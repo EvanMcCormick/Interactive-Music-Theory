@@ -24,7 +24,20 @@
           </select>
         </div>
 
-        <div class="control-group">
+        <!-- Keyboard Size selector - only for piano -->
+        <div class="control-group" *ngIf="isPiano()">
+          <label for="keyboard-size-select">Keyboard Size:</label>
+          <select id="keyboard-size-select" (change)="onKeyboardSizeChange($event)">
+            <option value="25" [selected]="state.selectedStringCount === 25">25 Keys (Compact)</option>
+            <option value="37" [selected]="state.selectedStringCount === 37">37 Keys (Small)</option>
+            <option value="49" [selected]="state.selectedStringCount === 49">49 Keys (Medium)</option>
+            <option value="61" [selected]="state.selectedStringCount === 61">61 Keys (Standard)</option>
+            <option value="88" [selected]="state.selectedStringCount === 88">88 Keys (Full Piano)</option>
+          </select>
+        </div>
+
+        <!-- Only show Strings and Tuning for stringed instruments (not piano) -->
+        <div class="control-group" *ngIf="!isPiano()">
           <label for="string-count-select">Strings:</label>
           <select id="string-count-select" (change)="onStringCountChange($event)">
             <option *ngFor="let count of getAvailableStringCounts()"
@@ -35,7 +48,7 @@
           </select>
         </div>
 
-        <div class="control-group">
+        <div class="control-group" *ngIf="!isPiano()">
           <label for="tuning-select">Tuning:</label>
           <select id="tuning-select" (change)="onTuningChange($event)">
             <option *ngFor="let tuning of musicTheoryService.getTunings() | keyvalue"
@@ -103,10 +116,9 @@
       <button class="menu-button" (click)="toggleInstrumentConfig()" *ngIf="!showInstrumentConfig">
         ☰ Settings
       </button>
-      <h1>{{ getInstrumentName() }} Fretboard Explorer</h1>
+      <h1>{{ getInstrumentName() }} {{ isPiano() ? 'Explorer' : 'Fretboard Explorer' }}</h1>
     </div>
 
-    <div class="formula-display">
     <div class="formula-display">
       <div class="formula-header">
         <div class="formula-info">
@@ -130,7 +142,7 @@
       </div>
     </div>
 
-    <div class="fretboard-container">
+    <div class="fretboard-container" *ngIf="!isPiano()">
       <div class="fretboard">
         <!-- Fret markers -->
         <div class="fret-markers">
@@ -161,6 +173,14 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Piano Keyboard View -->
+    <div class="keyboard-view" *ngIf="isPiano()">
+      <app-keyboard 
+        [keys]="keyboardKeys" 
+        [showNashvilleNumbers]="state.showNashvilleNumbers">
+      </app-keyboard>
     </div>
   </div>
 </div>
