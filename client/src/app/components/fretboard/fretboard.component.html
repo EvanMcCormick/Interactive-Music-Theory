@@ -1,90 +1,112 @@
 <div class="music-theory-container">
-  <div class="controls-panel">
-    <h2>{{ getInstrumentName() }} Fretboard Explorer</h2>
-
-    <!-- Instrument Configuration Section (Collapsible) -->
-    <div class="instrument-config-section">
-      <button class="config-toggle" (click)="toggleInstrumentConfig()">
-        <span class="toggle-icon">{{ showInstrumentConfig ? '▼' : '▶' }}</span>
-        Instrument Settings
-        <span class="current-config">{{ getInstrumentName() }} • {{ state.selectedStringCount }} strings • {{ getTuningName() }}</span>
+  <!-- Side Navigation Panel -->
+  <div class="side-nav" [class.collapsed]="!showInstrumentConfig">
+    <div class="side-nav-header">
+      <h2>Settings</h2>
+      <button class="nav-toggle" (click)="toggleInstrumentConfig()" title="Toggle sidebar">
+        {{ showInstrumentConfig ? '◀' : '▶' }}
       </button>
+    </div>
 
-      <div class="config-content" *ngIf="showInstrumentConfig">
-        <div class="config-grid">
-          <div class="control-group">
-            <label for="instrument-select">Instrument:</label>
-            <select id="instrument-select" (change)="onInstrumentChange($event)">
-              <option *ngFor="let instrument of musicTheoryService.getInstruments()"
-                      [value]="instrument.id"
-                      [selected]="instrument.id === state.selectedInstrument">
-                {{ instrument.name }}
-              </option>
-            </select>
-          </div>
+    <div class="side-nav-content" *ngIf="showInstrumentConfig">
+      <!-- Instrument Settings Section -->
+      <div class="nav-section">
+        <h3>Instrument</h3>
+        
+        <div class="control-group">
+          <label for="instrument-select">Type:</label>
+          <select id="instrument-select" (change)="onInstrumentChange($event)">
+            <option *ngFor="let instrument of musicTheoryService.getInstruments()"
+                    [value]="instrument.id"
+                    [selected]="instrument.id === state.selectedInstrument">
+              {{ instrument.name }}
+            </option>
+          </select>
+        </div>
 
-          <div class="control-group">
-            <label for="string-count-select">Strings:</label>
-            <select id="string-count-select" (change)="onStringCountChange($event)">
-              <option *ngFor="let count of getAvailableStringCounts()"
-                      [value]="count"
-                      [selected]="state.selectedStringCount === count">
-                {{ count }}
-              </option>
-            </select>
-          </div>
+        <div class="control-group">
+          <label for="string-count-select">Strings:</label>
+          <select id="string-count-select" (change)="onStringCountChange($event)">
+            <option *ngFor="let count of getAvailableStringCounts()"
+                    [value]="count"
+                    [selected]="state.selectedStringCount === count">
+              {{ count }}
+            </option>
+          </select>
+        </div>
 
-          <div class="control-group">
-            <label for="tuning-select">Tuning:</label>
-            <select id="tuning-select" (change)="onTuningChange($event)">
-              <option *ngFor="let tuning of musicTheoryService.getTunings() | keyvalue"
-                      [value]="tuning.key"
-                      [selected]="tuning.key === state.selectedTuning">
-                {{ tuning.value.name }}
-              </option>
-            </select>
-          </div>
+        <div class="control-group">
+          <label for="tuning-select">Tuning:</label>
+          <select id="tuning-select" (change)="onTuningChange($event)">
+            <option *ngFor="let tuning of musicTheoryService.getTunings() | keyvalue"
+                    [value]="tuning.key"
+                    [selected]="tuning.key === state.selectedTuning">
+              {{ tuning.value.name }}
+            </option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Music Theory Settings Section -->
+      <div class="nav-section">
+        <h3>Music Theory</h3>
+        
+        <div class="control-group">
+          <label for="key-select">Key:</label>
+          <select id="key-select" [disabled]="isKeyDisabled()"
+                  (change)="onKeyChange($event)">
+            <option *ngFor="let note of chromaticScale"
+                    [value]="note"
+                    [selected]="note === state.selectedKey">
+              {{ note }}
+            </option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label for="category-select">Category:</label>
+          <select id="category-select" (change)="onCategoryChange($event)">
+            <option *ngFor="let category of unifiedCategories"
+                    [value]="category.id"
+                    [selected]="category.id === state.selectedCategory">
+              {{ category.name }}
+            </option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label for="item-select">{{ getItemLabel() }}:</label>
+          <select id="item-select" (change)="onItemChange($event)">
+            <option *ngFor="let item of currentItems"
+                    [value]="item.id"
+                    [selected]="item.id === state.selectedItem">
+              {{ item.name }}
+            </option>
+          </select>
+        </div>
+
+        <div class="control-group checkbox-group">
+          <label class="checkbox-container">
+            <input type="checkbox"
+                   [checked]="state.showNashvilleNumbers"
+                   (change)="toggleNashvilleNumbers()">
+            <span>Show Nashville Numbers</span>
+          </label>
         </div>
       </div>
     </div>
+  </div>
 
-    <!-- Music Theory Controls - Compact Row -->
-    <div class="controls-row">
-      <div class="control-group key-group">
-        <label for="key-select">Key:</label>
-        <select id="key-select" [disabled]="isKeyDisabled()"
-                (change)="onKeyChange($event)">
-          <option *ngFor="let note of chromaticScale"
-                  [value]="note"
-                  [selected]="note === state.selectedKey">
-            {{ note }}
-          </option>
-        </select>
-      </div>
-
-      <div class="control-group category-group">
-        <label for="category-select">Category:</label>
-        <select id="category-select" (change)="onCategoryChange($event)">
-          <option *ngFor="let category of unifiedCategories"
-                  [value]="category.id"
-                  [selected]="category.id === state.selectedCategory">
-            {{ category.name }}
-          </option>
-        </select>
-      </div>
-
-      <div class="control-group scale-group">
-        <label for="item-select">{{ getItemLabel() }}:</label>
-        <select id="item-select" (change)="onItemChange($event)">
-          <option *ngFor="let item of currentItems"
-                  [value]="item.id"
-                  [selected]="item.id === state.selectedItem">
-            {{ item.name }}
-          </option>
-        </select>
-      </div>
+  <!-- Main Content Area -->
+  <div class="main-content">
+    <div class="top-bar">
+      <button class="menu-button" (click)="toggleInstrumentConfig()" *ngIf="!showInstrumentConfig">
+        ☰ Settings
+      </button>
+      <h1>{{ getInstrumentName() }} Fretboard Explorer</h1>
     </div>
 
+    <div class="formula-display">
     <div class="formula-display">
       <div class="formula-header">
         <div class="formula-info">
@@ -98,12 +120,6 @@
           </div>
         </div>
         <div class="formula-actions">
-          <label class="checkbox-container">
-            <input type="checkbox"
-                   [checked]="state.showNashvilleNumbers"
-                   (change)="toggleNashvilleNumbers()">
-            Show Nashville Numbers
-          </label>
           <button class="play-button" *ngIf="isChordCategory()" (click)="playChord()">
             ▶ Play
           </button>
@@ -113,34 +129,34 @@
         </div>
       </div>
     </div>
-  </div>
 
-  <div class="fretboard-container">
-    <div class="fretboard">
-      <!-- Fret markers -->
-      <div class="fret-markers">
-        <div class="fret-marker" *ngFor="let fret of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]"
-             [ngClass]="{'single-marker': [3, 5, 7, 9, 15].includes(fret), 
-                        'double-marker': fret === 12}">
-          {{ fret }}
+    <div class="fretboard-container">
+      <div class="fretboard">
+        <!-- Fret markers -->
+        <div class="fret-markers">
+          <div class="fret-marker" *ngFor="let fret of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]"
+               [ngClass]="{'single-marker': [3, 5, 7, 9, 15].includes(fret), 
+                          'double-marker': fret === 12}">
+            {{ fret }}
+          </div>
         </div>
-      </div>
 
-      <!-- Strings -->
-      <div class="string" *ngFor="let stringNotes of fretboard; let stringIndex = index">
-        <div class="note" *ngFor="let note of stringNotes; let fretIndex = index"
-             [ngClass]="{
-               'root': note.isRoot,
-               'in-mode': note.isInMode,
-               'not-in-mode': !note.isInMode,
-               'selected': isNoteSelected(stringIndex, fretIndex),
-               'playing': isNotePlaying(stringIndex, fretIndex)
-             }"
-             (click)="onNoteClick(stringIndex, fretIndex, note)">
-          <div class="note-content">
-            <div class="note-name">{{ note.noteName }}</div>
-            <div class="nashville-number" *ngIf="state.showNashvilleNumbers">
-              {{ note.nashvilleNumber }}
+        <!-- Strings -->
+        <div class="string" *ngFor="let stringNotes of fretboard; let stringIndex = index">
+          <div class="note" *ngFor="let note of stringNotes; let fretIndex = index"
+               [ngClass]="{
+                 'root': note.isRoot,
+                 'in-mode': note.isInMode,
+                 'not-in-mode': !note.isInMode,
+                 'selected': isNoteSelected(stringIndex, fretIndex),
+                 'playing': isNotePlaying(stringIndex, fretIndex)
+               }"
+               (click)="onNoteClick(stringIndex, fretIndex, note)">
+            <div class="note-content">
+              <div class="note-name">{{ note.noteName }}</div>
+              <div class="nashville-number" *ngIf="state.showNashvilleNumbers">
+                {{ note.nashvilleNumber }}
+              </div>
             </div>
           </div>
         </div>

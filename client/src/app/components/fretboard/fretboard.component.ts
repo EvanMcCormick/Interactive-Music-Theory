@@ -30,7 +30,7 @@ export class FretboardComponent implements OnInit, OnDestroy {
   currentlyPlayingPosition: { stringIndex: number, fretIndex: number } | null = null;
 
   // UI state
-  showInstrumentConfig = false;  private bassInstrument: Tone.FMSynth;
+  showInstrumentConfig = true;  private bassInstrument: Tone.FMSynth;
   private reverb: Tone.Reverb;
   private compressor: Tone.Compressor;
   private eq: Tone.EQ3;

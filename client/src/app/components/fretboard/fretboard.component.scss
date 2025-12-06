@@ -1,254 +1,312 @@
 :host {
   display: block;
   font-family: 'Roboto', Arial, sans-serif;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .music-theory-container {
   display: flex;
-  flex-direction: column;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 20px;
-}
-
-.controls-panel {
-  background-color: #f8f9fa;
-  border-radius: 10px;
-  padding: 15px 20px;
-  margin-bottom: 15px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-
-  h2 {
-    margin-top: 0;
-    color: #2c3e50;
-    font-weight: 600;
-    border-bottom: 2px solid #3498db;
-    padding-bottom: 8px;
-    margin-bottom: 20px;
-  }
-
-  h3 {
-    margin: 15px 0 12px 0;
-    color: #34495e;
-    font-weight: 600;
-    font-size: 1.1em;
-  }
-}
-
-// Instrument Configuration Section
-.instrument-config-section {
-  margin-bottom: 15px;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
-  background-color: white;
+  height: 100vh;
   overflow: hidden;
-
-  .config-toggle {
-    width: 100%;
-    padding: 12px 16px;
-    background-color: #e9ecef;
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-weight: 600;
-    color: #495057;
-    transition: background-color 0.2s;
-    text-align: left;
-
-    &:hover {
-      background-color: #dee2e6;
-    }
-
-    .toggle-icon {
-      font-size: 0.8em;
-      transition: transform 0.2s;
-    }
-
-    .current-config {
-      margin-left: auto;
-      font-weight: 400;
-      font-size: 0.9em;
-      color: #6c757d;
-    }
-  }
-
-  .config-content {
-    padding: 15px;
-    background-color: #f8f9fa;
-    border-top: 1px solid #dee2e6;
-  }
-
-  .config-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 15px;
-
-    @media (max-width: 768px) {
-      grid-template-columns: 1fr;
-    }
-  }
 }
 
-// Compact controls row
-.controls-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 15px;
-  margin-bottom: 12px;
-
-  @media (max-width: 768px) {
-    flex-wrap: wrap;
-  }
-}
-
-.control-group {
+// Side Navigation Panel
+.side-nav {
+  width: 320px;
+  background-color: #2c3e50;
+  color: #ecf0f1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  transition: all 0.3s ease;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
 
-  label {
-    font-weight: 600;
-    color: #34495e;
-    font-size: 0.85em;
+  &.collapsed {
+    width: 0;
+    overflow: hidden;
   }
 
-  select {
-    padding: 8px 12px;
-    border-radius: 6px;
-    border: 1px solid #dde1e7;
-    background-color: white;
-    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
-    transition: border-color 0.2s, box-shadow 0.2s;
-    font-size: 0.9em;
+  .side-nav-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px;
+    background-color: #34495e;
+    border-bottom: 1px solid #455a64;
 
-    &:focus {
-      border-color: #3498db;
-      box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.25);
-      outline: none;
+    h2 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #ecf0f1;
+    }
+
+    .nav-toggle {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background-color 0.2s;
+
+      &:hover {
+        background-color: #2980b9;
+      }
     }
   }
 
-  &.key-group {
-    flex-shrink: 0;
-
-    select {
-      width: 70px;
-    }
-  }
-
-  &.category-group {
+  .side-nav-content {
     flex: 1;
-    min-width: 150px;
+    overflow-y: auto;
+    padding: 0;
+
+    &::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: #34495e;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: #3498db;
+      border-radius: 4px;
+
+      &:hover {
+        background: #2980b9;
+      }
+    }
   }
 
-  &.scale-group {
-    flex: 1.5;
-    min-width: 180px;
+  .nav-section {
+    padding: 20px;
+    border-bottom: 1px solid #455a64;
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    h3 {
+      margin: 0 0 20px 0;
+      color: #3498db;
+      font-weight: 600;
+      font-size: 1.1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .control-group {
+      margin-bottom: 20px;
+
+      &:last-child {
+        margin-bottom: 0;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 500;
+        color: #bdc3c7;
+        font-size: 0.9rem;
+      }
+
+      select {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #455a64;
+        border-radius: 6px;
+        background-color: #34495e;
+        color: #ecf0f1;
+        font-size: 0.95rem;
+        cursor: pointer;
+        transition: all 0.2s;
+
+        &:hover {
+          background-color: #3d5872;
+        }
+
+        &:focus {
+          outline: none;
+          border-color: #3498db;
+          box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.2);
+        }
+
+        &:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        option {
+          background-color: #34495e;
+          color: #ecf0f1;
+        }
+      }
+
+      &.checkbox-group {
+        .checkbox-container {
+          display: flex;
+          align-items: center;
+          cursor: pointer;
+          user-select: none;
+
+          input[type="checkbox"] {
+            margin-right: 10px;
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: #3498db;
+          }
+
+          span {
+            color: #ecf0f1;
+            font-weight: 500;
+          }
+
+          &:hover span {
+            color: #3498db;
+          }
+        }
+      }
+    }
   }
 }
 
-.checkbox-container {
+// Main Content Area
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: #ecf0f1;
+}
+
+.top-bar {
+  background-color: #34495e;
+  padding: 15px 20px;
   display: flex;
   align-items: center;
-  cursor: pointer;
-  font-size: 0.9em;
-  color: #34495e;
-  white-space: nowrap;
+  gap: 20px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 
-  input[type="checkbox"] {
-    margin-right: 8px;
-    width: 16px;
-    height: 16px;
-    accent-color: #3498db;
+  .menu-button {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 15px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 500;
+    transition: background-color 0.2s;
+
+    &:hover {
+      background-color: #2980b9;
+    }
+  }
+
+  h1 {
+    margin: 0;
+    color: #ecf0f1;
+    font-size: 1.5rem;
+    font-weight: 600;
   }
 }
 
+// Formula Display
 .formula-display {
-  margin-top: 10px;
-  padding: 10px 15px;
-  background-color: #ecf0f1;
-  border-radius: 8px;
-  border-left: 5px solid #3498db;
+  padding: 20px;
+  background-color: white;
+  border-bottom: 1px solid #dee2e6;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 
   .formula-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 15px;
+    gap: 20px;
+
+    @media (max-width: 768px) {
+      flex-direction: column;
+      align-items: flex-start;
+    }
   }
 
   .formula-info {
     flex: 1;
-    min-width: 0;
+
+    .formula-title {
+      font-size: 1.3rem;
+      font-weight: 600;
+      color: #2c3e50;
+      margin-bottom: 8px;
+    }
+
+    .formula-notes {
+      font-size: 1.1rem;
+      color: #34495e;
+      margin-bottom: 5px;
+    }
+
+    .formula-nashville {
+      font-size: 0.95rem;
+      color: #7f8c8d;
+    }
   }
 
   .formula-actions {
     display: flex;
-    align-items: center;
     gap: 15px;
-    flex-shrink: 0;
-  }
+    align-items: center;
 
-  .formula-title {
-    font-weight: 600;
-    margin-bottom: 4px;
-    color: #2980b9;
-    font-size: 1em;
-  }
+    .play-button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 20px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 500;
+      transition: background-color 0.2s;
 
-  .formula-notes {
-    font-size: 1.1em;
-    letter-spacing: 1.5px;
-    font-weight: 500;
-  }
+      &:hover {
+        background-color: #2980b9;
+      }
 
-  .formula-nashville {
-    font-size: 0.85em;
-    color: #7f8c8d;
-    margin-top: 2px;
-  }
-
-  .play-button {
-    padding: 8px 16px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border: none;
-    border-radius: 6px;
-    font-weight: 600;
-    font-size: 0.9em;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    box-shadow: 0 2px 5px rgba(102, 126, 234, 0.3);
-    white-space: nowrap;
-    flex-shrink: 0;
-
-    &:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
-    }
-
-    &:active {
-      transform: translateY(0);
-      box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
-    }
-
-    &:focus {
-      outline: none;
-      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.3);
+      &:active {
+        transform: scale(0.98);
+      }
     }
   }
 }
 
+// Fretboard Container
 .fretboard-container {
-  overflow-x: auto;
-  margin-bottom: 20px;
-  background-color: #f8f9fa;
-  border-radius: 10px;
+  flex: 1;
+  overflow: auto;
   padding: 20px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  background-color: #f8f9fa;
+
+  &::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: #f1f1f1;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 6px;
+
+    &:hover {
+      background: #555;
+    }
+  }
 }
 
 .fretboard {
@@ -258,6 +316,9 @@
   position: relative;
   margin-top: 0;
   background: linear-gradient(to right, #d4a76a, #c49455);
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
 
 .fret-markers {
@@ -309,7 +370,7 @@
 
 .string {
   display: flex;
-  height: 50px; /* Reduced from 70px to close up the gap between strings */
+  height: 50px;
   margin-bottom: 0;
   align-items: center;
   position: relative;
@@ -354,20 +415,6 @@
   &:nth-of-type(6)::after {
     height: 3.5px; /* Thickest string (lowest pitch) */
   }
-}
-
-.string-name {
-  width: 40px;
-  font-weight: bold;
-  text-align: center;
-  position: relative;
-  z-index: 1;
-  background-color: #2c3e50;
-  color: white;
-  border-radius: 4px;
-  padding: 6px 0;
-  margin-right: 10px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .note {
@@ -445,52 +492,36 @@
     background: rgba(50, 50, 50, 0.25);
     color: rgba(255, 255, 255, 0.8);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-    transform: scale(0.85);
-    opacity: 0.9;
   }
 
-  // Currently playing note style (bright gold with pulsing animation)
-  &.playing .note-content {
-    background: radial-gradient(circle at 30% 30%, #ffd700, #ffb300) !important;
-    color: #1a1a1a !important;
-    transform: scale(1.25) !important;
-    box-shadow: 0 0 20px rgba(255, 215, 0, 0.8), 0 0 40px rgba(255, 215, 0, 0.4) !important;
-    animation: pulse-playing 0.3s ease-in-out;
-    z-index: 10 !important;
-
-    .nashville-number {
-      color: rgba(26, 26, 26, 0.9) !important;
-      font-weight: 700;
-    }
-
-    .note-name {
-      font-weight: 700;
-    }
-  }
-
-  &:hover .note-content {
+  &.selected .note-content {
     transform: scale(1.15);
-    z-index: 2;
-    box-shadow: 0 5px 10px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 0 20px rgba(76, 175, 80, 0.6), 0 0 0 3px rgba(76, 175, 80, 0.3);
+    background: radial-gradient(circle at 30% 30%, #66bb6a, #388e3c);
+    color: white;
   }
 
-  &.not-in-mode:hover .note-content {
-    background: rgba(100, 181, 246, 0.5);
-    color: white;
-    opacity: 1;
+  &.playing .note-content {
+    animation: pulse 0.5s ease-out;
+    transform: scale(1.2);
+    box-shadow: 0 0 25px rgba(255, 193, 7, 0.8), 0 0 0 4px rgba(255, 193, 7, 0.4);
+  }
+
+  &:hover:not(.selected) .note-content {
+    transform: scale(1.05);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
   }
 }
 
-// Pulse animation for playing notes
-@keyframes pulse-playing {
+@keyframes pulse {
   0% {
-    transform: scale(1.1);
+    transform: scale(1);
   }
   50% {
-    transform: scale(1.3);
+    transform: scale(1.25);
   }
   100% {
-    transform: scale(1.25);
+    transform: scale(1.2);
   }
 }
 
@@ -512,56 +543,30 @@
 .note:nth-child(15) { flex: 0.57; } /* 14th fret */
 .note:nth-child(16) { flex: 0.55; } /* 15th fret */
 
-.tuning-info {
-  background-color: #f8f9fa;
-  border-radius: 10px;
-  padding: 20px;
-  margin-top: 25px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-
-  h3 {
-    margin-top: 0;
-    color: #2c3e50;
-    font-weight: 600;
-    border-bottom: 2px solid #3498db;
-    padding-bottom: 10px;
-    margin-bottom: 15px;
+// Responsive Design
+@media (max-width: 1024px) {
+  .side-nav {
+    width: 280px;
   }
-
-  p {
-    margin-bottom: 0;
-    color: #34495e;
-    font-size: 16px;
-  }
-}
-
-// Fret inlays (position markers)
-.fretboard::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-image: radial-gradient(circle at center, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0) 60%);
-  background-size: 8.33% 20px;  background-position: 37.5% 100%, 62.5% 100%, 50% 100%, 25% 50%, 75% 50%, 41.5% 50%, 58.5% 50%;
-  background-repeat: no-repeat;
-  pointer-events: none;
 }
 
 @media (max-width: 768px) {
-  .control-group {
+  .music-theory-container {
     flex-direction: column;
-    align-items: flex-start;
+  }
 
-    label {
-      margin-bottom: 8px;
-      width: 100%;
+  .side-nav {
+    width: 100%;
+    max-height: 50vh;
+
+    &.collapsed {
+      max-height: 0;
     }
+  }
 
-    select {
-      width: 100%;
-      max-width: none;
+  .top-bar {
+    h1 {
+      font-size: 1.2rem;
     }
   }
   
