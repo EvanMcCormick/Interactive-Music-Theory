@@ -1,18 +1,27 @@
 # Interactive Music Theory
 
-A comprehensive web application for exploring scales, modes, chords, and music theory concepts on guitar and bass guitar fretboards.
+A comprehensive web application for exploring scales, modes, chords, and music theory concepts on guitar, bass guitar, and piano/keyboard.
 
 ## Features
 
-### Interactive Fretboard
-- Visual fretboard display with 16 frets (0-15)
-- Click on notes to hear them played
+### Interactive Instrument Display
+- **Fretboard View**: Visual fretboard display with 16 frets (0-15) for guitar/bass
+- **Keyboard View**: Realistic piano keyboard with black and white keys
+- Click on notes/keys to hear them played with instrument-specific sounds
 - Real-time highlighting of notes being played
 - Root notes highlighted in red, scale/chord tones in blue
+- Dimmed display for notes not in the current scale/mode
 
 ### Instrument Support
 - **Guitar**: 6, 7, and 8 string configurations
 - **Bass Guitar**: 4, 5, and 6 string configurations
+- **Piano/Keyboard**: 25, 37, 49, 61 (standard), and 88-key (full piano) configurations
+
+### Side Navigation Interface
+- Modern collapsible sidebar with dark theme
+- Organized settings sections for Instrument and Music Theory
+- Context-sensitive controls (shows only relevant options for selected instrument)
+- Responsive design that adapts to screen size
 
 ### Tunings
 
@@ -126,7 +135,17 @@ A comprehensive web application for exploring scales, modes, chords, and music t
 - 6th, Minor 6th
 
 ### Audio Playback
-- Play scales/modes with ergonomic finger positioning (4-fret hand position)
+- **Guitar/Bass**: Authentic bass guitar sound with FM synthesis
+  - Optimized harmonicity and modulation for bass-like timbre
+  - 3-band EQ (bass boost, mid/high cut)
+  - Compression for punchy sound
+  - Reverb for depth
+- **Piano**: Realistic piano sound with polyphonic capability
+  - Polyphonic synthesizer (play multiple notes simultaneously)
+  - Piano-specific envelope (quick attack, long release)
+  - Reverb for ambience
+  - Register-sensitive sustain (longer for lower notes)
+- Play scales/modes with ergonomic finger positioning (4-fret hand position for guitar/bass)
 - Play chords as arpeggios
 - Audio synthesis powered by Tone.js
 - Visual note highlighting during playback
@@ -134,7 +153,16 @@ A comprehensive web application for exploring scales, modes, chords, and music t
 ### Nashville Number System
 - Toggle Nashville numbers on/off
 - Display intervals relative to the root note
+- Visible on both fretboard and keyboard displays
 - Helpful for understanding scale degrees and transposition
+
+### Keyboard-Specific Features
+- 61-key keyboard optimized for 1080p screens (default)
+- Keyboard size selector for different screen sizes and preferences
+- Black keys displayed at top, white keys extend downward (standard piano layout)
+- Note names and octave numbers visible on white keys
+- Color-coded highlighting matches fretboard (root = red, in-mode = blue)
+- Horizontal scrolling for larger keyboards (88-key)
 
 ## Tech Stack
 
@@ -198,7 +226,8 @@ MusicTheory/
 │   ├── src/
 │   │   ├── app/
 │   │   │   ├── components/
-│   │   │   │   └── fretboard/       # Main fretboard component
+│   │   │   │   ├── fretboard/       # Main fretboard/keyboard component
+│   │   │   │   └── keyboard/        # Piano keyboard component
 │   │   │   ├── models/              # TypeScript interfaces
 │   │   │   └── services/            # Music theory service
 │   │   ├── assets/
@@ -216,13 +245,28 @@ MusicTheory/
 
 ## Usage
 
-1. **Select an Instrument**: Choose between Guitar or Bass Guitar
-2. **Configure Strings & Tuning**: Set the number of strings and tuning
+1. **Select an Instrument**: Choose between Guitar, Bass Guitar, or Piano/Keyboard
+2. **Configure Instrument**:
+   - For Guitar/Bass: Set the number of strings and tuning
+   - For Piano: Select keyboard size (25, 37, 49, 61, or 88 keys)
 3. **Choose a Key**: Select the root note (C, C#, D, etc.)
 4. **Select Category**: Pick from scales, modes, or chord types
 5. **Choose Scale/Chord**: Select the specific scale or chord to display
-6. **Play**: Click the Play button to hear the scale or chord
-7. **Explore**: Click individual notes on the fretboard to hear them
+6. **Toggle Nashville Numbers**: Optional display of interval numbers
+7. **Play**: Click the Play button to hear the scale or chord
+8. **Explore**: Click individual notes on the fretboard or keys on the keyboard to hear them
+
+## Recent Updates
+
+### Version 2.0 (December 2025)
+- ✨ **New**: Piano/Keyboard instrument support with 5 keyboard sizes
+- ✨ **New**: Realistic piano sound synthesis with polyphonic capability
+- ✨ **New**: Modern side navigation interface with collapsible sidebar
+- ✨ **New**: Context-sensitive controls (shows only relevant options per instrument)
+- 🎨 **Improved**: Responsive design optimized for different screen sizes
+- 🎨 **Improved**: 61-key keyboard as default for optimal 1080p display
+- 🎵 **Enhanced**: Authentic bass guitar sound with professional effects chain
+- 🐛 **Fixed**: Octave calculation for accurate note frequencies across all instruments
 
 ## Contributing
 
