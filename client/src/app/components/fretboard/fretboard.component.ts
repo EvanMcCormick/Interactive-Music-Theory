@@ -2,6 +2,7 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MusicTheoryService } from '../../services/music-theory.service';
 import { FretNote, Scale, ScaleCategory, MusicTheoryState, Instrument, Chord, ChordCategory, MusicTheoryCategory, MusicTheoryItem } from '../../models/music-theory.model';
+import { KeyboardComponent } from '../keyboard/keyboard.component';
 import * as Tone from 'tone';
 
 @Component({
@@ -9,7 +10,7 @@ import * as Tone from 'tone';
   templateUrl: './fretboard.component.html',
   styleUrls: ['./fretboard.component.scss'],
   standalone: true,
-  imports: [CommonModule]
+  imports: [CommonModule, KeyboardComponent]
 })
 export class FretboardComponent implements OnInit, OnDestroy {
   // Arrays to store note data
@@ -17,8 +18,9 @@ export class FretboardComponent implements OnInit, OnDestroy {
   unifiedCategories: MusicTheoryCategory[] = [];
   currentItems: MusicTheoryItem[] = [];
 
-  // Fretboard data
+  // Fretboard/Keyboard data
   fretboard: FretNote[][] = [];
+  keyboardKeys: FretNote[] = [];
 
   // State (retrieved from service)
   state!: MusicTheoryState;
@@ -123,7 +125,16 @@ export class FretboardComponent implements OnInit, OnDestroy {
 
   // Update fretboard when relevant selections change
   refreshFretboard(): void {
-    this.fretboard = this.musicTheoryService.generateFretboard();
+    if (this.isPiano()) {
+      this.keyboardKeys = this.musicTheoryService.generateKeyboard();
+    } else {
+      this.fretboard = this.musicTheoryService.generateFretboard();
+    }
+  }
+
+  // Check if current instrument is piano
+  isPiano(): boolean {
+    return this.state?.selectedInstrument === 'piano';
   }
 
   // Handler methods for UI interactions
@@ -155,6 +166,24 @@ export class FretboardComponent implements OnInit, OnDestroy {
   onStringCountChange(event: Event): void {
     const select = event.target as HTMLSelectElement;
     this.musicTheoryService.updateStringCount(parseInt(select.value, 10));
+  }
+
+  onKeyboardSizeChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    const size = parseInt(select.value, 10);
+    
+    // Map keyboard size to tuning name
+    const tuningMap: { [key: number]: string } = {
+      25: 'standard25',
+      37: 'standard37',
+      49: 'standard49',
+      61: 'standard61',
+      88: 'standard88'
+    };
+    
+    // Update both the key count and tuning
+    this.musicTheoryService.updateStringCount(size);
+    this.musicTheoryService.updateTuning(tuningMap[size]);
   }
 
   toggleNashvilleNumbers(): void {

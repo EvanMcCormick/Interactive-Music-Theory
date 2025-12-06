@@ -220,6 +220,12 @@ export class MusicTheoryService {
       name: 'Bass Guitar',
       defaultTuning: 'standard',
       supportedStringCounts: [4, 5, 6]
+    },
+    {
+      id: 'piano',
+      name: 'Piano/Keyboard',
+      defaultTuning: 'standard88',
+      supportedStringCounts: [88, 61, 49, 37, 25] // 88-key, 61-key, 49-key, 37-key, 25-key keyboards
     }
   ];
   // Bass guitar tunings (Standard bass: E2-A2-D3-G3 for audio playback)
@@ -316,6 +322,61 @@ export class MusicTheoryService {
     }
   };
 
+  // Piano/Keyboard configurations
+  // Piano keys are represented as octaves of notes starting from A0 (note index 9, octave 0)
+  private pianoTunings: Tunings = {
+    'standard88': {
+      name: '88 Keys (Full)',
+      strings: {
+        '88': { 
+          notes: this.generatePianoKeys(88, 9, 0), // A0 to C8
+          stringNames: this.generatePianoKeyNames(88, 9, 0),
+          octaves: this.generatePianoOctaves(88, 9, 0)
+        }
+      }
+    },
+    'standard61': {
+      name: '61 Keys',
+      strings: {
+        '61': { 
+          notes: this.generatePianoKeys(61, 0, 2), // C2 to C7
+          stringNames: this.generatePianoKeyNames(61, 0, 2),
+          octaves: this.generatePianoOctaves(61, 0, 2)
+        }
+      }
+    },
+    'standard49': {
+      name: '49 Keys',
+      strings: {
+        '49': { 
+          notes: this.generatePianoKeys(49, 0, 2), // C2 to C6
+          stringNames: this.generatePianoKeyNames(49, 0, 2),
+          octaves: this.generatePianoOctaves(49, 0, 2)
+        }
+      }
+    },
+    'standard37': {
+      name: '37 Keys',
+      strings: {
+        '37': { 
+          notes: this.generatePianoKeys(37, 0, 3), // C3 to C6
+          stringNames: this.generatePianoKeyNames(37, 0, 3),
+          octaves: this.generatePianoOctaves(37, 0, 3)
+        }
+      }
+    },
+    'standard25': {
+      name: '25 Keys',
+      strings: {
+        '25': { 
+          notes: this.generatePianoKeys(25, 0, 3), // C3 to C5
+          stringNames: this.generatePianoKeyNames(25, 0, 3),
+          octaves: this.generatePianoOctaves(25, 0, 3)
+        }
+      }
+    }
+  };
+
   // Combined tunings map (will be populated dynamically)
   private tunings: Tunings = {};
   // State management
@@ -385,7 +446,59 @@ export class MusicTheoryService {
       Object.assign(this.tunings, this.bassTunings);
     } else if (instrumentId === 'guitar') {
       Object.assign(this.tunings, this.guitarTunings);
+    } else if (instrumentId === 'piano') {
+      Object.assign(this.tunings, this.pianoTunings);
     }
+  }
+
+  // Helper methods for generating piano keys
+  private generatePianoKeys(keyCount: number, startNote: number, startOctave: number): number[] {
+    const keys: number[] = [];
+    let note = startNote;
+    let octave = startOctave;
+    
+    for (let i = 0; i < keyCount; i++) {
+      keys.push(note);
+      note++;
+      if (note >= 12) {
+        note = 0;
+        octave++;
+      }
+    }
+    
+    return keys;
+  }
+
+  private generatePianoKeyNames(keyCount: number, startNote: number, startOctave: number): string[] {
+    const keyNames: string[] = [];
+    let note = startNote;
+    
+    for (let i = 0; i < keyCount; i++) {
+      keyNames.push(this.chromaticScaleWithSharps[note]);
+      note++;
+      if (note >= 12) {
+        note = 0;
+      }
+    }
+    
+    return keyNames;
+  }
+
+  private generatePianoOctaves(keyCount: number, startNote: number, startOctave: number): number[] {
+    const octaves: number[] = [];
+    let note = startNote;
+    let octave = startOctave;
+    
+    for (let i = 0; i < keyCount; i++) {
+      octaves.push(octave);
+      note++;
+      if (note >= 12) {
+        note = 0;
+        octave++;
+      }
+    }
+    
+    return octaves;
   }
 
   // Get available instruments
@@ -447,7 +560,14 @@ export class MusicTheoryService {
     
     // Set default tuning and string count for this instrument
     newState.selectedTuning = instrument.defaultTuning;
-    newState.selectedStringCount = instrument.supportedStringCounts[0];
+    
+    // For piano, default to 61 keys (good for 1080p screens), otherwise use first option
+    if (instrumentId === 'piano') {
+      newState.selectedStringCount = 61;
+      newState.selectedTuning = 'standard61';
+    } else {
+      newState.selectedStringCount = instrument.supportedStringCounts[0];
+    }
     
     this.state.next(newState);
   }
@@ -661,6 +781,38 @@ export class MusicTheoryService {
     }
     
     return fretboard;
+  }
+
+  // Generate keyboard data (for piano)
+  generateKeyboard(): FretNote[] {
+    const state = this.state.getValue();
+    const keyCount = state.selectedStringCount; // For piano, "string count" means number of keys
+    const modeNotes = this.generateModeNotes();
+    const rootNoteIndex = this.getNoteIndex(state.selectedKey);
+    const currentTuning = this.tunings[state.selectedTuning].strings[state.selectedStringCount.toString()];
+    
+    if (!currentTuning) {
+      return [];
+    }
+    
+    const keys: FretNote[] = [];
+    
+    for (let keyIndex = 0; keyIndex < keyCount; keyIndex++) {
+      const noteValue = currentTuning.notes[keyIndex];
+      const octave = (currentTuning as any).octaves ? (currentTuning as any).octaves[keyIndex] : 4;
+
+      keys.push({
+        fret: keyIndex, // Using fret property to store key index
+        noteValue,
+        noteName: this.getNoteName(noteValue),
+        octave: octave,
+        nashvilleNumber: this.getNashvilleNumber(noteValue, rootNoteIndex),
+        isRoot: noteValue === rootNoteIndex,
+        isInMode: modeNotes.includes(noteValue)
+      });
+    }
+    
+    return keys;
   }
 
   // Format the formula as note names

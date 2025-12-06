@@ -283,6 +283,17 @@
   }
 }
 
+// Keyboard View Container
+.keyboard-view {
+  flex: 1;
+  overflow: auto;
+  padding: 20px;
+  background-color: #ecf0f1;
+  display: flex;
+  align-items: flex-start; // Changed from center to flex-start to align at top
+  justify-content: center;
+}
+
 // Fretboard Container
 .fretboard-container {
   flex: 1;

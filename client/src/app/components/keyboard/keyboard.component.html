@@ -1,0 +1,29 @@
+<div class="keyboard-container">
+  <div class="keyboard">
+    <div *ngFor="let key of keys; let i = index"
+         class="piano-key"
+         [ngClass]="{
+           'black-key': isBlackKey(key.noteName),
+           'white-key': !isBlackKey(key.noteName),
+           'root': key.isRoot,
+           'in-mode': key.isInMode,
+           'not-in-mode': !key.isInMode,
+           'playing': isKeyPlaying(i)
+         }"
+         (click)="onKeyClick(i, key)">
+      <div class="key-label" *ngIf="!isBlackKey(key.noteName)">
+        <span class="note-name">{{ key.noteName }}</span>
+        <span class="octave-number">{{ key.octave }}</span>
+        <span class="nashville-number" *ngIf="showNashvilleNumbers && key.nashvilleNumber">
+          {{ key.nashvilleNumber }}
+        </span>
+      </div>
+      <div class="key-label-black" *ngIf="isBlackKey(key.noteName)">
+        <span class="note-name">{{ key.noteName }}</span>
+        <span class="nashville-number" *ngIf="showNashvilleNumbers && key.nashvilleNumber">
+          {{ key.nashvilleNumber }}
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
