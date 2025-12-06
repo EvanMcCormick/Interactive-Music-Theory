@@ -1,0 +1,459 @@
+import { Component, OnInit, OnDestroy } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { MusicTheoryService } from '../../services/music-theory.service';
+import { FretNote, Scale, ScaleCategory, MusicTheoryState, Instrument, Chord, ChordCategory, MusicTheoryCategory, MusicTheoryItem } from '../../models/music-theory.model';
+import * as Tone from 'tone';
+
+@Component({
+  selector: 'app-fretboard',
+  templateUrl: './fretboard.component.html',
+  styleUrls: ['./fretboard.component.scss'],
+  standalone: true,
+  imports: [CommonModule]
+})
+export class FretboardComponent implements OnInit, OnDestroy {
+  // Arrays to store note data
+  chromaticScale: string[] = [];
+  unifiedCategories: MusicTheoryCategory[] = [];
+  currentItems: MusicTheoryItem[] = [];
+
+  // Fretboard data
+  fretboard: FretNote[][] = [];
+
+  // State (retrieved from service)
+  state!: MusicTheoryState;
+
+  // Track selected notes for pattern display
+  selectedNoteIndices: { stringIndex: number, fretIndex: number }[] = [];
+
+  // Track currently playing note position during arpeggio
+  currentlyPlayingPosition: { stringIndex: number, fretIndex: number } | null = null;
+
+  // UI state
+  showInstrumentConfig = false;  private bassInstrument: Tone.FMSynth;
+  private reverb: Tone.Reverb;
+  private compressor: Tone.Compressor;
+  private eq: Tone.EQ3;
+  private volume: Tone.Volume;
+  
+  constructor(public musicTheoryService: MusicTheoryService) {
+    // Create a master volume control
+    this.volume = new Tone.Volume(-8);
+    
+    // Create EQ for bass frequency shaping
+    this.eq = new Tone.EQ3({
+      low: 8,      // Boost bass frequencies
+      mid: -2,     // Slight cut in mids
+      high: -8     // Significant cut in highs for bass-like sound
+    });
+    
+    // Create compression for punchy bass sound
+    this.compressor = new Tone.Compressor({
+      threshold: -18,
+      ratio: 8,
+      attack: 0.001,
+      release: 0.05
+    });
+    
+    // Create subtle reverb
+    this.reverb = new Tone.Reverb({
+      decay: 1.2,
+      wet: 0.08
+    });
+    
+    // Create FM synthesis for more realistic bass sound
+    this.bassInstrument = new Tone.FMSynth({
+      harmonicity: 0.25,    // Lower harmonicity for deeper bass
+      modulationIndex: 8,   // Higher modulation for more complex timbre
+      oscillator: {
+        type: "sine"        // Sine wave for fundamental
+      },
+      envelope: {
+        attack: 0.005,      // Very quick attack
+        decay: 0.3,         // Quick decay
+        sustain: 0.4,       // Lower sustain
+        release: 1.5        // Long release for bass resonance
+      },
+      modulation: {
+        type: "sawtooth"    // Sawtooth for harmonics
+      },
+      modulationEnvelope: {
+        attack: 0.01,
+        decay: 0.2,
+        sustain: 0.1,
+        release: 0.8
+      }
+    });
+    
+    // Chain effects: Bass -> EQ -> Compressor -> Reverb -> Volume -> Destination
+    this.bassInstrument.chain(this.eq, this.compressor, this.reverb, this.volume, Tone.Destination);
+  }
+
+  ngOnInit(): void {
+    // Initialize data
+    this.chromaticScale = this.musicTheoryService.getChromaticScale();
+    this.unifiedCategories = this.musicTheoryService.getUnifiedCategories();
+
+    // Subscribe to state changes
+    this.musicTheoryService.getState().subscribe((state: MusicTheoryState) => {
+      this.state = state;
+      this.currentItems = this.musicTheoryService.getCurrentItems();
+      this.refreshFretboard();
+      // Clear selected notes when state changes
+      this.selectedNoteIndices = [];
+    });
+  }  ngOnDestroy(): void {
+    // Clean up audio resources
+    if (this.bassInstrument) {
+      this.bassInstrument.dispose();
+    }
+    if (this.eq) {
+      this.eq.dispose();
+    }
+    if (this.compressor) {
+      this.compressor.dispose();
+    }
+    if (this.reverb) {
+      this.reverb.dispose();
+    }
+    if (this.volume) {
+      this.volume.dispose();
+    }
+  }
+
+  // Update fretboard when relevant selections change
+  refreshFretboard(): void {
+    this.fretboard = this.musicTheoryService.generateFretboard();
+  }
+
+  // Handler methods for UI interactions
+  onInstrumentChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    this.musicTheoryService.updateInstrument(select.value);
+  }
+
+  onKeyChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    this.musicTheoryService.updateKey(select.value);
+  }
+
+  onCategoryChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    this.musicTheoryService.updateCategory(select.value);
+  }
+
+  onItemChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    this.musicTheoryService.updateItem(select.value);
+  }
+
+  onTuningChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    this.musicTheoryService.updateTuning(select.value);
+  }
+
+  onStringCountChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    this.musicTheoryService.updateStringCount(parseInt(select.value, 10));
+  }
+
+  toggleNashvilleNumbers(): void {
+    this.musicTheoryService.toggleNashvilleNumbers();
+  }
+
+  isNoteSelected(stringIndex: number, fretIndex: number): boolean {
+    return this.selectedNoteIndices.some(note => 
+      note.stringIndex === stringIndex && note.fretIndex === fretIndex
+    );
+  }  playNote(noteName: string, octave: number): void {
+    if (Tone.context.state !== 'running') {
+      Tone.context.resume();
+    }
+    
+    // Convert note name to a format Tone.js can understand
+    // Handle note names with slashes (e.g., "C#/Db" -> "C#")
+    const cleanNoteName = this.cleanNoteNameForTone(noteName);
+    
+    console.log(`Playing note: ${cleanNoteName}${octave} (original: ${noteName}${octave})`);
+    
+    // Add slight randomization to velocity for more human feel
+    const velocity = 0.6 + Math.random() * 0.4; // Random velocity between 0.6 and 1.0
+    
+    // Use appropriate duration for bass notes - bass notes should sustain longer
+    const duration = octave <= 1 ? '2n' : octave <= 2 ? '2n' : octave <= 3 ? '4n' : '8n';
+    
+    this.bassInstrument.triggerAttackRelease(`${cleanNoteName}${octave}`, duration, undefined, velocity);
+  }
+  
+  // Helper function to clean note names for Tone.js
+  private cleanNoteNameForTone(noteName: string): string {
+    // If the note name contains a slash, take the first part (sharp notation)
+    if (noteName.includes('/')) {
+      return noteName.split('/')[0];
+    }
+    return noteName;
+  }
+
+  // Helper methods for the template
+  getInstrumentName(): string {
+    const currentInstrument = this.musicTheoryService.getCurrentInstrument();
+    return currentInstrument ? currentInstrument.name : 'Bass Guitar';
+  }
+
+  getAvailableStringCounts(): number[] {
+    const currentInstrument = this.musicTheoryService.getCurrentInstrument();
+    return currentInstrument ? currentInstrument.supportedStringCounts : [4, 5, 6];
+  }
+
+  getFormulaAsNotes(): string {
+    return this.musicTheoryService.getFormulaAsNotes();
+  }
+
+  getFormulaAsNashville(): string {
+    return this.musicTheoryService.getFormulaAsNashville();
+  }
+
+  isKeyDisabled(): boolean {
+    return this.musicTheoryService.isKeyDisabled();
+  }
+
+  getCurrentScaleObject(): Scale | undefined {
+    return this.musicTheoryService.getCurrentScaleObject();
+  }
+
+  getCategoryName(): string {
+    const category = this.musicTheoryService.getCurrentCategory();
+    return category ? category.name : '';
+  }
+
+  getCurrentCategory(): MusicTheoryCategory | undefined {
+    return this.musicTheoryService.getCurrentCategory();
+  }
+
+  getCurrentItem(): MusicTheoryItem | undefined {
+    return this.musicTheoryService.getCurrentItem();
+  }
+
+  getItemLabel(): string {
+    const category = this.getCurrentCategory();
+    return category ? category.itemLabel : 'Item';
+  }
+
+  getTuningName(): string {
+    const tunings = this.musicTheoryService.getTunings();
+    return tunings[this.state.selectedTuning]?.name || '';
+  }
+  // Interactive methods
+  onNoteClick(stringIndex: number, fretIndex: number, note: FretNote): void {
+    if (!note.isInMode) return; // Only allow clicking on notes in the current scale
+
+    // Play the note sound
+    this.playNote(note.noteName, note.octave);
+
+    const existingIndex = this.selectedNoteIndices.findIndex(
+      n => n.stringIndex === stringIndex && n.fretIndex === fretIndex
+    );
+
+    if (existingIndex > -1) {
+      // Deselect if already selected
+      this.selectedNoteIndices.splice(existingIndex, 1);
+    } else {
+      // Add to selected notes
+      this.selectedNoteIndices.push({ stringIndex, fretIndex });
+    }
+  }
+
+  // Helper methods for unified system
+  isChordCategory(): boolean {
+    return this.musicTheoryService.isChordCategory();
+  }
+
+  getItemDisplayName(): string {
+    return this.musicTheoryService.getItemDisplayName();
+  }
+
+  playChord(): void {
+    if (Tone.context.state !== 'running') {
+      Tone.context.resume();
+    }
+
+    const currentItem = this.getCurrentItem();
+    if (!currentItem) return;
+
+    const state = this.state;
+    const keyIndex = this.musicTheoryService.getNoteIndex(state.selectedKey);
+
+    // Get the chord tones in the correct order based on intervals
+    const chordToneIndices = currentItem.intervals.map((interval: number) => {
+      return (keyIndex + interval) % 12;
+    });
+
+    // For triads (3 notes), add the root again as the 4th beat
+    const isTriad = chordToneIndices.length === 3;
+    if (isTriad) {
+      chordToneIndices.push(chordToneIndices[0]); // Add root again
+    }
+
+    // Find the best (lowest) position for each chord tone on the fretboard
+    const notesToPlay: { stringIndex: number; fretIndex: number; noteName: string; octave: number }[] = [];
+
+    chordToneIndices.forEach((chordToneIndex) => {
+      // Find all positions of this chord tone on the fretboard
+      const positions: { stringIndex: number; fretIndex: number; noteName: string; octave: number }[] = [];
+
+      this.fretboard.forEach((stringNotes, stringIndex) => {
+        stringNotes.forEach((note, fretIndex) => {
+          if (note.noteValue === chordToneIndex && note.isInMode) {
+            positions.push({
+              stringIndex,
+              fretIndex,
+              noteName: note.noteName,
+              octave: note.octave
+            });
+          }
+        });
+      });
+
+      // Sort positions by octave (lowest first) and take the lowest one
+      if (positions.length > 0) {
+        positions.sort((a, b) => a.octave - b.octave);
+        notesToPlay.push(positions[0]);
+      }
+    });
+
+    // Play notes in sequence (4/4 quarter note pattern)
+    const delayBetweenNotes = 500; // milliseconds (quarter note at 120 BPM)
+    const highlightDuration = 450; // slightly less than delay for clean separation
+
+    notesToPlay.forEach((notePos, index) => {
+      setTimeout(() => {
+        // Highlight the specific position
+        this.currentlyPlayingPosition = {
+          stringIndex: notePos.stringIndex,
+          fretIndex: notePos.fretIndex
+        };
+
+        // Play the note sound
+        this.playNote(notePos.noteName, notePos.octave);
+
+        // Clear highlight after duration
+        setTimeout(() => {
+          // Only clear if this is still the current position (prevents race conditions)
+          if (this.currentlyPlayingPosition?.stringIndex === notePos.stringIndex &&
+              this.currentlyPlayingPosition?.fretIndex === notePos.fretIndex) {
+            this.currentlyPlayingPosition = null;
+          }
+        }, highlightDuration);
+      }, index * delayBetweenNotes);
+    });
+  }
+
+  playMode(): void {
+    if (Tone.context.state !== 'running') {
+      Tone.context.resume();
+    }
+
+    const currentItem = this.getCurrentItem();
+    if (!currentItem) return;
+
+    const state = this.state;
+    const keyIndex = this.musicTheoryService.getNoteIndex(state.selectedKey);
+
+    // Get all notes in the scale that are marked as isInMode on the fretboard
+    const allScalePositions: { stringIndex: number; fretIndex: number; noteName: string; octave: number; noteValue: number }[] = [];
+
+    this.fretboard.forEach((stringNotes, stringIndex) => {
+      stringNotes.forEach((note, fretIndex) => {
+        if (note.isInMode) {
+          allScalePositions.push({
+            stringIndex,
+            fretIndex,
+            noteName: note.noteName,
+            octave: note.octave,
+            noteValue: note.noteValue
+          });
+        }
+      });
+    });
+
+    // Sort by octave first, then by noteValue to get ascending pitch order
+    allScalePositions.sort((a, b) => {
+      if (a.octave !== b.octave) {
+        return a.octave - b.octave;
+      }
+      // Within same octave, sort by chromatic value relative to key
+      const aOffset = (a.noteValue - keyIndex + 12) % 12;
+      const bOffset = (b.noteValue - keyIndex + 12) % 12;
+      return aOffset - bOffset;
+    });
+
+    // Filter to get only positions in the middle octave range (2-4)
+    const preferredPositions = allScalePositions.filter(p => p.octave >= 2 && p.octave <= 4);
+
+    // If we don't have enough notes in preferred range, use all positions
+    const positionsToUse = preferredPositions.length >= 8 ? preferredPositions : allScalePositions;
+
+    // Find a good starting position (first root note in preferred octave range)
+    let startIndex = positionsToUse.findIndex(p => p.noteValue === keyIndex && p.octave >= 2);
+    if (startIndex === -1) {
+      startIndex = positionsToUse.findIndex(p => p.noteValue === keyIndex);
+    }
+    if (startIndex === -1) startIndex = 0;
+
+    // Get 8 consecutive notes starting from the root
+    const notesToPlay: { stringIndex: number; fretIndex: number; noteName: string; octave: number }[] = [];
+
+    for (let i = 0; i < 8 && (startIndex + i) < positionsToUse.length; i++) {
+      const pos = positionsToUse[startIndex + i];
+      notesToPlay.push({
+        stringIndex: pos.stringIndex,
+        fretIndex: pos.fretIndex,
+        noteName: pos.noteName,
+        octave: pos.octave
+      });
+    }
+
+    // Debug: Log the notes that will be played
+    console.log('Scale notes to play:', notesToPlay.map((n, i) => `${i + 1}. ${n.noteName}${n.octave}`).join(', '));
+
+    // Play notes in sequence (4/4 quarter note pattern for 2 bars = 8 quarter notes)
+    const delayBetweenNotes = 500; // milliseconds (quarter note at 120 BPM)
+    const highlightDuration = 450; // slightly less than delay for clean separation
+
+    notesToPlay.forEach((notePos, index) => {
+      setTimeout(() => {
+        // Highlight the specific position
+        this.currentlyPlayingPosition = {
+          stringIndex: notePos.stringIndex,
+          fretIndex: notePos.fretIndex
+        };
+
+        console.log(`Playing note ${index + 1}: ${notePos.noteName}${notePos.octave}`);
+        // Play the note sound
+        this.playNote(notePos.noteName, notePos.octave);
+
+        // Clear highlight after duration
+        setTimeout(() => {
+          // Only clear if this is still the current position (prevents race conditions)
+          if (this.currentlyPlayingPosition?.stringIndex === notePos.stringIndex &&
+              this.currentlyPlayingPosition?.fretIndex === notePos.fretIndex) {
+            this.currentlyPlayingPosition = null;
+          }
+        }, highlightDuration);
+      }, index * delayBetweenNotes);
+    });
+  }
+
+  // Helper method to check if a specific note position is currently playing
+  isNotePlaying(stringIndex: number, fretIndex: number): boolean {
+    if (!this.currentlyPlayingPosition) return false;
+
+    // Match by exact position on the fretboard
+    return this.currentlyPlayingPosition.stringIndex === stringIndex &&
+           this.currentlyPlayingPosition.fretIndex === fretIndex;
+  }
+
+  toggleInstrumentConfig(): void {
+    this.showInstrumentConfig = !this.showInstrumentConfig;
+  }
+}

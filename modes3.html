@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive Bass Guitar Scales and Modes</title>
+  
+  <!-- Load React -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  
+  <!-- Load Babel for JSX support -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Load Tailwind CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  
+  <style>
+    /* Bass fretboard styles */
+    .fretboard {
+      border: 2px solid #92400e;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-left: 20px;
+      margin-right: 2px;
+    }
+    
+    .fret-numbers {
+      display: flex;
+      background-color: #fffdf6;
+      border-bottom: 1px solid #92400e;
+      margin-left: -20px;
+    }
+    
+    .fret-number {
+      flex: 1;
+      text-align: center;
+      font-size: 0.75rem;
+      padding: 0.25rem 0;
+      border-right: 1px solid #d97706;
+      font-weight: 500;
+    }
+    
+    .fret-number:last-child {
+      border-right: none;
+    }
+    
+    .string-row {
+      display: flex;
+      background-color: #fef3c7;
+      border-bottom: 1px solid #d97706;
+      position: relative;
+    }
+    
+    .string-row:last-child {
+      border-bottom: none;
+    }
+    
+    .string-label {
+      position: absolute;
+      left: -20px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-weight: bold;
+      font-size: 0.75rem;
+    }
+    
+    .fret-cell {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 3rem;
+      border-right: 1px solid #d97706;
+    }
+    
+    .fret-cell:last-child {
+      border-right: none;
+    }
+    
+    .fret-0 {
+      background-color: #fffdf6;
+    }
+    
+    /* Note styles */
+    .note-circle {
+      width: 2rem;
+      height: 2rem;
+      border-radius: 50%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: white;
+    }
+    
+    .root-note {
+      background-color: #ef4444;
+    }
+    
+    .mode-note {
+      background-color: #3b82f6;
+    }
+    
+    .key-note {
+      background-color: transparent;
+      color: black;
+      font-weight: bold;
+    }
+    
+    /* Control panel styles */
+    .control-panel {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      margin-bottom: 1rem;
+    }
+    
+    .control-group {
+      margin-bottom: 0.5rem;
+    }
+    
+    .control-label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 0.25rem;
+    }
+    
+    .select-control {
+      width: 100%;
+      padding: 0.5rem;
+      border: 1px solid #d1d5db;
+      border-radius: 0.375rem;
+    }
+    
+    /* Layout styles */
+    .container {
+      max-width: 72rem;
+      margin: 0 auto;
+      padding: 1rem;
+    }
+    
+    .card {
+      background-color: white;
+      border-radius: 0.5rem;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      padding: 1rem;
+    }
+    
+    .title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+    
+    .subtitle {
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+    
+    .formula {
+      font-size: 0.875rem;
+      color: #4b5563;
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+    
+    .legend {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    
+    .legend-item {
+      display: flex;
+      align-items: center;
+    }
+    
+    .legend-color {
+      width: 1rem;
+      height: 1rem;
+      border-radius: 50%;
+      margin-right: 0.5rem;
+    }
+    
+    .legend-text {
+      font-size: 0.875rem;
+    }
+    
+    .mt-2 {
+      margin-top: 0.75rem;
+    }
+    
+    /* Toggle switch for Nashville numbering */
+    .toggle-container {
+      display: flex;
+      align-items: center;
+      margin-bottom: 0.5rem;
+      justify-content: center;
+    }
+    
+    .toggle-label {
+      margin-right: 0.5rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 3rem;
+      height: 1.5rem;
+    }
+    
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 1.5rem;
+    }
+    
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 1rem;
+      width: 1rem;
+      left: 0.25rem;
+      bottom: 0.25rem;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .toggle-slider {
+      background-color: #3b82f6;
+    }
+    
+    input:checked + .toggle-slider:before {
+      transform: translateX(1.5rem);
+    }
+  </style>
+</head>
+<body class="bg-gray-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    function InteractiveBassModesChart() {
+      // State variables
+      const [selectedKey, setSelectedKey] = React.useState('C');
+      const [selectedCategory, setSelectedCategory] = React.useState('fretboardNotes');
+      const [selectedScale, setSelectedScale] = React.useState('allNotesSharp');
+      const [selectedTuning, setSelectedTuning] = React.useState('standard');
+      const [selectedStringCount, setSelectedStringCount] = React.useState(4);
+      const [showNashvilleNumbers, setShowNashvilleNumbers] = React.useState(false);
+      
+      // Define the musical keys (chromatic scale) with separate sharp and flat notation
+      const chromaticScaleWithBoth = [
+        'C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F', 'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B'
+      ];
+      
+      // Separate arrays for sharp and flat notation
+      const chromaticScaleWithSharps = [
+        'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'
+      ];
+      
+      const chromaticScaleWithFlats = [
+        'C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'
+      ];
+      
+      // Nashville number system (relative to major scale intervals)
+      const nashvilleNumbers = ['1', 'b2', '2', 'b3', '3', '4', '#4/b5', '5', 'b6', '6', 'b7', '7'];
+      
+      // Define scale/mode categories and their scales
+      const scaleCategories = [
+        {
+          id: 'fretboardNotes',
+          name: 'Fretboard Notes',
+          scales: [
+            { id: 'allNotesSharp', name: 'All Notes (Sharps)', intervals: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], preferSharps: true },
+            { id: 'allNotesFlat', name: 'All Notes (Flats)', intervals: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], preferSharps: false },
+            { id: 'naturalNotes', name: 'Natural Notes (No Sharps/Flats)', intervals: [0, 2, 4, 5, 7, 9, 11], preferSharps: true },
+            { id: 'sharps', name: 'Sharp Notes', intervals: [1, 3, 6, 8, 10], preferSharps: true },
+            { id: 'flats', name: 'Flat Notes', intervals: [1, 3, 6, 8, 10], preferSharps: false }
+          ]
+        },
+        {
+          id: 'diatonicModes',
+          name: 'Diatonic Modes',
+          scales: [
+            { id: 'ionian', name: 'Ionian (Major)', intervals: [0, 2, 4, 5, 7, 9, 11], preferSharps: true },
+            { id: 'dorian', name: 'Dorian', intervals: [0, 2, 3, 5, 7, 9, 10], preferSharps: false },
+            { id: 'phrygian', name: 'Phrygian', intervals: [0, 1, 3, 5, 7, 8, 10], preferSharps: false },
+            { id: 'lydian', name: 'Lydian', intervals: [0, 2, 4, 6, 7, 9, 11], preferSharps: true },
+            { id: 'mixolydian', name: 'Mixolydian', intervals: [0, 2, 4, 5, 7, 9, 10], preferSharps: true },
+            { id: 'aeolian', name: 'Aeolian (Natural Minor)', intervals: [0, 2, 3, 5, 7, 8, 10], preferSharps: false },
+            { id: 'locrian', name: 'Locrian', intervals: [0, 1, 3, 5, 6, 8, 10], preferSharps: false }
+          ]
+        },
+        {
+          id: 'pentatonicScales',
+          name: 'Pentatonic Scales',
+          scales: [
+            { id: 'majorPentatonic', name: 'Major Pentatonic', intervals: [0, 2, 4, 7, 9], preferSharps: true },
+            { id: 'minorPentatonic', name: 'Minor Pentatonic', intervals: [0, 3, 5, 7, 10], preferSharps: false }
+          ]
+        },
+        {
+          id: 'bluesScales',
+          name: 'Blues Scales',
+          scales: [
+            { id: 'majorBlues', name: 'Major Blues', intervals: [0, 2, 3, 4, 7, 9], preferSharps: true },
+            { id: 'minorBlues', name: 'Minor Blues', intervals: [0, 3, 5, 6, 7, 10], preferSharps: false }
+          ]
+        },
+        {
+          id: 'otherScales',
+          name: 'Other Scales',
+          scales: [
+            { id: 'harmonicMinor', name: 'Harmonic Minor', intervals: [0, 2, 3, 5, 7, 8, 11], preferSharps: false },
+            { id: 'melodicMinor', name: 'Melodic Minor', intervals: [0, 2, 3, 5, 7, 9, 11], preferSharps: false },
+            { id: 'wholeTone', name: 'Whole Tone', intervals: [0, 2, 4, 6, 8, 10], preferSharps: true },
+            { id: 'diminished', name: 'Diminished (H-W)', intervals: [0, 1, 3, 4, 6, 7, 9, 10], preferSharps: false },
+            { id: 'augmented', name: 'Augmented', intervals: [0, 3, 4, 7, 8, 11], preferSharps: true }
+          ]
+        }
+      ];
+      
+      // Keys that traditionally use flats
+      const flatKeys = ['F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb', 'Cb'];
+      
+      // Define bass guitar tunings (semitones from C)
+      const tunings = {
+        'standard': { 
+          name: 'Standard',
+          strings: {
+            4: { notes: [7, 2, 9, 4], stringNames: ['G', 'D', 'A', 'E'] },                      // 4-string: E-A-D-G
+            5: { notes: [7, 2, 9, 4, 11], stringNames: ['G', 'D', 'A', 'E', 'B'] },            // 5-string: B-E-A-D-G
+            6: { notes: [0, 7, 2, 9, 4, 11], stringNames: ['C', 'G', 'D', 'A', 'E', 'B'] }     // 6-string: B-E-A-D-G-C
+          }
+        },
+        'dropD': { 
+          name: 'Drop D',
+          strings: {
+            4: { notes: [7, 2, 9, 2], stringNames: ['G', 'D', 'A', 'D'] },                      // 4-string: D-A-D-G
+            5: { notes: [7, 2, 9, 2, 9], stringNames: ['G', 'D', 'A', 'D', 'A'] },             // 5-string: A-D-A-D-G
+            6: { notes: [7, 2, 9, 2, 9, 4], stringNames: ['G', 'D', 'A', 'D', 'A', 'E'] }      // 6-string: E-A-D-A-D-G
+          }
+        },
+        'halfStep': { 
+          name: 'Half Step Down',
+          strings: {
+            4: { notes: [6, 1, 8, 3], stringNames: ['Gb', 'Db', 'Ab', 'Eb'] },                  // 4-string: Eb-Ab-Db-Gb
+            5: { notes: [6, 1, 8, 3, 10], stringNames: ['Gb', 'Db', 'Ab', 'Eb', 'Bb'] },       // 5-string: Bb-Eb-Ab-Db-Gb
+            6: { notes: [6, 1, 8, 3, 10, 5], stringNames: ['Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F'] } // 6-string: F-Bb-Eb-Ab-Db-Gb
+          }
+        },
+        'wholeStep': { 
+          name: 'Whole Step Down',
+          strings: {
+            4: { notes: [5, 0, 7, 2], stringNames: ['F', 'C', 'G', 'D'] },                      // 4-string: D-G-C-F
+            5: { notes: [5, 0, 7, 2, 9], stringNames: ['F', 'C', 'G', 'D', 'A'] },             // 5-string: A-D-G-C-F
+            6: { notes: [5, 0, 7, 2, 9, 4], stringNames: ['F', 'C', 'G', 'D', 'A', 'E'] }      // 6-string: E-A-D-G-C-F
+          }
+        },
+        'fifths': { 
+          name: 'All Fifths',
+          strings: {
+            4: { notes: [9, 2, 7, 0], stringNames: ['A', 'D', 'G', 'C'] },                      // 4-string: C-G-D-A
+            5: { notes: [9, 2, 7, 0, 5], stringNames: ['A', 'D', 'G', 'C', 'F'] },             // 5-string: F-C-G-D-A
+            6: { notes: [9, 2, 7, 0, 5, 10], stringNames: ['A', 'D', 'G', 'C', 'F', 'Bb'] }    // 6-string: Bb-F-C-G-D-A
+          }
+        }
+      };
+      
+      // Function to handle category change
+      function handleCategoryChange(e) {
+        const newCategory = e.target.value;
+        setSelectedCategory(newCategory);
+        
+        // Set the first scale of the new category as selected
+        const firstScaleInCategory = scaleCategories.find(cat => cat.id === newCategory).scales[0].id;
+        setSelectedScale(firstScaleInCategory);
+      }
+      
+      // Get the current scales for the selected category
+      function getCurrentScales() {
+        const category = scaleCategories.find(cat => cat.id === selectedCategory);
+        return category ? category.scales : [];
+      }
+      
+      // Get the currently selected scale object
+      function getCurrentScaleObject() {
+        const scales = getCurrentScales();
+        return scales.find(scale => scale.id === selectedScale);
+      }
+      
+      // Function to determine whether to use sharps or flats for the current selection
+      function shouldUseSharps() {
+        const currentScale = getCurrentScaleObject();
+        
+        // For fretboard notes, respect the explicit selection
+        if (selectedCategory === 'fretboardNotes') {
+          if (selectedScale === 'allNotesSharp' || selectedScale === 'sharps') {
+            return true;
+          }
+          if (selectedScale === 'allNotesFlat' || selectedScale === 'flats') {
+            return false;
+          }
+        }
+        
+        // If the key is a flat key, prefer flats
+        if (flatKeys.includes(selectedKey)) {
+          return false;
+        }
+        
+        // For certain keys with accidentals, make specific decisions
+        if (selectedKey.includes('#') || selectedKey.includes('b')) {
+          // If key has a # in it, prefer sharps, if it has a b, prefer flats
+          return selectedKey.includes('#');
+        }
+        
+        // Otherwise use the scale's preference
+        return currentScale.preferSharps;
+      }
+      
+      // Function to get the appropriate chromatic scale based on accidental preference
+      function getChromatic() {
+        return shouldUseSharps() ? chromaticScaleWithSharps : chromaticScaleWithFlats;
+      }
+      
+      // Function to get the index of a note in the chromatic scale
+      function getNoteIndex(noteName) {
+        // Handle both formats, e.g. both "C#" and "C#/Db" should map to index 1
+        if (noteName.includes('/')) {
+          return chromaticScaleWithBoth.indexOf(noteName);
+        }
+        
+        // For simple notes, check in both scales
+        const sharpIndex = chromaticScaleWithSharps.indexOf(noteName);
+        if (sharpIndex !== -1) return sharpIndex;
+        
+        const flatIndex = chromaticScaleWithFlats.indexOf(noteName);
+        return flatIndex;
+      }
+      
+      // Function to get the note name from a note index
+      function getNoteName(noteIndex) {
+        return getChromatic()[noteIndex % 12];
+      }
+      
+      // Function to get the Nashville number for a note
+      function getNashvilleNumber(noteIndex, keyIndex) {
+        // Calculate the interval relative to the key
+        const interval = (noteIndex - keyIndex + 12) % 12;
+        return nashvilleNumbers[interval];
+      }
+      
+      // Generate the notes for the selected key and scale
+      function generateModeNotes() {
+        const keyIndex = getNoteIndex(selectedKey);
+        const currentScale = getCurrentScaleObject();
+        
+        // For fretboard notes options, handle specifically
+        if (selectedCategory === 'fretboardNotes') {
+          if (selectedScale === 'allNotesSharp' || selectedScale === 'allNotesFlat') {
+            return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; // All notes
+          }
+          if (selectedScale === 'naturalNotes') {
+            return [0, 2, 4, 5, 7, 9, 11]; // Natural notes C, D, E, F, G, A, B regardless of key
+          }
+          if (selectedScale === 'sharps') {
+            return [1, 3, 6, 8, 10]; // Sharp notes C#, D#, F#, G#, A# regardless of key
+          }
+          if (selectedScale === 'flats') {
+            return [1, 3, 6, 8, 10]; // Flat notes Db, Eb, Gb, Ab, Bb regardless of key
+          }
+        }
+        
+        // For other categories (scales/modes), calculate notes based on the key
+        return currentScale.intervals.map(interval => {
+          return (keyIndex + interval) % 12;
+        });
+      }
+      
+      // Generate the fretboard data structure
+      function generateFretboard() {
+        const frets = 12; // 0 to 12th fret
+        const strings = selectedStringCount; // 4, 5, or 6 strings based on selection
+        const modeNotes = generateModeNotes();
+        const rootNoteIndex = getNoteIndex(selectedKey);
+        const currentTuning = tunings[selectedTuning].strings[selectedStringCount];
+        
+        const fretboard = [];
+        
+        for (let stringIndex = 0; stringIndex < strings; stringIndex++) {
+          const openStringNote = currentTuning.notes[stringIndex];
+          
+          // Calculate all notes (including open string as fret 0)
+          const stringNotes = [];
+          for (let fret = 0; fret <= frets; fret++) {
+            const noteValue = (openStringNote + fret) % 12;
+            stringNotes.push({
+              fret,
+              noteValue,
+              noteName: getNoteName(noteValue),
+              nashvilleNumber: getNashvilleNumber(noteValue, rootNoteIndex),
+              isRoot: noteValue === rootNoteIndex,
+              isInMode: modeNotes.includes(noteValue)
+            });
+          }
+          
+          fretboard.push(stringNotes);
+        }
+        
+        return fretboard;
+      }
+      
+      // Format the formula as note names
+      function getFormulaAsNotes() {
+        const keyIndex = getNoteIndex(selectedKey);
+        const currentScale = getCurrentScaleObject();
+        
+        // For special Fretboard Notes options, show fixed formulas
+        if (selectedCategory === 'fretboardNotes') {
+          if (selectedScale === 'allNotesSharp' || selectedScale === 'allNotesFlat') {
+            return "All 12 notes of the chromatic scale";
+          }
+          if (selectedScale === 'naturalNotes') {
+            return "C - D - E - F - G - A - B";
+          }
+          if (selectedScale === 'sharps') {
+            return "C# - D# - F# - G# - A#";
+          }
+          if (selectedScale === 'flats') {
+            return "Db - Eb - Gb - Ab - Bb";
+          }
+        }
+        
+        // Generate formula with Nashville numbers if enabled
+        const intervals = currentScale.intervals;
+        
+        if (showNashvilleNumbers && !isKeyDisabled()) {
+          const noteNames = intervals.map(interval => {
+            const noteIndex = (keyIndex + interval) % 12;
+            return `${getNoteName(noteIndex)} (${nashvilleNumbers[interval]})`;
+          });
+          return noteNames.join(' - ');
+        }
+        
+        // Otherwise show just the note names
+        return intervals.map(interval => {
+          return getNoteName((keyIndex + interval) % 12);
+        }).join(' - ');
+      }
+      
+      // Format Nashville numbers formula
+      function getFormulaAsNashville() {
+        const currentScale = getCurrentScaleObject();
+        
+        // Only show for applicable scales
+        if (selectedCategory === 'fretboardNotes' || isKeyDisabled()) {
+          return "";
+        }
+        
+        // Map intervals to Nashville numbers
+        return currentScale.intervals.map(interval => {
+          return nashvilleNumbers[interval];
+        }).join(' - ');
+      }
+      
+      // Check if the key selector should be disabled
+      function isKeyDisabled() {
+        return selectedCategory === 'fretboardNotes' && 
+               (selectedScale === 'allNotesSharp' || 
+                selectedScale === 'allNotesFlat' || 
+                selectedScale === 'naturalNotes' || 
+                selectedScale === 'sharps' || 
+                selectedScale === 'flats');
+      }
+      
+      const fretboard = generateFretboard();
+      const currentScale = getCurrentScaleObject();
+      const categoryName = scaleCategories.find(cat => cat.id === selectedCategory).name;
+      
+      return (
+        <div className="container">
+          <div className="card">
+            <h2 className="title">Interactive Bass Guitar Scales and Modes</h2>
+            
+            {/* Scale selection controls */}
+            <div className="control-panel">
+              <div className="control-group">
+                <label htmlFor="key-select" className="control-label">Select Key:</label>
+                <select 
+                  id="key-select"
+                  value={selectedKey} 
+                  onChange={(e) => setSelectedKey(e.target.value)}
+                  className="select-control"
+                  disabled={isKeyDisabled()}
+                >
+                  {chromaticScaleWithBoth.map(key => (
+                    <option key={key} value={key}>{key}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className="control-group">
+                <label htmlFor="category-select" className="control-label">Select Category:</label>
+                <select 
+                  id="category-select"
+                  value={selectedCategory} 
+                  onChange={handleCategoryChange}
+                  className="select-control"
+                >
+                  {scaleCategories.map(category => (
+                    <option key={category.id} value={category.id}>{category.name}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className="control-group">
+                <label htmlFor="scale-select" className="control-label">
+                  {selectedCategory === 'fretboardNotes' ? 'Select Fretboard Notes:' : `Select ${categoryName}:`}
+                </label>
+                <select 
+                  id="scale-select"
+                  value={selectedScale} 
+                  onChange={(e) => setSelectedScale(e.target.value)}
+                  className="select-control"
+                >
+                  {getCurrentScales().map(scale => (
+                    <option key={scale.id} value={scale.id}>{scale.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            
+            {/* Bass configuration controls */}
+            <div className="control-panel mt-2">
+              <div className="control-group">
+                <label htmlFor="strings-select" className="control-label">Number of Strings:</label>
+                <select 
+                  id="strings-select"
+                  value={selectedStringCount} 
+                  onChange={(e) => setSelectedStringCount(parseInt(e.target.value))}
+                  className="select-control"
+                >
+                  <option value="4">4 Strings</option>
+                  <option value="5">5 Strings</option>
+                  <option value="6">6 Strings</option>
+                </select>
+              </div>
+              
+              <div className="control-group">
+                <label htmlFor="tuning-select" className="control-label">Select Tuning:</label>
+                <select 
+                  id="tuning-select"
+                  value={selectedTuning} 
+                  onChange={(e) => setSelectedTuning(e.target.value)}
+                  className="select-control"
+                >
+                  {Object.entries(tunings).map(([id, tuning]) => (
+                    <option key={id} value={id}>{tuning.name}</option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Nashville numbering toggle */}
+              <div className="control-group">
+                <div className="toggle-container">
+                  <span className="toggle-label">Nashville Numbering:</span>
+                  <label className="toggle-switch">
+                    <input
+                      type="checkbox"
+                      checked={showNashvilleNumbers}
+                      onChange={() => setShowNashvilleNumbers(!showNashvilleNumbers)}
+                    />
+                    <span className="toggle-slider"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+            
+            <h3 className="subtitle">
+              {isKeyDisabled() 
+                ? `${currentScale.name} - ${selectedStringCount}-string ${tunings[selectedTuning].name}` 
+                : `${selectedKey} ${currentScale.name} - ${selectedStringCount}-string ${tunings[selectedTuning].name}`}
+            </h3>
+            <p className="formula">
+              {getFormulaAsNotes()}
+            </p>
+            {showNashvilleNumbers && !isKeyDisabled() && (
+              <p className="formula">
+                Nashville Numbers: {getFormulaAsNashville()}
+              </p>
+            )}
+            
+            <div className="overflow-auto">
+              <div className="fretboard">
+                {/* Fret numbers */}
+                <div className="fret-numbers">
+                  <div style={{ width: '20px' }}></div>
+                  {[...Array(13)].map((_, fret) => (
+                    <div key={fret} className="fret-number">{fret}</div>
+                  ))}
+                </div>
+                
+                {/* Strings */}
+                {fretboard.map((string, stringIndex) => (
+                  <div key={stringIndex} className="string-row">
+                    <div className="string-label">
+                      {tunings[selectedTuning].strings[selectedStringCount].stringNames[stringIndex]}
+                    </div>
+                    {string.map((fret, fretIndex) => (
+                      <div 
+                        key={fretIndex} 
+                        className={`fret-cell ${fretIndex === 0 ? 'fret-0' : ''}`}
+                      >
+                        {fretIndex === 0 ? (
+                          // For fret 0, check if the note is part of the mode
+                          fret.isInMode ? (
+                            <div className={`note-circle ${fret.isRoot ? 'root-note' : 'mode-note'}`}>
+                              {showNashvilleNumbers && !isKeyDisabled() ? fret.nashvilleNumber : fret.noteName}
+                            </div>
+                          ) : (
+                            // If not in mode, show the string name in black
+                            <div className="note-circle key-note">
+                              {tunings[selectedTuning].strings[selectedStringCount].stringNames[stringIndex]}
+                            </div>
+                          )
+                        ) : (
+                          // For other frets, show only notes that are part of the mode
+                          fret.isInMode ? (
+                            <div className={`note-circle ${fret.isRoot ? 'root-note' : 'mode-note'}`}>
+                              {showNashvilleNumbers && !isKeyDisabled() ? fret.nashvilleNumber : fret.noteName}
+                            </div>
+                          ) : (
+                            <div style={{ width: '2rem', height: '2rem' }}></div>
+                          )
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+              
+              {/* Legend */}
+              <div className="legend">
+                <div className="legend-item">
+                  <div className="legend-color" style={{ backgroundColor: '#ef4444' }}></div>
+                  <span className="legend-text">Root Note {showNashvilleNumbers && !isKeyDisabled() ? '(1)' : ''}</span>
+                </div>
+                <div className="legend-item">
+                  <div className="legend-color" style={{ backgroundColor: '#3b82f6' }}></div>
+                  <span className="legend-text">Mode Note</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Render the app
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<InteractiveBassModesChart />);
+  </script>
+</body>
+</html>

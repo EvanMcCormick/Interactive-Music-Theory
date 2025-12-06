@@ -1,0 +1,67 @@
+# .NET Core
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/mcp.json
+
+# Angular / Node.js
+node_modules/
+dist/
+npm-debug.log
+yarn-error.log
+# Angular cache - more specific patterns
+.angular/
+**/.angular/
+**/.angular/cache/
+**/client/angular/cache/
+**/*.pack
+**/*.pack.old
+client/angular/cache/
+client/.angular/cache/
+client/angular/cache/**/*
+.sass-cache/
+connect.lock
+coverage/
+libpeerconnection.log
+testem.log
+typings/
+
+# IDE specific files
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# Cache files
+**/.cache/
+**/cache/
+**/*.cache
+
+# Log files
+**/logs/
+**/*.log
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Compiled output
+**/out/
+**/dist/
+**/build/

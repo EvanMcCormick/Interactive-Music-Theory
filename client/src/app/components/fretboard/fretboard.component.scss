@@ -1,0 +1,573 @@
+:host {
+  display: block;
+  font-family: 'Roboto', Arial, sans-serif;
+}
+
+.music-theory-container {
+  display: flex;
+  flex-direction: column;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.controls-panel {
+  background-color: #f8f9fa;
+  border-radius: 10px;
+  padding: 15px 20px;
+  margin-bottom: 15px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+
+  h2 {
+    margin-top: 0;
+    color: #2c3e50;
+    font-weight: 600;
+    border-bottom: 2px solid #3498db;
+    padding-bottom: 8px;
+    margin-bottom: 20px;
+  }
+
+  h3 {
+    margin: 15px 0 12px 0;
+    color: #34495e;
+    font-weight: 600;
+    font-size: 1.1em;
+  }
+}
+
+// Instrument Configuration Section
+.instrument-config-section {
+  margin-bottom: 15px;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  background-color: white;
+  overflow: hidden;
+
+  .config-toggle {
+    width: 100%;
+    padding: 12px 16px;
+    background-color: #e9ecef;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    color: #495057;
+    transition: background-color 0.2s;
+    text-align: left;
+
+    &:hover {
+      background-color: #dee2e6;
+    }
+
+    .toggle-icon {
+      font-size: 0.8em;
+      transition: transform 0.2s;
+    }
+
+    .current-config {
+      margin-left: auto;
+      font-weight: 400;
+      font-size: 0.9em;
+      color: #6c757d;
+    }
+  }
+
+  .config-content {
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-top: 1px solid #dee2e6;
+  }
+
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+
+    @media (max-width: 768px) {
+      grid-template-columns: 1fr;
+    }
+  }
+}
+
+// Compact controls row
+.controls-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 15px;
+  margin-bottom: 12px;
+
+  @media (max-width: 768px) {
+    flex-wrap: wrap;
+  }
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  label {
+    font-weight: 600;
+    color: #34495e;
+    font-size: 0.85em;
+  }
+
+  select {
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #dde1e7;
+    background-color: white;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
+    transition: border-color 0.2s, box-shadow 0.2s;
+    font-size: 0.9em;
+
+    &:focus {
+      border-color: #3498db;
+      box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.25);
+      outline: none;
+    }
+  }
+
+  &.key-group {
+    flex-shrink: 0;
+
+    select {
+      width: 70px;
+    }
+  }
+
+  &.category-group {
+    flex: 1;
+    min-width: 150px;
+  }
+
+  &.scale-group {
+    flex: 1.5;
+    min-width: 180px;
+  }
+}
+
+.checkbox-container {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: 0.9em;
+  color: #34495e;
+  white-space: nowrap;
+
+  input[type="checkbox"] {
+    margin-right: 8px;
+    width: 16px;
+    height: 16px;
+    accent-color: #3498db;
+  }
+}
+
+.formula-display {
+  margin-top: 10px;
+  padding: 10px 15px;
+  background-color: #ecf0f1;
+  border-radius: 8px;
+  border-left: 5px solid #3498db;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+
+  .formula-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 15px;
+  }
+
+  .formula-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .formula-actions {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-shrink: 0;
+  }
+
+  .formula-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: #2980b9;
+    font-size: 1em;
+  }
+
+  .formula-notes {
+    font-size: 1.1em;
+    letter-spacing: 1.5px;
+    font-weight: 500;
+  }
+
+  .formula-nashville {
+    font-size: 0.85em;
+    color: #7f8c8d;
+    margin-top: 2px;
+  }
+
+  .play-button {
+    padding: 8px 16px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 5px rgba(102, 126, 234, 0.3);
+    white-space: nowrap;
+    flex-shrink: 0;
+
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+    }
+
+    &:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
+    }
+
+    &:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.3);
+    }
+  }
+}
+
+.fretboard-container {
+  overflow-x: auto;
+  margin-bottom: 20px;
+  background-color: #f8f9fa;
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.fretboard {
+  display: flex;
+  flex-direction: column;
+  min-width: 1100px;
+  position: relative;
+  margin-top: 0;
+  background: linear-gradient(to right, #d4a76a, #c49455);
+}
+
+.fret-markers {
+  display: flex;
+  margin-bottom: 10px;
+  
+  .fret-marker {
+    text-align: center;
+    position: relative;
+    color: #2c3e50;
+    font-weight: 600;
+    font-size: 14px;
+
+    &.single-marker::after,
+    &.double-marker::after {
+      content: '•';
+      position: absolute;
+      bottom: -25px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #f0f0f0;
+      font-size: 28px;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    &.double-marker::after {
+      content: '••';
+    }
+  }
+
+  /* Adjust fret marker widths to create a more consistent progression */
+  .fret-marker:nth-child(1) { flex: 0.65; } /* 0 fret (nut) */
+  .fret-marker:nth-child(2) { flex: 0.95; } /* 1st fret - wider now */
+  .fret-marker:nth-child(3) { flex: 0.9; } /* 2nd fret */
+  .fret-marker:nth-child(4) { flex: 0.85; } /* 3rd fret */
+  .fret-marker:nth-child(5) { flex: 0.8; } /* 4th fret */
+  .fret-marker:nth-child(6) { flex: 0.77; } /* 5th fret */
+  .fret-marker:nth-child(7) { flex: 0.74; } /* 6th fret */
+  .fret-marker:nth-child(8) { flex: 0.71; } /* 7th fret */
+  .fret-marker:nth-child(9) { flex: 0.69; } /* 8th fret */
+  .fret-marker:nth-child(10) { flex: 0.67; } /* 9th fret */
+  .fret-marker:nth-child(11) { flex: 0.65; } /* 10th fret */
+  .fret-marker:nth-child(12) { flex: 0.63; } /* 11th fret */
+  .fret-marker:nth-child(13) { flex: 0.61; } /* 12th fret */
+  .fret-marker:nth-child(14) { flex: 0.59; } /* 13th fret */
+  .fret-marker:nth-child(15) { flex: 0.57; } /* 14th fret */
+  .fret-marker:nth-child(16) { flex: 0.55; } /* 15th fret */
+}
+
+.string {
+  display: flex;
+  height: 50px; /* Reduced from 70px to close up the gap between strings */
+  margin-bottom: 0;
+  align-items: center;
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 40px;
+    right: 0;
+    background: linear-gradient(90deg, #d1d1d1, #a8a8a8);
+    z-index: 0;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  }
+
+  // Reset all string thicknesses first
+  &::after {
+    height: 1px;
+  }
+
+  // Apply thickness based on index - bass strings are thicker than treble strings
+  &:nth-of-type(1)::after {
+    height: 1px; /* Thinnest string (highest pitch) */
+  }
+  
+  &:nth-of-type(2)::after {
+    height: 1.5px;
+  }
+  
+  &:nth-of-type(3)::after {
+    height: 2px;
+  }
+  
+  &:nth-of-type(4)::after {
+    height: 2.5px;
+  }
+  
+  &:nth-of-type(5)::after {
+    height: 3px;
+  }
+  
+  &:nth-of-type(6)::after {
+    height: 3.5px; /* Thickest string (lowest pitch) */
+  }
+}
+
+.string-name {
+  width: 40px;
+  font-weight: bold;
+  text-align: center;
+  position: relative;
+  z-index: 1;
+  background-color: #2c3e50;
+  color: white;
+  border-radius: 4px;
+  padding: 6px 0;
+  margin-right: 10px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.note {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &::before {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    height: 100%;
+    width: 1px;
+    background-color: rgba(0, 0, 0, 0.4);
+    box-shadow: -1px 0 0 rgba(255, 255, 255, 0.1);
+  }
+
+  &:first-of-type::before {
+    width: 3px;
+    background-color: #34495e;
+    box-shadow: none;
+  }
+
+  .note-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    transition: all 0.2s ease;
+    box-shadow: 0 3px 5px rgba(0, 0, 0, 0.2);
+  }
+
+  .note-name {
+    font-weight: 600;
+    font-size: 15px;
+  }
+
+  .nashville-number {
+    font-size: 12px;
+    margin-top: 2px;
+  }
+
+  &.root .note-content {
+    background: radial-gradient(circle at 30% 30%, #ff5252, #d32f2f);
+    color: white;
+    transform: scale(1.1);
+    box-shadow: 0 4px 8px rgba(211, 47, 47, 0.4);
+
+    .nashville-number {
+      color: rgba(255, 255, 255, 0.9);
+    }
+  }
+
+  &.in-mode .note-content {
+    background: radial-gradient(circle at 30% 30%, #64b5f6, #1976d2);
+    color: white;
+    
+    .nashville-number {
+      color: rgba(255, 255, 255, 0.9);
+    }
+  }
+
+  &.not-in-mode .note-content {
+    background: rgba(50, 50, 50, 0.25);
+    color: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    transform: scale(0.85);
+    opacity: 0.9;
+  }
+
+  // Currently playing note style (bright gold with pulsing animation)
+  &.playing .note-content {
+    background: radial-gradient(circle at 30% 30%, #ffd700, #ffb300) !important;
+    color: #1a1a1a !important;
+    transform: scale(1.25) !important;
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.8), 0 0 40px rgba(255, 215, 0, 0.4) !important;
+    animation: pulse-playing 0.3s ease-in-out;
+    z-index: 10 !important;
+
+    .nashville-number {
+      color: rgba(26, 26, 26, 0.9) !important;
+      font-weight: 700;
+    }
+
+    .note-name {
+      font-weight: 700;
+    }
+  }
+
+  &:hover .note-content {
+    transform: scale(1.15);
+    z-index: 2;
+    box-shadow: 0 5px 10px rgba(0, 0, 0, 0.3);
+  }
+
+  &.not-in-mode:hover .note-content {
+    background: rgba(100, 181, 246, 0.5);
+    color: white;
+    opacity: 1;
+  }
+}
+
+// Pulse animation for playing notes
+@keyframes pulse-playing {
+  0% {
+    transform: scale(1.1);
+  }
+  50% {
+    transform: scale(1.3);
+  }
+  100% {
+    transform: scale(1.25);
+  }
+}
+
+/* Match the note widths to the fret marker widths */
+.note:nth-child(1) { flex: 0.65; } /* 0 fret (nut) */
+.note:nth-child(2) { flex: 0.95; } /* 1st fret - wider now */
+.note:nth-child(3) { flex: 0.9; } /* 2nd fret */
+.note:nth-child(4) { flex: 0.85; } /* 3rd fret */
+.note:nth-child(5) { flex: 0.8; } /* 4th fret */
+.note:nth-child(6) { flex: 0.77; } /* 5th fret */
+.note:nth-child(7) { flex: 0.74; } /* 6th fret */
+.note:nth-child(8) { flex: 0.71; } /* 7th fret */
+.note:nth-child(9) { flex: 0.69; } /* 8th fret */
+.note:nth-child(10) { flex: 0.67; } /* 9th fret */
+.note:nth-child(11) { flex: 0.65; } /* 10th fret */
+.note:nth-child(12) { flex: 0.63; } /* 11th fret */
+.note:nth-child(13) { flex: 0.61; } /* 12th fret */
+.note:nth-child(14) { flex: 0.59; } /* 13th fret */
+.note:nth-child(15) { flex: 0.57; } /* 14th fret */
+.note:nth-child(16) { flex: 0.55; } /* 15th fret */
+
+.tuning-info {
+  background-color: #f8f9fa;
+  border-radius: 10px;
+  padding: 20px;
+  margin-top: 25px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+
+  h3 {
+    margin-top: 0;
+    color: #2c3e50;
+    font-weight: 600;
+    border-bottom: 2px solid #3498db;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+  }
+
+  p {
+    margin-bottom: 0;
+    color: #34495e;
+    font-size: 16px;
+  }
+}
+
+// Fret inlays (position markers)
+.fretboard::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: radial-gradient(circle at center, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0) 60%);
+  background-size: 8.33% 20px;  background-position: 37.5% 100%, 62.5% 100%, 50% 100%, 25% 50%, 75% 50%, 41.5% 50%, 58.5% 50%;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+@media (max-width: 768px) {
+  .control-group {
+    flex-direction: column;
+    align-items: flex-start;
+
+    label {
+      margin-bottom: 8px;
+      width: 100%;
+    }
+
+    select {
+      width: 100%;
+      max-width: none;
+    }
+  }
+  
+  .fretboard {
+    min-width: auto;
+    width: 100%;
+    overflow-x: auto;
+  }
+}

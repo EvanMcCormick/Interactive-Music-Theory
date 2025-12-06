@@ -1,0 +1,55 @@
+body {
+  margin: 0;
+  padding: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  background-color: #f8f9fa;
+}
+
+.app-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  background-color: #3f51b5;
+  color: white;
+  padding: 20px;
+  text-align: center;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+header h1 {
+  margin: 0;
+  font-size: 2em;
+}
+
+header p {
+  margin: 10px 0 0;
+  font-size: 1.1em;
+  opacity: 0.9;
+}
+
+main {
+  flex: 1;
+  padding: 20px;
+}
+
+footer {
+  background-color: #303f9f;
+  color: white;
+  text-align: center;
+  padding: 15px;
+  margin-top: auto;
+  font-size: 0.9em;
+}
+
+@media (max-width: 768px) {
+  header h1 {
+    font-size: 1.5em;
+  }
+  
+  header p {
+    font-size: 1em;
+  }
+}

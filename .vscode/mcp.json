@@ -1,0 +1,20 @@
+{
+    "servers": {
+      "nx-mcp": {
+        "type": "sse",
+        "url": "http://localhost:9038/sse"
+      },
+      "fetch": {
+        "command": "cmd",
+        "args": ["/c", "uvx", "mcp-server-fetch"]
+      },
+      "filesystem": {
+        "command": "cmd",
+        "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-filesystem", "d:\\Github\\MusicTheory"]
+      },
+      "memory": {
+        "command": "cmd", 
+        "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-memory"]
+      }
+    }
+  }
