@@ -7,7 +7,7 @@ description: Use when creating or modifying Angular components in MusicTheory - 
 
 ## Overview
 
-All components in MusicTheory use Angular 19's standalone component pattern. This skill ensures consistency with existing architecture and proper integration.
+All components in MusicTheory use Angular 21's standalone component pattern. This skill ensures consistency with existing architecture and proper integration.
 
 **Core principle:** Standalone components, centralized state in MusicTheoryService, proper cleanup.
 
@@ -274,6 +274,41 @@ export class FormComponent {
 </select>
 ```
 
+## External Library Integration (ChangeDetectorRef)
+
+When integrating external libraries that emit events outside Angular's zone (like alphaTab, IndexedDB callbacks), use `ChangeDetectorRef` to manually trigger change detection:
+
+```typescript
+import { ChangeDetectorRef } from '@angular/core';
+
+export class MyComponent implements OnInit, OnDestroy {
+  private destroy$ = new Subject<void>();
+
+  constructor(
+    private externalService: ExternalService,
+    private cdr: ChangeDetectorRef
+  ) {}
+
+  ngOnInit(): void {
+    // Subscribe to service state
+    this.externalService.getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(state => {
+        this.state = state;
+        // Force change detection for events from outside Angular zone
+        this.cdr.detectChanges();
+      });
+  }
+}
+```
+
+**When to use ChangeDetectorRef:**
+- alphaTab events (scoreLoaded, playerStateChanged, etc.)
+- IndexedDB callbacks
+- Web Worker messages
+- WebSocket events
+- Any third-party library using native callbacks
+
 ## Anti-Patterns
 
 | Anti-Pattern | Problem | Correct Approach |
@@ -284,6 +319,7 @@ export class FormComponent {
 | Computations in template | Performance issues | Use methods or pipes |
 | Missing trackBy | Poor list performance | Always provide trackBy |
 | Audio without disposal | Memory/resource leak | Dispose in ngOnDestroy |
+| Missing ChangeDetectorRef | UI not updating from external events | Use cdr.detectChanges() |
 
 ## Checklist
 
@@ -300,6 +336,7 @@ When creating/modifying a component:
 - [ ] Template avoids complex computations
 - [ ] SCSS is component-scoped
 - [ ] Follows existing naming conventions
+- [ ] Uses ChangeDetectorRef for external library events
 
 ## Lazy-Loaded Routes
 

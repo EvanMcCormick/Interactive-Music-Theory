@@ -92,7 +92,9 @@ export class AlphaTabService {
 
 ## Build Configuration
 
-alphaTab requires custom webpack for WebWorkers and AudioWorklets:
+alphaTab requires custom webpack for WebWorkers and AudioWorklets, plus asset configuration for fonts and soundfonts.
+
+### Webpack Plugin
 
 ```javascript
 // custom-webpack.config.js
@@ -100,25 +102,61 @@ const { AlphaTabWebPackPlugin } = require('@coderline/alphatab-webpack');
 
 module.exports = {
   plugins: [
-    new AlphaTabWebPackPlugin()  // Copies fonts and soundfont
+    new AlphaTabWebPackPlugin()  // Copies fonts and soundfont during build
   ]
 };
 ```
 
+### Angular.json Configuration
+
+**IMPORTANT:** The webpack plugin only copies assets during full builds. For `ng serve` (dev server), you must also configure assets in angular.json:
+
 ```json
-// angular.json - Use custom-webpack builder
+// angular.json
 {
   "architect": {
     "build": {
       "builder": "@angular-builders/custom-webpack:browser",
       "options": {
+        "assets": [
+          "src/favicon.ico",
+          "src/assets",
+          {
+            "glob": "**/*",
+            "input": "node_modules/@coderline/alphatab/dist/font",
+            "output": "/font"
+          },
+          {
+            "glob": "**/*",
+            "input": "node_modules/@coderline/alphatab/dist/soundfont",
+            "output": "/soundfont"
+          }
+        ],
         "customWebpackConfig": {
           "path": "./custom-webpack.config.js"
         }
       }
+    },
+    "serve": {
+      "builder": "@angular-builders/custom-webpack:dev-server"
     }
   }
 }
+```
+
+### Asset Paths in Code
+
+When initializing alphaTab, use these paths:
+```typescript
+this.alphaTabService.initializeApi(element, {
+  core: {
+    fontDirectory: '/font/',  // Must match angular.json output
+    useWorkers: true
+  },
+  player: {
+    soundFont: '/soundfont/sonivox.sf2'  // Must match angular.json output
+  }
+});
 ```
 
 ## File Handling
@@ -366,16 +404,46 @@ setTrackSolo(trackIndex: number, solo: boolean): void {
 | No soundfont | Path incorrect | Check `/soundfont/sonivox.sf2` exists |
 | Rendering blank | Container too small | Ensure container has dimensions |
 | Memory leak | Not disposing | Call `api.destroy()` in ngOnDestroy |
+| UI not updating | Events outside Angular zone | Use ChangeDetectorRef.detectChanges() |
+| Assets missing in dev | Only webpack plugin configured | Add assets to angular.json |
+
+## ChangeDetectorRef for UI Updates
+
+alphaTab events fire outside Angular's zone. Even with NgZone.run() in the service, components may need manual change detection:
+
+```typescript
+import { ChangeDetectorRef } from '@angular/core';
+
+export class GpViewerComponent implements OnInit {
+  constructor(
+    private alphaTabService: AlphaTabService,
+    private cdr: ChangeDetectorRef
+  ) {}
+
+  ngOnInit(): void {
+    this.alphaTabService.getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(state => {
+        this.state = state;
+        // CRITICAL: Force change detection for alphaTab events
+        this.cdr.detectChanges();
+      });
+  }
+}
+```
 
 ## Checklist
 
 When modifying GP viewer/library:
 
 - [ ] AlphaTabService wraps all API calls
-- [ ] NgZone.run() used for all event handlers
+- [ ] NgZone.run() used for all event handlers in service
+- [ ] ChangeDetectorRef.detectChanges() used in component subscriptions
 - [ ] Files validated before loading
 - [ ] Dispose called in ngOnDestroy
 - [ ] IndexedDB transactions properly handled
 - [ ] Highlighting re-applied after score renders
 - [ ] Loading/error states handled in UI
 - [ ] File size considered for IndexedDB storage limits
+- [ ] Assets configured in angular.json for dev server
+- [ ] Custom webpack config includes AlphaTabWebPackPlugin

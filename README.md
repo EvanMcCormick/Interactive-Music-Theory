@@ -134,6 +134,20 @@ A comprehensive web application for exploring scales, modes, chords, and music t
 - Add 9, Minor Add 9
 - 6th, Minor 6th
 
+### Guitar Pro File Viewer
+- **GP File Support**: Load and play Guitar Pro files (.gp, .gp3, .gp4, .gp5, .gpx)
+- **Full Playback**: Play/pause, tempo control, seeking, and looping
+- **Track Controls**: Mute/solo individual tracks
+- **Scale Highlighting**: Highlight notes matching selected scales/chords
+- **Drag & Drop**: Easy file loading via drag-and-drop or file dialog
+- **Save to Library**: Store GP files locally for quick access
+
+### GP Library
+- **Local Storage**: IndexedDB-backed library for storing Guitar Pro files
+- **Metadata Display**: View title, artist, album, tempo, and track count
+- **Search & Filter**: Find files by name or metadata
+- **Quick Loading**: Open files directly from library into viewer
+
 ### Audio Playback
 - **Guitar/Bass**: Authentic bass guitar sound with FM synthesis
   - Optimized harmonicity and modulation for bass-like timbre
@@ -167,8 +181,9 @@ A comprehensive web application for exploring scales, modes, chords, and music t
 ## Tech Stack
 
 ### Frontend (Client)
-- **Framework**: Angular 19
+- **Framework**: Angular 21
 - **Audio**: Tone.js for sound synthesis
+- **Sheet Music**: alphaTab for Guitar Pro file rendering and playback
 - **Styling**: SCSS with responsive design
 
 ### Backend (Server)
@@ -227,11 +242,14 @@ MusicTheory/
 │   │   ├── app/
 │   │   │   ├── components/
 │   │   │   │   ├── fretboard/       # Main fretboard/keyboard component
-│   │   │   │   └── keyboard/        # Piano keyboard component
+│   │   │   │   ├── keyboard/        # Piano keyboard component
+│   │   │   │   ├── gp-viewer/       # Guitar Pro file viewer
+│   │   │   │   └── gp-library/      # GP file library browser
 │   │   │   ├── models/              # TypeScript interfaces
-│   │   │   └── services/            # Music theory service
+│   │   │   └── services/            # Music theory, alphaTab, GP library services
 │   │   ├── assets/
 │   │   └── styles.css
+│   ├── custom-webpack.config.js     # alphaTab webpack plugin config
 │   ├── angular.json
 │   └── package.json
 │
@@ -257,6 +275,15 @@ MusicTheory/
 8. **Explore**: Click individual notes on the fretboard or keys on the keyboard to hear them
 
 ## Recent Updates
+
+### Version 2.1 (January 2026)
+- ✨ **New**: Guitar Pro File Viewer with alphaTab integration
+- ✨ **New**: GP Library for storing and managing Guitar Pro files locally
+- ✨ **New**: Scale/chord highlighting on GP sheet music
+- ✨ **New**: Full playback controls (play/pause, tempo, seeking, looping)
+- ✨ **New**: Track mute/solo controls for multi-track GP files
+- ⬆️ **Upgraded**: Angular 19 → 21
+- 🔧 **Technical**: Custom webpack configuration for alphaTab WebWorkers
 
 ### Version 2.0 (December 2025)
 - ✨ **New**: Piano/Keyboard instrument support with 5 keyboard sizes
