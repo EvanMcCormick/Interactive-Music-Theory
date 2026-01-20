@@ -1,0 +1,100 @@
+$nav-bg-secondary: #34495e;
+$accent-color: #3498db;
+$text-primary: #ecf0f1;
+$text-secondary: #bdc3c7;
+$border-color: #465666;
+
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.search-input {
+  display: flex;
+  align-items: center;
+  background-color: $nav-bg-secondary;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  padding: 0 0.75rem;
+
+  svg {
+    color: $text-secondary;
+    flex-shrink: 0;
+  }
+
+  input {
+    background: transparent;
+    border: none;
+    padding: 0.5rem;
+    color: $text-primary;
+    font-size: 0.9rem;
+    width: 200px;
+
+    &::placeholder {
+      color: $text-secondary;
+    }
+
+    &:focus {
+      outline: none;
+    }
+  }
+
+  &:focus-within {
+    border-color: $accent-color;
+  }
+}
+
+.filter-select {
+  select {
+    background-color: $nav-bg-secondary;
+    border: 1px solid $border-color;
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+    color: $text-primary;
+    font-size: 0.85rem;
+    cursor: pointer;
+    min-width: 120px;
+
+    &:focus {
+      outline: none;
+      border-color: $accent-color;
+    }
+
+    option {
+      background-color: $nav-bg-secondary;
+      color: $text-primary;
+    }
+  }
+}
+
+.clear-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  background-color: transparent;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  color: $text-secondary;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #e74c3c;
+    color: #e74c3c;
+  }
+}
+
+// Responsive
+@media (max-width: 768px) {
+  .search-input input {
+    width: 150px;
+  }
+
+  .filter-select select {
+    min-width: 100px;
+  }
+}

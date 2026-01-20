@@ -42,8 +42,13 @@ typings/
 .DS_Store
 Thumbs.db
 
+# Windows reserved names (prevent accidental creation)
+nul
+NUL
+
 # Claude Code
-.claude/
+.claude/*
+!.claude/skills/
 
 # Cache files
 **/.cache/

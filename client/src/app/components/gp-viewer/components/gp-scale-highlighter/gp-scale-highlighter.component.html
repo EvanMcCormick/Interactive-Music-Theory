@@ -1,0 +1,51 @@
+<div class="scale-highlighter">
+  <div class="highlighter-header">
+    <label class="toggle-label">
+      <input
+        type="checkbox"
+        [checked]="isEnabled"
+        (change)="toggleHighlight()"
+      />
+      <span>Highlight Scale/Chord</span>
+    </label>
+  </div>
+
+  <div class="highlighter-controls" [class.disabled]="!isEnabled">
+    <!-- Root note selector -->
+    <div class="control-group">
+      <label>Root</label>
+      <select
+        [(ngModel)]="selectedRoot"
+        (ngModelChange)="onRootChange()"
+        [disabled]="!isEnabled"
+      >
+        <option *ngFor="let note of noteNames; let i = index" [value]="i">
+          {{ note }}
+        </option>
+      </select>
+    </div>
+
+    <!-- Scale/Chord selector -->
+    <div class="control-group scale-select">
+      <label>Scale/Chord</label>
+      <select
+        [(ngModel)]="selectedScaleId"
+        (ngModelChange)="onScaleChange()"
+        [disabled]="!isEnabled"
+      >
+        <option value="">-- Select --</option>
+        <optgroup *ngFor="let category of getGroupedScales()" [label]="category.name">
+          <option *ngFor="let scale of category.scales" [value]="scale.id">
+            {{ scale.name }}
+          </option>
+        </optgroup>
+      </select>
+    </div>
+  </div>
+
+  <!-- Current selection display -->
+  <div class="current-selection" *ngIf="isEnabled && selectedScaleId">
+    <span class="selection-label">Highlighting:</span>
+    <span class="selection-value">{{ noteNames[selectedRoot] }} {{ getSelectedScaleName() }}</span>
+  </div>
+</div>

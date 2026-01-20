@@ -1,0 +1,59 @@
+<div
+  class="file-card"
+  [class.grid]="viewMode === 'grid'"
+  [class.list]="viewMode === 'list'"
+  (click)="onOpen($event)"
+>
+  <!-- Grid view -->
+  <ng-container *ngIf="viewMode === 'grid'">
+    <div class="card-header">
+      <span class="extension-badge" [style.background-color]="getExtensionColor()">
+        {{ getExtension() }}
+      </span>
+      <button class="delete-btn" (click)="onDelete($event)" title="Delete">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="card-body">
+      <h3 class="title">{{ entry.title }}</h3>
+      <p class="artist" *ngIf="entry.artist">{{ entry.artist }}</p>
+      <p class="album" *ngIf="entry.album">{{ entry.album }}</p>
+    </div>
+
+    <div class="card-footer">
+      <span class="meta">{{ entry.tempo }} BPM</span>
+      <span class="meta">{{ entry.trackCount }} tracks</span>
+      <span class="meta">{{ formatFileSize(entry.fileSize) }}</span>
+    </div>
+  </ng-container>
+
+  <!-- List view -->
+  <ng-container *ngIf="viewMode === 'list'">
+    <span class="extension-badge" [style.background-color]="getExtensionColor()">
+      {{ getExtension() }}
+    </span>
+
+    <div class="list-info">
+      <span class="title">{{ entry.title }}</span>
+      <span class="artist" *ngIf="entry.artist">{{ entry.artist }}</span>
+    </div>
+
+    <div class="list-meta">
+      <span>{{ entry.tempo }} BPM</span>
+      <span>{{ entry.trackCount }} tracks</span>
+      <span>{{ formatFileSize(entry.fileSize) }}</span>
+      <span>{{ formatDate(entry.dateAdded) }}</span>
+    </div>
+
+    <button class="delete-btn" (click)="onDelete($event)" title="Delete">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="3 6 5 6 21 6"/>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+      </svg>
+    </button>
+  </ng-container>
+</div>

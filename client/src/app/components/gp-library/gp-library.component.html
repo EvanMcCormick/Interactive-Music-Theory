@@ -1,0 +1,141 @@
+<div
+  class="gp-library-container"
+  [class.dragging]="isDragging"
+  (dragover)="onDragOver($event)"
+  (dragleave)="onDragLeave($event)"
+  (drop)="onDrop($event)"
+>
+  <!-- Header -->
+  <header class="library-header">
+    <div class="header-left">
+      <h1>GP Library</h1>
+      <span class="file-count">{{ filteredEntries.length }} files</span>
+    </div>
+
+    <div class="header-actions">
+      <!-- Add files button -->
+      <label class="add-btn">
+        <input
+          type="file"
+          accept=".gp,.gp3,.gp4,.gp5,.gpx"
+          multiple
+          (change)="onFileSelected($event)"
+          style="display: none"
+        />
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        Add Files
+      </label>
+
+      <!-- View toggle -->
+      <button class="view-toggle" (click)="toggleViewMode()" [title]="viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'">
+        <svg *ngIf="viewMode === 'grid'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="8" y1="6" x2="21" y2="6"/>
+          <line x1="8" y1="12" x2="21" y2="12"/>
+          <line x1="8" y1="18" x2="21" y2="18"/>
+          <line x1="3" y1="6" x2="3.01" y2="6"/>
+          <line x1="3" y1="12" x2="3.01" y2="12"/>
+          <line x1="3" y1="18" x2="3.01" y2="18"/>
+        </svg>
+        <svg *ngIf="viewMode === 'list'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7"/>
+          <rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/>
+          <rect x="3" y="14" width="7" height="7"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Filters and sorting -->
+  <div class="filters-bar">
+    <app-gp-library-filters
+      (filterChange)="onFilterChange($event)"
+    ></app-gp-library-filters>
+
+    <div class="sort-controls">
+      <span class="sort-label">Sort by:</span>
+      <button
+        class="sort-btn"
+        [class.active]="sortBy === 'dateAdded'"
+        (click)="onSortChange('dateAdded')"
+      >
+        Date {{ sortBy === 'dateAdded' ? (sortAscending ? '↑' : '↓') : '' }}
+      </button>
+      <button
+        class="sort-btn"
+        [class.active]="sortBy === 'title'"
+        (click)="onSortChange('title')"
+      >
+        Title {{ sortBy === 'title' ? (sortAscending ? '↑' : '↓') : '' }}
+      </button>
+      <button
+        class="sort-btn"
+        [class.active]="sortBy === 'artist'"
+        (click)="onSortChange('artist')"
+      >
+        Artist {{ sortBy === 'artist' ? (sortAscending ? '↑' : '↓') : '' }}
+      </button>
+      <button
+        class="sort-btn"
+        [class.active]="sortBy === 'tempo'"
+        (click)="onSortChange('tempo')"
+      >
+        BPM {{ sortBy === 'tempo' ? (sortAscending ? '↑' : '↓') : '' }}
+      </button>
+    </div>
+  </div>
+
+  <!-- Content area -->
+  <main class="library-content">
+    <!-- Empty state -->
+    <div class="empty-state" *ngIf="entries.length === 0">
+      <div class="empty-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="12" y1="18" x2="12" y2="12"/>
+          <line x1="9" y1="15" x2="15" y2="15"/>
+        </svg>
+      </div>
+      <h2>No files in library</h2>
+      <p>Drop Guitar Pro files here or click "Add Files" to get started</p>
+    </div>
+
+    <!-- No results state -->
+    <div class="empty-state" *ngIf="entries.length > 0 && filteredEntries.length === 0">
+      <h2>No matching files</h2>
+      <p>Try adjusting your filters</p>
+    </div>
+
+    <!-- File grid/list -->
+    <div
+      class="file-container"
+      [class.grid-view]="viewMode === 'grid'"
+      [class.list-view]="viewMode === 'list'"
+      *ngIf="filteredEntries.length > 0"
+    >
+      <app-gp-file-card
+        *ngFor="let entry of filteredEntries"
+        [entry]="entry"
+        [viewMode]="viewMode"
+        (open)="openFile(entry)"
+        (delete)="deleteFile(entry)"
+      ></app-gp-file-card>
+    </div>
+  </main>
+
+  <!-- Drag overlay -->
+  <div class="drag-overlay" *ngIf="isDragging">
+    <div class="drag-content">
+      <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <p>Drop files to add to library</p>
+    </div>
+  </div>
+</div>

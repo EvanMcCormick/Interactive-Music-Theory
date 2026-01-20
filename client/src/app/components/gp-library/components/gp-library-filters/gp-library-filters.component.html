@@ -1,0 +1,59 @@
+<div class="filters">
+  <!-- Search -->
+  <div class="search-input">
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="8"/>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input
+      type="text"
+      placeholder="Search by title, artist..."
+      [(ngModel)]="searchText"
+      (ngModelChange)="onSearchChange()"
+    />
+  </div>
+
+  <!-- Key filter -->
+  <div class="filter-select">
+    <select [(ngModel)]="selectedKey" (ngModelChange)="onKeyChange()">
+      <option [ngValue]="null">All Keys</option>
+      <option *ngFor="let note of noteNames; let i = index" [ngValue]="i">
+        {{ note }}
+      </option>
+    </select>
+  </div>
+
+  <!-- Scale filter -->
+  <div class="filter-select">
+    <select [(ngModel)]="selectedScaleId" (ngModelChange)="onScaleChange()">
+      <option value="">All Scales</option>
+      <option *ngFor="let scale of scales" [value]="scale.id">
+        {{ scale.name }}
+      </option>
+    </select>
+  </div>
+
+  <!-- Chord filter -->
+  <div class="filter-select">
+    <select [(ngModel)]="selectedChordId" (ngModelChange)="onChordChange()">
+      <option value="">All Chords</option>
+      <option *ngFor="let chord of chords" [value]="chord.id">
+        {{ chord.name }}
+      </option>
+    </select>
+  </div>
+
+  <!-- Clear filters button -->
+  <button
+    class="clear-btn"
+    *ngIf="hasActiveFilters()"
+    (click)="clearFilters()"
+    title="Clear all filters"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="18" y1="6" x2="6" y2="18"/>
+      <line x1="6" y1="6" x2="18" y2="18"/>
+    </svg>
+    Clear
+  </button>
+</div>

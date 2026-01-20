@@ -1,0 +1,192 @@
+<div class="gp-viewer-container" [class.dragging]="isDragging">
+  <!-- Header with song info -->
+  <header class="gp-header" *ngIf="scoreInfo">
+    <div class="song-info">
+      <h1 class="song-title">{{ scoreInfo.title }}</h1>
+      <p class="song-artist" *ngIf="scoreInfo.artist">{{ scoreInfo.artist }}</p>
+      <p class="song-album" *ngIf="scoreInfo.album">{{ scoreInfo.album }}</p>
+    </div>
+    <div class="song-meta">
+      <span class="meta-item">{{ scoreInfo.tempo }} BPM</span>
+      <span class="meta-item">{{ scoreInfo.trackCount }} tracks</span>
+      <span class="meta-item">{{ scoreInfo.barCount }} bars</span>
+    </div>
+    <div class="header-actions">
+      <button
+        class="save-btn"
+        [class.saved]="isInLibrary"
+        [disabled]="isSaving || isInLibrary"
+        (click)="saveToLibrary()"
+        [title]="isInLibrary ? 'Already in library' : 'Save to library'"
+      >
+        <svg *ngIf="!isInLibrary && !isSaving" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+          <polyline points="17 21 17 13 7 13 7 21"/>
+          <polyline points="7 3 7 8 15 8"/>
+        </svg>
+        <svg *ngIf="isInLibrary" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+        <span *ngIf="isSaving">Saving...</span>
+        <span *ngIf="!isSaving && !isInLibrary">Save to Library</span>
+        <span *ngIf="!isSaving && isInLibrary">In Library</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main content area -->
+  <div class="gp-main">
+    <!-- Sidebar with track list and highlighting controls -->
+    <aside class="track-sidebar" *ngIf="tracks.length > 0">
+      <h3>Tracks</h3>
+      <ul class="track-list">
+        <li *ngFor="let track of tracks" class="track-item" [style.border-left-color]="track.color">
+          <span class="track-name">{{ track.name }}</span>
+          <div class="track-controls">
+            <button
+              class="track-btn"
+              [class.active]="track.isMuted"
+              (click)="toggleTrackMute(track.index)"
+              title="Mute">
+              M
+            </button>
+            <button
+              class="track-btn"
+              [class.active]="track.isSolo"
+              (click)="toggleTrackSolo(track.index)"
+              title="Solo">
+              S
+            </button>
+          </div>
+        </li>
+      </ul>
+
+      <!-- Scale/Chord Highlighter -->
+      <div class="highlighter-section">
+        <app-gp-scale-highlighter
+          (highlightChange)="onHighlightChange($event)">
+        </app-gp-scale-highlighter>
+      </div>
+    </aside>
+
+    <!-- AlphaTab rendering area -->
+    <div class="alphatab-wrapper">
+      <!-- Drop zone overlay -->
+      <div class="drop-zone" *ngIf="!state?.isLoaded || isDragging" [class.active]="isDragging">
+        <div class="drop-content">
+          <div class="drop-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </div>
+          <p class="drop-text">Drop a Guitar Pro file here</p>
+          <p class="drop-subtext">or</p>
+          <button class="browse-btn" (click)="openFileDialog()">Browse Files</button>
+          <p class="supported-formats">Supported: .gp, .gp3, .gp4, .gp5, .gpx</p>
+        </div>
+      </div>
+
+      <!-- Loading indicator -->
+      <div class="loading-overlay" *ngIf="state?.loadingState === 'loading'">
+        <div class="spinner"></div>
+        <p>Loading...</p>
+      </div>
+
+      <!-- Error display -->
+      <div class="error-overlay" *ngIf="state?.loadingState === 'error'">
+        <p class="error-message">{{ state?.errorMessage }}</p>
+        <button class="retry-btn" (click)="openFileDialog()">Try Another File</button>
+      </div>
+
+      <!-- AlphaTab container -->
+      <div #alphaTabContainer class="alphatab-container"></div>
+    </div>
+  </div>
+
+  <!-- Playback controls footer -->
+  <footer class="playback-controls" *ngIf="state?.isLoaded">
+    <!-- Progress bar -->
+    <div class="progress-bar" (click)="onProgressClick($event)">
+      <div class="progress-fill" [style.width.%]="getProgressPercent()"></div>
+    </div>
+
+    <div class="controls-row">
+      <!-- Time display -->
+      <div class="time-display">
+        <span class="current-time">{{ formatTime(state?.timePosition || 0) }}</span>
+        <span class="time-separator">/</span>
+        <span class="total-time">{{ formatTime(state?.totalDuration || 0) }}</span>
+      </div>
+
+      <!-- Main controls -->
+      <div class="main-controls">
+        <button class="control-btn" (click)="stop()" title="Stop">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="6" width="12" height="12"/>
+          </svg>
+        </button>
+
+        <button class="control-btn play-btn" (click)="playPause()" [title]="state?.isPlaying ? 'Pause' : 'Play'">
+          <svg *ngIf="!state?.isPlaying" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5,3 19,12 5,21"/>
+          </svg>
+          <svg *ngIf="state?.isPlaying" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="4" width="4" height="16"/>
+            <rect x="14" y="4" width="4" height="16"/>
+          </svg>
+        </button>
+
+        <button
+          class="control-btn"
+          [class.active]="state?.isLooping"
+          (click)="toggleLoop()"
+          title="Loop">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="17 1 21 5 17 9"/>
+            <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+            <polyline points="7 23 3 19 7 15"/>
+            <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Volume & Tempo controls -->
+      <div class="slider-controls">
+        <div class="slider-group">
+          <label>Vol</label>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            [(ngModel)]="volume"
+            (input)="onVolumeChange()"
+          />
+          <span class="slider-value">{{ volume }}%</span>
+        </div>
+
+        <div class="slider-group">
+          <label>Tempo</label>
+          <input
+            type="range"
+            min="25"
+            max="200"
+            [(ngModel)]="tempo"
+            (input)="onTempoChange()"
+          />
+          <span class="slider-value">{{ tempo }}%</span>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Hidden file input -->
+  <input
+    #fileInput
+    type="file"
+    accept=".gp,.gp3,.gp4,.gp5,.gpx"
+    (change)="onFileSelected($event)"
+    style="display: none"
+  />
+</div>

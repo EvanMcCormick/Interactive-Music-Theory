@@ -1,13 +1,16 @@
 <div class="app-container">
   <header>
-    <h1>Interactive Music Theory</h1>
+    <div class="header-content">
+      <h1>Interactive Music Theory</h1>
+      <nav class="main-nav">
+        <a routerLink="/fretboard" routerLinkActive="active">Fretboard</a>
+        <a routerLink="/gp-viewer" routerLinkActive="active">GP Viewer</a>
+        <a routerLink="/gp-library" routerLinkActive="active">GP Library</a>
+      </nav>
+    </div>
   </header>
-  
+
   <main>
-    <app-fretboard></app-fretboard>
+    <router-outlet></router-outlet>
   </main>
-  
-  <footer>
-    <p>&copy; 2025 MusicTheory App</p>
-  </footer>
 </div>
