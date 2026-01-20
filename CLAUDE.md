@@ -1,11 +1,11 @@
 # MusicTheory Project Guidelines
 
-This is an interactive music theory learning application built with Angular 19 and ASP.NET Core.
+This is an interactive music theory learning application built with Angular 21 and ASP.NET Core.
 
 ## Project Structure
 
 ```
-client/               # Angular 19 frontend
+client/               # Angular 21 frontend
   src/app/
     components/       # Standalone Angular components (FretboardComponent, KeyboardComponent)
     services/         # MusicTheoryService (centralized state management with RxJS)
@@ -15,11 +15,11 @@ server/               # ASP.NET Core API backend (mostly scaffolding)
 
 ## Tech Stack (ALWAYS use these versions/patterns)
 
-- **Angular 19** with standalone components (NO NgModules for new components)
-- **TypeScript 5.5** with strict mode enabled
+- **Angular 21** with standalone components (NO NgModules for new components)
+- **TypeScript 5.9** with strict mode enabled
 - **Tone.js 15.0** for audio synthesis
 - **RxJS 7.8** for reactive state management
-- **ASP.NET Core 9.0** for backend (when applicable)
+- **ASP.NET Core 10.0** for backend (when applicable)
 
 ---
 
