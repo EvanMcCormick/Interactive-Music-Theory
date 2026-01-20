@@ -41,6 +41,7 @@ public class MusicTheoryDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
         {
             entity.HasKey(t => t.Id);
             entity.HasIndex(t => t.UserId).IsUnique();
+            entity.Property(t => t.HourlyRate).HasPrecision(10, 2);
         });
 
         // StudentProfile configuration
