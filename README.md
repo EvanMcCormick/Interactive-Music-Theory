@@ -2,6 +2,8 @@
 
 A comprehensive web application for exploring scales, modes, chords, and music theory concepts on guitar, bass guitar, and piano/keyboard.
 
+> **SaaS Platform in Development**: We're building a B2B music education platform for teachers and students. See [docs/ROADMAP.md](docs/ROADMAP.md) for progress and [docs/plans/2026-01-20-saas-platform-design.md](docs/plans/2026-01-20-saas-platform-design.md) for the full design.
+
 ## Features
 
 ### Interactive Instrument Display
@@ -237,28 +239,36 @@ A comprehensive web application for exploring scales, modes, chords, and music t
 
 ```
 MusicTheory/
-├── client/                          # Angular frontend
+├── client/                          # Angular 21 frontend
 │   ├── src/
 │   │   ├── app/
-│   │   │   ├── components/
+│   │   │   ├── components/          # UI components
 │   │   │   │   ├── fretboard/       # Main fretboard/keyboard component
 │   │   │   │   ├── keyboard/        # Piano keyboard component
 │   │   │   │   ├── gp-viewer/       # Guitar Pro file viewer
 │   │   │   │   └── gp-library/      # GP file library browser
-│   │   │   ├── models/              # TypeScript interfaces
-│   │   │   └── services/            # Music theory, alphaTab, GP library services
-│   │   ├── assets/
-│   │   └── styles.css
-│   ├── custom-webpack.config.js     # alphaTab webpack plugin config
-│   ├── angular.json
+│   │   │   ├── models/              # TypeScript interfaces (auth, user, music)
+│   │   │   ├── services/            # Music theory, auth, alphaTab services
+│   │   │   ├── guards/              # Route guards (auth, role)
+│   │   │   └── interceptors/        # HTTP interceptor for JWT
+│   │   ├── environments/            # Environment configs
+│   │   └── assets/
 │   └── package.json
 │
-└── server/                          # C# backend
-    ├── MusicTheory.API/
-    │   ├── Controllers/
-    │   ├── Models/
-    │   └── Services/
-    └── MusicTheory.sln
+├── server/                          # ASP.NET Core 9 backend
+│   └── MusicTheory.API/
+│       ├── Controllers/             # Auth, Users (+ future endpoints)
+│       ├── Data/                    # DbContext
+│       ├── Models/
+│       │   ├── Entities/            # Domain models (User, Profile, etc.)
+│       │   ├── DTOs/                # Request/response DTOs
+│       │   └── Enums/               # UserRole, EnrollmentStatus, etc.
+│       ├── Services/                # JWT, Auth, User services
+│       └── Migrations/              # EF Core migrations
+│
+└── docs/                            # Documentation
+    ├── ROADMAP.md                   # Development progress tracker
+    └── plans/                       # Design documents and implementation plans
 ```
 
 ## Usage
@@ -275,6 +285,15 @@ MusicTheory/
 8. **Explore**: Click individual notes on the fretboard or keys on the keyboard to hear them
 
 ## Recent Updates
+
+### SaaS Platform - Phase 1 Complete (January 2026)
+- 🚀 **Backend**: ASP.NET Core 9 API with Identity and JWT authentication
+- 🔐 **Auth System**: Register, login, refresh tokens, logout
+- 👥 **User Profiles**: Teacher and student profiles with role-based access
+- 📊 **Database**: Entity Framework Core 9 with SQL Server
+- 🔗 **API Endpoints**: Auth controller, Users controller with /me endpoint
+- 🅰️ **Angular Integration**: Auth service, HTTP interceptor, route guards
+- 📋 **Next Phase**: Teacher-student core (invitations, courses, lessons)
 
 ### Version 2.1 (January 2026)
 - ✨ **New**: Guitar Pro File Viewer with alphaTab integration
