@@ -256,5 +256,5 @@ Found elsewhere in the repo while building this:
   registered only in the dead module, so `HttpClient` was never actually
   provided and `AuthService` would have thrown `NullInjectorError` on first
   use; that registration moved to `main.ts`.
-- `AlphaTabService.loadFromUrl`, `loadFromBuffer`, `seekToTick` and
-  `setTrackVolume` have no callers.
+- `AlphaTabService.loadFromUrl`, `loadFromBuffer`, `seekToTick`,
+  `setTrackVolume` and `setTracks` had no callers and have been removed.

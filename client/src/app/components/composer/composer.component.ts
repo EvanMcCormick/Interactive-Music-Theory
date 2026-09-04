@@ -72,6 +72,8 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   private resizeObserver: ResizeObserver | null = null;
   private lastRenderedWidth = 0;
+  /** Set when a render was skipped because the container had no width yet. */
+  private renderPending = false;
 
   readonly durations: DurationOption[] = [
     { label: '𝅝', value: 1, dots: 0 },
@@ -165,12 +167,16 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
     this.resizeObserver = new ResizeObserver(entries => {
       const width = entries[0]?.contentRect.width ?? 0;
-      if (width > 0 && width !== this.lastRenderedWidth) {
-        this.lastRenderedWidth = width;
-        // render() redraws the score alphaTab already holds. renderScore()
-        // alone will not recover a render that was skipped at width 0.
+      if (width <= 0) return;
+
+      if (this.renderPending) {
+        // A render was skipped at width 0; redo it now the element is laid out.
+        this.renderCurrentDocument();
+      } else if (width !== this.lastRenderedWidth) {
+        // Re-flow the existing score for the new width.
         this.alphaTabService.render();
       }
+      this.lastRenderedWidth = width;
     });
     this.resizeObserver.observe(element);
   }
@@ -189,6 +195,15 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   private renderCurrentDocument(): void {
     if (!this.state) return;
+
+    // alphaTab refuses to draw into a zero-width element, logging "skipped
+    // rendering because of width=0", and never retries by itself. Defer until
+    // the ResizeObserver reports a real width.
+    if ((this.alphaTabContainer?.nativeElement.clientWidth ?? 0) === 0) {
+      this.renderPending = true;
+      return;
+    }
+    this.renderPending = false;
 
     try {
       const settings = new alphaTab.Settings();

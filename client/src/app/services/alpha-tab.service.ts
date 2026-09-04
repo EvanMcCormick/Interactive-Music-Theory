@@ -176,40 +176,7 @@ export class AlphaTabService {
     }
   }
 
-  /**
-   * Load a Guitar Pro file from ArrayBuffer
-   */
-  loadFromBuffer(buffer: ArrayBuffer, trackIndices?: number[]): void {
-    if (!this.api) {
-      throw new Error('alphaTab API not initialized');
-    }
 
-    this.updateState({ loadingState: 'loading', errorMessage: null });
-    const uint8Array = new Uint8Array(buffer);
-    this.api.load(uint8Array, trackIndices ?? [0]);
-  }
-
-  /**
-   * Load from URL
-   */
-  loadFromUrl(url: string): void {
-    if (!this.api) {
-      throw new Error('alphaTab API not initialized');
-    }
-
-    this.updateState({ loadingState: 'loading', errorMessage: null });
-
-    fetch(url)
-      .then(response => response.arrayBuffer())
-      .then(buffer => {
-        const uint8Array = new Uint8Array(buffer);
-        this.api?.load(uint8Array, [0]);
-      })
-      .catch(error => {
-        const message = error instanceof Error ? error.message : 'Failed to load from URL';
-        this.updateState({ loadingState: 'error', errorMessage: message });
-      });
-  }
 
   /**
    * Render an in-memory score. Used by the composer, which builds a Score from
@@ -311,14 +278,6 @@ export class AlphaTabService {
     this.api?.stop();
   }
 
-  /**
-   * Seek to position in ticks
-   */
-  seekToTick(tick: number): void {
-    if (this.api) {
-      this.api.tickPosition = tick;
-    }
-  }
 
   /**
    * Seek to position in milliseconds
@@ -359,16 +318,6 @@ export class AlphaTabService {
     }
   }
 
-  /**
-   * Set which tracks to render
-   */
-  setTracks(trackIndices: number[]): void {
-    if (this.api && this.api.score) {
-      const tracks = trackIndices.map(i => this.api!.score!.tracks[i]).filter(t => t);
-      this.api.renderTracks(tracks);
-      this.updateState({ selectedTracks: trackIndices });
-    }
-  }
 
   /**
    * Mute/unmute a track
@@ -394,17 +343,6 @@ export class AlphaTabService {
     }
   }
 
-  /**
-   * Set track volume
-   */
-  setTrackVolume(trackIndex: number, volume: number): void {
-    if (this.api && this.api.score) {
-      const track = this.api.score.tracks[trackIndex];
-      if (track) {
-        this.api.changeTrackVolume([track], volume);
-      }
-    }
-  }
 
   /**
    * Get simplified track info for UI
