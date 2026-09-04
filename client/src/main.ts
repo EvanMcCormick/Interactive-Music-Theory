@@ -1,9 +1,11 @@
 import { enableProdMode } from '@angular/core';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { AppComponent } from './app/app.component';
 import { environment } from './environments/environment';
 import { FretboardComponent } from './app/components/fretboard/fretboard.component';
+import { authInterceptor } from './app/interceptors/auth.interceptor';
 
 if (environment.production) {
   enableProdMode();
@@ -31,6 +33,7 @@ const routes = [
 
 bootstrapApplication(AppComponent, {
   providers: [
-    provideRouter(routes)
+    provideRouter(routes),
+    provideHttpClient(withInterceptors([authInterceptor]))
   ]
 }).catch(err => console.error(err));

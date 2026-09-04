@@ -248,10 +248,13 @@ UI controls are missing:
 - Track mixer controls (mute, solo, volume, balance).
 - Looping a bar range for practice.
 
-Known issues elsewhere in the repo, found while building this:
+Found elsewhere in the repo while building this:
 
-- `app.module.ts` and `app-routing.module.ts` are dead code. The app bootstraps
-  from `main.ts`, which holds the live route table. Both were editable without
-  any effect, which cost time; they should be deleted.
+- `app.module.ts` and `app-routing.module.ts` were dead code - the app
+  bootstraps from `main.ts`, which holds the live route table. Both have been
+  deleted. `provideHttpClient(withInterceptors([authInterceptor]))` was
+  registered only in the dead module, so `HttpClient` was never actually
+  provided and `AuthService` would have thrown `NullInjectorError` on first
+  use; that registration moved to `main.ts`.
 - `AlphaTabService.loadFromUrl`, `loadFromBuffer`, `seekToTick` and
   `setTrackVolume` have no callers.
