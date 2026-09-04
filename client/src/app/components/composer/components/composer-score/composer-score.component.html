@@ -1,0 +1,14 @@
+<div class="score-area">
+  <div class="alphatab-container" #alphaTabContainer>
+    <div
+      class="tab-caret"
+      *ngIf="caretRect"
+      [style.left.px]="caretRect.left"
+      [style.top.px]="caretRect.top"
+      [style.width.px]="caretRect.width"
+      [style.height.px]="caretRect.height"
+    ></div>
+  </div>
+
+  <p class="render-error" *ngIf="renderError">{{ renderError }}</p>
+</div>

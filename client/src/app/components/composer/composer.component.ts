@@ -1,17 +1,14 @@
 import {
-  AfterViewInit,
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
-  ElementRef,
   HostListener,
   OnDestroy,
-  OnInit,
-  ViewChild
+  OnInit
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Subject, debounceTime, takeUntil } from 'rxjs';
+import { Subject, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
 import { AlphaTabService } from '../../services/alpha-tab.service';
@@ -19,9 +16,8 @@ import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerService } from '../../services/composer.service';
 import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
-import {
-  AlphaTabState
-} from '../../models/alpha-tab.model';
+import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
+import { AlphaTabState } from '../../models/alpha-tab.model';
 import {
   ComposerState,
   DurationValue,
@@ -46,22 +42,22 @@ const CHROMATIC_SHARPS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 
 @Component({
   selector: 'app-composer',
   standalone: true,
-  imports: [CommonModule, FormsModule, ComposerLibraryPanelComponent],
+  imports: [CommonModule, FormsModule, ComposerLibraryPanelComponent, ComposerScoreComponent],
   templateUrl: './composer.component.html',
   styleUrls: ['./composer.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
-  @ViewChild('alphaTabContainer') alphaTabContainer!: ElementRef<HTMLDivElement>;
+export class ComposerComponent implements OnInit, OnDestroy {
+  /** Highest fret the digit accumulator will build up to. */
+  private static readonly MAX_FRET = 24;
+  /** How long consecutive digits keep combining into one fret number. */
+  private static readonly FRET_BUFFER_MS = 800;
 
   private readonly destroy$ = new Subject<void>();
-  /** Coalesces renders so typing does not re-engrave on every keystroke. */
-  private readonly renderRequest$ = new Subject<void>();
 
   state: ComposerState | null = null;
   playerState: AlphaTabState | null = null;
 
-  texSource = '';
   texDraft = '';
   texDiagnostics: TexDiagnostic[] = [];
   showTexPanel = false;
@@ -70,10 +66,9 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   metronomeEnabled = false;
   countInEnabled = false;
 
-  private resizeObserver: ResizeObserver | null = null;
-  private lastRenderedWidth = 0;
-  /** Set when a render was skipped because the container had no width yet. */
-  private renderPending = false;
+  /** Accumulates digits so two-digit frets like 12 can be typed. */
+  private fretBuffer = '';
+  private fretBufferTimer: ReturnType<typeof setTimeout> | null = null;
 
   readonly durations: DurationOption[] = [
     { label: '𝅝', value: 1, dots: 0 },
@@ -110,21 +105,11 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   ) {}
 
   ngOnInit(): void {
-    // Subscribe to render requests first, so the initial document state below
-    // is picked up. The debounce also defers the first render past
-    // ngAfterViewInit, giving alphaTab time to finish booting its workers -
-    // rendering synchronously against a freshly constructed API silently
-    // produces an empty surface.
-    this.renderRequest$
-      .pipe(debounceTime(150), takeUntil(this.destroy$))
-      .subscribe(() => this.renderCurrentDocument());
-
     this.composer
       .getState()
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
         this.state = state;
-        this.renderRequest$.next();
         this.cdr.markForCheck();
       });
 
@@ -138,87 +123,10 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       });
   }
 
-  ngAfterViewInit(): void {
-    this.alphaTabService.initializeApi(this.alphaTabContainer.nativeElement, {
-      core: { fontDirectory: '/font/', useWorkers: true },
-      display: { scale: 1.0, staveProfile: 'default', layoutMode: 'page' },
-      player: {
-        enablePlayer: true,
-        enableCursor: true,
-        enableUserInteraction: true,
-        soundFont: '/soundfont/sonivox.sf2',
-        scrollElement: this.alphaTabContainer.nativeElement
-      }
-    });
-
-    this.observeContainerWidth();
-    this.renderRequest$.next();
-  }
-
-  /**
-   * alphaTab refuses to render into a zero-width element, logging
-   * "skipped rendering because of width=0". On first paint the container can
-   * still be unmeasured, so watch for it gaining width and render then. This
-   * also recovers the score when the window or side panels resize.
-   */
-  private observeContainerWidth(): void {
-    const element = this.alphaTabContainer?.nativeElement;
-    if (!element || typeof ResizeObserver === 'undefined') return;
-
-    this.resizeObserver = new ResizeObserver(entries => {
-      const width = entries[0]?.contentRect.width ?? 0;
-      if (width <= 0) return;
-
-      if (this.renderPending) {
-        // A render was skipped at width 0; redo it now the element is laid out.
-        this.renderCurrentDocument();
-      } else if (width !== this.lastRenderedWidth) {
-        // Re-flow the existing score for the new width.
-        this.alphaTabService.render();
-      }
-      this.lastRenderedWidth = width;
-    });
-    this.resizeObserver.observe(element);
-  }
-
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
-    this.resizeObserver?.disconnect();
-    this.resizeObserver = null;
-    this.alphaTabService.dispose();
-  }
-
-  // -------------------------------------------------------------------------
-  // Rendering
-  // -------------------------------------------------------------------------
-
-  private renderCurrentDocument(): void {
-    if (!this.state) return;
-
-    // alphaTab refuses to draw into a zero-width element, logging "skipped
-    // rendering because of width=0", and never retries by itself. Defer until
-    // the ResizeObserver reports a real width.
-    if ((this.alphaTabContainer?.nativeElement.clientWidth ?? 0) === 0) {
-      this.renderPending = true;
-      return;
-    }
-    this.renderPending = false;
-
-    try {
-      const settings = new alphaTab.Settings();
-      const score = this.mapper.toScore(this.state.doc, settings);
-      this.alphaTabService.renderScore(score);
-      this.texSource = this.texService.export(score);
-      if (!this.showTexPanel) {
-        this.texDraft = this.texSource;
-      }
-      this.texApplyError = null;
-    } catch (error) {
-      this.texApplyError =
-        error instanceof Error ? error.message : 'Failed to render the score';
-    }
-    this.cdr.markForCheck();
+    this.resetFretBuffer();
   }
 
   // -------------------------------------------------------------------------
@@ -262,34 +170,27 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     return !!staff && staff.tuning.length > 0;
   }
 
-  get currentStringCount(): number {
-    if (!this.state) return 0;
-    return this.composer.staffAt(this.state.doc, this.state.cursor)?.tuning.length ?? 0;
-  }
-
   get currentTrackProgram(): number {
     if (!this.state) return 25;
     return this.state.doc.tracks[this.state.cursor.trackIndex]?.playback.program ?? 25;
   }
 
-  /** Frets offered by the fretted-input widget. */
-  readonly frets = Array.from({ length: 13 }, (_, i) => i);
-
-  enterFret(stringIndex: number, fret: number): void {
-    const pitch: NotePitch = { kind: 'fretted', string: stringIndex + 1, fret };
-    this.auditionFretted(stringIndex, fret);
-    this.composer.setCursor({ stringIndex });
-    this.composer.setNoteAtCursor(pitch);
-  }
-
   enterPitch(noteValue: number): void {
     const pitch: NotePitch = { kind: 'pitched', noteValue, octave: this.inputOctave };
-    // alphaTab octave convention is handled in the mapper; MIDI is direct here.
     this.alphaTabService.auditionNote(
       (this.inputOctave + 1) * 12 + noteValue,
       this.currentTrackProgram
     );
     this.composer.setNoteAtCursor(pitch);
+  }
+
+  private writeFret(stringIndex: number, fret: number): void {
+    const pitch: NotePitch = { kind: 'fretted', string: stringIndex + 1, fret };
+    this.auditionFretted(stringIndex, fret);
+    this.composer.setCursor({ stringIndex });
+    // Do not advance: as in Guitar Pro the caret stays put, so other strings of
+    // the same chord can be typed. Arrow keys move on.
+    this.composer.setNoteAtCursor(pitch, false);
   }
 
   private auditionFretted(stringIndex: number, fret: number): void {
@@ -366,9 +267,20 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   toggleTexPanel(): void {
     this.showTexPanel = !this.showTexPanel;
     if (this.showTexPanel) {
-      this.texDraft = this.texSource;
+      this.texDraft = this.currentTex();
       this.texDiagnostics = [];
       this.texApplyError = null;
+    }
+  }
+
+  /** Canonical alphaTex for the current document, generated on demand. */
+  private currentTex(): string {
+    if (!this.state) return '';
+    try {
+      const score = this.mapper.toScore(this.state.doc, new alphaTab.Settings());
+      return this.texService.export(score);
+    } catch {
+      return '';
     }
   }
 
@@ -389,7 +301,7 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   revertTex(): void {
-    this.texDraft = this.texSource;
+    this.texDraft = this.currentTex();
     this.texDiagnostics = [];
     this.texApplyError = null;
   }
@@ -412,18 +324,22 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     switch (event.key) {
       case 'ArrowLeft':
         event.preventDefault();
+        this.resetFretBuffer();
         this.composer.moveCursorByBeat(-1);
         break;
       case 'ArrowRight':
         event.preventDefault();
+        this.resetFretBuffer();
         this.composer.moveCursorByBeat(1);
         break;
       case 'ArrowUp':
         event.preventDefault();
+        this.resetFretBuffer();
         this.composer.moveCursorByString(-1);
         break;
       case 'ArrowDown':
         event.preventDefault();
+        this.resetFretBuffer();
         this.composer.moveCursorByString(1);
         break;
       case 'Delete':
@@ -452,20 +368,46 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  /** Number keys type frets directly onto the current string, as in Guitar Pro. */
+  /**
+   * Number keys type frets onto the current string, as in Guitar Pro.
+   *
+   * Digits accumulate briefly so two-digit frets can be typed: "1" then "2"
+   * within the window means fret 12, not fret 1 followed by fret 2. A digit
+   * that would overshoot the fretboard starts a fresh number rather than being
+   * silently clamped.
+   */
   private handleFretDigit(event: KeyboardEvent): void {
     if (!this.currentStaffIsFretted) return;
     if (!/^[0-9]$/.test(event.key)) return;
 
     event.preventDefault();
-    const stringIndex = this.state?.cursor.stringIndex ?? 0;
-    this.enterFret(stringIndex, Number(event.key));
+
+    const combined = Number(this.fretBuffer + event.key);
+    const fret = combined <= ComposerComponent.MAX_FRET ? combined : Number(event.key);
+    this.fretBuffer = String(fret);
+
+    if (this.fretBufferTimer) clearTimeout(this.fretBufferTimer);
+    this.fretBufferTimer = setTimeout(
+      () => this.resetFretBuffer(),
+      ComposerComponent.FRET_BUFFER_MS
+    );
+
+    this.writeFret(this.state?.cursor.stringIndex ?? 0, fret);
+  }
+
+  private resetFretBuffer(): void {
+    this.fretBuffer = '';
+    if (this.fretBufferTimer) {
+      clearTimeout(this.fretBufferTimer);
+      this.fretBufferTimer = null;
+    }
   }
 
   private shiftDuration(direction: number): void {
     if (!this.state) return;
     const index = this.durations.findIndex(d => d.value === this.state!.inputDuration);
-    const next = this.durations[Math.max(0, Math.min(this.durations.length - 1, index + direction))];
+    const next =
+      this.durations[Math.max(0, Math.min(this.durations.length - 1, index + direction))];
     if (next) this.composer.applyDurationAtCursor(next.value, this.state.inputDots);
   }
 

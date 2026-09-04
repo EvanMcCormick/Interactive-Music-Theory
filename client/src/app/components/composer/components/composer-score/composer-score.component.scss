@@ -1,0 +1,48 @@
+// Score view: the engraved output plus the click-to-edit caret.
+@use 'sass:color';
+
+$accent-color: #3498db;
+$error-color: #e74c3c;
+
+:host {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.score-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: #ffffff;
+  position: relative;
+}
+
+.alphatab-container {
+  position: relative;
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  cursor: text;
+}
+
+// Caret drawn over the tab staff, showing where typing will land.
+.tab-caret {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 2px;
+  background-color: rgba($accent-color, 0.25);
+  box-shadow: 0 0 0 1px rgba($accent-color, 0.9) inset;
+  transition: left 0.08s ease, top 0.08s ease;
+  z-index: 5;
+}
+
+.render-error {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  background-color: rgba($error-color, 0.15);
+  border-top: 1px solid $error-color;
+  color: $error-color;
+  font-size: 0.85rem;
+}

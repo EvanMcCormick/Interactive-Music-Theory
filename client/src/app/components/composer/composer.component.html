@@ -94,11 +94,7 @@
     </aside>
 
     <!-- Score -->
-    <main class="score-area">
-      <div class="alphatab-container" #alphaTabContainer></div>
-
-      <p class="render-error" *ngIf="texApplyError">{{ texApplyError }}</p>
-    </main>
+    <app-composer-score></app-composer-score>
   </div>
 
   <!-- Note input -->
@@ -123,26 +119,14 @@
       </span>
     </div>
 
-    <!-- Fretted input -->
-    <div class="fretboard-input" *ngIf="currentStaffIsFretted">
-      <div class="fret-header">
-        <span class="string-label"></span>
-        <span class="fret-number" *ngFor="let f of frets">{{ f }}</span>
-      </div>
-      <div
-        class="string-row"
-        *ngFor="let str of [].constructor(currentStringCount); let si = index"
-        [class.active]="s.cursor.stringIndex === si"
-      >
-        <span class="string-label">{{ si + 1 }}</span>
-        <button
-          class="fret-cell"
-          *ngFor="let f of frets"
-          (click)="enterFret(si, f)"
-          [title]="'String ' + (si + 1) + ', fret ' + f"
-        >{{ f }}</button>
-      </div>
-    </div>
+    <!-- Fretted staves are edited directly on the tab -->
+    <p class="edit-hint" *ngIf="currentStaffIsFretted">
+      Click the tab to place the caret, then type a fret number.
+      <span class="keys-hint">← →</span> move,
+      <span class="keys-hint">↑ ↓</span> change string,
+      <span class="keys-hint">R</span> rest,
+      <span class="keys-hint">Del</span> delete.
+    </p>
 
     <!-- Pitched input -->
     <div class="keyboard-input" *ngIf="!currentStaffIsFretted">

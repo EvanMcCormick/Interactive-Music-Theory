@@ -157,6 +157,38 @@ and `-` change duration — GP's shortcuts, so muscle memory carries over.
 `composer-input` reads `staff.showTablature` to choose its widget, so "adaptive
 per track" falls out of the model rather than needing a mode switch.
 
+### Fretted staves are edited on the tab itself
+
+The first build offered a grid of fret buttons. Clicking numbers out of a grid
+is a poor way to write tab, so fretted entry now works as it does in Guitar
+Pro: click the tab to place the caret, then type the fret.
+
+alphaTab supplies the semantic half - `beatMouseDown` reports the exact beat
+that was hit, with no pixel maths. It has no notion of which *string line* the
+pointer landed on, because a bar's bounds span the notation and tablature
+staves together, so `TabHitTestService` measures that from the rendered SVG:
+alphaTab draws staff lines as thin, wide rects, and grouping their distinct y
+values by spacing separates the 5-line notation staff from the N-line tab
+staff.
+
+That service is deliberately **stateless**. A caching version proved fragile:
+alphaTab replaces its render surface on every re-render, so cached coordinates
+came from a detached element, which reports an all-zero bounding box and put
+the caret off-screen. Measuring on demand is one pass over a few dozen rects,
+and correctness stops depending on render timing.
+
+Two further timing details, both learned the hard way:
+
+- alphaTab attaches the rendered surface *after* `renderFinished`, so caret
+  placement waits two animation frames.
+- These callbacks originate outside Angular's change detection, so the caret
+  update calls `detectChanges()`; `markForCheck()` alone left the caret
+  unrendered under `OnPush`.
+
+Digits accumulate for 800ms so two-digit frets can be typed, and entry does not
+advance the caret - as in Guitar Pro, it stays put so other strings of the same
+chord can be typed.
+
 ### Existing components are not reusable as-is
 
 - `KeyboardComponent` is a display widget: it takes `keys: FretNote[]` and plays
@@ -241,6 +273,10 @@ Still outstanding, all of which the model and mapper already support - only the
 UI controls are missing:
 
 - Editing time signature, key signature and clef per bar.
+- Click-to-edit on standard notation. Only fretted staves are editable directly
+  on the score; pitched staves still use the on-screen keyboard, because
+  mapping a click on a 5-line staff back to a pitch needs clef, key signature
+  and ledger lines resolved first.
 - Repeats, alternate endings, section markers and triplet feel.
 - Dynamics, tuplets and note effects (bends, slides, hammer-ons, harmonics).
 - Multiple voices per staff.

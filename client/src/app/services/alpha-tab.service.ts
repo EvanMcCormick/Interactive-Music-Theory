@@ -402,6 +402,30 @@ export class AlphaTabService {
   }
 
   /**
+   * Notify when a rendered beat is clicked. alphaTab does the hit testing, so
+   * the caller gets the exact beat without any pixel maths of its own.
+   * Requires `player.enableUserInteraction`.
+   */
+  onBeatMouseDown(handler: (beat: alphaTab.model.Beat) => void): void {
+    this.api?.beatMouseDown.on(beat => this.ngZone.run(() => handler(beat)));
+  }
+
+  /** Notify when a rendered note is clicked, giving the exact note. */
+  onNoteMouseDown(handler: (note: alphaTab.model.Note) => void): void {
+    this.api?.noteMouseDown.on(note => this.ngZone.run(() => handler(note)));
+  }
+
+  /** Notify once each render pass finishes, when bounds become valid. */
+  onRenderFinished(handler: () => void): void {
+    this.api?.renderFinished.on(() => this.ngZone.run(() => handler()));
+  }
+
+  /** Positions of rendered beats and notes, valid after a render completes. */
+  getBoundsLookup(): alphaTab.rendering.BoundsLookup | null {
+    return this.api?.boundsLookup ?? null;
+  }
+
+  /**
    * Dispose of alphaTab resources
    */
   dispose(): void {
