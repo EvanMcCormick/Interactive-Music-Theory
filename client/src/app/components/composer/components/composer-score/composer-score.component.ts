@@ -15,8 +15,20 @@ import * as alphaTab from '@coderline/alphatab';
 import { AlphaTabService } from '../../../../services/alpha-tab.service';
 import { ComposerService } from '../../../../services/composer.service';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
-import { TabHitTestService } from '../../../../services/tab-hit-test.service';
+import { StaffHitTestService, StaffLines } from '../../../../services/staff-hit-test.service';
+import {
+  bottomLineDiatonic,
+  diatonicToPitch,
+  pitchToMidi
+} from '../../../../services/staff-pitch';
 import { ComposerState } from '../../../../models/composer.model';
+
+/** One staff as alphaTab draws it, tied back to the track it came from. */
+interface StaffSlot {
+  trackIndex: number;
+  staffIndex: number;
+  kind: 'notation' | 'tab';
+}
 
 /**
  * The engraved score, and the click-to-edit surface over it.
@@ -43,7 +55,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   state: ComposerState | null = null;
   renderError: string | null = null;
 
-  /** Caret box drawn over the tab staff, in container-relative pixels. */
+  /** Caret box drawn over the staff, in container-relative pixels. */
   caretRect: { left: number; top: number; width: number; height: number } | null = null;
 
   private resizeObserver: ResizeObserver | null = null;
@@ -53,11 +65,15 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   private destroyed = false;
   private pointer: { x: number; y: number } | null = null;
 
+  /** Which rendered staff the caret sits on, and how far up it. */
+  private caretStaffIndex: number | null = null;
+  private caretHalfSteps = 0;
+
   constructor(
     private readonly composer: ComposerService,
     private readonly mapper: ScoreDocMapperService,
     private readonly alphaTabService: AlphaTabService,
-    private readonly tabHitTest: TabHitTestService,
+    private readonly hitTest: StaffHitTestService,
     private readonly cdr: ChangeDetectorRef
   ) {}
 
@@ -130,7 +146,12 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
     try {
       const score = this.mapper.toScore(this.state.doc, new alphaTab.Settings());
-      this.alphaTabService.renderScore(score);
+      // Render every track: without explicit indices alphaTab shows only the
+      // first, which hides all but one staff on a multi-track score.
+      this.alphaTabService.renderScore(
+        score,
+        score.tracks.map((_, index) => index)
+      );
       this.renderError = null;
     } catch (error) {
       this.renderError =
@@ -168,33 +189,31 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   // -------------------------------------------------------------------------
 
   /**
-   * Clicking the tab moves the caret there, as in Guitar Pro; the fret is then
-   * typed on the keyboard.
+   * Clicking a staff moves the caret there. On tablature the fret is then
+   * typed, as in Guitar Pro; on standard notation the clicked position is
+   * itself the pitch, so the note is written straight away.
    *
-   * alphaTab resolves which beat was hit. It has no notion of which string line
-   * the pointer landed on, because a bar's bounds span the notation and tab
-   * staves together, so the pointer position is captured in the capture phase
-   * and resolved against the measured tab geometry.
+   * The pointer position is captured in the capture phase so it is available
+   * when alphaTab's own handler fires.
    */
   private wireScoreInteraction(): void {
     const element = this.alphaTabContainer?.nativeElement;
     if (!element) return;
 
     element.addEventListener('mousedown', this.onScorePointerDown, { capture: true });
-
     this.alphaTabService.onBeatMouseDown(beat => this.selectBeat(beat));
 
     // alphaTab attaches the rendered surface after this event, so measuring
-    // has to wait for the DOM to settle. Two frames covers append plus layout.
+    // has to wait for the DOM to settle.
     this.alphaTabService.onRenderFinished(() => this.scheduleCaretUpdate());
   }
 
   /**
    * Recomputes the caret once the DOM has settled.
    *
-   * markForCheck alone is not enough here: these callbacks originate from
-   * alphaTab, outside Angular's own change detection, so the view is refreshed
-   * explicitly as the project's alphaTab guidance recommends.
+   * markForCheck alone is not enough: these callbacks originate from alphaTab,
+   * outside Angular's change detection, so the view is refreshed explicitly as
+   * the project's alphaTab guidance recommends.
    */
   private scheduleCaretUpdate(): void {
     requestAnimationFrame(() =>
@@ -210,27 +229,90 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     this.pointer = { x: event.clientX, y: event.clientY };
   };
 
-  private selectBeat(beat: alphaTab.model.Beat): void {
-    const element = this.alphaTabContainer?.nativeElement;
-    // Measure against the staff that was actually clicked, which on a
-    // multi-track score need not be the one the caret is currently on.
-    const stringCount = beat.voice.bar.staff.stringTuning.tunings.length;
+  /**
+   * The staves alphaTab draws, in render order, described from the document.
+   *
+   * alphaTab lays out each track's staves in order, standard notation before
+   * tablature, so this lines up index-for-index with the measured staves and
+   * says which track a clicked staff belongs to.
+   */
+  private staffSlots(): StaffSlot[] {
+    const slots: StaffSlot[] = [];
+    if (!this.state) return slots;
 
-    const hit =
-      element && this.pointer
-        ? this.tabHitTest.stringAt(element, stringCount, this.pointer.x, this.pointer.y)
-        : null;
-
-    this.composer.setCursor({
-      trackIndex: beat.voice.bar.staff.track.index,
-      staffIndex: beat.voice.bar.staff.index,
-      barIndex: beat.voice.bar.index,
-      voiceIndex: beat.voice.index,
-      beatIndex: beat.index,
-      ...(hit !== null ? { stringIndex: hit - 1 } : {})
+    this.state.doc.tracks.forEach((track, trackIndex) => {
+      track.staves.forEach((staff, staffIndex) => {
+        if (staff.showStandardNotation) {
+          slots.push({ trackIndex, staffIndex, kind: 'notation' });
+        }
+        if (staff.showTablature && staff.tuning.length > 0) {
+          slots.push({ trackIndex, staffIndex, kind: 'tab' });
+        }
+      });
     });
 
+    return slots;
+  }
+
+  /**
+   * Moves the caret to the clicked position.
+   *
+   * The beat comes from alphaTab, but the track and staff cannot: a beat's
+   * bounds cover every staff in the system, so alphaTab always reports the
+   * first track. Both are taken from where the pointer landed vertically.
+   */
+  private selectBeat(beat: alphaTab.model.Beat): void {
+    const element = this.alphaTabContainer?.nativeElement;
+    if (!element || !this.state) return;
+
+    const hitIndex = this.pointer
+      ? this.hitTest.staffIndexAt(element, this.pointer.x, this.pointer.y)
+      : null;
+    const slot = hitIndex !== null ? this.staffSlots()[hitIndex] : undefined;
+    const staff = hitIndex !== null ? this.hitTest.allStaves(element)[hitIndex] : undefined;
+
+    const cursor = {
+      trackIndex: slot ? slot.trackIndex : beat.voice.bar.staff.track.index,
+      staffIndex: slot ? slot.staffIndex : beat.voice.bar.staff.index,
+      barIndex: beat.voice.bar.index,
+      voiceIndex: beat.voice.index,
+      beatIndex: beat.index
+    };
+
+    if (slot?.kind === 'tab' && staff && this.pointer) {
+      this.composer.setCursor({
+        ...cursor,
+        stringIndex: this.hitTest.stringIn(staff, this.pointer.y) - 1
+      });
+    } else {
+      this.composer.setCursor(cursor);
+    }
+
+    this.caretStaffIndex = hitIndex;
+
+    if (slot?.kind === 'notation' && staff) this.placeClickedPitch(staff);
+
     this.scheduleCaretUpdate();
+  }
+
+  /** Writes the note the pointer landed on, for standard notation staves. */
+  private placeClickedPitch(staff: StaffLines): void {
+    if (!this.pointer || !this.state) return;
+
+    const bar = this.composer.barAt(this.state.doc, this.state.cursor);
+    if (!bar) return;
+
+    const diatonic = this.hitTest.diatonicIn(staff, bar.clef, this.pointer.y);
+    if (diatonic === null) return;
+
+    const pitch = diatonicToPitch(diatonic, bar.keySignature, bar.clefOttava);
+    const program =
+      this.state.doc.tracks[this.state.cursor.trackIndex]?.playback.program ?? 0;
+
+    this.caretHalfSteps = diatonic - (bottomLineDiatonic(bar.clef) ?? 0);
+    this.alphaTabService.auditionNote(pitchToMidi(pitch), program);
+    // Advance so a melody flows, matching fret entry.
+    this.composer.setNoteAtCursor(pitch, true);
   }
 
   private updateCaretOverlay(): void {
@@ -238,7 +320,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     const api = this.alphaTabService.getApi();
     const lookup = this.alphaTabService.getBoundsLookup();
 
-    if (!element || !api?.score || !lookup || !this.state || this.stringCount === 0) {
+    if (!element || !api?.score || !lookup || !this.state || this.caretStaffIndex === null) {
       this.caretRect = null;
       return;
     }
@@ -251,15 +333,23 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       ?.beats[cursor.beatIndex];
 
     const bounds = beat ? lookup.findBeat(beat) : null;
-    this.caretRect = bounds
-      ? this.tabHitTest.caretRect(
-          element,
-          this.stringCount,
-          bounds.visualBounds.x,
-          bounds.visualBounds.w,
-          (cursor.stringIndex ?? 0) + 1
-        )
-      : null;
+    if (!bounds) {
+      this.caretRect = null;
+      return;
+    }
+
+    const halfSteps =
+      this.stringCount > 0
+        ? this.hitTest.stringToHalfSteps((cursor.stringIndex ?? 0) + 1, this.stringCount)
+        : this.caretHalfSteps;
+
+    this.caretRect = this.hitTest.caretRect(
+      element,
+      this.caretStaffIndex,
+      bounds.visualBounds.x,
+      bounds.visualBounds.w,
+      halfSteps
+    );
   }
 
   /** String count of the staff the caret is on; 0 for non-fretted staves. */

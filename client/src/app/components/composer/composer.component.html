@@ -119,8 +119,7 @@
       </span>
     </div>
 
-    <!-- Fretted staves are edited directly on the tab -->
-    <p class="edit-hint" *ngIf="currentStaffIsFretted">
+    <p class="edit-hint" *ngIf="currentStaffIsFretted; else pitchedHint">
       Click the tab to place the caret, then type a fret number.
       <span class="keys-hint">← →</span> move,
       <span class="keys-hint">↑ ↓</span> change string,
@@ -128,23 +127,15 @@
       <span class="keys-hint">Del</span> delete.
     </p>
 
-    <!-- Pitched input -->
-    <div class="keyboard-input" *ngIf="!currentStaffIsFretted">
-      <label class="octave-field">
-        <span>Octave</span>
-        <select [(ngModel)]="inputOctave">
-          <option *ngFor="let o of octaves" [ngValue]="o">{{ o }}</option>
-        </select>
-      </label>
-      <div class="keys">
-        <button
-          *ngFor="let name of chromatic; let v = index"
-          class="key"
-          [class.black]="name.includes('#')"
-          (click)="enterPitch(v)"
-        >{{ name }}{{ inputOctave }}</button>
-      </div>
-    </div>
+    <ng-template #pitchedHint>
+      <p class="edit-hint">
+        Click the staff to place a note at that pitch.
+        <span class="keys-hint">← →</span> move,
+        <span class="keys-hint">R</span> rest,
+        <span class="keys-hint">Del</span> delete.
+      </p>
+    </ng-template>
+
   </section>
 
   <!-- alphaTex escape hatch -->

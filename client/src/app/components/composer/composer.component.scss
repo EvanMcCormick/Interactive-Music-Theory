@@ -279,40 +279,6 @@ $surface-bg: #1a252f;
   color: $text-secondary;
 }
 
-// Pitched input
-.keyboard-input {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.keys {
-  display: flex;
-  gap: 3px;
-}
-
-.key {
-  min-width: 3.2rem;
-  height: 3rem;
-  background-color: #f8f9fa;
-  border: 1px solid #adb5bd;
-  border-radius: 0 0 4px 4px;
-  color: #212529;
-  cursor: pointer;
-  font-size: 0.75rem;
-
-  &:hover { background-color: $accent-color; color: $text-primary; }
-
-  &.black {
-    background-color: #2b3138;
-    border-color: #12161a;
-    color: $text-secondary;
-
-    &:hover { background-color: $accent-color; color: $text-primary; }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // alphaTex panel
 // ---------------------------------------------------------------------------

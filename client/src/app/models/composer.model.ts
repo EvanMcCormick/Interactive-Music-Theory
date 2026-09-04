@@ -302,13 +302,39 @@ export function createRestBeat(duration: DurationValue = 4): BeatDoc {
   };
 }
 
-export function createDefaultBar(showTablature: boolean): BarDoc {
+/**
+ * A bar filled with rests for a whole measure.
+ *
+ * Guitar Pro shows every position in a bar as a rest until it is filled in, and
+ * the caret steps between those positions. A bar holding a single rest would
+ * give a 4/4 measure just one slot, so every note entered would land on top of
+ * the last one.
+ */
+export function createDefaultBar(
+  showTablature: boolean,
+  timeSignature: TimeSignature = { numerator: 4, denominator: 4, isCommon: true }
+): BarDoc {
+  const slotDuration = (timeSignature.denominator as DurationValue) ?? 4;
+  const slots = Math.max(1, timeSignature.numerator);
+
   return {
-    clef: showTablature ? 'g2' : 'g2',
+    clef: 'g2',
     clefOttava: 'regular',
     keySignature: { fifths: 0, mode: 'major' },
-    voices: [{ beats: [createRestBeat()] }]
+    voices: [{ beats: Array.from({ length: slots }, () => createRestBeat(slotDuration)) }]
   };
+}
+
+/** Time signature in force at `index`, following the inherit-from-previous rule. */
+export function effectiveTimeSignature(
+  masterBars: MasterBarDoc[],
+  index: number
+): TimeSignature {
+  for (let i = Math.min(index, masterBars.length - 1); i >= 0; i--) {
+    const signature = masterBars[i]?.timeSignature;
+    if (signature) return signature;
+  }
+  return { numerator: 4, denominator: 4, isCommon: true };
 }
 
 export function createDefaultCursor(): EditCursor {

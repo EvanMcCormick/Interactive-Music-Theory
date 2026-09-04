@@ -21,6 +21,7 @@ import { AlphaTabState } from '../../models/alpha-tab.model';
 import {
   ComposerState,
   DurationValue,
+  EditCursor,
   NotePitch,
   TexDiagnostic
 } from '../../models/composer.model';
@@ -36,8 +37,6 @@ interface InstrumentOption {
   program: number;
   fretted: boolean;
 }
-
-const CHROMATIC_SHARPS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 @Component({
   selector: 'app-composer',
@@ -69,6 +68,8 @@ export class ComposerComponent implements OnInit, OnDestroy {
   /** Accumulates digits so two-digit frets like 12 can be typed. */
   private fretBuffer = '';
   private fretBufferTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Where the digits currently being typed were written. */
+  private fretTarget: EditCursor | null = null;
 
   readonly durations: DurationOption[] = [
     { label: '𝅝', value: 1, dots: 0 },
@@ -90,11 +91,6 @@ export class ComposerComponent implements OnInit, OnDestroy {
   ];
 
   newTrackInstrument: InstrumentOption = this.instruments[3];
-
-  /** Octaves offered by the pitched-input keyboard. */
-  readonly octaves = [2, 3, 4, 5, 6];
-  inputOctave = 4;
-  readonly chromatic = CHROMATIC_SHARPS;
 
   constructor(
     private readonly composer: ComposerService,
@@ -175,22 +171,33 @@ export class ComposerComponent implements OnInit, OnDestroy {
     return this.state.doc.tracks[this.state.cursor.trackIndex]?.playback.program ?? 25;
   }
 
-  enterPitch(noteValue: number): void {
-    const pitch: NotePitch = { kind: 'pitched', noteValue, octave: this.inputOctave };
-    this.alphaTabService.auditionNote(
-      (this.inputOctave + 1) * 12 + noteValue,
-      this.currentTrackProgram
-    );
-    this.composer.setNoteAtCursor(pitch);
-  }
+  /**
+   * Writes a fret and moves on, or rewrites the note just written.
+   *
+   * The first digit places a note and advances the caret so a melody flows.
+   * A further digit typed within the window belongs to the same number, so it
+   * rewrites that note in place - "1" then "2" gives fret 12 on one beat, not
+   * fret 1 followed by fret 2 - and the caret stays where it moved to.
+   */
+  private writeFret(fret: number, continuing: boolean): void {
+    if (!this.state) return;
 
-  private writeFret(stringIndex: number, fret: number): void {
+    const target = continuing && this.fretTarget ? this.fretTarget : this.state.cursor;
+    const stringIndex = target.stringIndex ?? 0;
     const pitch: NotePitch = { kind: 'fretted', string: stringIndex + 1, fret };
+
     this.auditionFretted(stringIndex, fret);
-    this.composer.setCursor({ stringIndex });
-    // Do not advance: as in Guitar Pro the caret stays put, so other strings of
-    // the same chord can be typed. Arrow keys move on.
-    this.composer.setNoteAtCursor(pitch, false);
+
+    if (continuing && this.fretTarget) {
+      const resume = this.state.cursor;
+      this.composer.setCursor(this.fretTarget);
+      this.composer.setNoteAtCursor(pitch, false);
+      this.composer.setCursor(resume);
+      return;
+    }
+
+    this.fretTarget = { ...target };
+    this.composer.setNoteAtCursor(pitch, true);
   }
 
   private auditionFretted(stringIndex: number, fret: number): void {
@@ -383,20 +390,22 @@ export class ComposerComponent implements OnInit, OnDestroy {
     event.preventDefault();
 
     const combined = Number(this.fretBuffer + event.key);
-    const fret = combined <= ComposerComponent.MAX_FRET ? combined : Number(event.key);
-    this.fretBuffer = String(fret);
+    const continuing = this.fretBuffer !== '' && combined <= ComposerComponent.MAX_FRET;
+    const fret = continuing ? combined : Number(event.key);
 
+    this.fretBuffer = String(fret);
     if (this.fretBufferTimer) clearTimeout(this.fretBufferTimer);
     this.fretBufferTimer = setTimeout(
       () => this.resetFretBuffer(),
       ComposerComponent.FRET_BUFFER_MS
     );
 
-    this.writeFret(this.state?.cursor.stringIndex ?? 0, fret);
+    this.writeFret(fret, continuing);
   }
 
   private resetFretBuffer(): void {
     this.fretBuffer = '';
+    this.fretTarget = null;
     if (this.fretBufferTimer) {
       clearTimeout(this.fretBufferTimer);
       this.fretBufferTimer = null;

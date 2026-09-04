@@ -13,6 +13,7 @@ import {
   StaffDoc,
   TrackDoc,
   createDefaultBar,
+  effectiveTimeSignature,
   createDefaultCursor,
   createDefaultMasterBar,
   createDefaultNoteEffects,
@@ -84,7 +85,7 @@ export class ComposerService {
       album: '',
       tempo: 120,
       masterBars,
-      tracks: [ComposerService.createTrack('Guitar', 'gtr', 25, true, masterBars.length)]
+      tracks: [ComposerService.createTrack('Guitar', 'gtr', 25, true, masterBars)]
     };
   }
 
@@ -93,7 +94,7 @@ export class ComposerService {
     shortName: string,
     program: number,
     fretted: boolean,
-    barCount: number
+    masterBars: MasterBarDoc[]
   ): TrackDoc {
     const staff: StaffDoc = {
       tuning: fretted ? STANDARD_GUITAR_TUNING.slice() : [],
@@ -105,7 +106,9 @@ export class ComposerService {
       showTablature: fretted,
       showSlash: false,
       showNumbered: false,
-      bars: Array.from({ length: barCount }, () => createDefaultBar(fretted))
+      bars: masterBars.map((_, index) =>
+        createDefaultBar(fretted, effectiveTimeSignature(masterBars, index))
+      )
     };
 
     return {
@@ -320,7 +323,6 @@ export class ComposerService {
       }
 
       beat.notes.push(note);
-      if (advance) this.appendTrailingRest(draft, cursor, state.inputDuration);
     });
 
     if (advance) this.moveCursorByBeat(1);
@@ -338,22 +340,26 @@ export class ComposerService {
       beat.isRest = true;
       beat.duration = state.inputDuration;
       beat.dots = state.inputDots;
-      if (advance) this.appendTrailingRest(draft, cursor, state.inputDuration);
     });
 
     if (advance) this.moveCursorByBeat(1);
   }
 
+  /**
+   * Clears the beat at the caret back to a rest.
+   *
+   * The slot is kept rather than removed: bars are pre-filled with a full
+   * measure of rests, so deleting a note should empty its position, not
+   * shorten the bar.
+   */
   deleteAtCursor(): void {
     const cursor = this.stateSubject.getValue().cursor;
     this.commit(draft => {
       const voice = this.voiceAt(draft, cursor);
-      if (!voice || voice.beats.length === 0) return;
-      if (voice.beats.length === 1) {
-        voice.beats[0] = createRestBeat(voice.beats[0].duration);
-      } else {
-        voice.beats.splice(cursor.beatIndex, 1);
-      }
+      const beat = voice?.beats[cursor.beatIndex];
+      if (!beat) return;
+      beat.notes = [];
+      beat.isRest = true;
     });
   }
 
@@ -374,17 +380,6 @@ export class ComposerService {
     this.setInputDuration(duration, dots);
   }
 
-  /**
-   * Appends a trailing rest when the caret sits on the final beat, so there is
-   * always somewhere to type next. Call from inside an existing commit so note
-   * entry stays a single undo step.
-   */
-  private appendTrailingRest(draft: ScoreDoc, cursor: EditCursor, duration: DurationValue): void {
-    const voice = this.voiceAt(draft, cursor);
-    if (voice && cursor.beatIndex >= voice.beats.length - 1) {
-      voice.beats.push(createRestBeat(duration));
-    }
-  }
 
   // -------------------------------------------------------------------------
   // Structure: bars and tracks
@@ -401,7 +396,10 @@ export class ComposerService {
       for (const track of draft.tracks) {
         for (const staff of track.staves) {
           const template = staff.bars[Math.min(at, staff.bars.length - 1)];
-          const bar = createDefaultBar(staff.showTablature);
+          const bar = createDefaultBar(
+            staff.showTablature,
+            effectiveTimeSignature(draft.masterBars, at)
+          );
           if (template) {
             bar.clef = template.clef;
             bar.clefOttava = template.clefOttava;
@@ -438,7 +436,7 @@ export class ComposerService {
           name.slice(0, 3).toLowerCase(),
           program,
           fretted,
-          draft.masterBars.length
+          draft.masterBars
         )
       );
     });

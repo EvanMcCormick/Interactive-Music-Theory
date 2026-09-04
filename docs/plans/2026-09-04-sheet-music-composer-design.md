@@ -185,9 +185,40 @@ Two further timing details, both learned the hard way:
   update calls `detectChanges()`; `markForCheck()` alone left the caret
   unrendered under `OnPush`.
 
-Digits accumulate for 800ms so two-digit frets can be typed, and entry does not
-advance the caret - as in Guitar Pro, it stays put so other strings of the same
-chord can be typed.
+Digits accumulate for 800ms so two-digit frets can be typed. Entry advances the
+caret so a melody flows; a digit arriving inside that window rewrites the note
+just placed rather than the new position, so "1" then "2" gives fret 12 on one
+beat rather than two separate notes.
+
+### Standard notation is edited the same way
+
+Clicking a notation staff writes the note at that position, since there is no
+second keystroke to wait for. `staff-pitch.ts` holds the arithmetic as pure
+functions: a staff position is a diatonic step, clef fixes which letter the
+bottom line carries, the key signature decides whether that letter is sharpened
+or flattened, and an ottava marking shifts the sounding octave. Accidentals
+that cross an octave - B sharp sounding as C, C flat as B - carry the octave
+rather than wrapping the semitone in place. It is covered by 35 specs checked
+against known facts (treble E4 through F5, middle C on ledger lines in both
+treble and bass, alto and tenor placement, both accidental orders).
+
+### Which staff was clicked
+
+alphaTab's `beatMouseDown` cannot answer this: a beat's bounds span every staff
+in the system, so on a multi-track score it always reports the first track.
+Clicking the piano staff selected the guitar.
+
+`StaffHitTestService` therefore resolves the vertical question itself. It
+clusters the rendered line positions by gap - breaking whenever the spacing
+changes - which separates a guitar track's 5-line notation staff and 6-line
+tablature staff from the next track's staves. The component builds the same
+list from the document, in alphaTab's render order (notation before tablature,
+track by track), and the two line up index for index, giving the track and
+staff under the pointer.
+
+Bars are pre-filled with a full measure of rests, as Guitar Pro shows them. A
+bar holding a single rest gave a 4/4 measure just one position, so every note
+entered landed on top of the last.
 
 ### Existing components are not reusable as-is
 
@@ -273,10 +304,6 @@ Still outstanding, all of which the model and mapper already support - only the
 UI controls are missing:
 
 - Editing time signature, key signature and clef per bar.
-- Click-to-edit on standard notation. Only fretted staves are editable directly
-  on the score; pitched staves still use the on-screen keyboard, because
-  mapping a click on a 5-line staff back to a pitch needs clef, key signature
-  and ledger lines resolved first.
 - Repeats, alternate endings, section markers and triplet feel.
 - Dynamics, tuplets and note effects (bends, slides, hammer-ons, harmonics).
 - Multiple voices per staff.
