@@ -27,15 +27,28 @@ import {
  * alphaTab's own AlphaTexExporter for the tex escape hatch and persistence.
  * Score -> ScoreDoc brings edited tex back in.
  *
- * OCTAVE CONVENTION: alphaTab stores octaves one higher than scientific pitch
- * notation. alphaTex `C4` (middle C, MIDI 60) is stored as octave 5, tone 0,
- * because realValue = octave * 12 + tone. ScoreDoc uses scientific notation, so
- * every conversion crosses this +1/-1 boundary. Verified in the spec.
+ * Two alphaTab conventions are normalised here so the rest of the app can use
+ * the ones musicians expect. Both are verified in the spec.
+ *
+ * OCTAVE: alphaTab stores octaves one higher than scientific pitch notation.
+ * alphaTex `C4` (middle C, MIDI 60) is stored as octave 5, tone 0, because
+ * realValue = octave * 12 + tone. ScoreDoc uses scientific notation.
+ *
+ * STRING NUMBERING: alphaTab numbers strings from the LOWEST pitch, so on a
+ * 6-string guitar string 1 is the low E and string 6 is the high E. Standard
+ * tab notation is the opposite - string 1 is the high E, the top line of the
+ * tab staff. ScoreDoc uses the tab convention, where string 1 always
+ * corresponds to StaffDoc.tuning[0], the highest-pitched string.
  */
 @Injectable({ providedIn: 'root' })
 export class ScoreDocMapperService {
   /** alphaTab octave = scientific octave + 1. */
   private static readonly OCTAVE_OFFSET = 1;
+
+  /** Converts between tab string numbering and alphaTab's, in either direction. */
+  private flipString(stringNumber: number, stringCount: number): number {
+    return stringCount - stringNumber + 1;
+  }
 
   // -------------------------------------------------------------------------
   // ScoreDoc -> alphaTab Score
@@ -154,13 +167,14 @@ export class ScoreDocMapperService {
       );
     }
 
+    const stringCount = doc.tuning.length;
     for (const barDoc of doc.bars) {
-      staff.addBar(this.toBar(barDoc));
+      staff.addBar(this.toBar(barDoc, stringCount));
     }
     return staff;
   }
 
-  private toBar(doc: BarDoc): alphaTab.model.Bar {
+  private toBar(doc: BarDoc, stringCount: number): alphaTab.model.Bar {
     const bar = new alphaTab.model.Bar();
     bar.clef = this.toClef(doc.clef);
     bar.clefOttava = this.toOttavia(doc.clefOttava);
@@ -171,20 +185,20 @@ export class ScoreDocMapperService {
         : alphaTab.model.KeySignatureType.Major;
 
     for (const voiceDoc of doc.voices) {
-      bar.addVoice(this.toVoice(voiceDoc));
+      bar.addVoice(this.toVoice(voiceDoc, stringCount));
     }
     return bar;
   }
 
-  private toVoice(doc: VoiceDoc): alphaTab.model.Voice {
+  private toVoice(doc: VoiceDoc, stringCount: number): alphaTab.model.Voice {
     const voice = new alphaTab.model.Voice();
     for (const beatDoc of doc.beats) {
-      voice.addBeat(this.toBeat(beatDoc));
+      voice.addBeat(this.toBeat(beatDoc, stringCount));
     }
     return voice;
   }
 
-  private toBeat(doc: BeatDoc): alphaTab.model.Beat {
+  private toBeat(doc: BeatDoc, stringCount: number): alphaTab.model.Beat {
     const beat = new alphaTab.model.Beat();
     beat.duration = doc.duration as unknown as alphaTab.model.Duration;
     beat.dots = doc.dots;
@@ -218,17 +232,17 @@ export class ScoreDocMapperService {
     // An empty note list is how alphaTab represents a rest.
     if (!doc.isRest) {
       for (const noteDoc of doc.notes) {
-        beat.addNote(this.toNote(noteDoc));
+        beat.addNote(this.toNote(noteDoc, stringCount));
       }
     }
     return beat;
   }
 
-  private toNote(doc: NoteDoc): alphaTab.model.Note {
+  private toNote(doc: NoteDoc, stringCount: number): alphaTab.model.Note {
     const note = new alphaTab.model.Note();
 
     if (doc.pitch.kind === 'fretted') {
-      note.string = doc.pitch.string;
+      note.string = this.flipString(doc.pitch.string, stringCount);
       note.fret = doc.pitch.fret;
     } else {
       note.octave = doc.pitch.octave + ScoreDocMapperService.OCTAVE_OFFSET;
@@ -333,11 +347,11 @@ export class ScoreDocMapperService {
       showTablature: staff.showTablature,
       showSlash: staff.showSlash,
       showNumbered: staff.showNumbered,
-      bars: staff.bars.map(b => this.fromBar(b))
+      bars: staff.bars.map(b => this.fromBar(b, staff.stringTuning.tunings.length))
     };
   }
 
-  private fromBar(bar: alphaTab.model.Bar): BarDoc {
+  private fromBar(bar: alphaTab.model.Bar, stringCount: number): BarDoc {
     return {
       clef: this.fromClef(bar.clef),
       clefOttava: this.fromOttavia(bar.clefOttava),
@@ -346,15 +360,15 @@ export class ScoreDocMapperService {
         mode:
           bar.keySignatureType === alphaTab.model.KeySignatureType.Minor ? 'minor' : 'major'
       },
-      voices: bar.voices.map(v => this.fromVoice(v))
+      voices: bar.voices.map(v => this.fromVoice(v, stringCount))
     };
   }
 
-  private fromVoice(voice: alphaTab.model.Voice): VoiceDoc {
-    return { beats: voice.beats.map(b => this.fromBeat(b)) };
+  private fromVoice(voice: alphaTab.model.Voice, stringCount: number): VoiceDoc {
+    return { beats: voice.beats.map(b => this.fromBeat(b, stringCount)) };
   }
 
-  private fromBeat(beat: alphaTab.model.Beat): BeatDoc {
+  private fromBeat(beat: alphaTab.model.Beat, stringCount: number): BeatDoc {
     const effects = createDefaultBeatEffects();
     effects.isLetRing = beat.isLetRing;
     effects.isPalmMute = beat.isPalmMute;
@@ -373,7 +387,7 @@ export class ScoreDocMapperService {
           ? { numerator: beat.tupletNumerator, denominator: beat.tupletDenominator }
           : null,
       isRest: beat.notes.length === 0,
-      notes: beat.notes.map(n => this.fromNote(n)),
+      notes: beat.notes.map(n => this.fromNote(n, stringCount)),
       dynamics: this.fromDynamicValue(beat.dynamics),
       lyrics: beat.lyrics && beat.lyrics.length > 0 ? beat.lyrics[0] : null,
       text: beat.text ?? null,
@@ -381,7 +395,7 @@ export class ScoreDocMapperService {
     };
   }
 
-  private fromNote(note: alphaTab.model.Note): NoteDoc {
+  private fromNote(note: alphaTab.model.Note, stringCount: number): NoteDoc {
     const effects = createDefaultNoteEffects();
     effects.isGhost = note.isGhost;
     effects.isDead = note.isDead;
@@ -392,7 +406,11 @@ export class ScoreDocMapperService {
     effects.harmonic = this.fromHarmonicType(note.harmonicType);
 
     const pitch: NotePitch = note.isStringed
-      ? { kind: 'fretted', string: note.string, fret: note.fret }
+      ? {
+          kind: 'fretted',
+          string: this.flipString(note.string, stringCount),
+          fret: note.fret
+        }
       : {
           kind: 'pitched',
           noteValue: note.tone,

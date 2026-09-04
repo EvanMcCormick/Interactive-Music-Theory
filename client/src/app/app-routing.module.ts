@@ -11,6 +11,11 @@ const routes: Routes = [
       .then(m => m.GpViewerComponent)
   },
   {
+    path: 'composer',
+    loadComponent: () => import('./components/composer/composer.component')
+      .then(m => m.ComposerComponent)
+  },
+  {
     path: 'gp-library',
     loadComponent: () => import('./components/gp-library/gp-library.component')
       .then(m => m.GpLibraryComponent)

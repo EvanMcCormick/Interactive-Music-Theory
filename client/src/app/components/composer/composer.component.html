@@ -1,0 +1,193 @@
+<div class="composer-container" *ngIf="state as s">
+  <!-- Toolbar -->
+  <header class="composer-header">
+    <div class="score-info">
+      <input
+        class="title-input"
+        type="text"
+        [ngModel]="s.doc.title"
+        (ngModelChange)="onTitleChange($event)"
+        aria-label="Score title"
+      />
+      <span class="dirty-marker" *ngIf="s.isDirty" title="Unsaved changes">●</span>
+    </div>
+
+    <div class="transport">
+      <button class="icon-btn" (click)="playPause()" [title]="playerState?.isPlaying ? 'Pause (Space)' : 'Play (Space)'">
+        <span *ngIf="!playerState?.isPlaying">▶</span>
+        <span *ngIf="playerState?.isPlaying">❚❚</span>
+      </button>
+      <button class="icon-btn" (click)="stop()" title="Stop">■</button>
+
+      <label class="tempo-field">
+        <span>BPM</span>
+        <input
+          type="number"
+          min="20"
+          max="400"
+          [ngModel]="s.doc.tempo"
+          (ngModelChange)="onTempoChange($event)"
+        />
+      </label>
+
+      <button
+        class="toggle-btn"
+        [class.active]="metronomeEnabled"
+        (click)="toggleMetronome()"
+        title="Metronome"
+      >Metronome</button>
+      <button
+        class="toggle-btn"
+        [class.active]="countInEnabled"
+        (click)="toggleCountIn()"
+        title="Count-in"
+      >Count-in</button>
+    </div>
+
+    <div class="header-actions">
+      <button class="text-btn" (click)="undo()" [disabled]="!s.canUndo" title="Undo (Ctrl+Z)">Undo</button>
+      <button class="text-btn" (click)="redo()" [disabled]="!s.canRedo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+      <button class="text-btn" (click)="newScore()" title="Start a new score">New</button>
+      <button class="text-btn" [class.active]="showTexPanel" (click)="toggleTexPanel()">alphaTex</button>
+    </div>
+  </header>
+
+  <div class="composer-body">
+    <!-- Track list -->
+    <aside class="track-panel">
+      <h2 class="panel-heading">Tracks</h2>
+      <ul class="track-list">
+        <li
+          *ngFor="let track of s.doc.tracks; let i = index; trackBy: trackByIndex"
+          class="track-item"
+          [class.selected]="s.cursor.trackIndex === i"
+          (click)="selectTrack(i)"
+        >
+          <span class="track-swatch" [style.background-color]="track.color"></span>
+          <span class="track-name">{{ track.name }}</span>
+          <button
+            class="track-remove"
+            (click)="removeTrack(i); $event.stopPropagation()"
+            [disabled]="s.doc.tracks.length <= 1"
+            title="Remove track"
+          >×</button>
+        </li>
+      </ul>
+
+      <div class="add-track">
+        <select [(ngModel)]="newTrackInstrument" aria-label="Instrument for new track">
+          <option *ngFor="let inst of instruments" [ngValue]="inst">{{ inst.name }}</option>
+        </select>
+        <button class="text-btn" (click)="addTrack()">Add track</button>
+      </div>
+
+      <h2 class="panel-heading">Bars</h2>
+      <div class="bar-controls">
+        <button class="text-btn" (click)="addBar()">Add bar</button>
+        <button class="text-btn" (click)="removeBar()" [disabled]="s.doc.masterBars.length <= 1">
+          Remove bar
+        </button>
+      </div>
+      <p class="hint">{{ s.doc.masterBars.length }} bars</p>
+    </aside>
+
+    <!-- Score -->
+    <main class="score-area">
+      <div class="alphatab-container" #alphaTabContainer></div>
+
+      <p class="render-error" *ngIf="texApplyError">{{ texApplyError }}</p>
+    </main>
+  </div>
+
+  <!-- Note input -->
+  <section class="input-panel">
+    <div class="duration-palette">
+      <button
+        *ngFor="let d of durations"
+        class="duration-btn"
+        [class.active]="isDurationActive(d)"
+        (click)="selectDuration(d)"
+        [title]="d.value + 'th note'"
+      >{{ d.label }}</button>
+
+      <button class="duration-btn" [class.active]="s.inputDots > 0" (click)="toggleDot()" title="Dotted">
+        ·
+      </button>
+      <button class="duration-btn" (click)="enterRest()" title="Rest (R)">𝄽</button>
+      <button class="duration-btn" (click)="deleteAtCursor()" title="Delete (Del)">⌫</button>
+
+      <span class="cursor-readout">
+        Bar {{ s.cursor.barIndex + 1 }} · Beat {{ s.cursor.beatIndex + 1 }}
+      </span>
+    </div>
+
+    <!-- Fretted input -->
+    <div class="fretboard-input" *ngIf="currentStaffIsFretted">
+      <div class="fret-header">
+        <span class="string-label"></span>
+        <span class="fret-number" *ngFor="let f of frets">{{ f }}</span>
+      </div>
+      <div
+        class="string-row"
+        *ngFor="let str of [].constructor(currentStringCount); let si = index"
+        [class.active]="s.cursor.stringIndex === si"
+      >
+        <span class="string-label">{{ si + 1 }}</span>
+        <button
+          class="fret-cell"
+          *ngFor="let f of frets"
+          (click)="enterFret(si, f)"
+          [title]="'String ' + (si + 1) + ', fret ' + f"
+        >{{ f }}</button>
+      </div>
+    </div>
+
+    <!-- Pitched input -->
+    <div class="keyboard-input" *ngIf="!currentStaffIsFretted">
+      <label class="octave-field">
+        <span>Octave</span>
+        <select [(ngModel)]="inputOctave">
+          <option *ngFor="let o of octaves" [ngValue]="o">{{ o }}</option>
+        </select>
+      </label>
+      <div class="keys">
+        <button
+          *ngFor="let name of chromatic; let v = index"
+          class="key"
+          [class.black]="name.includes('#')"
+          (click)="enterPitch(v)"
+        >{{ name }}{{ inputOctave }}</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- alphaTex escape hatch -->
+  <section class="tex-panel" *ngIf="showTexPanel">
+    <div class="tex-header">
+      <h2 class="panel-heading">alphaTex source</h2>
+      <div class="tex-actions">
+        <button class="text-btn" (click)="applyTex()">Apply</button>
+        <button class="text-btn" (click)="revertTex()">Revert</button>
+      </div>
+    </div>
+
+    <textarea
+      class="tex-editor"
+      [(ngModel)]="texDraft"
+      spellcheck="false"
+      aria-label="alphaTex source"
+    ></textarea>
+
+    <ul class="diagnostics" *ngIf="texDiagnostics.length > 0">
+      <li
+        *ngFor="let d of texDiagnostics"
+        class="diagnostic"
+        [class.error]="d.severity === 'error'"
+        [class.warning]="d.severity === 'warning'"
+      >
+        <span class="location">{{ d.line }}:{{ d.column }}</span>
+        <span class="message">{{ d.message }}</span>
+      </li>
+    </ul>
+  </section>
+</div>

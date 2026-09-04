@@ -212,6 +212,84 @@ export class AlphaTabService {
   }
 
   /**
+   * Render an in-memory score. Used by the composer, which builds a Score from
+   * its own ScoreDoc rather than loading a file.
+   */
+  renderScore(score: alphaTab.model.Score, trackIndices?: number[]): void {
+    if (!this.api) {
+      throw new Error('alphaTab API not initialized');
+    }
+    this.updateState({ loadingState: 'loading', errorMessage: null });
+    this.api.renderScore(score, trackIndices);
+  }
+
+  /**
+   * Sound a single note immediately, on the score's own soundfont.
+   *
+   * Auditioning is deliberately decoupled from rendering: note entry should be
+   * audible instantly even while a re-render is still in flight.
+   *
+   * @param midiKey MIDI note number (60 = middle C)
+   * @param program General MIDI program to voice the note with
+   * @param durationMs How long to hold the note
+   */
+  auditionNote(midiKey: number, program = 25, durationMs = 500): void {
+    if (!this.api) return;
+
+    const midi = new alphaTab.midi.MidiFile();
+    midi.division = 960;
+
+    const channel = 0;
+    const ticks = Math.max(1, Math.round((durationMs / 500) * midi.division));
+
+    midi.addEvent(
+      new alphaTab.midi.ProgramChangeEvent(0, 0, channel, program)
+    );
+    midi.addEvent(
+      new alphaTab.midi.NoteOnEvent(0, 0, channel, midiKey, 100)
+    );
+    midi.addEvent(
+      new alphaTab.midi.NoteOffEvent(0, ticks, channel, midiKey, 0)
+    );
+
+    this.api.player?.playOneTimeMidiFile(midi);
+  }
+
+  /**
+   * Toggle the metronome. Volume is 0-1.
+   */
+  setMetronomeVolume(volume: number): void {
+    if (this.api) {
+      this.api.metronomeVolume = Math.max(0, Math.min(1, volume));
+    }
+  }
+
+  /**
+   * Toggle the count-in before playback. Volume is 0-1.
+   */
+  setCountInVolume(volume: number): void {
+    if (this.api) {
+      this.api.countInVolume = Math.max(0, Math.min(1, volume));
+    }
+  }
+
+  /**
+   * Restrict playback to a tick range, or pass null to play the whole score.
+   */
+  setPlaybackRange(startTick: number | null, endTick?: number): void {
+    if (!this.api) return;
+
+    if (startTick === null) {
+      this.api.playbackRange = null;
+      return;
+    }
+    const range = new alphaTab.synth.PlaybackRange();
+    range.startTick = startTick;
+    range.endTick = endTick ?? startTick;
+    this.api.playbackRange = range;
+  }
+
+  /**
    * Start playback
    */
   play(): void {

@@ -1,0 +1,453 @@
+// Composer Component Styles
+// Follows the dark theme established by the fretboard and GP viewer components
+@use 'sass:color';
+
+$nav-bg-primary: #2c3e50;
+$nav-bg-secondary: #34495e;
+$accent-color: #3498db;
+$accent-hover: #2980b9;
+$text-primary: #ecf0f1;
+$text-secondary: #bdc3c7;
+$border-color: #465666;
+$error-color: #e74c3c;
+$warning-color: #f39c12;
+$surface-bg: #1a252f;
+
+.composer-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: $surface-bg;
+  color: $text-primary;
+}
+
+// ---------------------------------------------------------------------------
+// Toolbar
+// ---------------------------------------------------------------------------
+
+.composer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 0.75rem 1.25rem;
+  background-color: $nav-bg-primary;
+  border-bottom: 1px solid $border-color;
+  flex-wrap: wrap;
+}
+
+.score-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+
+  .title-input {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: $text-primary;
+    font-size: 1.15rem;
+    font-weight: 600;
+    padding: 0.25rem 0.5rem;
+    min-width: 12rem;
+
+    &:hover { border-color: $border-color; }
+    &:focus {
+      outline: none;
+      border-color: $accent-color;
+      background-color: rgba(0, 0, 0, 0.2);
+    }
+  }
+
+  .dirty-marker {
+    color: $accent-color;
+    font-size: 0.7rem;
+  }
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tempo-field,
+.octave-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: $text-secondary;
+  font-size: 0.8rem;
+
+  input,
+  select {
+    width: 4.5rem;
+    padding: 0.3rem 0.4rem;
+    background-color: $nav-bg-secondary;
+    border: 1px solid $border-color;
+    border-radius: 4px;
+    color: $text-primary;
+
+    &:focus { outline: none; border-color: $accent-color; }
+  }
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.icon-btn,
+.text-btn,
+.toggle-btn {
+  background-color: $nav-bg-secondary;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  color: $text-primary;
+  cursor: pointer;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+
+  &:hover:not(:disabled) {
+    background-color: $accent-color;
+    border-color: $accent-hover;
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  &.active {
+    background-color: $accent-color;
+    border-color: $accent-hover;
+  }
+}
+
+.icon-btn {
+  min-width: 2.4rem;
+  font-size: 0.95rem;
+}
+
+// ---------------------------------------------------------------------------
+// Body: track panel + score
+// ---------------------------------------------------------------------------
+
+.composer-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.track-panel {
+  width: 15rem;
+  flex-shrink: 0;
+  padding: 1rem;
+  background-color: $nav-bg-primary;
+  border-right: 1px solid $border-color;
+  overflow-y: auto;
+}
+
+.panel-heading {
+  margin: 0 0 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: $text-secondary;
+}
+
+.track-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+
+.track-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+
+  &:hover { background-color: rgba(255, 255, 255, 0.06); }
+
+  &.selected {
+    background-color: rgba($accent-color, 0.25);
+    box-shadow: inset 2px 0 0 $accent-color;
+  }
+
+  .track-swatch {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .track-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .track-remove {
+    background: none;
+    border: none;
+    color: $text-secondary;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 0.2rem;
+
+    &:hover:not(:disabled) { color: $error-color; }
+    &:disabled { opacity: 0.3; cursor: not-allowed; }
+  }
+}
+
+.add-track {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 1.5rem;
+
+  select {
+    padding: 0.35rem;
+    background-color: $nav-bg-secondary;
+    border: 1px solid $border-color;
+    border-radius: 4px;
+    color: $text-primary;
+  }
+}
+
+.bar-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  color: $text-secondary;
+}
+
+.score-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: #ffffff;
+  position: relative;
+}
+
+.alphatab-container {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.render-error {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  background-color: rgba($error-color, 0.15);
+  border-top: 1px solid $error-color;
+  color: $error-color;
+  font-size: 0.85rem;
+}
+
+// ---------------------------------------------------------------------------
+// Note input
+// ---------------------------------------------------------------------------
+
+.input-panel {
+  background-color: $nav-bg-primary;
+  border-top: 1px solid $border-color;
+  padding: 0.75rem 1.25rem;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.duration-palette {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.duration-btn {
+  min-width: 2.4rem;
+  height: 2.2rem;
+  background-color: $nav-bg-secondary;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  color: $text-primary;
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+
+  &:hover { background-color: $accent-color; }
+  &.active {
+    background-color: $accent-color;
+    border-color: $accent-hover;
+  }
+}
+
+.cursor-readout {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: $text-secondary;
+}
+
+// Fretted input
+.fretboard-input {
+  display: inline-block;
+  font-size: 0.8rem;
+}
+
+.fret-header,
+.string-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.string-label,
+.fret-number {
+  width: 2.1rem;
+  text-align: center;
+  color: $text-secondary;
+  font-size: 0.72rem;
+}
+
+.string-row {
+  &.active .string-label { color: $accent-color; font-weight: 700; }
+  &.active .fret-cell { border-color: rgba($accent-color, 0.6); }
+}
+
+.fret-cell {
+  width: 2.1rem;
+  height: 1.7rem;
+  background-color: $nav-bg-secondary;
+  border: 1px solid $border-color;
+  border-radius: 3px;
+  color: $text-secondary;
+  cursor: pointer;
+  font-size: 0.75rem;
+
+  &:hover {
+    background-color: $accent-color;
+    color: $text-primary;
+  }
+}
+
+// Pitched input
+.keyboard-input {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.keys {
+  display: flex;
+  gap: 3px;
+}
+
+.key {
+  min-width: 3.2rem;
+  height: 3rem;
+  background-color: #f8f9fa;
+  border: 1px solid #adb5bd;
+  border-radius: 0 0 4px 4px;
+  color: #212529;
+  cursor: pointer;
+  font-size: 0.75rem;
+
+  &:hover { background-color: $accent-color; color: $text-primary; }
+
+  &.black {
+    background-color: #2b3138;
+    border-color: #12161a;
+    color: $text-secondary;
+
+    &:hover { background-color: $accent-color; color: $text-primary; }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// alphaTex panel
+// ---------------------------------------------------------------------------
+
+.tex-panel {
+  background-color: $nav-bg-primary;
+  border-top: 1px solid $border-color;
+  padding: 0.75rem 1.25rem 1rem;
+  max-height: 45vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.tex-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+
+  .panel-heading { margin: 0; }
+}
+
+.tex-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.tex-editor {
+  width: 100%;
+  min-height: 9rem;
+  resize: vertical;
+  background-color: #11181f;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  color: $text-primary;
+  font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 0.6rem;
+
+  &:focus { outline: none; border-color: $accent-color; }
+}
+
+.diagnostics {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  overflow-y: auto;
+  max-height: 8rem;
+}
+
+.diagnostic {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.3rem 0.4rem;
+  border-left: 3px solid $text-secondary;
+  margin-bottom: 2px;
+  font-size: 0.78rem;
+  background-color: rgba(0, 0, 0, 0.2);
+
+  &.error { border-left-color: $error-color; }
+  &.warning { border-left-color: $warning-color; }
+
+  .location {
+    flex-shrink: 0;
+    color: $text-secondary;
+    font-family: 'Consolas', monospace;
+  }
+
+  .message { color: $text-primary; }
+}
