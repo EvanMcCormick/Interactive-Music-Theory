@@ -1,0 +1,49 @@
+<section class="library-panel">
+  <h2 class="panel-heading">Library</h2>
+
+  <div class="save-actions">
+    <button class="text-btn" (click)="save()">
+      {{ currentId ? 'Save' : 'Save to library' }}
+    </button>
+    <button class="text-btn" (click)="save(true)" *ngIf="currentId">Save as copy</button>
+  </div>
+
+  <ul class="composition-list" *ngIf="entries.length > 0; else emptyLibrary">
+    <li
+      *ngFor="let entry of entries; trackBy: trackById"
+      class="composition-item"
+      [class.current]="entry.id === currentId"
+      (click)="load(entry.id)"
+      [title]="'Load ' + entry.title"
+    >
+      <span class="composition-title">{{ entry.title }}</span>
+      <span class="composition-meta">
+        {{ entry.trackCount }} track{{ entry.trackCount === 1 ? '' : 's' }} ·
+        {{ entry.barCount }} bar{{ entry.barCount === 1 ? '' : 's' }}
+      </span>
+      <button
+        class="composition-remove"
+        (click)="remove(entry.id, entry.title, $event)"
+        title="Delete composition"
+      >×</button>
+    </li>
+  </ul>
+
+  <ng-template #emptyLibrary>
+    <p class="hint">Nothing saved yet.</p>
+  </ng-template>
+
+  <h2 class="panel-heading">Export</h2>
+  <div class="export-actions">
+    <button class="text-btn" (click)="exportGuitarPro()" title="Guitar Pro 7 file">
+      Guitar Pro (.gp)
+    </button>
+    <button class="text-btn" (click)="exportAlphaTex()" title="Plain alphaTex source">
+      alphaTex
+    </button>
+    <button class="text-btn" (click)="exportMidi()" title="Standard MIDI file">MIDI</button>
+  </div>
+
+  <p class="status" *ngIf="statusMessage">{{ statusMessage }}</p>
+  <p class="status error" *ngIf="errorMessage">{{ errorMessage }}</p>
+</section>

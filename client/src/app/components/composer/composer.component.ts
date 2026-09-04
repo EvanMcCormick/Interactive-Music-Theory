@@ -18,6 +18,7 @@ import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerService } from '../../services/composer.service';
 import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
+import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
 import {
   AlphaTabState
 } from '../../models/alpha-tab.model';
@@ -45,7 +46,7 @@ const CHROMATIC_SHARPS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 
 @Component({
   selector: 'app-composer',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, ComposerLibraryPanelComponent],
   templateUrl: './composer.component.html',
   styleUrls: ['./composer.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -68,6 +69,9 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   metronomeEnabled = false;
   countInEnabled = false;
+
+  private resizeObserver: ResizeObserver | null = null;
+  private lastRenderedWidth = 0;
 
   readonly durations: DurationOption[] = [
     { label: '𝅝', value: 1, dots: 0 },
@@ -104,6 +108,15 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   ) {}
 
   ngOnInit(): void {
+    // Subscribe to render requests first, so the initial document state below
+    // is picked up. The debounce also defers the first render past
+    // ngAfterViewInit, giving alphaTab time to finish booting its workers -
+    // rendering synchronously against a freshly constructed API silently
+    // produces an empty surface.
+    this.renderRequest$
+      .pipe(debounceTime(150), takeUntil(this.destroy$))
+      .subscribe(() => this.renderCurrentDocument());
+
     this.composer
       .getState()
       .pipe(takeUntil(this.destroy$))
@@ -121,10 +134,6 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
         // alphaTab events originate outside Angular's zone.
         this.cdr.detectChanges();
       });
-
-    this.renderRequest$
-      .pipe(debounceTime(150), takeUntil(this.destroy$))
-      .subscribe(() => this.renderCurrentDocument());
   }
 
   ngAfterViewInit(): void {
@@ -139,12 +148,38 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
         scrollElement: this.alphaTabContainer.nativeElement
       }
     });
-    this.renderCurrentDocument();
+
+    this.observeContainerWidth();
+    this.renderRequest$.next();
+  }
+
+  /**
+   * alphaTab refuses to render into a zero-width element, logging
+   * "skipped rendering because of width=0". On first paint the container can
+   * still be unmeasured, so watch for it gaining width and render then. This
+   * also recovers the score when the window or side panels resize.
+   */
+  private observeContainerWidth(): void {
+    const element = this.alphaTabContainer?.nativeElement;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+
+    this.resizeObserver = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width > 0 && width !== this.lastRenderedWidth) {
+        this.lastRenderedWidth = width;
+        // render() redraws the score alphaTab already holds. renderScore()
+        // alone will not recover a render that was skipped at width 0.
+        this.alphaTabService.render();
+      }
+    });
+    this.resizeObserver.observe(element);
   }
 
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     this.alphaTabService.dispose();
   }
 

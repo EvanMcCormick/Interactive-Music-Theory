@@ -58,16 +58,8 @@ export class ComposerService {
     return this.stateSubject.asObservable();
   }
 
-  getCurrentState(): ComposerState {
-    return this.stateSubject.getValue();
-  }
-
   get doc(): ScoreDoc {
     return this.stateSubject.getValue().doc;
-  }
-
-  get cursor(): EditCursor {
-    return this.stateSubject.getValue().cursor;
   }
 
   // -------------------------------------------------------------------------
@@ -328,12 +320,10 @@ export class ComposerService {
       }
 
       beat.notes.push(note);
+      if (advance) this.appendTrailingRest(draft, cursor, state.inputDuration);
     });
 
-    if (advance) {
-      this.appendBeatIfAtEnd();
-      this.moveCursorByBeat(1);
-    }
+    if (advance) this.moveCursorByBeat(1);
   }
 
   /** Turns the beat at the caret into a rest. */
@@ -348,12 +338,10 @@ export class ComposerService {
       beat.isRest = true;
       beat.duration = state.inputDuration;
       beat.dots = state.inputDots;
+      if (advance) this.appendTrailingRest(draft, cursor, state.inputDuration);
     });
 
-    if (advance) {
-      this.appendBeatIfAtEnd();
-      this.moveCursorByBeat(1);
-    }
+    if (advance) this.moveCursorByBeat(1);
   }
 
   deleteAtCursor(): void {
@@ -386,27 +374,15 @@ export class ComposerService {
     this.setInputDuration(duration, dots);
   }
 
-  /** Adds a beat when the caret sits on the last beat of the last bar. */
-  private appendBeatIfAtEnd(): void {
-    const state = this.stateSubject.getValue();
-    const cursor = state.cursor;
-    const voice = this.voiceAt(state.doc, cursor);
-    if (!voice) return;
-
-    const atLastBeat = cursor.beatIndex >= voice.beats.length - 1;
-    const staff = this.staffAt(state.doc, cursor);
-    const atLastBar = staff ? cursor.barIndex >= staff.bars.length - 1 : false;
-
-    if (atLastBeat && atLastBar) {
-      this.commit(draft => {
-        const draftVoice = this.voiceAt(draft, cursor);
-        draftVoice?.beats.push(createRestBeat(state.inputDuration));
-      });
-    } else if (atLastBeat) {
-      this.commit(draft => {
-        const draftVoice = this.voiceAt(draft, cursor);
-        draftVoice?.beats.push(createRestBeat(state.inputDuration));
-      });
+  /**
+   * Appends a trailing rest when the caret sits on the final beat, so there is
+   * always somewhere to type next. Call from inside an existing commit so note
+   * entry stays a single undo step.
+   */
+  private appendTrailingRest(draft: ScoreDoc, cursor: EditCursor, duration: DurationValue): void {
+    const voice = this.voiceAt(draft, cursor);
+    if (voice && cursor.beatIndex >= voice.beats.length - 1) {
+      voice.beats.push(createRestBeat(duration));
     }
   }
 
@@ -472,27 +448,6 @@ export class ComposerService {
     if (this.doc.tracks.length <= 1) return;
     this.commit(draft => {
       draft.tracks.splice(index, 1);
-    });
-  }
-
-  updateTrack(index: number, changes: Partial<TrackDoc>): void {
-    this.commit(draft => {
-      const track = draft.tracks[index];
-      if (track) Object.assign(track, changes);
-    });
-  }
-
-  updateMasterBar(index: number, changes: Partial<MasterBarDoc>): void {
-    this.commit(draft => {
-      const masterBar = draft.masterBars[index];
-      if (masterBar) Object.assign(masterBar, changes);
-    });
-  }
-
-  updateBar(cursor: EditCursor, changes: Partial<BarDoc>): void {
-    this.commit(draft => {
-      const bar = this.barAt(draft, cursor);
-      if (bar) Object.assign(bar, changes);
     });
   }
 

@@ -224,6 +224,16 @@ export class AlphaTabService {
   }
 
   /**
+   * Force a re-render of the score alphaTab already holds.
+   *
+   * alphaTab refuses to draw into a zero-width element and does not retry on
+   * its own, so this is needed once the container has actually been laid out.
+   */
+  render(): void {
+    this.api?.render();
+  }
+
+  /**
    * Sound a single note immediately, on the score's own soundfont.
    *
    * Auditioning is deliberately decoupled from rendering: note entry should be
@@ -271,22 +281,6 @@ export class AlphaTabService {
     if (this.api) {
       this.api.countInVolume = Math.max(0, Math.min(1, volume));
     }
-  }
-
-  /**
-   * Restrict playback to a tick range, or pass null to play the whole score.
-   */
-  setPlaybackRange(startTick: number | null, endTick?: number): void {
-    if (!this.api) return;
-
-    if (startTick === null) {
-      this.api.playbackRange = null;
-      return;
-    }
-    const range = new alphaTab.synth.PlaybackRange();
-    range.startTick = startTick;
-    range.endTick = endTick ?? startTick;
-    this.api.playbackRange = range;
   }
 
   /**

@@ -19,6 +19,23 @@ import {
   createDefaultBeatEffects,
   createDefaultNoteEffects
 } from '../models/composer.model';
+import {
+  applySlide,
+  fromBrushType,
+  fromClef,
+  fromDynamicValue,
+  fromGraceType,
+  fromHarmonicType,
+  fromOttavia,
+  fromTripletFeel,
+  toBrushType,
+  toClef,
+  toDynamicValue,
+  toGraceType,
+  toHarmonicType,
+  toOttavia,
+  toTripletFeel
+} from './alpha-tab-enum.bridge';
 
 /**
  * Converts between our editable ScoreDoc and alphaTab's runtime Score.
@@ -93,7 +110,7 @@ export class ScoreDocMapperService {
     masterBar.isRepeatStart = doc.isRepeatStart;
     masterBar.repeatCount = doc.repeatCount;
     masterBar.alternateEndings = doc.alternateEndings;
-    masterBar.tripletFeel = this.toTripletFeel(doc.tripletFeel);
+    masterBar.tripletFeel = toTripletFeel(doc.tripletFeel);
     masterBar.isFreeTime = doc.isFreeTime;
 
     if (doc.section) {
@@ -176,8 +193,8 @@ export class ScoreDocMapperService {
 
   private toBar(doc: BarDoc, stringCount: number): alphaTab.model.Bar {
     const bar = new alphaTab.model.Bar();
-    bar.clef = this.toClef(doc.clef);
-    bar.clefOttava = this.toOttavia(doc.clefOttava);
+    bar.clef = toClef(doc.clef);
+    bar.clefOttava = toOttavia(doc.clefOttava);
     bar.keySignature = doc.keySignature.fifths as alphaTab.model.KeySignature;
     bar.keySignatureType =
       doc.keySignature.mode === 'minor'
@@ -209,7 +226,7 @@ export class ScoreDocMapperService {
     }
 
     if (doc.dynamics !== null) {
-      beat.dynamics = this.toDynamicValue(doc.dynamics);
+      beat.dynamics = toDynamicValue(doc.dynamics);
     }
     if (doc.lyrics !== null) {
       beat.lyrics = [doc.lyrics];
@@ -226,8 +243,8 @@ export class ScoreDocMapperService {
     beat.vibrato = doc.effects.vibrato
       ? alphaTab.model.VibratoType.Slight
       : alphaTab.model.VibratoType.None;
-    beat.brushType = this.toBrushType(doc.effects.brush);
-    beat.graceType = this.toGraceType(doc.effects.grace);
+    beat.brushType = toBrushType(doc.effects.brush);
+    beat.graceType = toGraceType(doc.effects.grace);
 
     // An empty note list is how alphaTab represents a rest.
     if (!doc.isRest) {
@@ -263,8 +280,8 @@ export class ScoreDocMapperService {
     note.vibrato = doc.effects.vibrato
       ? alphaTab.model.VibratoType.Slight
       : alphaTab.model.VibratoType.None;
-    note.harmonicType = this.toHarmonicType(doc.effects.harmonic);
-    this.applySlide(note, doc.effects.slide);
+    note.harmonicType = toHarmonicType(doc.effects.harmonic);
+    applySlide(note, doc.effects.slide);
 
     return note;
   }
@@ -309,7 +326,7 @@ export class ScoreDocMapperService {
       isRepeatStart: masterBar.isRepeatStart,
       repeatCount: masterBar.repeatCount,
       alternateEndings: masterBar.alternateEndings,
-      tripletFeel: this.fromTripletFeel(masterBar.tripletFeel),
+      tripletFeel: fromTripletFeel(masterBar.tripletFeel),
       section: masterBar.section
         ? { marker: masterBar.section.marker ?? '', text: masterBar.section.text ?? '' }
         : null,
@@ -353,8 +370,8 @@ export class ScoreDocMapperService {
 
   private fromBar(bar: alphaTab.model.Bar, stringCount: number): BarDoc {
     return {
-      clef: this.fromClef(bar.clef),
-      clefOttava: this.fromOttavia(bar.clefOttava),
+      clef: fromClef(bar.clef),
+      clefOttava: fromOttavia(bar.clefOttava),
       keySignature: {
         fifths: bar.keySignature as number,
         mode:
@@ -376,8 +393,8 @@ export class ScoreDocMapperService {
     effects.pop = beat.pop;
     effects.tap = beat.tap;
     effects.vibrato = beat.vibrato !== alphaTab.model.VibratoType.None;
-    effects.brush = this.fromBrushType(beat.brushType);
-    effects.grace = this.fromGraceType(beat.graceType);
+    effects.brush = fromBrushType(beat.brushType);
+    effects.grace = fromGraceType(beat.graceType);
 
     return {
       duration: (beat.duration as number) as DurationValue,
@@ -388,7 +405,7 @@ export class ScoreDocMapperService {
           : null,
       isRest: beat.notes.length === 0,
       notes: beat.notes.map(n => this.fromNote(n, stringCount)),
-      dynamics: this.fromDynamicValue(beat.dynamics),
+      dynamics: fromDynamicValue(beat.dynamics),
       lyrics: beat.lyrics && beat.lyrics.length > 0 ? beat.lyrics[0] : null,
       text: beat.text ?? null,
       effects
@@ -403,7 +420,7 @@ export class ScoreDocMapperService {
     effects.isPalmMute = note.isPalmMute;
     effects.isStaccato = note.isStaccato;
     effects.vibrato = note.vibrato !== alphaTab.model.VibratoType.None;
-    effects.harmonic = this.fromHarmonicType(note.harmonicType);
+    effects.harmonic = fromHarmonicType(note.harmonicType);
 
     const pitch: NotePitch = note.isStringed
       ? {
@@ -428,179 +445,6 @@ export class ScoreDocMapperService {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // Enum bridges
-  // -------------------------------------------------------------------------
-
-  private toClef(kind: ClefKind): alphaTab.model.Clef {
-    switch (kind) {
-      case 'f4': return alphaTab.model.Clef.F4;
-      case 'c3': return alphaTab.model.Clef.C3;
-      case 'c4': return alphaTab.model.Clef.C4;
-      case 'n': return alphaTab.model.Clef.Neutral;
-      default: return alphaTab.model.Clef.G2;
-    }
-  }
-
-  private fromClef(clef: alphaTab.model.Clef): ClefKind {
-    switch (clef) {
-      case alphaTab.model.Clef.F4: return 'f4';
-      case alphaTab.model.Clef.C3: return 'c3';
-      case alphaTab.model.Clef.C4: return 'c4';
-      case alphaTab.model.Clef.Neutral: return 'n';
-      default: return 'g2';
-    }
-  }
-
-  private toOttavia(kind: OttaviaKind): alphaTab.model.Ottavia {
-    switch (kind) {
-      case '15ma': return alphaTab.model.Ottavia._15ma;
-      case '8va': return alphaTab.model.Ottavia._8va;
-      case '8vb': return alphaTab.model.Ottavia._8vb;
-      case '15mb': return alphaTab.model.Ottavia._15mb;
-      default: return alphaTab.model.Ottavia.Regular;
-    }
-  }
-
-  private fromOttavia(ottavia: alphaTab.model.Ottavia): OttaviaKind {
-    switch (ottavia) {
-      case alphaTab.model.Ottavia._15ma: return '15ma';
-      case alphaTab.model.Ottavia._8va: return '8va';
-      case alphaTab.model.Ottavia._8vb: return '8vb';
-      case alphaTab.model.Ottavia._15mb: return '15mb';
-      default: return 'regular';
-    }
-  }
-
-  private toTripletFeel(kind: TripletFeelKind): alphaTab.model.TripletFeel {
-    switch (kind) {
-      case 'triplet8th': return alphaTab.model.TripletFeel.Triplet8th;
-      case 'triplet16th': return alphaTab.model.TripletFeel.Triplet16th;
-      case 'dotted8th': return alphaTab.model.TripletFeel.Dotted8th;
-      case 'dotted16th': return alphaTab.model.TripletFeel.Dotted16th;
-      case 'scottish8th': return alphaTab.model.TripletFeel.Scottish8th;
-      case 'scottish16th': return alphaTab.model.TripletFeel.Scottish16th;
-      default: return alphaTab.model.TripletFeel.NoTripletFeel;
-    }
-  }
-
-  private fromTripletFeel(feel: alphaTab.model.TripletFeel): TripletFeelKind {
-    switch (feel) {
-      case alphaTab.model.TripletFeel.Triplet8th: return 'triplet8th';
-      case alphaTab.model.TripletFeel.Triplet16th: return 'triplet16th';
-      case alphaTab.model.TripletFeel.Dotted8th: return 'dotted8th';
-      case alphaTab.model.TripletFeel.Dotted16th: return 'dotted16th';
-      case alphaTab.model.TripletFeel.Scottish8th: return 'scottish8th';
-      case alphaTab.model.TripletFeel.Scottish16th: return 'scottish16th';
-      default: return 'none';
-    }
-  }
-
-  private toDynamicValue(value: DynamicValue): alphaTab.model.DynamicValue {
-    switch (value) {
-      case 'ppp': return alphaTab.model.DynamicValue.PPP;
-      case 'pp': return alphaTab.model.DynamicValue.PP;
-      case 'p': return alphaTab.model.DynamicValue.P;
-      case 'mp': return alphaTab.model.DynamicValue.MP;
-      case 'mf': return alphaTab.model.DynamicValue.MF;
-      case 'ff': return alphaTab.model.DynamicValue.FF;
-      case 'fff': return alphaTab.model.DynamicValue.FFF;
-      default: return alphaTab.model.DynamicValue.F;
-    }
-  }
-
-  private fromDynamicValue(value: alphaTab.model.DynamicValue): DynamicValue | null {
-    switch (value) {
-      case alphaTab.model.DynamicValue.PPP: return 'ppp';
-      case alphaTab.model.DynamicValue.PP: return 'pp';
-      case alphaTab.model.DynamicValue.P: return 'p';
-      case alphaTab.model.DynamicValue.MP: return 'mp';
-      case alphaTab.model.DynamicValue.MF: return 'mf';
-      case alphaTab.model.DynamicValue.F: return 'f';
-      case alphaTab.model.DynamicValue.FF: return 'ff';
-      case alphaTab.model.DynamicValue.FFF: return 'fff';
-      default: return null;
-    }
-  }
-
-  private toBrushType(brush: string): alphaTab.model.BrushType {
-    switch (brush) {
-      case 'brushUp': return alphaTab.model.BrushType.BrushUp;
-      case 'brushDown': return alphaTab.model.BrushType.BrushDown;
-      case 'arpeggioUp': return alphaTab.model.BrushType.ArpeggioUp;
-      case 'arpeggioDown': return alphaTab.model.BrushType.ArpeggioDown;
-      default: return alphaTab.model.BrushType.None;
-    }
-  }
-
-  private fromBrushType(brush: alphaTab.model.BrushType): BeatDoc['effects']['brush'] {
-    switch (brush) {
-      case alphaTab.model.BrushType.BrushUp: return 'brushUp';
-      case alphaTab.model.BrushType.BrushDown: return 'brushDown';
-      case alphaTab.model.BrushType.ArpeggioUp: return 'arpeggioUp';
-      case alphaTab.model.BrushType.ArpeggioDown: return 'arpeggioDown';
-      default: return 'none';
-    }
-  }
-
-  private toGraceType(grace: string): alphaTab.model.GraceType {
-    switch (grace) {
-      case 'onBeat': return alphaTab.model.GraceType.OnBeat;
-      case 'beforeBeat': return alphaTab.model.GraceType.BeforeBeat;
-      default: return alphaTab.model.GraceType.None;
-    }
-  }
-
-  private fromGraceType(grace: alphaTab.model.GraceType): BeatDoc['effects']['grace'] {
-    switch (grace) {
-      case alphaTab.model.GraceType.OnBeat: return 'onBeat';
-      case alphaTab.model.GraceType.BeforeBeat: return 'beforeBeat';
-      default: return 'none';
-    }
-  }
-
-  private toHarmonicType(harmonic: string): alphaTab.model.HarmonicType {
-    switch (harmonic) {
-      case 'natural': return alphaTab.model.HarmonicType.Natural;
-      case 'artificial': return alphaTab.model.HarmonicType.Artificial;
-      case 'pinch': return alphaTab.model.HarmonicType.Pinch;
-      case 'tap': return alphaTab.model.HarmonicType.Tap;
-      case 'semi': return alphaTab.model.HarmonicType.Semi;
-      default: return alphaTab.model.HarmonicType.None;
-    }
-  }
-
-  private fromHarmonicType(
-    harmonic: alphaTab.model.HarmonicType
-  ): NoteDoc['effects']['harmonic'] {
-    switch (harmonic) {
-      case alphaTab.model.HarmonicType.Natural: return 'natural';
-      case alphaTab.model.HarmonicType.Artificial: return 'artificial';
-      case alphaTab.model.HarmonicType.Pinch: return 'pinch';
-      case alphaTab.model.HarmonicType.Tap: return 'tap';
-      case alphaTab.model.HarmonicType.Semi: return 'semi';
-      default: return 'none';
-    }
-  }
-
-  private applySlide(note: alphaTab.model.Note, slide: NoteDoc['effects']['slide']): void {
-    switch (slide) {
-      case 'shiftSlide':
-        note.slideOutType = alphaTab.model.SlideOutType.Shift;
-        break;
-      case 'legatoSlide':
-        note.slideOutType = alphaTab.model.SlideOutType.Legato;
-        break;
-      case 'slideOutUp':
-        note.slideOutType = alphaTab.model.SlideOutType.OutUp;
-        break;
-      case 'slideInBelow':
-        note.slideInType = alphaTab.model.SlideInType.IntoFromBelow;
-        break;
-      default:
-        note.slideOutType = alphaTab.model.SlideOutType.None;
-    }
-  }
 }
 
 /** Reference key signatures, exposed for UI pickers. */
