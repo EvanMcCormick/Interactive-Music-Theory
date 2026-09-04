@@ -1,7 +1,8 @@
 # Sheet Music Composer — Design
 
 **Date:** 2026-09-04
-**Status:** Approved, ready for implementation
+**Status:** Implemented. See "Build status" at the end for what landed and
+what is still outstanding.
 
 ## Goal
 
@@ -32,16 +33,24 @@ Neither notation rendering nor audio synthesis needs to be written.
 
 ### Data flow
 
+> **Revised during implementation.** The original plan hand-wrote an alphaTex
+> serializer. A spike found `alphaTab.exporter.AlphaTexExporter`, so the score
+> is now built as an alphaTab `Score` and rendered directly. That removed the
+> largest and most error-prone piece of work, dropped a parse from every
+> render, and makes the tex canonical by construction.
+
 ```
-ScoreDoc  --serialize-->  alphaTex  --api.tex()-->  alphaTab renders + plays
-   ^                                                        |
-   |                                                        v
-   +---------- import (scoreLoaded) <---- AlphaTexImporter parses ----+
+ScoreDoc  <-- map -->  alphaTab Score  --renderScore()-->  renders + plays
+                             |
+                             +-- AlphaTexExporter --> tex  (saving, escape hatch)
+                             ^
+      tex  --AlphaTexImporter-+                       (escape hatch input)
 ```
 
-Editing mutates `ScoreDoc` immutably. A serializer emits alphaTex; `api.tex()`
-renders it and rebuilds the MIDI for playback. The reverse arrow runs **only**
-when the user edits raw tex in the escape-hatch panel, so there is no sync loop.
+Editing mutates `ScoreDoc` immutably, `ScoreDocMapperService` turns it into an
+alphaTab `Score`, and `api.renderScore()` engraves and rebuilds the MIDI. tex is
+only generated for saving and for the escape-hatch panel. The reverse arrow runs
+**only** when the user edits raw tex, so there is no sync loop.
 
 **Why `ScoreDoc` rather than mutating alphaTab's `Score` directly:** undo/redo.
 `ScoreDoc` is an acyclic plain object, so undo is `structuredClone` onto a stack.
@@ -162,10 +171,11 @@ from the existing components but are new code.
 | Service | Responsibility |
 |---|---|
 | `ComposerService` | `ScoreDoc` in a `BehaviorSubject`, edit operations, caret, undo/redo |
-| `AlphaTexSerializerService` | `ScoreDoc` to alphaTex |
-| `AlphaTexImportService` | alphaTex to `ScoreDoc`, via alphaTab's importer + diagnostics |
+| `ScoreDocMapperService` | `ScoreDoc` to and from alphaTab's `Score` |
+| `AlphaTexService` | alphaTex export/parse via alphaTab, with positioned diagnostics |
 | `ComposerLibraryService` | IndexedDB persistence |
-| `AlphaTabService` (extend) | add `tex()`, `renderScore()`, `playOneTimeMidiFile()` |
+| `ComposerExportService` | `.gp`, alphaTex and MIDI download |
+| `AlphaTabService` (extend) | `renderScore()`, `render()`, `auditionNote()`, metronome, count-in |
 
 ## Performance
 
@@ -213,8 +223,35 @@ Export paths:
 Full-featured is the target; built in vertical slices so something is playable
 early.
 
-1. **Foundation** — model, serializer, `ComposerService`, page shell, tex panel,
-   playback. End to end: type tex, see notation, hear it.
-2. **Guided entry** — caret, input widgets, duration palette, keyboard shortcuts.
-3. **Structure** — multi-track, staves, time/key changes, repeats, dynamics.
-4. **Persistence** — IndexedDB library, `.gp` / tex / MIDI export.
+1. **Foundation** — model, mapper, `ComposerService`, page shell, tex panel,
+   playback. *Done.*
+2. **Guided entry** — caret, input widgets, duration palette, keyboard
+   shortcuts. *Done.*
+3. **Structure** — multi-track and per-track instruments, add/remove bars and
+   tracks. *Partly done* (see below).
+4. **Persistence** — IndexedDB library, `.gp` / tex / MIDI export. *Done.*
+
+## Build status
+
+Working and verified in the browser: note entry on fretted and pitched staves,
+playback, undo/redo, multi-track, add/remove bars and tracks, save/load to the
+IndexedDB library, export, and the alphaTex escape hatch with diagnostics.
+
+Still outstanding, all of which the model and mapper already support - only the
+UI controls are missing:
+
+- Editing time signature, key signature and clef per bar.
+- Repeats, alternate endings, section markers and triplet feel.
+- Dynamics, tuplets and note effects (bends, slides, hammer-ons, harmonics).
+- Multiple voices per staff.
+- Per-track staff options: tuning, capo, transposition, tab/notation toggles.
+- Track mixer controls (mute, solo, volume, balance).
+- Looping a bar range for practice.
+
+Known issues elsewhere in the repo, found while building this:
+
+- `app.module.ts` and `app-routing.module.ts` are dead code. The app bootstraps
+  from `main.ts`, which holds the live route table. Both were editable without
+  any effect, which cost time; they should be deleted.
+- `AlphaTabService.loadFromUrl`, `loadFromBuffer`, `seekToTick` and
+  `setTrackVolume` have no callers.
