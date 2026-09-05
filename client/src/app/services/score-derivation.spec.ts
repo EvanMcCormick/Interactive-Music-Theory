@@ -25,7 +25,6 @@ const note = (pitch: number, onsetSec: number, confidence = 1): DetectedNote => 
 /** Eight beats at 120 BPM: two bars of 4/4. */
 const GRID: BeatGrid = {
   beatsSec: [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5],
-  downbeatIndices: [0, 4],
   timeSignature: { numerator: 4, denominator: 4, isCommon: true }
 };
 
@@ -236,7 +235,6 @@ describe('deriveScore', () => {
     // grid at 1e-6 s asked for 2,500,001 bars and two and a half seconds.
     const fast: BeatGrid = {
       beatsSec: [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07],
-      downbeatIndices: [0, 4],
       timeSignature: { numerator: 4, denominator: 4, isCommon: true }
     };
 
@@ -258,7 +256,6 @@ describe('deriveScore', () => {
     // anywhere near the cap, so the cap changes nothing.
     const eightSeconds: BeatGrid = {
       beatsSec: Array.from({ length: 16 }, (_, index) => index * 0.5),
-      downbeatIndices: [0, 4, 8, 12],
       timeSignature: { numerator: 4, denominator: 4, isCommon: true }
     };
 
@@ -273,8 +270,8 @@ describe('deriveScore', () => {
   // -------------------------------------------------------------------------
 
   it('produces a structurally valid score from a degenerate session', () => {
-    const oneBeat: BeatGrid = { ...GRID, beatsSec: [0.4], downbeatIndices: [0] };
-    const noBeats: BeatGrid = { ...GRID, beatsSec: [], downbeatIndices: [] };
+    const oneBeat: BeatGrid = { ...GRID, beatsSec: [0.4] };
+    const noBeats: BeatGrid = { ...GRID, beatsSec: [] };
 
     const cases: TranscriptionSession[] = [
       session([]),
@@ -369,7 +366,6 @@ describe('deriveScore', () => {
     const spacing = 60 / bpm;
     return {
       beatsSec: Array.from({ length: 16 }, (_, index) => index * spacing),
-      downbeatIndices: [0, 4, 8, 12],
       timeSignature: { numerator: 4, denominator: 4, isCommon: true }
     };
   }

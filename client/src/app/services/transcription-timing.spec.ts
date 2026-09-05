@@ -4,7 +4,6 @@ import { gridTempo, secondsToBeats } from './transcription-timing';
 /** Four beats at 120 BPM, so every beat is half a second. */
 const GRID: BeatGrid = {
   beatsSec: [0, 0.5, 1.0, 1.5, 2.0],
-  downbeatIndices: [0, 4],
   timeSignature: { numerator: 4, denominator: 4, isCommon: true }
 };
 
@@ -17,8 +16,7 @@ const RITARDANDO: BeatGrid = { ...GRID, beatsSec: [0, 0.5, 1.0, 1.5, 3.5] };
 /** Starts slow: intervals 2.0, 0.5, 0.5. Median 0.5. */
 const ACCELERANDO: BeatGrid = {
   ...GRID,
-  beatsSec: [0, 2.0, 2.5, 3.0],
-  downbeatIndices: [0]
+  beatsSec: [0, 2.0, 2.5, 3.0]
 };
 
 describe('secondsToBeats', () => {
@@ -77,7 +75,7 @@ describe('secondsToBeats', () => {
   });
 
   it('survives a grid too short to interpolate', () => {
-    const single: BeatGrid = { ...GRID, beatsSec: [0.4], downbeatIndices: [0] };
+    const single: BeatGrid = { ...GRID, beatsSec: [0.4] };
     expect(secondsToBeats(9, single)).toBe(0);
   });
 });

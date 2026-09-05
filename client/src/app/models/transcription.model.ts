@@ -64,17 +64,21 @@ export interface DetectedNote {
  * tracking is already an inference, and the user is expected to correct it;
  * a corrected tempo or meter is expressed by regenerating the grid, not by
  * overriding it downstream.
+ *
+ * Bars are not stated here, they are counted. `deriveScore` reads bar 1 as
+ * starting at `beatsSec[0]` and every bar after it as another `numerator`
+ * beats, so a corrected downbeat phase is expressed by trimming `beatsSec` -
+ * the same move scope decision 3 makes for a corrected tempo. There was a
+ * `downbeatIndices` array here saying the same thing a second time, and
+ * nothing read it; a beat tracker that dropped or doubled a beat could have
+ * filled it with downbeats the written bars disagreed with, and nothing would
+ * have said so. M2's tracker reintroduces it together with the derivation
+ * support that honours it, because a field derivation ignores is worse than no
+ * field at all.
  */
 export interface BeatGrid {
-  /** Ascending. */
+  /** Ascending. `beatsSec[0]` is the first downbeat. */
   beatsSec: number[];
-  /**
-   * Indices into beatsSec that begin a bar. Ascending, and the first entry is
-   * 0: beatsSec[0] is always the first downbeat. Derivation treats it as the
-   * start of bar 1, so a pickup must be trimmed out of beatsSec rather than
-   * expressed by starting this array above 0.
-   */
-  downbeatIndices: number[];
   timeSignature: TimeSignature;
 }
 

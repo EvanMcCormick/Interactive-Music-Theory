@@ -192,17 +192,21 @@ export interface DetectedNote {
  * tracking is already an inference, and the user is expected to correct it;
  * a corrected tempo or meter is expressed by regenerating the grid, not by
  * overriding it downstream.
+ *
+ * Bars are not stated here, they are counted. `deriveScore` reads bar 1 as
+ * starting at `beatsSec[0]` and every bar after it as another `numerator`
+ * beats, so a corrected downbeat phase is expressed by trimming `beatsSec` -
+ * the same move scope decision 3 makes for a corrected tempo. There was a
+ * `downbeatIndices` array here saying the same thing a second time, and
+ * nothing read it; a beat tracker that dropped or doubled a beat could have
+ * filled it with downbeats the written bars disagreed with, and nothing would
+ * have said so. M2's tracker reintroduces it together with the derivation
+ * support that honours it, because a field derivation ignores is worse than no
+ * field at all.
  */
 export interface BeatGrid {
-  /** Ascending. */
+  /** Ascending. `beatsSec[0]` is the first downbeat. */
   beatsSec: number[];
-  /**
-   * Indices into beatsSec that begin a bar. Ascending, and the first entry is
-   * 0: beatsSec[0] is always the first downbeat. Derivation treats it as the
-   * start of bar 1, so a pickup must be trimmed out of beatsSec rather than
-   * expressed by starting this array above 0.
-   */
-  downbeatIndices: number[];
   timeSignature: TimeSignature;
 }
 
@@ -296,7 +300,6 @@ import { gridTempo, secondsToBeats } from './transcription-timing';
 /** Four beats at 120 BPM, so every beat is half a second. */
 const GRID: BeatGrid = {
   beatsSec: [0, 0.5, 1.0, 1.5, 2.0],
-  downbeatIndices: [0, 4],
   timeSignature: { numerator: 4, denominator: 4, isCommon: true }
 };
 
@@ -309,8 +312,7 @@ const RITARDANDO: BeatGrid = { ...GRID, beatsSec: [0, 0.5, 1.0, 1.5, 3.5] };
 /** Starts slow: intervals 2.0, 0.5, 0.5. Median 0.5. */
 const ACCELERANDO: BeatGrid = {
   ...GRID,
-  beatsSec: [0, 2.0, 2.5, 3.0],
-  downbeatIndices: [0]
+  beatsSec: [0, 2.0, 2.5, 3.0]
 };
 
 describe('secondsToBeats', () => {
@@ -369,7 +371,7 @@ describe('secondsToBeats', () => {
   });
 
   it('survives a grid too short to interpolate', () => {
-    const single: BeatGrid = { ...GRID, beatsSec: [0.4], downbeatIndices: [0] };
+    const single: BeatGrid = { ...GRID, beatsSec: [0.4] };
     expect(secondsToBeats(9, single)).toBe(0);
   });
 });
@@ -2458,7 +2460,6 @@ const note = (pitch: number, onsetSec: number, confidence = 1): DetectedNote => 
 /** Eight beats at 120 BPM: two bars of 4/4. */
 const GRID: BeatGrid = {
   beatsSec: [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5],
-  downbeatIndices: [0, 4],
   timeSignature: { numerator: 4, denominator: 4, isCommon: true }
 };
 
@@ -2567,7 +2568,6 @@ describe('deriveScore', () => {
     // grid at 1e-6 s asked for 2,500,001 bars and two and a half seconds.
     const fast: BeatGrid = {
       beatsSec: [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07],
-      downbeatIndices: [0, 4],
       timeSignature: { numerator: 4, denominator: 4, isCommon: true }
     };
 
@@ -2589,7 +2589,6 @@ describe('deriveScore', () => {
     // anywhere near the cap, so the cap changes nothing.
     const eightSeconds: BeatGrid = {
       beatsSec: Array.from({ length: 16 }, (_, index) => index * 0.5),
-      downbeatIndices: [0, 4, 8, 12],
       timeSignature: { numerator: 4, denominator: 4, isCommon: true }
     };
 
@@ -2892,6 +2891,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 - **Triplets.** `allowTriplets` exists in the settings and is ignored.
 - **Chord-aware fingering.** The Viterbi pass scores a sequence and cannot see that two notes sound at once, so `separateSimultaneous` repairs its result instead: within one attack the most constrained note claims its string first and the rest take their next-cheapest free candidate. That is enough to keep a dyad off one tab line — the collisions that survive it are the ones no fingering can avoid — but it is a repair, not a search, so the pair it lands on is not always the pair a player would choose. Scoring whole chords, and validating the shapes they make, arrives with guitar polyphony.
 - **Two attacks the grid has nowhere to put.** Onsets more than half a slot apart are two clusters, and two clusters can still round onto one slot — `snapToSlots` says so itself. When they do, `addToChord` drops the second, and no attack window can prevent it: widening the separation window to cover it means separating everything within a whole slot, which would scatter an ordinary run of sixteenths across the neck. It is reachable off a slot boundary — at 120 BPM on a sixteenth grid, a pair starting 65 ms in and 65 to 120 ms apart loses a note, about 7% of the (start, separation) square swept — and it is a statement about `finestDivision` rather than about units: the two onsets round to the same sixteenth, and one sixteenth holds one attack. Closing it properly means either a finer grid or letting the two rounded slots repel each other, which changes the written rhythm; both are bigger than a repair. The conservation sweep anchors its first onset on a slot for exactly this reason, and says so.
+- **Downbeats stated rather than counted.** `BeatGrid` carried a `downbeatIndices` array through all of M1 and nothing ever read it: `deriveScore` derives bars as uniform spans of `numerator` beats from `beatsSec[0]`, so the array's documented invariants were enforced nowhere. It has been removed rather than left as a trap for M2, whose beat tracker exists to produce downbeats — the natural move is to populate it and assume derivation honours it, and a tracker that dropped or doubled a beat would then write bars disagreeing with the grid, silently. M1's rule is uniform bars from `beatsSec[0]`, and a corrected downbeat phase is expressed by trimming `beatsSec`, which scope decision 3 already establishes. **M2 reintroduces the field together with the derivation support that honours it**, in the same change: a field derivation ignores is worse than no field at all.
 - **Pickup bars.** Notes before the first downbeat are pulled onto beat 1.
 - **Note durations.** `DetectedNote.offsetSec` is read by nothing: every note sustains until the next onset, so rests appear only before a bar's first note. See scope decision 5.
 - **Context-based octave correction.** Only out-of-range folding is implemented; an octave error landing on a playable pitch survives.
