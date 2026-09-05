@@ -16,6 +16,7 @@
             "main": "src/main.ts",
             "polyfills": ["zone.js"],
             "tsConfig": "tsconfig.app.json",
+            "webWorkerTsConfig": "src/tsconfig.worker.json",
             "assets": [
               "src/favicon.ico",
               "src/assets",
@@ -98,6 +99,7 @@
             "main": "src/test.ts",
             "polyfills": ["zone.js"],
             "tsConfig": "tsconfig.spec.json",
+            "webWorkerTsConfig": "src/tsconfig.worker.json",
             "karmaConfig": "karma.conf.js",
             "assets": [
               "src/favicon.ico",

@@ -1,0 +1,24 @@
+/* Compilation settings for Web Workers. See tsconfig.json for the rest. */
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../out-tsc/worker",
+    // ES2022 to match the project's own target, not the "es2018" the
+    // `ng generate web-worker` schematic writes - that template has not been
+    // updated since the CLI targeted ES2018, and taking it verbatim would
+    // silently compile the worker against an older standard library than the
+    // rest of the app while still emitting for the same browsers.
+    //
+    // `webworker` *replaces* `dom`: no `window`, no `document`, no
+    // `AudioContext`. That is the point. Everything this worker's import graph
+    // reaches has to be usable off the main thread, and the compiler is a
+    // cheaper way to find out than a runtime hang.
+    "lib": ["ES2022", "webworker"],
+    "types": []
+  },
+  // Relative to this file, which lives in `src/` - so the schematic's
+  // "src/**/*.worker.ts" would look for `src/src/` and match nothing. A
+  // tsconfig with no inputs is not a warning: once `webWorkerTsConfig` is set,
+  // it fails every build with TS18003.
+  "include": ["**/*.worker.ts"]
+}
