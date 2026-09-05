@@ -9,6 +9,12 @@ const at = (beatInBar: number, fret: number): PlacedNote => ({
   pitch: { kind: 'fretted', string: 2, fret }
 });
 
+/** As `at`, but naming the string, for cases that build a chord. */
+const on = (beatInBar: number, string: number, fret: number): PlacedNote => ({
+  beatInBar,
+  pitch: { kind: 'fretted', string, fret }
+});
+
 describe('quantizeBar', () => {
   it('fills an empty bar with exactly one bar of rests', () => {
     const beats = quantizeBar([], FOUR_FOUR, 16);
@@ -33,9 +39,38 @@ describe('quantizeBar', () => {
   });
 
   it('merges notes landing on the same slot into one chord', () => {
-    const beats = quantizeBar([at(0, 0), at(0.02, 2)], FOUR_FOUR, 16);
+    const beats = quantizeBar([on(0, 2, 0), on(0.02, 1, 2)], FOUR_FOUR, 16);
 
     expect(beats[0].notes.length).toBe(2);
+  });
+
+  it('keeps a chord together when its onsets straddle a slot boundary', () => {
+    // A hand crossing the strings spreads a chord over a few tens of
+    // milliseconds: these two are 0.08 beats apart, 40 ms at 120 BPM. On a
+    // sixteenth grid they fall either side of the midpoint between slot 1 and
+    // slot 2, so rounding each on its own writes them as two attacks a
+    // thirty-second apart rather than as one chord.
+    const beats = quantizeBar([on(0.34, 2, 3), on(0.42, 1, 5)], FOUR_FOUR, 16);
+
+    const struck = beats.filter(beat => !beat.isRest && !beat.notes[0].isTied);
+
+    expect(struck.length).toBe(1);
+    expect(struck[0].notes.map(note => note.pitch)).toEqual([
+      { kind: 'fretted', string: 2, fret: 3 },
+      { kind: 'fretted', string: 1, fret: 5 }
+    ]);
+  });
+
+  it('writes at most one note per string in a chord', () => {
+    // A tab line holds one number, an invariant ComposerService.setNoteAtCursor
+    // enforces on the editing side. Two co-incident notes fingered to the same
+    // string - or one onset detected twice - must not both be written.
+    const beats = quantizeBar([on(0, 2, 3), on(0, 2, 7), on(0, 1, 5)], FOUR_FOUR, 16);
+
+    expect(beats[0].notes.map(note => note.pitch)).toEqual([
+      { kind: 'fretted', string: 2, fret: 3 },
+      { kind: 'fretted', string: 1, fret: 5 }
+    ]);
   });
 
   it('ties across a span no single note value can express', () => {
@@ -153,9 +188,13 @@ describe('quantizeBar', () => {
         const totalSlots = signature.numerator * slotsPerBeat;
 
         for (let seed = 0; seed < 20; seed++) {
+          // One note per string, cycling: notes sharing a slot become a chord,
+          // and a chord may not put two numbers on one tab line. The onsets
+          // are spread widely enough that no two are close enough to cluster,
+          // so each still snaps on its own.
           const notes: PlacedNote[] = Array.from({ length: seed % 7 }, (_, i) => ({
             beatInBar: (((seed * 7 + i * 13) % 100) / 100) * signature.numerator,
-            pitch: { kind: 'fretted', string: 2, fret: i } as NotePitch
+            pitch: { kind: 'fretted', string: i % 4, fret: i } as NotePitch
           }));
 
           const beats = quantizeBar(notes, signature, finest);

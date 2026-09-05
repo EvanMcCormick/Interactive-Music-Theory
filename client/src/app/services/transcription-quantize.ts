@@ -54,6 +54,90 @@ function durationTable(finestDivision: number): DurationUnit[] {
 }
 
 /**
+ * Widest gap between two onsets that still counts as one attack.
+ *
+ * Half a slot is the natural tolerance, being exactly the rounding radius, but
+ * on a coarse grid half a slot is a rhythm rather than a chord: at
+ * `finestDivision: 4` it is a whole eighth note. So it is capped here too, at
+ * a thirty-second note's worth of beat - about 62 ms at 120 BPM, comfortably
+ * wider than the 30-40 ms a hand takes to cross the strings.
+ */
+const MAX_CHORD_SPREAD_BEATS = 0.125;
+
+/**
+ * Adds a pitch to a chord, dropping it if its string is already spoken for.
+ *
+ * A tab line holds one number, so a fretted staff shows at most one note per
+ * string - the invariant `ComposerService.setNoteAtCursor` enforces on the
+ * editing side. Two co-incident notes fingered to the same string, or one
+ * onset detected twice, would otherwise write two numbers on one line. The
+ * earlier onset wins.
+ */
+function addToChord(chord: NotePitch[], pitch: NotePitch): void {
+  if (
+    pitch.kind === 'fretted'
+    && chord.some(taken => taken.kind === 'fretted' && taken.string === pitch.string)
+  ) {
+    return;
+  }
+
+  chord.push(pitch);
+}
+
+/**
+ * Groups a bar's onsets onto grid slots, one chord per slot.
+ *
+ * Onsets are clustered before they are rounded, not after. Rounding first and
+ * merging on the result splits a chord whenever its notes straddle a slot
+ * midpoint - for a 40 ms spread at 120 BPM on a sixteenth grid, roughly a
+ * third of the time - and writes the two halves as separate attacks a
+ * thirty-second apart, which is exactly the raggedness this module exists to
+ * avoid.
+ */
+function snapToSlots(
+  notes: PlacedNote[],
+  slotsPerBeat: number,
+  totalSlots: number
+): Map<number, NotePitch[]> {
+  const tolerance = Math.min(0.5, MAX_CHORD_SPREAD_BEATS * slotsPerBeat);
+  const sorted = [...notes].sort((a, b) => a.beatInBar - b.beatInBar);
+
+  const clusters: { onsets: number[]; pitches: NotePitch[] }[] = [];
+  for (const note of sorted) {
+    const onset = note.beatInBar * slotsPerBeat;
+    const open = clusters[clusters.length - 1];
+
+    // Measured from the cluster's first onset rather than its last, so a run
+    // of closely spaced notes cannot chain into one arbitrarily wide chord.
+    if (open && onset - open.onsets[0] <= tolerance) {
+      open.onsets.push(onset);
+      open.pitches.push(note.pitch);
+    } else {
+      clusters.push({ onsets: [onset], pitches: [note.pitch] });
+    }
+  }
+
+  const chords = new Map<number, NotePitch[]>();
+  for (const cluster of clusters) {
+    const centre =
+      cluster.onsets.reduce((sum, onset) => sum + onset, 0) / cluster.onsets.length;
+    const slot = Math.min(totalSlots - 1, Math.max(0, Math.round(centre)));
+
+    let chord = chords.get(slot);
+    if (!chord) {
+      chord = [];
+      chords.set(slot, chord);
+    }
+
+    // Two clusters can still round onto one slot on a coarse grid, so the
+    // per-string check belongs here rather than inside the cluster loop.
+    for (const pitch of cluster.pitches) addToChord(chord, pitch);
+  }
+
+  return chords;
+}
+
+/**
  * The strong points of a bar, in slots.
  *
  * Longest-first decomposition only knows how long a span is, never where it
@@ -172,10 +256,10 @@ export function slotsToDurations(
 /**
  * Lays a bar's notes onto the rhythmic grid.
  *
- * Onsets are snapped to slots, simultaneous notes collapse into a chord, each
- * note runs until the next one starts, and gaps become rests. A note whose
- * span no single value can express is split and tied rather than rounded, so
- * the bar total never moves.
+ * Onsets close enough together to be one attack collapse into a chord, chords
+ * are snapped to slots, each runs until the next one starts, and gaps become
+ * rests. A span no single value can express is split and tied rather than
+ * rounded, so the bar total never moves.
  */
 export function quantizeBar(
   notes: PlacedNote[],
@@ -202,17 +286,7 @@ export function quantizeBar(
 
   const totalSlots = timeSignature.numerator * slotsPerBeat;
 
-  const chords = new Map<number, NotePitch[]>();
-  for (const note of notes) {
-    const slot = Math.min(
-      totalSlots - 1,
-      Math.max(0, Math.round(note.beatInBar * slotsPerBeat))
-    );
-    const existing = chords.get(slot);
-    if (existing) existing.push(note.pitch);
-    else chords.set(slot, [note.pitch]);
-  }
-
+  const chords = snapToSlots(notes, slotsPerBeat, totalSlots);
   const frame = metricFrame(timeSignature, slotsPerBeat);
   const beats: BeatDoc[] = [];
 
