@@ -122,7 +122,23 @@ export interface TranscriptionSession {
   id: string;
   sourceName: string;
   durationSec: number;
+  /**
+   * The notes derivation works from: the detector's output with harmonic
+   * partials removed.
+   */
   notes: DetectedNote[];
+  /**
+   * Everything the detector reported, before suppression.
+   *
+   * Kept because of the two-layer model at the top of this file: these are the
+   * facts, and harmonic suppression is a five-parameter heuristic calibrated on
+   * one fixture — interpretation, on the facts side of the line only because
+   * M2 runs it once at detection time. Three quarters of a real detection goes
+   * through it, so discarding the input would mean re-running the model to undo
+   * a heuristic. `notes` is a subset of this, not a transformation of it: the
+   * objects are the same ones.
+   */
+  rawNotes: DetectedNote[];
   grid: BeatGrid;
   settings: DerivationSettings;
 }

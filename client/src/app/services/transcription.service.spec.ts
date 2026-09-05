@@ -182,12 +182,14 @@ function checkInvariants(states: TranscriptionState[]): void {
         // that failed and nothing else.
         expect(state.derived).withContext(`${where}: derived`).toBeNull();
         expect(state.session).withContext(`${where}: session`).toBeNull();
+        expect(state.suppressed).withContext(`${where}: suppressed`).toEqual([]);
         expect(state.refusal).withContext(`${where}: refusal`).toBeNull();
         break;
       default:
         // idle and the three working phases have produced nothing yet.
         expect(state.derived).withContext(`${where}: derived`).toBeNull();
         expect(state.session).withContext(`${where}: session`).toBeNull();
+        expect(state.suppressed).withContext(`${where}: suppressed`).toEqual([]);
         expect(state.error).withContext(`${where}: error`).toBeNull();
         expect(state.refusal).withContext(`${where}: refusal`).toBeNull();
         break;
@@ -229,6 +231,7 @@ describe('TranscriptionService', () => {
         progress: 0,
         session: null,
         derived: null,
+        suppressed: [],
         error: null,
         refusal: null
       });
@@ -658,6 +661,67 @@ describe('TranscriptionService', () => {
       const dropped = service.state.derived?.dropped ?? [];
       expect(dropped.length).toBe(PLAYED_PITCHES.length);
       expect(dropped.every(entry => entry.reason === 'belowConfidence')).toBeTrue();
+    });
+  });
+
+  /**
+   * Twenty-six of the fixture's thirty-four detections are partials. Until M2's
+   * review they were removed and then unrecoverable: `session.notes` was the
+   * post-suppression list, so the largest discard in the pipeline was invisible
+   * to the mechanism `DerivedScore.dropped` exists for.
+   */
+  describe('suppressed partials', () => {
+    it('reports the partials it removed rather than dropping them silently', async () => {
+      await service.transcribe(wavFile());
+
+      const suppressed = service.state.suppressed;
+      expect(suppressed.length).toBe(DETECTED.length - PLAYED_PITCHES.length);
+      expect(suppressed.length).toBeGreaterThan(service.state.session?.notes.length ?? 0);
+
+      // Every one of them is a note the detector reported and derivation never
+      // saw, so the two lists partition the detection with nothing left over.
+      const kept = new Set(service.state.session?.notes.map(n => n.id));
+      expect(suppressed.every(n => !kept.has(n.id))).toBeTrue();
+      expect(suppressed.length + kept.size).toBe(DETECTED.length);
+    });
+
+    it('reports them in reading order, like the kept notes', async () => {
+      await service.transcribe(wavFile());
+
+      const onsets = service.state.suppressed.map(n => n.onsetSec);
+      expect(onsets).toEqual([...onsets].sort((a, b) => a - b));
+    });
+
+    it('keeps the raw detection on the session, undamaged by suppression', async () => {
+      await service.transcribe(wavFile());
+
+      const session = service.state.session;
+      expect(session?.rawNotes.length).toBe(DETECTED.length);
+      expect(session?.rawNotes.map(n => n.id)).toEqual(DETECTED.map(n => n.id));
+      // Its own array: a detector that reused the one it returned could not
+      // reach into the session through it.
+      expect(session?.rawNotes).not.toBe(DETECTED);
+    });
+
+    it('carries both across a re-derivation', async () => {
+      await service.transcribe(wavFile());
+      const suppressed = service.state.suppressed;
+      const rawNotes = service.state.session?.rawNotes;
+
+      service.updateSettings({ capo: 3 });
+
+      expect(service.state.suppressed).toBe(suppressed);
+      expect(service.state.session?.rawNotes).toBe(rawNotes!);
+      expect(detector.calls).toBe(1);
+    });
+
+    it('reports nothing when the detector reports no partials', async () => {
+      detector.notes = DETECTED.filter(n => PLAYED_PITCHES.includes(n.pitch)).slice(0, 2);
+
+      await service.transcribe(wavFile());
+
+      expect(service.state.suppressed).toEqual([]);
+      expect(service.state.phase).toBe('ready');
     });
   });
 

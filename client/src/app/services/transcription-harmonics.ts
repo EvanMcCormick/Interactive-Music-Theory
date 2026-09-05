@@ -62,9 +62,32 @@ export const DEFAULT_HARMONIC_OPTIONS: HarmonicOptions = {
   partialDurationRatio: 0.9
 };
 
+/** Reading order for both lists this module hands back: earliest first. */
+function byOnsetThenPitch(a: DetectedNote, b: DetectedNote): number {
+  return a.onsetSec - b.onsetSec || a.pitch - b.pitch;
+}
+
+/**
+ * Removes the partials, and reports what it removed.
+ *
+ * `suppressed`, if given, collects the notes that did not survive - three
+ * quarters of a real detection, and until M2's review the largest discard in
+ * the whole pipeline with no record anywhere. `DerivedScore.dropped` exists so
+ * a `ScoreDoc` can say why a bar is empty and M3 can render a rejected note
+ * greyed rather than let it vanish; suppression happens before derivation ever
+ * sees the notes, so without this its losses are invisible to that mechanism.
+ * They are worth seeing: this is a five-parameter heuristic calibrated on one
+ * fixture, and scope decision 2 documents a known false positive - a short line
+ * over a held pedal - that a user currently has no way to notice.
+ *
+ * An out-parameter rather than a widened return, matching `quantizeBar`: the
+ * kept notes are what the whole module is about, and twenty-eight call sites
+ * in the specs assert on them and nothing else.
+ */
 export function suppressHarmonics(
   notes: DetectedNote[],
-  overrides: Partial<HarmonicOptions> = {}
+  overrides: Partial<HarmonicOptions> = {},
+  suppressed?: DetectedNote[]
 ): DetectedNote[] {
   const options: HarmonicOptions = { ...DEFAULT_HARMONIC_OPTIONS, ...overrides };
 
@@ -78,11 +101,21 @@ export function suppressHarmonics(
   );
 
   const kept: DetectedNote[] = [];
+  const removed: DetectedNote[] = [];
   for (const note of byPitch) {
-    if (!kept.some(root => explains(root, note, options))) kept.push(note);
+    if (kept.some(root => explains(root, note, options))) removed.push(note);
+    else kept.push(note);
   }
 
-  return kept.sort((a, b) => a.onsetSec - b.onsetSec || a.pitch - b.pitch);
+  if (suppressed) {
+    // Same order as the kept list, so a renderer can walk the two together.
+    // Appended one at a time rather than with `push(...removed)`: a long stem
+    // discards thousands of partials and spreading them would eventually hit
+    // the argument-count limit.
+    for (const note of removed.sort(byOnsetThenPitch)) suppressed.push(note);
+  }
+
+  return kept.sort(byOnsetThenPitch);
 }
 
 /** True when `note` is a partial, or a re-detection, of the lower `root`. */

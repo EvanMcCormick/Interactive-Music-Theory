@@ -548,6 +548,18 @@ git add src/app/services/transcription-harmonics.ts src/app/services/transcripti
 git commit -m "feat: Suppress harmonic partials from detector output"
 ```
 
+**Amended after review: suppression has to say what it removed.**
+
+As first written, `transcribe` kept only the return value, so the 26 suppressed notes of a 34-note detection were not retained, not reported and not recoverable — `session.notes` *was* the post-suppression list. `DerivedScore.dropped` exists so a `ScoreDoc` can say why a bar is empty and M3 can render a rejected note greyed; on real material the largest discard category by an order of magnitude was invisible to it, including the known false positive of scope decision 2 (a short line over a held pedal).
+
+Three changes, none of them structural:
+
+- `suppressHarmonics(notes, overrides, suppressed?)` takes an **out-parameter**, not a `{ kept, suppressed }` return. Chosen to match `quantizeBar`, which made the same call for the same situation and wrote down why: the return value is what the module is about, and here twenty-eight call sites across the specs assert on the kept notes and nothing else. One convention for both discard channels beats two.
+- `TranscriptionSession.rawNotes` holds the detector's whole output. `notes` is a subset of it — the same objects — so nothing is destroyed at detection time.
+- `TranscriptionState.suppressed` surfaces the partials for M3. At state level rather than on the session because it is what the current suppression pass concluded, not a fact about the audio; `rawNotes` is the fact.
+
+**Follow-up this enables, and M3 should do: move suppression into the re-derive path.** M1's model says detected events are facts and everything else is interpretation. Harmonic suppression is a five-parameter heuristic calibrated on one fixture — interpretation — but M2 runs it once, at detection time, on the facts side of the line, where only re-running the model can undo it. With `rawNotes` on the session the rest is mechanical: put `HarmonicOptions` in `DerivationSettings`, run `suppressHarmonics` at the top of `rederive` over `session.rawNotes`, and the suppression thresholds become live knobs like every other. The one thing that is *not* mechanical is beat tracking, which runs on the suppressed notes by necessity (see `TranscriptionService`'s docblock) and would have to be re-run with them — which is why this is M3 work and not a footnote to M2.
+
 ---
 
 ## Task 2: Beat tracking from note onsets

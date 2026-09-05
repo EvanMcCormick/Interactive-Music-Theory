@@ -48,6 +48,8 @@ function session(
     sourceName: 'bassline.wav',
     durationSec,
     notes,
+    // Nothing here exercises suppression, so the raw list is the same list.
+    rawNotes: notes,
     grid,
     settings: createDefaultDerivationSettings()
   };

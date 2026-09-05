@@ -15,7 +15,10 @@
  * notes the detector returned for an eight-note fixture - and an onset-driven
  * beat tracker fed those follows the artefacts rather than the rhythm. The
  * suppression pass is not a cosmetic filter applied to the output; it is a
- * precondition of the step after it.
+ * precondition of the step after it. It is not, however, allowed to destroy
+ * anything: the raw list stays on the session and the partials it removed go
+ * on the state, because deciding a note is an artefact is interpretation and
+ * interpretation has to be reversible.
  *
  * **Detection and derivation are separated by the session.** `deriveScore` is
  * pure and fast, so `updateSettings` re-derives from `session.notes` - plain
@@ -66,6 +69,7 @@ import { BehaviorSubject, Observable } from 'rxjs';
 import { TimeSignature } from '../models/composer.model';
 import {
   DerivationSettings,
+  DetectedNote,
   TranscriptionSession,
   createDefaultDerivationSettings
 } from '../models/transcription.model';
@@ -90,6 +94,26 @@ export interface TranscriptionState {
   progress: number;
   session: TranscriptionSession | null;
   derived: DerivedScore | null;
+  /**
+   * The partials harmonic suppression removed, earliest first.
+   *
+   * Alongside `derived.dropped` rather than inside it: those are notes
+   * *derivation* turned away, and M3 renders both greyed for the same reason -
+   * a note the pipeline decided against is worth showing as a decision rather
+   * than as an absence. On real material this is the larger list by an order
+   * of magnitude, twenty-six of the thirty-four notes in the fixture.
+   *
+   * At state level rather than on the session because it is what the current
+   * suppression pass concluded, not a fact about the audio - `session.rawNotes`
+   * is that. Today it is fixed at detection time; when suppression moves into
+   * the re-derive path it becomes a per-derivation answer, which is where a
+   * state field is the right home.
+   *
+   * Empty rather than null when there is nothing: a run with no partials and a
+   * run that has not happened are both "nothing was suppressed", and the phase
+   * already says which.
+   */
+  suppressed: DetectedNote[];
   error: string | null;
   /**
    * Why the last settings change was turned away, or null when it was applied.
@@ -132,6 +156,7 @@ const IDLE_STATE: TranscriptionState = {
   progress: 0,
   session: null,
   derived: null,
+  suppressed: [],
   error: null,
   refusal: null
 };
@@ -246,12 +271,21 @@ export class TranscriptionService {
       );
 
       this.push({ ...IDLE_STATE, phase: 'deriving' });
-      const notes = suppressHarmonics(detection.notes);
+
+      // Nothing the detector reported is thrown away here: the partials go on
+      // the state for M3 to render, and the whole raw list stays on the
+      // session, so suppression can one day be re-run with different options
+      // without re-running the model.
+      const suppressed: DetectedNote[] = [];
+      const notes = suppressHarmonics(detection.notes, {}, suppressed);
       const session: TranscriptionSession = {
         id: nextSessionId(),
         sourceName: file.name,
         durationSec: decoded.durationSec,
         notes,
+        // Copied, not aliased: `suppressHarmonics` hands back an array of its
+        // own and the two lists should not differ in whose they are.
+        rawNotes: [...detection.notes],
         // The suppressed notes, not `detection.notes`. See the module docblock.
         grid: trackBeats(notes, decoded.durationSec, timeSignature),
         settings
@@ -262,6 +296,7 @@ export class TranscriptionService {
         progress: 1,
         session,
         derived: deriveScore(session),
+        suppressed,
         error: null,
         refusal: null
       };
@@ -385,6 +420,9 @@ export class TranscriptionService {
       progress: 1,
       session,
       derived: deriveScore(session),
+      // Carried, not recomputed: suppression runs once, at detection time.
+      // When it moves into this path it becomes another line above.
+      suppressed: current.suppressed,
       error: null,
       refusal: null
     });

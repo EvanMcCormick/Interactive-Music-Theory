@@ -271,6 +271,52 @@ describe('suppressHarmonics', () => {
     expect([...onsets].sort((a, b) => a - b)).toEqual(onsets);
   });
 
+  /**
+   * Suppression is where three quarters of a detection goes, and it runs
+   * before derivation ever sees the notes - so unless it says what it removed,
+   * the largest discard in the pipeline is invisible to the `dropped`
+   * machinery M3 renders.
+   */
+  describe('reporting what it removed', () => {
+    it('hands back the partials it suppressed', () => {
+      const suppressed: DetectedNote[] = [];
+      const kept = suppressHarmonics(DETECTED, {}, suppressed);
+
+      expect(kept.length).toBe(PLAYED.length);
+      expect(suppressed.length).toBe(DETECTED.length - PLAYED.length);
+      // The two lists partition the detection: nothing invented, nothing lost.
+      expect([...kept, ...suppressed].map(n => n.id).sort()).toEqual(
+        DETECTED.map(n => n.id).sort()
+      );
+    });
+
+    it('reports them in onset order, like the kept notes', () => {
+      const suppressed: DetectedNote[] = [];
+      suppressHarmonics(DETECTED, {}, suppressed);
+
+      const onsets = suppressed.map(n => n.onsetSec);
+      expect([...onsets].sort((a, b) => a - b)).toEqual(onsets);
+    });
+
+    it('appends rather than replacing, so one array can collect several passes', () => {
+      const suppressed: DetectedNote[] = [];
+      suppressHarmonics(DETECTED, {}, suppressed);
+      const first = suppressed.length;
+
+      suppressHarmonics(DETECTED, {}, suppressed);
+
+      expect(suppressed.length).toBe(first * 2);
+    });
+
+    it('leaves the array empty when nothing was a partial', () => {
+      const suppressed: DetectedNote[] = [];
+      // A root and the fifth above it: not a partial interval.
+      suppressHarmonics([note([0, 28, 0.4, 0.6], 0), note([0, 35, 0.4, 0.6], 1)], {}, suppressed);
+
+      expect(suppressed).toEqual([]);
+    });
+  });
+
   it('does not mutate its input', () => {
     // Identities, not just the count: the pass sorts, and sorting in place
     // would leave the caller's array reordered while its length held. The
