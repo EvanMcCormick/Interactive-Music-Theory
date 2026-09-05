@@ -240,6 +240,9 @@ export interface ComposerState {
 
 export const STANDARD_GUITAR_TUNING: number[] = [64, 59, 55, 50, 45, 40];
 
+/** 4-string bass, standard tuning: G2 D2 A1 E1, highest string first. */
+export const STANDARD_BASS_TUNING: number[] = [43, 38, 33, 28];
+
 export function createDefaultPlaybackInfo(program = 25): PlaybackInfoDoc {
   return { program, bank: 0, volume: 15, balance: 8, isMute: false, isSolo: false };
 }

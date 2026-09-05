@@ -17,6 +17,16 @@ describe('createDefaultDerivationSettings', () => {
     expect(tuning[0]).toBe(43);
   });
 
+  it('honours a caller-supplied tuning', () => {
+    expect(createDefaultDerivationSettings([40, 45, 50, 55]).tuning)
+      .toEqual([40, 45, 50, 55]);
+  });
+
+  it('does not hand out the shared constant for callers to mutate', () => {
+    createDefaultDerivationSettings().tuning[0] = 99;
+    expect(STANDARD_BASS_TUNING[0]).toBe(43);
+  });
+
   it('starts with a sixteenth-note grid and no key override', () => {
     const settings = createDefaultDerivationSettings();
 

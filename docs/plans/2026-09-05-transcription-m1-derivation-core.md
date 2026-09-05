@@ -36,10 +36,12 @@ You do not need to know music theory to implement this, but three terms recur:
 - **Beat** — one unit of the time signature's *denominator*. In 4/4 that is a quarter note; in 6/8 an eighth note. A 4/4 bar is 4 beats long.
 - **Slot** — the smallest rhythmic subdivision we will write down, set by `finestDivision`. With `finestDivision: 16` (sixteenth notes) in 4/4, one beat is 4 slots and a bar is 16 slots.
 
-### Two scope decisions, made deliberately
+### Four scope decisions, made deliberately
 
 1. **No `@Injectable` services in M1.** The design doc names a `ScoreDerivationService`, but everything here is a pure function and Angular does not require DI to call one. Components will import `deriveScore` directly. The stateful `TranscriptionService` arrives in M2 when there is actually state to hold.
 2. **Quantization uses greedy duration decomposition, not the cost-based DP from the design doc.** The property that matters — every bar sums to exactly one bar, which is what stops the notation drifting — is guaranteed by construction either way. Choosing *between* equally-valid spellings (dotted quarter vs quarter-tied-to-eighth) by onset strength is polish, and is listed as follow-up work at the end of this plan.
+3. **`BeatGrid` is interpretation, not raw fact.** Only `DetectedNote[]` is the immutable layer. Beat tracking is already an inference over the audio, and the user is expected to correct it, so a corrected tempo or meter is expressed by *regenerating the grid* — not by an override that downstream code has to reconcile against a grid it disagrees with. Later milestones say "actually it's 90 BPM" by handing `deriveScore` a new grid.
+4. **No dynamics.** `DetectedNote` carries no amplitude or velocity, so `BeatDoc.dynamics` is always `null` in M1. Adding a velocity field is cheap; deciding how amplitude maps onto *ppp*-*fff* is not, and it is not what this milestone is about.
 
 ---
 
@@ -47,6 +49,7 @@ You do not need to know music theory to implement this, but three terms recur:
 
 **Files:**
 - Create: `src/app/models/transcription.model.ts`
+- Modify: `src/app/models/composer.model.ts` (add `STANDARD_BASS_TUNING`)
 - Test: `src/app/models/transcription.model.spec.ts`
 
 **Step 1: Write the failing test**
@@ -73,6 +76,16 @@ describe('createDefaultDerivationSettings', () => {
     expect(tuning[0]).toBe(43);
   });
 
+  it('honours a caller-supplied tuning', () => {
+    expect(createDefaultDerivationSettings([40, 45, 50, 55]).tuning)
+      .toEqual([40, 45, 50, 55]);
+  });
+
+  it('does not hand out the shared constant for callers to mutate', () => {
+    createDefaultDerivationSettings().tuning[0] = 99;
+    expect(STANDARD_BASS_TUNING[0]).toBe(43);
+  });
+
   it('starts with a sixteenth-note grid and no key override', () => {
     const settings = createDefaultDerivationSettings();
 
@@ -81,6 +94,10 @@ describe('createDefaultDerivationSettings', () => {
   });
 });
 ```
+
+The last two tests are what give the first one teeth: `[43, 38, 33, 28]` is
+value-identical to the default, so on its own it cannot tell a correct factory
+from one that ignores its argument.
 
 **Step 2: Run test to verify it fails**
 
@@ -92,10 +109,46 @@ Expected: FAIL — `Cannot find module './transcription.model'`.
 
 **Step 3: Write minimal implementation**
 
-Create `src/app/models/transcription.model.ts`:
+First, in `src/app/models/composer.model.ts`, directly after
+`STANDARD_GUITAR_TUNING` under the `// Defaults` banner, add its sibling.
+Instrument reference data belongs in one place, not split across two model
+files:
 
 ```typescript
-import { DurationValue, KeySignature, TimeSignature } from './composer.model';
+/** 4-string bass, standard tuning: G2 D2 A1 E1, highest string first. */
+export const STANDARD_BASS_TUNING: number[] = [43, 38, 33, 28];
+```
+
+Then create `src/app/models/transcription.model.ts`:
+
+```typescript
+/**
+ * Domain model for audio transcription.
+ *
+ * The model is deliberately two-layered:
+ *  1. **Detected events are facts.** `DetectedNote` holds what the detector
+ *     observed, timed in absolute seconds into the source audio. Nothing about
+ *     tempo, meter, key or instrument can make it wrong.
+ *  2. **A ScoreDoc is an interpretation of those facts.** Everything in
+ *     `DerivationSettings` — tuning, capo, grid, confidence floor — is a knob
+ *     on that interpretation, and `deriveScore` is pure, so a score can be
+ *     re-derived at any time without re-running detection.
+ *
+ * `BeatGrid` sits on the interpretation side despite looking like measured
+ * data; see its docblock.
+ */
+
+import {
+  DurationValue,
+  KeySignature,
+  STANDARD_BASS_TUNING,
+  TimeSignature
+} from './composer.model';
+
+// Instrument reference data lives in composer.model.ts alongside
+// STANDARD_GUITAR_TUNING; re-exported here so transcription callers can reach
+// it from the model they already import.
+export { STANDARD_BASS_TUNING };
 
 /**
  * Raw output of a note detector, before any musical interpretation.
@@ -114,7 +167,14 @@ export interface DetectedNote {
   offsetSec: number;
   /** 0-1, straight from the model. */
   confidence: number;
-  /** Per-frame deviation in cents. Empty when the note has no bend. */
+  /**
+   * Per-frame deviation in cents. Empty when the note has no bend.
+   *
+   * Sampled at the detector's own frame rate, which this model does not
+   * record. Converting these to `NoteEffectsDoc.bendPoints` — quarter tones,
+   * one value per bend point rather than per frame — therefore needs that rate
+   * from the detector as well as the array itself.
+   */
   bendCents: number[];
 }
 
@@ -123,29 +183,51 @@ export interface DetectedNote {
  *
  * One entry per beat of the time signature's denominator: quarter notes in
  * 4/4, eighths in 6/8.
+ *
+ * Unlike DetectedNote, this is interpretation rather than raw fact. Beat
+ * tracking is already an inference, and the user is expected to correct it;
+ * a corrected tempo or meter is expressed by regenerating the grid, not by
+ * overriding it downstream.
  */
 export interface BeatGrid {
   /** Ascending. */
   beatsSec: number[];
-  /** Indices into beatsSec that begin a bar. */
+  /**
+   * Indices into beatsSec that begin a bar. Ascending, and the first entry is
+   * 0: beatsSec[0] is always the first downbeat. Derivation treats it as the
+   * start of bar 1, so a pickup must be trimmed out of beatsSec rather than
+   * expressed by starting this array above 0.
+   */
   downbeatIndices: number[];
   timeSignature: TimeSignature;
 }
+
+/**
+ * Grid resolutions a bar can actually be decomposed into.
+ *
+ * Narrower than DurationValue on purpose: the duration table used to fill bars
+ * bottoms out at a 64th note, so a finer grid would leave spans it cannot
+ * express, and those spans would vanish rather than fail loudly. Derived with
+ * Extract so it stays assignable to BeatDoc.duration.
+ */
+export type FinestDivision = Extract<DurationValue, 4 | 8 | 16 | 32 | 64>;
 
 /** Every knob that turns detected events into notation. */
 export interface DerivationSettings {
   /** MIDI pitch per open string, highest string first. */
   tuning: number[];
+  /** Frets. 0 = no capo. */
   capo: number;
   /** Shortest note that may be written. 16 = sixteenth note. */
-  finestDivision: DurationValue;
+  finestDivision: FinestDivision;
   allowTriplets: boolean;
   /** null infers the key from the notes. */
   key: KeySignature | null;
-  /** Notes below this confidence are left out of the score. */
+  /** Notes below this confidence are left out of the score. 0-1, compared against DetectedNote.confidence. */
   confidenceFloor: number;
+  /** Highest fret available on the neck, in frets. */
   maxFret: number;
-  /** Pins the fretting hand near a fret. null lets it roam. */
+  /** Pins the fretting hand near a fret number, compared against candidate frets. null lets it roam. */
   positionHint: number | null;
 }
 
@@ -157,9 +239,6 @@ export interface TranscriptionSession {
   grid: BeatGrid;
   settings: DerivationSettings;
 }
-
-/** 4-string bass, standard tuning: G2 D2 A1 E1, highest string first. */
-export const STANDARD_BASS_TUNING: number[] = [43, 38, 33, 28];
 
 export function createDefaultDerivationSettings(
   tuning: number[] = STANDARD_BASS_TUNING
@@ -183,12 +262,12 @@ export function createDefaultDerivationSettings(
 npx ng test --watch=false --browsers=ChromeHeadless --include='**/transcription.model.spec.ts'
 ```
 
-Expected: PASS, 3 tests.
+Expected: PASS, 5 tests.
 
 **Step 5: Commit**
 
 ```bash
-git add src/app/models/transcription.model.ts src/app/models/transcription.model.spec.ts
+git add src/app/models/transcription.model.ts src/app/models/transcription.model.spec.ts src/app/models/composer.model.ts
 git commit -m "feat: Add transcription domain types"
 ```
 
@@ -352,7 +431,8 @@ Turns onset positions into note durations that fill the bar **exactly**. This is
 Create `src/app/services/transcription-quantize.spec.ts`:
 
 ```typescript
-import { DurationValue, NotePitch, TimeSignature } from '../models/composer.model';
+import { NotePitch, TimeSignature } from '../models/composer.model';
+import { FinestDivision } from '../models/transcription.model';
 import { PlacedNote, beatSlots, quantizeBar } from './transcription-quantize';
 
 const FOUR_FOUR: TimeSignature = { numerator: 4, denominator: 4, isCommon: true };
@@ -400,6 +480,12 @@ describe('quantizeBar', () => {
     expect(beats[1].notes[0].isTied).toBe(true);
   });
 
+  /**
+   * `FinestDivision` rules out grids the duration table cannot express, but it
+   * cannot rule out a grid coarser than the meter it is being applied to: 8 is
+   * a perfectly good eighth-note grid, just not for a /16 bar. That stays a
+   * runtime check.
+   */
   it('rejects a grid coarser than the time signature', () => {
     const sixteenths: TimeSignature = { numerator: 4, denominator: 16, isCommon: false };
 
@@ -421,7 +507,7 @@ describe('quantizeBar', () => {
     ];
 
     for (const signature of signatures) {
-      for (const finest of [8, 16, 32] as DurationValue[]) {
+      for (const finest of [8, 16, 32] as FinestDivision[]) {
         if (finest < signature.denominator) continue;
 
         for (let seed = 0; seed < 20; seed++) {
@@ -458,6 +544,7 @@ import {
   createDefaultBeatEffects,
   createDefaultNoteEffects
 } from '../models/composer.model';
+import { FinestDivision } from '../models/transcription.model';
 
 /** A note already placed on the fretboard, still waiting for a duration. */
 export interface PlacedNote {
@@ -500,7 +587,10 @@ function durationTable(finestDivision: number): DurationUnit[] {
  * finest division and so is always available as a last resort. That guarantee
  * is what keeps every derived bar exactly full.
  */
-export function slotsToDurations(slots: number, finestDivision: number): DurationUnit[] {
+export function slotsToDurations(
+  slots: number,
+  finestDivision: FinestDivision
+): DurationUnit[] {
   const table = durationTable(finestDivision);
   const out: DurationUnit[] = [];
   let remaining = slots;
@@ -526,7 +616,7 @@ export function slotsToDurations(slots: number, finestDivision: number): Duratio
 export function quantizeBar(
   notes: PlacedNote[],
   timeSignature: TimeSignature,
-  finestDivision: DurationValue
+  finestDivision: FinestDivision
 ): BeatDoc[] {
   const slotsPerBeat = finestDivision / timeSignature.denominator;
   if (!Number.isInteger(slotsPerBeat) || slotsPerBeat < 1) {
@@ -1283,7 +1373,7 @@ Expected: PASS, 8 tests.
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 39 new = **97 tests, 0 failures**.
+Expected: PASS — 58 baseline + 41 new = **99 tests, 0 failures**.
 
 **Step 6: Commit**
 
@@ -1296,7 +1386,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 97 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 99 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
 - Every derived bar sums to exactly one bar, for every time signature and grid tested.
 - The two position-stability tests pass, proving fingering responds to available time.
@@ -1309,3 +1399,4 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 - **Chords.** Simultaneous notes merge into one beat, which is right, but no chord-shape validation happens — that arrives with guitar polyphony.
 - **Pickup bars.** Notes before the first downbeat are pulled onto beat 1.
 - **Context-based octave correction.** Only out-of-range folding is implemented; an octave error landing on a playable pitch survives.
+- **Dynamics.** `DetectedNote` records no amplitude or velocity, so every `BeatDoc.dynamics` is `null`. A decision, not an oversight: see scope decision 4.
