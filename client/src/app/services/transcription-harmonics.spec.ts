@@ -80,6 +80,54 @@ describe('suppressHarmonics', () => {
     expect(suppressHarmonics(pair).length).toBe(2);
   });
 
+  it('keeps an octave leap over a note that is still ringing', () => {
+    // E1 to E2 with the low note left to ring under it. Overlapping, at a
+    // partial's interval, and no quieter — the E2 is in fact the louder of
+    // the two. Only its length says it was played rather than radiated.
+    const leap = [
+      note([0, 28, 0.8, 0.62], 0),
+      note([0.6, 40, 0.8, 0.64], 1)
+    ];
+
+    expect(suppressHarmonics(leap).map(n => n.pitch)).toEqual([28, 40]);
+  });
+
+  it('keeps octave eighths pumping against each other', () => {
+    // E1/E2 alternating eighths at 120 BPM, each held 0.22 s so every note
+    // overlaps the one before it. Suppressing on overlap alone deletes every
+    // E2 and leaves four repeated E1s.
+    const eighths = Array.from({ length: 8 }, (_, i) =>
+      note([i * 0.25, i % 2 ? 40 : 28, 0.22, i % 2 ? 0.58 : 0.62], i)
+    );
+
+    expect(suppressHarmonics(eighths).map(n => n.pitch)).toEqual([
+      28, 40, 28, 40, 28, 40, 28, 40
+    ]);
+  });
+
+  it('keeps a slapped pop two octaves over the thumbed note under it', () => {
+    // Thumb on E1, pop on E3 a quarter-second later: +24 is a partial's
+    // interval, and the thumbed note is still ringing when the pop lands.
+    const slap = [
+      note([0, 28, 0.45, 0.70], 0),
+      note([0.25, 52, 0.50, 0.66], 1)
+    ];
+
+    expect(suppressHarmonics(slap).map(n => n.pitch)).toEqual([28, 52]);
+  });
+
+  it('keeps a note at a partial interval that began before its supposed root', () => {
+    // A partial cannot start before the pluck that makes it. This E2 is
+    // already dying away when the E1 lands underneath it, so the E1 does not
+    // explain it — even though they overlap and the E2 is much the shorter.
+    const pair = [
+      note([0, 40, 0.6, 0.50], 0),
+      note([0.5, 28, 1.0, 0.70], 1)
+    ];
+
+    expect(suppressHarmonics(pair).map(n => n.pitch)).toEqual([40, 28]);
+  });
+
   it('drops the 5th partial, nearly two octaves and a major third up', () => {
     // 5f0 is 27.86 semitones above the fundamental: E1 at 28 rings at 56.
     const pair = [

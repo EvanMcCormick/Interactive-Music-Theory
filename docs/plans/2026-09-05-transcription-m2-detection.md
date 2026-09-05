@@ -45,7 +45,7 @@ A throwaway spike answered the questions this plan would otherwise have guessed 
 ### Scope decisions
 
 1. **Beat tracking runs on detected note onsets, not on a spectral flux envelope.** The design doc specifies an STFT onset envelope. Building an FFT is real work, and for a bass stem the notes *are* the rhythm — every onset the beat tracker would find is already a `DetectedNote` with an amplitude. This keeps beat tracking a pure function testable without any audio, and Ellis's dynamic program is unchanged. A spectral envelope is the upgrade path if note onsets prove too sparse.
-2. **Octave double-stops are sacrificed.** Task 1 cannot distinguish a genuine octave double-stop from a fundamental plus its second partial — in the spike's data the octave partial's amplitude (0.552) is within 2 % of the fundamental's (0.565). Losing rare double-stops to fix 4× over-detection is the right trade for a bass-first milestone. Recorded as a limitation.
+2. **Suppression is bought with duration, and costs short notes over long ones.** Amplitude cannot tell a partial from a real note played above a ringing one: in the spike's data an octave partial comes back *louder* than the E1 that produced it (0.548 against 0.520, a ratio of 1.05). Duration can — the higher modes of a plucked string damp faster than the fundamental, and across the fixture's 21 partial suppressions the longest partial runs 0.86 of the note that produced it. So Task 1 suppresses a note at a partial's interval only when it also starts no earlier than the note below it and dies away sooner. Octave double-stops, octave leaps over a ringing low note, pumping octave eighths and slapped pops all survive that. What is still lost is a genuine note at +12, +19, +24, +28 or +31 that both overlaps the note below it *and* is markedly shorter than it — a short line over a held pedal is the case to watch: under a 2 s E1, line notes at those intervals are still deleted. Recorded as a limitation.
 3. **No downbeat detection.** M1 removed `downbeatIndices` deliberately. M2 produces `beatsSec` and a caller-supplied `timeSignature`; bar 1 starts at `beatsSec[0]`. Reintroducing downbeats means reintroducing the field *and* the derivation support together, which is M3 work.
 
 ---
@@ -141,6 +141,54 @@ describe('suppressHarmonics', () => {
     ];
 
     expect(suppressHarmonics(pair).length).toBe(2);
+  });
+
+  it('keeps an octave leap over a note that is still ringing', () => {
+    // E1 to E2 with the low note left to ring under it. Overlapping, at a
+    // partial's interval, and no quieter — the E2 is in fact the louder of
+    // the two. Only its length says it was played rather than radiated.
+    const leap = [
+      note([0, 28, 0.8, 0.62], 0),
+      note([0.6, 40, 0.8, 0.64], 1)
+    ];
+
+    expect(suppressHarmonics(leap).map(n => n.pitch)).toEqual([28, 40]);
+  });
+
+  it('keeps octave eighths pumping against each other', () => {
+    // E1/E2 alternating eighths at 120 BPM, each held 0.22 s so every note
+    // overlaps the one before it. Suppressing on overlap alone deletes every
+    // E2 and leaves four repeated E1s.
+    const eighths = Array.from({ length: 8 }, (_, i) =>
+      note([i * 0.25, i % 2 ? 40 : 28, 0.22, i % 2 ? 0.58 : 0.62], i)
+    );
+
+    expect(suppressHarmonics(eighths).map(n => n.pitch)).toEqual([
+      28, 40, 28, 40, 28, 40, 28, 40
+    ]);
+  });
+
+  it('keeps a slapped pop two octaves over the thumbed note under it', () => {
+    // Thumb on E1, pop on E3 a quarter-second later: +24 is a partial's
+    // interval, and the thumbed note is still ringing when the pop lands.
+    const slap = [
+      note([0, 28, 0.45, 0.70], 0),
+      note([0.25, 52, 0.50, 0.66], 1)
+    ];
+
+    expect(suppressHarmonics(slap).map(n => n.pitch)).toEqual([28, 52]);
+  });
+
+  it('keeps a note at a partial interval that began before its supposed root', () => {
+    // A partial cannot start before the pluck that makes it. This E2 is
+    // already dying away when the E1 lands underneath it, so the E1 does not
+    // explain it — even though they overlap and the E2 is much the shorter.
+    const pair = [
+      note([0, 40, 0.6, 0.50], 0),
+      note([0.5, 28, 1.0, 0.70], 1)
+    ];
+
+    expect(suppressHarmonics(pair).map(n => n.pitch)).toEqual([40, 28]);
   });
 
   it('drops the 5th partial, nearly two octaves and a major third up', () => {
@@ -251,8 +299,10 @@ import { DetectedNote } from '../models/transcription.model';
  *
  * What makes this tractable is that a partial is always *above* its
  * fundamental — physics, not a heuristic. So: consider notes lowest first, and
- * drop any that a lower, overlapping note already explains as one of its
- * partials. Ordering by pitch guarantees a fundamental has been considered
+ * drop any that a lower note already explains as one of its partials — one it
+ * overlaps, starts no earlier than, and dies away sooner than. Overlap alone
+ * is not enough; that would delete octave leaps and slapped pops along with
+ * the artefacts. Ordering by pitch guarantees a fundamental has been considered
  * before anything it could explain, without assuming it is the louder of the
  * two. It often is not: in the measured output an octave partial comes back at
  * amplitude 0.548 against the 0.520 of the E1 that produced it.
@@ -276,12 +326,20 @@ export interface HarmonicOptions {
   unisonAmplitudeRatio: number;
   /** ...and this share of its duration. */
   unisonDurationRatio: number;
+  /**
+   * A partial decays faster than its fundamental, so it sounds for less of it.
+   * Be clear-eyed about this number: it is calibrated on one fixture, whose
+   * longest partial runs 0.86 of the note that produced it. 0.90 clears that
+   * by four points and nothing more.
+   */
+  partialDurationRatio: number;
 }
 
 export const DEFAULT_HARMONIC_OPTIONS: HarmonicOptions = {
   toleranceSec: 0.03,
   unisonAmplitudeRatio: 0.8,
-  unisonDurationRatio: 0.5
+  unisonDurationRatio: 0.5,
+  partialDurationRatio: 0.9
 };
 
 export function suppressHarmonics(
@@ -323,16 +381,30 @@ function explains(
     root.onsetSec <= note.offsetSec + options.toleranceSec;
   if (!overlaps) return false;
 
-  if (interval > 0) return true;
+  const rootDuration = root.offsetSec - root.onsetSec;
+  const noteDuration = note.offsetSec - note.onsetSec;
+
+  if (interval > 0) {
+    // A partial is set ringing by the same pluck as its fundamental, so it
+    // cannot start first. Unison is exempt on purpose: a re-detection often
+    // straddles the onset of the note it duplicates, and the symmetric
+    // overlap above is what catches the earlier half of such a pair.
+    if (note.onsetSec < root.onsetSec - options.toleranceSec) return false;
+
+    // Overlap alone would delete real music: an octave leap over a ringing
+    // low note, a slapped pop over its thumbed root, pumping octave eighths.
+    // Amplitude cannot separate those from partials — in the fixture a
+    // partial comes back 5 % *louder* than the note that produced it — but
+    // duration can, because the higher modes of a plucked string damp faster
+    // than the fundamental and so sound for less of it.
+    return noteDuration < rootDuration * options.partialDurationRatio;
+  }
 
   // Unison needs more care. A note genuinely struck twice also overlaps itself
   // when the first one is still ringing, and suppressing that would delete
   // repeated notes — which basslines are full of. A re-detection is both
   // markedly quieter and markedly shorter than the note it duplicates; a real
   // second attack is neither.
-  const rootDuration = root.offsetSec - root.onsetSec;
-  const noteDuration = note.offsetSec - note.onsetSec;
-
   return (
     note.confidence < root.confidence * options.unisonAmplitudeRatio &&
     noteDuration < rootDuration * options.unisonDurationRatio
@@ -342,7 +414,7 @@ function explains(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 12 tests. The first assertion — 34 notes in, the exact played line out — is the one that matters.
+Expected: PASS, 16 tests. The first assertion — 34 notes in, the exact eight played events out — is the one that matters.
 
 **Step 5: Commit**
 
@@ -657,7 +729,7 @@ Commit: `feat: Add TranscriptionService orchestration`
 
 ## Deliberately not in M2
 
-- **Octave double-stops** — Task 1 cannot distinguish one from a fundamental plus its second partial, since their amplitudes are within 2 % in real output.
+- **Short notes at a partial's interval over long ones.** Task 1 keeps a note above a ringing lower note when it lasts at least 0.9 of it, which saves double-stops, octave leaps and slapped pops; a *short* note at +12, +19, +24, +28 or +31 over a held pedal is still read as that pedal's partial and deleted. See scope decision 2.
 - **Downbeat detection** — see scope decision 3.
 - **Spectral-flux onset envelope** — beat tracking uses note onsets; see scope decision 1.
 - **A no-WebGL fallback.** The CPU backend is ~100× slower and unusable for full songs. Bumping TF.js to 4.x via `overrides` would unlock the WASM backend, and is worth trying once — Basic Pitch touches only `loadGraphModel`, `slice`, `concat1d`, `signal.frame`, `expandDims`, `zeros`, `tensor` and `GraphModel.execute`.

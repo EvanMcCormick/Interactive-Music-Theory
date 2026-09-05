@@ -14,8 +14,10 @@ import { DetectedNote } from '../models/transcription.model';
  *
  * What makes this tractable is that a partial is always *above* its
  * fundamental — physics, not a heuristic. So: consider notes lowest first, and
- * drop any that a lower, overlapping note already explains as one of its
- * partials. Ordering by pitch guarantees a fundamental has been considered
+ * drop any that a lower note already explains as one of its partials — one it
+ * overlaps, starts no earlier than, and dies away sooner than. Overlap alone
+ * is not enough; that would delete octave leaps and slapped pops along with
+ * the artefacts. Ordering by pitch guarantees a fundamental has been considered
  * before anything it could explain, without assuming it is the louder of the
  * two. It often is not: in the measured output an octave partial comes back at
  * amplitude 0.548 against the 0.520 of the E1 that produced it.
@@ -39,12 +41,20 @@ export interface HarmonicOptions {
   unisonAmplitudeRatio: number;
   /** ...and this share of its duration. */
   unisonDurationRatio: number;
+  /**
+   * A partial decays faster than its fundamental, so it sounds for less of it.
+   * Be clear-eyed about this number: it is calibrated on one fixture, whose
+   * longest partial runs 0.86 of the note that produced it. 0.90 clears that
+   * by four points and nothing more.
+   */
+  partialDurationRatio: number;
 }
 
 export const DEFAULT_HARMONIC_OPTIONS: HarmonicOptions = {
   toleranceSec: 0.03,
   unisonAmplitudeRatio: 0.8,
-  unisonDurationRatio: 0.5
+  unisonDurationRatio: 0.5,
+  partialDurationRatio: 0.9
 };
 
 export function suppressHarmonics(
@@ -86,16 +96,30 @@ function explains(
     root.onsetSec <= note.offsetSec + options.toleranceSec;
   if (!overlaps) return false;
 
-  if (interval > 0) return true;
+  const rootDuration = root.offsetSec - root.onsetSec;
+  const noteDuration = note.offsetSec - note.onsetSec;
+
+  if (interval > 0) {
+    // A partial is set ringing by the same pluck as its fundamental, so it
+    // cannot start first. Unison is exempt on purpose: a re-detection often
+    // straddles the onset of the note it duplicates, and the symmetric
+    // overlap above is what catches the earlier half of such a pair.
+    if (note.onsetSec < root.onsetSec - options.toleranceSec) return false;
+
+    // Overlap alone would delete real music: an octave leap over a ringing
+    // low note, a slapped pop over its thumbed root, pumping octave eighths.
+    // Amplitude cannot separate those from partials — in the fixture a
+    // partial comes back 5 % *louder* than the note that produced it — but
+    // duration can, because the higher modes of a plucked string damp faster
+    // than the fundamental and so sound for less of it.
+    return noteDuration < rootDuration * options.partialDurationRatio;
+  }
 
   // Unison needs more care. A note genuinely struck twice also overlaps itself
   // when the first one is still ringing, and suppressing that would delete
   // repeated notes — which basslines are full of. A re-detection is both
   // markedly quieter and markedly shorter than the note it duplicates; a real
   // second attack is neither.
-  const rootDuration = root.offsetSec - root.onsetSec;
-  const noteDuration = note.offsetSec - note.onsetSec;
-
   return (
     note.confidence < root.confidence * options.unisonAmplitudeRatio &&
     noteDuration < rootDuration * options.unisonDurationRatio
