@@ -24,12 +24,20 @@ import { BeatGrid, DetectedNote } from '../models/transcription.model';
  *
  * Two things carry most of the weight, and both are easy to lose:
  *
- * The **log-normal tempo prior** is what stops the estimate locking onto half
- * or double the played tempo. Raw autocorrelation cannot tell a beat from its
- * own subdivision - a line of eighth notes correlates at the eighth about as
- * well as at the quarter, and often better, because the shorter lag has more
- * overlapping terms to sum. Weighting each lag by how plausible its tempo is
- * as a *perceived* tempo breaks the tie the way a listener does.
+ * The **log-normal tempo prior** is what stops the estimate locking onto a
+ * *subdivision* of the played tempo. Raw autocorrelation cannot tell a beat
+ * from its own subdivision - a line of eighth notes correlates at the eighth
+ * about as well as at the quarter, and often better, because the shorter lag
+ * has more overlapping terms to sum. Weighting each lag by how plausible its
+ * tempo is as a *perceived* tempo breaks the tie the way a listener does.
+ *
+ * It cuts both ways, and the same prior is what *causes* a halved reading
+ * above roughly 175 BPM: past there its penalty on the true lag exceeds that
+ * lag's correlation advantage over its own double, so 180 comes back as 90.
+ * See `maxBpm`. And no prior can recover a tempo the onsets never state - a
+ * bass playing roots on beats 1 and 3 at 120 BPM leaves no onset energy at
+ * the quarter-note lag to weigh, and reads as 60. That one is the price of
+ * tracking note onsets instead of a spectral envelope.
  *
  * The **squared-log transition penalty** is what lets the beat drift with the
  * music without skipping one. It is symmetric in the ratio of the gap to the
@@ -48,7 +56,16 @@ export interface BeatTrackingOptions {
   frameRateHz: number;
   /** Slowest tempo the search will consider. */
   minBpm: number;
-  /** Fastest tempo the search will consider. */
+  /**
+   * Fastest tempo the search will *consider* - not the fastest it can return.
+   *
+   * Above roughly 175 BPM the prior's penalty on the true lag outweighs that
+   * lag's correlation advantage over its own double, and the estimate comes
+   * back exactly halved: 180 reads as 90, 200 as 100, 210 as 105. Raising this
+   * does not help, because it is the prior and not the band that decides.
+   * Widening `priorWidth` or moving `priorBpm` up would, at the cost of the
+   * subdivision-locking the prior exists to prevent.
+   */
   maxBpm: number;
   /** Tempo the log-normal prior is centred on. */
   priorBpm: number;
@@ -110,10 +127,15 @@ export function onsetSignal(
     const weight = Number.isFinite(note.confidence) ? Math.max(note.confidence, 0) : 0;
     if (weight === 0) continue;
 
-    const centre = Math.round(note.onsetSec * rate);
-    const from = Math.max(0, centre - radius);
-    const to = Math.min(frames - 1, centre + radius);
+    const centre = note.onsetSec * rate;
+    const nearest = Math.round(centre);
+    const from = Math.max(0, nearest - radius);
+    const to = Math.min(frames - 1, nearest + radius);
     for (let i = from; i <= to; i++) {
+      // Measured from the *unrounded* onset, so one falling between two frames
+      // leans on both instead of snapping to the nearer. Rounding first put
+      // the kernel up to half a frame - 5 ms - off, for nothing: the frames it
+      // covers are the same either way.
       const offset = (i - centre) / sigma;
       signal[i] += weight * Math.exp(-0.5 * offset * offset);
     }
@@ -139,12 +161,16 @@ export function onsetSignal(
  */
 export function estimateTempo(
   signal: Float32Array,
-  options: BeatTrackingOptions = DEFAULT_BEAT_OPTIONS
+  overrides: Partial<BeatTrackingOptions> = {}
 ): number {
+  const options: BeatTrackingOptions = { ...DEFAULT_BEAT_OPTIONS, ...overrides };
   const rate = safeRate(options.frameRateHz);
   const frames = signal.length;
-  const minLag = Math.max(1, Math.floor((60 * rate) / options.maxBpm));
-  const maxLag = Math.min(frames - 1, Math.ceil((60 * rate) / options.minBpm));
+  // Rounded inward, so the band stays inside the tempos the caller asked for.
+  // Outward - floor here, ceil below - reached 214.29 BPM against a stated
+  // 210, which is a band nobody wrote down.
+  const minLag = Math.max(1, Math.ceil((60 * rate) / options.maxBpm));
+  const maxLag = Math.min(frames - 1, Math.floor((60 * rate) / options.minBpm));
 
   let bestScore = 0;
   let bestLag = -1;
@@ -180,8 +206,9 @@ export function trackBeats(
   notes: DetectedNote[],
   durationSec: number,
   timeSignature: TimeSignature,
-  options: BeatTrackingOptions = DEFAULT_BEAT_OPTIONS
+  overrides: Partial<BeatTrackingOptions> = {}
 ): BeatGrid {
+  const options: BeatTrackingOptions = { ...DEFAULT_BEAT_OPTIONS, ...overrides };
   const rate = safeRate(options.frameRateHz);
 
   const signal = onsetSignal(notes, durationSec, rate);

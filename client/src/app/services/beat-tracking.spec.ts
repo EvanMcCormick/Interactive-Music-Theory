@@ -82,6 +82,37 @@ describe('estimateTempo', () => {
     expect(estimateTempo(signal, DEFAULT_BEAT_OPTIONS)).toBeCloseTo(100, -0.5);
   });
 
+  it('cannot read a tempo much above 175 BPM, and halves it instead', () => {
+    // Not a defect to fix — the log-normal prior is doing exactly what it is
+    // there for, and past roughly 175 BPM its penalty on the true lag exceeds
+    // that lag's correlation advantage over its own double, so the answer
+    // comes back exactly halved: 180 as 90, 200 as 100, 210 as 105. `maxBpm`
+    // is therefore the band the search considers, not a tempo it can return.
+    // Pinned here so any later change to the prior shows up as a diff.
+    const at = (bpm: number) =>
+      onsetSignal(pulse(40, 60 / bpm), (40 * 60) / bpm, DEFAULT_BEAT_OPTIONS.frameRateHz);
+
+    expect(estimateTempo(at(170), DEFAULT_BEAT_OPTIONS)).toBeGreaterThan(160);
+    expect(estimateTempo(at(180), DEFAULT_BEAT_OPTIONS)).toBeCloseTo(90, -0.5);
+  });
+
+  it('reads half tempo off a bass playing roots on beats 1 and 3', () => {
+    // Inherent to tracking note onsets rather than a spectral flux envelope —
+    // scope decision 1. Half-note-sparse material leaves no onset energy at
+    // the quarter-note lag for the prior to weigh, so 120 BPM reads as 60 and
+    // every note is notated at twice its written value. Pinned, not fixed:
+    // the fix is the spectral envelope, which is the documented upgrade path
+    // and would change only `onsetSignal`.
+    const onsets = Array.from({ length: 8 }, (_, bar) => [bar * 2, bar * 2 + 1]).flat();
+    const roots = notesAt(onsets);
+
+    expect(estimateTempo(onsetSignal(roots, 16, DEFAULT_BEAT_OPTIONS.frameRateHz)))
+      .toBeCloseTo(60, -0.5);
+
+    const gaps = gapsOf(trackBeats(roots, 16, FOUR_FOUR).beatsSec);
+    for (const gap of gaps) expect(gap).toBeCloseTo(1, 1);
+  });
+
   it('falls back to a working frame rate rather than to priorBpm', () => {
     // With an unusable rate, `maxLag` comes out zero, the search loop never
     // runs and the function returns `priorBpm` — 120, a plausible number that

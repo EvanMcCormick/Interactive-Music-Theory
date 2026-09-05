@@ -44,7 +44,7 @@ A throwaway spike answered the questions this plan would otherwise have guessed 
 
 ### Scope decisions
 
-1. **Beat tracking runs on detected note onsets, not on a spectral flux envelope.** The design doc specifies an STFT onset envelope. Building an FFT is real work, and for a bass stem the notes *are* the rhythm — every onset the beat tracker would find is already a `DetectedNote` with an amplitude. This keeps beat tracking a pure function testable without any audio, and Ellis's dynamic program is unchanged. A spectral envelope is the upgrade path if note onsets prove too sparse.
+1. **Beat tracking runs on detected note onsets, not on a spectral flux envelope.** The design doc specifies an STFT onset envelope. Building an FFT is real work, and for a bass stem the notes *are* the rhythm — every onset the beat tracker would find is already a `DetectedNote` with an amplitude. This keeps beat tracking a pure function testable without any audio, and Ellis's dynamic program is unchanged. A spectral envelope is the upgrade path if note onsets prove too sparse. **What it costs:** sparse material halves. A bass playing roots on beats 1 and 3 at 120 BPM comes back as 60, because there is no onset energy at the quarter-note lag for the prior to weigh — the tempo is simply not stated in the onsets, and no prior can recover what was never there. A flux envelope would still see the note *ringing* across the missing beats. This is the price of the decision, not a bug in the tracker; it is pinned by a test and recorded as a limitation.
 2. **Suppression is bought with duration, and costs short notes over long ones.** Amplitude cannot tell a partial from a real note played above a ringing one: in the spike's data an octave partial comes back *louder* than the E1 that produced it (0.548 against 0.520, a ratio of 1.05). Duration can — the higher modes of a plucked string damp faster than the fundamental, and across the fixture's 21 partial suppressions the longest partial runs 0.86 of the note that produced it. So Task 1 suppresses a note at a partial's interval only when it also starts no earlier than the note below it and dies away sooner. Octave double-stops, octave leaps over a ringing low note, pumping octave eighths and slapped pops all survive that. What is still lost is a genuine note at +12, +19, +24, +28 or +31 that both overlaps the note below it *and* is markedly shorter than it — a short line over a held pedal is the case to watch: under a 2 s E1, line notes at those intervals are still deleted. Recorded as a limitation.
 3. **No downbeat detection.** M1 removed `downbeatIndices` deliberately. M2 produces `beatsSec` and a caller-supplied `timeSignature`; bar 1 starts at `beatsSec[0]`. Reintroducing downbeats means reintroducing the field *and* the derivation support together, which is M3 work.
 
@@ -628,6 +628,37 @@ describe('estimateTempo', () => {
     expect(estimateTempo(signal, DEFAULT_BEAT_OPTIONS)).toBeCloseTo(100, -0.5);
   });
 
+  it('cannot read a tempo much above 175 BPM, and halves it instead', () => {
+    // Not a defect to fix — the log-normal prior is doing exactly what it is
+    // there for, and past roughly 175 BPM its penalty on the true lag exceeds
+    // that lag's correlation advantage over its own double, so the answer
+    // comes back exactly halved: 180 as 90, 200 as 100, 210 as 105. `maxBpm`
+    // is therefore the band the search considers, not a tempo it can return.
+    // Pinned here so any later change to the prior shows up as a diff.
+    const at = (bpm: number) =>
+      onsetSignal(pulse(40, 60 / bpm), (40 * 60) / bpm, DEFAULT_BEAT_OPTIONS.frameRateHz);
+
+    expect(estimateTempo(at(170), DEFAULT_BEAT_OPTIONS)).toBeGreaterThan(160);
+    expect(estimateTempo(at(180), DEFAULT_BEAT_OPTIONS)).toBeCloseTo(90, -0.5);
+  });
+
+  it('reads half tempo off a bass playing roots on beats 1 and 3', () => {
+    // Inherent to tracking note onsets rather than a spectral flux envelope —
+    // scope decision 1. Half-note-sparse material leaves no onset energy at
+    // the quarter-note lag for the prior to weigh, so 120 BPM reads as 60 and
+    // every note is notated at twice its written value. Pinned, not fixed:
+    // the fix is the spectral envelope, which is the documented upgrade path
+    // and would change only `onsetSignal`.
+    const onsets = Array.from({ length: 8 }, (_, bar) => [bar * 2, bar * 2 + 1]).flat();
+    const roots = notesAt(onsets);
+
+    expect(estimateTempo(onsetSignal(roots, 16, DEFAULT_BEAT_OPTIONS.frameRateHz)))
+      .toBeCloseTo(60, -0.5);
+
+    const gaps = gapsOf(trackBeats(roots, 16, FOUR_FOUR).beatsSec);
+    for (const gap of gaps) expect(gap).toBeCloseTo(1, 1);
+  });
+
   it('falls back to a working frame rate rather than to priorBpm', () => {
     // With an unusable rate, `maxLag` comes out zero, the search loop never
     // runs and the function returns `priorBpm` — 120, a plausible number that
@@ -811,9 +842,10 @@ Expected: FAIL — `Cannot find module './beat-tracking'`.
 
 Create `src/app/services/beat-tracking.ts` implementing:
 
-- `onsetSignal(notes, durationSec, frameRateHz): Float32Array` — an impulse at each onset weighted by `confidence`, then a Gaussian blur of about 20 ms so a beat still scores when an onset sits slightly off it. It sizes itself from the largest onset, so that has to be **clamped to `durationSec` plus a second** whenever `durationSec` is a usable positive number: unbounded, a stray `onsetSec: 1e7` asks for a billion frames — four gigabytes — and then a dynamic program of ~7.5e10 iterations that never returns. `durationSec` is the authority on how long the source is, the same call `score-derivation.ts` makes in `barsInSource`.
-- `estimateTempo(signal, options): number` — autocorrelation across lags spanning `minBpm`..`maxBpm`, each lag's score scaled by Ellis's log-normal prior `exp(-0.5 * (log2(bpm / priorBpm) / priorWidth)^2)`. The prior is what stops the estimate locking onto a *subdivision* of the played tempo, which is the classic failure. It **sanitises `frameRateHz` itself** rather than trusting the caller — it is exported, and an unusable rate leaves `maxLag` at zero, so the search loop never runs and it returns `priorBpm`: 120 BPM against music played at 90, in a grid nothing downstream can tell from a tracked one. `trackBeats` passes the rate it sanitised for `onsetSignal` on to it for the same reason.
+- `onsetSignal(notes, durationSec, frameRateHz): Float32Array` — an impulse at each onset weighted by `confidence`, then a Gaussian blur of about 20 ms so a beat still scores when an onset sits slightly off it. Measure the Gaussian from the *unrounded* onset rather than from its nearest frame — free, and sub-frame accurate instead of up to 5 ms off. It sizes itself from the largest onset, so that has to be **clamped to `durationSec` plus a second** whenever `durationSec` is a usable positive number: unbounded, a stray `onsetSec: 1e7` asks for a billion frames — four gigabytes — and then a dynamic program of ~7.5e10 iterations that never returns. `durationSec` is the authority on how long the source is, the same call `score-derivation.ts` makes in `barsInSource`.
+- `estimateTempo(signal, options): number` — autocorrelation across lags spanning `minBpm`..`maxBpm`, each lag's score scaled by Ellis's log-normal prior `exp(-0.5 * (log2(bpm / priorBpm) / priorWidth)^2)`. The prior is what stops the estimate locking onto a *subdivision* of the played tempo, which is the classic failure. It **sanitises `frameRateHz` itself** rather than trusting the caller — it is exported, and an unusable rate leaves `maxLag` at zero, so the search loop never runs and it returns `priorBpm`: 120 BPM against music played at 90, in a grid nothing downstream can tell from a tracked one. `trackBeats` passes the rate it sanitised for `onsetSignal` on to it for the same reason. Round the lag band **inward** — `ceil` for `minLag`, `floor` for `maxLag` — so it stays inside the tempos the caller asked for; outward reached 214.29 BPM against a stated 210. And note what `maxBpm` can and cannot promise: see the limitation on the tempo ceiling below.
 - `trackBeats(notes, durationSec, timeSignature, options?): BeatGrid` — the dynamic program. For each frame `i`, score it as `signal[i] + max over j in [i - 2P, i - P/2] of (score[j] - tightness * log((i - j) / P)^2)`, where `P` is the period in frames. Record a back-pointer, then backtrace from the best-scoring frame in the final period. The squared-log penalty lets the beat drift with the music but not skip one.
+- Both public entry points take **`Partial<BeatTrackingOptions>` merged over the defaults**, matching `suppressHarmonics(notes, overrides: Partial<HarmonicOptions> = {})` in Task 1 — a caller overriding one knob should not have to restate the other five.
 - **Trim the backtrace** before returning it, as librosa's `__trim_beats` does. The DP can only start a chain in the first half-period, so its first beat is *structurally* always less than half a beat into the file: music that starts at 2.7 s comes back with five beats in front of it that no note supports, and since `deriveScore` reads `beatsSec[0]` as bar 1 beat 1, that puts the first played note on bar 2 beat 2 with the tempo still perfectly right. The tail is the same fault reversed — 8 s of music in a file stated as 40 s long produced 81 beats, 65 of them past the last note. So: sample the local score at the beat frames, smooth it with the three non-zero taps of a five-point Hann window, and keep the run from the first to the last beat clearing half the RMS of that curve. When nothing clears it — a lone onset, silence — fall through to the even grid rather than returning a stub. One deliberate deviation from librosa, whose slice stops *before* the last beat it just called valid and so drops a real one.
 
 Defaults:
@@ -833,7 +865,7 @@ With no notes, return an even grid at `priorBpm` spanning `durationSec` — a de
 
 **Step 4: Run tests, then the full suite**
 
-Expected: the beat spec passes, and the full suite is 155 + 24 + 18 = 197.
+Expected: the beat spec passes, and the full suite is 155 + 24 + 20 = 199.
 
 **Step 5: Commit**
 
@@ -1015,6 +1047,8 @@ Commit: `feat: Add TranscriptionService orchestration`
 - **Short notes at a partial's interval over long ones.** Task 1 keeps a note above a ringing lower note when it lasts at least 0.9 of it, which saves double-stops, octave leaps and slapped pops; a *short* note at +12, +19, +24, +28 or +31 over a held pedal is still read as that pedal's partial and deleted. See scope decision 2.
 - **Any tolerance on the partial intervals themselves.** `HARMONIC_SEMITONES` matches integer offsets exactly, and only the 5th partial is far enough off a semitone to make that look risky: 5f0 sits at +27.863, so it lands on +28 unless the fundamental is detected more than 36 cents flat of its own bin centre. Real strings are inharmonic, and inharmonicity pushes upper partials *sharp* — toward +28, not away from it. So no tolerance is needed now. If measurement ever says otherwise, the fix is to test `Math.abs(interval - exact) <= 0.5` against the exact ratios (12, 19.020, 24, 27.863, 31.020), **not** to add a flat +27 entry: +27 is a real interval a bass player can play against a ringing low note, and listing it would delete those notes outright.
 - **Evidence for +28 and +31.** Both are in the list on physical grounds. The fixture's synthetic source carried only 2nd, 3rd and 4th harmonics, so no pair in it is 28 or 31 semitones apart, and no measurement yet confirms a detector reports them. The two standalone tests for them are constructed, not observed.
+- **Tempos much above 175 BPM.** `maxBpm: 210` is the band the autocorrelation search *considers*, not a tempo it can return. Past roughly 175 BPM the log-normal prior's penalty on the true lag exceeds that lag's correlation advantage over its own double, and the estimate comes back exactly halved: 170 reads as 171, but 180 reads as 90, 200 as 100 and 210 as 105. Raising `maxBpm` does not help, because it is the prior and not the band that decides. Widening `priorWidth` or moving `priorBpm` up would, at the cost of the subdivision-locking the prior exists to prevent — so the ceiling is documented on the field and pinned by a test rather than tuned around. Real bass parts sit well inside it.
+- **Tempo from half-note-sparse material.** A bass playing roots on beats 1 and 3 at 120 BPM reads as 60 BPM, and every note is notated at twice its written value. Inherent to tracking note onsets — see scope decision 1. Pinned by a test.
 - **Downbeat detection** — see scope decision 3.
 - **Spectral-flux onset envelope** — beat tracking uses note onsets; see scope decision 1.
 - **A no-WebGL fallback.** The CPU backend is ~100× slower and unusable for full songs. Bumping TF.js to 4.x via `overrides` would unlock the WASM backend, and is worth trying once — Basic Pitch touches only `loadGraphModel`, `slice`, `concat1d`, `signal.frame`, `expandDims`, `zeros`, `tensor` and `GraphModel.execute`.
