@@ -36,7 +36,7 @@ You do not need to know music theory to implement this, but three terms recur:
 - **Beat** — one unit of the time signature's *denominator*. In 4/4 that is a quarter note; in 6/8 an eighth note. A 4/4 bar is 4 beats long.
 - **Slot** — the smallest rhythmic subdivision we will write down, set by `finestDivision`. With `finestDivision: 16` (sixteenth notes) in 4/4, one beat is 4 slots and a bar is 16 slots.
 
-### Four scope decisions, made deliberately
+### Six scope decisions, made deliberately
 
 1. **No `@Injectable` services in M1.** The design doc names a `ScoreDerivationService`, but everything here is a pure function and Angular does not require DI to call one. Components will import `deriveScore` directly. The stateful `TranscriptionService` arrives in M2 when there is actually state to hold.
 2. **Quantization decomposes greedily inside metric fragments, not with the cost-based DP from the design doc.** The property that matters — every bar sums to exactly one bar, which is what stops the notation drifting — is guaranteed by construction: the finest division is always available as a one-slot unit, so every fragment decomposes exactly.
@@ -44,6 +44,8 @@ You do not need to know music theory to implement this, but three terms recur:
    What is still deferred is the DP that *chooses between* readable spellings — dotted quarter vs quarter-tied-to-eighth, where both respect the meter — by onset strength. That is polish, and is listed as follow-up work at the end of this plan.
 3. **`BeatGrid` is interpretation, not raw fact.** Only `DetectedNote[]` is the immutable layer. Beat tracking is already an inference over the audio, and the user is expected to correct it, so a corrected tempo or meter is expressed by *regenerating the grid* — not by an override that downstream code has to reconcile against a grid it disagrees with. Later milestones say "actually it's 90 BPM" by handing `deriveScore` a new grid.
 4. **No dynamics.** `DetectedNote` carries no amplitude or velocity, so `BeatDoc.dynamics` is always `null` in M1. Adding a velocity field is cheap; deciding how amplitude maps onto *ppp*-*fff* is not, and it is not what this milestone is about.
+5. **`DetectedNote.offsetSec` is discarded; every note sustains to the next onset.** `PlacedNote` carries a position and no duration, so `quantizeBar` gives each note the whole span up to the next attack. Staccato eighths on beats 1 and 3 are written as two half notes, and a rest can only appear before a bar's first note. That is the trade, taken deliberately: over-sustaining is the *opposite* failure from raggedness, and it is the one a reader can absorb — the pitches, their order and their attack points are all still right, which is what a player needs from tab. Honouring offsets means a second quantization pass (releases snapped to the same grid, spans shortened, freed slots filled with rests) and a rule for what counts as a rest rather than a legato gap; both are milestone-sized.
+6. **Bars are assigned from the rounded slot, not from the raw beat.** `deriveScore` rounds each onset to a global slot index and reads the bar off that, then hands `quantizeBar` the *unrounded* position within that bar. Choosing the bar first pulls a note in the last half-slot of a bar back onto that bar's final slot instead of forward onto the next bar's downbeat — and if the next bar opens with a note too, that writes two attacks where the performance had one. Passing the position on unrounded is what still lets `quantizeBar` recognise two onsets a few tens of milliseconds apart as one chord. `quantizeBar`'s own clamp into `[0, totalSlots - 1]` stays, now as a genuine defensive guard rather than the thing doing the work.
 
 ---
 
@@ -693,6 +695,26 @@ describe('quantizeBar', () => {
   });
 
   /**
+   * The last way a span the duration table cannot fill reaches
+   * `slotsToDurations`: an onset that is not a number at all. It used to snap
+   * to a NaN slot and yield an empty bar - no notes, no rests, no complaint.
+   */
+  it('rejects an onset that is not a number', () => {
+    expect(() => quantizeBar([at(NaN, 0)], FOUR_FOUR, 16)).toThrowError(/NaN/);
+  });
+
+  it('copies each pitch rather than aliasing the caller\'s object', () => {
+    const source = on(0, 2, 3);
+    const beats = quantizeBar([source, on(1.25, 1, 5)], FOUR_FOUR, 16);
+
+    expect(beats[0].notes[0].pitch).toEqual(source.pitch);
+    expect(beats[0].notes[0].pitch).not.toBe(source.pitch);
+    // And each tied fragment gets its own, so editing one does not edit the
+    // rest of the tie. ComposerService.replaceDocument stores by reference.
+    expect(beats[1].notes[0].pitch).not.toBe(beats[0].notes[0].pitch);
+  });
+
+  /**
    * The invariant the whole feature rests on. Independently snapping onsets to
    * a grid - the obvious approach, and what most transcribers do - produces
    * durations that overrun or underfill the bar, which is the root of the
@@ -719,7 +741,7 @@ describe('quantizeBar', () => {
     ];
 
     for (const signature of signatures) {
-      for (const finest of [8, 16, 32] as FinestDivision[]) {
+      for (const finest of [4, 8, 16, 32, 64] as FinestDivision[]) {
         if (finest < signature.denominator) continue;
 
         const slotsPerBeat = finest / signature.denominator;
@@ -741,9 +763,11 @@ describe('quantizeBar', () => {
 
           // What should be struck where: onsets sharing a slot merge into one
           // chord, and an onset rounding past the final slot is pulled back
-          // onto it.
+          // onto it. Walked in onset order, since that is the order a chord's
+          // notes are written in - and two onsets far apart can still share
+          // the final slot once the clamp has pulled the later one back.
           const bySlot = new Map<number, NotePitch[]>();
-          for (const note of notes) {
+          for (const note of [...notes].sort((a, b) => a.beatInBar - b.beatInBar)) {
             const slot = Math.min(
               totalSlots - 1,
               Math.max(0, Math.round(note.beatInBar * slotsPerBeat))
@@ -800,6 +824,22 @@ import {
 } from '../models/composer.model';
 import { FinestDivision } from '../models/transcription.model';
 
+/**
+ * Lays a bar's onsets onto a rhythmic grid and gives them written durations.
+ *
+ * Two guarantees, in that order of importance. A bar always sums to exactly
+ * one bar: onsets snap to slots and the span between two of them is
+ * decomposed into values that fill it exactly, so notation cannot drift the
+ * way it does when each onset is rounded and handed its own independent
+ * duration. And the meter stays visible: a span is cut where it crosses a
+ * beat or the middle of the bar before values are chosen, because a value
+ * that merely fits the length can still hide every beat it crosses.
+ *
+ * Pure functions with no Angular or audio dependency, following the
+ * `staff-pitch.ts` precedent, so the arithmetic can be checked directly
+ * against hand-written bars.
+ */
+
 /** A note already placed on the fretboard, still waiting for a duration. */
 export interface PlacedNote {
   /** Position within the bar, in denominator-unit beats. */
@@ -829,7 +869,7 @@ const DOT_MULTIPLIER = [1, 1.5, 1.75];
 const MAX_WRITTEN_DOTS = 1;
 
 /** Every duration expressible on this grid, longest first. */
-function durationTable(finestDivision: number): DurationUnit[] {
+function durationTable(finestDivision: FinestDivision): DurationUnit[] {
   const values: DurationValue[] = [1, 2, 4, 8, 16, 32, 64];
   const table: DurationUnit[] = [];
 
@@ -1021,6 +1061,12 @@ function metricFragments(
  * because one slot is by definition the finest division and so is always
  * available as a last resort. That guarantee is what keeps every derived bar
  * exactly full; the fragmenting only decides how the span is spelled.
+ *
+ * Throws rather than under-summing on a span it cannot fill exactly. A
+ * fractional or negative span would otherwise decompose to something short
+ * and the bar would silently come out wrong, which is the one failure this
+ * module exists to rule out; a NaN one - the shape a NaN `beatInBar` arrives
+ * in - would empty the bar with no diagnostic at all.
  */
 export function slotsToDurations(
   slots: number,
@@ -1028,6 +1074,14 @@ export function slotsToDurations(
   startSlot: number,
   frame: MetricFrame
 ): DurationUnit[] {
+  if (!Number.isInteger(slots) || slots < 0) {
+    throw new Error(`cannot write a span of ${slots} slots`);
+  }
+
+  if (!Number.isInteger(startSlot) || startSlot < 0) {
+    throw new Error(`cannot start a span at slot ${startSlot}`);
+  }
+
   const table = durationTable(finestDivision);
   const out: DurationUnit[] = [];
 
@@ -1090,7 +1144,10 @@ export function quantizeBar(
         tuplet: null,
         isRest: pitches === null,
         notes: (pitches ?? []).map(pitch => ({
-          pitch,
+          // Copied, not aliased: `ComposerService.replaceDocument` stores the
+          // document by reference, so every NoteDoc needs a pitch of its own
+          // or editing one tied fragment would edit the whole tie.
+          pitch: { ...pitch },
           // Only the first fragment is struck; the rest are held over.
           isTied: index > 0,
           accidental: 'auto' as const,
@@ -1124,7 +1181,7 @@ export function quantizeBar(
 }
 
 /** Slots a beat list occupies. Used to assert bars come out exactly full. */
-export function beatSlots(beats: BeatDoc[], finestDivision: number): number {
+export function beatSlots(beats: BeatDoc[], finestDivision: FinestDivision): number {
   return beats.reduce(
     (sum, beat) => sum + (finestDivision / beat.duration) * DOT_MULTIPLIER[beat.dots],
     0
@@ -1134,7 +1191,7 @@ export function beatSlots(beats: BeatDoc[], finestDivision: number): number {
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 13 tests.
+Expected: PASS, 15 tests.
 
 **Step 5: Commit**
 
@@ -1296,6 +1353,20 @@ Create `src/app/services/transcription-fingering.ts`:
 ```typescript
 import { NotePitch } from '../models/composer.model';
 import { DerivationSettings } from '../models/transcription.model';
+
+/**
+ * Chooses where on the neck each note is played.
+ *
+ * The one idea here is that a hand movement costs what the time available
+ * makes it cost: a five-fret shift is nothing across a rest and unacceptable
+ * between two sixteenths. Per-note lowest-fret assignment cannot express
+ * that, which is why tab from such tools skitters across the neck on fast
+ * passages. Scoring whole paths with a Viterbi pass can.
+ *
+ * Pure functions with no Angular or audio dependency, following the
+ * `staff-pitch.ts` precedent, so the costs can be checked against fixtures
+ * chosen to separate the fast answer from the slow one.
+ */
 
 export interface FingeringInput {
   /** MIDI pitch. */
@@ -1487,7 +1558,7 @@ export function assignFingering(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 10 tests.
+Expected: PASS, 11 tests.
 
 If the two position tests fail, the weights are miscalibrated rather than the algorithm being wrong — check `MOVE_REFERENCE_SEC` and `FRET_HEIGHT_WEIGHT` first. Both fixtures were chosen so the fast and slow answers differ under the constants above.
 
@@ -1770,18 +1841,28 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
     settings
   );
 
-  const placed: { beat: number; pitch: NotePitch }[] = [];
+  const slotsPerBeat = settings.finestDivision / timeSignature.denominator;
+  const slotsPerBar = timeSignature.numerator * slotsPerBeat;
+
+  const placed: { bar: number; beatInBar: number; pitch: NotePitch }[] = [];
   corrected.forEach((note, index) => {
     const pitch = fingering[index];
-    if (pitch) {
-      // Anything before the first downbeat is pulled onto it; a proper pickup
-      // bar needs a negative-bar concept the score model does not carry.
-      placed.push({ beat: Math.max(0, secondsToBeats(note.onsetSec, grid)), pitch });
-    }
+    if (!pitch) return;
+
+    // Anything before the first downbeat is pulled onto it; a proper pickup
+    // bar needs a negative-bar concept the score model does not carry.
+    const beat = Math.max(0, secondsToBeats(note.onsetSec, grid));
+
+    // The bar comes off the rounded slot, not the raw beat: a note in the last
+    // half-slot of a bar belongs on the next bar's downbeat, and choosing the
+    // bar first would pull it back onto this bar's final slot instead. The
+    // position handed on stays unrounded, so quantizeBar can still see two
+    // onsets a few tens of milliseconds apart as one chord.
+    const bar = Math.floor(Math.round(beat * slotsPerBeat) / slotsPerBar);
+    placed.push({ bar, beatInBar: beat - bar * timeSignature.numerator, pitch });
   });
 
-  const lastBeat = placed.reduce((max, entry) => Math.max(max, entry.beat), 0);
-  const barCount = Math.floor(lastBeat / timeSignature.numerator) + 1;
+  const barCount = placed.reduce((max, entry) => Math.max(max, entry.bar), 0) + 1;
 
   const masterBars: MasterBarDoc[] = Array.from({ length: barCount }, (_, index) => ({
     ...createDefaultMasterBar(),
@@ -1793,11 +1874,8 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
 
   const bars: BarDoc[] = Array.from({ length: barCount }, (_, index) => {
     const inBar: PlacedNote[] = placed
-      .filter(entry => Math.floor(entry.beat / timeSignature.numerator) === index)
-      .map(entry => ({
-        beatInBar: entry.beat - index * timeSignature.numerator,
-        pitch: entry.pitch
-      }));
+      .filter(entry => entry.bar === index)
+      .map(entry => ({ beatInBar: entry.beatInBar, pitch: entry.pitch }));
 
     return {
       clef: 'f4',
@@ -1851,9 +1929,9 @@ Expected: PASS, 8 tests.
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 47 new = **105 tests, 0 failures**.
+Expected: PASS — 58 baseline + 56 new = **114 tests, 0 failures**.
 
-The 47 break down as 5 + 12 + 8 + 9 + 5 + 8 across tasks 1-6.
+The 56 break down as 5 + 12 + 15 + 11 + 5 + 8 across tasks 1-6.
 
 **Step 6: Commit**
 
@@ -1866,7 +1944,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 105 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 114 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
 - Every derived bar sums to exactly one bar **and strikes every onset it was given,
   with the pitches that onset carried**, for every time signature and grid tested.
@@ -1882,5 +1960,6 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 - **Triplets.** `allowTriplets` exists in the settings and is ignored.
 - **Chords.** Simultaneous notes merge into one beat, which is right, but no chord-shape validation happens — that arrives with guitar polyphony.
 - **Pickup bars.** Notes before the first downbeat are pulled onto beat 1.
+- **Note durations.** `DetectedNote.offsetSec` is read by nothing: every note sustains until the next onset, so rests appear only before a bar's first note. See scope decision 5.
 - **Context-based octave correction.** Only out-of-range folding is implemented; an octave error landing on a playable pitch survives.
 - **Dynamics.** `DetectedNote` records no amplitude or velocity, so every `BeatDoc.dynamics` is `null`. A decision, not an oversight: see scope decision 4.

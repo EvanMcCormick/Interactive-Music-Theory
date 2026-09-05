@@ -8,6 +8,22 @@ import {
 } from '../models/composer.model';
 import { FinestDivision } from '../models/transcription.model';
 
+/**
+ * Lays a bar's onsets onto a rhythmic grid and gives them written durations.
+ *
+ * Two guarantees, in that order of importance. A bar always sums to exactly
+ * one bar: onsets snap to slots and the span between two of them is
+ * decomposed into values that fill it exactly, so notation cannot drift the
+ * way it does when each onset is rounded and handed its own independent
+ * duration. And the meter stays visible: a span is cut where it crosses a
+ * beat or the middle of the bar before values are chosen, because a value
+ * that merely fits the length can still hide every beat it crosses.
+ *
+ * Pure functions with no Angular or audio dependency, following the
+ * `staff-pitch.ts` precedent, so the arithmetic can be checked directly
+ * against hand-written bars.
+ */
+
 /** A note already placed on the fretboard, still waiting for a duration. */
 export interface PlacedNote {
   /** Position within the bar, in denominator-unit beats. */
@@ -37,7 +53,7 @@ const DOT_MULTIPLIER = [1, 1.5, 1.75];
 const MAX_WRITTEN_DOTS = 1;
 
 /** Every duration expressible on this grid, longest first. */
-function durationTable(finestDivision: number): DurationUnit[] {
+function durationTable(finestDivision: FinestDivision): DurationUnit[] {
   const values: DurationValue[] = [1, 2, 4, 8, 16, 32, 64];
   const table: DurationUnit[] = [];
 
@@ -229,6 +245,12 @@ function metricFragments(
  * because one slot is by definition the finest division and so is always
  * available as a last resort. That guarantee is what keeps every derived bar
  * exactly full; the fragmenting only decides how the span is spelled.
+ *
+ * Throws rather than under-summing on a span it cannot fill exactly. A
+ * fractional or negative span would otherwise decompose to something short
+ * and the bar would silently come out wrong, which is the one failure this
+ * module exists to rule out; a NaN one - the shape a NaN `beatInBar` arrives
+ * in - would empty the bar with no diagnostic at all.
  */
 export function slotsToDurations(
   slots: number,
@@ -236,6 +258,14 @@ export function slotsToDurations(
   startSlot: number,
   frame: MetricFrame
 ): DurationUnit[] {
+  if (!Number.isInteger(slots) || slots < 0) {
+    throw new Error(`cannot write a span of ${slots} slots`);
+  }
+
+  if (!Number.isInteger(startSlot) || startSlot < 0) {
+    throw new Error(`cannot start a span at slot ${startSlot}`);
+  }
+
   const table = durationTable(finestDivision);
   const out: DurationUnit[] = [];
 
@@ -298,7 +328,10 @@ export function quantizeBar(
         tuplet: null,
         isRest: pitches === null,
         notes: (pitches ?? []).map(pitch => ({
-          pitch,
+          // Copied, not aliased: `ComposerService.replaceDocument` stores the
+          // document by reference, so every NoteDoc needs a pitch of its own
+          // or editing one tied fragment would edit the whole tie.
+          pitch: { ...pitch },
           // Only the first fragment is struck; the rest are held over.
           isTied: index > 0,
           accidental: 'auto' as const,
@@ -332,7 +365,7 @@ export function quantizeBar(
 }
 
 /** Slots a beat list occupies. Used to assert bars come out exactly full. */
-export function beatSlots(beats: BeatDoc[], finestDivision: number): number {
+export function beatSlots(beats: BeatDoc[], finestDivision: FinestDivision): number {
   return beats.reduce(
     (sum, beat) => sum + (finestDivision / beat.duration) * DOT_MULTIPLIER[beat.dots],
     0

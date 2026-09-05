@@ -1,6 +1,20 @@
 import { NotePitch } from '../models/composer.model';
 import { DerivationSettings } from '../models/transcription.model';
 
+/**
+ * Chooses where on the neck each note is played.
+ *
+ * The one idea here is that a hand movement costs what the time available
+ * makes it cost: a five-fret shift is nothing across a rest and unacceptable
+ * between two sixteenths. Per-note lowest-fret assignment cannot express
+ * that, which is why tab from such tools skitters across the neck on fast
+ * passages. Scoring whole paths with a Viterbi pass can.
+ *
+ * Pure functions with no Angular or audio dependency, following the
+ * `staff-pitch.ts` precedent, so the costs can be checked against fixtures
+ * chosen to separate the fast answer from the slow one.
+ */
+
 export interface FingeringInput {
   /** MIDI pitch. */
   pitch: number;

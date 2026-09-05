@@ -155,6 +155,26 @@ describe('quantizeBar', () => {
   });
 
   /**
+   * The last way a span the duration table cannot fill reaches
+   * `slotsToDurations`: an onset that is not a number at all. It used to snap
+   * to a NaN slot and yield an empty bar - no notes, no rests, no complaint.
+   */
+  it('rejects an onset that is not a number', () => {
+    expect(() => quantizeBar([at(NaN, 0)], FOUR_FOUR, 16)).toThrowError(/NaN/);
+  });
+
+  it('copies each pitch rather than aliasing the caller\'s object', () => {
+    const source = on(0, 2, 3);
+    const beats = quantizeBar([source, on(1.25, 1, 5)], FOUR_FOUR, 16);
+
+    expect(beats[0].notes[0].pitch).toEqual(source.pitch);
+    expect(beats[0].notes[0].pitch).not.toBe(source.pitch);
+    // And each tied fragment gets its own, so editing one does not edit the
+    // rest of the tie. ComposerService.replaceDocument stores by reference.
+    expect(beats[1].notes[0].pitch).not.toBe(beats[0].notes[0].pitch);
+  });
+
+  /**
    * The invariant the whole feature rests on. Independently snapping onsets to
    * a grid - the obvious approach, and what most transcribers do - produces
    * durations that overrun or underfill the bar, which is the root of the
@@ -181,7 +201,7 @@ describe('quantizeBar', () => {
     ];
 
     for (const signature of signatures) {
-      for (const finest of [8, 16, 32] as FinestDivision[]) {
+      for (const finest of [4, 8, 16, 32, 64] as FinestDivision[]) {
         if (finest < signature.denominator) continue;
 
         const slotsPerBeat = finest / signature.denominator;
@@ -203,9 +223,11 @@ describe('quantizeBar', () => {
 
           // What should be struck where: onsets sharing a slot merge into one
           // chord, and an onset rounding past the final slot is pulled back
-          // onto it.
+          // onto it. Walked in onset order, since that is the order a chord's
+          // notes are written in - and two onsets far apart can still share
+          // the final slot once the clamp has pulled the later one back.
           const bySlot = new Map<number, NotePitch[]>();
-          for (const note of notes) {
+          for (const note of [...notes].sort((a, b) => a.beatInBar - b.beatInBar)) {
             const slot = Math.min(
               totalSlots - 1,
               Math.max(0, Math.round(note.beatInBar * slotsPerBeat))
