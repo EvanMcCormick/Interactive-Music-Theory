@@ -39,7 +39,9 @@ You do not need to know music theory to implement this, but three terms recur:
 ### Four scope decisions, made deliberately
 
 1. **No `@Injectable` services in M1.** The design doc names a `ScoreDerivationService`, but everything here is a pure function and Angular does not require DI to call one. Components will import `deriveScore` directly. The stateful `TranscriptionService` arrives in M2 when there is actually state to hold.
-2. **Quantization uses greedy duration decomposition, not the cost-based DP from the design doc.** The property that matters — every bar sums to exactly one bar, which is what stops the notation drifting — is guaranteed by construction either way. Choosing *between* equally-valid spellings (dotted quarter vs quarter-tied-to-eighth) by onset strength is polish, and is listed as follow-up work at the end of this plan.
+2. **Quantization decomposes greedily inside metric fragments, not with the cost-based DP from the design doc.** The property that matters — every bar sums to exactly one bar, which is what stops the notation drifting — is guaranteed by construction: the finest division is always available as a one-slot unit, so every fragment decomposes exactly.
+   Greedy on its own, though, is handed a span *length* and nothing else, and that produces spellings that are wrong rather than merely different: a note on the "and of 4" of a 4/4 bar preceded by a *double-dotted half rest*, a note on the second eighth of a 6/8 bar written as a *half note* straddling both dotted-quarter groups. So a span is first cut to finish the beat it starts inside, and again at the half-bar in meters that have one, and greedy runs inside those fragments. Double dots are dropped from the table for the same reason.
+   What is still deferred is the DP that *chooses between* readable spellings — dotted quarter vs quarter-tied-to-eighth, where both respect the meter — by onset strength. That is polish, and is listed as follow-up work at the end of this plan.
 3. **`BeatGrid` is interpretation, not raw fact.** Only `DetectedNote[]` is the immutable layer. Beat tracking is already an inference over the audio, and the user is expected to correct it, so a corrected tempo or meter is expressed by *regenerating the grid* — not by an override that downstream code has to reconcile against a grid it disagrees with. Later milestones say "actually it's 90 BPM" by handing `deriveScore` a new grid.
 4. **No dynamics.** `DetectedNote` carries no amplitude or velocity, so `BeatDoc.dynamics` is always `null` in M1. Adding a velocity field is cheap; deciding how amplitude maps onto *ppp*-*fff* is not, and it is not what this milestone is about.
 
@@ -584,6 +586,54 @@ describe('quantizeBar', () => {
   });
 
   /**
+   * Three tests on spelling, which is where longest-first decomposition on its
+   * own goes wrong. It is handed a span length and nothing else, so it cannot
+   * tell a value that fits from a value a reader can follow.
+   */
+  it('does not let a rest swallow the middle of the bar', () => {
+    // One note on the "and of 4". The rest in front of it is three and a half
+    // beats, which longest-first spells as a single double-dotted half rest -
+    // a value that starts on beat 1 and hides every beat it crosses.
+    const beats = quantizeBar([at(3.5, 5)], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [2, 0, true],  // half rest, beats 1 and 2
+      [4, 1, true],  // dotted quarter rest, up to the "and of 4"
+      [8, 0, false]  // the eighth note itself
+    ]);
+  });
+
+  it('keeps a 6/8 bar inside its two dotted-quarter groups', () => {
+    const sixEight: TimeSignature = { numerator: 6, denominator: 8, isCommon: false };
+
+    // A note on the second eighth, held to the bar line. Longest-first spells
+    // it as a half note: five eighths' worth of value starting inside the
+    // first group and ending inside the second, so neither group is visible.
+    const beats = quantizeBar([at(1, 3)], sixEight, 8);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [8, 0, true],   // eighth rest
+      [4, 0, false],  // quarter, finishing the first group
+      [4, 1, false]   // dotted quarter, the whole second group
+    ]);
+    expect(beats[2].notes[0].isTied).toBe(true);
+  });
+
+  it('ties a syncopated note across the beat rather than hiding it', () => {
+    // Onsets on slots 0, 3 and 6 of a sixteenth grid. Longest-first gives the
+    // last note a half note starting on the "and of 2".
+    const beats = quantizeBar([at(0, 0), at(0.75, 2), at(1.5, 4)], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.notes[0].isTied])).toEqual([
+      [8, 1, false],   // dotted eighth
+      [16, 0, false],  // sixteenth, finishing beat 1
+      [8, 0, true],    // tied into an eighth on beat 2
+      [8, 0, false],   // eighth on the "and of 2"
+      [2, 0, true]     // tied into the half that fills beats 3 and 4
+    ]);
+  });
+
+  /**
    * `FinestDivision` rules out grids the duration table cannot express, but it
    * cannot rule out a grid coarser than the meter it is being applied to: 8 is
    * a perfectly good eighth-note grid, just not for a /16 bar. That stays a
@@ -728,13 +778,24 @@ export interface DurationUnit {
 /** Slots added by each augmentation dot: none, half again, three quarters again. */
 const DOT_MULTIPLIER = [1, 1.5, 1.75];
 
+/**
+ * Dots this module will write.
+ *
+ * Double dots are legal, and `DOT_MULTIPLIER` still measures them so
+ * `beatSlots` can size a beat that came from somewhere else. But they are rare
+ * enough in real parts to read as a mistake, and longest-first decomposition
+ * reaches for them constantly: the rest in front of a note on the "and of 4"
+ * comes out as a single double-dotted half. One dot is the practical ceiling.
+ */
+const MAX_WRITTEN_DOTS = 1;
+
 /** Every duration expressible on this grid, longest first. */
 function durationTable(finestDivision: number): DurationUnit[] {
   const values: DurationValue[] = [1, 2, 4, 8, 16, 32, 64];
   const table: DurationUnit[] = [];
 
   for (const duration of values) {
-    for (let dots = 0; dots <= 2; dots++) {
+    for (let dots = 0; dots <= MAX_WRITTEN_DOTS; dots++) {
       const slots = (finestDivision / duration) * DOT_MULTIPLIER[dots];
       if (Number.isInteger(slots) && slots >= 1) {
         table.push({ duration, dots, slots });
@@ -746,25 +807,116 @@ function durationTable(finestDivision: number): DurationUnit[] {
 }
 
 /**
- * Decomposes a span of grid slots into writable durations, longest first.
+ * The strong points of a bar, in slots.
  *
- * Guaranteed to sum to exactly `slots`, because one slot is by definition the
- * finest division and so is always available as a last resort. That guarantee
- * is what keeps every derived bar exactly full.
+ * Longest-first decomposition only knows how long a span is, never where it
+ * starts, and that is enough to produce spellings a reader has to decode: a
+ * note on the "and of 2" of a 4/4 bar comes out as a half note plus an eighth,
+ * a half note that begins halfway through beat 2 and hides the middle of the
+ * bar. Cutting spans at these offsets first is what turns that into the
+ * eighth-tied-to-half a reader expects.
+ */
+export interface MetricFrame {
+  /**
+   * Slots in one felt beat: a quarter in 4/4, a dotted quarter in 6/8. Not the
+   * denominator unit, which in a compound meter is a subdivision of the beat.
+   */
+  beatUnit: number;
+  /** Slots to the middle of the bar, or null if the bar has no even middle. */
+  halfBar: number | null;
+}
+
+/** Reads the felt beat and the half-bar off a time signature. */
+export function metricFrame(
+  timeSignature: TimeSignature,
+  slotsPerBeat: number
+): MetricFrame {
+  // 6/8, 9/8 and 12/8 are felt in dotted-quarter groups of three eighths. 3/8
+  // is not: it is three beats, not one group of three.
+  const isCompound =
+    (timeSignature.denominator === 8 || timeSignature.denominator === 16)
+    && timeSignature.numerator % 3 === 0
+    && timeSignature.numerator > 3;
+
+  const beatUnit = slotsPerBeat * (isCompound ? 3 : 1);
+  const totalSlots = timeSignature.numerator * slotsPerBeat;
+  const feltBeats = totalSlots / beatUnit;
+
+  return {
+    beatUnit,
+    // The ear hears the middle of an even bar whether or not anything is
+    // written there, which is why 4/4 splits at the half-bar and 3/4 does not.
+    halfBar: feltBeats % 2 === 0 ? totalSlots / 2 : null
+  };
+}
+
+/**
+ * Cuts a span into fragments no single written value should cross.
+ *
+ * At most two cuts: one to finish the beat the span starts inside, and one at
+ * the half-bar. What follows starts on a beat and is left alone, so a whole
+ * note is still a whole note and a dotted half still a dotted half. Only spans
+ * that begin off the beat, or straddle the middle of the bar, get broken up.
+ */
+function metricFragments(
+  startSlot: number,
+  slots: number,
+  frame: MetricFrame
+): { start: number; slots: number }[] {
+  const fragments: { start: number; slots: number }[] = [];
+  let start = startSlot;
+  let remaining = slots;
+
+  const intoBeat = start % frame.beatUnit;
+  if (intoBeat !== 0) {
+    const head = Math.min(remaining, frame.beatUnit - intoBeat);
+    fragments.push({ start, slots: head });
+    start += head;
+    remaining -= head;
+  }
+
+  if (remaining > 0 && frame.halfBar !== null) {
+    const nextHalf = (Math.floor(start / frame.halfBar) + 1) * frame.halfBar;
+    if (nextHalf < start + remaining) {
+      const head = nextHalf - start;
+      fragments.push({ start, slots: head });
+      start += head;
+      remaining -= head;
+    }
+  }
+
+  if (remaining > 0) fragments.push({ start, slots: remaining });
+
+  return fragments;
+}
+
+/**
+ * Decomposes a span of grid slots into writable durations, longest first
+ * within each metric fragment.
+ *
+ * Guaranteed to sum to exactly `slots`, whatever the fragments come out as,
+ * because one slot is by definition the finest division and so is always
+ * available as a last resort. That guarantee is what keeps every derived bar
+ * exactly full; the fragmenting only decides how the span is spelled.
  */
 export function slotsToDurations(
   slots: number,
-  finestDivision: FinestDivision
+  finestDivision: FinestDivision,
+  startSlot: number,
+  frame: MetricFrame
 ): DurationUnit[] {
   const table = durationTable(finestDivision);
   const out: DurationUnit[] = [];
-  let remaining = slots;
 
-  while (remaining > 0) {
-    const unit = table.find(candidate => candidate.slots <= remaining);
-    if (!unit) break;
-    out.push(unit);
-    remaining -= unit.slots;
+  for (const fragment of metricFragments(startSlot, slots, frame)) {
+    let remaining = fragment.slots;
+
+    while (remaining > 0) {
+      const unit = table.find(candidate => candidate.slots <= remaining);
+      if (!unit) break;
+      out.push(unit);
+      remaining -= unit.slots;
+    }
   }
 
   return out;
@@ -814,10 +966,11 @@ export function quantizeBar(
     else chords.set(slot, [note.pitch]);
   }
 
+  const frame = metricFrame(timeSignature, slotsPerBeat);
   const beats: BeatDoc[] = [];
 
-  const emit = (slots: number, pitches: NotePitch[] | null): void => {
-    slotsToDurations(slots, finestDivision).forEach((unit, index) => {
+  const emit = (start: number, slots: number, pitches: NotePitch[] | null): void => {
+    slotsToDurations(slots, finestDivision, start, frame).forEach((unit, index) => {
       beats.push({
         duration: unit.duration,
         dots: unit.dots,
@@ -841,17 +994,17 @@ export function quantizeBar(
   const starts = [...chords.keys()].sort((a, b) => a - b);
 
   if (starts.length === 0) {
-    emit(totalSlots, null);
+    emit(0, totalSlots, null);
     return beats;
   }
 
-  if (starts[0] > 0) emit(starts[0], null);
+  if (starts[0] > 0) emit(0, starts[0], null);
 
   starts.forEach((start, index) => {
     const end = index + 1 < starts.length ? starts[index + 1] : totalSlots;
     // Non-null assertion is sound: `start` came out of `chords.keys()`, so the
     // map is guaranteed to hold an entry for it.
-    emit(end - start, chords.get(start)!);
+    emit(start, end - start, chords.get(start)!);
   });
 
   return beats;
@@ -868,7 +1021,7 @@ export function beatSlots(beats: BeatDoc[], finestDivision: number): number {
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 8 tests.
+Expected: PASS, 11 tests.
 
 **Step 5: Commit**
 
@@ -1576,7 +1729,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Deliberately not in M1
 
-- **Cost-based quantization DP.** Greedy decomposition guarantees exact bars; choosing between equally-valid spellings by onset strength is the refinement.
+- **Cost-based quantization DP.** Greedy decomposition inside metric fragments guarantees exact bars and keeps the beat visible; choosing between the spellings that remain — dotted quarter vs quarter-tied-to-eighth, both metrically sound — by onset strength is the refinement.
 - **Key inference.** `settings.key` is honoured; `null` falls back to C major. Krumhansl-Schmuckler correlation lands with the notation staff work, since tab is unaffected.
 - **Triplets.** `allowTriplets` exists in the settings and is ignored.
 - **Chords.** Simultaneous notes merge into one beat, which is right, but no chord-shape validation happens — that arrives with guitar polyphony.

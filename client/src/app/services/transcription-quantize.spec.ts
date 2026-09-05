@@ -48,6 +48,54 @@ describe('quantizeBar', () => {
   });
 
   /**
+   * Three tests on spelling, which is where longest-first decomposition on its
+   * own goes wrong. It is handed a span length and nothing else, so it cannot
+   * tell a value that fits from a value a reader can follow.
+   */
+  it('does not let a rest swallow the middle of the bar', () => {
+    // One note on the "and of 4". The rest in front of it is three and a half
+    // beats, which longest-first spells as a single double-dotted half rest -
+    // a value that starts on beat 1 and hides every beat it crosses.
+    const beats = quantizeBar([at(3.5, 5)], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [2, 0, true],  // half rest, beats 1 and 2
+      [4, 1, true],  // dotted quarter rest, up to the "and of 4"
+      [8, 0, false]  // the eighth note itself
+    ]);
+  });
+
+  it('keeps a 6/8 bar inside its two dotted-quarter groups', () => {
+    const sixEight: TimeSignature = { numerator: 6, denominator: 8, isCommon: false };
+
+    // A note on the second eighth, held to the bar line. Longest-first spells
+    // it as a half note: five eighths' worth of value starting inside the
+    // first group and ending inside the second, so neither group is visible.
+    const beats = quantizeBar([at(1, 3)], sixEight, 8);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [8, 0, true],   // eighth rest
+      [4, 0, false],  // quarter, finishing the first group
+      [4, 1, false]   // dotted quarter, the whole second group
+    ]);
+    expect(beats[2].notes[0].isTied).toBe(true);
+  });
+
+  it('ties a syncopated note across the beat rather than hiding it', () => {
+    // Onsets on slots 0, 3 and 6 of a sixteenth grid. Longest-first gives the
+    // last note a half note starting on the "and of 2".
+    const beats = quantizeBar([at(0, 0), at(0.75, 2), at(1.5, 4)], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.notes[0].isTied])).toEqual([
+      [8, 1, false],   // dotted eighth
+      [16, 0, false],  // sixteenth, finishing beat 1
+      [8, 0, true],    // tied into an eighth on beat 2
+      [8, 0, false],   // eighth on the "and of 2"
+      [2, 0, true]     // tied into the half that fills beats 3 and 4
+    ]);
+  });
+
+  /**
    * `FinestDivision` rules out grids the duration table cannot express, but it
    * cannot rule out a grid coarser than the meter it is being applied to: 8 is
    * a perfectly good eighth-note grid, just not for a /16 bar. That stays a
