@@ -27,11 +27,15 @@ const GRID: BeatGrid = {
   timeSignature: { numerator: 4, denominator: 4, isCommon: true }
 };
 
-function session(notes: DetectedNote[], grid: BeatGrid = GRID): TranscriptionSession {
+function session(
+  notes: DetectedNote[],
+  grid: BeatGrid = GRID,
+  durationSec = 4
+): TranscriptionSession {
   return {
     id: 's1',
     sourceName: 'bassline.wav',
-    durationSec: 4,
+    durationSec,
     notes,
     grid,
     settings: createDefaultDerivationSettings()
@@ -209,7 +213,56 @@ describe('deriveScore', () => {
     // The grid ends at 3.5s. A note ten seconds later extrapolates by the
     // final interval, which secondsToBeats clamps to twice the median, so the
     // bar count stays proportionate instead of running away.
-    expect(deriveScore(session([note(33, 0), note(35, 13.5)])).masterBars.length).toBe(7);
+    //
+    // The source has to be long enough to hold that note - fourteen seconds -
+    // or the duration cap below is the thing being measured rather than the
+    // extrapolation. At the four seconds the other cases use, an onset at 13.5
+    // is one the audio never contained.
+    expect(deriveScore(session([note(33, 0), note(35, 13.5)], GRID, 14)).masterBars.length)
+      .toBe(7);
+  });
+
+  // -------------------------------------------------------------------------
+  // The bar count, bounded by the source rather than by the last onset.
+  // -------------------------------------------------------------------------
+
+  it('caps the bar count at what the source duration can hold', () => {
+    // 0.01 s between beats, and an onset ten seconds into a clip a tenth of a
+    // second long. `secondsToBeats` extrapolates without limit, so that onset
+    // used to land in bar 251 and take 251 MasterBarDocs, 251 bars of rests
+    // and 251 passes over the placed notes with it - from two notes. The same
+    // grid at 1e-6 s asked for 2,500,001 bars and two and a half seconds.
+    const fast: BeatGrid = {
+      beatsSec: [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07],
+      downbeatIndices: [0, 4],
+      timeSignature: { numerator: 4, denominator: 4, isCommon: true }
+    };
+
+    const input = session([note(33, 0), note(35, 10)], fast, 0.1);
+    const score = deriveScore(input);
+
+    // Ten beats of audio, so three bars, plus the one a note rounding forward
+    // off the end needs.
+    expect(score.masterBars.length).toBe(4);
+    expect(score.tracks[0].staves[0].bars.length).toBe(4);
+
+    // Held rather than dropped: the stray onset is clamped into the last bar,
+    // so both notes are still struck somewhere a reader can see them.
+    expect(struckPerBar(input).flat().length).toBe(2);
+  });
+
+  it('leaves an ordinary session\'s bar count alone', () => {
+    // Four bars of material inside an eight-second source: nothing here is
+    // anywhere near the cap, so the cap changes nothing.
+    const eightSeconds: BeatGrid = {
+      beatsSec: Array.from({ length: 16 }, (_, index) => index * 0.5),
+      downbeatIndices: [0, 4, 8, 12],
+      timeSignature: { numerator: 4, denominator: 4, isCommon: true }
+    };
+
+    const notes = [note(33, 0), note(35, 2), note(38, 4), note(40, 6)];
+
+    expect(deriveScore(session(notes, eightSeconds, 8)).masterBars.length).toBe(4);
   });
 
   // -------------------------------------------------------------------------

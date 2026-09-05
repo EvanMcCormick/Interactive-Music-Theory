@@ -36,6 +36,48 @@ const BASS_PROGRAM = 33;
 const C_MAJOR: KeySignature = { fifths: 0, mode: 'major' };
 
 /**
+ * Bars allowed past the end of the source, so a note arriving in its final
+ * moments still has somewhere to live.
+ *
+ * One, and no more: bar assignment rounds an onset to the nearest slot, so a
+ * note in the last half-slot of the audio is carried onto the downbeat of the
+ * bar after it - a bar the source duration on its own does not account for.
+ */
+const RING_OUT_BARS = 1;
+
+/**
+ * Bars the source audio can hold.
+ *
+ * `secondsToBeats` extrapolates past the tracked grid without limit, and the
+ * bar count comes off the last note, so nothing in that arithmetic stops one
+ * stray onset from asking for an arbitrarily long score. A grid with 0.01 s
+ * between beats plus a note ten seconds later wants 251 bars from two notes;
+ * at 1e-6 s it wants millions, each one a `MasterBarDoc`, a full bar of rests
+ * and a pass over `placed`.
+ *
+ * A note cannot sound after the audio has stopped, so `durationSec` is the
+ * honest ceiling. A session that does not carry one falls back to the span of
+ * the tracked grid, the only other statement it makes about how long the
+ * source is.
+ */
+function barsInSource(session: TranscriptionSession): number {
+  const beats = session.grid.beatsSec;
+  const trackedSec = beats.length > 0 ? beats[beats.length - 1] : 0;
+  const sourceSec =
+    Number.isFinite(session.durationSec) && session.durationSec > 0
+      ? session.durationSec
+      : trackedSec;
+
+  const bars = Math.ceil(
+    secondsToBeats(sourceSec, session.grid) / session.grid.timeSignature.numerator
+  );
+
+  // Never below one: a ScoreDoc with no bars is one ComposerService cannot
+  // open, which is the failure the NaN-onset guard above also exists to stop.
+  return Math.max(1, bars + RING_OUT_BARS);
+}
+
+/**
  * Interprets detected events as notation.
  *
  * Pure and fast, so every setting is a live knob: changing tuning, capo,
@@ -90,6 +132,7 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
 
   const slotsPerBeat = settings.finestDivision / timeSignature.denominator;
   const slotsPerBar = timeSignature.numerator * slotsPerBeat;
+  const barLimit = barsInSource(session);
 
   const placed: { bar: number; beatInBar: number; pitch: NotePitch }[] = [];
   corrected.forEach((note, index) => {
@@ -105,10 +148,21 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
     // bar first would pull it back onto this bar's final slot instead. The
     // position handed on stays unrounded, so quantizeBar can still see two
     // onsets a few tens of milliseconds apart as one chord.
-    const bar = Math.floor(Math.round(beat * slotsPerBeat) / slotsPerBar);
+    //
+    // Clamped into the source, the far-end counterpart of the `Math.max(0, ...)`
+    // above: an onset the grid extrapolates past the end of the audio is held
+    // in the last bar rather than allowed to size the score. Held, not dropped
+    // - `quantizeBar` pulls the resulting out-of-range `beatInBar` onto the
+    // bar's final slot, so the onset is still struck somewhere a reader can
+    // see it, which is what dropping it from `placed` would cost.
+    const bar = Math.min(
+      barLimit - 1,
+      Math.floor(Math.round(beat * slotsPerBeat) / slotsPerBar)
+    );
     placed.push({ bar, beatInBar: beat - bar * timeSignature.numerator, pitch });
   });
 
+  // Bounded by construction: every entry's bar was clamped to `barLimit - 1`.
   const barCount = placed.reduce((max, entry) => Math.max(max, entry.bar), 0) + 1;
 
   const masterBars: MasterBarDoc[] = Array.from({ length: barCount }, (_, index) => ({

@@ -2337,6 +2337,7 @@ Create `src/app/services/score-derivation.spec.ts`:
 
 ```typescript
 import {
+  BeatGrid,
   DetectedNote,
   TranscriptionSession,
   createDefaultDerivationSettings
@@ -2354,19 +2355,44 @@ const note = (pitch: number, onsetSec: number, confidence = 1): DetectedNote => 
 });
 
 /** Eight beats at 120 BPM: two bars of 4/4. */
-function session(notes: DetectedNote[]): TranscriptionSession {
+const GRID: BeatGrid = {
+  beatsSec: [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5],
+  downbeatIndices: [0, 4],
+  timeSignature: { numerator: 4, denominator: 4, isCommon: true }
+};
+
+function session(
+  notes: DetectedNote[],
+  grid: BeatGrid = GRID,
+  durationSec = 4
+): TranscriptionSession {
   return {
     id: 's1',
     sourceName: 'bassline.wav',
-    durationSec: 4,
+    durationSec,
     notes,
-    grid: {
-      beatsSec: [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5],
-      downbeatIndices: [0, 4],
-      timeSignature: { numerator: 4, denominator: 4, isCommon: true }
-    },
+    grid,
     settings: createDefaultDerivationSettings()
   };
+}
+
+/**
+ * The fingerings actually struck, bar by bar.
+ *
+ * Struck rather than merely non-rest: a span no single note value can express
+ * is spelled as several `BeatDoc`s for one onset, and every fragment after the
+ * first is a tie continuation rather than a second attack.
+ */
+function struckPerBar(input: TranscriptionSession): ([number, number] | null)[][] {
+  return deriveScore(input).tracks[0].staves[0].bars.map(bar =>
+    bar.voices[0].beats
+      .filter(beat => !beat.isRest && !beat.notes[0].isTied)
+      .map(beat =>
+        beat.notes[0].pitch.kind === 'fretted'
+          ? ([beat.notes[0].pitch.string, beat.notes[0].pitch.fret] as [number, number])
+          : null
+      )
+  );
 }
 
 describe('deriveScore', () => {
@@ -2427,6 +2453,49 @@ describe('deriveScore', () => {
     expect(score.masterBars.length).toBe(1);
     expect(beats.every(beat => beat.isRest)).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // The bar count, bounded by the source rather than by the last onset.
+  // -------------------------------------------------------------------------
+
+  it('caps the bar count at what the source duration can hold', () => {
+    // 0.01 s between beats, and an onset ten seconds into a clip a tenth of a
+    // second long. `secondsToBeats` extrapolates without limit, so that onset
+    // used to land in bar 251 and take 251 MasterBarDocs, 251 bars of rests
+    // and 251 passes over the placed notes with it - from two notes. The same
+    // grid at 1e-6 s asked for 2,500,001 bars and two and a half seconds.
+    const fast: BeatGrid = {
+      beatsSec: [0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07],
+      downbeatIndices: [0, 4],
+      timeSignature: { numerator: 4, denominator: 4, isCommon: true }
+    };
+
+    const input = session([note(33, 0), note(35, 10)], fast, 0.1);
+    const score = deriveScore(input);
+
+    // Ten beats of audio, so three bars, plus the one a note rounding forward
+    // off the end needs.
+    expect(score.masterBars.length).toBe(4);
+    expect(score.tracks[0].staves[0].bars.length).toBe(4);
+
+    // Held rather than dropped: the stray onset is clamped into the last bar,
+    // so both notes are still struck somewhere a reader can see them.
+    expect(struckPerBar(input).flat().length).toBe(2);
+  });
+
+  it('leaves an ordinary session\'s bar count alone', () => {
+    // Four bars of material inside an eight-second source: nothing here is
+    // anywhere near the cap, so the cap changes nothing.
+    const eightSeconds: BeatGrid = {
+      beatsSec: Array.from({ length: 16 }, (_, index) => index * 0.5),
+      downbeatIndices: [0, 4, 8, 12],
+      timeSignature: { numerator: 4, denominator: 4, isCommon: true }
+    };
+
+    const notes = [note(33, 0), note(35, 2), note(38, 4), note(40, 6)];
+
+    expect(deriveScore(session(notes, eightSeconds, 8)).masterBars.length).toBe(4);
+  });
 });
 ```
 
@@ -2462,6 +2531,48 @@ const BASS_PROGRAM = 33;
 const C_MAJOR: KeySignature = { fifths: 0, mode: 'major' };
 
 /**
+ * Bars allowed past the end of the source, so a note arriving in its final
+ * moments still has somewhere to live.
+ *
+ * One, and no more: bar assignment rounds an onset to the nearest slot, so a
+ * note in the last half-slot of the audio is carried onto the downbeat of the
+ * bar after it - a bar the source duration on its own does not account for.
+ */
+const RING_OUT_BARS = 1;
+
+/**
+ * Bars the source audio can hold.
+ *
+ * `secondsToBeats` extrapolates past the tracked grid without limit, and the
+ * bar count comes off the last note, so nothing in that arithmetic stops one
+ * stray onset from asking for an arbitrarily long score. A grid with 0.01 s
+ * between beats plus a note ten seconds later wants 251 bars from two notes;
+ * at 1e-6 s it wants millions, each one a `MasterBarDoc`, a full bar of rests
+ * and a pass over `placed`.
+ *
+ * A note cannot sound after the audio has stopped, so `durationSec` is the
+ * honest ceiling. A session that does not carry one falls back to the span of
+ * the tracked grid, the only other statement it makes about how long the
+ * source is.
+ */
+function barsInSource(session: TranscriptionSession): number {
+  const beats = session.grid.beatsSec;
+  const trackedSec = beats.length > 0 ? beats[beats.length - 1] : 0;
+  const sourceSec =
+    Number.isFinite(session.durationSec) && session.durationSec > 0
+      ? session.durationSec
+      : trackedSec;
+
+  const bars = Math.ceil(
+    secondsToBeats(sourceSec, session.grid) / session.grid.timeSignature.numerator
+  );
+
+  // Never below one: a ScoreDoc with no bars is one ComposerService cannot
+  // open, which is the failure the NaN-onset guard above also exists to stop.
+  return Math.max(1, bars + RING_OUT_BARS);
+}
+
+/**
  * Interprets detected events as notation.
  *
  * Pure and fast, so every setting is a live knob: changing tuning, capo,
@@ -2494,6 +2605,7 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
 
   const slotsPerBeat = settings.finestDivision / timeSignature.denominator;
   const slotsPerBar = timeSignature.numerator * slotsPerBeat;
+  const barLimit = barsInSource(session);
 
   const placed: { bar: number; beatInBar: number; pitch: NotePitch }[] = [];
   corrected.forEach((note, index) => {
@@ -2509,10 +2621,21 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
     // bar first would pull it back onto this bar's final slot instead. The
     // position handed on stays unrounded, so quantizeBar can still see two
     // onsets a few tens of milliseconds apart as one chord.
-    const bar = Math.floor(Math.round(beat * slotsPerBeat) / slotsPerBar);
+    //
+    // Clamped into the source, the far-end counterpart of the `Math.max(0, ...)`
+    // above: an onset the grid extrapolates past the end of the audio is held
+    // in the last bar rather than allowed to size the score. Held, not dropped
+    // - `quantizeBar` pulls the resulting out-of-range `beatInBar` onto the
+    // bar's final slot, so the onset is still struck somewhere a reader can
+    // see it, which is what dropping it from `placed` would cost.
+    const bar = Math.min(
+      barLimit - 1,
+      Math.floor(Math.round(beat * slotsPerBeat) / slotsPerBar)
+    );
     placed.push({ bar, beatInBar: beat - bar * timeSignature.numerator, pitch });
   });
 
+  // Bounded by construction: every entry's bar was clamped to `barLimit - 1`.
   const barCount = placed.reduce((max, entry) => Math.max(max, entry.bar), 0) + 1;
 
   const masterBars: MasterBarDoc[] = Array.from({ length: barCount }, (_, index) => ({
@@ -2572,7 +2695,7 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 8 tests.
+Expected: PASS, 10 tests.
 
 **Step 5: Run the full suite**
 
@@ -2580,12 +2703,11 @@ Expected: PASS, 8 tests.
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 87 new = **145 tests, 0 failures**.
+Expected: PASS — 58 baseline + 89 new = **147 tests, 0 failures**.
 
-The 87 break down as 5 + 12 + 21 + 22 + 9 + 18 across tasks 1-6. Task 6's
-listing above stops at the 8 tests the task was written with; the other 10 were
-added by later review rounds and live only in
-`src/app/services/score-derivation.spec.ts`.
+The 89 break down as 5 + 12 + 21 + 22 + 9 + 20 across tasks 1-6. Task 6's
+listing above stops at 10; the other 10 were added by later review rounds and
+live only in `src/app/services/score-derivation.spec.ts`.
 
 **Step 6: Commit**
 
@@ -2598,7 +2720,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 145 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 147 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
 - Every derived bar sums to exactly one bar **and strikes every onset it was given,
   with the pitches that onset carried**, for every time signature and grid tested.
