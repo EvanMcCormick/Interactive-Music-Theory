@@ -94,10 +94,7 @@ export function onsetSignal(
   durationSec: number,
   frameRateHz: number
 ): Float32Array {
-  const rate =
-    Number.isFinite(frameRateHz) && frameRateHz > 0
-      ? frameRateHz
-      : DEFAULT_BEAT_OPTIONS.frameRateHz;
+  const rate = safeRate(frameRateHz);
 
   // Never shorter than the notes it has to hold: a caller's durationSec is
   // metadata about the file, and a detector can report an onset past it.
@@ -134,12 +131,17 @@ export function onsetSignal(
  *
  * Falls back to `priorBpm` when the signal correlates with itself nowhere in
  * the band - a single note, or silence.
+ *
+ * Sanitises `frameRateHz` itself rather than trusting the caller. Exported, so
+ * the caller need not be `trackBeats`; and an unusable rate here would leave
+ * `maxLag` at zero, skip the loop entirely and return `priorBpm` - a wrong
+ * tempo indistinguishable from an honest fallback.
  */
 export function estimateTempo(
   signal: Float32Array,
   options: BeatTrackingOptions = DEFAULT_BEAT_OPTIONS
 ): number {
-  const rate = options.frameRateHz;
+  const rate = safeRate(options.frameRateHz);
   const frames = signal.length;
   const minLag = Math.max(1, Math.floor((60 * rate) / options.maxBpm));
   const maxLag = Math.min(frames - 1, Math.ceil((60 * rate) / options.minBpm));
@@ -180,10 +182,7 @@ export function trackBeats(
   timeSignature: TimeSignature,
   options: BeatTrackingOptions = DEFAULT_BEAT_OPTIONS
 ): BeatGrid {
-  const rate =
-    Number.isFinite(options.frameRateHz) && options.frameRateHz > 0
-      ? options.frameRateHz
-      : DEFAULT_BEAT_OPTIONS.frameRateHz;
+  const rate = safeRate(options.frameRateHz);
 
   const signal = onsetSignal(notes, durationSec, rate);
   const localScore = normalise(signal);
@@ -191,7 +190,10 @@ export function trackBeats(
     return evenGrid(notes, durationSec, options.priorBpm, timeSignature);
   }
 
-  const bpm = estimateTempo(signal, options);
+  // The sanitised rate, not the caller's: the frame indices this reasons about
+  // are the ones `onsetSignal` just produced, and `estimateTempo` converting
+  // them at a different rate would return a tempo for a signal nobody built.
+  const bpm = estimateTempo(signal, { ...options, frameRateHz: rate });
   const chain = trackFrames(localScore, (60 * rate) / bpm, options.tightness);
   const frames = trimBeats(localScore, chain);
   if (frames.length < 2) return evenGrid(notes, durationSec, bpm, timeSignature);
@@ -199,11 +201,48 @@ export function trackBeats(
   return { beatsSec: frames.map(frame => frame / rate), timeSignature };
 }
 
-/** Seconds the grid has to cover: the stated duration, or the last onset. */
+/**
+ * Frame rate to actually work at, given whatever a caller supplied.
+ *
+ * Zero, negative and NaN all land on the default. Everything here is sized or
+ * indexed in frames, so a rate that is not a positive number is not a slightly
+ * wrong answer - it is an empty search band or an array of length NaN.
+ */
+function safeRate(frameRateHz: number): number {
+  return Number.isFinite(frameRateHz) && frameRateHz > 0
+    ? frameRateHz
+    : DEFAULT_BEAT_OPTIONS.frameRateHz;
+}
+
+/**
+ * How far past a stated duration a detected onset is allowed to push the grid.
+ *
+ * Generous enough for a note that rings past the end of the file, short enough
+ * that a garbage onset cannot size the array.
+ */
+const SPAN_OVERRUN_SEC = 1;
+
+/**
+ * Seconds the grid has to cover: the stated duration, or the last onset.
+ *
+ * The onsets get to extend the span because a detector can report one past the
+ * duration a caller stated - but only as far as `SPAN_OVERRUN_SEC` beyond it.
+ * Unbounded, a single bad onset sizes every array downstream: `onsetSec: 1e7`
+ * is a billion frames, four gigabytes, and a dynamic program of ~7.5e10
+ * iterations that never returns. When `durationSec` is a usable positive
+ * number it is the authority on how long the source is, the same argument
+ * `score-derivation.ts`'s `barsInSource` makes; when it is not, there is
+ * nothing to clamp against and the onsets are all there is.
+ */
 function spanSec(notes: DetectedNote[], durationSec: number): number {
-  let span = Number.isFinite(durationSec) ? Math.max(durationSec, 0) : 0;
+  const stated = Number.isFinite(durationSec) ? Math.max(durationSec, 0) : 0;
+  const ceiling = stated > 0 ? stated + SPAN_OVERRUN_SEC : Infinity;
+
+  let span = stated;
   for (const note of notes) {
-    if (Number.isFinite(note.onsetSec)) span = Math.max(span, note.onsetSec);
+    if (Number.isFinite(note.onsetSec)) {
+      span = Math.max(span, Math.min(note.onsetSec, ceiling));
+    }
   }
   return span;
 }

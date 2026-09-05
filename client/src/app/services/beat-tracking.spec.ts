@@ -81,6 +81,21 @@ describe('estimateTempo', () => {
 
     expect(estimateTempo(signal, DEFAULT_BEAT_OPTIONS)).toBeCloseTo(100, -0.5);
   });
+
+  it('falls back to a working frame rate rather than to priorBpm', () => {
+    // With an unusable rate, `maxLag` comes out zero, the search loop never
+    // runs and the function returns `priorBpm` — 120, a plausible number that
+    // no caller can tell from an honest "nothing correlated" fallback. It is
+    // exported, so it has to sanitise its own options rather than trust
+    // `trackBeats` to have done it.
+    const signal = onsetSignal(pulse(16, 60 / 90), 11, DEFAULT_BEAT_OPTIONS.frameRateHz);
+
+    for (const frameRateHz of [0, Number.NaN, -50]) {
+      const bpm = estimateTempo(signal, { ...DEFAULT_BEAT_OPTIONS, frameRateHz });
+
+      expect(bpm).withContext(`frameRateHz ${frameRateHz}`).toBeCloseTo(90, -0.5);
+    }
+  });
 });
 
 describe('trackBeats', () => {
@@ -125,6 +140,35 @@ describe('trackBeats', () => {
     const grid = trackBeats(pulse(16, 0.5), 40, FOUR_FOUR);
 
     expect(grid.beatsSec[grid.beatsSec.length - 1]).toBeLessThan(8.5);
+  });
+
+  it('tracks at the sanitised frame rate, not the one it was handed', () => {
+    // The rate is sanitised once and then used for the onset signal and the
+    // beat times — but the raw options used to reach `estimateTempo`, which
+    // then returned `priorBpm`. The grid that came back was structurally
+    // perfect and 120 BPM against music played at 90.
+    for (const frameRateHz of [0, Number.NaN, -50]) {
+      const grid = trackBeats(pulse(16, 60 / 90), 11, FOUR_FOUR, {
+        ...DEFAULT_BEAT_OPTIONS,
+        frameRateHz
+      });
+      const gaps = gapsOf(grid.beatsSec);
+      const meanGap = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length;
+
+      expect(60 / meanGap).withContext(`frameRateHz ${frameRateHz}`).toBeCloseTo(90, -0.5);
+    }
+  });
+
+  it('does not let one bad onset size the grid', () => {
+    // `spanSec` takes the largest finite onset, so before the clamp a stray
+    // `onsetSec: 1e7` asked for a billion frames — four gigabytes — and then
+    // ran a dynamic program over them, hanging the thread. `durationSec` is
+    // the authority on how long the source is, the same call
+    // `score-derivation.ts` makes in `barsInSource`.
+    const notes = [...pulse(8, 0.5), ...notesAt([1e7])];
+
+    expect(onsetSignal(notes, 4, DEFAULT_BEAT_OPTIONS.frameRateHz).length).toBeLessThan(1000);
+    expect(trackBeats(notes, 4, FOUR_FOUR).beatsSec.every(beat => beat < 6)).toBeTrue();
   });
 
   it('carries the caller time signature through', () => {

@@ -627,6 +627,21 @@ describe('estimateTempo', () => {
 
     expect(estimateTempo(signal, DEFAULT_BEAT_OPTIONS)).toBeCloseTo(100, -0.5);
   });
+
+  it('falls back to a working frame rate rather than to priorBpm', () => {
+    // With an unusable rate, `maxLag` comes out zero, the search loop never
+    // runs and the function returns `priorBpm` — 120, a plausible number that
+    // no caller can tell from an honest "nothing correlated" fallback. It is
+    // exported, so it has to sanitise its own options rather than trust
+    // `trackBeats` to have done it.
+    const signal = onsetSignal(pulse(16, 60 / 90), 11, DEFAULT_BEAT_OPTIONS.frameRateHz);
+
+    for (const frameRateHz of [0, Number.NaN, -50]) {
+      const bpm = estimateTempo(signal, { ...DEFAULT_BEAT_OPTIONS, frameRateHz });
+
+      expect(bpm).withContext(`frameRateHz ${frameRateHz}`).toBeCloseTo(90, -0.5);
+    }
+  });
 });
 
 describe('trackBeats', () => {
@@ -671,6 +686,35 @@ describe('trackBeats', () => {
     const grid = trackBeats(pulse(16, 0.5), 40, FOUR_FOUR);
 
     expect(grid.beatsSec[grid.beatsSec.length - 1]).toBeLessThan(8.5);
+  });
+
+  it('tracks at the sanitised frame rate, not the one it was handed', () => {
+    // The rate is sanitised once and then used for the onset signal and the
+    // beat times — but the raw options used to reach `estimateTempo`, which
+    // then returned `priorBpm`. The grid that came back was structurally
+    // perfect and 120 BPM against music played at 90.
+    for (const frameRateHz of [0, Number.NaN, -50]) {
+      const grid = trackBeats(pulse(16, 60 / 90), 11, FOUR_FOUR, {
+        ...DEFAULT_BEAT_OPTIONS,
+        frameRateHz
+      });
+      const gaps = gapsOf(grid.beatsSec);
+      const meanGap = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length;
+
+      expect(60 / meanGap).withContext(`frameRateHz ${frameRateHz}`).toBeCloseTo(90, -0.5);
+    }
+  });
+
+  it('does not let one bad onset size the grid', () => {
+    // `spanSec` takes the largest finite onset, so before the clamp a stray
+    // `onsetSec: 1e7` asked for a billion frames — four gigabytes — and then
+    // ran a dynamic program over them, hanging the thread. `durationSec` is
+    // the authority on how long the source is, the same call
+    // `score-derivation.ts` makes in `barsInSource`.
+    const notes = [...pulse(8, 0.5), ...notesAt([1e7])];
+
+    expect(onsetSignal(notes, 4, DEFAULT_BEAT_OPTIONS.frameRateHz).length).toBeLessThan(1000);
+    expect(trackBeats(notes, 4, FOUR_FOUR).beatsSec.every(beat => beat < 6)).toBeTrue();
   });
 
   it('carries the caller time signature through', () => {
@@ -753,8 +797,8 @@ Expected: FAIL — `Cannot find module './beat-tracking'`.
 
 Create `src/app/services/beat-tracking.ts` implementing:
 
-- `onsetSignal(notes, durationSec, frameRateHz): Float32Array` — an impulse at each onset weighted by `confidence`, then a Gaussian blur of about 20 ms so a beat still scores when an onset sits slightly off it.
-- `estimateTempo(signal, options): number` — autocorrelation across lags spanning `minBpm`..`maxBpm`, each lag's score scaled by Ellis's log-normal prior `exp(-0.5 * (log2(bpm / priorBpm) / priorWidth)^2)`. The prior is what stops the estimate locking onto a half- or double-time peak, which is the classic failure.
+- `onsetSignal(notes, durationSec, frameRateHz): Float32Array` — an impulse at each onset weighted by `confidence`, then a Gaussian blur of about 20 ms so a beat still scores when an onset sits slightly off it. It sizes itself from the largest onset, so that has to be **clamped to `durationSec` plus a second** whenever `durationSec` is a usable positive number: unbounded, a stray `onsetSec: 1e7` asks for a billion frames — four gigabytes — and then a dynamic program of ~7.5e10 iterations that never returns. `durationSec` is the authority on how long the source is, the same call `score-derivation.ts` makes in `barsInSource`.
+- `estimateTempo(signal, options): number` — autocorrelation across lags spanning `minBpm`..`maxBpm`, each lag's score scaled by Ellis's log-normal prior `exp(-0.5 * (log2(bpm / priorBpm) / priorWidth)^2)`. The prior is what stops the estimate locking onto a *subdivision* of the played tempo, which is the classic failure. It **sanitises `frameRateHz` itself** rather than trusting the caller — it is exported, and an unusable rate leaves `maxLag` at zero, so the search loop never runs and it returns `priorBpm`: 120 BPM against music played at 90, in a grid nothing downstream can tell from a tracked one. `trackBeats` passes the rate it sanitised for `onsetSignal` on to it for the same reason.
 - `trackBeats(notes, durationSec, timeSignature, options?): BeatGrid` — the dynamic program. For each frame `i`, score it as `signal[i] + max over j in [i - 2P, i - P/2] of (score[j] - tightness * log((i - j) / P)^2)`, where `P` is the period in frames. Record a back-pointer, then backtrace from the best-scoring frame in the final period. The squared-log penalty lets the beat drift with the music but not skip one.
 - **Trim the backtrace** before returning it, as librosa's `__trim_beats` does. The DP can only start a chain in the first half-period, so its first beat is *structurally* always less than half a beat into the file: music that starts at 2.7 s comes back with five beats in front of it that no note supports, and since `deriveScore` reads `beatsSec[0]` as bar 1 beat 1, that puts the first played note on bar 2 beat 2 with the tempo still perfectly right. The tail is the same fault reversed — 8 s of music in a file stated as 40 s long produced 81 beats, 65 of them past the last note. So: sample the local score at the beat frames, smooth it with the three non-zero taps of a five-point Hann window, and keep the run from the first to the last beat clearing half the RMS of that curve. When nothing clears it — a lone onset, silence — fall through to the even grid rather than returning a stub. One deliberate deviation from librosa, whose slice stops *before* the last beat it just called valid and so drops a real one.
 
@@ -775,7 +819,7 @@ With no notes, return an even grid at `priorBpm` spanning `durationSec` — a de
 
 **Step 4: Run tests, then the full suite**
 
-Expected: the beat spec passes, and the full suite is 155 + 24 + 14 = 193.
+Expected: the beat spec passes, and the full suite is 155 + 24 + 17 = 196.
 
 **Step 5: Commit**
 
