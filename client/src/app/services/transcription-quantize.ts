@@ -82,6 +82,25 @@ function durationTable(finestDivision: FinestDivision): DurationUnit[] {
 const MAX_CHORD_SPREAD_BEATS = 0.125;
 
 /**
+ * The window inside which two onsets are merged into one chord, in
+ * denominator-unit beats - the units `secondsToBeats` reports and `PlacedNote`
+ * carries.
+ *
+ * Exported because it is a contract, not an implementation detail.
+ * `addToChord` drops the second of two notes merged onto one string, so
+ * `assignFingering` has to have already moved apart everything this window
+ * will merge. It cannot check that for itself: it runs before bars exist and
+ * knows nothing of slots, so `score-derivation.ts` reads the window here and
+ * hands it across. An independently sized window there - the 30 ms constant
+ * this replaced - left a band of separations wide enough to merge and too wide
+ * to separate, where the second note vanished with no rest, no error and no
+ * record.
+ */
+export function chordToleranceBeats(slotsPerBeat: number): number {
+  return Math.min(0.5 / slotsPerBeat, MAX_CHORD_SPREAD_BEATS);
+}
+
+/**
  * Adds a pitch to a chord, dropping it if its string is already spoken for.
  *
  * A tab line holds one number, so a fretted staff shows at most one note per
@@ -116,7 +135,7 @@ function snapToSlots(
   slotsPerBeat: number,
   totalSlots: number
 ): Map<number, NotePitch[]> {
-  const tolerance = Math.min(0.5, MAX_CHORD_SPREAD_BEATS * slotsPerBeat);
+  const tolerance = chordToleranceBeats(slotsPerBeat) * slotsPerBeat;
   const sorted = [...notes].sort((a, b) => a.beatInBar - b.beatInBar);
 
   const clusters: { onsets: number[]; pitches: NotePitch[] }[] = [];

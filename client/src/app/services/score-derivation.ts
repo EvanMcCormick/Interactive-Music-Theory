@@ -12,7 +12,7 @@ import {
 import { TranscriptionSession } from '../models/transcription.model';
 import { assignFingering } from './transcription-fingering';
 import { correctOctaves } from './transcription-octave';
-import { PlacedNote, quantizeBar } from './transcription-quantize';
+import { PlacedNote, chordToleranceBeats, quantizeBar } from './transcription-quantize';
 import { gridTempo, secondsToBeats } from './transcription-timing';
 
 /**
@@ -121,27 +121,44 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
   // short, so nothing downstream compensates for it.
   const corrected = correctOctaves(audible, settings);
 
+  const slotsPerBeat = settings.finestDivision / timeSignature.denominator;
+  const slotsPerBar = timeSignature.numerator * slotsPerBeat;
+  const barLimit = barsInSource(session);
+
+  // Computed once and shared, because fingering and placement have to agree
+  // about where a note sits to the last decimal. Anything before the first
+  // downbeat is pulled onto it here rather than later; a proper pickup bar
+  // needs a negative-bar concept the score model does not carry, and two
+  // pickup onsets clamped onto beat 0 are as simultaneous to `quantizeBar` as
+  // any chord, so `assignFingering` has to see them that way too.
+  const beats = corrected.map(note => Math.max(0, secondsToBeats(note.onsetSec, grid)));
+
   // Fingering runs across the whole piece rather than bar by bar, so hand
   // position carries over bar lines the way a player's does. The NotePitch
   // values come back with 1-based tab string numbers, matching StaffDoc.tuning
   // and ScoreDocMapperService, so nothing here has to renumber them.
+  //
+  // The chord tolerance travels with them: `quantizeBar` merges onsets inside
+  // it into one chord and keeps one pitch per string, so anything it will
+  // merge has to leave `assignFingering` already on distinct strings. This
+  // assembly is the only place that knows both windows, which is why sizing
+  // them independently went unnoticed for so long.
   const fingering = assignFingering(
-    corrected.map(note => ({ pitch: note.pitch, onsetSec: note.onsetSec })),
-    settings
+    corrected.map((note, index) => ({
+      pitch: note.pitch,
+      onsetSec: note.onsetSec,
+      beatPosition: beats[index]
+    })),
+    settings,
+    chordToleranceBeats(slotsPerBeat)
   );
-
-  const slotsPerBeat = settings.finestDivision / timeSignature.denominator;
-  const slotsPerBar = timeSignature.numerator * slotsPerBeat;
-  const barLimit = barsInSource(session);
 
   const placed: { bar: number; beatInBar: number; pitch: NotePitch }[] = [];
   corrected.forEach((note, index) => {
     const pitch = fingering[index];
     if (!pitch) return;
 
-    // Anything before the first downbeat is pulled onto it; a proper pickup
-    // bar needs a negative-bar concept the score model does not carry.
-    const beat = Math.max(0, secondsToBeats(note.onsetSec, grid));
+    const beat = beats[index];
 
     // The bar comes off the rounded slot, not the raw beat: a note in the last
     // half-slot of a bar belongs on the next bar's downbeat, and choosing the

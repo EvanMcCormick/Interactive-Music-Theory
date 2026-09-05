@@ -964,6 +964,25 @@ function durationTable(finestDivision: FinestDivision): DurationUnit[] {
 const MAX_CHORD_SPREAD_BEATS = 0.125;
 
 /**
+ * The window inside which two onsets are merged into one chord, in
+ * denominator-unit beats - the units `secondsToBeats` reports and `PlacedNote`
+ * carries.
+ *
+ * Exported because it is a contract, not an implementation detail.
+ * `addToChord` drops the second of two notes merged onto one string, so
+ * `assignFingering` has to have already moved apart everything this window
+ * will merge. It cannot check that for itself: it runs before bars exist and
+ * knows nothing of slots, so `score-derivation.ts` reads the window here and
+ * hands it across. An independently sized window there - the 30 ms constant
+ * this replaced - left a band of separations wide enough to merge and too wide
+ * to separate, where the second note vanished with no rest, no error and no
+ * record.
+ */
+export function chordToleranceBeats(slotsPerBeat: number): number {
+  return Math.min(0.5 / slotsPerBeat, MAX_CHORD_SPREAD_BEATS);
+}
+
+/**
  * Adds a pitch to a chord, dropping it if its string is already spoken for.
  *
  * A tab line holds one number, so a fretted staff shows at most one note per
@@ -998,7 +1017,7 @@ function snapToSlots(
   slotsPerBeat: number,
   totalSlots: number
 ): Map<number, NotePitch[]> {
-  const tolerance = Math.min(0.5, MAX_CHORD_SPREAD_BEATS * slotsPerBeat);
+  const tolerance = chordToleranceBeats(slotsPerBeat) * slotsPerBeat;
   const sorted = [...notes].sort((a, b) => a.beatInBar - b.beatInBar);
 
   const clusters: { onsets: number[]; pitches: NotePitch[] }[] = [];
@@ -1301,8 +1320,42 @@ import {
   createDefaultDerivationSettings
 } from '../models/transcription.model';
 import { assignFingering, candidatesFor } from './transcription-fingering';
+import { chordToleranceBeats } from './transcription-quantize';
 
 const SETTINGS = createDefaultDerivationSettings();
+
+/**
+ * Beats per second in the fixtures below: 120 BPM in 4/4, the grid
+ * `score-derivation.spec.ts` uses, so a quarter note is half a second and a
+ * sixteenth is 0.125.
+ */
+const BEATS_PER_SEC = 2;
+
+/**
+ * The attack window `deriveScore` hands in at those settings: four sixteenth
+ * slots to the beat, so `chordToleranceBeats` caps at half a slot - an eighth
+ * of a beat, 62.5 ms here.
+ */
+const ATTACK_WINDOW_BEATS = chordToleranceBeats(SETTINGS.finestDivision / 4);
+
+/**
+ * `assignFingering` with the fixtures written in seconds.
+ *
+ * Every case here is a statement about a hand at 120 BPM, so the beat position
+ * each onset carries is a restatement of its time rather than an independent
+ * fixture value. Cases that are about the window itself pass their own.
+ */
+function finger(
+  notes: { pitch: number; onsetSec: number }[],
+  settings = SETTINGS,
+  attackWindowBeats = ATTACK_WINDOW_BEATS
+): ReturnType<typeof assignFingering> {
+  return assignFingering(
+    notes.map(note => ({ ...note, beatPosition: note.onsetSec * BEATS_PER_SEC })),
+    settings,
+    attackWindowBeats
+  );
+}
 
 describe('candidatesFor', () => {
   it('finds every string that can reach a pitch', () => {
@@ -1370,11 +1423,11 @@ describe('assignFingering', () => {
     expect(STANDARD_BASS_TUNING[top]).toBe(Math.max(...STANDARD_BASS_TUNING));
     expect(STANDARD_BASS_TUNING[bottom]).toBe(Math.min(...STANDARD_BASS_TUNING));
 
-    const openTop = assignFingering(
+    const openTop = finger(
       [{ pitch: STANDARD_BASS_TUNING[top], onsetSec: 0 }],
       SETTINGS
     );
-    const openBottom = assignFingering(
+    const openBottom = finger(
       [{ pitch: STANDARD_BASS_TUNING[bottom], onsetSec: 0 }],
       SETTINGS
     );
@@ -1390,17 +1443,17 @@ describe('assignFingering', () => {
   });
 
   it('prefers an open string to the fretted equivalent', () => {
-    expect(assignFingering([{ pitch: 33, onsetSec: 0 }], SETTINGS)).toEqual([
+    expect(finger([{ pitch: 33, onsetSec: 0 }], SETTINGS)).toEqual([
       { kind: 'fretted', string: 3, fret: 0 }
     ]);
   });
 
   it('returns null where the instrument cannot play the pitch', () => {
-    expect(assignFingering([{ pitch: 20, onsetSec: 0 }], SETTINGS)).toEqual([null]);
+    expect(finger([{ pitch: 20, onsetSec: 0 }], SETTINGS)).toEqual([null]);
   });
 
   it('carries on after an unplayable note', () => {
-    const result = assignFingering(
+    const result = finger(
       [{ pitch: 20, onsetSec: 0 }, { pitch: 33, onsetSec: 1 }],
       SETTINGS
     );
@@ -1420,7 +1473,7 @@ describe('assignFingering', () => {
    * tab skitters across the neck on fast passages.
    */
   it('stays in position when the notes come fast', () => {
-    const fast = assignFingering(
+    const fast = finger(
       [
         { pitch: 52, onsetSec: 0 },
         { pitch: 54, onsetSec: 0.1 },
@@ -1433,7 +1486,7 @@ describe('assignFingering', () => {
   });
 
   it('shifts down the neck when there is time to move', () => {
-    const slow = assignFingering(
+    const slow = finger(
       [
         { pitch: 52, onsetSec: 0 },
         { pitch: 54, onsetSec: 2 },
@@ -1459,7 +1512,7 @@ describe('assignFingering', () => {
    * accident, which would have hidden the leap this exists to catch.
    */
   it('does not buy a leap with an open string in the middle', () => {
-    const figure = assignFingering(
+    const figure = finger(
       [
         { pitch: 55, onsetSec: 0 },
         { pitch: 33, onsetSec: 0.0625 },
@@ -1483,7 +1536,7 @@ describe('assignFingering', () => {
     // 10 ms apart rather than exactly together: a detector does not report
     // two strings plucked at once to the sample, and a window that only
     // caught identical onsets would catch almost nothing real.
-    const dyad = assignFingering(
+    const dyad = finger(
       [{ pitch: 33, onsetSec: 0 }, { pitch: 36, onsetSec: 0.01 }],
       SETTINGS
     );
@@ -1512,7 +1565,7 @@ describe('assignFingering', () => {
    * the constrained note is stranded on a collision it had a way out of.
    */
   it('moves whichever of two simultaneous notes has somewhere to go', () => {
-    const dyad = assignFingering(
+    const dyad = finger(
       [{ pitch: 43, onsetSec: 0 }, { pitch: 63, onsetSec: 0.01 }],
       SETTINGS
     );
@@ -1532,7 +1585,7 @@ describe('assignFingering', () => {
    */
   it('leaves a collision that no fingering can avoid', () => {
     expect(
-      assignFingering([{ pitch: 28, onsetSec: 0 }, { pitch: 30, onsetSec: 0.01 }], SETTINGS)
+      finger([{ pitch: 28, onsetSec: 0 }, { pitch: 30, onsetSec: 0.01 }], SETTINGS)
     ).toEqual([
       { kind: 'fretted', string: 4, fret: 0 },
       { kind: 'fretted', string: 4, fret: 2 }
@@ -1540,7 +1593,7 @@ describe('assignFingering', () => {
   });
 
   it('pulls the hand towards a position hint', () => {
-    const hinted = assignFingering(
+    const hinted = finger(
       [{ pitch: 45, onsetSec: 0 }],
       { ...SETTINGS, positionHint: 12 }
     );
@@ -1568,7 +1621,7 @@ describe('assignFingering', () => {
    */
   it('balances a string crossing against the climb it saves', () => {
     // G#1 then G#2, two seconds apart: time enough to go anywhere.
-    const octave = assignFingering(
+    const octave = finger(
       [{ pitch: 32, onsetSec: 0 }, { pitch: 44, onsetSec: 2 }],
       SETTINGS
     );
@@ -1589,7 +1642,7 @@ describe('assignFingering', () => {
   it('pays a bonus for an open string, without overpaying', () => {
     // G#1 then D2, a quarter apart. The open D is two strings away; fret 5 of
     // the A string is one. Without the bonus the nearer string wins.
-    const openD = assignFingering(
+    const openD = finger(
       [{ pitch: 32, onsetSec: 0 }, { pitch: 38, onsetSec: 0.25 }],
       SETTINGS
     );
@@ -1599,7 +1652,7 @@ describe('assignFingering', () => {
     // the C# at fret 6 of the G string - a shape a hand can make. Double the
     // bonus and the open A is worth taking instead, spreading the same two
     // notes across the whole neck.
-    const dyad = assignFingering(
+    const dyad = finger(
       [{ pitch: 33, onsetSec: 0 }, { pitch: 49, onsetSec: 0.001 }],
       SETTINGS
     );
@@ -1614,7 +1667,7 @@ describe('assignFingering', () => {
    */
   it('never lets a long rest make a shift free', () => {
     // F#1, up an octave and a major third, and back - three seconds apart.
-    const spaced = assignFingering(
+    const spaced = finger(
       [
         { pitch: 30, onsetSec: 0 },
         { pitch: 44, onsetSec: 3 },
@@ -1637,7 +1690,7 @@ describe('assignFingering', () => {
    */
   it('never lets a chord price a string crossing out of reach', () => {
     // G#1, G#2 and D2, detected a millisecond apart: one attack.
-    const chord = assignFingering(
+    const chord = finger(
       [
         { pitch: 32, onsetSec: 0 },
         { pitch: 44, onsetSec: 0.001 },
@@ -1661,7 +1714,7 @@ describe('assignFingering', () => {
    */
   it('discounts a move across an open string without abolishing it', () => {
     // A1 then G3, a sixteenth apart.
-    const climb = assignFingering(
+    const climb = finger(
       [{ pitch: 33, onsetSec: 0 }, { pitch: 55, onsetSec: 0.125 }],
       SETTINGS
     );
@@ -1676,7 +1729,7 @@ describe('assignFingering', () => {
   });
 
   /**
-   * `SIMULTANEITY_SEC` needs pinning at both ends. Too small and a detector
+   * The attack window needs pinning at both ends. Too small and a detector
    * reporting a chord a few milliseconds wide stops being a chord; too large
    * and consecutive notes of an ordinary line are read as struck together,
    * and the repair scatters a run that belongs on one string.
@@ -1690,7 +1743,7 @@ describe('assignFingering', () => {
       onsetSec: index * 0.125
     }));
 
-    expect(assignFingering(run, SETTINGS)).toEqual([
+    expect(finger(run, SETTINGS)).toEqual([
       { kind: 'fretted', string: 4, fret: 0 },
       { kind: 'fretted', string: 4, fret: 1 },
       { kind: 'fretted', string: 4, fret: 2 },
@@ -1701,7 +1754,33 @@ describe('assignFingering', () => {
       { kind: 'fretted', string: 3, fret: 2 }
     ]);
   });
+
+  /**
+   * The window is the caller's to size, and it has to be the one the bar will
+   * be quantized on. Sizing it here instead - the 30 ms constant this replaced
+   * - left every separation between the two windows unseparated and merged,
+   * and `addToChord` deleted the second pitch outright.
+   */
+  it('measures one attack on the window the bar will be quantized to', () => {
+    const spread = [{ pitch: 33, onsetSec: 0 }, { pitch: 36, onsetSec: 0.05 }];
+
+    // 50 ms is inside half a sixteenth slot at 120 BPM, so `snapToSlots` will
+    // make one chord of these two and they have to leave here on strings that
+    // can each hold a number.
+    expect(finger(spread)).toEqual([
+      { kind: 'fretted', string: 3, fret: 0 },
+      { kind: 'fretted', string: 4, fret: 8 }
+    ]);
+
+    // A narrower window is not a milder version of the same answer. Both notes
+    // stay on the A string, and one of them stops existing a stage later.
+    expect(finger(spread, SETTINGS, 0.03 * BEATS_PER_SEC)).toEqual([
+      { kind: 'fretted', string: 3, fret: 0 },
+      { kind: 'fretted', string: 3, fret: 3 }
+    ]);
+  });
 });
+
 ```
 
 **Step 2: Run test to verify it fails**
@@ -1744,6 +1823,18 @@ export interface FingeringInput {
   /** MIDI pitch. */
   pitch: number;
   onsetSec: number;
+  /**
+   * Where the onset sits on the beat grid, in denominator-unit beats, exactly
+   * as `score-derivation.ts` will place it.
+   *
+   * Carried alongside the seconds because the two are used for different
+   * things and neither substitutes for the other. Movement cost is a fact
+   * about hands and stays in seconds; what counts as one attack is a fact
+   * about the grid the bar will be written on, and has to be measured in the
+   * units `transcription-quantize.ts` measures it in - see
+   * `separateSimultaneous`.
+   */
+  beatPosition: number;
 }
 
 export interface Candidate {
@@ -1791,22 +1882,6 @@ const POSITION_HINT_WEIGHT = 0.5;
  * reachable on ordinary material rather than a contrived fixture.
  */
 const OPEN_STRING_MOVE_DISCOUNT = 0.25;
-
-/**
- * How close two onsets have to be to count as one attack.
- *
- * A fact about hands rather than about the cost model: 30 ms is roughly what
- * it takes to cross the strings, which is why `transcription-quantize.ts`
- * sizes its own chord tolerance the same way. Sitting inside that tolerance
- * matters, since anything this pass separates is about to be merged into one
- * chord there.
- *
- * It lands close to `MOVE_REFERENCE_SEC / MAX_TIME_FACTOR`, the gap below
- * which movement cost stops responding to the gap at all, and that is a
- * pleasing coincidence rather than a derivation - deriving it would let a
- * change to the cost ceiling silently redefine what counts as a chord.
- */
-const SIMULTANEITY_SEC = 0.03;
 
 /**
  * Every string/fret pair that sounds `pitch` on this instrument.
@@ -1938,23 +2013,41 @@ function bestPath(
  * bottom string of a bass has nowhere else to go, and losing one of the two
  * notes is then the honest outcome rather than a bug.
  *
- * Mutates `chosen` in place. Requires `notes` in ascending `onsetSec`.
+ * What counts as one attack is not this module's judgement to make. Safety
+ * runs one way only - everything `snapToSlots` will merge must already have
+ * been moved apart here, or `addToChord` deletes a pitch with nothing left to
+ * show it was struck - so `attackWindowBeats` is the merge window itself,
+ * read off `chordToleranceBeats` and handed across by `score-derivation.ts`.
+ * Sizing it here instead, as an independent 30 ms constant, is what opened the
+ * band of separations wide enough to merge and too wide to separate: measured
+ * on the assembled pipeline it swallowed a note at 35-125 ms apart at 60 BPM,
+ * and the band moved with the tempo because one window was in seconds and the
+ * other in beats.
+ *
+ * A window wider than the merge window only ever costs tab quality - two notes
+ * given distinct strings that the bar was going to write on separate slots
+ * anyway - so erring wide is safe and erring narrow deletes notes.
+ *
+ * Mutates `chosen` in place. Requires `notes` in ascending `onsetSec`, and
+ * `beatPosition` ascending with it.
  */
 function separateSimultaneous(
   chosen: (Candidate | null)[],
   notes: FingeringInput[],
-  settings: DerivationSettings
+  settings: DerivationSettings,
+  attackWindowBeats: number
 ): void {
   let start = 0;
 
   while (start < notes.length) {
     // Measured from the attack's first onset rather than its last, so a run of
     // closely spaced notes cannot chain into one arbitrarily long attack. The
-    // same rule `snapToSlots` uses to cluster onsets into chords.
+    // same rule `snapToSlots` uses to cluster onsets into chords, on the same
+    // quantity, so the two passes group identically.
     let end = start + 1;
     while (
       end < notes.length
-      && notes[end].onsetSec - notes[start].onsetSec <= SIMULTANEITY_SEC
+      && notes[end].beatPosition - notes[start].beatPosition <= attackWindowBeats
     ) {
       end++;
     }
@@ -2025,6 +2118,13 @@ function separateAttack(
  * at zero, so an out-of-order note is scored as though struck with the one
  * before it, and `separateSimultaneous` groups on the same assumption.
  *
+ * `attackWindowBeats` is how far apart two onsets may sit and still be one
+ * attack, in the denominator-unit beats `FingeringInput.beatPosition` carries.
+ * It belongs to the bar the notes will be written into rather than to this
+ * module, so callers pass `chordToleranceBeats` from
+ * `transcription-quantize.ts`; see `separateSimultaneous` for why a window
+ * narrower than that one loses notes outright.
+ *
  * Returns null at any index the instrument cannot play. Such a note breaks the
  * chain, and the notes after it are optimised as a fresh run.
  *
@@ -2037,7 +2137,8 @@ function separateAttack(
  */
 export function assignFingering(
   notes: FingeringInput[],
-  settings: DerivationSettings
+  settings: DerivationSettings,
+  attackWindowBeats: number
 ): (NotePitch | null)[] {
   const chosen: (Candidate | null)[] = new Array(notes.length).fill(null);
 
@@ -2073,7 +2174,7 @@ export function assignFingering(
   // Runs are optimised as sequences, so two notes struck together can come out
   // on one string; the repair spans runs because an unplayable note between
   // them does not stop them sounding at the same moment.
-  separateSimultaneous(chosen, notes, settings);
+  separateSimultaneous(chosen, notes, settings, attackWindowBeats);
 
   return chosen.map(candidate =>
     candidate === null
@@ -2086,11 +2187,11 @@ export function assignFingering(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 22 tests.
+Expected: PASS, 23 tests.
 
 If the two position tests fail, the weights are miscalibrated rather than the algorithm being wrong — check `MOVE_REFERENCE_SEC` and `FRET_HEIGHT_WEIGHT` first. Both fixtures were chosen so the fast and slow answers differ under the constants above.
 
-The last six tests pin the constants themselves rather than behaviour they happen to produce. Each fixture was picked by mutation: the expected answer holds when its constant is nudged 10% either way and changes when the constant is zeroed or doubled, so a fixture surviving on a rounding error cannot masquerade as a test. Zeroing or doubling any of `STRING_CHANGE_WEIGHT`, `FRET_HEIGHT_WEIGHT`, `OPEN_STRING_BONUS`, `MOVE_WEIGHT`, `POSITION_HINT_WEIGHT`, `MOVE_REFERENCE_SEC`, `MIN_TIME_FACTOR`, `MAX_TIME_FACTOR`, `OPEN_STRING_MOVE_DISCOUNT` or `SIMULTANEITY_SEC` now fails at least one test.
+The last six tests pin the constants themselves rather than behaviour they happen to produce. Each fixture was picked by mutation: the expected answer holds when its constant is nudged 10% either way and changes when the constant is zeroed or doubled, so a fixture surviving on a rounding error cannot masquerade as a test. Zeroing or doubling any of `STRING_CHANGE_WEIGHT`, `FRET_HEIGHT_WEIGHT`, `OPEN_STRING_BONUS`, `MOVE_WEIGHT`, `POSITION_HINT_WEIGHT`, `MOVE_REFERENCE_SEC`, `MIN_TIME_FACTOR`, `MAX_TIME_FACTOR`, `OPEN_STRING_MOVE_DISCOUNT` now fails at least one test. The attack window is no longer a constant of this module - it is `chordToleranceBeats`, handed in - and the test that pins it does so by passing a narrower one and watching a note lose its string.
 
 `STRING_CHANGE_WEIGHT` and `FRET_HEIGHT_WEIGHT` cannot be separated, and one test covers both. On an instrument tuned in fourths every alternative fingering of a pitch trades five frets of height for one string of crossing, so only the ratio `FRET_HEIGHT_WEIGHT * 5 : STRING_CHANGE_WEIGHT` is observable; a sweep of every two-note bass fixture found no case that moves one without moving the other.
 
@@ -2522,7 +2623,7 @@ import {
 import { TranscriptionSession } from '../models/transcription.model';
 import { assignFingering } from './transcription-fingering';
 import { correctOctaves } from './transcription-octave';
-import { PlacedNote, quantizeBar } from './transcription-quantize';
+import { PlacedNote, chordToleranceBeats, quantizeBar } from './transcription-quantize';
 import { gridTempo, secondsToBeats } from './transcription-timing';
 
 /** General MIDI program 33: electric bass, finger. */
@@ -2594,27 +2695,44 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
   // short, so nothing downstream compensates for it.
   const corrected = correctOctaves(audible, settings);
 
+  const slotsPerBeat = settings.finestDivision / timeSignature.denominator;
+  const slotsPerBar = timeSignature.numerator * slotsPerBeat;
+  const barLimit = barsInSource(session);
+
+  // Computed once and shared, because fingering and placement have to agree
+  // about where a note sits to the last decimal. Anything before the first
+  // downbeat is pulled onto it here rather than later; a proper pickup bar
+  // needs a negative-bar concept the score model does not carry, and two
+  // pickup onsets clamped onto beat 0 are as simultaneous to `quantizeBar` as
+  // any chord, so `assignFingering` has to see them that way too.
+  const beats = corrected.map(note => Math.max(0, secondsToBeats(note.onsetSec, grid)));
+
   // Fingering runs across the whole piece rather than bar by bar, so hand
   // position carries over bar lines the way a player's does. The NotePitch
   // values come back with 1-based tab string numbers, matching StaffDoc.tuning
   // and ScoreDocMapperService, so nothing here has to renumber them.
+  //
+  // The chord tolerance travels with them: `quantizeBar` merges onsets inside
+  // it into one chord and keeps one pitch per string, so anything it will
+  // merge has to leave `assignFingering` already on distinct strings. This
+  // assembly is the only place that knows both windows, which is why sizing
+  // them independently went unnoticed for so long.
   const fingering = assignFingering(
-    corrected.map(note => ({ pitch: note.pitch, onsetSec: note.onsetSec })),
-    settings
+    corrected.map((note, index) => ({
+      pitch: note.pitch,
+      onsetSec: note.onsetSec,
+      beatPosition: beats[index]
+    })),
+    settings,
+    chordToleranceBeats(slotsPerBeat)
   );
-
-  const slotsPerBeat = settings.finestDivision / timeSignature.denominator;
-  const slotsPerBar = timeSignature.numerator * slotsPerBeat;
-  const barLimit = barsInSource(session);
 
   const placed: { bar: number; beatInBar: number; pitch: NotePitch }[] = [];
   corrected.forEach((note, index) => {
     const pitch = fingering[index];
     if (!pitch) return;
 
-    // Anything before the first downbeat is pulled onto it; a proper pickup
-    // bar needs a negative-bar concept the score model does not carry.
-    const beat = Math.max(0, secondsToBeats(note.onsetSec, grid));
+    const beat = beats[index];
 
     // The bar comes off the rounded slot, not the raw beat: a note in the last
     // half-slot of a bar belongs on the next bar's downbeat, and choosing the
@@ -2697,17 +2815,51 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
 
 Expected: PASS, 10 tests.
 
+### Note conservation, end to end
+
+The two tests added by the final milestone review, and the reason they live
+here rather than in either module.
+
+`transcription-quantize.spec.ts` has had a conservation property test since the
+module was written, and it did not catch this: it stops at `quantizeBar`, so it
+takes the fingering it is handed as given. The defect lived in the gap between
+two modules, each internally consistent. `transcription-fingering.ts` decided in
+*seconds* what to move onto distinct strings; `transcription-quantize.ts`
+decided in *beats* what to merge into one chord; and quantize merged the wider
+window. Between them a note was deleted with no rest, no error and no record —
+at default settings any separation from 35 to 125 ms at 60 BPM, 35 to 80 at 90,
+35 to 60 at 120. The band moved with the tempo precisely because the two windows
+were in different units. Six per-module review rounds could not see it, because
+neither module was wrong on its own.
+
+The fix is that the separation window is no longer a constant of the fingering
+module. `chordToleranceBeats` is exported from `transcription-quantize.ts`,
+`deriveScore` reads it and hands it to `assignFingering` alongside each note's
+beat position, and the two passes now group onsets on the same quantity in the
+same units. Erring wide is safe — a note given a string it did not need costs
+tab quality — and erring narrow deletes notes, so the containment runs one way:
+*everything quantize will merge must already have been separated.*
+
+The test is a sweep rather than a fixture: five pitch pairs × four tempi × every
+5 ms of separation from 0 to 200 ms, asserting every input pitch is read back
+off the derived tab. What counts as "genuinely unplayable" comes from
+`candidatesFor` rather than a fixture, so the property cannot quietly degrade
+into "notes usually survive"; a companion test pins the one honest loss, a minor
+second at the bottom of a bass, which has no two-string fingering at all.
+
 **Step 5: Run the full suite**
 
 ```bash
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 89 new = **147 tests, 0 failures**.
+Expected: PASS — 58 baseline + 92 new = **150 tests, 0 failures**.
 
-The 89 break down as 5 + 12 + 21 + 22 + 9 + 20 across tasks 1-6. Task 6's
-listing above stops at 10; the other 10 were added by later review rounds and
-live only in `src/app/services/score-derivation.spec.ts`.
+The 92 break down as 5 + 12 + 21 + 23 + 9 + 22 across tasks 1-6. Task 6's
+listing above stops at 10; the other 12 were added by later review rounds and
+live only in `src/app/services/score-derivation.spec.ts`. Two of those twelve
+are the note-conservation property over the whole assembly, described under
+Task 6.
 
 **Step 6: Commit**
 
@@ -2720,7 +2872,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 147 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 150 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
 - Every derived bar sums to exactly one bar **and strikes every onset it was given,
   with the pitches that onset carried**, for every time signature and grid tested.
@@ -2739,6 +2891,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 - **Key inference.** `settings.key` is honoured; `null` falls back to C major. Krumhansl-Schmuckler correlation lands with the notation staff work, since tab is unaffected.
 - **Triplets.** `allowTriplets` exists in the settings and is ignored.
 - **Chord-aware fingering.** The Viterbi pass scores a sequence and cannot see that two notes sound at once, so `separateSimultaneous` repairs its result instead: within one attack the most constrained note claims its string first and the rest take their next-cheapest free candidate. That is enough to keep a dyad off one tab line — the collisions that survive it are the ones no fingering can avoid — but it is a repair, not a search, so the pair it lands on is not always the pair a player would choose. Scoring whole chords, and validating the shapes they make, arrives with guitar polyphony.
+- **Two attacks the grid has nowhere to put.** Onsets more than half a slot apart are two clusters, and two clusters can still round onto one slot — `snapToSlots` says so itself. When they do, `addToChord` drops the second, and no attack window can prevent it: widening the separation window to cover it means separating everything within a whole slot, which would scatter an ordinary run of sixteenths across the neck. It is reachable off a slot boundary — at 120 BPM on a sixteenth grid, a pair starting 65 ms in and 65 to 120 ms apart loses a note, about 7% of the (start, separation) square swept — and it is a statement about `finestDivision` rather than about units: the two onsets round to the same sixteenth, and one sixteenth holds one attack. Closing it properly means either a finer grid or letting the two rounded slots repel each other, which changes the written rhythm; both are bigger than a repair. The conservation sweep anchors its first onset on a slot for exactly this reason, and says so.
 - **Pickup bars.** Notes before the first downbeat are pulled onto beat 1.
 - **Note durations.** `DetectedNote.offsetSec` is read by nothing: every note sustains until the next onset, so rests appear only before a bar's first note. See scope decision 5.
 - **Context-based octave correction.** Only out-of-range folding is implemented; an octave error landing on a playable pitch survives.

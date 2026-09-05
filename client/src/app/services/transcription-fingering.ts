@@ -29,6 +29,18 @@ export interface FingeringInput {
   /** MIDI pitch. */
   pitch: number;
   onsetSec: number;
+  /**
+   * Where the onset sits on the beat grid, in denominator-unit beats, exactly
+   * as `score-derivation.ts` will place it.
+   *
+   * Carried alongside the seconds because the two are used for different
+   * things and neither substitutes for the other. Movement cost is a fact
+   * about hands and stays in seconds; what counts as one attack is a fact
+   * about the grid the bar will be written on, and has to be measured in the
+   * units `transcription-quantize.ts` measures it in - see
+   * `separateSimultaneous`.
+   */
+  beatPosition: number;
 }
 
 export interface Candidate {
@@ -76,22 +88,6 @@ const POSITION_HINT_WEIGHT = 0.5;
  * reachable on ordinary material rather than a contrived fixture.
  */
 const OPEN_STRING_MOVE_DISCOUNT = 0.25;
-
-/**
- * How close two onsets have to be to count as one attack.
- *
- * A fact about hands rather than about the cost model: 30 ms is roughly what
- * it takes to cross the strings, which is why `transcription-quantize.ts`
- * sizes its own chord tolerance the same way. Sitting inside that tolerance
- * matters, since anything this pass separates is about to be merged into one
- * chord there.
- *
- * It lands close to `MOVE_REFERENCE_SEC / MAX_TIME_FACTOR`, the gap below
- * which movement cost stops responding to the gap at all, and that is a
- * pleasing coincidence rather than a derivation - deriving it would let a
- * change to the cost ceiling silently redefine what counts as a chord.
- */
-const SIMULTANEITY_SEC = 0.03;
 
 /**
  * Every string/fret pair that sounds `pitch` on this instrument.
@@ -223,23 +219,41 @@ function bestPath(
  * bottom string of a bass has nowhere else to go, and losing one of the two
  * notes is then the honest outcome rather than a bug.
  *
- * Mutates `chosen` in place. Requires `notes` in ascending `onsetSec`.
+ * What counts as one attack is not this module's judgement to make. Safety
+ * runs one way only - everything `snapToSlots` will merge must already have
+ * been moved apart here, or `addToChord` deletes a pitch with nothing left to
+ * show it was struck - so `attackWindowBeats` is the merge window itself,
+ * read off `chordToleranceBeats` and handed across by `score-derivation.ts`.
+ * Sizing it here instead, as an independent 30 ms constant, is what opened the
+ * band of separations wide enough to merge and too wide to separate: measured
+ * on the assembled pipeline it swallowed a note at 35-125 ms apart at 60 BPM,
+ * and the band moved with the tempo because one window was in seconds and the
+ * other in beats.
+ *
+ * A window wider than the merge window only ever costs tab quality - two notes
+ * given distinct strings that the bar was going to write on separate slots
+ * anyway - so erring wide is safe and erring narrow deletes notes.
+ *
+ * Mutates `chosen` in place. Requires `notes` in ascending `onsetSec`, and
+ * `beatPosition` ascending with it.
  */
 function separateSimultaneous(
   chosen: (Candidate | null)[],
   notes: FingeringInput[],
-  settings: DerivationSettings
+  settings: DerivationSettings,
+  attackWindowBeats: number
 ): void {
   let start = 0;
 
   while (start < notes.length) {
     // Measured from the attack's first onset rather than its last, so a run of
     // closely spaced notes cannot chain into one arbitrarily long attack. The
-    // same rule `snapToSlots` uses to cluster onsets into chords.
+    // same rule `snapToSlots` uses to cluster onsets into chords, on the same
+    // quantity, so the two passes group identically.
     let end = start + 1;
     while (
       end < notes.length
-      && notes[end].onsetSec - notes[start].onsetSec <= SIMULTANEITY_SEC
+      && notes[end].beatPosition - notes[start].beatPosition <= attackWindowBeats
     ) {
       end++;
     }
@@ -310,6 +324,13 @@ function separateAttack(
  * at zero, so an out-of-order note is scored as though struck with the one
  * before it, and `separateSimultaneous` groups on the same assumption.
  *
+ * `attackWindowBeats` is how far apart two onsets may sit and still be one
+ * attack, in the denominator-unit beats `FingeringInput.beatPosition` carries.
+ * It belongs to the bar the notes will be written into rather than to this
+ * module, so callers pass `chordToleranceBeats` from
+ * `transcription-quantize.ts`; see `separateSimultaneous` for why a window
+ * narrower than that one loses notes outright.
+ *
  * Returns null at any index the instrument cannot play. Such a note breaks the
  * chain, and the notes after it are optimised as a fresh run.
  *
@@ -322,7 +343,8 @@ function separateAttack(
  */
 export function assignFingering(
   notes: FingeringInput[],
-  settings: DerivationSettings
+  settings: DerivationSettings,
+  attackWindowBeats: number
 ): (NotePitch | null)[] {
   const chosen: (Candidate | null)[] = new Array(notes.length).fill(null);
 
@@ -358,7 +380,7 @@ export function assignFingering(
   // Runs are optimised as sequences, so two notes struck together can come out
   // on one string; the repair spans runs because an unplayable note between
   // them does not stop them sounding at the same moment.
-  separateSimultaneous(chosen, notes, settings);
+  separateSimultaneous(chosen, notes, settings, attackWindowBeats);
 
   return chosen.map(candidate =>
     candidate === null

@@ -3,8 +3,42 @@ import {
   createDefaultDerivationSettings
 } from '../models/transcription.model';
 import { assignFingering, candidatesFor } from './transcription-fingering';
+import { chordToleranceBeats } from './transcription-quantize';
 
 const SETTINGS = createDefaultDerivationSettings();
+
+/**
+ * Beats per second in the fixtures below: 120 BPM in 4/4, the grid
+ * `score-derivation.spec.ts` uses, so a quarter note is half a second and a
+ * sixteenth is 0.125.
+ */
+const BEATS_PER_SEC = 2;
+
+/**
+ * The attack window `deriveScore` hands in at those settings: four sixteenth
+ * slots to the beat, so `chordToleranceBeats` caps at half a slot - an eighth
+ * of a beat, 62.5 ms here.
+ */
+const ATTACK_WINDOW_BEATS = chordToleranceBeats(SETTINGS.finestDivision / 4);
+
+/**
+ * `assignFingering` with the fixtures written in seconds.
+ *
+ * Every case here is a statement about a hand at 120 BPM, so the beat position
+ * each onset carries is a restatement of its time rather than an independent
+ * fixture value. Cases that are about the window itself pass their own.
+ */
+function finger(
+  notes: { pitch: number; onsetSec: number }[],
+  settings = SETTINGS,
+  attackWindowBeats = ATTACK_WINDOW_BEATS
+): ReturnType<typeof assignFingering> {
+  return assignFingering(
+    notes.map(note => ({ ...note, beatPosition: note.onsetSec * BEATS_PER_SEC })),
+    settings,
+    attackWindowBeats
+  );
+}
 
 describe('candidatesFor', () => {
   it('finds every string that can reach a pitch', () => {
@@ -72,11 +106,11 @@ describe('assignFingering', () => {
     expect(STANDARD_BASS_TUNING[top]).toBe(Math.max(...STANDARD_BASS_TUNING));
     expect(STANDARD_BASS_TUNING[bottom]).toBe(Math.min(...STANDARD_BASS_TUNING));
 
-    const openTop = assignFingering(
+    const openTop = finger(
       [{ pitch: STANDARD_BASS_TUNING[top], onsetSec: 0 }],
       SETTINGS
     );
-    const openBottom = assignFingering(
+    const openBottom = finger(
       [{ pitch: STANDARD_BASS_TUNING[bottom], onsetSec: 0 }],
       SETTINGS
     );
@@ -92,17 +126,17 @@ describe('assignFingering', () => {
   });
 
   it('prefers an open string to the fretted equivalent', () => {
-    expect(assignFingering([{ pitch: 33, onsetSec: 0 }], SETTINGS)).toEqual([
+    expect(finger([{ pitch: 33, onsetSec: 0 }], SETTINGS)).toEqual([
       { kind: 'fretted', string: 3, fret: 0 }
     ]);
   });
 
   it('returns null where the instrument cannot play the pitch', () => {
-    expect(assignFingering([{ pitch: 20, onsetSec: 0 }], SETTINGS)).toEqual([null]);
+    expect(finger([{ pitch: 20, onsetSec: 0 }], SETTINGS)).toEqual([null]);
   });
 
   it('carries on after an unplayable note', () => {
-    const result = assignFingering(
+    const result = finger(
       [{ pitch: 20, onsetSec: 0 }, { pitch: 33, onsetSec: 1 }],
       SETTINGS
     );
@@ -122,7 +156,7 @@ describe('assignFingering', () => {
    * tab skitters across the neck on fast passages.
    */
   it('stays in position when the notes come fast', () => {
-    const fast = assignFingering(
+    const fast = finger(
       [
         { pitch: 52, onsetSec: 0 },
         { pitch: 54, onsetSec: 0.1 },
@@ -135,7 +169,7 @@ describe('assignFingering', () => {
   });
 
   it('shifts down the neck when there is time to move', () => {
-    const slow = assignFingering(
+    const slow = finger(
       [
         { pitch: 52, onsetSec: 0 },
         { pitch: 54, onsetSec: 2 },
@@ -161,7 +195,7 @@ describe('assignFingering', () => {
    * accident, which would have hidden the leap this exists to catch.
    */
   it('does not buy a leap with an open string in the middle', () => {
-    const figure = assignFingering(
+    const figure = finger(
       [
         { pitch: 55, onsetSec: 0 },
         { pitch: 33, onsetSec: 0.0625 },
@@ -185,7 +219,7 @@ describe('assignFingering', () => {
     // 10 ms apart rather than exactly together: a detector does not report
     // two strings plucked at once to the sample, and a window that only
     // caught identical onsets would catch almost nothing real.
-    const dyad = assignFingering(
+    const dyad = finger(
       [{ pitch: 33, onsetSec: 0 }, { pitch: 36, onsetSec: 0.01 }],
       SETTINGS
     );
@@ -214,7 +248,7 @@ describe('assignFingering', () => {
    * the constrained note is stranded on a collision it had a way out of.
    */
   it('moves whichever of two simultaneous notes has somewhere to go', () => {
-    const dyad = assignFingering(
+    const dyad = finger(
       [{ pitch: 43, onsetSec: 0 }, { pitch: 63, onsetSec: 0.01 }],
       SETTINGS
     );
@@ -234,7 +268,7 @@ describe('assignFingering', () => {
    */
   it('leaves a collision that no fingering can avoid', () => {
     expect(
-      assignFingering([{ pitch: 28, onsetSec: 0 }, { pitch: 30, onsetSec: 0.01 }], SETTINGS)
+      finger([{ pitch: 28, onsetSec: 0 }, { pitch: 30, onsetSec: 0.01 }], SETTINGS)
     ).toEqual([
       { kind: 'fretted', string: 4, fret: 0 },
       { kind: 'fretted', string: 4, fret: 2 }
@@ -242,7 +276,7 @@ describe('assignFingering', () => {
   });
 
   it('pulls the hand towards a position hint', () => {
-    const hinted = assignFingering(
+    const hinted = finger(
       [{ pitch: 45, onsetSec: 0 }],
       { ...SETTINGS, positionHint: 12 }
     );
@@ -270,7 +304,7 @@ describe('assignFingering', () => {
    */
   it('balances a string crossing against the climb it saves', () => {
     // G#1 then G#2, two seconds apart: time enough to go anywhere.
-    const octave = assignFingering(
+    const octave = finger(
       [{ pitch: 32, onsetSec: 0 }, { pitch: 44, onsetSec: 2 }],
       SETTINGS
     );
@@ -291,7 +325,7 @@ describe('assignFingering', () => {
   it('pays a bonus for an open string, without overpaying', () => {
     // G#1 then D2, a quarter apart. The open D is two strings away; fret 5 of
     // the A string is one. Without the bonus the nearer string wins.
-    const openD = assignFingering(
+    const openD = finger(
       [{ pitch: 32, onsetSec: 0 }, { pitch: 38, onsetSec: 0.25 }],
       SETTINGS
     );
@@ -301,7 +335,7 @@ describe('assignFingering', () => {
     // the C# at fret 6 of the G string - a shape a hand can make. Double the
     // bonus and the open A is worth taking instead, spreading the same two
     // notes across the whole neck.
-    const dyad = assignFingering(
+    const dyad = finger(
       [{ pitch: 33, onsetSec: 0 }, { pitch: 49, onsetSec: 0.001 }],
       SETTINGS
     );
@@ -316,7 +350,7 @@ describe('assignFingering', () => {
    */
   it('never lets a long rest make a shift free', () => {
     // F#1, up an octave and a major third, and back - three seconds apart.
-    const spaced = assignFingering(
+    const spaced = finger(
       [
         { pitch: 30, onsetSec: 0 },
         { pitch: 44, onsetSec: 3 },
@@ -339,7 +373,7 @@ describe('assignFingering', () => {
    */
   it('never lets a chord price a string crossing out of reach', () => {
     // G#1, G#2 and D2, detected a millisecond apart: one attack.
-    const chord = assignFingering(
+    const chord = finger(
       [
         { pitch: 32, onsetSec: 0 },
         { pitch: 44, onsetSec: 0.001 },
@@ -363,7 +397,7 @@ describe('assignFingering', () => {
    */
   it('discounts a move across an open string without abolishing it', () => {
     // A1 then G3, a sixteenth apart.
-    const climb = assignFingering(
+    const climb = finger(
       [{ pitch: 33, onsetSec: 0 }, { pitch: 55, onsetSec: 0.125 }],
       SETTINGS
     );
@@ -378,7 +412,7 @@ describe('assignFingering', () => {
   });
 
   /**
-   * `SIMULTANEITY_SEC` needs pinning at both ends. Too small and a detector
+   * The attack window needs pinning at both ends. Too small and a detector
    * reporting a chord a few milliseconds wide stops being a chord; too large
    * and consecutive notes of an ordinary line are read as struck together,
    * and the repair scatters a run that belongs on one string.
@@ -392,7 +426,7 @@ describe('assignFingering', () => {
       onsetSec: index * 0.125
     }));
 
-    expect(assignFingering(run, SETTINGS)).toEqual([
+    expect(finger(run, SETTINGS)).toEqual([
       { kind: 'fretted', string: 4, fret: 0 },
       { kind: 'fretted', string: 4, fret: 1 },
       { kind: 'fretted', string: 4, fret: 2 },
@@ -401,6 +435,31 @@ describe('assignFingering', () => {
       { kind: 'fretted', string: 3, fret: 0 },
       { kind: 'fretted', string: 3, fret: 1 },
       { kind: 'fretted', string: 3, fret: 2 }
+    ]);
+  });
+
+  /**
+   * The window is the caller's to size, and it has to be the one the bar will
+   * be quantized on. Sizing it here instead - the 30 ms constant this replaced
+   * - left every separation between the two windows unseparated and merged,
+   * and `addToChord` deleted the second pitch outright.
+   */
+  it('measures one attack on the window the bar will be quantized to', () => {
+    const spread = [{ pitch: 33, onsetSec: 0 }, { pitch: 36, onsetSec: 0.05 }];
+
+    // 50 ms is inside half a sixteenth slot at 120 BPM, so `snapToSlots` will
+    // make one chord of these two and they have to leave here on strings that
+    // can each hold a number.
+    expect(finger(spread)).toEqual([
+      { kind: 'fretted', string: 3, fret: 0 },
+      { kind: 'fretted', string: 4, fret: 8 }
+    ]);
+
+    // A narrower window is not a milder version of the same answer. Both notes
+    // stay on the A string, and one of them stops existing a stage later.
+    expect(finger(spread, SETTINGS, 0.03 * BEATS_PER_SEC)).toEqual([
+      { kind: 'fretted', string: 3, fret: 0 },
+      { kind: 'fretted', string: 3, fret: 3 }
     ]);
   });
 });

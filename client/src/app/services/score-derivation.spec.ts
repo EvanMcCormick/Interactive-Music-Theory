@@ -3,11 +3,13 @@ import * as alphaTab from '@coderline/alphatab';
 import {
   BeatGrid,
   DetectedNote,
+  STANDARD_BASS_TUNING,
   TranscriptionSession,
   createDefaultDerivationSettings
 } from '../models/transcription.model';
 import { ComposerService } from './composer.service';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
+import { candidatesFor } from './transcription-fingering';
 import { beatSlots } from './transcription-quantize';
 import { deriveScore } from './score-derivation';
 
@@ -341,5 +343,145 @@ describe('deriveScore', () => {
 
     expect(struckPerBar(shuffled)).toEqual(struckPerBar(ordered));
     expect(struckPerBar(shuffled)).toEqual([[[3, 0], [2, 7]], [[1, 9]]]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Note conservation, end to end.
+  //
+  // `transcription-quantize.spec.ts` has had a conservation property test
+  // since the module was written, and it did not catch this: it stops at
+  // `quantizeBar`, so it takes the fingering it is handed as given. The defect
+  // lived in the gap between two modules, each internally consistent -
+  // `transcription-fingering.ts` decided in seconds what to move onto distinct
+  // strings, `transcription-quantize.ts` decided in beats what to merge into
+  // one chord, and quantize merged the wider window. Between the two, a note
+  // was deleted with no rest, no error and no record: at default settings any
+  // separation from 35 to 125 ms at 60 BPM, 35 to 80 at 90, 35 to 60 at 120,
+  // the band moving with the tempo precisely because the two windows were in
+  // different units.
+  //
+  // A property over the whole assembly is the only shape of test that could
+  // have seen it, which is why the sweep is here rather than in either module.
+  // -------------------------------------------------------------------------
+
+  /** Four-four at `bpm`, sixteen beats long. */
+  function gridAtTempo(bpm: number): BeatGrid {
+    const spacing = 60 / bpm;
+    return {
+      beatsSec: Array.from({ length: 16 }, (_, index) => index * spacing),
+      downbeatIndices: [0, 4, 8, 12],
+      timeSignature: { numerator: 4, denominator: 4, isCommon: true }
+    };
+  }
+
+  /**
+   * Every pitch actually struck in the derived score, read back off the tab.
+   *
+   * Read back rather than trusted: a string number and a fret are what the
+   * score really says, so recovering the pitch from them is the same arithmetic
+   * a reader does, and it fails if the fingering is wrong as well as if the
+   * note is missing.
+   */
+  function soundedPitches(input: TranscriptionSession): number[] {
+    const staff = deriveScore(input).tracks[0].staves[0];
+
+    return staff.bars.flatMap(bar =>
+      bar.voices[0].beats
+        .filter(beat => !beat.isRest)
+        .flatMap(beat => beat.notes)
+        // Tie continuations are the same attack written again, not a note.
+        .filter(entry => !entry.isTied)
+        .map(entry =>
+          entry.pitch.kind === 'fretted'
+            ? staff.tuning[entry.pitch.string - 1] + entry.pitch.fret + staff.capo
+            : NaN
+        )
+    );
+  }
+
+  const SETTINGS_MAX_FRET = createDefaultDerivationSettings().maxFret;
+
+  /**
+   * Whether the instrument can sound both pitches at once.
+   *
+   * A tab line holds one number, so two notes struck together need candidates
+   * on two different strings. Taken from `candidatesFor` rather than restated
+   * as a fixture, because it is the whole content of the word "genuinely" in
+   * the property below - a note may go missing only when the instrument cannot
+   * play it, and nothing else counts as an excuse.
+   */
+  function playableTogether(low: number, high: number): boolean {
+    const options = candidatesFor(low, STANDARD_BASS_TUNING, 0, SETTINGS_MAX_FRET);
+    const others = candidatesFor(high, STANDARD_BASS_TUNING, 0, SETTINGS_MAX_FRET);
+    return options.some(one => others.some(other => one.string !== other.string));
+  }
+
+  /**
+   * The first onset sits on the downbeat, and that is a real restriction on
+   * what this sweep covers rather than a convenience.
+   *
+   * Two onsets more than half a slot apart are two clusters, and two clusters
+   * can still round onto one slot - `snapToSlots` says so itself. When they do,
+   * `addToChord` drops the second, and no attack window can prevent it: the
+   * pair is two attacks the grid has nowhere to put, which is a statement about
+   * `finestDivision` and not about units. Off a slot boundary that is reachable
+   * - at 120 BPM a pair starting 65 ms in and 65 to 120 ms apart loses a note -
+   * and it is recorded as a known limitation rather than fixed here. Anchoring
+   * the first onset on a slot removes exactly that case and leaves the merge
+   * window, which is the thing under test.
+   */
+  it('keeps both notes of a playable pair however far apart the onsets are', () => {
+    // Each pair has a two-string fingering, checked below rather than asserted
+    // here. A1/C2 is the pair the original report was measured on.
+    const pairs: [number, number][] = [[33, 36], [43, 63], [32, 44], [40, 52], [33, 45]];
+    const lost: string[] = [];
+
+    for (const bpm of [60, 90, 120, 160]) {
+      const grid = gridAtTempo(bpm);
+      const durationSec = 16 * (60 / bpm);
+
+      for (const [low, high] of pairs) {
+        expect(playableTogether(low, high)).toBe(true);
+
+        // Every 5 ms across the range a detector actually reports. Basic Pitch
+        // emits onsets on 5.8 ms frames, so M2 walks the whole of this band.
+        for (let ms = 0; ms <= 200; ms += 5) {
+          const input = session(
+            [note(low, 0), note(high, ms / 1000)],
+            grid,
+            durationSec
+          );
+          const sounded = soundedPitches(input);
+
+          if (!sounded.includes(low) || !sounded.includes(high)) {
+            lost.push(`${low}+${high} at ${bpm} BPM, ${ms} ms apart -> [${sounded}]`);
+          }
+        }
+      }
+    }
+
+    // Listed rather than counted, so a failure names the band it lost.
+    expect(lost).toEqual([]);
+  });
+
+  /**
+   * The other half of the property, and the reason it says "playable" rather
+   * than "every". A minor second at the bottom of a bass lives on the E string
+   * at both ends, so struck together one of the two cannot be written at all -
+   * which is what a player would tell you about that interval on that
+   * instrument, and not a defect this milestone can fix.
+   *
+   * Making the exception explicit is what stops the sweep above from quietly
+   * degrading into "notes usually survive".
+   */
+  it('loses a note only where the instrument has no two-string fingering', () => {
+    expect(playableTogether(28, 30)).toBe(false);
+
+    // Struck together: one E string, one number, one survivor.
+    expect(soundedPitches(session([note(28, 0), note(30, 0.01)]))).toEqual([28]);
+
+    // Far enough apart to be two attacks and the same pair comes through
+    // whole, which is why the sweep above has to be a sweep.
+    expect(soundedPitches(session([note(28, 0), note(30, 0.5)]))).toEqual([28, 30]);
   });
 });
