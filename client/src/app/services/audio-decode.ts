@@ -40,8 +40,11 @@
  * through.
  */
 
-/** Basic Pitch's input rate: 22.05 kHz mono. */
-export const TARGET_SAMPLE_RATE = 22050;
+// Basic Pitch's input rate: 22.05 kHz mono. Imported rather than declared a
+// second time here: what this module resamples *to* and what the detector
+// checks its input *against* are two ends of one contract, and as two
+// constants they had to agree with nothing linking them.
+import { DETECTION_SAMPLE_RATE } from './note-detector';
 
 export interface DecodedAudio {
   audio: Float32Array;
@@ -65,7 +68,7 @@ export interface DecodedAudio {
  */
 export async function decodeToMono(
   data: ArrayBuffer,
-  targetRate: number = TARGET_SAMPLE_RATE
+  targetRate: number = DETECTION_SAMPLE_RATE
 ): Promise<DecodedAudio> {
   // Before decoding, which detaches the buffer.
   const sourceSampleRate = readRiffSampleRate(data);

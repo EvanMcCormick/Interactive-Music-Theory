@@ -36,6 +36,22 @@ export type DropReason =
   | 'belowConfidence'
   /** No string and fret on this instrument sounds the pitch. */
   | 'unplayable'
+  /**
+   * Sounded before the beat grid begins.
+   *
+   * The score has no pickup bar - a negative bar index is not a thing the
+   * model carries - so such a note is pulled onto beat 0, where it can land on
+   * top of what is genuinely there. When that costs the note, this is what
+   * happened to it: not two notes struck together on one string, but a note
+   * moved onto another one because there was nowhere earlier to put it.
+   * Reporting it as `stringTaken` blamed a collision the performance did not
+   * contain.
+   *
+   * The grid's first beat is not the music's: `trimBeats` starts the grid at
+   * the first beat the onsets support, so anything quiet in front of that is
+   * outside it. See `BeatGrid`.
+   */
+  | 'beforeGrid'
   /** Struck with another note already holding the string, and a tab line
    *  holds one number. */
   | 'stringTaken';
@@ -129,7 +145,9 @@ function barsInSource(session: TranscriptionSession): number {
  *
  * Returns the discards alongside the score. Three paths lose notes - the
  * confidence floor here, an unplayable pitch in `assignFingering`, a taken
- * string in `quantizeBar` - and a `ScoreDoc` records none of them. Handing
+ * string in `quantizeBar`, the last of which reports two different reasons
+ * depending on whether the note was where the performance put it - and a
+ * `ScoreDoc` records none of them. Handing
  * them back is what lets M3 render a rejected note greyed rather than let it
  * disappear, without re-deriving this module's rules over `session.notes` to
  * guess which notes are missing and why.
@@ -184,11 +202,16 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
 
   // Computed once and shared, because fingering and placement have to agree
   // about where a note sits to the last decimal. Anything before the first
-  // downbeat is pulled onto it here rather than later; a proper pickup bar
-  // needs a negative-bar concept the score model does not carry, and two
+  // beat of the grid is pulled onto it here rather than later; a proper pickup
+  // bar needs a negative-bar concept the score model does not carry, and two
   // pickup onsets clamped onto beat 0 are as simultaneous to `quantizeBar` as
   // any chord, so `assignFingering` has to see them that way too.
-  const beats = corrected.map(note => Math.max(0, secondsToBeats(note.onsetSec, grid)));
+  //
+  // The unclamped positions are kept as well, because the clamp is the one
+  // thing that can lose a note without the loss being about the note: see
+  // `beforeGrid`.
+  const rawBeats = corrected.map(note => secondsToBeats(note.onsetSec, grid));
+  const beats = rawBeats.map(beat => Math.max(0, beat));
 
   // Fingering runs across the whole piece rather than bar by bar, so hand
   // position carries over bar lines the way a player's does. The NotePitch
@@ -214,6 +237,10 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
   // not carry, so a note `quantizeBar` turns away can be named here without
   // widening `PlacedNote` for a field only this caller would ever read.
   const source = new Map<PlacedNote, DetectedNote>();
+
+  // The notes the clamp above actually moved, so a loss at beat 0 can be named
+  // for the clamp rather than for the collision it caused.
+  const movedOntoTheGrid = new Set<PlacedNote>();
 
   const placed: { bar: number; note: PlacedNote }[] = [];
   corrected.forEach((note, index) => {
@@ -248,6 +275,13 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
       pitch
     };
     source.set(entry, note);
+
+    // Rounded rather than raw: a note a fraction of a slot early would have
+    // snapped onto slot 0 anyway, so the clamp changed nothing about it and a
+    // collision there is genuine simultaneity. Only a note whose own slot is
+    // before the bar was actually relocated.
+    if (Math.round(rawBeats[index] * slotsPerBeat) < 0) movedOntoTheGrid.add(entry);
+
     placed.push({ bar, note: entry });
   });
 
@@ -276,7 +310,12 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
       const note = source.get(entry);
       // Sound: every element of `inBar` was registered in `source` when it was
       // built above, and `quantizeBar` only ever hands back notes it was given.
-      if (note) dropped.push({ note, reason: 'stringTaken' });
+      if (note) {
+        dropped.push({
+          note,
+          reason: movedOntoTheGrid.has(entry) ? 'beforeGrid' : 'stringTaken'
+        });
+      }
     }
 
     return {

@@ -54,11 +54,14 @@ module.exports = function (config) {
           '--use-angle=swiftshader',
           '--enable-unsafe-swiftshader'
         ]
-      },
-      ChromeHeadlessNoSandbox: {
-        base: 'ChromeHeadless',
-        flags: ['--no-sandbox', '--disable-gpu']
       }
+      // There was a `ChromeHeadlessNoSandbox` here and it was a trap. Nothing
+      // referenced it, and because the launcher above shadows the stock
+      // `ChromeHeadless` it inherited the SwiftShader flags while still adding
+      // `--disable-gpu` - so any CI reaching for it by name would have got the
+      // CPU backend and failed the `backend === 'webgl'` assertion, on a
+      // launcher that existed only to be safe. `--no-sandbox` is already in
+      // the launcher above, which is what containers need it for.
     },
     restartOnFileChange: true
   });

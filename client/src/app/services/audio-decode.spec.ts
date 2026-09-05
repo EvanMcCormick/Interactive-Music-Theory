@@ -1,4 +1,5 @@
-import { DecodedAudio, TARGET_SAMPLE_RATE, decodeToMono } from './audio-decode';
+import { DecodedAudio, decodeToMono } from './audio-decode';
+import { DETECTION_SAMPLE_RATE } from './note-detector';
 
 /**
  * Builds a RIFF/WAVE file in memory: the 44-byte canonical header plus 16-bit
@@ -143,7 +144,7 @@ describe('decodeToMono', () => {
   it('resamples a 44.1 kHz file down to the target rate', async () => {
     const decoded: DecodedAudio = await decodeToMono(makeWav(tone(440, 1, 44100), 44100, 1));
 
-    expect(decoded.audio.length).toBe(Math.ceil(decoded.durationSec * TARGET_SAMPLE_RATE));
+    expect(decoded.audio.length).toBe(Math.ceil(decoded.durationSec * DETECTION_SAMPLE_RATE));
     // Half the frames of the file it came from: a real resample, not the
     // decoded buffer handed straight back.
     expect(decoded.audio.length).toBe(22050);
@@ -154,7 +155,7 @@ describe('decodeToMono', () => {
     const decoded = await decodeToMono(makeWav(tone(440, 0.75, 44100), 44100, 1));
 
     expect(decoded.durationSec).toBeCloseTo(0.75, 3);
-    expect(decoded.audio.length).toBe(Math.ceil(decoded.durationSec * TARGET_SAMPLE_RATE));
+    expect(decoded.audio.length).toBe(Math.ceil(decoded.durationSec * DETECTION_SAMPLE_RATE));
   });
 
   it('keeps the pitch of a tone through the resample', async () => {
@@ -162,7 +163,7 @@ describe('decodeToMono', () => {
     // 880 Hz, and so would copying the buffer into a half-rate one.
     const decoded = await decodeToMono(makeWav(tone(440, 1, 44100), 44100, 1));
 
-    expect(measuredFrequency(decoded.audio, TARGET_SAMPLE_RATE)).toBeCloseTo(440, -0.5);
+    expect(measuredFrequency(decoded.audio, DETECTION_SAMPLE_RATE)).toBeCloseTo(440, -0.5);
   });
 
   it('does not fold content above the target Nyquist back into the band', async () => {
@@ -202,7 +203,7 @@ describe('decodeToMono', () => {
 
     expect(at441.sourceSampleRate).toBe(44100);
     expect(at48.sourceSampleRate).toBe(48000);
-    expect(at441.sourceSampleRate).not.toBe(TARGET_SAMPLE_RATE);
+    expect(at441.sourceSampleRate).not.toBe(DETECTION_SAMPLE_RATE);
   });
 
   it('finds the sample rate behind a chunk that comes before the format chunk', async () => {
@@ -211,7 +212,7 @@ describe('decodeToMono', () => {
     const decoded = await decodeToMono(wav);
 
     expect(decoded.sourceSampleRate).toBe(44100);
-    expect(decoded.audio.length).toBe(Math.ceil(decoded.durationSec * TARGET_SAMPLE_RATE));
+    expect(decoded.audio.length).toBe(Math.ceil(decoded.durationSec * DETECTION_SAMPLE_RATE));
   });
 
   it('honours an explicit target rate', async () => {
@@ -233,7 +234,7 @@ describe('decodeToMono', () => {
     // decodes repeatedly. Twenty in sequence has to simply work.
     for (let i = 0; i < 20; i++) {
       const decoded = await decodeToMono(makeWav(tone(220 + i, 0.1, 44100), 44100, 1));
-      expect(decoded.audio.length).toBe(Math.ceil(decoded.durationSec * TARGET_SAMPLE_RATE));
+      expect(decoded.audio.length).toBe(Math.ceil(decoded.durationSec * DETECTION_SAMPLE_RATE));
     }
   });
 

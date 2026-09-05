@@ -1,4 +1,4 @@
-import { TARGET_SAMPLE_RATE } from './audio-decode';
+import { DETECTION_SAMPLE_RATE } from './note-detector';
 import { BasicPitchDetector } from './basic-pitch-detector';
 import { DetectionResult } from './note-detector';
 import { suppressHarmonics } from './transcription-harmonics';
@@ -86,9 +86,9 @@ describe('BasicPitchDetector', () => {
 
   beforeAll(async () => {
     const detector = new BasicPitchDetector();
-    const audio = bassline(PLAYED, TARGET_SAMPLE_RATE);
+    const audio = bassline(PLAYED, DETECTION_SAMPLE_RATE);
 
-    result = await detector.detect(audio, TARGET_SAMPLE_RATE, fraction =>
+    result = await detector.detect(audio, DETECTION_SAMPLE_RATE, fraction =>
       progress.push(fraction)
     );
   }, 120_000);

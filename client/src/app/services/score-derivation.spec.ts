@@ -509,7 +509,9 @@ describe('deriveScore', () => {
   // What was discarded.
   //
   // Three paths lose notes and a ScoreDoc records none of them: the confidence
-  // floor, an unplayable pitch, and a string already taken. M3 has to render a
+  // floor, an unplayable pitch, and a string already taken - the last of which
+  // reports two reasons, since a note clamped onto beat 0 from outside the
+  // grid was not lost to a chord. M3 has to render a
   // rejected note greyed rather than let it disappear, and it cannot work out
   // which notes those are from the score - it would have to re-filter
   // `session.notes` and re-implement the rules here, a second copy of the
@@ -551,6 +553,38 @@ describe('deriveScore', () => {
     // silently absent, which is the whole difference this makes.
     const second = note(30, 0.01);
     const { dropped } = deriveScore(session([note(28, 0), second]));
+
+    expect(dropped).toEqual([{ note: second, reason: 'stringTaken' }]);
+  });
+
+  /**
+   * The grid does not have to begin where the music does. `trimBeats` starts
+   * it at the first beat the *onsets* support, so a quiet note in front of
+   * that is outside it, and `Math.max(0, ...)` pulls such a note onto beat 0
+   * because the score model has no pickup bar to put it in. If it lands on top
+   * of what is genuinely there, one of the two is lost - and blaming that on a
+   * taken string describes a collision the performance did not contain.
+   */
+  it('reports a note that sounded before the grid began', () => {
+    // Two quiet leading notes, a beat and a half in front of a grid that
+    // starts at 1.0 s. Both clamp onto beat 0 - there is nowhere earlier - and
+    // E1 and F#1 live on the same string, so one of them cannot be written.
+    // What lost it was the clamp, not a chord the player struck.
+    const late: BeatGrid = { ...GRID, beatsSec: GRID.beatsSec.map(sec => sec + 1) };
+    const second = note(30, 0.3);
+    const { dropped } = deriveScore(session([note(28, 0.1), second], late, 5));
+
+    expect(dropped).toEqual([{ note: second, reason: 'beforeGrid' }]);
+  });
+
+  it('does not call a note pre-grid for rounding jitter alone', () => {
+    // Both notes are within 20 ms of the grid's first beat - a twentieth of a
+    // slot at 120 BPM on a sixteenth grid - so they round onto slot 0 whether
+    // or not they are clamped. The clamp moved neither of them, and the
+    // collision is the simultaneity the performance actually contained.
+    const late: BeatGrid = { ...GRID, beatsSec: GRID.beatsSec.map(sec => sec + 0.02) };
+    const second = note(30, 0.01);
+    const { dropped } = deriveScore(session([note(28, 0), second], late));
 
     expect(dropped).toEqual([{ note: second, reason: 'stringTaken' }]);
   });

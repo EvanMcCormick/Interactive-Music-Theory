@@ -36,6 +36,7 @@
 import * as tf from '@tensorflow/tfjs';
 
 import { BasicPitchDetector } from '../services/basic-pitch-detector';
+import { messageOf } from '../services/error-message';
 import { DetectionResult } from '../services/note-detector';
 
 /**
@@ -107,7 +108,7 @@ async function run(request: DetectionRequest): Promise<void> {
     // loses its prototype in some engines and its stack in all of them - so the
     // message crosses as a string and `WorkerDetector` builds a fresh Error
     // around it on the other side.
-    post({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+    post({ type: 'error', message: messageOf(error) });
   }
 }
 

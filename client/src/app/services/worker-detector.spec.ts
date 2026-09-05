@@ -1,4 +1,4 @@
-import { TARGET_SAMPLE_RATE } from './audio-decode';
+import { DETECTION_SAMPLE_RATE } from './note-detector';
 import { DetectionResult } from './note-detector';
 import { suppressHarmonics } from './transcription-harmonics';
 import { WorkerDetector } from './worker-detector';
@@ -55,11 +55,11 @@ function pluck(midi: number, seconds: number, rate: number): Float32Array {
 
 /** `pitches` played in turn, one every `SPACING_SEC`. */
 function bassline(pitches: number[]): Float32Array {
-  const stride = Math.round(SPACING_SEC * TARGET_SAMPLE_RATE);
+  const stride = Math.round(SPACING_SEC * DETECTION_SAMPLE_RATE);
   const out = new Float32Array(pitches.length * stride);
 
   pitches.forEach((pitch, index) =>
-    out.set(pluck(pitch, SPACING_SEC, TARGET_SAMPLE_RATE), index * stride)
+    out.set(pluck(pitch, SPACING_SEC, DETECTION_SAMPLE_RATE), index * stride)
   );
 
   return out;
@@ -81,7 +81,7 @@ describe('WorkerDetector', () => {
     // block this timer for as long as it ran.
     const ticker = setInterval(() => mainThreadTicks++, 10);
     try {
-      result = await detector.detect(audio, TARGET_SAMPLE_RATE, fraction =>
+      result = await detector.detect(audio, DETECTION_SAMPLE_RATE, fraction =>
         progress.push(fraction)
       );
     } finally {
@@ -159,11 +159,11 @@ describe('WorkerDetector', () => {
   });
 
   it('refuses a second detection while one is running, without taking its audio', async () => {
-    const first = detector.detect(bassline([E1]), TARGET_SAMPLE_RATE, () => undefined);
+    const first = detector.detect(bassline([E1]), DETECTION_SAMPLE_RATE, () => undefined);
     const second = bassline([A1]);
 
     await expectAsync(
-      detector.detect(second, TARGET_SAMPLE_RATE, () => undefined)
+      detector.detect(second, DETECTION_SAMPLE_RATE, () => undefined)
     ).toBeRejectedWithError(/already running/);
 
     // A rejected call must not have cost the caller its audio, or a caller who
@@ -187,7 +187,7 @@ describe('WorkerDetector', () => {
     // detection has been recorded as pending. Unhandled, that is a promise
     // nobody ever settles.
     await expectAsync(
-      detector.detect(audio, TARGET_SAMPLE_RATE, () => undefined)
+      detector.detect(audio, DETECTION_SAMPLE_RATE, () => undefined)
     ).toBeRejectedWithError(/detached/);
 
     expect(detector.busy).toBe(false);
@@ -198,7 +198,7 @@ describe('WorkerDetector', () => {
     // to make every later call look concurrent.
     expect(detector.busy).toBe(false);
 
-    const after = await detector.detect(bassline([E1]), TARGET_SAMPLE_RATE, () => undefined);
+    const after = await detector.detect(bassline([E1]), DETECTION_SAMPLE_RATE, () => undefined);
 
     expect(after.notes.length).toBeGreaterThan(0);
   }, 120_000);
@@ -214,7 +214,7 @@ describe('WorkerDetector lifecycle', () => {
   afterEach(() => detector.terminate());
 
   it('rejects the detection in flight when it is terminated', async () => {
-    const running = detector.detect(bassline(PLAYED), TARGET_SAMPLE_RATE, () => undefined);
+    const running = detector.detect(bassline(PLAYED), DETECTION_SAMPLE_RATE, () => undefined);
 
     detector.terminate();
 
@@ -226,7 +226,7 @@ describe('WorkerDetector lifecycle', () => {
   it('starts a fresh worker for the next detection after a terminate', async () => {
     detector.terminate();
 
-    const result = await detector.detect(bassline([E1]), TARGET_SAMPLE_RATE, () => undefined);
+    const result = await detector.detect(bassline([E1]), DETECTION_SAMPLE_RATE, () => undefined);
 
     expect(result.notes.length).toBeGreaterThan(0);
     expect(detector.lastEnvironment?.offMainThread).toBe(true);

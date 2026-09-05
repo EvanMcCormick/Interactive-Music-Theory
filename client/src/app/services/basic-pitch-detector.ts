@@ -42,13 +42,10 @@ import {
 import type { NoteEventTime } from '@spotify/basic-pitch';
 
 import { DetectedNote } from '../models/transcription.model';
-import { DetectionResult, NoteDetector } from './note-detector';
+import { DETECTION_SAMPLE_RATE, DetectionResult, NoteDetector } from './note-detector';
 
 /** Where `angular.json` copies the weights bundled with the npm package. */
 export const BASIC_PITCH_MODEL_URL = '/basic-pitch-model/model.json';
-
-/** The only rate the model accepts. Mirrors `AUDIO_SAMPLE_RATE` in the library. */
-const MODEL_SAMPLE_RATE = 22050;
 
 /** Samples per model frame. Mirrors `FFT_HOP`. */
 const FFT_HOP = 256;
@@ -63,7 +60,7 @@ const FFT_HOP = 256;
  * uses the unrounded ratio. Reporting 86 here would walk a bend a whole frame
  * off its note every 6.5 seconds.
  */
-export const BEND_FRAME_RATE_HZ = MODEL_SAMPLE_RATE / FFT_HOP;
+export const BEND_FRAME_RATE_HZ = DETECTION_SAMPLE_RATE / FFT_HOP;
 
 /** Contour bins per semitone in the model's bend output. Mirrors the library. */
 const CONTOUR_BINS_PER_SEMITONE = 3;
@@ -89,9 +86,9 @@ export class BasicPitchDetector implements NoteDetector {
     sampleRate: number,
     onProgress: (fraction: number) => void
   ): Promise<DetectionResult> {
-    if (sampleRate !== MODEL_SAMPLE_RATE) {
+    if (sampleRate !== DETECTION_SAMPLE_RATE) {
       throw new Error(
-        `Basic Pitch needs audio at ${MODEL_SAMPLE_RATE} Hz, was given ${sampleRate} Hz.`
+        `Basic Pitch needs audio at ${DETECTION_SAMPLE_RATE} Hz, was given ${sampleRate} Hz.`
       );
     }
 
@@ -145,9 +142,9 @@ export class BasicPitchDetector implements NoteDetector {
     try {
       // The library floors the frame rate to count output frames, and this
       // trim has to agree with it exactly or the output shifts in time.
-      const annotationsFps = Math.floor(MODEL_SAMPLE_RATE / FFT_HOP);
+      const annotationsFps = Math.floor(DETECTION_SAMPLE_RATE / FFT_HOP);
       const framesWanted = Math.floor(
-        audioOriginalLength * (annotationsFps / MODEL_SAMPLE_RATE)
+        audioOriginalLength * (annotationsFps / DETECTION_SAMPLE_RATE)
       );
       const batches = reshapedInput.shape[0];
       let framesSoFar = 0;

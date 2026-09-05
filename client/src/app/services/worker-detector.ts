@@ -32,6 +32,7 @@ import type {
   DetectionResponse,
   WorkerEnvironment
 } from '../workers/detection.worker';
+import { errorOf } from './error-message';
 import { DetectionResult, NoteDetector } from './note-detector';
 
 interface PendingDetection {
@@ -93,7 +94,7 @@ export class WorkerDetector implements NoteDetector {
       try {
         worker = this.ensureWorker();
       } catch (error) {
-        reject(error instanceof Error ? error : new Error(String(error)));
+        reject(errorOf(error));
 
         return;
       }
@@ -114,9 +115,7 @@ export class WorkerDetector implements NoteDetector {
         // been transferred - the same `Float32Array` twice - is a DataCloneError
         // here. `this.pending` is already set at this point, so without this
         // the caller would wait on a worker that was never asked anything.
-        this.settle(pending =>
-          pending.reject(error instanceof Error ? error : new Error(String(error)))
-        );
+        this.settle(pending => pending.reject(errorOf(error)));
       }
     });
   }

@@ -17,6 +17,25 @@
 
 import { DetectedNote } from '../models/transcription.model';
 
+/**
+ * The rate audio is handed to a detector at, in Hz.
+ *
+ * Basic Pitch is trained at 22.05 kHz and rejects anything else, so this is
+ * simultaneously what `decodeToMono` resamples *to* and what the detector
+ * checks its input *against*. Those are two ends of one contract and were two
+ * unrelated constants, `TARGET_SAMPLE_RATE` in `audio-decode.ts` and
+ * `MODEL_SAMPLE_RATE` in `basic-pitch-detector.ts`, which had to agree with
+ * nothing linking them: change one and the decoder silently produces audio the
+ * detector refuses.
+ *
+ * It lives here because this is the boundary the two sides meet at, and
+ * because `basic-pitch-detector.ts` must stay unreachable from the main thread
+ * - putting it there would give the decoder no way to read it without dragging
+ * TF.js into the main bundle. This module is types and a number, and imports
+ * nothing but the domain model.
+ */
+export const DETECTION_SAMPLE_RATE = 22050;
+
 export interface DetectionResult {
   notes: DetectedNote[];
   /**

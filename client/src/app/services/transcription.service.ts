@@ -73,9 +73,10 @@ import {
   TranscriptionSession,
   createDefaultDerivationSettings
 } from '../models/transcription.model';
-import { TARGET_SAMPLE_RATE, decodeToMono } from './audio-decode';
+import { decodeToMono } from './audio-decode';
+import { messageOf } from './error-message';
 import { trackBeats } from './beat-tracking';
-import { NoteDetector } from './note-detector';
+import { DETECTION_SAMPLE_RATE, NoteDetector } from './note-detector';
 import { DerivedScore, deriveScore } from './score-derivation';
 import { suppressHarmonics } from './transcription-harmonics';
 import { barGridFault } from './transcription-quantize';
@@ -266,7 +267,7 @@ export class TranscriptionService {
       // already been read into `decoded.durationSec`.
       const detection = await this.detector.detect(
         decoded.audio,
-        TARGET_SAMPLE_RATE,
+        DETECTION_SAMPLE_RATE,
         fraction => this.reportDetectionProgress(fraction)
       );
 
@@ -462,6 +463,3 @@ function nextSessionId(): string {
   return `txn-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
