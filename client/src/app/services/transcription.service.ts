@@ -286,6 +286,9 @@ export class TranscriptionService {
         // Copied, not aliased: `suppressHarmonics` hands back an array of its
         // own and the two lists should not differ in whose they are.
         rawNotes: [...detection.notes],
+        // Kept with the notes it describes. Every `bendCents` above is sampled
+        // at this rate and is uninterpretable without it.
+        bendFrameRateHz: detection.bendFrameRateHz,
         // The suppressed notes, not `detection.notes`. See the module docblock.
         grid: trackBeats(notes, decoded.durationSec, timeSignature),
         settings

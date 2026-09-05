@@ -50,6 +50,9 @@ function session(
     notes,
     // Nothing here exercises suppression, so the raw list is the same list.
     rawNotes: notes,
+    // Basic Pitch's rate, 22050/256. Nothing derivation does reads it; the
+    // notes here carry no bends.
+    bendFrameRateHz: 86.13,
     grid,
     settings: createDefaultDerivationSettings()
   };

@@ -190,13 +190,33 @@ export class BasicPitchDetector implements NoteDetector {
 /**
  * `amplitude` becomes `confidence`.
  *
- * It is the note's peak activation in the frame posteriorgram, not a
- * calibrated probability — the library offers no confidence, and this is the
- * only signal it does offer. It behaves like one for what
- * `DerivationSettings.confidenceFloor` uses it for (rank the notes, cut the
- * weak end), and it is worth knowing what it cannot do: it does not separate a
- * real note from a harmonic partial. In the spike's output a partial came back
- * 5 % louder than the note that produced it.
+ * It is the **mean** of the note's frame activations across its span, not a
+ * peak and not a calibrated probability. Both of `toMidi.ts`'s construction
+ * sites compute it as `frames.slice(start, end).reduce(...) / (end - start)`;
+ * the second even carries the numpy line it came from as a comment. The
+ * library offers no confidence and this is the only signal it does offer.
+ *
+ * Two things follow, and neither is what "peak" would imply.
+ *
+ * **It is biased against long notes.** A mean over a decaying activation falls
+ * as the note is held, so a sustained note scores below a short punchy one of
+ * the same strength — the opposite of the bias a peak would carry, and worth
+ * knowing before anyone reads a low `confidence` as a weak detection.
+ *
+ * **`DerivationSettings.confidenceFloor` is very nearly a no-op at its
+ * default.** `outputToNotesPoly` builds a note's span out of exactly the frames
+ * that cleared its `frameThresh`, so the mean of those frames is bounded below
+ * by that threshold. `frameThresh` defaults to 0.3 and `confidenceFloor`
+ * defaults to 0.3: the same threshold applied twice, the second time to numbers
+ * the first has already guaranteed. Measured on the spike fixture,
+ * post-suppression amplitudes cluster in 0.520–0.712, so the floor changes
+ * nothing at all until it is raised past 0.52 — 0.22 above where it sits. Not
+ * re-tuned here: one synthetic fixture is not enough to pick a number, and M3
+ * has real stems. See the plan.
+ *
+ * What it cannot do at any setting: separate a real note from a harmonic
+ * partial. In the spike's output a partial came back 5 % louder than the note
+ * that produced it.
  */
 function toDetectedNote(event: NoteEventTime, index: number): DetectedNote {
   return {

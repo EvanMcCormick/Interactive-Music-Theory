@@ -72,12 +72,30 @@ export interface DetectedNote {
  * `downbeatIndices` array here saying the same thing a second time, and
  * nothing read it; a beat tracker that dropped or doubled a beat could have
  * filled it with downbeats the written bars disagreed with, and nothing would
- * have said so. M2's tracker reintroduces it together with the derivation
- * support that honours it, because a field derivation ignores is worse than no
- * field at all.
+ * have said so.
+ *
+ * ## `beatsSec[0]` is not known to be a downbeat
+ *
+ * It is treated as one, which is not the same thing, and the difference is
+ * worth being plain about because everything about where the bar lines fall
+ * rests on it. M2's tracker finds the pulse and not its phase: `trimBeats`
+ * returns the run starting at the first beat whose local score clears half the
+ * RMS - whichever tracked beat the onsets first support, with no downbeat
+ * property claimed for it or tested. A line that begins on beat 3 tracks
+ * perfectly and is barred a half-bar out.
+ *
+ * So the tempo is inferred and the phase is arbitrary. M2's scope decision 3
+ * deferred downbeat detection to M3, which needs a downbeat control - the user
+ * says where bar 1 begins, and the grid is trimmed to it - before any of this
+ * can be called a downbeat. Reintroducing `downbeatIndices` means
+ * reintroducing the field *and* the derivation support that honours it
+ * together, because a field derivation ignores is worse than no field at all.
  */
 export interface BeatGrid {
-  /** Ascending. `beatsSec[0]` is the first downbeat. */
+  /**
+   * Ascending. `beatsSec[0]` is the first *tracked* beat, and derivation reads
+   * it as bar 1 beat 1; whether it is a downbeat is not established. See above.
+   */
   beatsSec: number[];
   timeSignature: TimeSignature;
 }
@@ -110,7 +128,16 @@ export interface DerivationSettings {
    * standard-notation staff spells accidentals against it.
    */
   key: KeySignature | null;
-  /** Notes below this confidence are left out of the score. 0-1, compared against DetectedNote.confidence. */
+  /**
+   * Notes below this confidence are left out of the score. 0-1, compared
+   * against DetectedNote.confidence.
+   *
+   * The default of 0.3 does nothing with Basic Pitch behind it: that
+   * detector's amplitude is a mean over frames it has already thresholded at
+   * 0.3, so no note it reports can fall below this. See the `toDetectedNote`
+   * docblock in `basic-pitch-detector.ts`; calibrating it is an M3 question,
+   * when real stems are available.
+   */
   confidenceFloor: number;
   /** Highest fret available on the neck, in frets. */
   maxFret: number;
@@ -139,6 +166,19 @@ export interface TranscriptionSession {
    * objects are the same ones.
    */
   rawNotes: DetectedNote[];
+  /**
+   * Frame rate of every `bendCents` array above, in Hz.
+   *
+   * `DetectedNote` deliberately does not record it — it is a property of the
+   * detector, not of a note — so whoever hands the notes on has to hand the
+   * rate on with them, and this is where they come to rest. Without it
+   * `bendCents` is a list of numbers with no time axis: turning it into
+   * `NoteEffectsDoc.bendPoints`, which are positions through the note rather
+   * than frames, is not possible. `DetectionResult.bendFrameRateHz` produced
+   * it and crossed the worker boundary carrying it; this is the field that
+   * stops it being dropped on arrival.
+   */
+  bendFrameRateHz: number;
   grid: BeatGrid;
   settings: DerivationSettings;
 }

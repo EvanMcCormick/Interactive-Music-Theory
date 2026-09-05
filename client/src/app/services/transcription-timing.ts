@@ -43,12 +43,13 @@ function edgeInterval(local: number, median: number): number {
 }
 
 /**
- * Position of `sec` on the beat grid, measured in beats since the first
- * downbeat.
+ * Position of `sec` on the beat grid, measured in beats since its first beat.
  *
- * `beatsSec[0]` is a downbeat by the `BeatGrid` invariant, so beat 0 of the
- * result is beat 1 of bar 1 and callers can divide by the numerator to find
- * the bar.
+ * Beat 0 of the result is `beatsSec[0]`, which derivation writes as bar 1 beat
+ * 1, so callers can divide by the numerator to find the bar. That is a
+ * convention rather than a measurement: M2's tracker finds the pulse and not
+ * its phase, so whether the first tracked beat is a downbeat is not
+ * established. See `BeatGrid`.
  *
  * The result is fractional and unbounded. Times before the first beat come
  * back negative and times past the last extrapolate onwards, so callers never

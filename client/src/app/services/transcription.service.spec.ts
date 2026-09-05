@@ -715,6 +715,15 @@ describe('TranscriptionService', () => {
       expect(detector.calls).toBe(1);
     });
 
+    it('keeps the bend frame rate the detector reported', async () => {
+      // `bendCents` is a list of numbers with no time axis without it, and the
+      // rate rides on the detection result rather than on each note - so this
+      // is the one place it can come to rest.
+      await service.transcribe(wavFile());
+
+      expect(service.state.session?.bendFrameRateHz).toBe(22050 / 256);
+    });
+
     it('reports nothing when the detector reports no partials', async () => {
       detector.notes = DETECTED.filter(n => PLAYED_PITCHES.includes(n.pitch)).slice(0, 2);
 

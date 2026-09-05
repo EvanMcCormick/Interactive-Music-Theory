@@ -388,6 +388,10 @@ const TRIM_THRESHOLD = 0.5;
  * *before* the last beat it just called valid, throwing away a real beat;
  * this keeps it.
  *
+ * What comes back is the first beat the onsets support, which is not a claim
+ * about the downbeat: a line that starts on beat 3 is trimmed to that beat and
+ * barred a half-bar out, with the tempo still exactly right. See `BeatGrid`.
+ *
  * Returns an empty array when nothing clears the threshold, which is the
  * caller's cue to fall back to an even grid.
  */
