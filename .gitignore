@@ -70,3 +70,5 @@ NUL
 **/out/
 **/dist/
 **/build/
+# Git worktrees
+.worktrees/
