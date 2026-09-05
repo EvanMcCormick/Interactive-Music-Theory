@@ -1,5 +1,9 @@
 import { DetectedNote } from '../models/transcription.model';
-import { HARMONIC_SEMITONES, suppressHarmonics } from './transcription-harmonics';
+import {
+  DEFAULT_HARMONIC_OPTIONS,
+  HARMONIC_SEMITONES,
+  suppressHarmonics
+} from './transcription-harmonics';
 
 /** [onsetSec, midiPitch, durationSec, amplitude] */
 type Raw = [number, number, number, number];
@@ -128,6 +132,47 @@ describe('suppressHarmonics', () => {
     expect(suppressHarmonics(pair).map(n => n.pitch)).toEqual([40, 28]);
   });
 
+  it('allows the root a little slack past its offset, and not much', () => {
+    // The root stops at 0.5 s and the slack is 0.03 s, so an octave landing
+    // at 0.52 is still its partial and one landing at 0.54 is a new note.
+    const root: Raw = [0, 28, 0.5, 0.70];
+    const inside = suppressHarmonics([note(root, 0), note([0.52, 40, 0.2, 0.50], 1)]);
+    const outside = suppressHarmonics([note(root, 0), note([0.54, 40, 0.2, 0.50], 1)]);
+
+    expect(inside.map(n => n.pitch)).toEqual([28]);
+    expect(outside.map(n => n.pitch)).toEqual([28, 40]);
+  });
+
+  it('takes that slack from the options it is handed', () => {
+    // The same pair either side of the boundary, moved by widening the slack
+    // rather than by moving the notes.
+    const pair = [note([0, 28, 0.5, 0.70], 0), note([0.54, 40, 0.2, 0.50], 1)];
+    const roomier = { ...DEFAULT_HARMONIC_OPTIONS, toleranceSec: 0.1 };
+
+    expect(suppressHarmonics(pair).map(n => n.pitch)).toEqual([28, 40]);
+    expect(suppressHarmonics(pair, roomier).map(n => n.pitch)).toEqual([28]);
+  });
+
+  it('drops the 3rd partial, an octave and a fifth up', () => {
+    // 3f0 is 19.02 semitones above the fundamental: E1 at 28 rings at 47.
+    const pair = [
+      note([0, 28, 0.6, 0.60], 0),
+      note([0.1, 47, 0.2, 0.30], 1)
+    ];
+
+    expect(suppressHarmonics(pair).map(n => n.pitch)).toEqual([28]);
+  });
+
+  it('drops the 4th partial, two octaves up', () => {
+    // 4f0 is exactly 24 semitones above the fundamental: E1 at 28 rings at 52.
+    const pair = [
+      note([0, 28, 0.6, 0.60], 0),
+      note([0.1, 52, 0.2, 0.30], 1)
+    ];
+
+    expect(suppressHarmonics(pair).map(n => n.pitch)).toEqual([28]);
+  });
+
   it('drops the 5th partial, nearly two octaves and a major third up', () => {
     // 5f0 is 27.86 semitones above the fundamental: E1 at 28 rings at 56.
     const pair = [
@@ -168,6 +213,42 @@ describe('suppressHarmonics', () => {
     expect(suppressHarmonics(pair).length).toBe(2);
   });
 
+  it('pins how much shorter than its root a partial has to be', () => {
+    // The whole margin, in one test. The fixture's longest partial runs 0.86
+    // of the note that produced it and the threshold sits at 0.90, so an
+    // octave held 0.95 of the note under it was played, not radiated.
+    const pair = [
+      note([0, 28, 1.0, 0.62], 0),
+      note([0.5, 40, 0.95, 0.60], 1)
+    ];
+
+    expect(suppressHarmonics(pair).map(n => n.pitch)).toEqual([28, 40]);
+  });
+
+  it('keeps a softer repeat that is held nearly as long', () => {
+    // Quieter than the note it follows, so the amplitude half of the unison
+    // rule fires — but it rings on almost as long, which no re-detection
+    // does. Suppressing on loudness alone would delete it.
+    const pair = [
+      note([0, 33, 0.4, 0.70], 0),
+      note([0.3, 33, 0.35, 0.45], 1)
+    ];
+
+    expect(suppressHarmonics(pair).length).toBe(2);
+  });
+
+  it('keeps a staccato repeat played at full weight', () => {
+    // Short enough for the duration half of the unison rule to fire, but
+    // struck as hard as the note before it. Suppressing on length alone
+    // would delete every clipped repeated note in a bassline.
+    const pair = [
+      note([0, 33, 0.4, 0.70], 0),
+      note([0.3, 33, 0.1, 0.68], 1)
+    ];
+
+    expect(suppressHarmonics(pair).length).toBe(2);
+  });
+
   it('returns notes in onset order', () => {
     const kept = suppressHarmonics(DETECTED);
     const onsets = kept.map(n => n.onsetSec);
@@ -176,10 +257,15 @@ describe('suppressHarmonics', () => {
   });
 
   it('does not mutate its input', () => {
-    const before = DETECTED.length;
-    suppressHarmonics(DETECTED);
+    // Identities, not just the count: the pass sorts, and sorting in place
+    // would leave the caller's array reordered while its length held. The
+    // array has to be its own, too — the shared one has been through the
+    // suppressor already, and sorting a sorted array changes nothing.
+    const input = SPIKE_OUTPUT.map(note);
+    const before = input.map(n => n.id);
+    suppressHarmonics(input);
 
-    expect(DETECTED.length).toBe(before);
+    expect(input.map(n => n.id)).toEqual(before);
   });
 
   it('gives the same answer whatever order the detector reported the notes in', () => {
