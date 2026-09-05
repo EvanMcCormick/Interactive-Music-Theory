@@ -36,9 +36,46 @@ describe('candidatesFor', () => {
 });
 
 describe('assignFingering', () => {
+  /**
+   * `Candidate.string` is a 0-based subscript into the tuning; a ScoreDoc's
+   * string number is 1-based. Handing the subscript straight out is not an
+   * off-by-one in a label - `ScoreDocMapperService.flipString` counts strings
+   * from the other end, so on a bass every note lands a fourth sharp and the
+   * top string maps to a string that does not exist.
+   *
+   * So this pins the two ends of the neck to the two ends of the tuning array,
+   * with the array's own ordering asserted rather than assumed. Restating the
+   * numbers on either side would survive the same mistake.
+   */
+  it('numbers strings from the highest-pitched, the way tab does', () => {
+    const top = 0;
+    const bottom = STANDARD_BASS_TUNING.length - 1;
+
+    expect(STANDARD_BASS_TUNING[top]).toBe(Math.max(...STANDARD_BASS_TUNING));
+    expect(STANDARD_BASS_TUNING[bottom]).toBe(Math.min(...STANDARD_BASS_TUNING));
+
+    const openTop = assignFingering(
+      [{ pitch: STANDARD_BASS_TUNING[top], onsetSec: 0 }],
+      SETTINGS
+    );
+    const openBottom = assignFingering(
+      [{ pitch: STANDARD_BASS_TUNING[bottom], onsetSec: 0 }],
+      SETTINGS
+    );
+
+    // StaffDoc.tuning[0] is string 1, so the highest string is 1 and the
+    // lowest is the string count - 4 on a bass, not 0 and 3.
+    expect(openTop[0]).toEqual({ kind: 'fretted', string: 1, fret: 0 });
+    expect(openBottom[0]).toEqual({
+      kind: 'fretted',
+      string: STANDARD_BASS_TUNING.length,
+      fret: 0
+    });
+  });
+
   it('prefers an open string to the fretted equivalent', () => {
     expect(assignFingering([{ pitch: 33, onsetSec: 0 }], SETTINGS)).toEqual([
-      { kind: 'fretted', string: 2, fret: 0 }
+      { kind: 'fretted', string: 3, fret: 0 }
     ]);
   });
 
@@ -53,7 +90,7 @@ describe('assignFingering', () => {
     );
 
     expect(result[0]).toBeNull();
-    expect(result[1]).toEqual({ kind: 'fretted', string: 2, fret: 0 });
+    expect(result[1]).toEqual({ kind: 'fretted', string: 3, fret: 0 });
   });
 
   /**
@@ -76,7 +113,7 @@ describe('assignFingering', () => {
       SETTINGS
     );
 
-    expect(fast[2]).toEqual({ kind: 'fretted', string: 2, fret: 12 });
+    expect(fast[2]).toEqual({ kind: 'fretted', string: 3, fret: 12 });
   });
 
   it('shifts down the neck when there is time to move', () => {
@@ -89,13 +126,13 @@ describe('assignFingering', () => {
       SETTINGS
     );
 
-    expect(slow[2]).toEqual({ kind: 'fretted', string: 0, fret: 2 });
+    expect(slow[2]).toEqual({ kind: 'fretted', string: 1, fret: 2 });
   });
 
   /**
    * Charging nothing for a shift across an open string does not merely permit
    * a leap, it pays for one. `55 -> 45` on its own gives the sane
-   * `s0f12 | s2f12`; interposing an open A over the same 0.04s used to buy
+   * `s1f12 | s3f12`; interposing an open A over the same 0.04s used to buy
    * fret 22, because zeroing both move costs made staying on one string save
    * more in string-change cost than the leap cost. And it composes: an
    * alternating fretted/open figure bought unlimited free travel.
@@ -110,7 +147,7 @@ describe('assignFingering', () => {
       SETTINGS
     );
 
-    expect(figure[0]).toEqual({ kind: 'fretted', string: 0, fret: 12 });
+    expect(figure[0]).toEqual({ kind: 'fretted', string: 1, fret: 12 });
     expect(figure.every(pitch => pitch?.kind === 'fretted' && pitch.fret <= 12)).toBe(true);
   });
 
@@ -120,6 +157,6 @@ describe('assignFingering', () => {
       { ...SETTINGS, positionHint: 12 }
     );
 
-    expect(hinted[0]).toEqual({ kind: 'fretted', string: 2, fret: 12 });
+    expect(hinted[0]).toEqual({ kind: 'fretted', string: 3, fret: 12 });
   });
 });

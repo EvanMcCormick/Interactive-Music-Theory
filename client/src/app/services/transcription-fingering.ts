@@ -22,7 +22,14 @@ export interface FingeringInput {
 }
 
 export interface Candidate {
-  /** Index into the tuning array, so 0 is the highest string. */
+  /**
+   * Index into the tuning array, so 0 is the highest string.
+   *
+   * Deliberately not the string number a ScoreDoc carries, which is 1-based:
+   * this is a subscript, and every use of it inside this module is a lookup.
+   * `assignFingering` converts at the point it emits a `NotePitch`, and that
+   * is the only place the two conventions meet.
+   */
   string: number;
   fret: number;
 }
@@ -159,6 +166,13 @@ function bestPath(
  *
  * Returns null at any index the instrument cannot play. Such a note breaks the
  * chain, and the notes after it are optimised as a fresh run.
+ *
+ * The returned `NotePitch.string` is 1-based, the tab convention a ScoreDoc
+ * uses: string 1 is `StaffDoc.tuning[0]`, the highest-pitched string. Internal
+ * `Candidate.string` values are 0-based tuning subscripts, so this function is
+ * where the two conventions meet. Emitting the subscript unconverted is not a
+ * cosmetic error - `ScoreDocMapperService.flipString` counts from the other
+ * end, so an off-by-one there moves every note to a different string.
  */
 export function assignFingering(
   notes: FingeringInput[],
@@ -188,7 +202,8 @@ export function assignFingering(
         .forEach((candidate, offset) => {
           result[runStart + offset] = {
             kind: 'fretted',
-            string: candidate.string,
+            // Tuning subscript to tab string number; see the docblock.
+            string: candidate.string + 1,
             fret: candidate.fret
           };
         });

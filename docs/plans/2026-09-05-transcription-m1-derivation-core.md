@@ -1253,9 +1253,46 @@ describe('candidatesFor', () => {
 });
 
 describe('assignFingering', () => {
+  /**
+   * `Candidate.string` is a 0-based subscript into the tuning; a ScoreDoc's
+   * string number is 1-based. Handing the subscript straight out is not an
+   * off-by-one in a label - `ScoreDocMapperService.flipString` counts strings
+   * from the other end, so on a bass every note lands a fourth sharp and the
+   * top string maps to a string that does not exist.
+   *
+   * So this pins the two ends of the neck to the two ends of the tuning array,
+   * with the array's own ordering asserted rather than assumed. Restating the
+   * numbers on either side would survive the same mistake.
+   */
+  it('numbers strings from the highest-pitched, the way tab does', () => {
+    const top = 0;
+    const bottom = STANDARD_BASS_TUNING.length - 1;
+
+    expect(STANDARD_BASS_TUNING[top]).toBe(Math.max(...STANDARD_BASS_TUNING));
+    expect(STANDARD_BASS_TUNING[bottom]).toBe(Math.min(...STANDARD_BASS_TUNING));
+
+    const openTop = assignFingering(
+      [{ pitch: STANDARD_BASS_TUNING[top], onsetSec: 0 }],
+      SETTINGS
+    );
+    const openBottom = assignFingering(
+      [{ pitch: STANDARD_BASS_TUNING[bottom], onsetSec: 0 }],
+      SETTINGS
+    );
+
+    // StaffDoc.tuning[0] is string 1, so the highest string is 1 and the
+    // lowest is the string count - 4 on a bass, not 0 and 3.
+    expect(openTop[0]).toEqual({ kind: 'fretted', string: 1, fret: 0 });
+    expect(openBottom[0]).toEqual({
+      kind: 'fretted',
+      string: STANDARD_BASS_TUNING.length,
+      fret: 0
+    });
+  });
+
   it('prefers an open string to the fretted equivalent', () => {
     expect(assignFingering([{ pitch: 33, onsetSec: 0 }], SETTINGS)).toEqual([
-      { kind: 'fretted', string: 2, fret: 0 }
+      { kind: 'fretted', string: 3, fret: 0 }
     ]);
   });
 
@@ -1270,7 +1307,7 @@ describe('assignFingering', () => {
     );
 
     expect(result[0]).toBeNull();
-    expect(result[1]).toEqual({ kind: 'fretted', string: 2, fret: 0 });
+    expect(result[1]).toEqual({ kind: 'fretted', string: 3, fret: 0 });
   });
 
   /**
@@ -1293,7 +1330,7 @@ describe('assignFingering', () => {
       SETTINGS
     );
 
-    expect(fast[2]).toEqual({ kind: 'fretted', string: 2, fret: 12 });
+    expect(fast[2]).toEqual({ kind: 'fretted', string: 3, fret: 12 });
   });
 
   it('shifts down the neck when there is time to move', () => {
@@ -1306,13 +1343,13 @@ describe('assignFingering', () => {
       SETTINGS
     );
 
-    expect(slow[2]).toEqual({ kind: 'fretted', string: 0, fret: 2 });
+    expect(slow[2]).toEqual({ kind: 'fretted', string: 1, fret: 2 });
   });
 
   /**
    * Charging nothing for a shift across an open string does not merely permit
    * a leap, it pays for one. `55 -> 45` on its own gives the sane
-   * `s0f12 | s2f12`; interposing an open A over the same 0.04s used to buy
+   * `s1f12 | s3f12`; interposing an open A over the same 0.04s used to buy
    * fret 22, because zeroing both move costs made staying on one string save
    * more in string-change cost than the leap cost. And it composes: an
    * alternating fretted/open figure bought unlimited free travel.
@@ -1327,7 +1364,7 @@ describe('assignFingering', () => {
       SETTINGS
     );
 
-    expect(figure[0]).toEqual({ kind: 'fretted', string: 0, fret: 12 });
+    expect(figure[0]).toEqual({ kind: 'fretted', string: 1, fret: 12 });
     expect(figure.every(pitch => pitch?.kind === 'fretted' && pitch.fret <= 12)).toBe(true);
   });
 
@@ -1337,7 +1374,7 @@ describe('assignFingering', () => {
       { ...SETTINGS, positionHint: 12 }
     );
 
-    expect(hinted[0]).toEqual({ kind: 'fretted', string: 2, fret: 12 });
+    expect(hinted[0]).toEqual({ kind: 'fretted', string: 3, fret: 12 });
   });
 });
 ```
@@ -1375,7 +1412,14 @@ export interface FingeringInput {
 }
 
 export interface Candidate {
-  /** Index into the tuning array, so 0 is the highest string. */
+  /**
+   * Index into the tuning array, so 0 is the highest string.
+   *
+   * Deliberately not the string number a ScoreDoc carries, which is 1-based:
+   * this is a subscript, and every use of it inside this module is a lookup.
+   * `assignFingering` converts at the point it emits a `NotePitch`, and that
+   * is the only place the two conventions meet.
+   */
   string: number;
   fret: number;
 }
@@ -1512,6 +1556,13 @@ function bestPath(
  *
  * Returns null at any index the instrument cannot play. Such a note breaks the
  * chain, and the notes after it are optimised as a fresh run.
+ *
+ * The returned `NotePitch.string` is 1-based, the tab convention a ScoreDoc
+ * uses: string 1 is `StaffDoc.tuning[0]`, the highest-pitched string. Internal
+ * `Candidate.string` values are 0-based tuning subscripts, so this function is
+ * where the two conventions meet. Emitting the subscript unconverted is not a
+ * cosmetic error - `ScoreDocMapperService.flipString` counts from the other
+ * end, so an off-by-one there moves every note to a different string.
  */
 export function assignFingering(
   notes: FingeringInput[],
@@ -1541,7 +1592,8 @@ export function assignFingering(
         .forEach((candidate, offset) => {
           result[runStart + offset] = {
             kind: 'fretted',
-            string: candidate.string,
+            // Tuning subscript to tab string number; see the docblock.
+            string: candidate.string + 1,
             fret: candidate.fret
           };
         });
@@ -1558,7 +1610,7 @@ export function assignFingering(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 11 tests.
+Expected: PASS, 12 tests.
 
 If the two position tests fail, the weights are miscalibrated rather than the algorithm being wrong — check `MOVE_REFERENCE_SEC` and `FRET_HEIGHT_WEIGHT` first. Both fixtures were chosen so the fast and slow answers differ under the constants above.
 
@@ -1621,6 +1673,35 @@ describe('correctOctaves', () => {
     expect(correctOctaves([note(30)], capoed)[0].pitch).toBe(42);
   });
 
+  /**
+   * SETTINGS is the unmodified default everywhere above except the capo test,
+   * and [43, 38, 33, 28] is value-identical to what a hardcoded bass range
+   * would use. So `lowest = 28 + settings.capo; highest = 67` - a fold that
+   * reads the capo but ignores the tuning and the fret count entirely - passes
+   * every case above. Only a different instrument tells the two apart.
+   */
+  it('folds against the configured instrument, not a hardcoded bass range', () => {
+    const guitar = { ...SETTINGS, tuning: [64, 59, 55, 50, 45, 40], maxFret: 12 };
+
+    // 33 is playable on a bass but a fourth below a guitar's lowest string, so
+    // it has to fold up. 74 is past a bass's last fret but sits at fret 10 of
+    // the guitar's top string, so it must not fold down.
+    expect(correctOctaves([note(33), note(74)], guitar).map(entry => entry.pitch))
+      .toEqual([45, 74]);
+  });
+
+  /**
+   * The two loops run in sequence, so the second can undo the first: from a
+   * pitch above the range it lands within 12 of `highest`, which is below
+   * `lowest` unless the range is at least an octave wide. Without the guard
+   * the 36 here folds to 24 - unplayable either way, but no longer visibly so.
+   */
+  it('leaves a range narrower than an octave alone', () => {
+    const narrow = { ...SETTINGS, tuning: [28], maxFret: 5 };
+
+    expect(correctOctaves([note(36)], narrow)[0].pitch).toBe(36);
+  });
+
   it('does not mutate its input', () => {
     const notes = [note(21)];
     correctOctaves(notes, SETTINGS);
@@ -1674,7 +1755,7 @@ export function correctOctaves(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 5 tests.
+Expected: PASS, 7 tests.
 
 **Step 5: Commit**
 
@@ -1835,7 +1916,9 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
   const corrected = correctOctaves(audible, settings);
 
   // Fingering runs across the whole piece rather than bar by bar, so hand
-  // position carries over bar lines the way a player's does.
+  // position carries over bar lines the way a player's does. The NotePitch
+  // values come back with 1-based tab string numbers, matching StaffDoc.tuning
+  // and ScoreDocMapperService, so nothing here has to renumber them.
   const fingering = assignFingering(
     corrected.map(note => ({ pitch: note.pitch, onsetSec: note.onsetSec })),
     settings
@@ -1929,9 +2012,9 @@ Expected: PASS, 8 tests.
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 56 new = **114 tests, 0 failures**.
+Expected: PASS — 58 baseline + 59 new = **117 tests, 0 failures**.
 
-The 56 break down as 5 + 12 + 15 + 11 + 5 + 8 across tasks 1-6.
+The 59 break down as 5 + 12 + 15 + 12 + 7 + 8 across tasks 1-6.
 
 **Step 6: Commit**
 
@@ -1944,7 +2027,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 114 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 117 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
 - Every derived bar sums to exactly one bar **and strikes every onset it was given,
   with the pitches that onset carried**, for every time signature and grid tested.
