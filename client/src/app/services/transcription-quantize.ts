@@ -16,8 +16,9 @@ import { FinestDivision } from '../models/transcription.model';
  * decomposed into values that fill it exactly, so notation cannot drift the
  * way it does when each onset is rounded and handed its own independent
  * duration. And the meter stays visible: a span is cut where it crosses a
- * beat or the middle of the bar before values are chosen, because a value
- * that merely fits the length can still hide every beat it crosses.
+ * beat or the middle of the bar without being aligned to it, before values
+ * are chosen, because a value that merely fits the length can still hide
+ * every beat it crosses.
  *
  * Pure functions with no Angular or audio dependency, following the
  * `staff-pitch.ts` precedent, so the arithmetic can be checked directly
@@ -201,9 +202,12 @@ export function metricFrame(
  * Cuts a span into fragments no single written value should cross.
  *
  * At most two cuts: one to finish the beat the span starts inside, and one at
- * the half-bar. What follows starts on a beat and is left alone, so a whole
- * note is still a whole note and a dotted half still a dotted half. Only spans
- * that begin off the beat, or straddle the middle of the bar, get broken up.
+ * the half-bar. The rule at each level is the same - only a span that
+ * *crosses* a boundary without being aligned to it needs breaking up. A span
+ * that starts on a boundary and ends on one of that level or higher is
+ * already spelled by a single value a reader can parse, so it is left whole:
+ * a whole note stays a whole note, a dotted half a dotted half, and an empty
+ * 4/4 bar one whole rest rather than two tied half rests.
  */
 function metricFragments(
   startSlot: number,
@@ -214,6 +218,8 @@ function metricFragments(
   let start = startSlot;
   let remaining = slots;
 
+  // Starting on a beat is itself the alignment test at this level: the head
+  // cut exists only to finish a beat the span opened partway through.
   const intoBeat = start % frame.beatUnit;
   if (intoBeat !== 0) {
     const head = Math.min(remaining, frame.beatUnit - intoBeat);
@@ -223,8 +229,17 @@ function metricFragments(
   }
 
   if (remaining > 0 && frame.halfBar !== null) {
-    const nextHalf = (Math.floor(start / frame.halfBar) + 1) * frame.halfBar;
-    if (nextHalf < start + remaining) {
+    const halfBar = frame.halfBar;
+
+    // Both ends on a multiple of the half-bar - which includes the bar line,
+    // the next level up, since `halfBar` is half of `totalSlots`. Such a span
+    // is a unit the meter is built from, and cutting it would write a tie a
+    // reader then has to undo: the bar-filling note in 4/4 is a whole note,
+    // not a half tied to a half.
+    const aligned = start % halfBar === 0 && (start + remaining) % halfBar === 0;
+
+    const nextHalf = (Math.floor(start / halfBar) + 1) * halfBar;
+    if (!aligned && nextHalf < start + remaining) {
       const head = nextHalf - start;
       fragments.push({ start, slots: head });
       start += head;

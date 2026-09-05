@@ -85,9 +85,11 @@ describe('deriveScore', () => {
     const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
 
     // Struck attacks, not non-rest beats. The surviving note holds the whole
-    // bar, and `quantizeBar` cuts that span at the half-bar, so it is written
-    // as a half note tied to a half note - two non-rest beats for one note.
-    // Counting non-rest beats would report 2 here whatever the floor did.
+    // bar, which `quantizeBar` spells as one whole note today - but how a span
+    // is spelled is its business, not this test's, and it has already changed
+    // once: the same bar used to come back as a half tied to a half, two
+    // non-rest beats for one attack. Counting non-rest beats would have
+    // reported 2 there whatever the floor did.
     expect(beats.filter(beat => !beat.isRest && !beat.notes[0].isTied).length).toBe(1);
   });
 

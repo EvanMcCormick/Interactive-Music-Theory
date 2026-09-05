@@ -671,6 +671,72 @@ describe('quantizeBar', () => {
   });
 
   /**
+   * The other half of the same rule. A cut a reader does not need is as wrong
+   * as a missing one: a span that starts on a metric boundary and ends on one
+   * of that level or higher is already a single value, and breaking it writes
+   * a tie the reader then has to undo. The case that shows up on every page is
+   * the empty bar, which came out as two tied half rests.
+   */
+  it('writes a bar-filling note as a single whole note', () => {
+    const beats = quantizeBar([at(0, 5)], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [1, 0, false]
+    ]);
+  });
+
+  it('writes an empty bar as a single whole rest', () => {
+    const beats = quantizeBar([], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [1, 0, true]
+    ]);
+  });
+
+  it('writes each half of a 4/4 bar as one half note', () => {
+    // Slots 0-8 and 8-16. Each both starts and ends on a multiple of the
+    // half-bar, so the half-bar is a boundary they meet rather than cross.
+    const beats = quantizeBar([at(0, 5), at(2, 7)], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [2, 0, false],
+      [2, 0, false]
+    ]);
+    expect(beats.every(beat => !beat.notes[0].isTied)).toBe(true);
+  });
+
+  it('writes an empty 3/4 bar as a single dotted half rest', () => {
+    const threeFour: TimeSignature = { numerator: 3, denominator: 4, isCommon: false };
+
+    expect(
+      quantizeBar([], threeFour, 16).map(beat => [beat.duration, beat.dots, beat.isRest])
+    ).toEqual([[2, 1, true]]);
+  });
+
+  it('writes an empty 6/8 bar as a single dotted half rest', () => {
+    const sixEight: TimeSignature = { numerator: 6, denominator: 8, isCommon: false };
+
+    expect(
+      quantizeBar([], sixEight, 8).map(beat => [beat.duration, beat.dots, beat.isRest])
+    ).toEqual([[2, 1, true]]);
+  });
+
+  it('still cuts a span that crosses the half-bar unaligned', () => {
+    // Slots 4-12: it opens on beat 2 and closes on beat 4, so neither end
+    // touches the middle of the bar it crosses. Left whole it would be a half
+    // note hiding the half-bar - the spelling the fragmenting exists to stop.
+    const beats = quantizeBar([at(1, 5), at(3, 7)], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [4, 0, true],   // quarter rest, beat 1
+      [4, 0, false],  // beat 2
+      [4, 0, false],  // tied across the half-bar into beat 3
+      [4, 0, false]   // the note on beat 4
+    ]);
+    expect(beats[2].notes[0].isTied).toBe(true);
+  });
+
+  /**
    * `FinestDivision` rules out grids the duration table cannot express, but it
    * cannot rule out a grid coarser than the meter it is being applied to: 8 is
    * a perfectly good eighth-note grid, just not for a /16 bar. That stays a
@@ -832,8 +898,9 @@ import { FinestDivision } from '../models/transcription.model';
  * decomposed into values that fill it exactly, so notation cannot drift the
  * way it does when each onset is rounded and handed its own independent
  * duration. And the meter stays visible: a span is cut where it crosses a
- * beat or the middle of the bar before values are chosen, because a value
- * that merely fits the length can still hide every beat it crosses.
+ * beat or the middle of the bar without being aligned to it, before values
+ * are chosen, because a value that merely fits the length can still hide
+ * every beat it crosses.
  *
  * Pure functions with no Angular or audio dependency, following the
  * `staff-pitch.ts` precedent, so the arithmetic can be checked directly
@@ -1017,9 +1084,12 @@ export function metricFrame(
  * Cuts a span into fragments no single written value should cross.
  *
  * At most two cuts: one to finish the beat the span starts inside, and one at
- * the half-bar. What follows starts on a beat and is left alone, so a whole
- * note is still a whole note and a dotted half still a dotted half. Only spans
- * that begin off the beat, or straddle the middle of the bar, get broken up.
+ * the half-bar. The rule at each level is the same - only a span that
+ * *crosses* a boundary without being aligned to it needs breaking up. A span
+ * that starts on a boundary and ends on one of that level or higher is
+ * already spelled by a single value a reader can parse, so it is left whole:
+ * a whole note stays a whole note, a dotted half a dotted half, and an empty
+ * 4/4 bar one whole rest rather than two tied half rests.
  */
 function metricFragments(
   startSlot: number,
@@ -1030,6 +1100,8 @@ function metricFragments(
   let start = startSlot;
   let remaining = slots;
 
+  // Starting on a beat is itself the alignment test at this level: the head
+  // cut exists only to finish a beat the span opened partway through.
   const intoBeat = start % frame.beatUnit;
   if (intoBeat !== 0) {
     const head = Math.min(remaining, frame.beatUnit - intoBeat);
@@ -1039,8 +1111,17 @@ function metricFragments(
   }
 
   if (remaining > 0 && frame.halfBar !== null) {
-    const nextHalf = (Math.floor(start / frame.halfBar) + 1) * frame.halfBar;
-    if (nextHalf < start + remaining) {
+    const halfBar = frame.halfBar;
+
+    // Both ends on a multiple of the half-bar - which includes the bar line,
+    // the next level up, since `halfBar` is half of `totalSlots`. Such a span
+    // is a unit the meter is built from, and cutting it would write a tie a
+    // reader then has to undo: the bar-filling note in 4/4 is a whole note,
+    // not a half tied to a half.
+    const aligned = start % halfBar === 0 && (start + remaining) % halfBar === 0;
+
+    const nextHalf = (Math.floor(start / halfBar) + 1) * halfBar;
+    if (!aligned && nextHalf < start + remaining) {
       const head = nextHalf - start;
       fragments.push({ start, slots: head });
       start += head;
@@ -1191,7 +1272,7 @@ export function beatSlots(beats: BeatDoc[], finestDivision: FinestDivision): num
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 15 tests.
+Expected: PASS, 21 tests.
 
 **Step 5: Commit**
 
@@ -2315,7 +2396,13 @@ describe('deriveScore', () => {
     const score = deriveScore(session([note(33, 0), note(35, 1.0, 0.05)]));
     const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
 
-    expect(beats.filter(beat => !beat.isRest).length).toBe(1);
+    // Struck attacks, not non-rest beats. The surviving note holds the whole
+    // bar, which `quantizeBar` spells as one whole note today - but how a span
+    // is spelled is its business, not this test's, and it has already changed
+    // once: the same bar used to come back as a half tied to a half, two
+    // non-rest beats for one attack. Counting non-rest beats would have
+    // reported 2 there whatever the floor did.
+    expect(beats.filter(beat => !beat.isRest && !beat.notes[0].isTied).length).toBe(1);
   });
 
   it('reads the tempo off the beat grid', () => {
@@ -2493,9 +2580,12 @@ Expected: PASS, 8 tests.
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 71 new = **129 tests, 0 failures**.
+Expected: PASS — 58 baseline + 87 new = **145 tests, 0 failures**.
 
-The 71 break down as 5 + 12 + 15 + 22 + 9 + 8 across tasks 1-6.
+The 87 break down as 5 + 12 + 21 + 22 + 9 + 18 across tasks 1-6. Task 6's
+listing above stops at the 8 tests the task was written with; the other 10 were
+added by later review rounds and live only in
+`src/app/services/score-derivation.spec.ts`.
 
 **Step 6: Commit**
 
@@ -2508,7 +2598,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 129 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 145 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
 - Every derived bar sums to exactly one bar **and strikes every onset it was given,
   with the pitches that onset carried**, for every time signature and grid tested.

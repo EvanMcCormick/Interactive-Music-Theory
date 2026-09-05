@@ -131,6 +131,72 @@ describe('quantizeBar', () => {
   });
 
   /**
+   * The other half of the same rule. A cut a reader does not need is as wrong
+   * as a missing one: a span that starts on a metric boundary and ends on one
+   * of that level or higher is already a single value, and breaking it writes
+   * a tie the reader then has to undo. The case that shows up on every page is
+   * the empty bar, which came out as two tied half rests.
+   */
+  it('writes a bar-filling note as a single whole note', () => {
+    const beats = quantizeBar([at(0, 5)], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [1, 0, false]
+    ]);
+  });
+
+  it('writes an empty bar as a single whole rest', () => {
+    const beats = quantizeBar([], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [1, 0, true]
+    ]);
+  });
+
+  it('writes each half of a 4/4 bar as one half note', () => {
+    // Slots 0-8 and 8-16. Each both starts and ends on a multiple of the
+    // half-bar, so the half-bar is a boundary they meet rather than cross.
+    const beats = quantizeBar([at(0, 5), at(2, 7)], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [2, 0, false],
+      [2, 0, false]
+    ]);
+    expect(beats.every(beat => !beat.notes[0].isTied)).toBe(true);
+  });
+
+  it('writes an empty 3/4 bar as a single dotted half rest', () => {
+    const threeFour: TimeSignature = { numerator: 3, denominator: 4, isCommon: false };
+
+    expect(
+      quantizeBar([], threeFour, 16).map(beat => [beat.duration, beat.dots, beat.isRest])
+    ).toEqual([[2, 1, true]]);
+  });
+
+  it('writes an empty 6/8 bar as a single dotted half rest', () => {
+    const sixEight: TimeSignature = { numerator: 6, denominator: 8, isCommon: false };
+
+    expect(
+      quantizeBar([], sixEight, 8).map(beat => [beat.duration, beat.dots, beat.isRest])
+    ).toEqual([[2, 1, true]]);
+  });
+
+  it('still cuts a span that crosses the half-bar unaligned', () => {
+    // Slots 4-12: it opens on beat 2 and closes on beat 4, so neither end
+    // touches the middle of the bar it crosses. Left whole it would be a half
+    // note hiding the half-bar - the spelling the fragmenting exists to stop.
+    const beats = quantizeBar([at(1, 5), at(3, 7)], FOUR_FOUR, 16);
+
+    expect(beats.map(beat => [beat.duration, beat.dots, beat.isRest])).toEqual([
+      [4, 0, true],   // quarter rest, beat 1
+      [4, 0, false],  // beat 2
+      [4, 0, false],  // tied across the half-bar into beat 3
+      [4, 0, false]   // the note on beat 4
+    ]);
+    expect(beats[2].notes[0].isTied).toBe(true);
+  });
+
+  /**
    * `FinestDivision` rules out grids the duration table cannot express, but it
    * cannot rule out a grid coarser than the meter it is being applied to: 8 is
    * a perfectly good eighth-note grid, just not for a /16 bar. That stays a
