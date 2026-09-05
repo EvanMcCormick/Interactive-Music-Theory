@@ -296,6 +296,19 @@ const GRID: BeatGrid = {
   timeSignature: { numerator: 4, denominator: 4, isCommon: true }
 };
 
+/** The same grid with beat 3 held long: intervals 0.5, 0.5, 2.0, 0.5. */
+const WOBBLY: BeatGrid = { ...GRID, beatsSec: [0, 0.5, 1.0, 3.0, 3.5] };
+
+/** Slows at the end: intervals 0.5, 0.5, 0.5, 2.0. Median 0.5. */
+const RITARDANDO: BeatGrid = { ...GRID, beatsSec: [0, 0.5, 1.0, 1.5, 3.5] };
+
+/** Starts slow: intervals 2.0, 0.5, 0.5. Median 0.5. */
+const ACCELERANDO: BeatGrid = {
+  ...GRID,
+  beatsSec: [0, 2.0, 2.5, 3.0],
+  downbeatIndices: [0]
+};
+
 describe('secondsToBeats', () => {
   it('maps a beat time onto its beat index', () => {
     expect(secondsToBeats(1.0, GRID)).toBe(2);
@@ -303,6 +316,18 @@ describe('secondsToBeats', () => {
 
   it('interpolates between two beats', () => {
     expect(secondsToBeats(1.25, GRID)).toBe(2.5);
+  });
+
+  /**
+   * GRID is perfectly uniform, so every other test here also passes for an
+   * implementation that ignores where the beats actually fall and just divides
+   * by one average interval - which would defeat the point of tracking beats
+   * individually. Only an uneven grid exercises the bracketing search.
+   */
+  it('interpolates within the beat it actually lands in on an uneven grid', () => {
+    // 2.0s is halfway through the long beat spanning 1.0s-3.0s.
+    expect(secondsToBeats(2.0, WOBBLY)).toBe(2.5);
+    expect(secondsToBeats(3.0, WOBBLY)).toBe(3);
   });
 
   it('extrapolates before the first beat as a negative position', () => {
@@ -313,8 +338,34 @@ describe('secondsToBeats', () => {
     expect(secondsToBeats(2.5, GRID)).toBe(5);
   });
 
+  /**
+   * Both extrapolation branches read the same interval on a uniform grid, so
+   * GRID cannot tell them apart: swapping one branch to use the other end's
+   * interval leaves every assertion above passing. These two fixtures have
+   * deliberately unequal first and final intervals, so each branch is pinned
+   * to its own end of the grid - and to the clamp that bounds it.
+   */
+  it('extrapolates past the end by the final interval, clamped to the median', () => {
+    // Final interval 2.0 is clamped to twice the 0.5 median, so 1.0s past the
+    // last beat at 3.5s is one further beat, not half of one.
+    expect(secondsToBeats(4.5, RITARDANDO)).toBe(5);
+  });
+
+  it('extrapolates before the start by the first interval, clamped to the median', () => {
+    // First interval 2.0 is clamped to 1.0 the same way, so 1.0s before the
+    // first beat is one beat early.
+    expect(secondsToBeats(-1.0, ACCELERANDO)).toBe(-1);
+  });
+
+  it('leaves each edge reading its own end of the grid', () => {
+    // The unclamped ends: RITARDANDO starts at the 0.5 median and ACCELERANDO
+    // finishes there, so a branch reaching for the wrong end would show up.
+    expect(secondsToBeats(-0.25, RITARDANDO)).toBe(-0.5);
+    expect(secondsToBeats(4.0, ACCELERANDO)).toBe(5);
+  });
+
   it('survives a grid too short to interpolate', () => {
-    const single: BeatGrid = { ...GRID, beatsSec: [0.4] };
+    const single: BeatGrid = { ...GRID, beatsSec: [0.4], downbeatIndices: [0] };
     expect(secondsToBeats(9, single)).toBe(0);
   });
 });
@@ -325,8 +376,17 @@ describe('gridTempo', () => {
   });
 
   it('ignores a single outlier interval', () => {
-    const wobbly: BeatGrid = { ...GRID, beatsSec: [0, 0.5, 1.0, 3.0, 3.5] };
-    expect(gridTempo(wobbly)).toBe(120);
+    expect(gridTempo(WOBBLY)).toBe(120);
+  });
+
+  /**
+   * An even number of intervals has no single middle value. Taking the upper
+   * one instead of averaging the two reports the slower half of the grid as
+   * the tempo of the whole.
+   */
+  it('averages the two middle intervals when the count is even', () => {
+    const even: BeatGrid = { ...GRID, beatsSec: [0, 0.4, 0.8, 1.4, 2.0] };
+    expect(gridTempo(even)).toBe(120);
   });
 });
 ```
@@ -347,13 +407,62 @@ Create `src/app/services/transcription-timing.ts`:
 import { BeatGrid } from '../models/transcription.model';
 
 /**
- * Position of `sec` on the beat grid, measured in beats.
+ * Converts between audio time and beat-grid position.
+ *
+ * This is the boundary between the audio world, where everything is absolute
+ * seconds into the source, and the notation world, where everything is beats.
+ * A `BeatGrid` is a list of measured beat times rather than a single tempo, so
+ * conversion is a lookup between neighbouring beats and not a division - which
+ * is what lets a score follow a performance that breathes.
+ *
+ * Pure functions with no Angular or audio dependency, following the
+ * `staff-pitch.ts` precedent, so the arithmetic can be checked directly
+ * against hand-written grids.
+ */
+
+/** Ascending gaps between consecutive beats. */
+function beatIntervals(beats: number[]): number[] {
+  const intervals: number[] = [];
+  for (let i = 1; i < beats.length; i++) intervals.push(beats[i] - beats[i - 1]);
+  return intervals;
+}
+
+/** Median gap. Resists a single dropped or doubled beat. */
+function medianInterval(beats: number[]): number {
+  const sorted = beatIntervals(beats).sort((a, b) => a - b);
+  if (sorted.length === 0) return 0;
+  const mid = sorted.length >> 1;
+  // Even counts average the two middle values rather than taking the upper.
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/**
+ * Interval to extrapolate an edge by.
+ *
+ * The local interval, so a real ritardando reads correctly, but clamped
+ * against the median so a single mistracked edge beat cannot throw a note
+ * into the wrong bar.
+ */
+function edgeInterval(local: number, median: number): number {
+  if (median <= 0) return local;
+  return Math.min(median * 2, Math.max(median / 2, local));
+}
+
+/**
+ * Position of `sec` on the beat grid, measured in beats since the first
+ * downbeat.
+ *
+ * `beatsSec[0]` is a downbeat by the `BeatGrid` invariant, so beat 0 of the
+ * result is beat 1 of bar 1 and callers can divide by the numerator to find
+ * the bar.
  *
  * The result is fractional and unbounded. Times before the first beat come
- * back negative and times past the last extrapolate from the final interval,
- * so callers never have to special-case a note that strays outside the
- * tracked region - a pickup before the first downbeat, or a ring-out after
- * the last.
+ * back negative and times past the last extrapolate onwards, so callers never
+ * have to special-case a note that strays outside the tracked region - a
+ * pickup before the first downbeat, or a ring-out after the last. Both edges
+ * extrapolate by the local interval clamped to between half and twice the
+ * median, so a genuine tempo change is honoured while a single mistracked edge
+ * beat is bounded.
  */
 export function secondsToBeats(sec: number, grid: BeatGrid): number {
   const beats = grid.beatsSec;
@@ -362,12 +471,12 @@ export function secondsToBeats(sec: number, grid: BeatGrid): number {
   const last = beats.length - 1;
 
   if (sec <= beats[0]) {
-    const interval = beats[1] - beats[0];
+    const interval = edgeInterval(beats[1] - beats[0], medianInterval(beats));
     return interval > 0 ? (sec - beats[0]) / interval : 0;
   }
 
   if (sec >= beats[last]) {
-    const interval = beats[last] - beats[last - 1];
+    const interval = edgeInterval(beats[last] - beats[last - 1], medianInterval(beats));
     return interval > 0 ? last + (sec - beats[last]) / interval : last;
   }
 
@@ -394,20 +503,14 @@ export function gridTempo(grid: BeatGrid): number {
   const beats = grid.beatsSec;
   if (beats.length < 2) return 120;
 
-  const intervals: number[] = [];
-  for (let i = 1; i < beats.length; i++) {
-    intervals.push(beats[i] - beats[i - 1]);
-  }
-  intervals.sort((a, b) => a - b);
-
-  const median = intervals[intervals.length >> 1];
+  const median = medianInterval(beats);
   return median > 0 ? Math.round(60 / median) : 120;
 }
 ```
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 7 tests.
+Expected: PASS, 12 tests.
 
 **Step 5: Commit**
 
@@ -493,12 +596,33 @@ describe('quantizeBar', () => {
   });
 
   /**
+   * `FinestDivision` exists so no span can reach `slotsToDurations` that the
+   * duration table cannot express - such a span under-sums silently rather
+   * than failing. A fractional numerator is the one remaining way in, since
+   * `TimeSignature` types the numerator as a bare number.
+   */
+  it('rejects a numerator that is not a whole number of beats', () => {
+    const fractional: TimeSignature = { numerator: 2.5, denominator: 4, isCommon: false };
+
+    expect(() => quantizeBar([], fractional, 16)).toThrowError(/numerator 2\.5/);
+  });
+
+  /**
    * The invariant the whole feature rests on. Independently snapping onsets to
    * a grid - the obvious approach, and what most transcribers do - produces
    * durations that overrun or underfill the bar, which is the root of the
    * ragged 32nd-note-and-tie mess such tools are known for.
+   *
+   * Length alone is not enough to pin that down: `beatSlots` never inspects
+   * `notes` or `isRest`, so a `quantizeBar` that discarded its notes and
+   * emitted a bar of rests would satisfy it for every case below. So each case
+   * also asserts placement, against the distinct slots the input snaps onto.
+   *
+   * Struck notes, not non-rest beats: a span no single value can express is
+   * split by `slotsToDurations` into several `BeatDoc`s for one onset, and the
+   * continuation fragments are tied.
    */
-  it('always produces exactly one bar of music', () => {
+  it('always produces exactly one bar of music, with every onset struck', () => {
     const signatures: TimeSignature[] = [
       { numerator: 4, denominator: 4, isCommon: true },
       { numerator: 3, denominator: 4, isCommon: false },
@@ -510,6 +634,9 @@ describe('quantizeBar', () => {
       for (const finest of [8, 16, 32] as FinestDivision[]) {
         if (finest < signature.denominator) continue;
 
+        const slotsPerBeat = finest / signature.denominator;
+        const totalSlots = signature.numerator * slotsPerBeat;
+
         for (let seed = 0; seed < 20; seed++) {
           const notes: PlacedNote[] = Array.from({ length: seed % 7 }, (_, i) => ({
             beatInBar: (((seed * 7 + i * 13) % 100) / 100) * signature.numerator,
@@ -517,9 +644,23 @@ describe('quantizeBar', () => {
           }));
 
           const beats = quantizeBar(notes, signature, finest);
-          const expected = signature.numerator * (finest / signature.denominator);
 
-          expect(beatSlots(beats, finest)).toBe(expected);
+          expect(beatSlots(beats, finest)).toBe(totalSlots);
+
+          // Onsets sharing a slot merge into one chord, and an onset rounding
+          // past the final slot is pulled back onto it, so the count of
+          // distinct snapped slots is the count of beats that begin a note.
+          const onsetSlots = new Set(
+            notes.map(note => Math.min(
+              totalSlots - 1,
+              Math.max(0, Math.round(note.beatInBar * slotsPerBeat))
+            ))
+          );
+          const struck = beats.filter(
+            beat => !beat.isRest && beat.notes.length > 0 && !beat.notes[0].isTied
+          );
+
+          expect(struck.length).toBe(onsetSlots.size);
         }
       }
     }
@@ -626,6 +767,16 @@ export function quantizeBar(
     );
   }
 
+  // A fractional numerator is the one route by which a non-integer span could
+  // reach slotsToDurations, where it would silently under-sum rather than
+  // fail. TimeSignature types the numerator as a bare number, so the type
+  // system cannot rule this out the way FinestDivision rules out bad grids.
+  if (!Number.isInteger(timeSignature.numerator) || timeSignature.numerator < 1) {
+    throw new Error(
+      `numerator ${timeSignature.numerator} is not a whole number of beats`
+    );
+  }
+
   const totalSlots = timeSignature.numerator * slotsPerBeat;
 
   const chords = new Map<number, NotePitch[]>();
@@ -674,6 +825,8 @@ export function quantizeBar(
 
   starts.forEach((start, index) => {
     const end = index + 1 < starts.length ? starts[index + 1] : totalSlots;
+    // Non-null assertion is sound: `start` came out of `chords.keys()`, so the
+    // map is guaranteed to hold an entry for it.
     emit(end - start, chords.get(start)!);
   });
 
@@ -691,7 +844,7 @@ export function beatSlots(beats: BeatDoc[], finestDivision: number): number {
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 7 tests.
+Expected: PASS, 8 tests.
 
 **Step 5: Commit**
 
@@ -1373,7 +1526,9 @@ Expected: PASS, 8 tests.
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 41 new = **99 tests, 0 failures**.
+Expected: PASS — 58 baseline + 47 new = **105 tests, 0 failures**.
+
+The 47 break down as 5 + 12 + 8 + 9 + 5 + 8 across tasks 1-6.
 
 **Step 6: Commit**
 
@@ -1386,9 +1541,11 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 99 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 105 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
-- Every derived bar sums to exactly one bar, for every time signature and grid tested.
+- Every derived bar sums to exactly one bar **and strikes every onset it was given**,
+  for every time signature and grid tested. Length alone is not the invariant: a
+  `quantizeBar` that discarded its notes and emitted rests would satisfy that half.
 - The two position-stability tests pass, proving fingering responds to available time.
 
 ## Deliberately not in M1
