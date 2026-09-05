@@ -19,6 +19,7 @@
     "@angular/platform-browser-dynamic": "^21.1.0",
     "@angular/router": "^21.1.0",
     "@coderline/alphatab": "^1.8.0",
+    "@spotify/basic-pitch": "^1.0.1",
     "rxjs": "~7.8.0",
     "tone": "^15.0.4",
     "zone.js": "~0.15.0"
