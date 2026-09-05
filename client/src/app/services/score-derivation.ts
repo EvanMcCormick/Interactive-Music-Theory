@@ -9,7 +9,7 @@ import {
   createDefaultMasterBar,
   createDefaultPlaybackInfo
 } from '../models/composer.model';
-import { TranscriptionSession } from '../models/transcription.model';
+import { DetectedNote, TranscriptionSession } from '../models/transcription.model';
 import { assignFingering } from './transcription-fingering';
 import { correctOctaves } from './transcription-octave';
 import { PlacedNote, chordToleranceBeats, quantizeBar } from './transcription-quantize';
@@ -29,6 +29,49 @@ import { gridTempo, secondsToBeats } from './transcription-timing';
  * precedent. Nothing is memoised and nothing is cached: re-deriving is cheap
  * enough that every setting can be a live knob.
  */
+
+/** Why a detected note is not in the score. */
+export type DropReason =
+  /** `confidence` was below `DerivationSettings.confidenceFloor`. */
+  | 'belowConfidence'
+  /** No string and fret on this instrument sounds the pitch. */
+  | 'unplayable'
+  /** Struck with another note already holding the string, and a tab line
+   *  holds one number. */
+  | 'stringTaken';
+
+export interface DroppedNote {
+  /**
+   * The note as derivation last saw it.
+   *
+   * After octave correction for the two later reasons, so its pitch explains
+   * the drop: a pitch folded into range and then found unplayable is reported
+   * at the pitch that had no fret, not the one the detector guessed.
+   */
+  note: DetectedNote;
+  reason: DropReason;
+}
+
+/**
+ * A derived score and everything derivation had to throw away to write it.
+ *
+ * The discards are half the answer, not a diagnostic. A `ScoreDoc` on its own
+ * cannot say whether a bar is empty because nothing was played or because
+ * everything in it fell below the confidence floor, and M3 has to render those
+ * notes greyed rather than let them disappear. Recovering that from the score
+ * alone would mean re-filtering `session.notes` and re-implementing this
+ * module's rules to work out what is missing - a second copy of the pipeline,
+ * kept in step by hope.
+ */
+export interface DerivedScore {
+  doc: ScoreDoc;
+  /**
+   * Grouped by the stage that discarded them: the confidence floor first, in
+   * the session's own order, then the fingering and quantization losses in
+   * onset order.
+   */
+  dropped: DroppedNote[];
+}
 
 /** General MIDI program 33: electric bass, finger. */
 const BASS_PROGRAM = 33;
@@ -83,14 +126,28 @@ function barsInSource(session: TranscriptionSession): number {
  * Pure and fast, so every setting is a live knob: changing tuning, capo,
  * meter, grid or confidence floor re-derives the whole score rather than
  * re-running detection. That is the point of keeping raw events around.
+ *
+ * Returns the discards alongside the score. Three paths lose notes - the
+ * confidence floor here, an unplayable pitch in `assignFingering`, a taken
+ * string in `quantizeBar` - and a `ScoreDoc` records none of them. Handing
+ * them back is what lets M3 render a rejected note greyed rather than let it
+ * disappear, without re-deriving this module's rules over `session.notes` to
+ * guess which notes are missing and why.
  */
-export function deriveScore(session: TranscriptionSession): ScoreDoc {
+export function deriveScore(session: TranscriptionSession): DerivedScore {
   const { settings, grid } = session;
   const timeSignature = grid.timeSignature;
 
-  const audible = session.notes.filter(
-    note => note.confidence >= settings.confidenceFloor
-  );
+  // Every note that goes in and does not come out, from all three paths that
+  // can lose one. Collected as they happen rather than reconstructed at the
+  // end: only the stage that discarded a note knows why.
+  const dropped: DroppedNote[] = [];
+
+  const audible: DetectedNote[] = [];
+  for (const note of session.notes) {
+    if (note.confidence >= settings.confidenceFloor) audible.push(note);
+    else dropped.push({ note, reason: 'belowConfidence' });
+  }
 
   // Checked before the sort, because a non-finite onset spoils both stages and
   // nothing downstream can recover from it. `Math.max(0, NaN)` is NaN, so such
@@ -153,10 +210,20 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
     chordToleranceBeats(slotsPerBeat)
   );
 
-  const placed: { bar: number; beatInBar: number; pitch: NotePitch }[] = [];
+  // Keyed by the `PlacedNote` object itself rather than by an id the type does
+  // not carry, so a note `quantizeBar` turns away can be named here without
+  // widening `PlacedNote` for a field only this caller would ever read.
+  const source = new Map<PlacedNote, DetectedNote>();
+
+  const placed: { bar: number; note: PlacedNote }[] = [];
   corrected.forEach((note, index) => {
     const pitch = fingering[index];
-    if (!pitch) return;
+    if (!pitch) {
+      // No string and fret sounds this pitch, so there is nothing to write. It
+      // is reported at the corrected pitch, which is the one that had no fret.
+      dropped.push({ note, reason: 'unplayable' });
+      return;
+    }
 
     const beat = beats[index];
 
@@ -176,7 +243,12 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
       barLimit - 1,
       Math.floor(Math.round(beat * slotsPerBeat) / slotsPerBar)
     );
-    placed.push({ bar, beatInBar: beat - bar * timeSignature.numerator, pitch });
+    const entry: PlacedNote = {
+      beatInBar: beat - bar * timeSignature.numerator,
+      pitch
+    };
+    source.set(entry, note);
+    placed.push({ bar, note: entry });
   });
 
   // Bounded by construction: every entry's bar was clamped to `barLimit - 1`.
@@ -193,13 +265,25 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
   const bars: BarDoc[] = Array.from({ length: barCount }, (_, index) => {
     const inBar: PlacedNote[] = placed
       .filter(entry => entry.bar === index)
-      .map(entry => ({ beatInBar: entry.beatInBar, pitch: entry.pitch }));
+      .map(entry => entry.note);
+
+    // One array per bar, drained straight into `dropped`, so the losses come
+    // out in bar order and nothing has to be matched up afterwards.
+    const taken: PlacedNote[] = [];
+    const beatDocs = quantizeBar(inBar, timeSignature, settings.finestDivision, taken);
+
+    for (const entry of taken) {
+      const note = source.get(entry);
+      // Sound: every element of `inBar` was registered in `source` when it was
+      // built above, and `quantizeBar` only ever hands back notes it was given.
+      if (note) dropped.push({ note, reason: 'stringTaken' });
+    }
 
     return {
       clef: 'f4',
       clefOttava: 'regular',
       keySignature: key,
-      voices: [{ beats: quantizeBar(inBar, timeSignature, settings.finestDivision) }]
+      voices: [{ beats: beatDocs }]
     };
   });
 
@@ -226,12 +310,15 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
   };
 
   return {
-    title: session.sourceName,
-    subTitle: '',
-    artist: '',
-    album: '',
-    tempo: gridTempo(grid),
-    masterBars,
-    tracks: [track]
+    doc: {
+      title: session.sourceName,
+      subTitle: '',
+      artist: '',
+      album: '',
+      tempo: gridTempo(grid),
+      masterBars,
+      tracks: [track]
+    },
+    dropped
   };
 }

@@ -985,19 +985,31 @@ export function chordToleranceBeats(slotsPerBeat: number): number {
 }
 
 /**
- * Adds a pitch to a chord, dropping it if its string is already spoken for.
+ * Adds a note to a chord, dropping it if its string is already spoken for.
  *
  * A tab line holds one number, so a fretted staff shows at most one note per
  * string - the invariant `ComposerService.setNoteAtCursor` enforces on the
  * editing side. Two co-incident notes fingered to the same string, or one
  * onset detected twice, would otherwise write two numbers on one line. The
  * earlier onset wins.
+ *
+ * The loser is appended to `dropped` when the caller supplied one. It is the
+ * only note this module can lose, and losing it without a record is what makes
+ * it dangerous: the score that comes back is perfectly well formed and simply
+ * has one fewer note in it than the performance did.
  */
-function addToChord(chord: NotePitch[], pitch: NotePitch): void {
+function addToChord(
+  chord: NotePitch[],
+  note: PlacedNote,
+  dropped: PlacedNote[] | undefined
+): void {
+  const pitch = note.pitch;
+
   if (
     pitch.kind === 'fretted'
     && chord.some(taken => taken.kind === 'fretted' && taken.string === pitch.string)
   ) {
+    dropped?.push(note);
     return;
   }
 
@@ -1017,12 +1029,13 @@ function addToChord(chord: NotePitch[], pitch: NotePitch): void {
 function snapToSlots(
   notes: PlacedNote[],
   slotsPerBeat: number,
-  totalSlots: number
+  totalSlots: number,
+  dropped: PlacedNote[] | undefined
 ): Map<number, NotePitch[]> {
   const tolerance = chordToleranceBeats(slotsPerBeat) * slotsPerBeat;
   const sorted = [...notes].sort((a, b) => a.beatInBar - b.beatInBar);
 
-  const clusters: { onsets: number[]; pitches: NotePitch[] }[] = [];
+  const clusters: { onsets: number[]; notes: PlacedNote[] }[] = [];
   for (const note of sorted) {
     const onset = note.beatInBar * slotsPerBeat;
     const open = clusters[clusters.length - 1];
@@ -1031,9 +1044,9 @@ function snapToSlots(
     // of closely spaced notes cannot chain into one arbitrarily wide chord.
     if (open && onset - open.onsets[0] <= tolerance) {
       open.onsets.push(onset);
-      open.pitches.push(note.pitch);
+      open.notes.push(note);
     } else {
-      clusters.push({ onsets: [onset], pitches: [note.pitch] });
+      clusters.push({ onsets: [onset], notes: [note] });
     }
   }
 
@@ -1051,7 +1064,7 @@ function snapToSlots(
 
     // Two clusters can still round onto one slot on a coarse grid, so the
     // per-string check belongs here rather than inside the cluster loop.
-    for (const pitch of cluster.pitches) addToChord(chord, pitch);
+    for (const note of cluster.notes) addToChord(chord, note, dropped);
   }
 
   return chords;
@@ -1208,11 +1221,19 @@ export function slotsToDurations(
  * are snapped to slots, each runs until the next one starts, and gaps become
  * rests. A span no single value can express is split and tied rather than
  * rounded, so the bar total never moves.
+ *
+ * `dropped`, if given, collects the notes this bar could not write: `addToChord`
+ * keeps one note per string, and the ones it turns away are the only notes that
+ * go in and do not come out. An out-parameter rather than a widened return,
+ * because the return type is what the whole module is about and nine call sites
+ * in the spec do not care - `score-derivation.ts` passes an array, unwraps
+ * nothing, and reports upward.
  */
 export function quantizeBar(
   notes: PlacedNote[],
   timeSignature: TimeSignature,
-  finestDivision: FinestDivision
+  finestDivision: FinestDivision,
+  dropped?: PlacedNote[]
 ): BeatDoc[] {
   const slotsPerBeat = finestDivision / timeSignature.denominator;
   if (!Number.isInteger(slotsPerBeat) || slotsPerBeat < 1) {
@@ -1234,7 +1255,7 @@ export function quantizeBar(
 
   const totalSlots = timeSignature.numerator * slotsPerBeat;
 
-  const chords = snapToSlots(notes, slotsPerBeat, totalSlots);
+  const chords = snapToSlots(notes, slotsPerBeat, totalSlots, dropped);
   const frame = metricFrame(timeSignature, slotsPerBeat);
   const beats: BeatDoc[] = [];
 
@@ -2448,6 +2469,15 @@ import {
 import { beatSlots } from './transcription-quantize';
 import { deriveScore } from './score-derivation';
 
+/**
+ * The score alone, for the cases that are not about what derivation discarded.
+ *
+ * `deriveScore` returns the score and the notes it had to throw away; most of
+ * what follows is about the score, and unwrapping at every call site would bury
+ * the assertions.
+ */
+const derived = (input: TranscriptionSession): ScoreDoc => deriveScore(input).doc;
+
 const note = (pitch: number, onsetSec: number, confidence = 1): DetectedNote => ({
   id: `${pitch}@${onsetSec}`,
   pitch,
@@ -2486,7 +2516,7 @@ function session(
  * first is a tie continuation rather than a second attack.
  */
 function struckPerBar(input: TranscriptionSession): ([number, number] | null)[][] {
-  return deriveScore(input).tracks[0].staves[0].bars.map(bar =>
+  return derived(input).tracks[0].staves[0].bars.map(bar =>
     bar.voices[0].beats
       .filter(beat => !beat.isRest && !beat.notes[0].isTied)
       .map(beat =>
@@ -2499,20 +2529,20 @@ function struckPerBar(input: TranscriptionSession): ([number, number] | null)[][
 
 describe('deriveScore', () => {
   it('writes one bar per four beats of material', () => {
-    const score = deriveScore(session([note(33, 0), note(35, 2.0)]));
+    const score = derived(session([note(33, 0), note(35, 2.0)]));
 
     expect(score.masterBars.length).toBe(2);
   });
 
   it('keeps staff bars parallel to master bars', () => {
-    const score = deriveScore(session([note(33, 0), note(35, 2.0)]));
+    const score = derived(session([note(33, 0), note(35, 2.0)]));
     const staff = score.tracks[0].staves[0];
 
     expect(staff.bars.length).toBe(score.masterBars.length);
   });
 
   it('fills every bar exactly', () => {
-    const score = deriveScore(session([note(33, 0), note(35, 0.75), note(40, 2.2)]));
+    const score = derived(session([note(33, 0), note(35, 0.75), note(40, 2.2)]));
     const staff = score.tracks[0].staves[0];
 
     for (const bar of staff.bars) {
@@ -2521,7 +2551,7 @@ describe('deriveScore', () => {
   });
 
   it('leaves out notes below the confidence floor', () => {
-    const score = deriveScore(session([note(33, 0), note(35, 1.0, 0.05)]));
+    const score = derived(session([note(33, 0), note(35, 1.0, 0.05)]));
     const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
 
     // Struck attacks, not non-rest beats. The surviving note holds the whole
@@ -2534,22 +2564,22 @@ describe('deriveScore', () => {
   });
 
   it('reads the tempo off the beat grid', () => {
-    expect(deriveScore(session([note(33, 0)])).tempo).toBe(120);
+    expect(derived(session([note(33, 0)])).tempo).toBe(120);
   });
 
   it('produces a tab staff tuned as configured', () => {
-    const staff = deriveScore(session([note(33, 0)])).tracks[0].staves[0];
+    const staff = derived(session([note(33, 0)])).tracks[0].staves[0];
 
     expect(staff.showTablature).toBe(true);
     expect(staff.tuning).toEqual([43, 38, 33, 28]);
   });
 
   it('names the score after its source', () => {
-    expect(deriveScore(session([note(33, 0)])).title).toBe('bassline.wav');
+    expect(derived(session([note(33, 0)])).title).toBe('bassline.wav');
   });
 
   it('produces a valid empty score when nothing was detected', () => {
-    const score = deriveScore(session([]));
+    const score = derived(session([]));
     const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
 
     expect(score.masterBars.length).toBe(1);
@@ -2572,7 +2602,7 @@ describe('deriveScore', () => {
     };
 
     const input = session([note(33, 0), note(35, 10)], fast, 0.1);
-    const score = deriveScore(input);
+    const score = derived(input);
 
     // Ten beats of audio, so three bars, plus the one a note rounding forward
     // off the end needs.
@@ -2594,7 +2624,7 @@ describe('deriveScore', () => {
 
     const notes = [note(33, 0), note(35, 2), note(38, 4), note(40, 6)];
 
-    expect(deriveScore(session(notes, eightSeconds, 8)).masterBars.length).toBe(4);
+    expect(derived(session(notes, eightSeconds, 8)).masterBars.length).toBe(4);
   });
 });
 ```
@@ -2619,11 +2649,54 @@ import {
   createDefaultMasterBar,
   createDefaultPlaybackInfo
 } from '../models/composer.model';
-import { TranscriptionSession } from '../models/transcription.model';
+import { DetectedNote, TranscriptionSession } from '../models/transcription.model';
 import { assignFingering } from './transcription-fingering';
 import { correctOctaves } from './transcription-octave';
 import { PlacedNote, chordToleranceBeats, quantizeBar } from './transcription-quantize';
 import { gridTempo, secondsToBeats } from './transcription-timing';
+
+/** Why a detected note is not in the score. */
+export type DropReason =
+  /** `confidence` was below `DerivationSettings.confidenceFloor`. */
+  | 'belowConfidence'
+  /** No string and fret on this instrument sounds the pitch. */
+  | 'unplayable'
+  /** Struck with another note already holding the string, and a tab line
+   *  holds one number. */
+  | 'stringTaken';
+
+export interface DroppedNote {
+  /**
+   * The note as derivation last saw it.
+   *
+   * After octave correction for the two later reasons, so its pitch explains
+   * the drop: a pitch folded into range and then found unplayable is reported
+   * at the pitch that had no fret, not the one the detector guessed.
+   */
+  note: DetectedNote;
+  reason: DropReason;
+}
+
+/**
+ * A derived score and everything derivation had to throw away to write it.
+ *
+ * The discards are half the answer, not a diagnostic. A `ScoreDoc` on its own
+ * cannot say whether a bar is empty because nothing was played or because
+ * everything in it fell below the confidence floor, and M3 has to render those
+ * notes greyed rather than let them disappear. Recovering that from the score
+ * alone would mean re-filtering `session.notes` and re-implementing this
+ * module's rules to work out what is missing - a second copy of the pipeline,
+ * kept in step by hope.
+ */
+export interface DerivedScore {
+  doc: ScoreDoc;
+  /**
+   * Grouped by the stage that discarded them: the confidence floor first, in
+   * the session's own order, then the fingering and quantization losses in
+   * onset order.
+   */
+  dropped: DroppedNote[];
+}
 
 /** General MIDI program 33: electric bass, finger. */
 const BASS_PROGRAM = 33;
@@ -2678,14 +2751,30 @@ function barsInSource(session: TranscriptionSession): number {
  * Pure and fast, so every setting is a live knob: changing tuning, capo,
  * meter, grid or confidence floor re-derives the whole score rather than
  * re-running detection. That is the point of keeping raw events around.
+ *
+ * Returns the discards alongside the score. Three paths lose notes - the
+ * confidence floor here, an unplayable pitch in `assignFingering`, a taken
+ * string in `quantizeBar` - and a `ScoreDoc` records none of them. Handing
+ * them back is what lets M3 render a rejected note greyed rather than let it
+ * disappear, without re-deriving this module's rules over `session.notes` to
+ * guess which notes are missing and why.
  */
-export function deriveScore(session: TranscriptionSession): ScoreDoc {
+export function deriveScore(session: TranscriptionSession): DerivedScore {
   const { settings, grid } = session;
   const timeSignature = grid.timeSignature;
 
-  const audible = session.notes
-    .filter(note => note.confidence >= settings.confidenceFloor)
-    .sort((a, b) => a.onsetSec - b.onsetSec);
+  // Every note that goes in and does not come out, from all three paths that
+  // can lose one. Collected as they happen rather than reconstructed at the
+  // end: only the stage that discarded a note knows why.
+  const dropped: DroppedNote[] = [];
+
+  const audible: DetectedNote[] = [];
+  for (const note of session.notes) {
+    if (note.confidence >= settings.confidenceFloor) audible.push(note);
+    else dropped.push({ note, reason: 'belowConfidence' });
+  }
+
+  audible.sort((a, b) => a.onsetSec - b.onsetSec);
 
   // correctOctaves folds onto one interval, lowest open string to highest
   // fret, while candidatesFor knows each string reaches only `maxFret - capo`
@@ -2726,10 +2815,20 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
     chordToleranceBeats(slotsPerBeat)
   );
 
-  const placed: { bar: number; beatInBar: number; pitch: NotePitch }[] = [];
+  // Keyed by the `PlacedNote` object itself rather than by an id the type does
+  // not carry, so a note `quantizeBar` turns away can be named here without
+  // widening `PlacedNote` for a field only this caller would ever read.
+  const source = new Map<PlacedNote, DetectedNote>();
+
+  const placed: { bar: number; note: PlacedNote }[] = [];
   corrected.forEach((note, index) => {
     const pitch = fingering[index];
-    if (!pitch) return;
+    if (!pitch) {
+      // No string and fret sounds this pitch, so there is nothing to write. It
+      // is reported at the corrected pitch, which is the one that had no fret.
+      dropped.push({ note, reason: 'unplayable' });
+      return;
+    }
 
     const beat = beats[index];
 
@@ -2749,7 +2848,12 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
       barLimit - 1,
       Math.floor(Math.round(beat * slotsPerBeat) / slotsPerBar)
     );
-    placed.push({ bar, beatInBar: beat - bar * timeSignature.numerator, pitch });
+    const entry: PlacedNote = {
+      beatInBar: beat - bar * timeSignature.numerator,
+      pitch
+    };
+    source.set(entry, note);
+    placed.push({ bar, note: entry });
   });
 
   // Bounded by construction: every entry's bar was clamped to `barLimit - 1`.
@@ -2766,13 +2870,25 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
   const bars: BarDoc[] = Array.from({ length: barCount }, (_, index) => {
     const inBar: PlacedNote[] = placed
       .filter(entry => entry.bar === index)
-      .map(entry => ({ beatInBar: entry.beatInBar, pitch: entry.pitch }));
+      .map(entry => entry.note);
+
+    // One array per bar, drained straight into `dropped`, so the losses come
+    // out in bar order and nothing has to be matched up afterwards.
+    const taken: PlacedNote[] = [];
+    const beatDocs = quantizeBar(inBar, timeSignature, settings.finestDivision, taken);
+
+    for (const entry of taken) {
+      const note = source.get(entry);
+      // Sound: every element of `inBar` was registered in `source` when it was
+      // built above, and `quantizeBar` only ever hands back notes it was given.
+      if (note) dropped.push({ note, reason: 'stringTaken' });
+    }
 
     return {
       clef: 'f4',
       clefOttava: 'regular',
       keySignature: key,
-      voices: [{ beats: quantizeBar(inBar, timeSignature, settings.finestDivision) }]
+      voices: [{ beats: beatDocs }]
     };
   });
 
@@ -2799,13 +2915,16 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
   };
 
   return {
-    title: session.sourceName,
-    subTitle: '',
-    artist: '',
-    album: '',
-    tempo: gridTempo(grid),
-    masterBars,
-    tracks: [track]
+    doc: {
+      title: session.sourceName,
+      subTitle: '',
+      artist: '',
+      album: '',
+      tempo: gridTempo(grid),
+      masterBars,
+      tracks: [track]
+    },
+    dropped
   };
 }
 ```
@@ -2813,6 +2932,38 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
 **Step 4: Run test to verify it passes**
 
 Expected: PASS, 10 tests.
+
+### What was discarded
+
+`deriveScore` returns a `DerivedScore` — the `ScoreDoc` and a `DroppedNote[]` —
+rather than a bare score, because three paths lose notes and a `ScoreDoc`
+records none of them: the confidence floor in `deriveScore`, an unplayable
+pitch that `assignFingering` returns `null` for, and a string already taken
+that `addToChord` refuses.
+
+The design doc's thesis is that transcription is *"won by the pipeline around
+the detector, and by what happens to the errors"*, and M3's spec requires that
+notes below the confidence floor render greyed rather than disappear, so the
+user can see what was discarded. That UI cannot be built from a bare
+`ScoreDoc`: M3 would have to re-filter `session.notes` and re-implement M1's
+rules to work out what is missing and why — a second copy of the pipeline, kept
+in step by hope.
+
+The plumbing for the third path is deliberately the narrowest of the options.
+`quantizeBar` takes an **optional `dropped?: PlacedNote[]` out-parameter**
+rather than a widened return type: its return type is what the whole module is
+about and nine call sites in its own spec do not care, and an optional
+parameter leaves every one of them untouched. `deriveScore` passes a fresh
+array per bar, maps each entry back to its `DetectedNote` through a
+`Map<PlacedNote, DetectedNote>` keyed on object identity — so `PlacedNote` does
+not grow an id field only one caller would ever read — and appends to
+`dropped`.
+
+Five tests: one per reason with the right note reported, one asserting
+`dropped` is empty for a session that comes through whole, and the conservation
+law that only this return shape makes statable — *every note is in the score or
+in `dropped`* — swept over 4,000 (start, separation) pairs at two tempi,
+including the off-slot starts the anchored sweep below cannot cover.
 
 ### Note conservation, end to end
 
@@ -2852,13 +3003,13 @@ second at the bottom of a bass, which has no two-string fingering at all.
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 92 new = **150 tests, 0 failures**.
+Expected: PASS — 58 baseline + 97 new = **155 tests, 0 failures**.
 
-The 92 break down as 5 + 12 + 21 + 23 + 9 + 22 across tasks 1-6. Task 6's
-listing above stops at 10; the other 12 were added by later review rounds and
-live only in `src/app/services/score-derivation.spec.ts`. Two of those twelve
-are the note-conservation property over the whole assembly, described under
-Task 6.
+The 97 break down as 5 + 12 + 21 + 23 + 9 + 27 across tasks 1-6. Task 6's
+listing above stops at 10; the other 17 were added by later review rounds and
+live only in `src/app/services/score-derivation.spec.ts`. Seven of those are
+the note-conservation property over the whole assembly and the reporting of
+what was discarded, both described under Task 6.
 
 **Step 6: Commit**
 
@@ -2871,7 +3022,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 150 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 155 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
 - Every derived bar sums to exactly one bar **and strikes every onset it was given,
   with the pitches that onset carried**, for every time signature and grid tested.
@@ -2881,7 +3032,12 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
   without `quantizeBar` being at fault: `addToChord` drops a pitch whose string is
   already taken, so two simultaneous notes fingered onto one string lose one of
   themselves. `separateSimultaneous` is what keeps that from happening wherever a
-  two-string fingering exists at all.
+  two-string fingering exists at all, and it is handed the very window
+  `quantizeBar` merges on so the two cannot drift apart.
+- **Nothing vanishes.** `deriveScore` returns the notes it discarded alongside the
+  score, with a reason for each, and every note handed in is either struck in the
+  score or listed in `dropped` — swept over onset offsets and separations at
+  several tempi, not argued from the code.
 - The two position-stability tests pass, proving fingering responds to available time.
 
 ## Deliberately not in M1
@@ -2890,7 +3046,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 - **Key inference.** `settings.key` is honoured; `null` falls back to C major. Krumhansl-Schmuckler correlation lands with the notation staff work, since tab is unaffected.
 - **Triplets.** `allowTriplets` exists in the settings and is ignored.
 - **Chord-aware fingering.** The Viterbi pass scores a sequence and cannot see that two notes sound at once, so `separateSimultaneous` repairs its result instead: within one attack the most constrained note claims its string first and the rest take their next-cheapest free candidate. That is enough to keep a dyad off one tab line — the collisions that survive it are the ones no fingering can avoid — but it is a repair, not a search, so the pair it lands on is not always the pair a player would choose. Scoring whole chords, and validating the shapes they make, arrives with guitar polyphony.
-- **Two attacks the grid has nowhere to put.** Onsets more than half a slot apart are two clusters, and two clusters can still round onto one slot — `snapToSlots` says so itself. When they do, `addToChord` drops the second, and no attack window can prevent it: widening the separation window to cover it means separating everything within a whole slot, which would scatter an ordinary run of sixteenths across the neck. It is reachable off a slot boundary — at 120 BPM on a sixteenth grid, a pair starting 65 ms in and 65 to 120 ms apart loses a note, about 7% of the (start, separation) square swept — and it is a statement about `finestDivision` rather than about units: the two onsets round to the same sixteenth, and one sixteenth holds one attack. Closing it properly means either a finer grid or letting the two rounded slots repel each other, which changes the written rhythm; both are bigger than a repair. The conservation sweep anchors its first onset on a slot for exactly this reason, and says so.
+- **Two attacks the grid has nowhere to put.** Onsets more than half a slot apart are two clusters, and two clusters can still round onto one slot — `snapToSlots` says so itself. When they do, `addToChord` drops the second, and no attack window can prevent it: widening the separation window to cover it means separating everything within a whole slot, which would scatter an ordinary run of sixteenths across the neck. It is reachable off a slot boundary — at 120 BPM on a sixteenth grid, a pair starting 65 ms in and 65 to 120 ms apart loses a note, about 7% of the (start, separation) square swept — and it is a statement about `finestDivision` rather than about units: the two onsets round to the same sixteenth, and one sixteenth holds one attack. Closing it properly means either a finer grid or letting the two rounded slots repel each other, which changes the written rhythm; both are bigger than a repair. What M1 does instead is refuse to lose it silently — the drop is reported as `stringTaken`. The conservation sweep anchors its first onset on a slot for exactly this reason, and says so; the unanchored case is covered by the weaker law that a note is in the score or in `dropped`.
 - **Downbeats stated rather than counted.** `BeatGrid` carried a `downbeatIndices` array through all of M1 and nothing ever read it: `deriveScore` derives bars as uniform spans of `numerator` beats from `beatsSec[0]`, so the array's documented invariants were enforced nowhere. It has been removed rather than left as a trap for M2, whose beat tracker exists to produce downbeats — the natural move is to populate it and assume derivation honours it, and a tracker that dropped or doubled a beat would then write bars disagreeing with the grid, silently. M1's rule is uniform bars from `beatsSec[0]`, and a corrected downbeat phase is expressed by trimming `beatsSec`, which scope decision 3 already establishes. **M2 reintroduces the field together with the derivation support that honours it**, in the same change: a field derivation ignores is worse than no field at all.
 - **Pickup bars.** Notes before the first downbeat are pulled onto beat 1.
 - **Note durations.** `DetectedNote.offsetSec` is read by nothing: every note sustains until the next onset, so rests appear only before a bar's first note. See scope decision 5.

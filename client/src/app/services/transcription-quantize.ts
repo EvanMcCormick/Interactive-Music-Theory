@@ -101,19 +101,31 @@ export function chordToleranceBeats(slotsPerBeat: number): number {
 }
 
 /**
- * Adds a pitch to a chord, dropping it if its string is already spoken for.
+ * Adds a note to a chord, dropping it if its string is already spoken for.
  *
  * A tab line holds one number, so a fretted staff shows at most one note per
  * string - the invariant `ComposerService.setNoteAtCursor` enforces on the
  * editing side. Two co-incident notes fingered to the same string, or one
  * onset detected twice, would otherwise write two numbers on one line. The
  * earlier onset wins.
+ *
+ * The loser is appended to `dropped` when the caller supplied one. It is the
+ * only note this module can lose, and losing it without a record is what makes
+ * it dangerous: the score that comes back is perfectly well formed and simply
+ * has one fewer note in it than the performance did.
  */
-function addToChord(chord: NotePitch[], pitch: NotePitch): void {
+function addToChord(
+  chord: NotePitch[],
+  note: PlacedNote,
+  dropped: PlacedNote[] | undefined
+): void {
+  const pitch = note.pitch;
+
   if (
     pitch.kind === 'fretted'
     && chord.some(taken => taken.kind === 'fretted' && taken.string === pitch.string)
   ) {
+    dropped?.push(note);
     return;
   }
 
@@ -133,12 +145,13 @@ function addToChord(chord: NotePitch[], pitch: NotePitch): void {
 function snapToSlots(
   notes: PlacedNote[],
   slotsPerBeat: number,
-  totalSlots: number
+  totalSlots: number,
+  dropped: PlacedNote[] | undefined
 ): Map<number, NotePitch[]> {
   const tolerance = chordToleranceBeats(slotsPerBeat) * slotsPerBeat;
   const sorted = [...notes].sort((a, b) => a.beatInBar - b.beatInBar);
 
-  const clusters: { onsets: number[]; pitches: NotePitch[] }[] = [];
+  const clusters: { onsets: number[]; notes: PlacedNote[] }[] = [];
   for (const note of sorted) {
     const onset = note.beatInBar * slotsPerBeat;
     const open = clusters[clusters.length - 1];
@@ -147,9 +160,9 @@ function snapToSlots(
     // of closely spaced notes cannot chain into one arbitrarily wide chord.
     if (open && onset - open.onsets[0] <= tolerance) {
       open.onsets.push(onset);
-      open.pitches.push(note.pitch);
+      open.notes.push(note);
     } else {
-      clusters.push({ onsets: [onset], pitches: [note.pitch] });
+      clusters.push({ onsets: [onset], notes: [note] });
     }
   }
 
@@ -167,7 +180,7 @@ function snapToSlots(
 
     // Two clusters can still round onto one slot on a coarse grid, so the
     // per-string check belongs here rather than inside the cluster loop.
-    for (const pitch of cluster.pitches) addToChord(chord, pitch);
+    for (const note of cluster.notes) addToChord(chord, note, dropped);
   }
 
   return chords;
@@ -324,11 +337,19 @@ export function slotsToDurations(
  * are snapped to slots, each runs until the next one starts, and gaps become
  * rests. A span no single value can express is split and tied rather than
  * rounded, so the bar total never moves.
+ *
+ * `dropped`, if given, collects the notes this bar could not write: `addToChord`
+ * keeps one note per string, and the ones it turns away are the only notes that
+ * go in and do not come out. An out-parameter rather than a widened return,
+ * because the return type is what the whole module is about and nine call sites
+ * in the spec do not care - `score-derivation.ts` passes an array, unwraps
+ * nothing, and reports upward.
  */
 export function quantizeBar(
   notes: PlacedNote[],
   timeSignature: TimeSignature,
-  finestDivision: FinestDivision
+  finestDivision: FinestDivision,
+  dropped?: PlacedNote[]
 ): BeatDoc[] {
   const slotsPerBeat = finestDivision / timeSignature.denominator;
   if (!Number.isInteger(slotsPerBeat) || slotsPerBeat < 1) {
@@ -350,7 +371,7 @@ export function quantizeBar(
 
   const totalSlots = timeSignature.numerator * slotsPerBeat;
 
-  const chords = snapToSlots(notes, slotsPerBeat, totalSlots);
+  const chords = snapToSlots(notes, slotsPerBeat, totalSlots, dropped);
   const frame = metricFrame(timeSignature, slotsPerBeat);
   const beats: BeatDoc[] = [];
 

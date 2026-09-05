@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import * as alphaTab from '@coderline/alphatab';
+import { ScoreDoc } from '../models/composer.model';
 import {
   BeatGrid,
   DetectedNote,
@@ -12,6 +13,15 @@ import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { candidatesFor } from './transcription-fingering';
 import { beatSlots } from './transcription-quantize';
 import { deriveScore } from './score-derivation';
+
+/**
+ * The score alone, for the cases that are not about what derivation discarded.
+ *
+ * `deriveScore` returns the score and the notes it had to throw away; most of
+ * what follows is about the score, and unwrapping at every call site would bury
+ * the assertions.
+ */
+const derived = (input: TranscriptionSession): ScoreDoc => deriveScore(input).doc;
 
 const note = (pitch: number, onsetSec: number, confidence = 1): DetectedNote => ({
   id: `${pitch}@${onsetSec}`,
@@ -51,7 +61,7 @@ function session(
  * first is a tie continuation rather than a second attack.
  */
 function struckPerBar(input: TranscriptionSession): ([number, number] | null)[][] {
-  return deriveScore(input).tracks[0].staves[0].bars.map(bar =>
+  return derived(input).tracks[0].staves[0].bars.map(bar =>
     bar.voices[0].beats
       .filter(beat => !beat.isRest && !beat.notes[0].isTied)
       .map(beat =>
@@ -64,20 +74,20 @@ function struckPerBar(input: TranscriptionSession): ([number, number] | null)[][
 
 describe('deriveScore', () => {
   it('writes one bar per four beats of material', () => {
-    const score = deriveScore(session([note(33, 0), note(35, 2.0)]));
+    const score = derived(session([note(33, 0), note(35, 2.0)]));
 
     expect(score.masterBars.length).toBe(2);
   });
 
   it('keeps staff bars parallel to master bars', () => {
-    const score = deriveScore(session([note(33, 0), note(35, 2.0)]));
+    const score = derived(session([note(33, 0), note(35, 2.0)]));
     const staff = score.tracks[0].staves[0];
 
     expect(staff.bars.length).toBe(score.masterBars.length);
   });
 
   it('fills every bar exactly', () => {
-    const score = deriveScore(session([note(33, 0), note(35, 0.75), note(40, 2.2)]));
+    const score = derived(session([note(33, 0), note(35, 0.75), note(40, 2.2)]));
     const staff = score.tracks[0].staves[0];
 
     for (const bar of staff.bars) {
@@ -86,7 +96,7 @@ describe('deriveScore', () => {
   });
 
   it('leaves out notes below the confidence floor', () => {
-    const score = deriveScore(session([note(33, 0), note(35, 1.0, 0.05)]));
+    const score = derived(session([note(33, 0), note(35, 1.0, 0.05)]));
     const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
 
     // Struck attacks, not non-rest beats. The surviving note holds the whole
@@ -99,22 +109,22 @@ describe('deriveScore', () => {
   });
 
   it('reads the tempo off the beat grid', () => {
-    expect(deriveScore(session([note(33, 0)])).tempo).toBe(120);
+    expect(derived(session([note(33, 0)])).tempo).toBe(120);
   });
 
   it('produces a tab staff tuned as configured', () => {
-    const staff = deriveScore(session([note(33, 0)])).tracks[0].staves[0];
+    const staff = derived(session([note(33, 0)])).tracks[0].staves[0];
 
     expect(staff.showTablature).toBe(true);
     expect(staff.tuning).toEqual([43, 38, 33, 28]);
   });
 
   it('names the score after its source', () => {
-    expect(deriveScore(session([note(33, 0)])).title).toBe('bassline.wav');
+    expect(derived(session([note(33, 0)])).title).toBe('bassline.wav');
   });
 
   it('produces a valid empty score when nothing was detected', () => {
-    const score = deriveScore(session([]));
+    const score = derived(session([]));
     const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
 
     expect(score.masterBars.length).toBe(1);
@@ -135,7 +145,7 @@ describe('deriveScore', () => {
     TestBed.configureTestingModule({});
     const mapper = TestBed.inject(ScoreDocMapperService);
 
-    const doc = deriveScore(session([note(33, 0), note(45, 1.0), note(52, 2.0)]));
+    const doc = derived(session([note(33, 0), note(45, 1.0), note(52, 2.0)]));
     const score = mapper.toScore(doc, new alphaTab.Settings());
 
     const sounded = score.tracks[0].staves[0].bars.flatMap(bar =>
@@ -168,7 +178,7 @@ describe('deriveScore', () => {
     TestBed.configureTestingModule({});
     const composer = TestBed.inject(ComposerService);
 
-    const doc = deriveScore(session([note(33, 0), note(45, 2.2)]));
+    const doc = derived(session([note(33, 0), note(45, 2.2)]));
     composer.replaceDocument(doc);
 
     // ComposerService's standing invariant: every staff has exactly one bar
@@ -219,7 +229,7 @@ describe('deriveScore', () => {
     // or the duration cap below is the thing being measured rather than the
     // extrapolation. At the four seconds the other cases use, an onset at 13.5
     // is one the audio never contained.
-    expect(deriveScore(session([note(33, 0), note(35, 13.5)], GRID, 14)).masterBars.length)
+    expect(derived(session([note(33, 0), note(35, 13.5)], GRID, 14)).masterBars.length)
       .toBe(7);
   });
 
@@ -239,7 +249,7 @@ describe('deriveScore', () => {
     };
 
     const input = session([note(33, 0), note(35, 10)], fast, 0.1);
-    const score = deriveScore(input);
+    const score = derived(input);
 
     // Ten beats of audio, so three bars, plus the one a note rounding forward
     // off the end needs.
@@ -261,7 +271,7 @@ describe('deriveScore', () => {
 
     const notes = [note(33, 0), note(35, 2), note(38, 4), note(40, 6)];
 
-    expect(deriveScore(session(notes, eightSeconds, 8)).masterBars.length).toBe(4);
+    expect(derived(session(notes, eightSeconds, 8)).masterBars.length).toBe(4);
   });
 
   // -------------------------------------------------------------------------
@@ -286,7 +296,7 @@ describe('deriveScore', () => {
     ];
 
     for (const input of cases) {
-      const score = deriveScore(input);
+      const score = derived(input);
       const staff = score.tracks[0].staves[0];
 
       expect(score.masterBars.length).toBeGreaterThan(0);
@@ -309,7 +319,7 @@ describe('deriveScore', () => {
    */
   it('rejects an onset that is not a time in seconds', () => {
     for (const onset of [NaN, Infinity, -Infinity]) {
-      expect(() => deriveScore(session([note(33, onset)])))
+      expect(() => derived(session([note(33, onset)])))
         .toThrowError(/not a time in seconds/);
     }
   });
@@ -379,7 +389,12 @@ describe('deriveScore', () => {
    * note is missing.
    */
   function soundedPitches(input: TranscriptionSession): number[] {
-    const staff = deriveScore(input).tracks[0].staves[0];
+    return pitchesIn(derived(input));
+  }
+
+  /** The same, read off a score already derived. */
+  function pitchesIn(doc: ScoreDoc): number[] {
+    const staff = doc.tracks[0].staves[0];
 
     return staff.bars.flatMap(bar =>
       bar.voices[0].beats
@@ -425,6 +440,10 @@ describe('deriveScore', () => {
    * and it is recorded as a known limitation rather than fixed here. Anchoring
    * the first onset on a slot removes exactly that case and leaves the merge
    * window, which is the thing under test.
+   *
+   * The unanchored case is not left untested: "accounts for every note it was
+   * given" sweeps it, and asserts the weaker law that holds everywhere - a note
+   * is in the score or in `dropped`, never simply gone.
    */
   it('keeps both notes of a playable pair however far apart the onsets are', () => {
     // Each pair has a two-string fingering, checked below rather than asserted
@@ -479,5 +498,102 @@ describe('deriveScore', () => {
     // Far enough apart to be two attacks and the same pair comes through
     // whole, which is why the sweep above has to be a sweep.
     expect(soundedPitches(session([note(28, 0), note(30, 0.5)]))).toEqual([28, 30]);
+  });
+
+  // -------------------------------------------------------------------------
+  // What was discarded.
+  //
+  // Three paths lose notes and a ScoreDoc records none of them: the confidence
+  // floor, an unplayable pitch, and a string already taken. M3 has to render a
+  // rejected note greyed rather than let it disappear, and it cannot work out
+  // which notes those are from the score - it would have to re-filter
+  // `session.notes` and re-implement the rules here, a second copy of the
+  // pipeline kept in step by hope.
+  // -------------------------------------------------------------------------
+
+  it('reports a note left out by the confidence floor', () => {
+    const quiet = note(35, 1.0, 0.05);
+    const { dropped } = deriveScore(session([note(33, 0), quiet]));
+
+    expect(dropped).toEqual([{ note: quiet, reason: 'belowConfidence' }]);
+  });
+
+  it('reports a pitch the instrument cannot play', () => {
+    // A one-string instrument five frets long reaches 28 to 33 and no further.
+    // The range is narrower than an octave, so `correctOctaves` has no safe
+    // fold and leaves both pitches where the detector put them.
+    const high = note(100, 0);
+    const higher = note(101, 1);
+
+    const { doc, dropped } = deriveScore({
+      ...session([high, higher]),
+      settings: { ...createDefaultDerivationSettings(), tuning: [28], maxFret: 5 }
+    });
+
+    expect(dropped).toEqual([
+      { note: high, reason: 'unplayable' },
+      { note: higher, reason: 'unplayable' }
+    ]);
+
+    // Still a score, and still an honest one: nothing was written.
+    expect(doc.tracks[0].staves[0].bars[0].voices[0].beats.every(beat => beat.isRest))
+      .toBe(true);
+  });
+
+  it('reports a pitch whose string was already taken', () => {
+    // E1 and F#1 both live on the bottom string of a bass and nowhere else, so
+    // struck together one of them cannot be written. Reported rather than
+    // silently absent, which is the whole difference this makes.
+    const second = note(30, 0.01);
+    const { dropped } = deriveScore(session([note(28, 0), second]));
+
+    expect(dropped).toEqual([{ note: second, reason: 'stringTaken' }]);
+  });
+
+  it('reports nothing for a session it can write whole', () => {
+    expect(deriveScore(session([note(33, 0), note(45, 1.0), note(52, 2.0)])).dropped)
+      .toEqual([]);
+  });
+
+  /**
+   * The conservation law the sweep above cannot state on its own.
+   *
+   * That sweep anchors its first onset on a slot, because off a slot boundary
+   * two onsets more than half a slot apart can still round onto one slot, and
+   * one slot holds one attack - a limit of `finestDivision`, not a bug the
+   * attack window can close. What must hold everywhere, anchored or not, is
+   * weaker and more important: a note is either in the score or in `dropped`.
+   * Nothing may simply cease to exist.
+   *
+   * This is the property that would have caught the original defect on its
+   * own, without knowing anything about windows or units.
+   */
+  it('accounts for every note it was given, at any offset', () => {
+    const unaccounted: string[] = [];
+
+    for (const bpm of [60, 120]) {
+      const grid = gridAtTempo(bpm);
+      const durationSec = 16 * (60 / bpm);
+
+      for (let baseMs = 0; baseMs <= 250; baseMs += 5) {
+        for (let gapMs = 0; gapMs <= 200; gapMs += 5) {
+          const input = session(
+            [note(33, baseMs / 1000), note(36, (baseMs + gapMs) / 1000)],
+            grid,
+            durationSec
+          );
+
+          const { doc, dropped } = deriveScore(input);
+          const accounted = [...pitchesIn(doc), ...dropped.map(entry => entry.note.pitch)]
+            .sort((a, b) => a - b);
+
+          if (accounted.length !== 2 || accounted[0] !== 33 || accounted[1] !== 36) {
+            unaccounted.push(`${bpm} BPM, ${baseMs} ms in, ${gapMs} ms apart`);
+          }
+        }
+      }
+    }
+
+    expect(unaccounted).toEqual([]);
   });
 });
