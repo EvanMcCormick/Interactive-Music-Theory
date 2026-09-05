@@ -62,15 +62,18 @@ const OPEN_STRING_MOVE_DISCOUNT = 0.25;
 /**
  * How close two onsets have to be to count as one attack.
  *
- * `MOVE_REFERENCE_SEC / MAX_TIME_FACTOR` is the gap below which movement cost
- * stops responding to the gap at all - the model has already decided there is
- * no time to move - so it is the natural place to stop treating two notes as
- * consecutive and start treating them as struck together. At 31 ms it is also
- * about what a hand takes to cross the strings, and comfortably inside
- * `transcription-quantize.ts`'s own chord tolerance, so nothing this pass
- * separates can be re-merged into a chord it did not look at.
+ * A fact about hands rather than about the cost model: 30 ms is roughly what
+ * it takes to cross the strings, which is why `transcription-quantize.ts`
+ * sizes its own chord tolerance the same way. Sitting inside that tolerance
+ * matters, since anything this pass separates is about to be merged into one
+ * chord there.
+ *
+ * It lands close to `MOVE_REFERENCE_SEC / MAX_TIME_FACTOR`, the gap below
+ * which movement cost stops responding to the gap at all, and that is a
+ * pleasing coincidence rather than a derivation - deriving it would let a
+ * change to the cost ceiling silently redefine what counts as a chord.
  */
-const SIMULTANEITY_SEC = MOVE_REFERENCE_SEC / MAX_TIME_FACTOR;
+const SIMULTANEITY_SEC = 0.03;
 
 /**
  * Every string/fret pair that sounds `pitch` on this instrument.

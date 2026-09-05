@@ -1367,17 +1367,22 @@ describe('assignFingering', () => {
   /**
    * Charging nothing for a shift across an open string does not merely permit
    * a leap, it pays for one. `55 -> 45` on its own gives the sane
-   * `s1f12 | s3f12`; interposing an open A over the same 0.04s used to buy
-   * fret 22, because zeroing both move costs made staying on one string save
-   * more in string-change cost than the leap cost. And it composes: an
-   * alternating fretted/open figure bought unlimited free travel.
+   * `s1f12 | s3f12`; interposing an open A across the same two thirty-seconds
+   * used to buy fret 22, because zeroing both move costs made staying on one
+   * string save more in string-change cost than the leap cost. And it
+   * composes: an alternating fretted/open figure bought unlimited free travel.
+   *
+   * The onsets are thirty-seconds at 120 rather than the 20 ms this was
+   * written with, which `separateSimultaneous` now reads as a single attack -
+   * and repairing the collision put the first note back on fret 12 by
+   * accident, which would have hidden the leap this exists to catch.
    */
   it('does not buy a leap with an open string in the middle', () => {
     const figure = assignFingering(
       [
         { pitch: 55, onsetSec: 0 },
-        { pitch: 33, onsetSec: 0.02 },
-        { pitch: 45, onsetSec: 0.04 }
+        { pitch: 33, onsetSec: 0.0625 },
+        { pitch: 45, onsetSec: 0.125 }
       ],
       SETTINGS
     );
@@ -1394,8 +1399,11 @@ describe('assignFingering', () => {
    * score with nothing to show it was ever there.
    */
   it('moves a simultaneous note off a string already taken', () => {
+    // 10 ms apart rather than exactly together: a detector does not report
+    // two strings plucked at once to the sample, and a window that only
+    // caught identical onsets would catch almost nothing real.
     const dyad = assignFingering(
-      [{ pitch: 33, onsetSec: 0 }, { pitch: 36, onsetSec: 0 }],
+      [{ pitch: 33, onsetSec: 0 }, { pitch: 36, onsetSec: 0.01 }],
       SETTINGS
     );
 
@@ -1424,7 +1432,7 @@ describe('assignFingering', () => {
    */
   it('moves whichever of two simultaneous notes has somewhere to go', () => {
     const dyad = assignFingering(
-      [{ pitch: 43, onsetSec: 0 }, { pitch: 63, onsetSec: 0 }],
+      [{ pitch: 43, onsetSec: 0 }, { pitch: 63, onsetSec: 0.01 }],
       SETTINGS
     );
 
@@ -1443,7 +1451,7 @@ describe('assignFingering', () => {
    */
   it('leaves a collision that no fingering can avoid', () => {
     expect(
-      assignFingering([{ pitch: 28, onsetSec: 0 }, { pitch: 30, onsetSec: 0 }], SETTINGS)
+      assignFingering([{ pitch: 28, onsetSec: 0 }, { pitch: 30, onsetSec: 0.01 }], SETTINGS)
     ).toEqual([
       { kind: 'fretted', string: 4, fret: 0 },
       { kind: 'fretted', string: 4, fret: 2 }
@@ -1457,6 +1465,160 @@ describe('assignFingering', () => {
     );
 
     expect(hinted[0]).toEqual({ kind: 'fretted', string: 3, fret: 12 });
+  });
+
+  // ---------------------------------------------------------------------
+  // The weights themselves.
+  //
+  // The tests above pin behaviour the weights happen to produce; these pin
+  // the weights. Each fixture was chosen by mutation: the answer below is
+  // stable when its weight is nudged 10% either way, and changes when the
+  // weight is zeroed or doubled. A fixture that only survives the true value
+  // by a rounding error would pass here and prove nothing, so none were kept.
+  // ---------------------------------------------------------------------
+
+  /**
+   * These two weights are one ratio, not two numbers. Every alternative
+   * fingering of a pitch on an instrument tuned in fourths trades five frets
+   * of height for one string of crossing, so `FRET_HEIGHT_WEIGHT * 5` and
+   * `STRING_CHANGE_WEIGHT` are always weighed against each other and no
+   * fixture can move one without moving the other. What can be pinned is
+   * where the balance sits, which is what this does - from both sides.
+   */
+  it('balances a string crossing against the climb it saves', () => {
+    // G#1 then G#2, two seconds apart: time enough to go anywhere.
+    const octave = assignFingering(
+      [{ pitch: 32, onsetSec: 0 }, { pitch: 44, onsetSec: 2 }],
+      SETTINGS
+    );
+
+    // Tip it towards crossing - no charge for it, or a dearer neck - and the
+    // hand jumps three strings for fret 1. Tip it the other way and it never
+    // leaves the E string, climbing to fret 16. Fret 6 of the D string is the
+    // answer between them.
+    expect(octave[1]).toEqual({ kind: 'fretted', string: 2, fret: 6 });
+  });
+
+  /**
+   * The older open-string test cannot see this weight at all: `candidatesFor`
+   * returns the open A first and ties break towards the first candidate, so
+   * it passes with every weight set to zero. Here the open string has to earn
+   * its place against a crossing, which is the only way the bonus can matter.
+   */
+  it('pays a bonus for an open string, without overpaying', () => {
+    // G#1 then D2, a quarter apart. The open D is two strings away; fret 5 of
+    // the A string is one. Without the bonus the nearer string wins.
+    const openD = assignFingering(
+      [{ pitch: 32, onsetSec: 0 }, { pitch: 38, onsetSec: 0.25 }],
+      SETTINGS
+    );
+    expect(openD[1]).toEqual({ kind: 'fretted', string: 2, fret: 0 });
+
+    // A1 and C#3 struck together. Fret 5 of the E string puts the hand beside
+    // the C# at fret 6 of the G string - a shape a hand can make. Double the
+    // bonus and the open A is worth taking instead, spreading the same two
+    // notes across the whole neck.
+    const dyad = assignFingering(
+      [{ pitch: 33, onsetSec: 0 }, { pitch: 49, onsetSec: 0.001 }],
+      SETTINGS
+    );
+    expect(dyad[0]).toEqual({ kind: 'fretted', string: 4, fret: 5 });
+  });
+
+  /**
+   * `MIN_TIME_FACTOR` is why the module docblock cannot say a shift across a
+   * rest is free. Time buys travel, but only down to a floor; past about two
+   * and a half seconds the gap stops mattering and a five-fret shift still
+   * costs 0.5.
+   */
+  it('never lets a long rest make a shift free', () => {
+    // F#1, up an octave and a major third, and back - three seconds apart.
+    const spaced = assignFingering(
+      [
+        { pitch: 30, onsetSec: 0 },
+        { pitch: 44, onsetSec: 3 },
+        { pitch: 30, onsetSec: 6 }
+      ],
+      SETTINGS
+    );
+
+    // Take the floor away and three seconds buys a fourteen-fret climb up the
+    // E string for nothing. Double it and movement outweighs the crossing, so
+    // the hand takes fret 1 of the G string to stay where it is.
+    expect(spaced[1]).toEqual({ kind: 'fretted', string: 2, fret: 6 });
+  });
+
+  /**
+   * `MAX_TIME_FACTOR` is the other end of the same clamp, and it only engages
+   * below about 31 ms - in practice a chord, or a detector reporting one
+   * attack twice. There is no movement to charge for between two notes struck
+   * together, and without a ceiling the model charges for it anyway.
+   */
+  it('never lets a chord price a string crossing out of reach', () => {
+    // G#1, G#2 and D2, detected a millisecond apart: one attack.
+    const chord = assignFingering(
+      [
+        { pitch: 32, onsetSec: 0 },
+        { pitch: 44, onsetSec: 0.001 },
+        { pitch: 38, onsetSec: 0.002 }
+      ],
+      SETTINGS
+    );
+
+    // Without the ceiling the imagined travel swamps every other term and the
+    // three notes are crammed into frets 4-6, open D and all. With it, the
+    // open D survives and the G# takes fret 1 of the G string.
+    expect(chord[1]).toEqual({ kind: 'fretted', string: 1, fret: 1 });
+    expect(chord[2]).toEqual({ kind: 'fretted', string: 2, fret: 0 });
+  });
+
+  /**
+   * The leap test above pins this discount away from 0, where an open string
+   * makes travel free. It does not pin it away from 1, which is no discount
+   * at all - and 1 is the value someone deleting a special case would reach
+   * for. Two notes are enough to pin both ends.
+   */
+  it('discounts a move across an open string without abolishing it', () => {
+    // A1 then G3, a sixteenth apart.
+    const climb = assignFingering(
+      [{ pitch: 33, onsetSec: 0 }, { pitch: 55, onsetSec: 0.125 }],
+      SETTINGS
+    );
+
+    // At no discount the open A is not worth the crossing and the A becomes
+    // fret 5 of the E string. At a full discount the open A pays for a leap
+    // to fret 22 of its own string. In between: open A, then fret 12.
+    expect(climb).toEqual([
+      { kind: 'fretted', string: 3, fret: 0 },
+      { kind: 'fretted', string: 1, fret: 12 }
+    ]);
+  });
+
+  /**
+   * `SIMULTANEITY_SEC` needs pinning at both ends. Too small and a detector
+   * reporting a chord a few milliseconds wide stops being a chord; too large
+   * and consecutive notes of an ordinary line are read as struck together,
+   * and the repair scatters a run that belongs on one string.
+   *
+   * The same run shows the move discount doing its job: five notes up the E
+   * string and then across to the open A, rather than carrying on to fret 5.
+   */
+  it('leaves a run of sixteenths on the string it belongs on', () => {
+    const run = [28, 29, 30, 31, 32, 33, 34, 35].map((pitch, index) => ({
+      pitch,
+      onsetSec: index * 0.125
+    }));
+
+    expect(assignFingering(run, SETTINGS)).toEqual([
+      { kind: 'fretted', string: 4, fret: 0 },
+      { kind: 'fretted', string: 4, fret: 1 },
+      { kind: 'fretted', string: 4, fret: 2 },
+      { kind: 'fretted', string: 4, fret: 3 },
+      { kind: 'fretted', string: 4, fret: 4 },
+      { kind: 'fretted', string: 3, fret: 0 },
+      { kind: 'fretted', string: 3, fret: 1 },
+      { kind: 'fretted', string: 3, fret: 2 }
+    ]);
   });
 });
 ```
@@ -1534,15 +1696,18 @@ const OPEN_STRING_MOVE_DISCOUNT = 0.25;
 /**
  * How close two onsets have to be to count as one attack.
  *
- * `MOVE_REFERENCE_SEC / MAX_TIME_FACTOR` is the gap below which movement cost
- * stops responding to the gap at all - the model has already decided there is
- * no time to move - so it is the natural place to stop treating two notes as
- * consecutive and start treating them as struck together. At 31 ms it is also
- * about what a hand takes to cross the strings, and comfortably inside
- * `transcription-quantize.ts`'s own chord tolerance, so nothing this pass
- * separates can be re-merged into a chord it did not look at.
+ * A fact about hands rather than about the cost model: 30 ms is roughly what
+ * it takes to cross the strings, which is why `transcription-quantize.ts`
+ * sizes its own chord tolerance the same way. Sitting inside that tolerance
+ * matters, since anything this pass separates is about to be merged into one
+ * chord there.
+ *
+ * It lands close to `MOVE_REFERENCE_SEC / MAX_TIME_FACTOR`, the gap below
+ * which movement cost stops responding to the gap at all, and that is a
+ * pleasing coincidence rather than a derivation - deriving it would let a
+ * change to the cost ceiling silently redefine what counts as a chord.
  */
-const SIMULTANEITY_SEC = MOVE_REFERENCE_SEC / MAX_TIME_FACTOR;
+const SIMULTANEITY_SEC = 0.03;
 
 /**
  * Every string/fret pair that sounds `pitch` on this instrument.
@@ -1814,9 +1979,13 @@ export function assignFingering(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 16 tests.
+Expected: PASS, 22 tests.
 
 If the two position tests fail, the weights are miscalibrated rather than the algorithm being wrong — check `MOVE_REFERENCE_SEC` and `FRET_HEIGHT_WEIGHT` first. Both fixtures were chosen so the fast and slow answers differ under the constants above.
+
+The last six tests pin the constants themselves rather than behaviour they happen to produce. Each fixture was picked by mutation: the expected answer holds when its constant is nudged 10% either way and changes when the constant is zeroed or doubled, so a fixture surviving on a rounding error cannot masquerade as a test. Zeroing or doubling any of `STRING_CHANGE_WEIGHT`, `FRET_HEIGHT_WEIGHT`, `OPEN_STRING_BONUS`, `MOVE_WEIGHT`, `POSITION_HINT_WEIGHT`, `MOVE_REFERENCE_SEC`, `MIN_TIME_FACTOR`, `MAX_TIME_FACTOR`, `OPEN_STRING_MOVE_DISCOUNT` or `SIMULTANEITY_SEC` now fails at least one test.
+
+`STRING_CHANGE_WEIGHT` and `FRET_HEIGHT_WEIGHT` cannot be separated, and one test covers both. On an instrument tuned in fourths every alternative fingering of a pitch trades five frets of height for one string of crossing, so only the ratio `FRET_HEIGHT_WEIGHT * 5 : STRING_CHANGE_WEIGHT` is observable; a sweep of every two-note bass fixture found no case that moves one without moving the other.
 
 **Step 5: Commit**
 
@@ -2248,9 +2417,9 @@ Expected: PASS, 8 tests.
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 64 new = **122 tests, 0 failures**.
+Expected: PASS — 58 baseline + 70 new = **128 tests, 0 failures**.
 
-The 64 break down as 5 + 12 + 15 + 16 + 8 + 8 across tasks 1-6.
+The 70 break down as 5 + 12 + 15 + 22 + 8 + 8 across tasks 1-6.
 
 **Step 6: Commit**
 
@@ -2263,7 +2432,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 122 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 128 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
 - Every derived bar sums to exactly one bar **and strikes every onset it was given,
   with the pitches that onset carried**, for every time signature and grid tested.
