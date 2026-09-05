@@ -1386,6 +1386,70 @@ describe('assignFingering', () => {
     expect(figure.every(pitch => pitch?.kind === 'fretted' && pitch.fret <= 12)).toBe(true);
   });
 
+  /**
+   * The Viterbi pass scores a sequence and cannot see that two notes sound at
+   * once, so it fingers a dyad on whichever single string is cheapest. The
+   * consequence is not just unreadable tab: a tab line holds one number, so
+   * `transcription-quantize.ts` drops the second pitch and the note leaves the
+   * score with nothing to show it was ever there.
+   */
+  it('moves a simultaneous note off a string already taken', () => {
+    const dyad = assignFingering(
+      [{ pitch: 33, onsetSec: 0 }, { pitch: 36, onsetSec: 0 }],
+      SETTINGS
+    );
+
+    // Both notes still sound, on strings that can each hold a number.
+    const sounded = dyad.map(pitch =>
+      pitch?.kind === 'fretted'
+        ? STANDARD_BASS_TUNING[pitch.string - 1] + pitch.fret
+        : null
+    );
+    expect(sounded).toEqual([33, 36]);
+    expect(new Set(dyad.map(pitch => pitch?.kind === 'fretted' && pitch.string)).size)
+      .toBe(2);
+
+    // Unrepaired both land on the A string, at frets 0 and 3.
+    expect(dyad).toEqual([
+      { kind: 'fretted', string: 3, fret: 0 },
+      { kind: 'fretted', string: 4, fret: 8 }
+    ]);
+  });
+
+  /**
+   * Which note moves cannot be decided on cost alone. Above fret 24 of the D
+   * string a bass has one string left, so a pitch up there has exactly one
+   * candidate; if the open string it collides with claims that string first,
+   * the constrained note is stranded on a collision it had a way out of.
+   */
+  it('moves whichever of two simultaneous notes has somewhere to go', () => {
+    const dyad = assignFingering(
+      [{ pitch: 43, onsetSec: 0 }, { pitch: 63, onsetSec: 0 }],
+      SETTINGS
+    );
+
+    // 63 can only be fret 20 of the G string, so the open G has to give way.
+    expect(dyad).toEqual([
+      { kind: 'fretted', string: 2, fret: 5 },
+      { kind: 'fretted', string: 1, fret: 20 }
+    ]);
+  });
+
+  /**
+   * Not every collision is a mistake. A minor second at the bottom of a bass
+   * lives on the E string at both ends, so there is no two-string fingering to
+   * find and one of the two notes is lost downstream - which is what a player
+   * would tell you about that interval on that instrument.
+   */
+  it('leaves a collision that no fingering can avoid', () => {
+    expect(
+      assignFingering([{ pitch: 28, onsetSec: 0 }, { pitch: 30, onsetSec: 0 }], SETTINGS)
+    ).toEqual([
+      { kind: 'fretted', string: 4, fret: 0 },
+      { kind: 'fretted', string: 4, fret: 2 }
+    ]);
+  });
+
   it('pulls the hand towards a position hint', () => {
     const hinted = assignFingering(
       [{ pitch: 45, onsetSec: 0 }],
@@ -1466,6 +1530,19 @@ const POSITION_HINT_WEIGHT = 0.5;
  * reachable on ordinary material rather than a contrived fixture.
  */
 const OPEN_STRING_MOVE_DISCOUNT = 0.25;
+
+/**
+ * How close two onsets have to be to count as one attack.
+ *
+ * `MOVE_REFERENCE_SEC / MAX_TIME_FACTOR` is the gap below which movement cost
+ * stops responding to the gap at all - the model has already decided there is
+ * no time to move - so it is the natural place to stop treating two notes as
+ * consecutive and start treating them as struck together. At 31 ms it is also
+ * about what a hand takes to cross the strings, and comfortably inside
+ * `transcription-quantize.ts`'s own chord tolerance, so nothing this pass
+ * separates can be re-merged into a chord it did not look at.
+ */
+const SIMULTANEITY_SEC = MOVE_REFERENCE_SEC / MAX_TIME_FACTOR;
 
 /**
  * Every string/fret pair that sounds `pitch` on this instrument.
@@ -1574,6 +1651,101 @@ function bestPath(
 }
 
 /**
+ * Moves notes struck together off each other's strings.
+ *
+ * `bestPath` scores a sequence and has no concept of two notes sounding at
+ * once, so it will finger a dyad twice on one string wherever that is the
+ * cheapest path - on a bass, for about one simultaneous pitch pair in nine.
+ * That is worse than merely invalid tab. A tab line holds one number, so
+ * `transcription-quantize.ts` drops a pitch whose string is already spoken
+ * for, and the second note leaves the score with no signal at all.
+ *
+ * A chord-aware Viterbi is the real answer and is deliberately not in M1, so
+ * this is a bounded repair on the result instead: within one attack the note
+ * already sitting cheapest keeps its string, and the others take their
+ * next-cheapest candidate on a string nobody else in the attack holds.
+ * Ranking by `nodeCost` rather than anything new keeps the repair speaking the
+ * same language as the path it is repairing.
+ *
+ * Where no free candidate exists the collision stands. A minor second on the
+ * bottom string of a bass has nowhere else to go, and losing one of the two
+ * notes is then the honest outcome rather than a bug.
+ *
+ * Mutates `chosen` in place. Requires `notes` in ascending `onsetSec`.
+ */
+function separateSimultaneous(
+  chosen: (Candidate | null)[],
+  notes: FingeringInput[],
+  settings: DerivationSettings
+): void {
+  let start = 0;
+
+  while (start < notes.length) {
+    // Measured from the attack's first onset rather than its last, so a run of
+    // closely spaced notes cannot chain into one arbitrarily long attack. The
+    // same rule `snapToSlots` uses to cluster onsets into chords.
+    let end = start + 1;
+    while (
+      end < notes.length
+      && notes[end].onsetSec - notes[start].onsetSec <= SIMULTANEITY_SEC
+    ) {
+      end++;
+    }
+
+    if (end - start > 1) separateAttack(chosen, notes, settings, start, end);
+    start = end;
+  }
+}
+
+/** One attack's worth of `separateSimultaneous`, over `chosen[start..end)`. */
+function separateAttack(
+  chosen: (Candidate | null)[],
+  notes: FingeringInput[],
+  settings: DerivationSettings,
+  start: number,
+  end: number
+): void {
+  const options = new Map<number, Candidate[]>();
+  for (let i = start; i < end; i++) {
+    if (chosen[i] === null) continue;
+    options.set(
+      i,
+      candidatesFor(notes[i].pitch, settings.tuning, settings.capo, settings.maxFret)
+    );
+  }
+
+  // Fewest options claims its string first, then cheapest position. Cost order
+  // alone is not enough: the top of a bass's range lives on one string only,
+  // and letting an open string it collides with claim that string first strands
+  // it on a collision it had a way out of. Whichever note ends up moving, it is
+  // the one with somewhere to move to.
+  const placed = [...options.keys()].sort((a, b) =>
+    options.get(a)!.length - options.get(b)!.length
+    || nodeCost(chosen[a]!, settings) - nodeCost(chosen[b]!, settings)
+  );
+
+  const taken = new Set<number>();
+  for (const index of placed) {
+    const current = chosen[index]!;
+    if (!taken.has(current.string)) {
+      taken.add(current.string);
+      continue;
+    }
+
+    const free = options.get(index)!.filter(candidate => !taken.has(candidate.string));
+
+    if (free.length === 0) continue;
+
+    const replacement = free.reduce((best, candidate) =>
+      nodeCost(candidate, settings) < nodeCost(best, settings) ? candidate : best
+    );
+
+    chosen[index] = replacement;
+    taken.add(replacement.string);
+  }
+}
+
+/**
  * Chooses a string and fret for every note, minimising total playing effort.
  *
  * The interesting term is movement cost scaled by the gap to the previous
@@ -1595,7 +1767,7 @@ export function assignFingering(
   notes: FingeringInput[],
   settings: DerivationSettings
 ): (NotePitch | null)[] {
-  const result: (NotePitch | null)[] = new Array(notes.length).fill(null);
+  const chosen: (Candidate | null)[] = new Array(notes.length).fill(null);
 
   let runStart = 0;
   while (runStart < notes.length) {
@@ -1617,12 +1789,7 @@ export function assignFingering(
     if (candidateSets.length > 0) {
       bestPath(candidateSets, notes.slice(runStart, end), settings)
         .forEach((candidate, offset) => {
-          result[runStart + offset] = {
-            kind: 'fretted',
-            // Tuning subscript to tab string number; see the docblock.
-            string: candidate.string + 1,
-            fret: candidate.fret
-          };
+          chosen[runStart + offset] = candidate;
         });
       runStart = end;
     } else {
@@ -1631,13 +1798,23 @@ export function assignFingering(
     }
   }
 
-  return result;
+  // Runs are optimised as sequences, so two notes struck together can come out
+  // on one string; the repair spans runs because an unplayable note between
+  // them does not stop them sounding at the same moment.
+  separateSimultaneous(chosen, notes, settings);
+
+  return chosen.map(candidate =>
+    candidate === null
+      ? null
+      // Tuning subscript to tab string number; see the docblock.
+      : { kind: 'fretted', string: candidate.string + 1, fret: candidate.fret }
+  );
 }
 ```
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 13 tests.
+Expected: PASS, 16 tests.
 
 If the two position tests fail, the weights are miscalibrated rather than the algorithm being wrong — check `MOVE_REFERENCE_SEC` and `FRET_HEIGHT_WEIGHT` first. Both fixtures were chosen so the fast and slow answers differ under the constants above.
 
@@ -1761,6 +1938,19 @@ Create `src/app/services/transcription-octave.ts`:
 
 ```typescript
 import { DetectedNote, DerivationSettings } from '../models/transcription.model';
+
+/**
+ * Corrects octave errors that a detector's own output cannot rule out.
+ *
+ * The pipeline knows one thing the model does not: which pitches the
+ * instrument can physically sound. That is enough to catch the commonest bass
+ * transcription error without any musical context, by folding anything outside
+ * the neck's range back onto it in whole octaves.
+ *
+ * Pure functions with no Angular or audio dependency, following the
+ * `staff-pitch.ts` precedent, so the folding can be checked directly against
+ * hand-written tunings.
+ */
 
 /**
  * Folds out-of-range pitches back onto the instrument.
@@ -2058,9 +2248,9 @@ Expected: PASS, 8 tests.
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 61 new = **119 tests, 0 failures**.
+Expected: PASS — 58 baseline + 64 new = **122 tests, 0 failures**.
 
-The 61 break down as 5 + 12 + 15 + 13 + 8 + 8 across tasks 1-6.
+The 64 break down as 5 + 12 + 15 + 16 + 8 + 8 across tasks 1-6.
 
 **Step 6: Commit**
 
@@ -2073,13 +2263,17 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 119 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 122 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
 - Every derived bar sums to exactly one bar **and strikes every onset it was given,
   with the pitches that onset carried**, for every time signature and grid tested.
   Length alone is not the invariant: a `quantizeBar` that discarded its notes and
   emitted rests would satisfy that half, and one that shuffled pitches between
-  slots would satisfy a count of attacks.
+  slots would satisfy a count of attacks. Note that fingering can cost a note here
+  without `quantizeBar` being at fault: `addToChord` drops a pitch whose string is
+  already taken, so two simultaneous notes fingered onto one string lose one of
+  themselves. `separateSimultaneous` is what keeps that from happening wherever a
+  two-string fingering exists at all.
 - The two position-stability tests pass, proving fingering responds to available time.
 
 ## Deliberately not in M1
@@ -2087,7 +2281,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 - **Cost-based quantization DP.** Greedy decomposition inside metric fragments guarantees exact bars and keeps the beat visible; choosing between the spellings that remain — dotted quarter vs quarter-tied-to-eighth, both metrically sound — by onset strength is the refinement.
 - **Key inference.** `settings.key` is honoured; `null` falls back to C major. Krumhansl-Schmuckler correlation lands with the notation staff work, since tab is unaffected.
 - **Triplets.** `allowTriplets` exists in the settings and is ignored.
-- **Chords.** Simultaneous notes merge into one beat, which is right, but no chord-shape validation happens — that arrives with guitar polyphony.
+- **Chord-aware fingering.** The Viterbi pass scores a sequence and cannot see that two notes sound at once, so `separateSimultaneous` repairs its result instead: within one attack the most constrained note claims its string first and the rest take their next-cheapest free candidate. That is enough to keep a dyad off one tab line — the collisions that survive it are the ones no fingering can avoid — but it is a repair, not a search, so the pair it lands on is not always the pair a player would choose. Scoring whole chords, and validating the shapes they make, arrives with guitar polyphony.
 - **Pickup bars.** Notes before the first downbeat are pulled onto beat 1.
 - **Note durations.** `DetectedNote.offsetSec` is read by nothing: every note sustains until the next onset, so rests appear only before a bar's first note. See scope decision 5.
 - **Context-based octave correction.** Only out-of-range folding is implemented; an octave error landing on a playable pitch survives.

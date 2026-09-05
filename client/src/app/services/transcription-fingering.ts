@@ -60,6 +60,19 @@ const POSITION_HINT_WEIGHT = 0.5;
 const OPEN_STRING_MOVE_DISCOUNT = 0.25;
 
 /**
+ * How close two onsets have to be to count as one attack.
+ *
+ * `MOVE_REFERENCE_SEC / MAX_TIME_FACTOR` is the gap below which movement cost
+ * stops responding to the gap at all - the model has already decided there is
+ * no time to move - so it is the natural place to stop treating two notes as
+ * consecutive and start treating them as struck together. At 31 ms it is also
+ * about what a hand takes to cross the strings, and comfortably inside
+ * `transcription-quantize.ts`'s own chord tolerance, so nothing this pass
+ * separates can be re-merged into a chord it did not look at.
+ */
+const SIMULTANEITY_SEC = MOVE_REFERENCE_SEC / MAX_TIME_FACTOR;
+
+/**
  * Every string/fret pair that sounds `pitch` on this instrument.
  *
  * Frets are relative to the capo, the way tab writes them, so a capo at 5
@@ -166,6 +179,101 @@ function bestPath(
 }
 
 /**
+ * Moves notes struck together off each other's strings.
+ *
+ * `bestPath` scores a sequence and has no concept of two notes sounding at
+ * once, so it will finger a dyad twice on one string wherever that is the
+ * cheapest path - on a bass, for about one simultaneous pitch pair in nine.
+ * That is worse than merely invalid tab. A tab line holds one number, so
+ * `transcription-quantize.ts` drops a pitch whose string is already spoken
+ * for, and the second note leaves the score with no signal at all.
+ *
+ * A chord-aware Viterbi is the real answer and is deliberately not in M1, so
+ * this is a bounded repair on the result instead: within one attack the note
+ * already sitting cheapest keeps its string, and the others take their
+ * next-cheapest candidate on a string nobody else in the attack holds.
+ * Ranking by `nodeCost` rather than anything new keeps the repair speaking the
+ * same language as the path it is repairing.
+ *
+ * Where no free candidate exists the collision stands. A minor second on the
+ * bottom string of a bass has nowhere else to go, and losing one of the two
+ * notes is then the honest outcome rather than a bug.
+ *
+ * Mutates `chosen` in place. Requires `notes` in ascending `onsetSec`.
+ */
+function separateSimultaneous(
+  chosen: (Candidate | null)[],
+  notes: FingeringInput[],
+  settings: DerivationSettings
+): void {
+  let start = 0;
+
+  while (start < notes.length) {
+    // Measured from the attack's first onset rather than its last, so a run of
+    // closely spaced notes cannot chain into one arbitrarily long attack. The
+    // same rule `snapToSlots` uses to cluster onsets into chords.
+    let end = start + 1;
+    while (
+      end < notes.length
+      && notes[end].onsetSec - notes[start].onsetSec <= SIMULTANEITY_SEC
+    ) {
+      end++;
+    }
+
+    if (end - start > 1) separateAttack(chosen, notes, settings, start, end);
+    start = end;
+  }
+}
+
+/** One attack's worth of `separateSimultaneous`, over `chosen[start..end)`. */
+function separateAttack(
+  chosen: (Candidate | null)[],
+  notes: FingeringInput[],
+  settings: DerivationSettings,
+  start: number,
+  end: number
+): void {
+  const options = new Map<number, Candidate[]>();
+  for (let i = start; i < end; i++) {
+    if (chosen[i] === null) continue;
+    options.set(
+      i,
+      candidatesFor(notes[i].pitch, settings.tuning, settings.capo, settings.maxFret)
+    );
+  }
+
+  // Fewest options claims its string first, then cheapest position. Cost order
+  // alone is not enough: the top of a bass's range lives on one string only,
+  // and letting an open string it collides with claim that string first strands
+  // it on a collision it had a way out of. Whichever note ends up moving, it is
+  // the one with somewhere to move to.
+  const placed = [...options.keys()].sort((a, b) =>
+    options.get(a)!.length - options.get(b)!.length
+    || nodeCost(chosen[a]!, settings) - nodeCost(chosen[b]!, settings)
+  );
+
+  const taken = new Set<number>();
+  for (const index of placed) {
+    const current = chosen[index]!;
+    if (!taken.has(current.string)) {
+      taken.add(current.string);
+      continue;
+    }
+
+    const free = options.get(index)!.filter(candidate => !taken.has(candidate.string));
+
+    if (free.length === 0) continue;
+
+    const replacement = free.reduce((best, candidate) =>
+      nodeCost(candidate, settings) < nodeCost(best, settings) ? candidate : best
+    );
+
+    chosen[index] = replacement;
+    taken.add(replacement.string);
+  }
+}
+
+/**
  * Chooses a string and fret for every note, minimising total playing effort.
  *
  * The interesting term is movement cost scaled by the gap to the previous
@@ -187,7 +295,7 @@ export function assignFingering(
   notes: FingeringInput[],
   settings: DerivationSettings
 ): (NotePitch | null)[] {
-  const result: (NotePitch | null)[] = new Array(notes.length).fill(null);
+  const chosen: (Candidate | null)[] = new Array(notes.length).fill(null);
 
   let runStart = 0;
   while (runStart < notes.length) {
@@ -209,12 +317,7 @@ export function assignFingering(
     if (candidateSets.length > 0) {
       bestPath(candidateSets, notes.slice(runStart, end), settings)
         .forEach((candidate, offset) => {
-          result[runStart + offset] = {
-            kind: 'fretted',
-            // Tuning subscript to tab string number; see the docblock.
-            string: candidate.string + 1,
-            fret: candidate.fret
-          };
+          chosen[runStart + offset] = candidate;
         });
       runStart = end;
     } else {
@@ -223,5 +326,15 @@ export function assignFingering(
     }
   }
 
-  return result;
+  // Runs are optimised as sequences, so two notes struck together can come out
+  // on one string; the repair spans runs because an unplayable note between
+  // them does not stop them sounding at the same moment.
+  separateSimultaneous(chosen, notes, settings);
+
+  return chosen.map(candidate =>
+    candidate === null
+      ? null
+      // Tuning subscript to tab string number; see the docblock.
+      : { kind: 'fretted', string: candidate.string + 1, fret: candidate.fret }
+  );
 }

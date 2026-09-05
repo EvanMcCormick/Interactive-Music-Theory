@@ -169,6 +169,70 @@ describe('assignFingering', () => {
     expect(figure.every(pitch => pitch?.kind === 'fretted' && pitch.fret <= 12)).toBe(true);
   });
 
+  /**
+   * The Viterbi pass scores a sequence and cannot see that two notes sound at
+   * once, so it fingers a dyad on whichever single string is cheapest. The
+   * consequence is not just unreadable tab: a tab line holds one number, so
+   * `transcription-quantize.ts` drops the second pitch and the note leaves the
+   * score with nothing to show it was ever there.
+   */
+  it('moves a simultaneous note off a string already taken', () => {
+    const dyad = assignFingering(
+      [{ pitch: 33, onsetSec: 0 }, { pitch: 36, onsetSec: 0 }],
+      SETTINGS
+    );
+
+    // Both notes still sound, on strings that can each hold a number.
+    const sounded = dyad.map(pitch =>
+      pitch?.kind === 'fretted'
+        ? STANDARD_BASS_TUNING[pitch.string - 1] + pitch.fret
+        : null
+    );
+    expect(sounded).toEqual([33, 36]);
+    expect(new Set(dyad.map(pitch => pitch?.kind === 'fretted' && pitch.string)).size)
+      .toBe(2);
+
+    // Unrepaired both land on the A string, at frets 0 and 3.
+    expect(dyad).toEqual([
+      { kind: 'fretted', string: 3, fret: 0 },
+      { kind: 'fretted', string: 4, fret: 8 }
+    ]);
+  });
+
+  /**
+   * Which note moves cannot be decided on cost alone. Above fret 24 of the D
+   * string a bass has one string left, so a pitch up there has exactly one
+   * candidate; if the open string it collides with claims that string first,
+   * the constrained note is stranded on a collision it had a way out of.
+   */
+  it('moves whichever of two simultaneous notes has somewhere to go', () => {
+    const dyad = assignFingering(
+      [{ pitch: 43, onsetSec: 0 }, { pitch: 63, onsetSec: 0 }],
+      SETTINGS
+    );
+
+    // 63 can only be fret 20 of the G string, so the open G has to give way.
+    expect(dyad).toEqual([
+      { kind: 'fretted', string: 2, fret: 5 },
+      { kind: 'fretted', string: 1, fret: 20 }
+    ]);
+  });
+
+  /**
+   * Not every collision is a mistake. A minor second at the bottom of a bass
+   * lives on the E string at both ends, so there is no two-string fingering to
+   * find and one of the two notes is lost downstream - which is what a player
+   * would tell you about that interval on that instrument.
+   */
+  it('leaves a collision that no fingering can avoid', () => {
+    expect(
+      assignFingering([{ pitch: 28, onsetSec: 0 }, { pitch: 30, onsetSec: 0 }], SETTINGS)
+    ).toEqual([
+      { kind: 'fretted', string: 4, fret: 0 },
+      { kind: 'fretted', string: 4, fret: 2 }
+    ]);
+  });
+
   it('pulls the hand towards a position hint', () => {
     const hinted = assignFingering(
       [{ pitch: 45, onsetSec: 0 }],
