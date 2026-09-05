@@ -1639,10 +1639,20 @@ import { DerivationSettings } from '../models/transcription.model';
  * Chooses where on the neck each note is played.
  *
  * The one idea here is that a hand movement costs what the time available
- * makes it cost: a five-fret shift is nothing across a rest and unacceptable
+ * makes it cost: a five-fret shift is cheap across a rest and unacceptable
  * between two sixteenths. Per-note lowest-fret assignment cannot express
  * that, which is why tab from such tools skitters across the neck on fast
  * passages. Scoring whole paths with a Viterbi pass can.
+ *
+ * Cheap, though, is not free. The time factor is clamped at both ends, and
+ * the floor means a five-fret shift still costs 0.5 however long the rest -
+ * an earlier draft of this docblock said free, and it was wrong.
+ *
+ * What the model does not have is a hand position. Movement is measured from
+ * the previous note's fret, so a figure that sits still under one hand is
+ * charged for every finger that moves within it, and where the hand sits on
+ * the neck is only weakly pinned. The plan's "Deliberately not in M1" records
+ * the measurement.
  *
  * Pure functions with no Angular or audio dependency, following the
  * `staff-pitch.ts` precedent, so the costs can be checked against fixtures
@@ -1671,6 +1681,14 @@ export interface Candidate {
 /**
  * Movement is judged against a quarter note at 120 BPM. A gap shorter than
  * this makes shifting proportionally more expensive, a longer gap cheaper.
+ *
+ * Both clamps bind well outside ordinary playing. The ceiling engages below
+ * `MOVE_REFERENCE_SEC / MAX_TIME_FACTOR`, about 31 ms, which in practice
+ * means chords and a detector reporting one attack twice rather than notes in
+ * sequence - there is no travel to charge for between two notes struck
+ * together, and without the ceiling the model charges for it anyway. The
+ * floor engages above 2.5 s, so it is a fact about long rests: past that
+ * point more time buys nothing, and a five-fret shift settles at 0.5.
  */
 const MOVE_REFERENCE_SEC = 0.25;
 const MIN_TIME_FACTOR = 0.1;
@@ -1743,6 +1761,9 @@ function nodeCost(candidate: Candidate, settings: DerivationSettings): number {
   // than merely avoiding a penalty.
   if (candidate.fret === 0) cost -= OPEN_STRING_BONUS;
 
+  // An open string has no fret to be in the wrong position, so the hint skips
+  // it - and with the bonus on top, no hint can pull the hand off one. Pinning
+  // a hand to the twelfth fret does not make an open E worth stopping.
   if (settings.positionHint !== null && candidate.fret > 0) {
     cost += POSITION_HINT_WEIGHT * Math.abs(candidate.fret - settings.positionHint);
   }
@@ -1914,9 +1935,14 @@ function separateAttack(
  * Chooses a string and fret for every note, minimising total playing effort.
  *
  * The interesting term is movement cost scaled by the gap to the previous
- * note. A five-fret shift is free across a rest and unacceptable between two
+ * note. A five-fret shift is cheap across a rest and unacceptable between two
  * sixteenths, which is exactly the judgement a player makes and exactly what
- * per-note lowest-fret assignment cannot express.
+ * per-note lowest-fret assignment cannot express. Cheap, not free: the time
+ * factor's floor leaves that shift costing 0.5 however long the rest.
+ *
+ * `notes` must be in ascending `onsetSec`. Gaps are read pairwise and clamped
+ * at zero, so an out-of-order note is scored as though struck with the one
+ * before it, and `separateSimultaneous` groups on the same assumption.
  *
  * Returns null at any index the instrument cannot play. Such a note breaks the
  * chain, and the notes after it are optimised as a fresh run.
@@ -2089,6 +2115,24 @@ describe('correctOctaves', () => {
     expect(correctOctaves([note(36)], narrow)[0].pitch).toBe(36);
   });
 
+  /**
+   * The fold steps by 12, so a large enough pitch does not merely give a
+   * strange answer - above about 2^57 one unit in the last place already
+   * exceeds 12, `pitch -= 12` stops changing anything and the loop spins for
+   * ever. Infinity does the same, and 1e15 would need some 8e13 iterations.
+   * A finiteness check alone would let the first and last of those through.
+   */
+  it('rejects a pitch too far outside MIDI to be a mis-heard note', () => {
+    for (const pitch of [2 ** 57, 1e15, Infinity, -Infinity, NaN]) {
+      expect(() => correctOctaves([note(pitch)], SETTINGS)).toThrowError(/not a MIDI pitch/);
+    }
+
+    // An octave error can land outside MIDI, and folding it is the whole job,
+    // so the bound has to sit well clear of 0-127.
+    expect(correctOctaves([note(-24)], SETTINGS)[0].pitch).toBe(36);
+    expect(correctOctaves([note(151)], SETTINGS)[0].pitch).toBe(67);
+  });
+
   it('does not mutate its input', () => {
     const notes = [note(21)];
     correctOctaves(notes, SETTINGS);
@@ -2122,6 +2166,20 @@ import { DetectedNote, DerivationSettings } from '../models/transcription.model'
  */
 
 /**
+ * How far outside MIDI a pitch may stray before it is a fault, not an error.
+ *
+ * The mistakes this module exists to fold are whole octaves, so a pitch an
+ * octave or two outside MIDI's 0-127 is exactly its business. Ten octaves
+ * outside is not a mis-heard note, and the folding loop is the wrong place to
+ * find that out: it steps by 12, so 1e15 would take some 8e13 iterations, and
+ * above about 2^57 one unit in the last place already exceeds 12 - `pitch -=
+ * 12` changes nothing and the loop never ends at all. Infinity behaves the
+ * same way. `Number.isFinite` catches neither of those, which is why the bound
+ * is a pitch domain rather than a finiteness check.
+ */
+const PITCH_LIMIT = 127 + 120;
+
+/**
  * Folds out-of-range pitches back onto the instrument.
  *
  * Detectors are weakest in the bass register: fundamentals below 100 Hz sit
@@ -2133,11 +2191,24 @@ import { DetectedNote, DerivationSettings } from '../models/transcription.model'
  *
  * It cannot catch an octave error that lands somewhere still playable; that
  * needs surrounding context and is left for later.
+ *
+ * Throws on a pitch outside the MIDI domain by more than ten octaves, the
+ * sibling modules' habit of failing loudly on input they cannot handle rather
+ * than misbehaving quietly. Nothing in `deriveScore` produces such a value,
+ * but the alternative here is not a wrong answer, it is a hang.
  */
 export function correctOctaves(
   notes: DetectedNote[],
   settings: DerivationSettings
 ): DetectedNote[] {
+  for (const note of notes) {
+    // Negated rather than `Math.abs(...) > PITCH_LIMIT` so NaN, which compares
+    // false against everything, is rejected by the same test as Infinity.
+    if (!(Math.abs(note.pitch) <= PITCH_LIMIT)) {
+      throw new Error(`note ${note.id} has pitch ${note.pitch}, which is not a MIDI pitch`);
+    }
+  }
+
   // A capo raises the bottom of the range and leaves the top where it was: it
   // takes frets away from the neck rather than adding them past the end, so
   // the highest pitch is still the top string stopped at the last fret. This
@@ -2160,7 +2231,7 @@ export function correctOctaves(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 8 tests.
+Expected: PASS, 9 tests.
 
 **Step 5: Commit**
 
@@ -2318,6 +2389,11 @@ export function deriveScore(session: TranscriptionSession): ScoreDoc {
     .filter(note => note.confidence >= settings.confidenceFloor)
     .sort((a, b) => a.onsetSec - b.onsetSec);
 
+  // correctOctaves folds onto one interval, lowest open string to highest
+  // fret, while candidatesFor knows each string reaches only `maxFret - capo`
+  // frets. Below four frets those bands stop overlapping and the two disagree;
+  // see "Deliberately not in M1". No instrument here is anywhere near that
+  // short, so nothing downstream compensates for it.
   const corrected = correctOctaves(audible, settings);
 
   // Fingering runs across the whole piece rather than bar by bar, so hand
@@ -2417,9 +2493,9 @@ Expected: PASS, 8 tests.
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 70 new = **128 tests, 0 failures**.
+Expected: PASS — 58 baseline + 71 new = **129 tests, 0 failures**.
 
-The 70 break down as 5 + 12 + 15 + 22 + 8 + 8 across tasks 1-6.
+The 71 break down as 5 + 12 + 15 + 22 + 9 + 8 across tasks 1-6.
 
 **Step 6: Commit**
 
@@ -2432,7 +2508,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 128 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 129 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
 - Every derived bar sums to exactly one bar **and strikes every onset it was given,
   with the pitches that onset carried**, for every time signature and grid tested.
@@ -2454,4 +2530,6 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 - **Pickup bars.** Notes before the first downbeat are pulled onto beat 1.
 - **Note durations.** `DetectedNote.offsetSec` is read by nothing: every note sustains until the next onset, so rests appear only before a bar's first note. See scope decision 5.
 - **Context-based octave correction.** Only out-of-range folding is implemented; an octave error landing on a playable pitch survives.
+- **A hand position to measure movement from.** `edgeCost` measures a shift from the previous note's fret, not from a position the hand is holding, so a figure that sits still under one hand is charged for every finger that moves inside it, and where the hand sits on the neck is only weakly constrained. The symptom is a knife edge: Db2-F2-Ab2-B2 sits in first position at onset gaps of 0.09 s and wider, and jumps to ninth position at 0.08 s and tighter, the two paths differing by 0.28 in total cost at 0.075 s. Aggregate behaviour is far better than that suggests — over 65 four-note figures rooted between E1 and E2, the mean chosen fret moves only from 2.27 at four seconds a note to 3.23 at 50 ms — but the limitation is real, and the fix is a position term rather than more weight tuning.
+- **Agreement between `correctOctaves` and `candidatesFor` below four frets.** `correctOctaves` folds onto a single interval, lowest open string to highest fret, while `candidatesFor` knows each string reaches only `maxFret - capo` frets in front of the capo. Once that reach is shorter than the gap between two strings the per-string bands stop overlapping, and a few pitches inside the outer range have no fret anywhere: at `maxFret: 3` on a standard bass, 32, 37 and 42; at 2, six of them. `correctOctaves` admits them, `assignFingering` returns null, and they are dropped. Unreachable at any real fret count, so it is recorded rather than fixed — a per-string range check earns its place only if a three-fret instrument ever appears.
 - **Dynamics.** `DetectedNote` records no amplitude or velocity, so every `BeatDoc.dynamics` is `null`. A decision, not an oversight: see scope decision 4.

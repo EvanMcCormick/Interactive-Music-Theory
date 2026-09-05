@@ -14,6 +14,20 @@ import { DetectedNote, DerivationSettings } from '../models/transcription.model'
  */
 
 /**
+ * How far outside MIDI a pitch may stray before it is a fault, not an error.
+ *
+ * The mistakes this module exists to fold are whole octaves, so a pitch an
+ * octave or two outside MIDI's 0-127 is exactly its business. Ten octaves
+ * outside is not a mis-heard note, and the folding loop is the wrong place to
+ * find that out: it steps by 12, so 1e15 would take some 8e13 iterations, and
+ * above about 2^57 one unit in the last place already exceeds 12 - `pitch -=
+ * 12` changes nothing and the loop never ends at all. Infinity behaves the
+ * same way. `Number.isFinite` catches neither of those, which is why the bound
+ * is a pitch domain rather than a finiteness check.
+ */
+const PITCH_LIMIT = 127 + 120;
+
+/**
  * Folds out-of-range pitches back onto the instrument.
  *
  * Detectors are weakest in the bass register: fundamentals below 100 Hz sit
@@ -25,11 +39,24 @@ import { DetectedNote, DerivationSettings } from '../models/transcription.model'
  *
  * It cannot catch an octave error that lands somewhere still playable; that
  * needs surrounding context and is left for later.
+ *
+ * Throws on a pitch outside the MIDI domain by more than ten octaves, the
+ * sibling modules' habit of failing loudly on input they cannot handle rather
+ * than misbehaving quietly. Nothing in `deriveScore` produces such a value,
+ * but the alternative here is not a wrong answer, it is a hang.
  */
 export function correctOctaves(
   notes: DetectedNote[],
   settings: DerivationSettings
 ): DetectedNote[] {
+  for (const note of notes) {
+    // Negated rather than `Math.abs(...) > PITCH_LIMIT` so NaN, which compares
+    // false against everything, is rejected by the same test as Infinity.
+    if (!(Math.abs(note.pitch) <= PITCH_LIMIT)) {
+      throw new Error(`note ${note.id} has pitch ${note.pitch}, which is not a MIDI pitch`);
+    }
+  }
+
   // A capo raises the bottom of the range and leaves the top where it was: it
   // takes frets away from the neck rather than adding them past the end, so
   // the highest pitch is still the top string stopped at the last fret. This

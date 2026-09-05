@@ -5,10 +5,20 @@ import { DerivationSettings } from '../models/transcription.model';
  * Chooses where on the neck each note is played.
  *
  * The one idea here is that a hand movement costs what the time available
- * makes it cost: a five-fret shift is nothing across a rest and unacceptable
+ * makes it cost: a five-fret shift is cheap across a rest and unacceptable
  * between two sixteenths. Per-note lowest-fret assignment cannot express
  * that, which is why tab from such tools skitters across the neck on fast
  * passages. Scoring whole paths with a Viterbi pass can.
+ *
+ * Cheap, though, is not free. The time factor is clamped at both ends, and
+ * the floor means a five-fret shift still costs 0.5 however long the rest -
+ * an earlier draft of this docblock said free, and it was wrong.
+ *
+ * What the model does not have is a hand position. Movement is measured from
+ * the previous note's fret, so a figure that sits still under one hand is
+ * charged for every finger that moves within it, and where the hand sits on
+ * the neck is only weakly pinned. The plan's "Deliberately not in M1" records
+ * the measurement.
  *
  * Pure functions with no Angular or audio dependency, following the
  * `staff-pitch.ts` precedent, so the costs can be checked against fixtures
@@ -37,6 +47,14 @@ export interface Candidate {
 /**
  * Movement is judged against a quarter note at 120 BPM. A gap shorter than
  * this makes shifting proportionally more expensive, a longer gap cheaper.
+ *
+ * Both clamps bind well outside ordinary playing. The ceiling engages below
+ * `MOVE_REFERENCE_SEC / MAX_TIME_FACTOR`, about 31 ms, which in practice
+ * means chords and a detector reporting one attack twice rather than notes in
+ * sequence - there is no travel to charge for between two notes struck
+ * together, and without the ceiling the model charges for it anyway. The
+ * floor engages above 2.5 s, so it is a fact about long rests: past that
+ * point more time buys nothing, and a five-fret shift settles at 0.5.
  */
 const MOVE_REFERENCE_SEC = 0.25;
 const MIN_TIME_FACTOR = 0.1;
@@ -109,6 +127,9 @@ function nodeCost(candidate: Candidate, settings: DerivationSettings): number {
   // than merely avoiding a penalty.
   if (candidate.fret === 0) cost -= OPEN_STRING_BONUS;
 
+  // An open string has no fret to be in the wrong position, so the hint skips
+  // it - and with the bonus on top, no hint can pull the hand off one. Pinning
+  // a hand to the twelfth fret does not make an open E worth stopping.
   if (settings.positionHint !== null && candidate.fret > 0) {
     cost += POSITION_HINT_WEIGHT * Math.abs(candidate.fret - settings.positionHint);
   }
@@ -280,9 +301,14 @@ function separateAttack(
  * Chooses a string and fret for every note, minimising total playing effort.
  *
  * The interesting term is movement cost scaled by the gap to the previous
- * note. A five-fret shift is free across a rest and unacceptable between two
+ * note. A five-fret shift is cheap across a rest and unacceptable between two
  * sixteenths, which is exactly the judgement a player makes and exactly what
- * per-note lowest-fret assignment cannot express.
+ * per-note lowest-fret assignment cannot express. Cheap, not free: the time
+ * factor's floor leaves that shift costing 0.5 however long the rest.
+ *
+ * `notes` must be in ascending `onsetSec`. Gaps are read pairwise and clamped
+ * at zero, so an out-of-order note is scored as though struck with the one
+ * before it, and `separateSimultaneous` groups on the same assumption.
  *
  * Returns null at any index the instrument cannot play. Such a note breaks the
  * chain, and the notes after it are optimised as a fresh run.

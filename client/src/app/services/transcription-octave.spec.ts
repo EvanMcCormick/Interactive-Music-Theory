@@ -78,6 +78,24 @@ describe('correctOctaves', () => {
     expect(correctOctaves([note(36)], narrow)[0].pitch).toBe(36);
   });
 
+  /**
+   * The fold steps by 12, so a large enough pitch does not merely give a
+   * strange answer - above about 2^57 one unit in the last place already
+   * exceeds 12, `pitch -= 12` stops changing anything and the loop spins for
+   * ever. Infinity does the same, and 1e15 would need some 8e13 iterations.
+   * A finiteness check alone would let the first and last of those through.
+   */
+  it('rejects a pitch too far outside MIDI to be a mis-heard note', () => {
+    for (const pitch of [2 ** 57, 1e15, Infinity, -Infinity, NaN]) {
+      expect(() => correctOctaves([note(pitch)], SETTINGS)).toThrowError(/not a MIDI pitch/);
+    }
+
+    // An octave error can land outside MIDI, and folding it is the whole job,
+    // so the bound has to sit well clear of 0-127.
+    expect(correctOctaves([note(-24)], SETTINGS)[0].pitch).toBe(36);
+    expect(correctOctaves([note(151)], SETTINGS)[0].pitch).toBe(67);
+  });
+
   it('does not mutate its input', () => {
     const notes = [note(21)];
     correctOctaves(notes, SETTINGS);
