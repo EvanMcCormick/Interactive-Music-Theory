@@ -688,6 +688,20 @@ describe('trackBeats', () => {
     expect(grid.beatsSec[grid.beatsSec.length - 1]).toBeLessThan(8.5);
   });
 
+  it('finds the beat when it is not at the start of the file', () => {
+    // Pulse offset half a beat from zero. Every other trackBeats fixture starts
+    // at t=0, where landing on the onsets and laying an even grid from frame 0
+    // are the same grid — this is the one that tells phase from luck.
+    const onsets = Array.from({ length: 16 }, (_, i) => 0.25 + i * 0.5);
+    const grid = trackBeats(notesAt(onsets), 8.25, FOUR_FOUR);
+
+    const tracked = grid.beatsSec.filter(beat => beat <= 7.8);
+    expect(tracked.length).toBeGreaterThan(14);
+    for (const beat of tracked) {
+      expect(Math.min(...onsets.map(onset => Math.abs(onset - beat)))).toBeLessThan(0.03);
+    }
+  });
+
   it('tracks at the sanitised frame rate, not the one it was handed', () => {
     // The rate is sanitised once and then used for the onset signal and the
     // beat times — but the raw options used to reach `estimateTempo`, which
@@ -819,7 +833,7 @@ With no notes, return an even grid at `priorBpm` spanning `durationSec` — a de
 
 **Step 4: Run tests, then the full suite**
 
-Expected: the beat spec passes, and the full suite is 155 + 24 + 17 = 196.
+Expected: the beat spec passes, and the full suite is 155 + 24 + 18 = 197.
 
 **Step 5: Commit**
 
