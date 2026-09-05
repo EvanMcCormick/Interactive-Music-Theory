@@ -59,7 +59,15 @@ const POSITION_HINT_WEIGHT = 0.5;
  */
 const OPEN_STRING_MOVE_DISCOUNT = 0.25;
 
-/** Every string/fret pair that sounds `pitch` on this instrument. */
+/**
+ * Every string/fret pair that sounds `pitch` on this instrument.
+ *
+ * Frets are relative to the capo, the way tab writes them, so a capo at 5
+ * leaves `maxFret - capo` frets in front of it rather than `maxFret`. Bounding
+ * a capo-relative fret by `maxFret` would let the capo lengthen the neck: on a
+ * 24-fret bass capoed at 5, MIDI 57 would be offered at relative fret 24,
+ * which is absolute fret 29.
+ */
 export function candidatesFor(
   pitch: number,
   tuning: number[],
@@ -67,10 +75,11 @@ export function candidatesFor(
   maxFret: number
 ): Candidate[] {
   const out: Candidate[] = [];
+  const reach = maxFret - capo;
 
   for (let string = 0; string < tuning.length; string++) {
     const fret = pitch - tuning[string] - capo;
-    if (fret >= 0 && fret <= maxFret) out.push({ string, fret });
+    if (fret >= 0 && fret <= reach) out.push({ string, fret });
   }
 
   return out;

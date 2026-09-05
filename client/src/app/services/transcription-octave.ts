@@ -30,8 +30,13 @@ export function correctOctaves(
   notes: DetectedNote[],
   settings: DerivationSettings
 ): DetectedNote[] {
+  // A capo raises the bottom of the range and leaves the top where it was: it
+  // takes frets away from the neck rather than adding them past the end, so
+  // the highest pitch is still the top string stopped at the last fret. This
+  // has to agree with `candidatesFor`, or a pitch folded to here would be
+  // admitted and then found unplayable, and the note would silently vanish.
   const lowest = Math.min(...settings.tuning) + settings.capo;
-  const highest = Math.max(...settings.tuning) + settings.capo + settings.maxFret;
+  const highest = Math.max(...settings.tuning) + settings.maxFret;
 
   // A range narrower than an octave has no safe fold.
   if (highest - lowest < 12) return notes;

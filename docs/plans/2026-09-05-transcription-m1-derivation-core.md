@@ -1247,6 +1247,24 @@ describe('candidatesFor', () => {
     ]);
   });
 
+  /**
+   * The capo test above only exercises the low end, where a capo obviously
+   * takes options away. It also has to take them away at the top: frets are
+   * counted from the capo, so bounding a capo-relative fret by `maxFret` lets
+   * the capo lengthen the neck instead of shortening it.
+   */
+  it('drops options the capo has pushed off the end of the neck', () => {
+    // A capo at 5 leaves 7 of a 12-fret neck, so G3 = 55 is the highest pitch
+    // available and fret 7 of the G string is its only home. Fret 12 of the D
+    // string is absolute fret 17, well past the end.
+    expect(candidatesFor(55, STANDARD_BASS_TUNING, 5, 12)).toEqual([
+      { string: 0, fret: 7 }
+    ]);
+
+    // One semitone higher there is nothing left to play it on.
+    expect(candidatesFor(56, STANDARD_BASS_TUNING, 5, 12)).toEqual([]);
+  });
+
   it('returns nothing for a pitch below the instrument', () => {
     expect(candidatesFor(20, STANDARD_BASS_TUNING, 0, 24)).toEqual([]);
   });
@@ -1449,7 +1467,15 @@ const POSITION_HINT_WEIGHT = 0.5;
  */
 const OPEN_STRING_MOVE_DISCOUNT = 0.25;
 
-/** Every string/fret pair that sounds `pitch` on this instrument. */
+/**
+ * Every string/fret pair that sounds `pitch` on this instrument.
+ *
+ * Frets are relative to the capo, the way tab writes them, so a capo at 5
+ * leaves `maxFret - capo` frets in front of it rather than `maxFret`. Bounding
+ * a capo-relative fret by `maxFret` would let the capo lengthen the neck: on a
+ * 24-fret bass capoed at 5, MIDI 57 would be offered at relative fret 24,
+ * which is absolute fret 29.
+ */
 export function candidatesFor(
   pitch: number,
   tuning: number[],
@@ -1457,10 +1483,11 @@ export function candidatesFor(
   maxFret: number
 ): Candidate[] {
   const out: Candidate[] = [];
+  const reach = maxFret - capo;
 
   for (let string = 0; string < tuning.length; string++) {
     const fret = pitch - tuning[string] - capo;
-    if (fret >= 0 && fret <= maxFret) out.push({ string, fret });
+    if (fret >= 0 && fret <= reach) out.push({ string, fret });
   }
 
   return out;
@@ -1610,7 +1637,7 @@ export function assignFingering(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 12 tests.
+Expected: PASS, 13 tests.
 
 If the two position tests fail, the weights are miscalibrated rather than the algorithm being wrong — check `MOVE_REFERENCE_SEC` and `FRET_HEIGHT_WEIGHT` first. Both fixtures were chosen so the fast and slow answers differ under the constants above.
 
@@ -1671,6 +1698,20 @@ describe('correctOctaves', () => {
   it('accounts for a capo raising the lowest playable pitch', () => {
     const capoed = { ...SETTINGS, capo: 5 };
     expect(correctOctaves([note(30)], capoed)[0].pitch).toBe(42);
+  });
+
+  /**
+   * A capo shortens the neck: it moves the bottom of the range up and leaves
+   * the top alone. Adding it to `highest` as well would admit pitches
+   * `candidatesFor` has no fret for, and a note with no fret is dropped from
+   * the score without a sign - the failure this module exists to prevent.
+   */
+  it('does not let a capo raise the highest playable pitch', () => {
+    const capoed = { ...SETTINGS, capo: 5 };
+
+    // Still 43 + 24 = 67, so 70 folds to 58 rather than staying put as a
+    // pitch that would need fret 27 in front of the capo.
+    expect(correctOctaves([note(70)], capoed)[0].pitch).toBe(58);
   });
 
   /**
@@ -1738,8 +1779,13 @@ export function correctOctaves(
   notes: DetectedNote[],
   settings: DerivationSettings
 ): DetectedNote[] {
+  // A capo raises the bottom of the range and leaves the top where it was: it
+  // takes frets away from the neck rather than adding them past the end, so
+  // the highest pitch is still the top string stopped at the last fret. This
+  // has to agree with `candidatesFor`, or a pitch folded to here would be
+  // admitted and then found unplayable, and the note would silently vanish.
   const lowest = Math.min(...settings.tuning) + settings.capo;
-  const highest = Math.max(...settings.tuning) + settings.capo + settings.maxFret;
+  const highest = Math.max(...settings.tuning) + settings.maxFret;
 
   // A range narrower than an octave has no safe fold.
   if (highest - lowest < 12) return notes;
@@ -1755,7 +1801,7 @@ export function correctOctaves(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 7 tests.
+Expected: PASS, 8 tests.
 
 **Step 5: Commit**
 
@@ -2012,9 +2058,9 @@ Expected: PASS, 8 tests.
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
 
-Expected: PASS — 58 baseline + 59 new = **117 tests, 0 failures**.
+Expected: PASS — 58 baseline + 61 new = **119 tests, 0 failures**.
 
-The 59 break down as 5 + 12 + 15 + 12 + 7 + 8 across tasks 1-6.
+The 61 break down as 5 + 12 + 15 + 13 + 8 + 8 across tasks 1-6.
 
 **Step 6: Commit**
 
@@ -2027,7 +2073,7 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 ## Done when
 
-- `npx ng test --watch=false --browsers=ChromeHeadless` reports 117 passing, 0 failures.
+- `npx ng test --watch=false --browsers=ChromeHeadless` reports 119 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
 - Every derived bar sums to exactly one bar **and strikes every onset it was given,
   with the pitches that onset carried**, for every time signature and grid tested.

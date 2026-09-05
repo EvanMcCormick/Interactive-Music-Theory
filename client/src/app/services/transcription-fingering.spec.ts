@@ -30,6 +30,24 @@ describe('candidatesFor', () => {
     ]);
   });
 
+  /**
+   * The capo test above only exercises the low end, where a capo obviously
+   * takes options away. It also has to take them away at the top: frets are
+   * counted from the capo, so bounding a capo-relative fret by `maxFret` lets
+   * the capo lengthen the neck instead of shortening it.
+   */
+  it('drops options the capo has pushed off the end of the neck', () => {
+    // A capo at 5 leaves 7 of a 12-fret neck, so G3 = 55 is the highest pitch
+    // available and fret 7 of the G string is its only home. Fret 12 of the D
+    // string is absolute fret 17, well past the end.
+    expect(candidatesFor(55, STANDARD_BASS_TUNING, 5, 12)).toEqual([
+      { string: 0, fret: 7 }
+    ]);
+
+    // One semitone higher there is nothing left to play it on.
+    expect(candidatesFor(56, STANDARD_BASS_TUNING, 5, 12)).toEqual([]);
+  });
+
   it('returns nothing for a pitch below the instrument', () => {
     expect(candidatesFor(20, STANDARD_BASS_TUNING, 0, 24)).toEqual([]);
   });

@@ -36,6 +36,20 @@ describe('correctOctaves', () => {
   });
 
   /**
+   * A capo shortens the neck: it moves the bottom of the range up and leaves
+   * the top alone. Adding it to `highest` as well would admit pitches
+   * `candidatesFor` has no fret for, and a note with no fret is dropped from
+   * the score without a sign - the failure this module exists to prevent.
+   */
+  it('does not let a capo raise the highest playable pitch', () => {
+    const capoed = { ...SETTINGS, capo: 5 };
+
+    // Still 43 + 24 = 67, so 70 folds to 58 rather than staying put as a
+    // pitch that would need fret 27 in front of the capo.
+    expect(correctOctaves([note(70)], capoed)[0].pitch).toBe(58);
+  });
+
+  /**
    * SETTINGS is the unmodified default everywhere above except the capo test,
    * and [43, 38, 33, 28] is value-identical to what a hardcoded bass range
    * would use. So `lowest = 28 + settings.capo; highest = 67` - a fold that
