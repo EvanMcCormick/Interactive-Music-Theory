@@ -33,7 +33,7 @@ A throwaway spike answered the questions this plan would otherwise have guessed 
 
 **3. Raw detection is 24 % precise.** On a clean synthetic bassline with 8 notes, Basic Pitch returns **34**. Recall is perfect — every true pitch is found, onsets accurate to 10–25 ms — but 26 notes are upward harmonic partials. Passing `minFreq`/`maxFreq` for a bass range removes exactly *one* of them, because the partials sit inside the band too. **Harmonic suppression is therefore a first-class module, not a polish step.** Task 1 builds it, against the spike's real output.
 
-**4. The fundamental is reliably the loudest note in its cluster** (0.52–0.71 amplitude versus ≤ 0.55 for partials). That is what makes Task 1 tractable.
+**4. The fundamental is *usually* the loudest note in its cluster, but only just — and not always** (0.52–0.71 amplitude for fundamentals versus ≤ 0.55 for partials). The margin is about 2 %, and the fixture violates it once: the E2 octave partial at 2.091 s comes back at 0.548 against the 0.520 of the E1 at 1.823 s that produced it. Amplitude is therefore *not* what makes Task 1 tractable. What does is that a partial is always **above** its fundamental in pitch — physics, not a heuristic — so ordering candidates by pitch ascending guarantees the fundamental is considered first with no dependence on relative loudness at all. Task 1 orders by pitch for exactly this reason.
 
 ### Facts about the library that the design doc got wrong
 
@@ -111,12 +111,16 @@ describe('suppressHarmonics', () => {
     expect(kept.map(n => n.pitch)).toEqual(PLAYED);
   });
 
-  it('keeps the strongest note of each cluster, not the first', () => {
-    const kept = suppressHarmonics(DETECTED);
+  it('suppresses a partial that is louder than its own fundamental', () => {
+    // Real detector output: the E2 partial at 2.091 (amp 0.548) outweighs the
+    // E1 that produced it at 1.823 (amp 0.520). Ordering by pitch rather than
+    // loudness is what catches it.
+    const cluster = [
+      note([1.823, 28, 0.628, 0.520], 0),
+      note([2.091, 40, 0.267, 0.548], 1)
+    ];
 
-    // The E1 at 0.000 outranks the E3 detected 58 ms later.
-    expect(kept[0].onsetSec).toBe(0);
-    expect(kept[0].confidence).toBe(0.565);
+    expect(suppressHarmonics(cluster).map(n => n.pitch)).toEqual([28]);
   });
 
   it('leaves a note with no harmonic relation alone', () => {
@@ -137,6 +141,26 @@ describe('suppressHarmonics', () => {
     ];
 
     expect(suppressHarmonics(pair).length).toBe(2);
+  });
+
+  it('drops the 5th partial, nearly two octaves and a major third up', () => {
+    // 5f0 is 27.86 semitones above the fundamental: E1 at 28 rings at 56.
+    const pair = [
+      note([0, 28, 0.6, 0.60], 0),
+      note([0.1, 56, 0.2, 0.30], 1)
+    ];
+
+    expect(suppressHarmonics(pair).map(n => n.pitch)).toEqual([28]);
+  });
+
+  it('drops the 6th partial, two octaves and a fifth up', () => {
+    // 6f0 is 31.02 semitones above the fundamental: E1 at 28 rings at 59.
+    const pair = [
+      note([0, 28, 0.6, 0.60], 0),
+      note([0.1, 59, 0.2, 0.30], 1)
+    ];
+
+    expect(suppressHarmonics(pair).map(n => n.pitch)).toEqual([28]);
   });
 
   it('drops a weak short unison inside a strong note as a re-detection', () => {
@@ -173,6 +197,24 @@ describe('suppressHarmonics', () => {
     expect(DETECTED.length).toBe(before);
   });
 
+  it('gives the same answer whatever order the detector reported the notes in', () => {
+    // Every pitch here but one is shared by at least two notes, and four of
+    // those pairs share an amplitude too (0.514 and 0.264 at pitch 45, 0.329
+    // at 52, 0.352 at 62), so neither the pitch sort nor the confidence
+    // tie-break fixes the order the greedy pass sees them in; onset has to.
+    const expected = suppressHarmonics(DETECTED).map(n => n.id);
+
+    for (let trial = 0; trial < 25; trial++) {
+      const shuffled = [...DETECTED];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+
+      expect(suppressHarmonics(shuffled).map(n => n.id)).toEqual(expected);
+    }
+  });
+
   it('lists the partials of a plucked string, unison first', () => {
     // 2f0, 3f0, 4f0, 5f0, 6f0 rounded to semitones, plus unison at 0.
     expect(HARMONIC_SEMITONES).toEqual([0, 12, 19, 24, 28, 31]);
@@ -207,9 +249,13 @@ import { DetectedNote } from '../models/transcription.model';
  * frequency range barely helps, because the partials fall inside the
  * instrument's range too.
  *
- * What makes this tractable is that the fundamental is reliably the loudest
- * note in its cluster. So: consider notes strongest first, and drop any that a
- * louder, overlapping note already explains as one of its partials.
+ * What makes this tractable is that a partial is always *above* its
+ * fundamental — physics, not a heuristic. So: consider notes lowest first, and
+ * drop any that a lower, overlapping note already explains as one of its
+ * partials. Ordering by pitch guarantees a fundamental has been considered
+ * before anything it could explain, without assuming it is the louder of the
+ * two. It often is not: in the measured output an octave partial comes back at
+ * amplitude 0.548 against the 0.520 of the E1 that produced it.
  *
  * Pure, and independent of any detector.
  */
@@ -242,21 +288,24 @@ export function suppressHarmonics(
   notes: DetectedNote[],
   options: HarmonicOptions = DEFAULT_HARMONIC_OPTIONS
 ): DetectedNote[] {
-  // Strongest first, so a fundamental is always considered before its own
-  // partials. Ties break on onset, keeping the result deterministic.
-  const byStrength = [...notes].sort(
-    (a, b) => b.confidence - a.confidence || a.onsetSec - b.onsetSec || a.pitch - b.pitch
+  // Lowest first, so a fundamental is always considered before its own
+  // partials, whatever their relative loudness. Amplitude then orders notes of
+  // equal pitch, which is exactly what the unison rule needs: the strong one
+  // must be seen first for the weak short one to be read as its re-detection.
+  // Onset breaks the remaining ties, keeping the result deterministic.
+  const byPitch = [...notes].sort(
+    (a, b) => a.pitch - b.pitch || b.confidence - a.confidence || a.onsetSec - b.onsetSec
   );
 
   const kept: DetectedNote[] = [];
-  for (const note of byStrength) {
+  for (const note of byPitch) {
     if (!kept.some(root => explains(root, note, options))) kept.push(note);
   }
 
   return kept.sort((a, b) => a.onsetSec - b.onsetSec || a.pitch - b.pitch);
 }
 
-/** True when `note` is a partial, or a re-detection, of the louder `root`. */
+/** True when `note` is a partial, or a re-detection, of the lower `root`. */
 function explains(
   root: DetectedNote,
   note: DetectedNote,
@@ -265,13 +314,14 @@ function explains(
   const interval = note.pitch - root.pitch;
   if (!HARMONIC_SEMITONES.includes(interval)) return false;
 
-  // A partial only counts while its fundamental is still sounding.
-  if (
-    note.onsetSec < root.onsetSec - options.toleranceSec ||
-    note.onsetSec > root.offsetSec + options.toleranceSec
-  ) {
-    return false;
-  }
+  // The two have to be sounding at the same time. Spans must overlap rather
+  // than the partial's onset falling inside its fundamental: a re-detection
+  // often begins a frame or two *before* the note it duplicates, and an
+  // onset-containment test would let those through.
+  const overlaps =
+    note.onsetSec <= root.offsetSec + options.toleranceSec &&
+    root.onsetSec <= note.offsetSec + options.toleranceSec;
+  if (!overlaps) return false;
 
   if (interval > 0) return true;
 
@@ -292,7 +342,7 @@ function explains(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 9 tests. The first assertion — 34 notes in, the exact played line out — is the one that matters.
+Expected: PASS, 12 tests. The first assertion — 34 notes in, the exact played line out — is the one that matters.
 
 **Step 5: Commit**
 
