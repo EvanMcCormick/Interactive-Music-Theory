@@ -615,8 +615,11 @@ describe('quantizeBar', () => {
    *
    * Length alone is not enough to pin that down: `beatSlots` never inspects
    * `notes` or `isRest`, so a `quantizeBar` that discarded its notes and
-   * emitted a bar of rests would satisfy it for every case below. So each case
-   * also asserts placement, against the distinct slots the input snaps onto.
+   * emitted a bar of rests would satisfy it for every case below. Nor is
+   * counting the attacks: a `quantizeBar` that struck the right number of
+   * slots with the wrong pitches on them would pass that too. So each case
+   * reconstructs, from the emitted beats alone, which pitches are struck at
+   * which slot offset, and compares that against the input.
    *
    * Struck notes, not non-rest beats: a span no single value can express is
    * split by `slotsToDurations` into several `BeatDoc`s for one onset, and the
@@ -647,20 +650,41 @@ describe('quantizeBar', () => {
 
           expect(beatSlots(beats, finest)).toBe(totalSlots);
 
-          // Onsets sharing a slot merge into one chord, and an onset rounding
-          // past the final slot is pulled back onto it, so the count of
-          // distinct snapped slots is the count of beats that begin a note.
-          const onsetSlots = new Set(
-            notes.map(note => Math.min(
+          // What should be struck where: onsets sharing a slot merge into one
+          // chord, and an onset rounding past the final slot is pulled back
+          // onto it.
+          const bySlot = new Map<number, NotePitch[]>();
+          for (const note of notes) {
+            const slot = Math.min(
               totalSlots - 1,
               Math.max(0, Math.round(note.beatInBar * slotsPerBeat))
-            ))
-          );
-          const struck = beats.filter(
-            beat => !beat.isRest && beat.notes.length > 0 && !beat.notes[0].isTied
-          );
+            );
+            const chord = bySlot.get(slot);
+            if (chord) chord.push(note.pitch);
+            else bySlot.set(slot, [note.pitch]);
+          }
+          const expected = [...bySlot.keys()]
+            .sort((a, b) => a - b)
+            .map(slot => [slot, bySlot.get(slot)] as [number, NotePitch[]]);
 
-          expect(struck.length).toBe(onsetSlots.size);
+          // What is struck where, read back out of the beats by accumulating
+          // slot offsets. Only the offsets matter, not how many `BeatDoc`s a
+          // span was spelled with.
+          const struck: [number, NotePitch[]][] = [];
+          let offset = 0;
+          for (const beat of beats) {
+            if (!beat.isRest && beat.notes.length > 0 && !beat.notes[0].isTied) {
+              struck.push([offset, beat.notes.map(note => note.pitch)]);
+            }
+            offset += beatSlots([beat], finest);
+          }
+
+          expect(struck).toEqual(expected);
+
+          // Redundant given the comparison above, but it says out loud the
+          // thing a reader most wants guaranteed: no input note is dropped.
+          expect(struck.reduce((sum, [, chord]) => sum + chord.length, 0))
+            .toBe(notes.length);
         }
       }
     }
@@ -1543,9 +1567,11 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
 
 - `npx ng test --watch=false --browsers=ChromeHeadless` reports 105 passing, 0 failures.
 - `deriveScore(session)` returns a `ScoreDoc` that `ComposerService.replaceDocument()` accepts unchanged.
-- Every derived bar sums to exactly one bar **and strikes every onset it was given**,
-  for every time signature and grid tested. Length alone is not the invariant: a
-  `quantizeBar` that discarded its notes and emitted rests would satisfy that half.
+- Every derived bar sums to exactly one bar **and strikes every onset it was given,
+  with the pitches that onset carried**, for every time signature and grid tested.
+  Length alone is not the invariant: a `quantizeBar` that discarded its notes and
+  emitted rests would satisfy that half, and one that shuffled pitches between
+  slots would satisfy a count of attacks.
 - The two position-stability tests pass, proving fingering responds to available time.
 
 ## Deliberately not in M1
