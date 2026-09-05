@@ -88,6 +88,16 @@ export function quantizeBar(
     );
   }
 
+  // A fractional numerator is the one route by which a non-integer span could
+  // reach slotsToDurations, where it would silently under-sum rather than
+  // fail. TimeSignature types the numerator as a bare number, so the type
+  // system cannot rule this out the way FinestDivision rules out bad grids.
+  if (!Number.isInteger(timeSignature.numerator) || timeSignature.numerator < 1) {
+    throw new Error(
+      `numerator ${timeSignature.numerator} is not a whole number of beats`
+    );
+  }
+
   const totalSlots = timeSignature.numerator * slotsPerBeat;
 
   const chords = new Map<number, NotePitch[]>();

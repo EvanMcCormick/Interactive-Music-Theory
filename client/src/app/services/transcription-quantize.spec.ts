@@ -60,12 +60,33 @@ describe('quantizeBar', () => {
   });
 
   /**
+   * `FinestDivision` exists so no span can reach `slotsToDurations` that the
+   * duration table cannot express - such a span under-sums silently rather
+   * than failing. A fractional numerator is the one remaining way in, since
+   * `TimeSignature` types the numerator as a bare number.
+   */
+  it('rejects a numerator that is not a whole number of beats', () => {
+    const fractional: TimeSignature = { numerator: 2.5, denominator: 4, isCommon: false };
+
+    expect(() => quantizeBar([], fractional, 16)).toThrowError(/numerator 2\.5/);
+  });
+
+  /**
    * The invariant the whole feature rests on. Independently snapping onsets to
    * a grid - the obvious approach, and what most transcribers do - produces
    * durations that overrun or underfill the bar, which is the root of the
    * ragged 32nd-note-and-tie mess such tools are known for.
+   *
+   * Length alone is not enough to pin that down: `beatSlots` never inspects
+   * `notes` or `isRest`, so a `quantizeBar` that discarded its notes and
+   * emitted a bar of rests would satisfy it for every case below. So each case
+   * also asserts placement, against the distinct slots the input snaps onto.
+   *
+   * Struck notes, not non-rest beats: a span no single value can express is
+   * split by `slotsToDurations` into several `BeatDoc`s for one onset, and the
+   * continuation fragments are tied.
    */
-  it('always produces exactly one bar of music', () => {
+  it('always produces exactly one bar of music, with every onset struck', () => {
     const signatures: TimeSignature[] = [
       { numerator: 4, denominator: 4, isCommon: true },
       { numerator: 3, denominator: 4, isCommon: false },
@@ -77,6 +98,9 @@ describe('quantizeBar', () => {
       for (const finest of [8, 16, 32] as FinestDivision[]) {
         if (finest < signature.denominator) continue;
 
+        const slotsPerBeat = finest / signature.denominator;
+        const totalSlots = signature.numerator * slotsPerBeat;
+
         for (let seed = 0; seed < 20; seed++) {
           const notes: PlacedNote[] = Array.from({ length: seed % 7 }, (_, i) => ({
             beatInBar: (((seed * 7 + i * 13) % 100) / 100) * signature.numerator,
@@ -84,9 +108,23 @@ describe('quantizeBar', () => {
           }));
 
           const beats = quantizeBar(notes, signature, finest);
-          const expected = signature.numerator * (finest / signature.denominator);
 
-          expect(beatSlots(beats, finest)).toBe(expected);
+          expect(beatSlots(beats, finest)).toBe(totalSlots);
+
+          // Onsets sharing a slot merge into one chord, and an onset rounding
+          // past the final slot is pulled back onto it, so the count of
+          // distinct snapped slots is the count of beats that begin a note.
+          const onsetSlots = new Set(
+            notes.map(note => Math.min(
+              totalSlots - 1,
+              Math.max(0, Math.round(note.beatInBar * slotsPerBeat))
+            ))
+          );
+          const struck = beats.filter(
+            beat => !beat.isRest && beat.notes.length > 0 && !beat.notes[0].isTied
+          );
+
+          expect(struck.length).toBe(onsetSlots.size);
         }
       }
     }
