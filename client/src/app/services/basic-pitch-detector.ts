@@ -1,0 +1,228 @@
+/**
+ * `NoteDetector` backed by Spotify's Basic Pitch, running in the browser on
+ * the TF.js WebGL backend.
+ *
+ * ## Why this reimplements the library's own inference loop
+ *
+ * `BasicPitch.evaluateModel` is the obvious entry point and it cannot be used.
+ * It reads each batch's output with `await tensor.array()`, and TF.js 3.21's
+ * *asynchronous* WebGL readback never resolves inside a Web Worker: a spike
+ * measured `.data()` hanging indefinitely there while `.dataSync()` on
+ * identical code returned in 3 ms. Inference has to live in a worker — a
+ * four-minute stem otherwise freezes the UI for seconds, and confining TF.js
+ * to a worker chunk is also what keeps it out of the main bundle — so the loop
+ * below mirrors `evaluateModel` structurally and substitutes `arraySync()` for
+ * every `await ...array()`. The CPU backend would sidestep the readback
+ * problem and is roughly 100x slower, which is not a trade worth making.
+ *
+ * Nothing here is a fork or a patch. Every piece it calls — `prepareData`,
+ * `evaluateSingleFrame`, `unwrapOutput`, the `model` promise — is public API;
+ * only the three lines that read tensors back differ.
+ *
+ * The loop also releases the tensors it allocates, which `evaluateModel` does
+ * not. On a long stem that is tens of megabytes of GPU textures.
+ *
+ * ## What comes out
+ *
+ * Basic Pitch over-detects a plucked bass line about fourfold: on the spike's
+ * synthetic bassline eight played notes came back as thirty-four, every
+ * spurious one a harmonic partial *above* its fundamental. Recall is what this
+ * adapter is responsible for; `suppressHarmonics` is responsible for precision.
+ * Constraining the model's own `minFreq`/`maxFreq` is not a substitute —
+ * measured, it removed exactly one of the twenty-six partials, because they
+ * sit inside a bass's range too — so the model's defaults are used unaltered.
+ */
+
+import {
+  BasicPitch,
+  addPitchBendsToNoteEvents,
+  noteFramesToTime,
+  outputToNotesPoly
+} from '@spotify/basic-pitch';
+import type { NoteEventTime } from '@spotify/basic-pitch';
+
+import { DetectedNote } from '../models/transcription.model';
+import { DetectionResult, NoteDetector } from './note-detector';
+
+/** Where `angular.json` copies the weights bundled with the npm package. */
+export const BASIC_PITCH_MODEL_URL = '/basic-pitch-model/model.json';
+
+/** The only rate the model accepts. Mirrors `AUDIO_SAMPLE_RATE` in the library. */
+const MODEL_SAMPLE_RATE = 22050;
+
+/** Samples per model frame. Mirrors `FFT_HOP`. */
+const FFT_HOP = 256;
+
+/**
+ * Rate at which the model reports frames, and so the rate `bendCents` is
+ * sampled at.
+ *
+ * 86.13 Hz, not the 86 the library's own `ANNOTATIONS_FPS` floors it to. That
+ * floored value exists only to count how many frames of output an input should
+ * produce; `modelFrameToTime`, which is what actually places notes in time,
+ * uses the unrounded ratio. Reporting 86 here would walk a bend a whole frame
+ * off its note every 6.5 seconds.
+ */
+export const BEND_FRAME_RATE_HZ = MODEL_SAMPLE_RATE / FFT_HOP;
+
+/** Contour bins per semitone in the model's bend output. Mirrors the library. */
+const CONTOUR_BINS_PER_SEMITONE = 3;
+
+/** The three model outputs, in the order `evaluateSingleFrame` returns them. */
+type Posteriorgrams = [number[][], number[][], number[][]];
+
+export class BasicPitchDetector implements NoteDetector {
+  private readonly basicPitch: BasicPitch;
+
+  /**
+   * Constructing this starts the model download; the promise lives inside
+   * `BasicPitch` and is awaited on first use. One instance, reused across
+   * calls — reloading the graph per file would cost a fetch and a fresh set of
+   * shader compiles every time.
+   */
+  constructor(modelUrl: string = BASIC_PITCH_MODEL_URL) {
+    this.basicPitch = new BasicPitch(modelUrl);
+  }
+
+  async detect(
+    audio: Float32Array,
+    sampleRate: number,
+    onProgress: (fraction: number) => void
+  ): Promise<DetectionResult> {
+    if (sampleRate !== MODEL_SAMPLE_RATE) {
+      throw new Error(
+        `Basic Pitch needs audio at ${MODEL_SAMPLE_RATE} Hz, was given ${sampleRate} Hz.`
+      );
+    }
+
+    const frames: number[][] = [];
+    const onsets: number[][] = [];
+    const contours: number[][] = [];
+
+    await this.infer(
+      audio,
+      ([batchFrames, batchOnsets, batchContours]) => {
+        // Appended row by row rather than with `push(...rows)`: a batch is
+        // only ~142 rows, but spreading a long stem's worth would eventually
+        // hit the argument-count limit.
+        for (const row of batchFrames) frames.push(row);
+        for (const row of batchOnsets) onsets.push(row);
+        for (const row of batchContours) contours.push(row);
+      },
+      onProgress
+    );
+
+    const events = noteFramesToTime(
+      addPitchBendsToNoteEvents(contours, outputToNotesPoly(frames, onsets))
+    );
+
+    // `outputToNotesPoly` walks the posteriorgram pitch by pitch, so what it
+    // returns is in no useful order at all. Pitch breaks the ties, so the
+    // result does not lean on the sort being stable.
+    events.sort(
+      (a, b) => a.startTimeSeconds - b.startTimeSeconds || a.pitchMidi - b.pitchMidi
+    );
+
+    return { notes: events.map(toDetectedNote), bendFrameRateHz: BEND_FRAME_RATE_HZ };
+  }
+
+  /**
+   * `BasicPitch.evaluateModel`, with synchronous readback and with its tensors
+   * released.
+   *
+   * Kept line-for-line comparable to the original, including the
+   * trim-to-original-length arithmetic, which is the subtle part: the model
+   * runs over overlapping two-second windows, so the concatenated output
+   * overshoots the input and the last useful batch has to be cut short.
+   */
+  private async infer(
+    audio: Float32Array,
+    onBatch: (posteriorgrams: Posteriorgrams) => void,
+    onProgress: (fraction: number) => void
+  ): Promise<void> {
+    const [reshapedInput, audioOriginalLength] = await this.basicPitch.prepareData(audio);
+
+    try {
+      // The library floors the frame rate to count output frames, and this
+      // trim has to agree with it exactly or the output shifts in time.
+      const annotationsFps = Math.floor(MODEL_SAMPLE_RATE / FFT_HOP);
+      const framesWanted = Math.floor(
+        audioOriginalLength * (annotationsFps / MODEL_SAMPLE_RATE)
+      );
+      const batches = reshapedInput.shape[0];
+      let framesSoFar = 0;
+
+      for (let batch = 0; batch < batches; batch++) {
+        onProgress(batch / batches);
+
+        // The original tests this after running the batch and throws the
+        // result away. Same output, one less inference.
+        if (framesSoFar >= framesWanted) continue;
+
+        const results = await this.basicPitch.evaluateSingleFrame(reshapedInput, batch);
+        const unwrapped = results.map(result => this.basicPitch.unwrapOutput(result));
+        for (const result of results) result.dispose();
+
+        const batchFrames = unwrapped[0].shape[0];
+        const keep = Math.min(batchFrames, framesWanted - framesSoFar);
+        const trimmed =
+          keep < batchFrames
+            ? unwrapped.map(output => output.slice([0, 0], [keep, -1]))
+            : unwrapped;
+        if (trimmed !== unwrapped) {
+          for (const output of unwrapped) output.dispose();
+        }
+        framesSoFar += batchFrames;
+
+        // The one substantive difference from `evaluateModel`: `arraySync`,
+        // not `await array()`. See the module docblock.
+        onBatch([trimmed[0].arraySync(), trimmed[1].arraySync(), trimmed[2].arraySync()]);
+        for (const output of trimmed) output.dispose();
+      }
+
+      onProgress(1);
+    } finally {
+      reshapedInput.dispose();
+    }
+  }
+}
+
+/**
+ * `amplitude` becomes `confidence`.
+ *
+ * It is the note's peak activation in the frame posteriorgram, not a
+ * calibrated probability — the library offers no confidence, and this is the
+ * only signal it does offer. It behaves like one for what
+ * `DerivationSettings.confidenceFloor` uses it for (rank the notes, cut the
+ * weak end), and it is worth knowing what it cannot do: it does not separate a
+ * real note from a harmonic partial. In the spike's output a partial came back
+ * 5 % louder than the note that produced it.
+ */
+function toDetectedNote(event: NoteEventTime, index: number): DetectedNote {
+  return {
+    // Position in the sorted result. Stable for a given detection, which is
+    // all anything downstream asks of it — a note's identity does not survive
+    // re-running detection anyway.
+    id: `bp-${index}`,
+    pitch: event.pitchMidi,
+    onsetSec: event.startTimeSeconds,
+    offsetSec: event.startTimeSeconds + event.durationSeconds,
+    confidence: event.amplitude,
+    bendCents: toCents(event.pitchBends)
+  };
+}
+
+/**
+ * Basic Pitch reports bends in **contour bins**, not cents.
+ *
+ * `addPitchBendsToNoteEvents` returns the argmax of the contour posteriorgram
+ * in a window around the note's nominal bin, offset so that 0 is the nominal
+ * pitch — and the contour grid is three bins to a semitone. So a bin is 100/3
+ * cents, and passing the raw array straight to `DetectedNote.bendCents`, which
+ * the model documents as cents, would understate every bend 33-fold.
+ */
+function toCents(pitchBends: number[] | undefined): number[] {
+  const centsPerBin = 100 / CONTOUR_BINS_PER_SEMITONE;
+
+  return pitchBends?.map(bins => bins * centsPerBin) ?? [];
+}

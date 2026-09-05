@@ -29,6 +29,32 @@ module.exports = function (config) {
     reporters: ['progress', 'kjhtml'],
     browsers: ['ChromeHeadless'],
     customLaunchers: {
+      // Deliberately shadows karma-chrome-launcher's own ChromeHeadless.
+      //
+      // The stock one passes --disable-gpu and so has no WebGL at all, and
+      // TF.js reacts to a missing GL context by quietly falling back to its
+      // CPU backend. The note detector runs on WebGL in production, and the
+      // whole reason `BasicPitchDetector` reimplements Basic Pitch's inference
+      // loop is WebGL tensor readback; on the CPU backend that spec would pass
+      // while never touching the code path it exists to cover. SwiftShader is
+      // a software rasteriser, so this buys coverage rather than speed - the
+      // detector spec takes 3.1 s under it against 2.6 s on CPU.
+      //
+      // Shadowing the name rather than adding a second launcher is what makes
+      // `--browsers=ChromeHeadless`, which is how everything from the plans to
+      // CI invokes this, get the GL-capable browser too.
+      ChromeHeadless: {
+        base: 'Chrome',
+        flags: [
+          '--headless=new',
+          '--no-sandbox',
+          '--disable-dev-shm-usage',
+          '--remote-debugging-port=9222',
+          '--use-gl=angle',
+          '--use-angle=swiftshader',
+          '--enable-unsafe-swiftshader'
+        ]
+      },
       ChromeHeadlessNoSandbox: {
         base: 'ChromeHeadless',
         flags: ['--no-sandbox', '--disable-gpu']

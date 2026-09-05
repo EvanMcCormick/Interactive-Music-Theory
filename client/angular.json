@@ -28,6 +28,11 @@
                 "glob": "**/*",
                 "input": "node_modules/@coderline/alphatab/dist/soundfont",
                 "output": "/soundfont"
+              },
+              {
+                "glob": "**/*",
+                "input": "node_modules/@spotify/basic-pitch/model",
+                "output": "/basic-pitch-model"
               }
             ],
             "styles": [
@@ -96,7 +101,12 @@
             "karmaConfig": "karma.conf.js",
             "assets": [
               "src/favicon.ico",
-              "src/assets"
+              "src/assets",
+              {
+                "glob": "**/*",
+                "input": "node_modules/@spotify/basic-pitch/model",
+                "output": "/basic-pitch-model"
+              }
             ],
             "styles": [
               "src/styles.css"
