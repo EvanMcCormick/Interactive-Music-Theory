@@ -562,6 +562,142 @@ describe('TranscriptionService', () => {
     });
   });
 
+  describe('updateTempo', () => {
+    it('respaces the grid without running detection again', async () => {
+      await service.transcribe(wavFile());
+
+      service.updateTempo(90);
+
+      expect(detector.calls).toBe(1);
+      // Read straight back off the grid by `gridTempo`, so the score says what
+      // was asked for rather than what the tracker measured.
+      expect(service.state.derived?.doc.tempo).toBe(90);
+
+      const beats = service.state.session?.grid.beatsSec ?? [];
+      expect(beats.length).toBeGreaterThan(1);
+      expect(beats[1] - beats[0]).toBeCloseTo(60 / 90, 6);
+    });
+
+    it('anchors the respacing on the first beat', async () => {
+      await service.transcribe(wavFile());
+      const first = service.state.session?.grid.beatsSec[0];
+
+      service.updateTempo(90);
+
+      // The beat the downbeat controls have already positioned. A tempo change
+      // that moved it would undo that work.
+      expect(service.state.session?.grid.beatsSec[0]).toBe(first!);
+    });
+
+    it('leaves the grid alone for a tempo that is not a positive number', async () => {
+      await service.transcribe(wavFile());
+      const beats = service.state.session?.grid.beatsSec ?? [];
+
+      for (const bad of [0, -60, NaN, Infinity]) {
+        service.updateTempo(bad);
+
+        expect(service.state.phase).toBe('ready');
+        expect(service.state.session?.grid.beatsSec).toEqual(beats);
+      }
+
+      expect(detector.calls).toBe(1);
+      checkInvariants(states);
+    });
+
+    it('is a no-op before anything has been transcribed', () => {
+      service.updateTempo(90);
+
+      expect(service.state.phase).toBe('idle');
+      expect(states.length).toBe(1);
+    });
+
+    it('is a no-op after a failed run', async () => {
+      detector.failWith = 'gone wrong';
+      await service.transcribe(wavFile());
+      const before = states.length;
+
+      service.updateTempo(90);
+
+      expect(service.state.phase).toBe('failed');
+      expect(states.length).toBe(before);
+    });
+  });
+
+  describe('nudgeDownbeat', () => {
+    it('moves the bar lines without running detection again', async () => {
+      await service.transcribe(wavFile());
+      const beats = service.state.session?.grid.beatsSec ?? [];
+
+      service.nudgeDownbeat(1);
+
+      expect(detector.calls).toBe(1);
+      // The beat after the one bar 1 used to start on.
+      expect(service.state.session?.grid.beatsSec).toEqual(beats.slice(1));
+    });
+
+    it('lets bar 1 begin before the audio does', async () => {
+      await service.transcribe(wavFile());
+      const beats = service.state.session?.grid.beatsSec ?? [];
+      expect(beats[0]).toBeLessThan(0.1);
+
+      service.nudgeDownbeat(-1);
+
+      // Negative, and still a working score: the piece begins mid-bar, which
+      // is what a first note on beat 2 means. `secondsToBeats` extrapolates
+      // there by design.
+      expect(service.state.session?.grid.beatsSec[0]).toBeLessThan(0);
+      expect(service.state.phase).toBe('ready');
+      expect(service.state.error).toBeNull();
+      expect(struckFrets(service.state).length).toBeGreaterThan(0);
+      checkInvariants(states);
+    });
+
+    it('restores the original placement on a round trip', async () => {
+      await service.transcribe(wavFile());
+      const frets = struckFrets(service.state);
+      const bars = service.state.derived?.doc.tracks[0].staves[0].bars.length;
+      expect(frets.length).toBeGreaterThan(0);
+
+      service.nudgeDownbeat(1);
+      service.nudgeDownbeat(-1);
+
+      // The placement, not the beat times: nudging back reconstructs the
+      // dropped beat from the interval that is now leading, and a tracked grid
+      // is not evenly spaced. What has to come back is where the notes are
+      // written, which is the only thing the user asked to move.
+      expect(struckFrets(service.state)).toEqual(frets);
+      expect(service.state.derived?.doc.tracks[0].staves[0].bars.length).toBe(bars!);
+      expect(detector.calls).toBe(1);
+    });
+
+    it('leaves the grid alone for a fractional nudge', async () => {
+      await service.transcribe(wavFile());
+      const beats = service.state.session?.grid.beatsSec ?? [];
+
+      service.nudgeDownbeat(0.5);
+
+      expect(service.state.session?.grid.beatsSec).toEqual(beats);
+      expect(detector.calls).toBe(1);
+    });
+
+    it('is a no-op before anything has been transcribed', () => {
+      service.nudgeDownbeat(1);
+
+      expect(service.state.phase).toBe('idle');
+      expect(states.length).toBe(1);
+    });
+
+    it('is a no-op while a transcription is running', async () => {
+      const first = service.transcribe(wavFile());
+      const before = states.length;
+
+      service.nudgeDownbeat(1);
+
+      expect(states.length).toBe(before);
+      await first;
+    });
+  });
+
   /**
    * The error contract: a settings combination the user chose degrades, and
    * only input data that cannot be honoured throws.

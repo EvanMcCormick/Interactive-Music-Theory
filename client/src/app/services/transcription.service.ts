@@ -74,6 +74,7 @@ import {
   createDefaultDerivationSettings
 } from '../models/transcription.model';
 import { decodeToMono } from './audio-decode';
+import { nudgedDownbeat, withTempo } from './beat-grid-edit';
 import { messageOf } from './error-message';
 import { trackBeats } from './beat-tracking';
 import { DETECTION_SAMPLE_RATE, NoteDetector } from './note-detector';
@@ -370,6 +371,55 @@ export class TranscriptionService {
     this.rederive(session => ({
       ...session,
       grid: { ...session.grid, timeSignature }
+    }));
+  }
+
+  /**
+   * Respaces the beat grid to a stated tempo, keeping bar 1 where it is.
+   *
+   * The tracker measures each beat rather than fitting one tempo, so a grid
+   * that drifted, dropped a beat or locked onto a subdivision is corrected by
+   * replacing the measurements with an even pulse - not by scaling them, which
+   * would carry the mistake through at a different speed. What survives is the
+   * first beat, because the user has already placed it with `nudgeDownbeat`
+   * and a tempo control that moved the bar lines would undo that work.
+   *
+   * Costs a re-derivation and no detection, like every other knob here. A
+   * tempo that is not a positive, finite number leaves the grid alone; see
+   * `withTempo`. A no-op unless a transcription has succeeded, and refused on
+   * the same terms as `updateSettings`.
+   */
+  updateTempo(bpm: number): void {
+    this.rederive(session => ({
+      ...session,
+      grid: withTempo(session.grid, bpm)
+    }));
+  }
+
+  /**
+   * Moves the bar lines by whole beats, without moving the beats themselves.
+   *
+   * The correction M2 left undone. `trimBeats` starts the grid at the first
+   * beat the onsets support and derivation reads that beat as bar 1 beat 1,
+   * but nothing established it as a downbeat - so a line that begins on beat 3
+   * tracks perfectly and is barred a half-bar out. This is how a listener says
+   * where bar 1 actually begins: `+1` starts it a beat later, `-1` a beat
+   * earlier.
+   *
+   * Nudging back can put the grid's first beat before zero, which is the
+   * correct answer rather than an edge case - it says the piece begins mid-bar
+   * - and `secondsToBeats` extrapolates there by design, so a note that now
+   * falls on beat 2 of bar 1 is written there rather than clamped onto beat 1
+   * and reported as `beforeGrid`.
+   *
+   * A no-op unless a transcription has succeeded, and refused on the same
+   * terms as `updateSettings`. A fractional or zero nudge leaves the grid
+   * alone; see `nudgedDownbeat`.
+   */
+  nudgeDownbeat(beats: number): void {
+    this.rederive(session => ({
+      ...session,
+      grid: nudgedDownbeat(session.grid, beats)
     }));
   }
 
