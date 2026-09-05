@@ -101,7 +101,14 @@ export interface DerivationSettings {
   /** Shortest note that may be written. 16 = sixteenth note. */
   finestDivision: FinestDivision;
   allowTriplets: boolean;
-  /** null infers the key from the notes. */
+  /**
+   * Key signature to write the score in. `null` falls back to C major.
+   *
+   * Not inferred: reading a key off the notes is deferred past M1, and a
+   * comment here once promised it. Nothing downstream would have noticed the
+   * difference, since tab is unaffected by the key signature and only the
+   * standard-notation staff spells accidentals against it.
+   */
   key: KeySignature | null;
   /** Notes below this confidence are left out of the score. 0-1, compared against DetectedNote.confidence. */
   confidenceFloor: number;

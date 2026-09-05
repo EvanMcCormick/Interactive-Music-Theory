@@ -229,7 +229,14 @@ export interface DerivationSettings {
   /** Shortest note that may be written. 16 = sixteenth note. */
   finestDivision: FinestDivision;
   allowTriplets: boolean;
-  /** null infers the key from the notes. */
+  /**
+   * Key signature to write the score in. `null` falls back to C major.
+   *
+   * Not inferred: reading a key off the notes is deferred past M1, and a
+   * comment here once promised it. Nothing downstream would have noticed the
+   * difference, since tab is unaffected by the key signature and only the
+   * standard-notation staff spells accidentals against it.
+   */
   key: KeySignature | null;
   /** Notes below this confidence are left out of the score. 0-1, compared against DetectedNote.confidence. */
   confidenceFloor: number;
@@ -2102,6 +2109,11 @@ function separateAttack(
   // and letting an open string it collides with claim that string first strands
   // it on a collision it had a way out of. Whichever note ends up moving, it is
   // the one with somewhere to move to.
+  //
+  // Every non-null assertion in this function reads from `options` or `chosen`
+  // at an index that came out of `options.keys()`, and the loop above puts an
+  // index in `options` only after testing `chosen[i] !== null`. So both lookups
+  // are populated by construction, and neither is a guess about the caller.
   const placed = [...options.keys()].sort((a, b) =>
     options.get(a)!.length - options.get(b)!.length
     || nodeCost(chosen[a]!, settings) - nodeCost(chosen[b]!, settings)
@@ -3039,6 +3051,68 @@ git commit -m "feat: Assemble detected events into a ScoreDoc"
   score or listed in `dropped` — swept over onset offsets and separations at
   several tempi, not argued from the code.
 - The two position-stability tests pass, proving fingering responds to available time.
+
+## Known limitations, and decisions M2 and M3 have to make
+
+Found in the final milestone review. Recorded rather than fixed: none of them is
+wrong today, and each one is a choice that belongs to a milestone with more
+context than M1 has.
+
+### The error-handling contract is inconsistent, and needs a decision before M3
+
+Three functions throw on input they cannot handle — `correctOctaves` on a pitch
+more than ten octaves outside MIDI, `deriveScore` on a non-finite onset,
+`quantizeBar` on a grid that cannot express its bar. Two return a silent default
+instead — `secondsToBeats` returns 0 for a grid too short to interpolate,
+`gridTempo` returns 120. And discarded notes now return a third way, as data.
+
+Each of those is defensible where it stands, and together they are not a
+contract. It matters in M3, where `deriveScore` sits in a live re-derive loop
+bound to UI controls: a throwing pure function blanks the preview, and the user
+who typed a bad number sees an empty page rather than a message. **Decide then
+whether derivation throws or degrades**, and make all five agree. The `dropped`
+channel added here is the shape a degrading answer would take.
+
+### Onset-to-slot rounding is implemented three times
+
+`snapToSlots` rounds a cluster centre to a slot; `deriveScore` rounds an onset to
+a global slot to pick its bar; and the quantize property test's own expectation
+builder rounds again to say where a note should have landed. The three agree
+today. The third is the one that costs something: a test whose expectation is
+built by the same rule as the code cannot catch a wrong *rounding rule*, only a
+wrong result under the same rule. Worth one exported helper, but the helper has
+to be chosen carefully — the first two round different quantities (a cluster
+centre within a bar, an absolute onset across the piece) and collapsing them
+without noticing that would be a regression, not a cleanup.
+
+### `deriveScore` is bass-only
+
+`clef: 'f4'` and General MIDI program 33 are hardcoded, while `DerivationSettings`
+accepts any tuning, so a guitar transcription comes out in bass clef on a bass
+patch. In scope for a bass-first milestone and not a defect. Before guitar, the
+settings model needs an instrument concept — clef, program and probably a
+default tuning move onto it together, rather than three more fields on
+`DerivationSettings`.
+
+### Fingering still has no hand-position anchor
+
+Recorded above under "Deliberately not in M1", and still true after these
+changes: `edgeCost` measures a shift from the previous note's fret rather than
+from a position the hand is holding. Confirmed rather than restated, since the
+attack-window change touched the module it lives in.
+
+### End-to-end coverage is thin on settings
+
+Every `deriveScore` test but two uses the default settings, and both exceptions
+narrow the instrument to prove a pitch unplayable. There is no end-to-end case at
+3/4 or 6/8, with a capo, at a `finestDivision` other than 16, with a
+`positionHint`, or with `settings.key` set. Each of those is unit-tested inside
+the module that consumes it — `metricFrame` on compound meters, `candidatesFor`
+on capos, `durationTable` on grids, `nodeCost` on the hint — but the product
+promise is that **every setting is a live knob**, and a knob is only live if it
+survives the assembly. The wiring is exactly where a setting gets read at the
+wrong stage or dropped on the floor, which is the class of defect the units
+cannot see; the attack-window bug was one of them.
 
 ## Deliberately not in M1
 

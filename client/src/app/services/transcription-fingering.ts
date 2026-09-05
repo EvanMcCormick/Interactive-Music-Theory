@@ -285,6 +285,11 @@ function separateAttack(
   // and letting an open string it collides with claim that string first strands
   // it on a collision it had a way out of. Whichever note ends up moving, it is
   // the one with somewhere to move to.
+  //
+  // Every non-null assertion in this function reads from `options` or `chosen`
+  // at an index that came out of `options.keys()`, and the loop above puts an
+  // index in `options` only after testing `chosen[i] !== null`. So both lookups
+  // are populated by construction, and neither is a guess about the caller.
   const placed = [...options.keys()].sort((a, b) =>
     options.get(a)!.length - options.get(b)!.length
     || nodeCost(chosen[a]!, settings) - nodeCost(chosen[b]!, settings)

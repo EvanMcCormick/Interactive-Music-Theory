@@ -53,8 +53,8 @@ export interface DetectedNote {
 }
 
 export interface BeatGrid {
-  beatsSec: number[];           // ascending
-  downbeatIndices: number[];    // indices into beatsSec
+  beatsSec: number[];           // ascending; beatsSec[0] is the first downbeat
+  downbeatIndices: number[];    // indices into beatsSec — M2, see below
   timeSignature: TimeSignature; // reused from composer.model.ts
 }
 
@@ -64,7 +64,7 @@ export interface DerivationSettings {
   capo: number;
   finestDivision: DurationValue;
   allowTriplets: boolean;
-  key: KeySignature | null;     // null = infer
+  key: KeySignature | null;     // null = C major until inference lands (M3+)
   confidenceFloor: number;
   maxFret: number;
   positionHint: number | null;
@@ -80,13 +80,26 @@ export interface TranscriptionSession {
 }
 ```
 
+Two of those fields are not what M1 shipped, and the difference is deliberate.
+`downbeatIndices` is **not in the M1 model**: derivation reads bar 1 as starting
+at `beatsSec[0]` and counts uniform bars of `numerator` beats from there, so a
+field it never read would have been a trap for M2's beat tracker — populate it,
+assume derivation honours it, and a dropped or doubled beat silently writes bars
+that disagree with the grid. M2 adds the field and the derivation support that
+honours it in the same change. And `key: null` falls back to C major rather than
+inferring anything; key inference is deferred.
+
 The entire downstream half of the feature is one signature:
 
 ```typescript
-function deriveScore(session: TranscriptionSession): ScoreDoc
+function deriveScore(session: TranscriptionSession): DerivedScore
 ```
 
-Pure. Synchronous. No audio, no model, no Angular.
+Pure. Synchronous. No audio, no model, no Angular. It returns the score **and
+the notes it had to throw away** — below the confidence floor, unplayable on the
+instrument, or struck on a string another note already held. A `ScoreDoc` cannot
+say which notes are missing or why, and showing the user what was discarded is
+half of what makes a transcription trustworthy.
 
 Two consequences follow, and they are the reason for this design:
 
