@@ -1,0 +1,360 @@
+# Transcription M3: Review UI Implementation Plan
+
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** The screen where a transcription becomes trustworthy — drop a stem, see the score, turn every knob until it is right, open it in the composer.
+
+**Architecture:** Two pure modules first (grid editing, ghost preview), then three standalone components. Re-derivation measures 0.10 ms, so every control re-renders live; nothing here needs a spinner except detection itself.
+
+**Tech Stack:** Angular 21 standalone components with `OnPush`, alphaTab 1.8 for the preview, SCSS matching the existing dark theme, no new dependencies.
+
+**Prior art:** M1 (`deriveScore`) and M2 (detection) are merged. Plans at `docs/plans/2026-09-05-transcription-m1-derivation-core.md` and `-m2-detection.md`; design at `-audio-transcription-design.md`.
+
+---
+
+## Before you start
+
+Work in `D:\Github\MusicTheory\.worktrees\audio-transcription-m3`, branch `feature/audio-transcription-review`. Paths below are relative to `client/`.
+
+```bash
+npx ng test --watch=false --browsers=ChromeHeadless
+npx ng test --watch=false --browsers=ChromeHeadless --include='**/NAME.spec.ts'
+```
+
+Baseline: **297 tests, 0 failures.**
+
+### What M3 has to fix, not just display
+
+Two limitations M2 recorded are M3's job:
+
+**1. Bar-line phase is arbitrary.** `beatsSec[0]` is the first *tracked* beat, with no established relationship to the true downbeat. Tempo can be perfect while every bar line sits a beat off, and nothing downstream can tell. The chosen fix is **nudge buttons** that shift the whole grid a beat at a time — cheap to build, and cheap to use precisely because re-derivation is instant.
+
+**2. Tempo and downbeat phase have no service method.** They are two of the design doc's nine promised live knobs, and both need `grid.beatsSec` regenerated or shifted. Task 1 builds them.
+
+### Conventions this codebase already has
+
+- Routes live in **`src/main.ts`**, not a routes file. Nav links are in `src/app/app.component.html`.
+- Components are standalone with `changeDetection: ChangeDetectionStrategy.OnPush`, `takeUntil(destroy$)` teardown — see `components/composer/composer.component.ts`.
+- Each component declares its own SCSS variables for the dark theme. Match the existing palette: `#2c3e50` nav, `#34495e` secondary, `#3498db` accent, `#ecf0f1` text, `#1a252f` surface, `#e74c3c` error, `#f39c12` warning.
+- alphaTab is wired through `services/alpha-tab.service.ts` and `services/score-doc-mapper.service.ts`. `components/composer/components/composer-score/` is the working example of rendering a `ScoreDoc` — read it before Task 4.
+
+### From the web-guidance pass
+
+- **Container queries** (Baseline since 2023) for the two-pane layout — the panel should respond to its own width, not the viewport, so it behaves correctly however it is embedded.
+- Every control gets a real `<label for>`; hints attach via `aria-describedby`. **Never a placeholder as a label.**
+- **Do not put phase churn in a live region.** "Decoding… / Detecting… / Deriving…" is exactly the interstitial noise the accessibility guidance warns against. One `aria-live="polite"` region announcing meaningful completions and refusals only.
+
+### Scope decisions
+
+1. **Ghost notes go in voice 2, not merged into the score.** `BarDoc.voices` is an array and alphaTab renders multiple voices. Putting discarded notes in a second voice leaves voice 1 byte-identical to what exports, so what you see is what the composer gets. Merging them into one voice could not offer that guarantee — adding onsets changes quantization and fingering.
+2. **The preview document is never exported.** *Open in Composer* sends `derived.doc`, not the preview.
+3. **No waveform.** The design doc's review screen does not require one, and the nudge buttons make the correction it would enable unnecessary. It is the obvious M4 addition if downbeat correction proves fiddly in practice.
+
+---
+
+## Task 1: Grid editing
+
+Tempo and downbeat phase — the two missing knobs.
+
+**Files:**
+- Create: `src/app/services/beat-grid-edit.ts`
+- Test: `src/app/services/beat-grid-edit.spec.ts`
+- Modify: `src/app/services/transcription.service.ts` (add `updateTempo`, `nudgeDownbeat`)
+
+**Step 1: Write the failing test**
+
+```typescript
+import { TimeSignature } from '../models/composer.model';
+import { BeatGrid } from '../models/transcription.model';
+import { nudgedDownbeat, withTempo } from './beat-grid-edit';
+
+const FOUR_FOUR: TimeSignature = { numerator: 4, denominator: 4, isCommon: true };
+
+/** Five beats at 120 BPM, starting at 1.0 s. */
+const GRID: BeatGrid = {
+  beatsSec: [1.0, 1.5, 2.0, 2.5, 3.0],
+  timeSignature: FOUR_FOUR
+};
+
+describe('withTempo', () => {
+  it('respaces the beats without moving the first one', () => {
+    const slower = withTempo(GRID, 60);
+
+    expect(slower.beatsSec[0]).toBe(1.0);
+    expect(slower.beatsSec[1] - slower.beatsSec[0]).toBeCloseTo(1.0, 6);
+  });
+
+  it('covers the same span it was given', () => {
+    const slower = withTempo(GRID, 60);
+    const last = slower.beatsSec[slower.beatsSec.length - 1];
+
+    // Original span is 2 s; at 60 BPM that is 2 beats plus the first.
+    expect(last).toBeCloseTo(3.0, 6);
+  });
+
+  it('gives more beats at a faster tempo', () => {
+    expect(withTempo(GRID, 240).beatsSec.length)
+      .toBeGreaterThan(GRID.beatsSec.length);
+  });
+
+  it('refuses a tempo that is not a positive number', () => {
+    for (const bad of [0, -60, NaN, Infinity]) {
+      expect(withTempo(GRID, bad)).toBe(GRID);
+    }
+  });
+
+  it('keeps the time signature', () => {
+    expect(withTempo(GRID, 90).timeSignature).toEqual(FOUR_FOUR);
+  });
+});
+
+describe('nudgedDownbeat', () => {
+  it('starts the bar a beat later when nudged forward', () => {
+    expect(nudgedDownbeat(GRID, 1).beatsSec).toEqual([1.5, 2.0, 2.5, 3.0]);
+  });
+
+  it('starts the bar a beat earlier when nudged back', () => {
+    expect(nudgedDownbeat(GRID, -1).beatsSec).toEqual([0.5, 1.0, 1.5, 2.0, 2.5, 3.0]);
+  });
+
+  it('nudges several beats at once', () => {
+    expect(nudgedDownbeat(GRID, 2).beatsSec).toEqual([2.0, 2.5, 3.0]);
+  });
+
+  it('is the identity for a nudge of nothing', () => {
+    expect(nudgedDownbeat(GRID, 0)).toBe(GRID);
+  });
+
+  it('never leaves fewer than two beats', () => {
+    expect(nudgedDownbeat(GRID, 99).beatsSec.length).toBe(2);
+  });
+
+  it('lets the grid start before the audio does', () => {
+    // A first note on beat 2 means bar 1 began before it — which is a
+    // negative time. secondsToBeats extrapolates there by design.
+    expect(nudgedDownbeat(GRID, -3).beatsSec[0]).toBeCloseTo(-0.5, 6);
+  });
+
+  it('restores the original spacing on a round trip', () => {
+    const there = nudgedDownbeat(GRID, 1);
+    const back = nudgedDownbeat(there, -1);
+
+    expect(back.beatsSec).toEqual(GRID.beatsSec);
+  });
+
+  it('refuses a fractional nudge', () => {
+    expect(nudgedDownbeat(GRID, 0.5)).toBe(GRID);
+  });
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Expected: FAIL — `Cannot find module './beat-grid-edit'`.
+
+**Step 3: Write minimal implementation**
+
+Create `src/app/services/beat-grid-edit.ts`:
+
+```typescript
+import { BeatGrid } from '../models/transcription.model';
+
+/**
+ * Corrections a listener makes to a tracked beat grid.
+ *
+ * Beat tracking gets tempo right far more often than it gets phase right: the
+ * grid's first beat is whichever tracked pulse the onsets first support, and
+ * nothing about it makes it a downbeat. So a transcription can be perfectly in
+ * time and still have every bar line a beat out of place, which no amount of
+ * tuning the tracker fixes and which a listener spots instantly.
+ *
+ * Both functions return a new grid, so the caller can re-derive and compare.
+ */
+
+/**
+ * Respaces a grid to a new tempo, anchored on its first beat.
+ *
+ * The first beat is the one the user has already positioned with the nudge
+ * controls, so a tempo change must not move it.
+ */
+export function withTempo(grid: BeatGrid, bpm: number): BeatGrid {
+  if (!Number.isFinite(bpm) || bpm <= 0) return grid;
+
+  const beats = grid.beatsSec;
+  if (beats.length < 2) return grid;
+
+  const start = beats[0];
+  const span = beats[beats.length - 1] - start;
+  const interval = 60 / bpm;
+  const count = Math.max(2, Math.round(span / interval) + 1);
+
+  return {
+    ...grid,
+    beatsSec: Array.from({ length: count }, (_, i) => start + i * interval)
+  };
+}
+
+/**
+ * Moves which tracked beat counts as bar 1, beat 1.
+ *
+ * Positive nudges drop beats off the front, so the bar starts later. Negative
+ * ones extend backwards using the leading interval, which can place the first
+ * beat before zero — that is correct, and means the piece begins mid-bar.
+ * `secondsToBeats` extrapolates before the grid by design.
+ */
+export function nudgedDownbeat(grid: BeatGrid, beats: number): BeatGrid {
+  const source = grid.beatsSec;
+  if (source.length < 2 || !Number.isInteger(beats) || beats === 0) return grid;
+
+  if (beats > 0) {
+    const drop = Math.min(beats, source.length - 2);
+    return { ...grid, beatsSec: source.slice(drop) };
+  }
+
+  const interval = source[1] - source[0];
+  const added = Array.from(
+    { length: -beats },
+    (_, i) => source[0] - (i + 1) * interval
+  ).reverse();
+
+  return { ...grid, beatsSec: [...added, ...source] };
+}
+```
+
+**Step 4: Add the service methods**
+
+In `transcription.service.ts`, add `updateTempo(bpm: number)` and `nudgeDownbeat(beats: number)`. Both replace `session.grid` and re-derive through the **same path** `updateSettings` uses — including the `barGridFault` check, so they cannot throw into a caller's event handler either. Add tests mirroring the existing `updateSettings` ones: the detector spy must stay at one call.
+
+**Step 5: Run the full suite, then commit**
+
+```bash
+git add src/app/services/beat-grid-edit.ts src/app/services/beat-grid-edit.spec.ts src/app/services/transcription.service.ts src/app/services/transcription.service.spec.ts
+git commit -m "feat: Let the listener correct tempo and downbeat"
+```
+
+---
+
+## Task 2: Ghost notes for discarded detections
+
+**Files:**
+- Create: `src/app/services/preview-score.ts`
+- Test: `src/app/services/preview-score.spec.ts`
+- Modify: `src/app/services/score-derivation.ts` (export the placement step)
+
+M1 reports every dropped note and why; M2 reports the harmonic partials it removed. None of it is visible. This puts them in the score, in rhythm, where the decision actually happened.
+
+**First, a small refactor.** `deriveScore` computes each note's bar and position inline. Extract that into an exported function — something like `placeDetectedNotes(notes, session): PlacedInBar[]` returning bar index, `beatInBar` and `NotePitch` — and have `deriveScore` use it. `buildPreviewDoc` then places ghosts by exactly the same rules, so the two cannot drift. Do not duplicate the logic.
+
+**Then:**
+
+```typescript
+export function buildPreviewDoc(
+  session: TranscriptionSession,
+  derived: DerivedScore,
+  suppressed: DetectedNote[]
+): ScoreDoc;
+```
+
+It clones `derived.doc`, places `derived.dropped.map(d => d.note)` plus `suppressed` through the same placement, quantizes them per bar with the session's settings, marks every resulting note `effects.isGhost = true`, and adds them as **voice 2** of each bar. Voice 1 is untouched.
+
+Notes that `assignFingering` cannot place (genuinely unplayable) have nowhere to go on a tab staff — leave them out and let the component report the count.
+
+Tests: voice 1 is deep-equal to `derived.doc`'s voice 1; every note in voice 2 is a ghost; a discarded note lands in the bar its onset falls in; a clean session produces a document with no ghost content; unplayable notes are excluded rather than crashing.
+
+**Verify in the browser before committing.** Render a preview document through the existing alphaTab path and look at it. The open question this plan cannot answer from a spec is whether a bar whose voice 2 is entirely rests renders visible clutter. If it does, add voice 2 only to bars that actually carry ghosts, and say so in your report.
+
+Commit: `feat: Show discarded detections as ghost notes`
+
+---
+
+## Task 3: AudioDropzoneComponent
+
+**Files:**
+- Create: `src/app/components/transcription/components/audio-dropzone/` (`.ts`, `.html`, `.scss`, `.spec.ts`)
+
+A labelled file input that also accepts a drop. Emits `@Output() fileSelected = new EventEmitter<File>()`.
+
+Requirements:
+- A real `<input type="file" accept="audio/*">` with a real `<label for>`. The drop zone is an enhancement over a working control, never a replacement for it — keyboard and screen-reader users must be able to choose a file.
+- `dragover`/`dragleave`/`drop` with `preventDefault`, and a visible state while a file is over the zone.
+- Reject non-audio files with a message rather than silently ignoring them.
+- Show the chosen file's name and size.
+
+Tests: emits on input change; emits on drop; rejects a non-audio file; the input has an associated label.
+
+Commit: `feat: Add the audio dropzone`
+
+---
+
+## Task 4: TranscriptionReviewComponent
+
+**Files:**
+- Create: `src/app/components/transcription/components/transcription-review/` (`.ts`, `.html`, `.scss`, `.spec.ts`)
+
+The product. Controls on one side, live score on the other.
+
+**Inputs:** the `TranscriptionState`. **Outputs:** one event per knob, or a single `settingsChanged` — your call, but keep the component free of `TranscriptionService`, so it is testable with a plain state object.
+
+**Controls**, each with a `<label for>` and, where it needs one, a hint via `aria-describedby`:
+
+| Control | Bound to |
+|---|---|
+| Tuning | `settings.tuning` (preset list) |
+| Capo | `settings.capo` |
+| Finest division | `settings.finestDivision` |
+| Confidence floor | `settings.confidenceFloor` |
+| Position hint | `settings.positionHint` |
+| Max fret | `settings.maxFret` |
+| Time signature | `updateTimeSignature` |
+| Tempo | `updateTempo` |
+| Downbeat | `nudgeDownbeat(-1)` / `nudgeDownbeat(+1)` |
+
+**The preview** renders the *ghost* document via the existing alphaTab path. Read `components/composer/components/composer-score/` first and reuse its approach rather than inventing a second one.
+
+**Discards:** a short line stating what was dropped and why, with counts by reason.
+
+**Refusals:** `TranscriptionState.refusal` is set when a settings combination cannot be expressed (`finestDivision: 4` in 6/8, say). Show it next to the control that caused it, keep the previous score on screen, and do not style it as an error — the score is still valid.
+
+Layout: two panes, side by side when there is room, stacked when there is not, driven by a **container query** on the component's own wrapper.
+
+Tests: changing a control emits the right value; the refusal message renders; discard counts render; the component survives a null session.
+
+Commit: `feat: Add the transcription review panel`
+
+---
+
+## Task 5: TranscriptionComponent, route and navigation
+
+**Files:**
+- Create: `src/app/components/transcription/` (`.ts`, `.html`, `.scss`, `.spec.ts`)
+- Modify: `src/main.ts` (route), `src/app/app.component.html` (nav link)
+
+The route host. Owns `TranscriptionService`, shows the dropzone until there is a session and the review panel after, and provides *Open in Composer* → `ComposerService.replaceDocument(state.derived.doc)` then `router.navigate(['/composer'])`.
+
+- Progress while detecting. **One** `aria-live="polite"` region, announcing completion and refusal only — not every phase.
+- Call `WorkerDetector.terminate()` in `ngOnDestroy`. `TranscriptionService` deliberately does not own the worker; a component that wants inference cancelled on destroy injects `NOTE_DETECTOR` and terminates it. That is the documented contract.
+- `takeUntil(destroy$)` on the state subscription.
+
+Add `{ path: 'transcribe', component: TranscriptionComponent }` to `main.ts` and a `Transcribe` link to the nav.
+
+**Verify in the browser.** Start the dev server, load `/transcribe`, and drive it: drop a file, watch progress, turn each knob and confirm the score re-renders, check the layout stacks at a narrow width, and confirm *Open in Composer* lands the score in the composer. Screenshot the result.
+
+Commit: `feat: Add the transcription route`
+
+---
+
+## Done when
+
+- Full suite green, `npx tsc -p tsconfig.spec.json --noEmit` clean, `npm run build` succeeds with the main bundle near 716 kB and TF.js still confined to the worker chunk.
+- `/transcribe` takes a real audio file to a rendered score in the browser.
+- Every one of the design doc's nine live knobs has a control, and each re-renders without re-running detection.
+- Discarded notes are visible as ghosts.
+- *Open in Composer* opens the clean document, and undo works (`replaceDocument` is already wrapped by the composer's undo stack).
+
+## Deliberately not in M3
+
+- **A waveform view** — see scope decision 3.
+- **Persisting sessions** to the API.
+- **Multi-track / multi-stem** transcription.
+- **Automatic downbeat inference** — the nudge controls are the answer for now; inference needs a spectral envelope M2 deliberately did not build.
+- **Re-running harmonic suppression on a settings change.** M2 baked suppression in at detection time; moving it into the re-derive path (and `HarmonicOptions` into `DerivationSettings`) is real work and would mean re-running beat tracking too, since the tracker runs on the suppressed notes.
