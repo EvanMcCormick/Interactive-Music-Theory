@@ -182,12 +182,14 @@ function checkInvariants(states: TranscriptionState[]): void {
         // that failed and nothing else.
         expect(state.derived).withContext(`${where}: derived`).toBeNull();
         expect(state.session).withContext(`${where}: session`).toBeNull();
+        expect(state.refusal).withContext(`${where}: refusal`).toBeNull();
         break;
       default:
         // idle and the three working phases have produced nothing yet.
         expect(state.derived).withContext(`${where}: derived`).toBeNull();
         expect(state.session).withContext(`${where}: session`).toBeNull();
         expect(state.error).withContext(`${where}: error`).toBeNull();
+        expect(state.refusal).withContext(`${where}: refusal`).toBeNull();
         break;
     }
   }
@@ -227,7 +229,8 @@ describe('TranscriptionService', () => {
         progress: 0,
         session: null,
         derived: null,
-        error: null
+        error: null,
+        refusal: null
       });
       expect(service.busy).toBeFalse();
     });
@@ -553,6 +556,95 @@ describe('TranscriptionService', () => {
 
       expect(service.state.phase).toBe('idle');
       expect(states.length).toBe(1);
+    });
+  });
+
+  /**
+   * The error contract: a settings combination the user chose degrades, and
+   * only input data that cannot be honoured throws.
+   *
+   * `quantizeBar` cannot write a bar whose beat the grid is coarser than, and
+   * both halves of that pair are live knobs - `finestDivision` through
+   * `updateSettings`, the denominator through `updateTimeSignature`. Before
+   * this was checked, the sequence below threw out of `updateSettings` into
+   * the caller's event handler: no state was pushed at all, so a UI went on
+   * showing the old score with its control in the new position.
+   */
+  describe('settings a bar cannot express', () => {
+    const SIX_EIGHT: TimeSignature = { numerator: 6, denominator: 8, isCommon: false };
+
+    it('refuses a finestDivision coarser than the meter, keeping the score', async () => {
+      await service.transcribe(wavFile(), SIX_EIGHT);
+      const derived = service.state.derived;
+      const settings = service.state.session?.settings;
+      expect(struckFrets(service.state).length).toBeGreaterThan(0);
+
+      service.updateSettings({ finestDivision: 4 });
+
+      expect(service.state.phase).toBe('ready');
+      // The previous score, not a re-derived one and not a blank one.
+      expect(service.state.derived).toBe(derived!);
+      expect(service.state.session?.settings).toBe(settings!);
+      expect(service.state.session?.settings.finestDivision).toBe(16);
+      expect(service.state.refusal).toContain('6/8');
+      expect(service.state.error).toBeNull();
+      checkInvariants(states);
+    });
+
+    it('refuses a meter the current grid cannot write', async () => {
+      await service.transcribe(wavFile());
+      const derived = service.state.derived;
+
+      // 16 slots to a /32 beat is half a slot: the same fault from the other
+      // side, and reachable from a meter dropdown alone.
+      service.updateTimeSignature({ numerator: 4, denominator: 32, isCommon: false });
+
+      expect(service.state.phase).toBe('ready');
+      expect(service.state.derived).toBe(derived!);
+      expect(service.state.session?.grid.timeSignature.denominator).toBe(4);
+      expect(service.state.refusal).toContain('4/32');
+      checkInvariants(states);
+    });
+
+    it('stays usable: a legal change still applies and clears the refusal', async () => {
+      await service.transcribe(wavFile(), SIX_EIGHT);
+      service.updateSettings({ finestDivision: 4 });
+      expect(service.state.refusal).not.toBeNull();
+
+      // 8 does express a 6/8 bar, so this one goes through.
+      service.updateSettings({ finestDivision: 8 });
+
+      expect(service.state.refusal).toBeNull();
+      expect(service.state.session?.settings.finestDivision).toBe(8);
+      expect(struckFrets(service.state).length).toBeGreaterThan(0);
+      expect(detector.calls).toBe(1);
+      checkInvariants(states);
+    });
+
+    it('reports the refusal to subscribers rather than throwing at the caller', async () => {
+      await service.transcribe(wavFile(), SIX_EIGHT);
+      const before = states.length;
+
+      expect(() => service.updateSettings({ finestDivision: 4 })).not.toThrow();
+
+      // A state *was* pushed: a control that moved and produced nothing is the
+      // failure this exists to prevent.
+      expect(states.length).toBe(before + 1);
+      expect(states[states.length - 1].refusal).toBeTruthy();
+    });
+
+    it('refuses an impossible meter up front, before decoding or detecting', async () => {
+      // 4/32 against the default sixteenth grid. The run never starts, so the
+      // fault is reported as the meter's rather than the file's.
+      await expectAsync(
+        service.transcribe(wavFile('walk.wav'), { numerator: 4, denominator: 32, isCommon: false })
+      ).toBeResolved();
+
+      expect(service.state.phase).toBe('failed');
+      expect(service.state.error).toContain('4/32');
+      expect(detector.calls).toBe(0);
+      expect(service.busy).toBeFalse();
+      checkInvariants(states);
     });
   });
 

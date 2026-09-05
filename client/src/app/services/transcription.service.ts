@@ -74,6 +74,7 @@ import { trackBeats } from './beat-tracking';
 import { NoteDetector } from './note-detector';
 import { DerivedScore, deriveScore } from './score-derivation';
 import { suppressHarmonics } from './transcription-harmonics';
+import { barGridFault } from './transcription-quantize';
 
 export type TranscriptionPhase =
   | 'idle'
@@ -90,6 +91,19 @@ export interface TranscriptionState {
   session: TranscriptionSession | null;
   derived: DerivedScore | null;
   error: string | null;
+  /**
+   * Why the last settings change was turned away, or null when it was applied.
+   *
+   * Separate from `error` because it is not one: the phase is still `ready`,
+   * the score is still the one that was there before, and the only thing that
+   * did not happen is the change. `error` means the run failed and there is
+   * nothing to show; a UI that renders the two the same way would report a
+   * working score as broken. Cleared by the next change that succeeds.
+   *
+   * See `rederive` for what can land here and why it is refused rather than
+   * thrown.
+   */
+  refusal: string | null;
 }
 
 /**
@@ -118,7 +132,8 @@ const IDLE_STATE: TranscriptionState = {
   progress: 0,
   session: null,
   derived: null,
-  error: null
+  error: null,
+  refusal: null
 };
 
 @Injectable({ providedIn: 'root' })
@@ -172,6 +187,12 @@ export class TranscriptionService {
    * not infer meter, and bar 1 starts at the first tracked beat. It can be
    * changed afterwards with `updateTimeSignature` for the cost of a
    * re-derivation.
+   *
+   * A meter the default grid cannot write - a /32 or /64 bar against the
+   * default sixteenth-note `finestDivision` - lands in `failed` before
+   * anything is decoded. It would otherwise be found by `quantizeBar` at the
+   * far end of a decode and an inference, and reported as though the file were
+   * at fault rather than the meter.
    */
   async transcribe(
     file: File,
@@ -182,6 +203,23 @@ export class TranscriptionService {
         `Already transcribing "${this.inFlight}"; wait for it to finish before starting ` +
           `"${file.name}".`
       );
+    }
+
+    const settings = createDefaultDerivationSettings();
+
+    // Checked here rather than left to `deriveScore`: same rule as `rederive`,
+    // one phase earlier. A caller mistake in the meter is not a fact about the
+    // audio, so it is worth saying so plainly and worth not spending an
+    // inference to find out.
+    const fault = barGridFault(timeSignature, settings.finestDivision);
+    if (fault !== null) {
+      this.push({
+        ...IDLE_STATE,
+        phase: 'failed',
+        error: `Could not transcribe "${file.name}": ${fault}.`
+      });
+
+      return;
     }
 
     this.inFlight = file.name;
@@ -216,7 +254,7 @@ export class TranscriptionService {
         notes,
         // The suppressed notes, not `detection.notes`. See the module docblock.
         grid: trackBeats(notes, decoded.durationSec, timeSignature),
-        settings: createDefaultDerivationSettings()
+        settings
       };
 
       terminal = {
@@ -224,7 +262,8 @@ export class TranscriptionService {
         progress: 1,
         session,
         derived: deriveScore(session),
-        error: null
+        error: null,
+        refusal: null
       };
     } catch (error) {
       terminal = {
@@ -253,6 +292,10 @@ export class TranscriptionService {
    * throwing at a UI whose slider the user has just dragged - would be worse
    * than doing nothing.
    *
+   * A `finestDivision` the current meter cannot be written on is refused
+   * rather than applied: the score stays as it was and `refusal` says why. See
+   * `rederive`.
+   *
    * Meter is not here because meter is not a `DerivationSettings` field; it
    * lives on the beat grid. `updateTimeSignature` changes it, at the same cost.
    */
@@ -280,7 +323,9 @@ export class TranscriptionService {
    * this is the whole of what changing meter means.
    *
    * A no-op unless a transcription has succeeded, for the same reason as
-   * `updateSettings`.
+   * `updateSettings`, and refused on the same terms: a meter whose beat the
+   * current `finestDivision` is coarser than leaves the score alone and sets
+   * `refusal`.
    */
   updateTimeSignature(timeSignature: TimeSignature): void {
     this.rederive(session => ({
@@ -292,11 +337,30 @@ export class TranscriptionService {
   /**
    * Applies `change` to the current session and pushes the score it derives.
    *
-   * `deriveScore` is deliberately not wrapped: it throws only on a note whose
-   * onset is not a finite time, and a session sitting in `ready` derived
-   * successfully once already, so a throw here is a bug worth surfacing rather
-   * than a user-facing failure. Catching it would replace a working score with
-   * a `failed` state the user could not undo.
+   * ## The error contract, settled here
+   *
+   * **Derivation degrades when the fault is a settings combination the user
+   * chose; it throws only on input data that cannot be honoured.** A knob the
+   * user can turn must never be able to throw out of a state-reporting method,
+   * because the exception escapes into whatever handler moved the control:
+   * nothing is pushed, and the UI goes on showing the old score with the
+   * control in its new position, describing a state that does not exist.
+   *
+   * So the impossible pair is checked *before* `deriveScore` sees it, and the
+   * change is refused - previous session, previous score, a message saying
+   * why. `finestDivision` and the meter's denominator are both live knobs and
+   * `quantizeBar` cannot write a bar whose beat the grid is coarser than: 6/8
+   * with a `finestDivision` of 4, or 4/16 with 8. Reaching that through two
+   * legal public calls takes nothing exotic - transcribe in 6/8, then drag
+   * `finestDivision` down.
+   *
+   * **Not a try/catch around `deriveScore`.** M1 warned that a throwing pure
+   * function inside a live re-derive loop blanks the preview, and a catch that
+   * swallowed everything would reintroduce exactly that: a bad note pitch or a
+   * NaN onset - facts about the detection, which no setting can repair - would
+   * be quietly absorbed instead of surfacing. Those still throw, and should:
+   * a session sitting in `ready` derived successfully once already, so they are
+   * bugs rather than user-facing failures.
    */
   private rederive(
     change: (session: TranscriptionSession) => TranscriptionSession
@@ -306,12 +370,23 @@ export class TranscriptionService {
 
     const session = change(current.session);
 
+    const fault = barGridFault(session.grid.timeSignature, session.settings.finestDivision);
+    if (fault !== null) {
+      // The whole change is turned away, not the offending half of it: a
+      // partly applied settings object would leave the state describing
+      // something the caller never asked for.
+      this.push({ ...current, refusal: `Could not apply that change: ${fault}.` });
+
+      return;
+    }
+
     this.push({
       phase: 'ready',
       progress: 1,
       session,
       derived: deriveScore(session),
-      error: null
+      error: null,
+      refusal: null
     });
   }
 

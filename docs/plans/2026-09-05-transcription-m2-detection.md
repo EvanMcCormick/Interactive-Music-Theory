@@ -48,6 +48,23 @@ A throwaway spike answered the questions this plan would otherwise have guessed 
 2. **Suppression is bought with duration, and costs short notes over long ones.** Amplitude cannot tell a partial from a real note played above a ringing one: in the spike's data an octave partial comes back *louder* than the E1 that produced it (0.548 against 0.520, a ratio of 1.05). Duration can — the higher modes of a plucked string damp faster than the fundamental, and across the fixture's 21 partial suppressions the longest partial runs 0.86 of the note that produced it. So Task 1 suppresses a note at a partial's interval only when it also starts no earlier than the note below it and dies away sooner. Octave double-stops, octave leaps over a ringing low note, pumping octave eighths and slapped pops all survive that. What is still lost is a genuine note at +12, +19, +24, +28 or +31 that both overlaps the note below it *and* is markedly shorter than it — a short line over a held pedal is the case to watch: under a 2 s E1, line notes at those intervals are still deleted. Recorded as a limitation.
 3. **No downbeat detection.** M1 removed `downbeatIndices` deliberately. M2 produces `beatsSec` and a caller-supplied `timeSignature`; bar 1 starts at `beatsSec[0]`. Reintroducing downbeats means reintroducing the field *and* the derivation support together, which is M3 work.
 
+### The error contract
+
+M1 left this open and named "before M3" as the deadline; M2 added five more modules on both sides of the line without deciding. Settled now, because M3 binds `finestDivision` and the meter to dropdowns:
+
+> **Derivation degrades when the fault is a settings combination the user chose; it throws only on input data that cannot be honoured. A knob the user can turn must never be able to throw out of a state-reporting method.**
+
+The case that forced it: `quantizeBar` throws whenever `finestDivision / timeSignature.denominator` is not an integer ≥ 1, and *both operands are live knobs*. Two legal public calls reach it — `transcribe(file, 6/8)` then `updateSettings({ finestDivision: 4 })` — and before the fix the exception escaped `updateSettings` into the caller's event handler, so `stateSubject` was never pushed and the UI went on showing the old score with its control in the new position. `4/16` with a `finestDivision` of 8 is the same fault from the other side.
+
+How it is implemented:
+
+- `barGridFault(timeSignature, finestDivision)` in `transcription-quantize.ts` returns the message or `null`. It is the single statement of the rule: `quantizeBar` throws on it, `TranscriptionService` asks it. It covers the numerator check too — the numerator arrives from the same caller through `updateTimeSignature` and is typed as a bare number.
+- `TranscriptionService.rederive` calls it **before** `deriveScore` and, on a fault, pushes a state that keeps the previous `session` and `derived` and carries the message in a new `TranscriptionState.refusal` field. The change is turned away whole, not half-applied.
+- `transcribe` checks the caller's meter against the default `finestDivision` before decoding, so an impossible meter costs neither a decode nor an inference and is reported as the meter's fault rather than the file's.
+- `refusal` is deliberately **not** `error`. The phase is still `ready` and the score is still good; a UI rendering the two the same way would report a working score as broken. It is cleared by the next change that succeeds.
+
+**Not a try/catch around `deriveScore`.** M1 warned that a throwing pure function inside a live re-derive loop blanks the preview, and swallowing everything reintroduces exactly that. `deriveScore`'s other throws — a non-finite onset, a pitch outside MIDI — are facts about the detection that no setting can repair, and they still throw.
+
 ---
 
 ## Task 1: Harmonic suppression

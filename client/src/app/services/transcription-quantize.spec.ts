@@ -1,6 +1,11 @@
 import { NotePitch, TimeSignature } from '../models/composer.model';
 import { FinestDivision } from '../models/transcription.model';
-import { PlacedNote, beatSlots, quantizeBar } from './transcription-quantize';
+import {
+  PlacedNote,
+  barGridFault,
+  beatSlots,
+  quantizeBar
+} from './transcription-quantize';
 
 const FOUR_FOUR: TimeSignature = { numerator: 4, denominator: 4, isCommon: true };
 
@@ -327,5 +332,41 @@ describe('quantizeBar', () => {
         }
       }
     }
+  });
+});
+
+/**
+ * The same two rules `quantizeBar` throws on, asked instead of answered.
+ *
+ * `TranscriptionService` calls this before it re-derives, because both halves
+ * of the pair are knobs the user turns and a knob must not be able to throw
+ * out of a state-reporting method.
+ */
+describe('barGridFault', () => {
+  it('passes a grid fine enough for the meter', () => {
+    expect(barGridFault(FOUR_FOUR, 16)).toBeNull();
+    expect(barGridFault(FOUR_FOUR, 4)).toBeNull();
+    expect(barGridFault({ numerator: 6, denominator: 8, isCommon: false }, 16)).toBeNull();
+  });
+
+  it('names a grid coarser than the meter, from either side of the pair', () => {
+    // The two sequences a live UI reaches: drop finestDivision under a /8
+    // meter, or pick a /16 meter under an eighth-note grid.
+    expect(barGridFault({ numerator: 6, denominator: 8, isCommon: false }, 4))
+      .toBe('finestDivision 4 cannot express a 6/8 bar');
+    expect(barGridFault({ numerator: 4, denominator: 16, isCommon: false }, 8))
+      .toBe('finestDivision 8 cannot express a 4/16 bar');
+  });
+
+  it('names a numerator that is not a whole number of beats', () => {
+    expect(barGridFault({ numerator: 2.5, denominator: 4, isCommon: false }, 16))
+      .toBe('numerator 2.5 is not a whole number of beats');
+  });
+
+  it('agrees with what quantizeBar throws', () => {
+    const sixEight: TimeSignature = { numerator: 6, denominator: 8, isCommon: false };
+
+    expect(() => quantizeBar([], sixEight, 4))
+      .toThrowError(barGridFault(sixEight, 4)!);
   });
 });

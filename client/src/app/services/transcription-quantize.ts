@@ -331,6 +331,48 @@ export function slotsToDurations(
 }
 
 /**
+ * Why this grid cannot write this meter, or null when it can.
+ *
+ * The two conditions `quantizeBar` refuses on, asked as a question instead of
+ * answered with an exception. Both are combinations of things a user turns:
+ * `finestDivision` is a `DerivationSettings` field and the meter comes in
+ * through `TranscriptionService.updateTimeSignature`, so a caller holding a
+ * working score needs to be able to find out that a change is impossible
+ * *before* it destroys one. Exported for that caller; `quantizeBar` itself
+ * still throws, because by then the choice has already been made and a bar it
+ * cannot write is not something it can degrade into.
+ *
+ * The pair is what matters, not either half. `finestDivision` is typed to the
+ * values the duration table can express and `TimeSignature` to a legal meter,
+ * yet 4 with 6/8 and 8 with 4/16 are both grids coarser than the beat they are
+ * being applied to. The numerator is checked here too: it is typed as a bare
+ * number, it arrives from the same caller, and a fractional one is the other
+ * way a span the duration table cannot fill reaches `slotsToDurations`.
+ */
+export function barGridFault(
+  timeSignature: TimeSignature,
+  finestDivision: FinestDivision
+): string | null {
+  const slotsPerBeat = finestDivision / timeSignature.denominator;
+  if (!Number.isInteger(slotsPerBeat) || slotsPerBeat < 1) {
+    return (
+      `finestDivision ${finestDivision} cannot express a ` +
+      `${timeSignature.numerator}/${timeSignature.denominator} bar`
+    );
+  }
+
+  // A fractional numerator is the one route by which a non-integer span could
+  // reach slotsToDurations, where it would silently under-sum rather than
+  // fail. TimeSignature types the numerator as a bare number, so the type
+  // system cannot rule this out the way FinestDivision rules out bad grids.
+  if (!Number.isInteger(timeSignature.numerator) || timeSignature.numerator < 1) {
+    return `numerator ${timeSignature.numerator} is not a whole number of beats`;
+  }
+
+  return null;
+}
+
+/**
  * Lays a bar's notes onto the rhythmic grid.
  *
  * Onsets close enough together to be one attack collapse into a chord, chords
@@ -351,24 +393,10 @@ export function quantizeBar(
   finestDivision: FinestDivision,
   dropped?: PlacedNote[]
 ): BeatDoc[] {
+  const fault = barGridFault(timeSignature, finestDivision);
+  if (fault !== null) throw new Error(fault);
+
   const slotsPerBeat = finestDivision / timeSignature.denominator;
-  if (!Number.isInteger(slotsPerBeat) || slotsPerBeat < 1) {
-    throw new Error(
-      `finestDivision ${finestDivision} cannot express a ` +
-      `${timeSignature.numerator}/${timeSignature.denominator} bar`
-    );
-  }
-
-  // A fractional numerator is the one route by which a non-integer span could
-  // reach slotsToDurations, where it would silently under-sum rather than
-  // fail. TimeSignature types the numerator as a bare number, so the type
-  // system cannot rule this out the way FinestDivision rules out bad grids.
-  if (!Number.isInteger(timeSignature.numerator) || timeSignature.numerator < 1) {
-    throw new Error(
-      `numerator ${timeSignature.numerator} is not a whole number of beats`
-    );
-  }
-
   const totalSlots = timeSignature.numerator * slotsPerBeat;
 
   const chords = snapToSlots(notes, slotsPerBeat, totalSlots, dropped);
