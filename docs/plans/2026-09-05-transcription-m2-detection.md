@@ -62,11 +62,7 @@ The marquee task. Turns 34 detected notes into 8, using the spike's actual outpu
 
 ```typescript
 import { DetectedNote } from '../models/transcription.model';
-import {
-  DEFAULT_HARMONIC_OPTIONS,
-  HARMONIC_SEMITONES,
-  suppressHarmonics
-} from './transcription-harmonics';
+import { HARMONIC_SEMITONES, suppressHarmonics } from './transcription-harmonics';
 
 /** [onsetSec, midiPitch, durationSec, amplitude] */
 type Raw = [number, number, number, number];
@@ -108,11 +104,18 @@ const DETECTED: DetectedNote[] = SPIKE_OUTPUT.map(note);
 /** The eight pitches actually synthesised, in order. */
 const PLAYED = [28, 33, 38, 43, 28, 33, 38, 43];
 
+/** ...and the eight detected events that are those notes rather than partials. */
+const PLAYED_IDS = ['n0', 'n4', 'n11', 'n15', 'n17', 'n21', 'n28', 'n31'];
+
 describe('suppressHarmonics', () => {
   it('recovers the played line from the raw detector output', () => {
     const kept = suppressHarmonics(DETECTED);
 
     expect(kept.map(n => n.pitch)).toEqual(PLAYED);
+    // Which eight events, not just which eight pitches — the fixture holds
+    // several detections of each played pitch, and everything downstream
+    // reads their onsets as the rhythm.
+    expect(kept.map(n => n.id)).toEqual(PLAYED_IDS);
   });
 
   it('suppresses a partial that is louder than its own fundamental', () => {
@@ -125,6 +128,19 @@ describe('suppressHarmonics', () => {
     ];
 
     expect(suppressHarmonics(cluster).map(n => n.pitch)).toEqual([28]);
+  });
+
+  it('keeps a root and the fifth above it', () => {
+    // A perfect fifth is not a partial of anything — 3f0 lands an octave
+    // *and* a fifth up. This is root-to-fifth over a ringing low note, the
+    // commonest figure in bass playing; adding +7 to HARMONIC_SEMITONES
+    // would delete every one of them, and this is what would object.
+    const rootAndFifth = [
+      note([0, 28, 0.6, 0.70], 0),
+      note([0.3, 35, 0.4, 0.55], 1)
+    ];
+
+    expect(suppressHarmonics(rootAndFifth).map(n => n.pitch)).toEqual([28, 35]);
   });
 
   it('leaves a note with no harmonic relation alone', () => {
@@ -210,10 +226,9 @@ describe('suppressHarmonics', () => {
     // The same pair either side of the boundary, moved by widening the slack
     // rather than by moving the notes.
     const pair = [note([0, 28, 0.5, 0.70], 0), note([0.54, 40, 0.2, 0.50], 1)];
-    const roomier = { ...DEFAULT_HARMONIC_OPTIONS, toleranceSec: 0.1 };
 
     expect(suppressHarmonics(pair).map(n => n.pitch)).toEqual([28, 40]);
-    expect(suppressHarmonics(pair, roomier).map(n => n.pitch)).toEqual([28]);
+    expect(suppressHarmonics(pair, { toleranceSec: 0.1 }).map(n => n.pitch)).toEqual([28]);
   });
 
   it('drops the 3rd partial, an octave and a fifth up', () => {
@@ -402,6 +417,11 @@ import { DetectedNote } from '../models/transcription.model';
  * rounded because detectors report integer MIDI pitches.
  *
  * 0 is included: a unison "partial" is the detector reporting one note twice.
+ *
+ * +28 and +31 are here on physical grounds alone. The synthetic bassline the
+ * fixture came from carried only 2nd, 3rd and 4th harmonics, so no pair in it
+ * is 28 or 31 semitones apart and no measurement has yet confirmed a detector
+ * reports those two. Real recordings should say.
  */
 export const HARMONIC_SEMITONES: number[] = [0, 12, 19, 24, 28, 31];
 
@@ -430,8 +450,10 @@ export const DEFAULT_HARMONIC_OPTIONS: HarmonicOptions = {
 
 export function suppressHarmonics(
   notes: DetectedNote[],
-  options: HarmonicOptions = DEFAULT_HARMONIC_OPTIONS
+  overrides: Partial<HarmonicOptions> = {}
 ): DetectedNote[] {
+  const options: HarmonicOptions = { ...DEFAULT_HARMONIC_OPTIONS, ...overrides };
+
   // Lowest first, so a fundamental is always considered before its own
   // partials, whatever their relative loudness. Amplitude then orders notes of
   // equal pitch, which is exactly what the unison rule needs: the strong one
@@ -500,7 +522,7 @@ function explains(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 16 tests. The first assertion — 34 notes in, the exact eight played events out — is the one that matters.
+Expected: PASS, 24 tests. The first assertion — 34 notes in, the exact eight played events out, by identity — is the one that matters.
 
 **Step 5: Commit**
 
@@ -636,7 +658,7 @@ With no notes, return an even grid at `priorBpm` spanning `durationSec` — a de
 
 **Step 4: Run tests, then the full suite**
 
-Expected: the beat spec passes, and the full suite is 155 + 9 + 8 = 172.
+Expected: the beat spec passes, and the full suite is 155 + 24 + 12 = 191.
 
 **Step 5: Commit**
 
@@ -816,6 +838,8 @@ Commit: `feat: Add TranscriptionService orchestration`
 ## Deliberately not in M2
 
 - **Short notes at a partial's interval over long ones.** Task 1 keeps a note above a ringing lower note when it lasts at least 0.9 of it, which saves double-stops, octave leaps and slapped pops; a *short* note at +12, +19, +24, +28 or +31 over a held pedal is still read as that pedal's partial and deleted. See scope decision 2.
+- **Any tolerance on the partial intervals themselves.** `HARMONIC_SEMITONES` matches integer offsets exactly, and only the 5th partial is far enough off a semitone to make that look risky: 5f0 sits at +27.863, so it lands on +28 unless the fundamental is detected more than 36 cents flat of its own bin centre. Real strings are inharmonic, and inharmonicity pushes upper partials *sharp* — toward +28, not away from it. So no tolerance is needed now. If measurement ever says otherwise, the fix is to test `Math.abs(interval - exact) <= 0.5` against the exact ratios (12, 19.020, 24, 27.863, 31.020), **not** to add a flat +27 entry: +27 is a real interval a bass player can play against a ringing low note, and listing it would delete those notes outright.
+- **Evidence for +28 and +31.** Both are in the list on physical grounds. The fixture's synthetic source carried only 2nd, 3rd and 4th harmonics, so no pair in it is 28 or 31 semitones apart, and no measurement yet confirms a detector reports them. The two standalone tests for them are constructed, not observed.
 - **Downbeat detection** — see scope decision 3.
 - **Spectral-flux onset envelope** — beat tracking uses note onsets; see scope decision 1.
 - **A no-WebGL fallback.** The CPU backend is ~100× slower and unusable for full songs. Bumping TF.js to 4.x via `overrides` would unlock the WASM backend, and is worth trying once — Basic Pitch touches only `loadGraphModel`, `slice`, `concat1d`, `signal.frame`, `expandDims`, `zeros`, `tensor` and `GraphModel.execute`.

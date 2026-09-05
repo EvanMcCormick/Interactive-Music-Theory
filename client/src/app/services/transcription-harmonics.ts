@@ -31,6 +31,11 @@ import { DetectedNote } from '../models/transcription.model';
  * rounded because detectors report integer MIDI pitches.
  *
  * 0 is included: a unison "partial" is the detector reporting one note twice.
+ *
+ * +28 and +31 are here on physical grounds alone. The synthetic bassline the
+ * fixture came from carried only 2nd, 3rd and 4th harmonics, so no pair in it
+ * is 28 or 31 semitones apart and no measurement has yet confirmed a detector
+ * reports those two. Real recordings should say.
  */
 export const HARMONIC_SEMITONES: number[] = [0, 12, 19, 24, 28, 31];
 
@@ -59,8 +64,10 @@ export const DEFAULT_HARMONIC_OPTIONS: HarmonicOptions = {
 
 export function suppressHarmonics(
   notes: DetectedNote[],
-  options: HarmonicOptions = DEFAULT_HARMONIC_OPTIONS
+  overrides: Partial<HarmonicOptions> = {}
 ): DetectedNote[] {
+  const options: HarmonicOptions = { ...DEFAULT_HARMONIC_OPTIONS, ...overrides };
+
   // Lowest first, so a fundamental is always considered before its own
   // partials, whatever their relative loudness. Amplitude then orders notes of
   // equal pitch, which is exactly what the unison rule needs: the strong one

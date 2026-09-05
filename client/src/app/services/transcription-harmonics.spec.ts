@@ -1,9 +1,5 @@
 import { DetectedNote } from '../models/transcription.model';
-import {
-  DEFAULT_HARMONIC_OPTIONS,
-  HARMONIC_SEMITONES,
-  suppressHarmonics
-} from './transcription-harmonics';
+import { HARMONIC_SEMITONES, suppressHarmonics } from './transcription-harmonics';
 
 /** [onsetSec, midiPitch, durationSec, amplitude] */
 type Raw = [number, number, number, number];
@@ -45,11 +41,18 @@ const DETECTED: DetectedNote[] = SPIKE_OUTPUT.map(note);
 /** The eight pitches actually synthesised, in order. */
 const PLAYED = [28, 33, 38, 43, 28, 33, 38, 43];
 
+/** ...and the eight detected events that are those notes rather than partials. */
+const PLAYED_IDS = ['n0', 'n4', 'n11', 'n15', 'n17', 'n21', 'n28', 'n31'];
+
 describe('suppressHarmonics', () => {
   it('recovers the played line from the raw detector output', () => {
     const kept = suppressHarmonics(DETECTED);
 
     expect(kept.map(n => n.pitch)).toEqual(PLAYED);
+    // Which eight events, not just which eight pitches — the fixture holds
+    // several detections of each played pitch, and everything downstream
+    // reads their onsets as the rhythm.
+    expect(kept.map(n => n.id)).toEqual(PLAYED_IDS);
   });
 
   it('suppresses a partial that is louder than its own fundamental', () => {
@@ -62,6 +65,19 @@ describe('suppressHarmonics', () => {
     ];
 
     expect(suppressHarmonics(cluster).map(n => n.pitch)).toEqual([28]);
+  });
+
+  it('keeps a root and the fifth above it', () => {
+    // A perfect fifth is not a partial of anything — 3f0 lands an octave
+    // *and* a fifth up. This is root-to-fifth over a ringing low note, the
+    // commonest figure in bass playing; adding +7 to HARMONIC_SEMITONES
+    // would delete every one of them, and this is what would object.
+    const rootAndFifth = [
+      note([0, 28, 0.6, 0.70], 0),
+      note([0.3, 35, 0.4, 0.55], 1)
+    ];
+
+    expect(suppressHarmonics(rootAndFifth).map(n => n.pitch)).toEqual([28, 35]);
   });
 
   it('leaves a note with no harmonic relation alone', () => {
@@ -147,10 +163,9 @@ describe('suppressHarmonics', () => {
     // The same pair either side of the boundary, moved by widening the slack
     // rather than by moving the notes.
     const pair = [note([0, 28, 0.5, 0.70], 0), note([0.54, 40, 0.2, 0.50], 1)];
-    const roomier = { ...DEFAULT_HARMONIC_OPTIONS, toleranceSec: 0.1 };
 
     expect(suppressHarmonics(pair).map(n => n.pitch)).toEqual([28, 40]);
-    expect(suppressHarmonics(pair, roomier).map(n => n.pitch)).toEqual([28]);
+    expect(suppressHarmonics(pair, { toleranceSec: 0.1 }).map(n => n.pitch)).toEqual([28]);
   });
 
   it('drops the 3rd partial, an octave and a fifth up', () => {
