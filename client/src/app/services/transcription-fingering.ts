@@ -27,6 +27,17 @@ const FRET_HEIGHT_WEIGHT = 0.15;
 const OPEN_STRING_BONUS = 1.5;
 const POSITION_HINT_WEIGHT = 0.5;
 
+/**
+ * An open string buys travel time but does not make a leap free.
+ *
+ * Charging nothing does not merely permit a leap across an open string, it
+ * *attracts* the optimiser to positions it would never otherwise pick - and it
+ * composes, so an alternating fretted/open figure buys unlimited free travel.
+ * E1, A1, D2 and G2 are among the most common roots in basslines, so that is
+ * reachable on ordinary material rather than a contrived fixture.
+ */
+const OPEN_STRING_MOVE_DISCOUNT = 0.25;
+
 /** Every string/fret pair that sounds `pitch` on this instrument. */
 export function candidatesFor(
   pitch: number,
@@ -61,11 +72,13 @@ function nodeCost(candidate: Candidate, settings: DerivationSettings): number {
 
 /** Cost of moving from one position to the next, given the time available. */
 function edgeCost(from: Candidate, to: Candidate, gapSec: number): number {
-  // An open string needs no fretting hand, so it neither costs a shift nor
-  // pins the hand in place for the note that follows.
+  // An open string needs no fretting precision and leaves the hand free to
+  // travel while it rings, so a shift on either side of one is cheaper - but
+  // the hand still has to cover the distance, so it is discounted, not free.
+  const distance = Math.abs(to.fret - from.fret);
   const move = from.fret === 0 || to.fret === 0
-    ? 0
-    : Math.abs(to.fret - from.fret);
+    ? distance * OPEN_STRING_MOVE_DISCOUNT
+    : distance;
 
   const timeFactor = Math.min(
     MAX_TIME_FACTOR,

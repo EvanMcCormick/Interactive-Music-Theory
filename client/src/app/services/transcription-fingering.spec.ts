@@ -92,6 +92,28 @@ describe('assignFingering', () => {
     expect(slow[2]).toEqual({ kind: 'fretted', string: 0, fret: 2 });
   });
 
+  /**
+   * Charging nothing for a shift across an open string does not merely permit
+   * a leap, it pays for one. `55 -> 45` on its own gives the sane
+   * `s0f12 | s2f12`; interposing an open A over the same 0.04s used to buy
+   * fret 22, because zeroing both move costs made staying on one string save
+   * more in string-change cost than the leap cost. And it composes: an
+   * alternating fretted/open figure bought unlimited free travel.
+   */
+  it('does not buy a leap with an open string in the middle', () => {
+    const figure = assignFingering(
+      [
+        { pitch: 55, onsetSec: 0 },
+        { pitch: 33, onsetSec: 0.02 },
+        { pitch: 45, onsetSec: 0.04 }
+      ],
+      SETTINGS
+    );
+
+    expect(figure[0]).toEqual({ kind: 'fretted', string: 0, fret: 12 });
+    expect(figure.every(pitch => pitch?.kind === 'fretted' && pitch.fret <= 12)).toBe(true);
+  });
+
   it('pulls the hand towards a position hint', () => {
     const hinted = assignFingering(
       [{ pitch: 45, onsetSec: 0 }],

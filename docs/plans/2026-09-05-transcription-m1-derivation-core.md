@@ -1252,6 +1252,28 @@ describe('assignFingering', () => {
     expect(slow[2]).toEqual({ kind: 'fretted', string: 0, fret: 2 });
   });
 
+  /**
+   * Charging nothing for a shift across an open string does not merely permit
+   * a leap, it pays for one. `55 -> 45` on its own gives the sane
+   * `s0f12 | s2f12`; interposing an open A over the same 0.04s used to buy
+   * fret 22, because zeroing both move costs made staying on one string save
+   * more in string-change cost than the leap cost. And it composes: an
+   * alternating fretted/open figure bought unlimited free travel.
+   */
+  it('does not buy a leap with an open string in the middle', () => {
+    const figure = assignFingering(
+      [
+        { pitch: 55, onsetSec: 0 },
+        { pitch: 33, onsetSec: 0.02 },
+        { pitch: 45, onsetSec: 0.04 }
+      ],
+      SETTINGS
+    );
+
+    expect(figure[0]).toEqual({ kind: 'fretted', string: 0, fret: 12 });
+    expect(figure.every(pitch => pitch?.kind === 'fretted' && pitch.fret <= 12)).toBe(true);
+  });
+
   it('pulls the hand towards a position hint', () => {
     const hinted = assignFingering(
       [{ pitch: 45, onsetSec: 0 }],
@@ -1301,6 +1323,17 @@ const FRET_HEIGHT_WEIGHT = 0.15;
 const OPEN_STRING_BONUS = 1.5;
 const POSITION_HINT_WEIGHT = 0.5;
 
+/**
+ * An open string buys travel time but does not make a leap free.
+ *
+ * Charging nothing does not merely permit a leap across an open string, it
+ * *attracts* the optimiser to positions it would never otherwise pick - and it
+ * composes, so an alternating fretted/open figure buys unlimited free travel.
+ * E1, A1, D2 and G2 are among the most common roots in basslines, so that is
+ * reachable on ordinary material rather than a contrived fixture.
+ */
+const OPEN_STRING_MOVE_DISCOUNT = 0.25;
+
 /** Every string/fret pair that sounds `pitch` on this instrument. */
 export function candidatesFor(
   pitch: number,
@@ -1335,11 +1368,13 @@ function nodeCost(candidate: Candidate, settings: DerivationSettings): number {
 
 /** Cost of moving from one position to the next, given the time available. */
 function edgeCost(from: Candidate, to: Candidate, gapSec: number): number {
-  // An open string needs no fretting hand, so it neither costs a shift nor
-  // pins the hand in place for the note that follows.
+  // An open string needs no fretting precision and leaves the hand free to
+  // travel while it rings, so a shift on either side of one is cheaper - but
+  // the hand still has to cover the distance, so it is discounted, not free.
+  const distance = Math.abs(to.fret - from.fret);
   const move = from.fret === 0 || to.fret === 0
-    ? 0
-    : Math.abs(to.fret - from.fret);
+    ? distance * OPEN_STRING_MOVE_DISCOUNT
+    : distance;
 
   const timeFactor = Math.min(
     MAX_TIME_FACTOR,
@@ -1452,7 +1487,7 @@ export function assignFingering(
 
 **Step 4: Run test to verify it passes**
 
-Expected: PASS, 9 tests.
+Expected: PASS, 10 tests.
 
 If the two position tests fail, the weights are miscalibrated rather than the algorithm being wrong — check `MOVE_REFERENCE_SEC` and `FRET_HEIGHT_WEIGHT` first. Both fixtures were chosen so the fast and slow answers differ under the constants above.
 
