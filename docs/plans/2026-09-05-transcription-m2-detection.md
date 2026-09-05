@@ -562,6 +562,23 @@ function pulse(count: number, intervalSec: number, startSec = 0): DetectedNote[]
   }));
 }
 
+/** Notes at the given times, each as loud as `confidence` says. */
+function notesAt(onsets: number[], confidence: (index: number) => number = () => 0.8): DetectedNote[] {
+  return onsets.map((onsetSec, i) => ({
+    id: `n${i}`,
+    pitch: 33,
+    onsetSec,
+    offsetSec: onsetSec + 0.3,
+    confidence: confidence(i),
+    bendCents: []
+  }));
+}
+
+/** Gaps between consecutive beats. */
+function gapsOf(beats: number[]): number[] {
+  return beats.slice(1).map((beat, i) => beat - beats[i]);
+}
+
 describe('onsetSignal', () => {
   it('puts energy at each onset and none between', () => {
     const signal = onsetSignal(pulse(4, 0.5), 2, DEFAULT_BEAT_OPTIONS.frameRateHz);
@@ -570,6 +587,15 @@ describe('onsetSignal', () => {
     expect(signal[0]).toBeGreaterThan(0);
     // A quarter of the way between two onsets is well clear of both.
     expect(signal[Math.round(0.25 * rate)]).toBeLessThan(signal[0] * 0.1);
+  });
+
+  it('spreads each onset over its neighbouring frames', () => {
+    // The blur is the whole reason a beat one frame off an onset still scores,
+    // which is what lets the tracker follow a period that is not a whole
+    // number of frames. Bare impulses pass every other test in this file.
+    const signal = onsetSignal(pulse(4, 0.5), 2, DEFAULT_BEAT_OPTIONS.frameRateHz);
+
+    expect(signal[1]).toBeGreaterThan(signal[0] * 0.5);
   });
 });
 
@@ -584,6 +610,22 @@ describe('estimateTempo', () => {
     const signal = onsetSignal(pulse(16, 60 / 90), 11, DEFAULT_BEAT_OPTIONS.frameRateHz);
 
     expect(estimateTempo(signal, DEFAULT_BEAT_OPTIONS)).toBeCloseTo(90, -0.5);
+  });
+
+  it('reads the beat and not the subdivision off barely accented eighths', () => {
+    // Eighth notes at 100 BPM, the on-beat ones only 5 % louder. Raw
+    // autocorrelation prefers the eighth: every onset lines up at that lag,
+    // and the shorter lag has one more overlapping term to sum. Scored
+    // without the log-normal prior this fixture returns 200 BPM; the prior is
+    // the only thing in the module that recovers 100, and nothing else here
+    // tests it.
+    const eighths = notesAt(
+      Array.from({ length: 30 }, (_, i) => i * 0.3),
+      i => (i % 2 === 0 ? 0.8 : 0.76)
+    );
+    const signal = onsetSignal(eighths, 9, DEFAULT_BEAT_OPTIONS.frameRateHz);
+
+    expect(estimateTempo(signal, DEFAULT_BEAT_OPTIONS)).toBeCloseTo(100, -0.5);
   });
 });
 
@@ -607,6 +649,30 @@ describe('trackBeats', () => {
     for (const gap of gaps) expect(gap).toBeCloseTo(0.5, 1);
   });
 
+  it('lays the first beat on the music, not on the silence in front of it', () => {
+    // Only frames inside the first half-period can start a DP chain, so the
+    // untrimmed backtrace always reaches back to within half a beat of frame
+    // zero. Music that starts later arrives with a run of beats no note
+    // supports in front of it, and `deriveScore` reads beatsSec[0] as bar 1
+    // beat 1 — so the five phantoms this fixture used to produce put the first
+    // played note on bar 2 beat 2 with the tempo still exactly right.
+    const grid = trackBeats(pulse(16, 0.5, 2.7), 10.7, FOUR_FOUR);
+
+    expect(Math.abs(grid.beatsSec[0] - 2.7)).toBeLessThan(0.5);
+  });
+
+  it('stops at the last note rather than filling the stated duration', () => {
+    // Eight seconds of music in a forty-second file. The beats past the end
+    // corrupt nothing — `score-derivation.ts` sizes the score from the notes
+    // it placed — but they are noise in an artifact a user has to correct by
+    // hand, and this fixture used to end 65 beats past the last note. The
+    // smoothing window carries one beat of ring-out past the last onset at
+    // 7.5 s, which is why this allows a beat and not none.
+    const grid = trackBeats(pulse(16, 0.5), 40, FOUR_FOUR);
+
+    expect(grid.beatsSec[grid.beatsSec.length - 1]).toBeLessThan(8.5);
+  });
+
   it('carries the caller time signature through', () => {
     const three: TimeSignature = { numerator: 3, denominator: 4, isCommon: false };
 
@@ -626,6 +692,56 @@ describe('trackBeats', () => {
 
     expect([...grid.beatsSec].sort((a, b) => a - b)).toEqual(grid.beatsSec);
   });
+
+  it('follows the music when the tempo changes', () => {
+    // 120 BPM for four seconds, then 132. Every other test in this file uses a
+    // pulse starting at zero and holding one tempo, which an evenly spaced
+    // grid laid down from frame zero satisfies without tracking anything -
+    // this is the fixture that tells a dynamic program from a ruler.
+    const onsets = [
+      ...Array.from({ length: 8 }, (_, i) => i * 0.5),
+      ...Array.from({ length: 9 }, (_, k) => 4 + k * (60 / 132))
+    ];
+    const grid = trackBeats(notesAt(onsets), 8, FOUR_FOUR);
+
+    // Every beat sits on a note, before and after the change.
+    for (const beat of grid.beatsSec) {
+      const nearest = Math.min(...onsets.map(onset => Math.abs(onset - beat)));
+      expect(nearest).toBeLessThan(0.015);
+    }
+
+    // And the beat speeds up with them rather than holding the old period.
+    const tail = gapsOf(grid.beatsSec.filter(beat => beat >= 4));
+    const meanGap = tail.reduce((sum, gap) => sum + gap, 0) / tail.length;
+
+    expect(meanGap).toBeCloseTo(60 / 132, 2);
+  });
+
+  it('produces a structurally valid grid from degenerate input', () => {
+    // Nothing downstream checks these, so the guarantee has to hold here:
+    // `secondsToBeats` divides by the gap between neighbouring beats, and a
+    // one-entry or NaN-bearing grid would silently poison every derived time.
+    // These are also the cases where the trim can take everything: a lone
+    // onset leaves one beat above threshold, and silence leaves none, so both
+    // have to come back out as the even grid rather than as a stub.
+    const cases: [string, DetectedNote[], number][] = [
+      ['a single note', notesAt([1]), 4],
+      ['every note at the same instant', notesAt([2, 2, 2, 2, 2]), 4],
+      ['notes with no confidence at all', pulse(8, 0.5).map(n => ({ ...n, confidence: 0 })), 4],
+      ['a zero duration and no notes', [], 0],
+      ['a zero duration with notes', notesAt([0, 0.5, 1]), 0],
+      ['a negative duration', [], -3],
+      ['a duration that is not a number', [], Number.NaN]
+    ];
+
+    for (const [label, notes, durationSec] of cases) {
+      const beats = trackBeats(notes, durationSec, FOUR_FOUR).beatsSec;
+
+      expect(beats.length).withContext(label).toBeGreaterThanOrEqual(2);
+      expect(beats.every(beat => Number.isFinite(beat))).withContext(label).toBeTrue();
+      expect(gapsOf(beats).every(gap => gap > 0)).withContext(label).toBeTrue();
+    }
+  });
 });
 ```
 
@@ -640,6 +756,7 @@ Create `src/app/services/beat-tracking.ts` implementing:
 - `onsetSignal(notes, durationSec, frameRateHz): Float32Array` — an impulse at each onset weighted by `confidence`, then a Gaussian blur of about 20 ms so a beat still scores when an onset sits slightly off it.
 - `estimateTempo(signal, options): number` — autocorrelation across lags spanning `minBpm`..`maxBpm`, each lag's score scaled by Ellis's log-normal prior `exp(-0.5 * (log2(bpm / priorBpm) / priorWidth)^2)`. The prior is what stops the estimate locking onto a half- or double-time peak, which is the classic failure.
 - `trackBeats(notes, durationSec, timeSignature, options?): BeatGrid` — the dynamic program. For each frame `i`, score it as `signal[i] + max over j in [i - 2P, i - P/2] of (score[j] - tightness * log((i - j) / P)^2)`, where `P` is the period in frames. Record a back-pointer, then backtrace from the best-scoring frame in the final period. The squared-log penalty lets the beat drift with the music but not skip one.
+- **Trim the backtrace** before returning it, as librosa's `__trim_beats` does. The DP can only start a chain in the first half-period, so its first beat is *structurally* always less than half a beat into the file: music that starts at 2.7 s comes back with five beats in front of it that no note supports, and since `deriveScore` reads `beatsSec[0]` as bar 1 beat 1, that puts the first played note on bar 2 beat 2 with the tempo still perfectly right. The tail is the same fault reversed — 8 s of music in a file stated as 40 s long produced 81 beats, 65 of them past the last note. So: sample the local score at the beat frames, smooth it with the three non-zero taps of a five-point Hann window, and keep the run from the first to the last beat clearing half the RMS of that curve. When nothing clears it — a lone onset, silence — fall through to the even grid rather than returning a stub. One deliberate deviation from librosa, whose slice stops *before* the last beat it just called valid and so drops a real one.
 
 Defaults:
 
@@ -658,7 +775,7 @@ With no notes, return an even grid at `priorBpm` spanning `durationSec` — a de
 
 **Step 4: Run tests, then the full suite**
 
-Expected: the beat spec passes, and the full suite is 155 + 24 + 12 = 191.
+Expected: the beat spec passes, and the full suite is 155 + 24 + 14 = 193.
 
 **Step 5: Commit**
 

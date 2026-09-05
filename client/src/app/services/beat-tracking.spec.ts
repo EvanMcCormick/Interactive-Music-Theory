@@ -103,6 +103,30 @@ describe('trackBeats', () => {
     for (const gap of gaps) expect(gap).toBeCloseTo(0.5, 1);
   });
 
+  it('lays the first beat on the music, not on the silence in front of it', () => {
+    // Only frames inside the first half-period can start a DP chain, so the
+    // untrimmed backtrace always reaches back to within half a beat of frame
+    // zero. Music that starts later arrives with a run of beats no note
+    // supports in front of it, and `deriveScore` reads beatsSec[0] as bar 1
+    // beat 1 — so the five phantoms this fixture used to produce put the first
+    // played note on bar 2 beat 2 with the tempo still exactly right.
+    const grid = trackBeats(pulse(16, 0.5, 2.7), 10.7, FOUR_FOUR);
+
+    expect(Math.abs(grid.beatsSec[0] - 2.7)).toBeLessThan(0.5);
+  });
+
+  it('stops at the last note rather than filling the stated duration', () => {
+    // Eight seconds of music in a forty-second file. The beats past the end
+    // corrupt nothing — `score-derivation.ts` sizes the score from the notes
+    // it placed — but they are noise in an artifact a user has to correct by
+    // hand, and this fixture used to end 65 beats past the last note. The
+    // smoothing window carries one beat of ring-out past the last onset at
+    // 7.5 s, which is why this allows a beat and not none.
+    const grid = trackBeats(pulse(16, 0.5), 40, FOUR_FOUR);
+
+    expect(grid.beatsSec[grid.beatsSec.length - 1]).toBeLessThan(8.5);
+  });
+
   it('carries the caller time signature through', () => {
     const three: TimeSignature = { numerator: 3, denominator: 4, isCommon: false };
 
@@ -151,6 +175,9 @@ describe('trackBeats', () => {
     // Nothing downstream checks these, so the guarantee has to hold here:
     // `secondsToBeats` divides by the gap between neighbouring beats, and a
     // one-entry or NaN-bearing grid would silently poison every derived time.
+    // These are also the cases where the trim can take everything: a lone
+    // onset leaves one beat above threshold, and silence leaves none, so both
+    // have to come back out as the even grid rather than as a stub.
     const cases: [string, DetectedNote[], number][] = [
       ['a single note', notesAt([1]), 4],
       ['every note at the same instant', notesAt([2, 2, 2, 2, 2]), 4],

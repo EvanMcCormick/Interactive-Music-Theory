@@ -192,7 +192,8 @@ export function trackBeats(
   }
 
   const bpm = estimateTempo(signal, options);
-  const frames = trackFrames(localScore, (60 * rate) / bpm, options.tightness);
+  const chain = trackFrames(localScore, (60 * rate) / bpm, options.tightness);
+  const frames = trimBeats(localScore, chain);
   if (frames.length < 2) return evenGrid(notes, durationSec, bpm, timeSignature);
 
   return { beatsSec: frames.map(frame => frame / rate), timeSignature };
@@ -245,6 +246,11 @@ function normalise(signal: Float32Array): Float64Array | null {
  * legal predecessor and start a chain, so the phase of the whole grid is
  * settled by which chain ends up strongest over the entire signal rather than
  * by wherever the first onset happens to be.
+ *
+ * The flip side of that is that the chain it returns *always* reaches back to
+ * within half a beat of frame zero and forward to within a beat of the last
+ * frame, whether or not there is any music out there. `trimBeats` is what cuts
+ * it back to the stretch the onsets actually support.
  */
 function trackFrames(localScore: Float64Array, period: number, tightness: number): number[] {
   const frames = localScore.length;
@@ -283,6 +289,65 @@ function trackFrames(localScore: Float64Array, period: number, tightness: number
   // backlink[cursor] is always below cursor, or -1, so this terminates.
   for (let cursor = end; cursor >= 0; cursor = backlink[cursor]) beats.push(cursor);
   return beats.reverse();
+}
+
+/**
+ * Smoothing applied to the beat-strength curve before trimming: the three
+ * non-zero taps of the five-point Hann window librosa uses.
+ *
+ * One weak beat inside a phrase should not end the run, so each beat is
+ * judged with its neighbours weighed in at half.
+ */
+const TRIM_SMOOTHING = [0.5, 1, 0.5];
+
+/** Fraction of the RMS beat strength a beat has to clear to be kept. */
+const TRIM_THRESHOLD = 0.5;
+
+/**
+ * Drops leading and trailing beats that no onset supports.
+ *
+ * `trackFrames` cannot help inventing them. Only frames inside the first half
+ * period can start a chain, so its first beat is structurally always less than
+ * half a beat into the file - and when the music starts later than that, every
+ * beat in front of it is fabricated. That matters because `deriveScore` reads
+ * `beatsSec[0]` as bar 1 beat 1: music starting at 2.7 s arrives with five
+ * phantom beats ahead of it, which puts the first played note on bar 2 beat 2
+ * with the tempo still exactly right. The tail is the same fault pointed the
+ * other way - a `durationSec` long past the last note fills the difference
+ * with beats nothing plays.
+ *
+ * This is librosa's `__trim_beats`: sample the local score at the beat frames,
+ * smooth it, and keep the run from the first to the last beat clearing half
+ * the RMS of that curve. One deliberate deviation - librosa's slice stops
+ * *before* the last beat it just called valid, throwing away a real beat;
+ * this keeps it.
+ *
+ * Returns an empty array when nothing clears the threshold, which is the
+ * caller's cue to fall back to an even grid.
+ */
+function trimBeats(localScore: Float64Array, beats: number[]): number[] {
+  if (beats.length === 0) return beats;
+
+  const strength = beats.map((_, i) => {
+    let sum = 0;
+    for (let tap = 0; tap < TRIM_SMOOTHING.length; tap++) {
+      const neighbour = beats[i + tap - 1];
+      if (neighbour === undefined) continue;
+      sum += TRIM_SMOOTHING[tap] * localScore[neighbour];
+    }
+    return sum;
+  });
+
+  const meanSquare = strength.reduce((sum, value) => sum + value * value, 0) / strength.length;
+  const threshold = TRIM_THRESHOLD * Math.sqrt(meanSquare);
+
+  const first = strength.findIndex(value => value > threshold);
+  if (first < 0) return [];
+
+  let last = strength.length - 1;
+  while (strength[last] <= threshold) last--;
+
+  return beats.slice(first, last + 1);
 }
 
 /** Evenly spaced beats at `bpm`, covering the same span. Always two or more. */
