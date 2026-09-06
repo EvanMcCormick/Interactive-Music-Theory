@@ -13,6 +13,10 @@ obj/
 !.vscode/extensions.json
 !.vscode/mcp.json
 
+# Audio dropped in for harmonic-eval/real-capture.spec.ts: derived detections
+# are committed (real-detections.fixture.ts), the recording never is.
+client/src/assets/real-capture/
+
 # Angular / Node.js
 node_modules/
 dist/
