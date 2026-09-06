@@ -1,0 +1,470 @@
+import {
+  AfterViewInit,
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  ElementRef,
+  EventEmitter,
+  Input,
+  OnChanges,
+  OnDestroy,
+  OnInit,
+  Output,
+  ViewChild
+} from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { Subject, debounceTime, takeUntil } from 'rxjs';
+import * as alphaTab from '@coderline/alphatab';
+
+import { ScoreDoc, TimeSignature } from '../../../../models/composer.model';
+import {
+  DerivationSettings,
+  DetectedNote,
+  FinestDivision
+} from '../../../../models/transcription.model';
+import { AlphaTabService } from '../../../../services/alpha-tab.service';
+import {
+  MAX_TEMPO_BPM,
+  MIN_TEMPO_BPM,
+  canNudgeDownbeat
+} from '../../../../services/beat-grid-edit';
+import { messageOf } from '../../../../services/error-message';
+import { buildPreviewDoc } from '../../../../services/preview-score';
+import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
+import { TranscriptionState } from '../../../../services/transcription.service';
+import {
+  DiscardCount,
+  FINEST_DIVISIONS,
+  TIME_SIGNATURE_PRESETS,
+  TUNING_PRESETS,
+  TimeSignaturePreset,
+  TuningPreset,
+  countDiscards,
+  gridTempoBpm,
+  meterId,
+  sameTuning,
+  withCurrentMeter,
+  withCurrentTuning
+} from './review-controls';
+
+/**
+ * The screen where a transcription becomes trustworthy.
+ *
+ * Nine knobs on one side, the score they produce on the other, and - the part
+ * that makes the discards judgeable rather than invisible - every detection the
+ * pipeline turned away drawn as a ghost in the bar it was struck in.
+ *
+ * ## It never sees `TranscriptionService`
+ *
+ * The state arrives as an `@Input` and every change leaves as an `@Output`, so
+ * the panel is exercised against a plain object rather than a running pipeline.
+ * That is not only a testing convenience: it is what makes the round trip
+ * checkable at all. A control here is *controlled* - it shows what the state
+ * says and nothing else - so a change the service refuses visibly snaps back,
+ * and a change it applies is visible because the state came back carrying it.
+ * A component that emitted and then trusted its own optimistic value could not
+ * tell those two apart.
+ *
+ * The mirror fields (`tuningPresetId`, `tempoBpm`, ...) are what make that
+ * work. Each is set optimistically when its control moves and then overwritten
+ * from the incoming state in `ngOnChanges`. Binding the controls straight at
+ * `state.session.settings.x` would look tidier and would *not* snap back: with
+ * the bound value unchanged, `ngModel` has nothing to write, and the control
+ * would sit showing a setting the score was never derived with.
+ *
+ * `@Input` state must be replaced rather than mutated - `OnPush` plus
+ * `ngOnChanges` is the whole update path. `TranscriptionService` pushes a new
+ * object every time, including on a refusal.
+ *
+ * ## The preview is the ghost document
+ *
+ * `buildPreviewDoc`, not `derived.doc`: voice 1 is shared by identity with the
+ * document that exports, and voice 2 carries the discards. *Open in Composer*
+ * is Task 5's job and sends `derived.doc`, never this.
+ *
+ * Rendering follows `ComposerScoreComponent` exactly - one alphaTab instance, a
+ * debounced render request, and a `ResizeObserver`, because alphaTab silently
+ * refuses to draw into a zero-width element and never retries. The one
+ * difference is that `AlphaTabService` is provided *here* rather than taken
+ * from the root injector. The root instance holds a single `AlphaTabApi` and
+ * `initializeApi` disposes whatever was already there, so two components that
+ * both used it would tear down each other's score. It also makes the renderer
+ * stubbable, which is how the specs assert the preview re-renders without
+ * booting a real engraver.
+ */
+
+/** Coalesces renders, so dragging the confidence slider re-engraves once. */
+const RENDER_DEBOUNCE_MS = 120;
+
+/** Distinguishes control ids when more than one panel is on a page. */
+let instanceCount = 0;
+
+/** Which knob a refusal is standing next to. */
+export type RefusableControl = 'finestDivision' | 'timeSignature';
+
+@Component({
+  selector: 'app-transcription-review',
+  standalone: true,
+  imports: [CommonModule, FormsModule],
+  templateUrl: './transcription-review.component.html',
+  styleUrls: ['./transcription-review.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [AlphaTabService]
+})
+export class TranscriptionReviewComponent
+  implements OnInit, OnChanges, AfterViewInit, OnDestroy
+{
+  @Input() state: TranscriptionState | null = null;
+
+  /** Any subset of `DerivationSettings`, which the service merges. */
+  @Output() readonly settingsChanged = new EventEmitter<Partial<DerivationSettings>>();
+  @Output() readonly timeSignatureChanged = new EventEmitter<TimeSignature>();
+  @Output() readonly tempoChanged = new EventEmitter<number>();
+  /** Whole beats, signed. `-1` starts bar 1 a beat earlier. */
+  @Output() readonly downbeatNudged = new EventEmitter<number>();
+
+  @ViewChild('previewContainer') previewContainer?: ElementRef<HTMLDivElement>;
+
+  readonly finestDivisions = FINEST_DIVISIONS;
+  readonly minTempoBpm = MIN_TEMPO_BPM;
+  readonly maxTempoBpm = MAX_TEMPO_BPM;
+
+  private readonly seq = ++instanceCount;
+
+  /** Control and hint ids, unique per instance so every `for` is unambiguous. */
+  readonly id = {
+    tuning: `txr-tuning-${this.seq}`,
+    capo: `txr-capo-${this.seq}`,
+    division: `txr-division-${this.seq}`,
+    divisionHint: `txr-division-hint-${this.seq}`,
+    confidence: `txr-confidence-${this.seq}`,
+    confidenceHint: `txr-confidence-hint-${this.seq}`,
+    position: `txr-position-${this.seq}`,
+    positionHint: `txr-position-hint-${this.seq}`,
+    maxFret: `txr-max-fret-${this.seq}`,
+    maxFretHint: `txr-max-fret-hint-${this.seq}`,
+    meter: `txr-meter-${this.seq}`,
+    tempo: `txr-tempo-${this.seq}`,
+    tempoHint: `txr-tempo-hint-${this.seq}`,
+    downbeatHint: `txr-downbeat-hint-${this.seq}`,
+    controlsHeading: `txr-controls-heading-${this.seq}`,
+    previewHeading: `txr-preview-heading-${this.seq}`
+  };
+
+  // What the controls show. Set optimistically when one moves, then
+  // authoritatively from the incoming state; see the class docblock.
+  tuningPresetId = '';
+  capo = 0;
+  finestDivision: FinestDivision = 16;
+  confidenceFloor = 0;
+  positionHint: number | null = null;
+  maxFret = 24;
+  timeSignatureId = '';
+  tempoBpm: number | null = null;
+
+  /** Presets plus, when the state matches none of them, the setting it is on. */
+  tuningOptions: TuningPreset[] = [...TUNING_PRESETS];
+  timeSignatureOptions: TimeSignaturePreset[] = [...TIME_SIGNATURE_PRESETS];
+
+  hasScore = false;
+  hasBars = false;
+  failure: string | null = null;
+  renderError: string | null = null;
+
+  canNudgeBack = false;
+  canNudgeForward = false;
+
+  discards: DiscardCount[] = [];
+  discardTotal = 0;
+  /** Ghosts `buildPreviewDoc` could not place at all. */
+  omittedCount = 0;
+
+  /** Set when the user states a tempo outside the range the service accepts. */
+  tempoNote: string | null = null;
+  /** Which control the current refusal belongs beside. */
+  refusalControl: RefusableControl = 'finestDivision';
+
+  private previewDoc: ScoreDoc | null = null;
+  private readonly destroy$ = new Subject<void>();
+  private readonly renderRequest$ = new Subject<void>();
+  private resizeObserver: ResizeObserver | null = null;
+  private lastRenderedWidth = 0;
+  /** Set when a render was skipped because the container had no width yet. */
+  private renderPending = false;
+
+  constructor(
+    private readonly mapper: ScoreDocMapperService,
+    private readonly alphaTabService: AlphaTabService,
+    private readonly cdr: ChangeDetectorRef
+  ) {}
+
+  ngOnInit(): void {
+    this.renderRequest$
+      .pipe(debounceTime(RENDER_DEBOUNCE_MS), takeUntil(this.destroy$))
+      .subscribe(() => this.renderPreview());
+  }
+
+  /**
+   * Reads the new state into the fields the template binds to.
+   *
+   * Everything is computed here rather than in the template, per the project's
+   * change-detection guidance, and because `buildPreviewDoc` is not something
+   * to run once per binding check.
+   *
+   * Fires before `ngOnInit` on the first cycle, so the render request it makes
+   * has no subscriber yet. `ngAfterViewInit` makes another, which is also when
+   * there is somewhere to draw.
+   */
+  ngOnChanges(): void {
+    const state = this.state;
+    const session = state?.session ?? null;
+    const derived = state?.derived ?? null;
+
+    this.failure = state?.phase === 'failed' ? state.error : null;
+    this.hasScore = session !== null && derived !== null;
+
+    if (!session || !derived) {
+      this.hasBars = false;
+      this.previewDoc = null;
+      this.renderError = null;
+      this.discards = [];
+      this.discardTotal = 0;
+      this.omittedCount = 0;
+      this.canNudgeBack = false;
+      this.canNudgeForward = false;
+      this.renderRequest$.next();
+      return;
+    }
+
+    const settings = session.settings;
+    this.capo = settings.capo;
+    this.finestDivision = settings.finestDivision;
+    this.confidenceFloor = settings.confidenceFloor;
+    this.positionHint = settings.positionHint;
+    this.maxFret = settings.maxFret;
+
+    // The tempo note describes a value that is no longer in the box: a state
+    // arriving means something was applied, and the field below is about to be
+    // rewritten from the grid. Left standing it would explain a number that is
+    // not on screen any more.
+    this.tempoBpm = gridTempoBpm(session.grid.beatsSec);
+    this.tempoNote = null;
+
+    this.tuningOptions = withCurrentTuning(settings.tuning);
+    this.tuningPresetId =
+      this.tuningOptions.find(option => sameTuning(option.tuning, settings.tuning))?.id ??
+      'custom';
+    this.timeSignatureOptions = withCurrentMeter(session.grid.timeSignature);
+    this.timeSignatureId = meterId(session.grid.timeSignature);
+
+    this.canNudgeBack = canNudgeDownbeat(session.grid, -1);
+    this.canNudgeForward = canNudgeDownbeat(session.grid, 1);
+
+    // The preview is the only place the discards are actually drawn, and its
+    // out-parameter is the only record of the ones it could not draw - so the
+    // document and the counts printed under it are built in one pass.
+    const omitted: DetectedNote[] = [];
+    try {
+      this.previewDoc = buildPreviewDoc(session, derived, state?.suppressed ?? [], omitted);
+      this.renderError = null;
+    } catch (error) {
+      this.previewDoc = null;
+      this.renderError = `Could not build the preview: ${messageOf(error)}`;
+    }
+
+    this.hasBars = (this.previewDoc?.masterBars.length ?? 0) > 0;
+    this.omittedCount = omitted.length;
+    this.discards = countDiscards(derived.dropped, state?.suppressed ?? []);
+    this.discardTotal = this.discards.reduce((total, entry) => total + entry.count, 0);
+
+    this.renderRequest$.next();
+  }
+
+  ngAfterViewInit(): void {
+    const element = this.previewContainer?.nativeElement;
+    if (!element) return;
+
+    this.alphaTabService.initializeApi(element, {
+      core: { fontDirectory: '/font/', useWorkers: true },
+      display: { scale: 0.9, staveProfile: 'default', layoutMode: 'page' },
+      // No playback here. The review panel is for looking at, the soundfont is
+      // a megabyte, and Task 5's "Open in Composer" is where a score gets a
+      // player.
+      player: { enablePlayer: false, enableCursor: false, enableUserInteraction: false }
+    });
+
+    this.observeContainerWidth();
+    this.renderRequest$.next();
+  }
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.alphaTabService.dispose();
+  }
+
+  // -------------------------------------------------------------------------
+  // The nine knobs
+  // -------------------------------------------------------------------------
+
+  onTuningChange(presetId: string): void {
+    this.tuningPresetId = presetId;
+    const preset = this.tuningOptions.find(option => option.id === presetId);
+    if (!preset) return;
+
+    // Copied: the service copies it again, but handing out a preset's own array
+    // would put shared reference data on the session.
+    this.settingsChanged.emit({ tuning: [...preset.tuning] });
+  }
+
+  onCapoChange(capo: number | null): void {
+    if (capo === null || !Number.isFinite(capo)) return;
+    this.capo = capo;
+    this.settingsChanged.emit({ capo });
+  }
+
+  onFinestDivisionChange(division: FinestDivision): void {
+    this.finestDivision = division;
+    this.refusalControl = 'finestDivision';
+    this.settingsChanged.emit({ finestDivision: division });
+  }
+
+  onConfidenceFloorChange(confidenceFloor: number | null): void {
+    if (confidenceFloor === null || !Number.isFinite(confidenceFloor)) return;
+    this.confidenceFloor = confidenceFloor;
+    this.settingsChanged.emit({ confidenceFloor });
+  }
+
+  /** Blank means "let the hand roam", which is `null` on the settings. */
+  onPositionHintChange(positionHint: number | null): void {
+    const value =
+      positionHint !== null && Number.isFinite(positionHint) ? positionHint : null;
+    this.positionHint = value;
+    this.settingsChanged.emit({ positionHint: value });
+  }
+
+  onMaxFretChange(maxFret: number | null): void {
+    if (maxFret === null || !Number.isFinite(maxFret)) return;
+    this.maxFret = maxFret;
+    this.settingsChanged.emit({ maxFret });
+  }
+
+  onTimeSignatureChange(presetId: string): void {
+    this.timeSignatureId = presetId;
+    this.refusalControl = 'timeSignature';
+    const preset = this.timeSignatureOptions.find(option => option.id === presetId);
+    if (preset) this.timeSignatureChanged.emit({ ...preset.value });
+  }
+
+  /**
+   * States a tempo, or says why this one will not be applied.
+   *
+   * `withTempo` refuses an out-of-range tempo rather than clamping it, and the
+   * refusal is silent: the grid comes back by identity, and the state that
+   * arrives is indistinguishable from one where nothing was asked for.
+   * Emitting anyway would leave the input showing a tempo the score was not
+   * derived at with nothing on screen to say so, so the bound is checked before
+   * the emit and the reason written next to the control.
+   */
+  onTempoChange(bpm: number | null): void {
+    this.tempoBpm = bpm;
+
+    if (bpm === null || !(bpm >= MIN_TEMPO_BPM && bpm <= MAX_TEMPO_BPM)) {
+      this.tempoNote = `Tempo has to be between ${MIN_TEMPO_BPM} and ${MAX_TEMPO_BPM} BPM.`;
+      return;
+    }
+
+    this.tempoNote = null;
+    this.tempoChanged.emit(bpm);
+  }
+
+  /** Buttons that would do nothing are disabled, so this only ever moves the bar. */
+  onNudgeDownbeat(beats: number): void {
+    this.downbeatNudged.emit(beats);
+  }
+
+  // -------------------------------------------------------------------------
+  // Template helpers
+  // -------------------------------------------------------------------------
+
+  /**
+   * The refusal, if it belongs beside `control`.
+   *
+   * Only `finestDivision` and the meter can produce one: `rederive` refuses on
+   * `barGridFault`, whose two arguments are exactly those, and a session in
+   * `ready` already derived cleanly once - so tempo and downbeat, which touch
+   * neither, cannot fail that check. Whichever of the two moved last is
+   * therefore the one that caused it.
+   */
+  refusalFor(control: RefusableControl): string | null {
+    if (this.refusalControl !== control) return null;
+    return this.state?.refusal ?? null;
+  }
+
+  trackByPreset(_index: number, preset: { id: string }): string {
+    return preset.id;
+  }
+
+  trackByDivision(_index: number, division: { value: FinestDivision }): number {
+    return division.value;
+  }
+
+  trackByDiscard(_index: number, discard: DiscardCount): string {
+    return discard.reason;
+  }
+
+  // -------------------------------------------------------------------------
+  // Preview rendering
+  // -------------------------------------------------------------------------
+
+  private renderPreview(): void {
+    const element = this.previewContainer?.nativeElement;
+    if (!element || !this.alphaTabService.getApi()) return;
+
+    const doc = this.previewDoc;
+    if (!doc || doc.masterBars.length === 0) {
+      this.renderPending = false;
+      return;
+    }
+
+    // alphaTab logs "skipped rendering because of width=0" and never retries,
+    // which is what the observer below is for. The pane starts hidden until
+    // there is a score, so this is an ordinary path rather than a corner of one.
+    if (element.clientWidth === 0) {
+      this.renderPending = true;
+      return;
+    }
+    this.renderPending = false;
+
+    try {
+      const score = this.mapper.toScore(doc, new alphaTab.Settings());
+      this.alphaTabService.renderScore(
+        score,
+        score.tracks.map((_, index) => index)
+      );
+      this.renderError = null;
+    } catch (error) {
+      this.renderError = `Could not draw the preview: ${messageOf(error)}`;
+    }
+    this.cdr.markForCheck();
+  }
+
+  private observeContainerWidth(): void {
+    const element = this.previewContainer?.nativeElement;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+
+    this.resizeObserver = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width <= 0) return;
+
+      if (this.renderPending) this.renderPreview();
+      else if (width !== this.lastRenderedWidth) this.alphaTabService.render();
+
+      this.lastRenderedWidth = width;
+    });
+    this.resizeObserver.observe(element);
+  }
+}

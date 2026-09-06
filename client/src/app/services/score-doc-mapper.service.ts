@@ -201,16 +201,51 @@ export class ScoreDocMapperService {
         ? alphaTab.model.KeySignatureType.Minor
         : alphaTab.model.KeySignatureType.Major;
 
-    for (const voiceDoc of doc.voices) {
-      bar.addVoice(this.toVoice(voiceDoc, stringCount));
-    }
+    doc.voices.forEach((voiceDoc, index) => {
+      bar.addVoice(this.toVoice(voiceDoc, stringCount, index));
+    });
     return bar;
   }
 
-  private toVoice(doc: VoiceDoc, stringCount: number): alphaTab.model.Voice {
+  /**
+   * Maps one voice, and declines to draw an accompanying voice that says
+   * nothing.
+   *
+   * A second voice made entirely of rests is a placeholder rather than a
+   * musical statement, and it exists because a document may not carry voice 2
+   * in some bars and not others: alphaTab's `Voice._chain` reads
+   * `bar.nextBar.voices[this.index]` for the last beat of every voice and
+   * dereferences it unchecked, so a bar with a second voice followed by one
+   * without throws out of `Score.finish` before anything is drawn. The
+   * ghost-note preview therefore gives *every* bar the extra voice, including
+   * the bars that discarded nothing - and alphaTab duly drew a grey full-bar
+   * rest under each of them.
+   *
+   * Marking those beats `isEmpty` is the renderer's answer to a document that
+   * cannot omit them. `Bar.finish` puts a voice in `filledVoices` only when it
+   * is not empty, and `Voice.finish` recomputes emptiness from its beats, so
+   * the placeholder voice drops out of the glyphs entirely while remaining
+   * present in the model for `_chain` to find. The bars that do carry ghosts
+   * are untouched.
+   *
+   * Only for voices past the first. Voice 0 is added to `filledVoices`
+   * unconditionally, so this could not hide it - but it would set
+   * `Bar.isEmpty`, which alphaTab reads as "not even having rests" and uses to
+   * stretch a beat across the whole bar during MIDI generation. A composer bar
+   * the user has left as rests is not that, and must keep drawing its rests.
+   */
+  private toVoice(
+    doc: VoiceDoc,
+    stringCount: number,
+    index: number
+  ): alphaTab.model.Voice {
     const voice = new alphaTab.model.Voice();
     for (const beatDoc of doc.beats) {
       voice.addBeat(this.toBeat(beatDoc, stringCount));
+    }
+
+    if (index > 0 && doc.beats.length > 0 && doc.beats.every(beat => beat.isRest)) {
+      for (const beat of voice.beats) beat.isEmpty = true;
     }
     return voice;
   }

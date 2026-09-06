@@ -1,0 +1,267 @@
+// Transcription review panel, matching the app's dark theme.
+
+$nav-bg: #2c3e50;
+$nav-bg-secondary: #34495e;
+$accent-color: #3498db;
+$accent-hover: #2980b9;
+$text-primary: #ecf0f1;
+$text-secondary: #bdc3c7;
+$surface-color: #1a252f;
+$border-color: #465666;
+$error-color: #e74c3c;
+$warning-color: #f39c12;
+
+:host {
+  display: block;
+  min-width: 0;
+}
+
+// The panel answers to its own width, not the window's, so it lays out
+// correctly wherever it is embedded - beside a sidebar, in a split view, or on
+// its own. `inline-size` rather than `size`, because the height is content
+// driven and a two-axis container would need one stated.
+.review {
+  container-type: inline-size;
+  container-name: review;
+  background-color: $nav-bg;
+  color: $text-primary;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.review__panes {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+// Wide enough for a column of controls and a staff that is still readable.
+// Below it the two stack, which is also what a phone gets.
+@container review (min-width: 760px) {
+  .review__panes {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .review__controls {
+    flex: 0 0 17rem;
+  }
+
+  .review__preview {
+    flex: 1 1 auto;
+  }
+}
+
+.review__controls,
+.review__preview {
+  min-width: 0;
+}
+
+.review__preview {
+  display: flex;
+  flex-direction: column;
+}
+
+// `[hidden]` is a UA-stylesheet `display: none`, which a `display: flex` above
+// would silently beat.
+.review__preview[hidden] {
+  display: none;
+}
+
+.review__heading {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.review__score {
+  background-color: #ffffff;
+  border-radius: 4px;
+  min-height: 12rem;
+  max-height: 34rem;
+  overflow: auto;
+}
+
+.review__placeholder {
+  margin: 0 0 1rem;
+  color: $text-secondary;
+  font-size: 0.85rem;
+  max-width: 52ch;
+}
+
+.review__failure {
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  background-color: rgba($error-color, 0.15);
+  border: 1px solid $error-color;
+  color: $error-color;
+  font-size: 0.85rem;
+}
+
+.review__render-error {
+  margin: 0.6rem 0 0;
+  color: $error-color;
+  font-size: 0.8rem;
+}
+
+.review__no-bars {
+  margin: 0.6rem 0 0;
+  color: $text-secondary;
+  font-size: 0.8rem;
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+.control {
+  margin: 0 0 0.9rem;
+}
+
+// A fieldset carries a border and padding of its own by default, which would
+// make the one grouped control look unlike the eight beside it.
+.control--group {
+  border: 0;
+  padding: 0;
+  margin-inline: 0;
+}
+
+.control__label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: $text-primary;
+  padding: 0;
+}
+
+.control__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.control__input {
+  background-color: $surface-color;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  color: $text-primary;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
+  width: 100%;
+  min-width: 0;
+
+  &:focus-visible {
+    outline: 2px solid $accent-color;
+    outline-offset: 1px;
+  }
+}
+
+.control__input--number {
+  width: 6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.control__input--range {
+  flex: 1 1 8rem;
+  width: auto;
+  padding: 0;
+  accent-color: $accent-color;
+}
+
+.control__readout {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: $text-secondary;
+  min-width: 3ch;
+}
+
+.control__unit {
+  font-size: 0.8rem;
+  color: $text-secondary;
+}
+
+.control__button {
+  background-color: $nav-bg-secondary;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  color: $text-primary;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.6rem;
+  transition: background-color 0.15s ease;
+
+  &:hover:not(:disabled) {
+    background-color: $accent-color;
+    border-color: $accent-hover;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $accent-color;
+    outline-offset: 2px;
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+}
+
+.control__hint {
+  margin: 0.25rem 0 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: $text-secondary;
+  max-width: 42ch;
+}
+
+// A refusal is not an error. The score on screen is still the one the settings
+// produced; the only thing that did not happen is the change. So: the warning
+// colour and a plain note, never the error red the failure banner uses.
+.control__refusal {
+  margin: 0.3rem 0 0;
+  padding: 0.3rem 0.45rem;
+  border-left: 3px solid $warning-color;
+  background-color: rgba($warning-color, 0.12);
+  color: $text-primary;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  max-width: 42ch;
+}
+
+// ---------------------------------------------------------------------------
+// Discards
+// ---------------------------------------------------------------------------
+
+.discards {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid $border-color;
+}
+
+.discards__line {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: $text-secondary;
+  max-width: 46ch;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.discards__reason {
+  color: $text-primary;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .control__button {
+    transition: none;
+  }
+}

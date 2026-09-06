@@ -1,0 +1,247 @@
+<!--
+  Two panes. The preview pane stays mounted whether or not there is a score, so
+  the alphaTab container is a stable ViewChild that can be initialised once in
+  ngAfterViewInit; it is hidden rather than removed when there is nothing to
+  draw, and the ResizeObserver picks it up when it comes back.
+-->
+<div class="review">
+  <p class="review__failure" *ngIf="failure" role="alert">{{ failure }}</p>
+
+  <p class="review__placeholder" *ngIf="!hasScore && !failure">
+    Nothing to review yet. Transcribe an audio file and the score, its settings
+    and everything the pipeline discarded appear here.
+  </p>
+
+  <div class="review__panes">
+    <section
+      class="review__controls"
+      *ngIf="hasScore"
+      [attr.aria-labelledby]="id.controlsHeading"
+    >
+      <h2 class="review__heading" [id]="id.controlsHeading">Interpretation</h2>
+
+      <div class="control">
+        <label class="control__label" [attr.for]="id.tuning">Tuning</label>
+        <select
+          class="control__input"
+          [id]="id.tuning"
+          [ngModel]="tuningPresetId"
+          (ngModelChange)="onTuningChange($event)"
+        >
+          <option
+            *ngFor="let preset of tuningOptions; trackBy: trackByPreset"
+            [value]="preset.id"
+          >
+            {{ preset.label }}
+          </option>
+        </select>
+      </div>
+
+      <div class="control">
+        <label class="control__label" [attr.for]="id.capo">Capo</label>
+        <input
+          class="control__input control__input--number"
+          type="number"
+          min="0"
+          max="12"
+          step="1"
+          [id]="id.capo"
+          [ngModel]="capo"
+          (ngModelChange)="onCapoChange($event)"
+        />
+      </div>
+
+      <div class="control">
+        <label class="control__label" [attr.for]="id.division">Finest division</label>
+        <select
+          class="control__input"
+          [id]="id.division"
+          [attr.aria-describedby]="id.divisionHint"
+          [ngModel]="finestDivision"
+          (ngModelChange)="onFinestDivisionChange($event)"
+        >
+          <option
+            *ngFor="let division of finestDivisions; trackBy: trackByDivision"
+            [ngValue]="division.value"
+          >
+            {{ division.label }}
+          </option>
+        </select>
+        <p class="control__hint" [id]="id.divisionHint">
+          The shortest note the score may be written with.
+        </p>
+        <!--
+          Deliberately not styled as an error: the settings change did not
+          happen, but the score on screen is the one that was already there and
+          is still valid.
+        -->
+        <p class="control__refusal" *ngIf="refusalFor('finestDivision') as refusal">
+          {{ refusal }}
+        </p>
+      </div>
+
+      <div class="control">
+        <label class="control__label" [attr.for]="id.confidence">
+          Confidence floor
+        </label>
+        <div class="control__row">
+          <input
+            class="control__input control__input--range"
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            [id]="id.confidence"
+            [attr.aria-describedby]="id.confidenceHint"
+            [ngModel]="confidenceFloor"
+            (ngModelChange)="onConfidenceFloorChange($event)"
+          />
+          <output class="control__readout" [attr.for]="id.confidence">
+            {{ confidenceFloor | number: '1.2-2' }}
+          </output>
+        </div>
+        <p class="control__hint" [id]="id.confidenceHint">
+          Detections below this are drawn as ghosts instead of notes.
+        </p>
+      </div>
+
+      <div class="control">
+        <label class="control__label" [attr.for]="id.position">Position hint</label>
+        <input
+          class="control__input control__input--number"
+          type="number"
+          min="0"
+          max="24"
+          step="1"
+          [id]="id.position"
+          [attr.aria-describedby]="id.positionHint"
+          [ngModel]="positionHint"
+          (ngModelChange)="onPositionHintChange($event)"
+        />
+        <p class="control__hint" [id]="id.positionHint">
+          The fret the hand is pinned near. Leave it blank to let it roam.
+        </p>
+      </div>
+
+      <div class="control">
+        <label class="control__label" [attr.for]="id.maxFret">Max fret</label>
+        <input
+          class="control__input control__input--number"
+          type="number"
+          min="1"
+          max="36"
+          step="1"
+          [id]="id.maxFret"
+          [attr.aria-describedby]="id.maxFretHint"
+          [ngModel]="maxFret"
+          (ngModelChange)="onMaxFretChange($event)"
+        />
+        <p class="control__hint" [id]="id.maxFretHint">
+          Frets the neck actually has. Anything past it is unplayable.
+        </p>
+      </div>
+
+      <div class="control">
+        <label class="control__label" [attr.for]="id.meter">Time signature</label>
+        <select
+          class="control__input"
+          [id]="id.meter"
+          [ngModel]="timeSignatureId"
+          (ngModelChange)="onTimeSignatureChange($event)"
+        >
+          <option
+            *ngFor="let preset of timeSignatureOptions; trackBy: trackByPreset"
+            [value]="preset.id"
+          >
+            {{ preset.label }}
+          </option>
+        </select>
+        <p class="control__refusal" *ngIf="refusalFor('timeSignature') as refusal">
+          {{ refusal }}
+        </p>
+      </div>
+
+      <div class="control">
+        <label class="control__label" [attr.for]="id.tempo">Tempo</label>
+        <div class="control__row">
+          <input
+            class="control__input control__input--number"
+            type="number"
+            [min]="minTempoBpm"
+            [max]="maxTempoBpm"
+            step="1"
+            [id]="id.tempo"
+            [attr.aria-describedby]="id.tempoHint"
+            [ngModel]="tempoBpm"
+            (ngModelChange)="onTempoChange($event)"
+          />
+          <span class="control__unit">BPM</span>
+        </div>
+        <p class="control__hint" [id]="id.tempoHint">
+          Respaces the beats from bar 1, which stays where it is.
+          {{ minTempoBpm }} to {{ maxTempoBpm }} BPM.
+        </p>
+        <p class="control__refusal" *ngIf="tempoNote">{{ tempoNote }}</p>
+      </div>
+
+      <!--
+        Two buttons under one name, so a fieldset and a legend rather than a
+        label: `for` points at one control, and neither button is the control
+        being named.
+      -->
+      <fieldset class="control control--group" [attr.aria-describedby]="id.downbeatHint">
+        <legend class="control__label">Downbeat</legend>
+        <div class="control__row">
+          <button
+            type="button"
+            class="control__button"
+            [disabled]="!canNudgeBack"
+            (click)="onNudgeDownbeat(-1)"
+          >
+            Bar 1 a beat earlier
+          </button>
+          <button
+            type="button"
+            class="control__button"
+            [disabled]="!canNudgeForward"
+            (click)="onNudgeDownbeat(1)"
+          >
+            Bar 1 a beat later
+          </button>
+        </div>
+        <p class="control__hint" [id]="id.downbeatHint">
+          Moves the bar lines without moving the beats. Nudging back can start
+          bar 1 before the audio does, which says the piece begins mid-bar.
+        </p>
+      </fieldset>
+
+      <div class="discards" *ngIf="discardTotal > 0 || omittedCount > 0">
+        <p class="discards__line" *ngIf="discardTotal > 0">
+          {{ discardTotal }} detection{{ discardTotal === 1 ? '' : 's' }} not in the
+          score, drawn as ghosts:
+          <span
+            class="discards__reason"
+            *ngFor="let discard of discards; trackBy: trackByDiscard; let last = last"
+          >{{ discard.count }} {{ discard.label }}{{ last ? '.' : ', ' }}</span>
+        </p>
+        <p class="discards__line" *ngIf="omittedCount > 0">
+          {{ omittedCount }} of them could not be drawn at all - no fret reaches
+          the pitch, or the slot was already taken.
+        </p>
+      </div>
+    </section>
+
+    <section
+      class="review__preview"
+      [hidden]="!hasScore"
+      [attr.aria-labelledby]="id.previewHeading"
+    >
+      <h2 class="review__heading" [id]="id.previewHeading">Score</h2>
+      <div class="review__score" #previewContainer></div>
+      <p class="review__no-bars" *ngIf="hasScore && !hasBars">
+        This derivation has no bars to draw.
+      </p>
+      <p class="review__render-error" *ngIf="renderError">{{ renderError }}</p>
+    </section>
+  </div>
+</div>
