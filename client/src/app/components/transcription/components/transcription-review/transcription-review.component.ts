@@ -30,7 +30,12 @@ import {
   canNudgeDownbeat
 } from '../../../../services/beat-grid-edit';
 import { messageOf } from '../../../../services/error-message';
-import { buildPreviewDoc } from '../../../../services/preview-score';
+import {
+  NoteIndex,
+  RenderedNote,
+  buildPreviewDoc,
+  detectionAt
+} from '../../../../services/preview-score';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { TranscriptionState } from '../../../../services/transcription.service';
 import {
@@ -42,6 +47,7 @@ import {
   TuningPreset,
   countDiscards,
   describeFolds,
+  describeToggle,
   gridTempoBpm,
   meterId,
   sameTuning,
@@ -154,6 +160,17 @@ export class TranscriptionReviewComponent
   @Output() readonly tempoChanged = new EventEmitter<number>();
   /** Whole beats, signed. `-1` starts bar 1 a beat earlier. */
   @Output() readonly downbeatNudged = new EventEmitter<number>();
+  /**
+   * A `DetectedNote.id` whose suppression verdict the user wants reversed.
+   *
+   * An id and not a verdict, because the panel is not entitled to one: which
+   * way a toggle goes depends on the kept set, which the service owns, and a
+   * component that emitted "keep this" would be stating a conclusion it had
+   * derived from a score that may already have been replaced. `toggleNote`
+   * reads the current session and decides; see its docblock for why the cycle
+   * is two steps rather than three.
+   */
+  @Output() readonly noteToggled = new EventEmitter<string>();
 
   @ViewChild('previewContainer') previewContainer?: ElementRef<HTMLDivElement>;
 
@@ -230,12 +247,46 @@ export class TranscriptionReviewComponent
    */
   foldNote: string | null = null;
 
+  /**
+   * What the last click on the score did, or null when the last state change
+   * was not one.
+   *
+   * Derived from the state that came back rather than from the click that went
+   * out, which is the same stance the mirror fields take: the panel emitted an
+   * id and has no idea which way the service moved it, so it asks the arriving
+   * session whether that note is in the kept set now. A click the service
+   * ignored - an id it did not recognise - pushes no state at all and leaves
+   * this null, which is the honest answer.
+   *
+   * Cleared by the next state that is not a toggle, so a sentence about one
+   * note cannot outlive the derivation it described.
+   */
+  toggleNote: string | null = null;
+
   /** Set when the user states a tempo outside the range the service accepts. */
   tempoNote: string | null = null;
   /** Which control the current refusal belongs beside. */
   refusalControl: RefusableControl = 'finestDivision';
 
   private previewDoc: ScoreDoc | null = null;
+  /**
+   * The way back from a note on the page to the detection behind it.
+   *
+   * Replaced in the same statement that replaces `previewDoc`, because
+   * `buildPreviewDoc` hands the two back together for exactly that reason: an
+   * index read against a document it did not describe answers a click with a
+   * different note, and nothing downstream can tell. See `NoteIndex`.
+   *
+   * One window where they are legitimately apart, and it is bounded: the
+   * render is debounced by `RENDER_DEBOUNCE_MS`, so for that long the index is
+   * the new one and the pixels are the old. A click landing there resolves
+   * against a page that is about to be replaced. Shortening the debounce would
+   * trade that for re-engraving on every frame of a slider drag, and the
+   * failure it causes is one stale toggle the user can repeat.
+   */
+  private noteIndex: NoteIndex = new Map<string, string>();
+  /** The id of the click awaiting the state it produced; see `toggleNote`. */
+  private pendingToggleId: string | null = null;
   private readonly destroy$ = new Subject<void>();
   private readonly renderRequest$ = new Subject<void>();
   private resizeObserver: ResizeObserver | null = null;
@@ -271,12 +322,20 @@ export class TranscriptionReviewComponent
     const session = state?.session ?? null;
     const derived = state?.derived ?? null;
 
+    // Read once and cleared here, so the sentence it produces describes this
+    // state and no later one. A threshold moved after a click therefore clears
+    // it rather than leaving it standing over a different score.
+    const toggled = this.pendingToggleId;
+    this.pendingToggleId = null;
+
     this.failure = state?.phase === 'failed' ? state.error : null;
     this.hasScore = session !== null && derived !== null;
 
     if (!session || !derived) {
       this.hasBars = false;
       this.previewDoc = null;
+      this.noteIndex = new Map<string, string>();
+      this.toggleNote = null;
       this.renderError = null;
       this.discards = [];
       this.discardTotal = 0;
@@ -319,17 +378,19 @@ export class TranscriptionReviewComponent
     // document and the counts printed under it are built in one pass.
     const omitted: DetectedNote[] = [];
     try {
-      // The index comes back with it and is what the next gesture on this
-      // panel will resolve a click through; nothing here reads it yet.
-      this.previewDoc = buildPreviewDoc(
-        session,
-        derived,
-        state?.suppressed ?? [],
-        omitted
-      ).doc;
+      // Document and index in one statement, never separately: a click is
+      // resolved through the index against the pixels the document produced,
+      // and the way that goes wrong is by their coming apart. See `noteIndex`.
+      const preview = buildPreviewDoc(session, derived, state?.suppressed ?? [], omitted);
+      this.previewDoc = preview.doc;
+      this.noteIndex = preview.index;
       this.renderError = null;
     } catch (error) {
       this.previewDoc = null;
+      // An index kept alongside a document that failed to build would resolve
+      // clicks on the score still drawn from the *previous* derivation, which
+      // is the one case where a confident wrong answer is available.
+      this.noteIndex = new Map<string, string>();
       this.renderError = `Could not build the preview: ${messageOf(error)}`;
     }
 
@@ -338,6 +399,7 @@ export class TranscriptionReviewComponent
     this.discards = countDiscards(derived.dropped, state?.suppressed ?? []);
     this.discardTotal = this.discards.reduce((total, entry) => total + entry.count, 0);
     this.foldNote = describeFolds(derived.folded);
+    this.toggleNote = toggled === null ? null : describeToggle(session, toggled);
 
     this.renderRequest$.next();
   }
@@ -347,13 +409,27 @@ export class TranscriptionReviewComponent
     if (!element) return;
 
     this.alphaTabService.initializeApi(element, {
-      core: { fontDirectory: '/font/', useWorkers: true },
+      // `includeNoteBounds` is what makes a note clickable at all: alphaTab
+      // hit-tests the beat and only asks for the note inside it when it
+      // recorded note bounds, so without this `onNoteMouseDown` registers a
+      // handler that is never called and the whole gesture fails silently.
+      core: { fontDirectory: '/font/', useWorkers: true, includeNoteBounds: true },
       display: { scale: 0.9, staveProfile: 'default', layoutMode: 'page' },
       // No playback here. The review panel is for looking at, the soundfont is
       // a megabyte, and Task 5's "Open in Composer" is where a score gets a
       // player.
       player: { enablePlayer: false, enableCursor: false, enableUserInteraction: false }
     });
+
+    // Registered once, here, against the api `initializeApi` just created.
+    // `AlphaTabService` holds one `AlphaTabApi` for this component's lifetime -
+    // `renderScore` reuses it and only `dispose` replaces it - so this survives
+    // every re-render, and the preview re-renders on every knob turn.
+    // Registering it in `renderPreview` instead would add a handler per render
+    // and fire one click as many times as the score had been drawn; registering
+    // it against an api that is later disposed would stop it working. Neither
+    // happens because there is exactly one api and exactly one registration.
+    this.alphaTabService.onNoteMouseDown(note => this.onNoteClicked(note));
 
     this.observeContainerWidth();
     this.renderRequest$.next();
@@ -365,6 +441,41 @@ export class TranscriptionReviewComponent
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.alphaTabService.dispose();
+  }
+
+  // -------------------------------------------------------------------------
+  // Overruling one note
+  // -------------------------------------------------------------------------
+
+  /**
+   * Reverses the pipeline's verdict on the note that was clicked, if there is
+   * one behind it.
+   *
+   * **Silent when there is not**, and that covers every case rather than a
+   * corner of one: a rest has no `Note` for alphaTab to report in the first
+   * place, an unfretted note takes no key the index can hold, a staff with no
+   * tuning cannot have its string number flipped, and a bar the index does not
+   * describe answers nothing. All four arrive here as `null` and all four are
+   * a no-op, because there is nothing to say and nowhere to say it - this runs
+   * from a mouse event, where a thrown error escapes into alphaTab's own
+   * dispatch.
+   *
+   * The id goes out and nothing is assumed about what it means. The panel does
+   * not know whether this note is about to be restored or suppressed: that
+   * depends on the kept set and on the two override lists, which the service
+   * owns. `toggleNote` decides, and the sentence the user reads is written
+   * from the state that comes back. See `TranscriptionReviewComponent.toggleNote`.
+   *
+   * Typed as `RenderedNote` rather than `alphaTab.model.Note`, matching
+   * `detectionAt`: a real `Note` satisfies it exactly, and a spec can drive
+   * this with four numbers instead of booting an engraver.
+   */
+  private onNoteClicked(note: RenderedNote): void {
+    const id = detectionAt(this.noteIndex, note);
+    if (id === null) return;
+
+    this.pendingToggleId = id;
+    this.noteToggled.emit(id);
   }
 
   // -------------------------------------------------------------------------

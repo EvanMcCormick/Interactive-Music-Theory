@@ -9,7 +9,13 @@ import {
   TranscriptionSession,
   createDefaultDerivationSettings
 } from '../../../../models/transcription.model';
+import { AlphaTabSettings } from '../../../../models/alpha-tab.model';
 import { AlphaTabService } from '../../../../services/alpha-tab.service';
+import {
+  NoteIndex,
+  RenderedNote,
+  buildPreviewDoc
+} from '../../../../services/preview-score';
 import { deriveScore } from '../../../../services/score-derivation';
 import {
   DEFAULT_HARMONIC_OPTIONS,
@@ -17,7 +23,13 @@ import {
 } from '../../../../services/transcription-harmonics';
 import { TranscriptionState } from '../../../../services/transcription.service';
 import { FoldedNote } from '../../../../services/transcription-octave';
-import { countDiscards, describeFolds, gridTempoBpm } from './review-controls';
+import {
+  countDiscards,
+  describeFolds,
+  describeToggle,
+  gridTempoBpm,
+  pitchName
+} from './review-controls';
 import { TranscriptionReviewComponent } from './transcription-review.component';
 
 /**
@@ -32,11 +44,32 @@ class FakeAlphaTabService {
   disposed = 0;
   renders = 0;
   readonly rendered: alphaTab.model.Score[] = [];
+
+  /**
+   * Every note-click handler registered, rather than the last one.
+   *
+   * The count is the assertion: a handler added per render would fire one
+   * click once per render that had happened, and a single `push` of a new
+   * state would hide that. See "the click handler outlives the renders".
+   */
+  readonly noteHandlers: ((note: RenderedNote) => void)[] = [];
+  /** What the component asked the engraver for; `includeNoteBounds` matters. */
+  settings: AlphaTabSettings | undefined;
   private api: object | null = null;
 
-  initializeApi(): void {
+  initializeApi(_element: HTMLElement, settings?: AlphaTabSettings): void {
     this.initialised += 1;
+    this.settings = settings;
     this.api = {};
+  }
+
+  onNoteMouseDown(handler: (note: RenderedNote) => void): void {
+    this.noteHandlers.push(handler);
+  }
+
+  /** Fires every registered handler, exactly as alphaTab's event would. */
+  clickNote(note: RenderedNote): void {
+    for (const handler of this.noteHandlers) handler(note);
   }
 
   getApi(): object | null {
@@ -73,6 +106,52 @@ const note = (
 
 /** Comfortably past the component's render debounce. */
 const SETTLE_MS = 200;
+
+/**
+ * The index the component builds for a state, rebuilt here to read keys off.
+ *
+ * `buildPreviewDoc` is pure in exactly these three arguments, so this is the
+ * same map the component holds - which is what lets a spec name a rendered
+ * note without reaching into a private field.
+ */
+function previewIndex(state: TranscriptionState): NoteIndex {
+  return buildPreviewDoc(state.session!, state.derived!, state.suppressed).index;
+}
+
+/** The index key that names `id`, or fails loudly if the index has no such note. */
+function keyFor(index: NoteIndex, id: string): string {
+  const found = [...index].find(([, value]) => value === id);
+  expect(found).withContext(`no rendered note for ${id}`).toBeDefined();
+
+  return found![0];
+}
+
+/**
+ * The `Note` alphaTab would report for an index key.
+ *
+ * The string number is flipped on the way in, because `detectionAt` flips it
+ * back: the index speaks the tab's numbering, where 1 is the highest-pitched
+ * string, and an `alphaTab.model.Note` speaks the opposite one. A spec that
+ * skipped the flip would pass against a symmetrical fixture and lie about
+ * every other one.
+ */
+function clickTarget(key: string, strings: number): RenderedNote {
+  const [bar, voice, beat, string] = key.split(':').map(Number);
+
+  return {
+    string: strings - string + 1,
+    beat: {
+      index: beat,
+      voice: {
+        index: voice,
+        bar: {
+          index: bar,
+          staff: { tuning: new Array<number>(strings).fill(0) }
+        }
+      }
+    }
+  };
+}
 
 const FOUR_FOUR: TimeSignature = { numerator: 4, denominator: 4, isCommon: true };
 
@@ -137,6 +216,7 @@ describe('TranscriptionReviewComponent', () => {
   let meterEmits: TimeSignature[];
   let tempoEmits: number[];
   let nudgeEmits: number[];
+  let toggleEmits: string[];
 
   function query<T extends HTMLElement>(selector: string): T {
     return fixture.nativeElement.querySelector(selector) as T;
@@ -213,10 +293,12 @@ describe('TranscriptionReviewComponent', () => {
     meterEmits = [];
     tempoEmits = [];
     nudgeEmits = [];
+    toggleEmits = [];
     component.settingsChanged.subscribe(v => settingsEmits.push(v));
     component.timeSignatureChanged.subscribe(v => meterEmits.push(v));
     component.tempoChanged.subscribe(v => tempoEmits.push(v));
     component.downbeatNudged.subscribe(v => nudgeEmits.push(v));
+    component.noteToggled.subscribe(v => toggleEmits.push(v));
 
     push(readyState(makeSession()));
     tick(SETTLE_MS);
@@ -985,6 +1067,218 @@ describe('TranscriptionReviewComponent', () => {
       // `correctOctaves` cannot produce this; a partial octave arriving here
       // means something upstream changed, and saying "an octave" would hide it.
       expect(describeFolds(folded([7]))).toContain('up 7 semitones');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // (d) Clicking a note overrules the pipeline on it.
+  // ---------------------------------------------------------------------------
+
+  describe('overruling one note', () => {
+    /** In `rawNotes` and suppressed: the ghost a click is meant to restore. */
+    const GHOST = note(43, 0.25, 1, 'ghost-1');
+
+    /** A session whose raw detection carries `GHOST` as well as the kept notes. */
+    function withGhost(): TranscriptionSession {
+      const session = makeSession();
+
+      return { ...session, rawNotes: [...session.notes, GHOST] };
+    }
+
+    it('asks the engraver for note bounds, without which no click is reported', () => {
+      // alphaTab hit-tests the beat and only asks for the note inside it when
+      // note bounds were recorded, so `noteMouseDown` never fires without this
+      // - and it fails silently, with a handler that is simply never called.
+      expect(alphaTabStub.settings?.core?.includeNoteBounds).toBeTrue();
+    });
+
+    it('resolves a click on a ghost to the detection behind it', fakeAsync(() => {
+      const state = readyState(withGhost(), { suppressed: [GHOST] });
+      push(state);
+      tick(SETTLE_MS);
+
+      alphaTabStub.clickNote(clickTarget(keyFor(previewIndex(state), 'ghost-1'), 4));
+
+      expect(toggleEmits).toEqual(['ghost-1']);
+    }));
+
+    it('resolves a click on a note in the score to its detection', fakeAsync(() => {
+      const state = readyState(withGhost(), { suppressed: [GHOST] });
+      push(state);
+      tick(SETTLE_MS);
+
+      // Voice 1's half of the index, which is what makes suppressing a kept
+      // note possible at all rather than only restoring a ghost.
+      alphaTabStub.clickNote(clickTarget(keyFor(previewIndex(state), '40@0'), 4));
+
+      expect(toggleEmits).toEqual(['40@0']);
+    }));
+
+    it('says nothing about a note with no detection behind it', fakeAsync(() => {
+      push(readyState(withGhost(), { suppressed: [GHOST] }));
+      tick(SETTLE_MS);
+
+      // alphaTab's "not on a string", which is what a pitched note on the
+      // notation staff reports. No key can be computed for it, so no answer.
+      alphaTabStub.clickNote({
+        string: -1,
+        beat: {
+          index: 0,
+          voice: { index: 0, bar: { index: 0, staff: { tuning: [43, 38, 33, 28] } } }
+        }
+      });
+
+      // A bar the index does not describe, which is where a click against a
+      // stale render lands.
+      alphaTabStub.clickNote({
+        string: 1,
+        beat: {
+          index: 0,
+          voice: { index: 0, bar: { index: 99, staff: { tuning: [43, 38, 33, 28] } } }
+        }
+      });
+
+      // A staff with no tuning at all: the flip has nothing to work from.
+      alphaTabStub.clickNote({
+        string: 1,
+        beat: { index: 0, voice: { index: 0, bar: { index: 0, staff: { tuning: [] } } } }
+      });
+
+      expect(toggleEmits).toEqual([]);
+    }));
+
+    it('has nothing to resolve against when the preview would not build', fakeAsync(() => {
+      const state = readyState(withGhost(), { suppressed: [GHOST] });
+      push(state);
+      tick(SETTLE_MS);
+      const key = keyFor(previewIndex(state), 'ghost-1');
+
+      // A document with no bars is the one state that leaves the previous
+      // score on screen with nothing behind it. An index carried over from the
+      // last derivation would answer a click on those old pixels confidently
+      // and wrongly.
+      const derived = deriveScore(withGhost());
+      push({
+        ...state,
+        derived: { ...derived, doc: { ...derived.doc, masterBars: [], tracks: [] } }
+      });
+      tick(SETTLE_MS);
+
+      alphaTabStub.clickNote(clickTarget(key, 4));
+
+      expect(toggleEmits).toEqual([]);
+    }));
+
+    // The failure a unit test of the handler alone cannot see: the preview
+    // re-renders on every knob turn, and a handler registered per render fires
+    // one click as many times as the score had been drawn.
+    it('registers the click handler once, whatever the preview does', fakeAsync(() => {
+      const state = readyState(withGhost(), { suppressed: [GHOST] });
+      push(state);
+      tick(SETTLE_MS);
+      push(readyState(withGhost(), { suppressed: [GHOST] }));
+      tick(SETTLE_MS);
+      push(state);
+      tick(SETTLE_MS);
+
+      expect(alphaTabStub.noteHandlers.length).toBe(1);
+      expect(alphaTabStub.rendered.length).toBeGreaterThan(1);
+
+      alphaTabStub.clickNote(clickTarget(keyFor(previewIndex(state), 'ghost-1'), 4));
+
+      expect(toggleEmits).toEqual(['ghost-1']);
+    }));
+
+    it('reads what the click did off the state that came back', fakeAsync(() => {
+      const state = readyState(withGhost(), { suppressed: [GHOST] });
+      push(state);
+      tick(SETTLE_MS);
+      alphaTabStub.clickNote(clickTarget(keyFor(previewIndex(state), 'ghost-1'), 4));
+
+      // What the host's `toggleNote` produces: the ghost is in the kept set now.
+      const session = makeSession();
+      push(
+        readyState({
+          ...session,
+          notes: [...session.notes, GHOST],
+          rawNotes: [...session.notes, GHOST]
+        })
+      );
+      tick(SETTLE_MS);
+
+      expect(text('.review__toggle')).toContain('Restored G2 at 0.25 s');
+    }));
+
+    it('says the other direction when the click suppressed a note', fakeAsync(() => {
+      const state = readyState(withGhost(), { suppressed: [GHOST] });
+      push(state);
+      tick(SETTLE_MS);
+      alphaTabStub.clickNote(clickTarget(keyFor(previewIndex(state), '40@0'), 4));
+
+      const session = makeSession();
+      const kept = session.notes.filter(candidate => candidate.id !== '40@0');
+      push(
+        readyState({ ...session, notes: kept }, { suppressed: [note(40, 0, 1, '40@0')] })
+      );
+      tick(SETTLE_MS);
+
+      expect(text('.review__toggle')).toContain('Suppressed E2 at 0.00 s');
+    }));
+
+    it('drops the sentence on the next change that is not a click', fakeAsync(() => {
+      const state = readyState(withGhost(), { suppressed: [GHOST] });
+      push(state);
+      tick(SETTLE_MS);
+      alphaTabStub.clickNote(clickTarget(keyFor(previewIndex(state), 'ghost-1'), 4));
+
+      const session = makeSession();
+      push(
+        readyState({
+          ...session,
+          notes: [...session.notes, GHOST],
+          rawNotes: [...session.notes, GHOST]
+        })
+      );
+      tick(SETTLE_MS);
+      expect(text('.review__toggle')).not.toBe('');
+
+      // A knob turn. The sentence described one derivation and this is a
+      // different one, so it goes rather than standing over a score it no
+      // longer describes.
+      type(component.id.capo, '2');
+      push(readyState(makeSession({ capo: 2 })));
+      tick(SETTLE_MS);
+
+      expect(text('.review__toggle')).toBe('');
+    }));
+
+    it('states the gesture, so a grey notehead is not the only clue', () => {
+      expect(text('.review__click-hint')).toContain('Click a note');
+      expect(text('.review__click-hint')).toContain('ghost');
+    });
+  });
+
+  describe('describeToggle', () => {
+    it('has nothing to say about an id the session does not carry', () => {
+      expect(describeToggle(makeSession(), 'not-a-note')).toBeNull();
+    });
+  });
+
+  describe('pitchName', () => {
+    it('names a MIDI pitch in scientific notation', () => {
+      expect(pitchName(28)).toBe('E1');
+      expect(pitchName(60)).toBe('C4');
+      expect(pitchName(58)).toBe('A#3');
+    });
+
+    it('names a pitch below MIDI 0 rather than indexing off the table', () => {
+      // `isCorrectablePitch` spans ten octaves either side, so this reaches the
+      // list; a signed `%` would have read past the front of the table.
+      expect(pitchName(-2)).toBe('A#-2');
+    });
+
+    it('says so when a pitch is not a number it can name', () => {
+      expect(pitchName(Number.NaN)).toBe('?');
     });
   });
 

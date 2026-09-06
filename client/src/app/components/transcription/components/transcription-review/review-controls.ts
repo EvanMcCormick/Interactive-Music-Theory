@@ -1,5 +1,9 @@
 import { STANDARD_BASS_TUNING, STANDARD_GUITAR_TUNING, TimeSignature } from '../../../../models/composer.model';
-import { DetectedNote, FinestDivision } from '../../../../models/transcription.model';
+import {
+  DetectedNote,
+  FinestDivision,
+  TranscriptionSession
+} from '../../../../models/transcription.model';
 import { DropReason } from '../../../../services/score-derivation';
 import { FoldedNote } from '../../../../services/transcription-octave';
 
@@ -243,3 +247,82 @@ export function countDiscards(
     }))
     .filter(entry => entry.count > 0);
 }
+
+/**
+ * Sharps only, deliberately.
+ *
+ * `CLAUDE.md` asks for both spellings and for `preferSharps` to decide between
+ * them, and that rule is about scales and chords - things that carry a key. A
+ * `DetectedNote` is a MIDI number the model emitted, with no key, no scale and
+ * no spelling; `DerivationSettings.key` defaults to null and is never inferred.
+ * Choosing flats for some of these would be inventing a harmonic context to
+ * justify it. So one spelling, stated once, and the same one every time - which
+ * is also what makes two rows of the discard list comparable at a glance.
+ */
+const CHROMATIC_SHARPS = [
+  'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'
+];
+
+/**
+ * A MIDI pitch as a reader says it: 28 is "E1", 58 is "A#3".
+ *
+ * Scientific pitch notation, where middle C (60) is C4 - so "E1" is MIDI 28,
+ * the pitch `STANDARD_BASS_TUNING`'s bottom string sounds, and a bass line
+ * written on it lands in the E1-G2 range rather than an octave above.
+ *
+ * A pitch that is not a usable number gets "?" rather than "NaN-1". These rows
+ * describe notes the pipeline turned away, and `preview-score.ts` turns away
+ * an uncorrectable pitch precisely because it is not one - so the list has to
+ * be able to name a note that has no name.
+ */
+export function pitchName(pitch: number): string {
+  if (!Number.isFinite(pitch)) return '?';
+
+  const midi = Math.round(pitch);
+  // `%` is signed in JS, so a pitch below MIDI 0 - which `isCorrectablePitch`
+  // permits, being ten octaves wide - would index the table negatively.
+  const step = ((midi % 12) + 12) % 12;
+
+  return `${CHROMATIC_SHARPS[step]}${Math.floor(midi / 12) - 1}`;
+}
+
+/** An onset in seconds, to hundredths, or "?" when it is not a time. */
+export function timeLabel(onsetSec: number): string {
+  return Number.isFinite(onsetSec) ? `${onsetSec.toFixed(2)} s` : '?';
+}
+
+/** Pitch and time together: "E1 at 1.50 s". */
+export function noteLabel(note: DetectedNote): string {
+  return `${pitchName(note.pitch)} at ${timeLabel(note.onsetSec)}`;
+}
+
+/**
+ * What a click on the score just did, read off the state it produced.
+ *
+ * Written from the arriving session rather than from the click that went out,
+ * because the panel does not know which way a toggle goes: that depends on the
+ * kept set and on the two override lists, and `TranscriptionService.toggleNote`
+ * is what consults them. Asking the new session whether the note is in `notes`
+ * is therefore the only account of the gesture that cannot be wrong.
+ *
+ * Null for an id the session does not carry. `toggleNote` ignores such an id
+ * without pushing anything, so in practice this state never arrives - but a
+ * second `transcribe` can replace the session while a click is in flight, and
+ * a sentence about a note from a different recording would be worse than
+ * silence.
+ *
+ * It says the gesture is repeatable, because that is the part that is not
+ * discoverable: a toggle undoes itself, so an override taken by mistake costs
+ * one more click rather than a re-upload.
+ */
+export function describeToggle(session: TranscriptionSession, id: string): string | null {
+  const note = session.rawNotes.find(candidate => candidate.id === id);
+  if (!note) return null;
+
+  const verb = session.notes.some(candidate => candidate.id === id)
+    ? 'Restored'
+    : 'Suppressed';
+
+  return `${verb} ${noteLabel(note)}. Click it again for the pipeline's own answer.`;
+}
+

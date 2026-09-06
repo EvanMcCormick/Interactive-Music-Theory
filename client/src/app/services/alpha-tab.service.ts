@@ -56,6 +56,9 @@ export class AlphaTabService {
     // Core settings
     defaultSettings.core.fontDirectory = settings?.core?.fontDirectory ?? '/assets/font/';
     defaultSettings.core.useWorkers = settings?.core?.useWorkers ?? true;
+    // alphaTab's own default, restated: `noteMouseDown` never fires without
+    // it, so a caller that wants note-level clicks has to say so.
+    defaultSettings.core.includeNoteBounds = settings?.core?.includeNoteBounds ?? false;
 
     // Display settings
     defaultSettings.display.scale = settings?.display?.scale ?? 1.0;
@@ -410,7 +413,23 @@ export class AlphaTabService {
     this.api?.beatMouseDown.on(beat => this.ngZone.run(() => handler(beat)));
   }
 
-  /** Notify when a rendered note is clicked, giving the exact note. */
+  /**
+   * Notify when a rendered note is clicked, giving the exact note.
+   *
+   * **Requires `core.includeNoteBounds`.** alphaTab hit-tests the beat first
+   * and only then asks the bounds lookup for a note inside it, and it skips
+   * that second step entirely unless note bounds were recorded - so without
+   * the flag this registers a handler that is never called, silently. It does
+   * *not* require the player: `_setupClickHandling` runs whatever
+   * `player.enableUserInteraction` says, which only governs `preventDefault`
+   * and the playback selection.
+   *
+   * Registered against the `AlphaTabApi` this service holds, which
+   * `initializeApi` creates once and `dispose` destroys. Re-rendering a
+   * different score does not replace it, so a caller registers once and the
+   * handler survives every render; registering per render would fire one click
+   * as many times as the score had been drawn.
+   */
   onNoteMouseDown(handler: (note: alphaTab.model.Note) => void): void {
     this.api?.noteMouseDown.on(note => this.ngZone.run(() => handler(note)));
   }

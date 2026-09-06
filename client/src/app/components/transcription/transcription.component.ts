@@ -242,6 +242,26 @@ export class TranscriptionComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * Reverses the suppression verdict on one detection.
+   *
+   * The review panel resolves a click on a notehead to a `DetectedNote.id` and
+   * emits it; which way the verdict moves is `toggleNote`'s to decide, since
+   * the kept set and the override lists are the service's. An id the session
+   * does not carry is ignored there, silently and without a push - which is
+   * why nothing is checked here.
+   *
+   * Synchronous, like every other knob: `toggleNote` pushes a new state before
+   * this returns, the subscription in `ngOnInit` marks this component, and the
+   * new state reaches the panel as a changed `@Input` in the change-detection
+   * pass Angular runs after the handler. The click arrives inside the Angular
+   * zone - `AlphaTabService.onNoteMouseDown` wraps its handler in
+   * `ngZone.run` - so that pass actually happens.
+   */
+  onNoteToggled(id: string): void {
+    this.transcription.toggleNote(id);
+  }
+
+  /**
    * Clears the finished transcription, bringing the dropzone back.
    *
    * The way out of the review screen, and the reason `showDropzone` is a

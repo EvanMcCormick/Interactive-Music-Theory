@@ -76,12 +76,37 @@ $warning-color: #f39c12;
   letter-spacing: 0.02em;
 }
 
+// `cursor: pointer` over the whole staff rather than over the noteheads,
+// because the noteheads are alphaTab's glyphs and this stylesheet cannot reach
+// them: the score is drawn into a canvas or an SVG the mapper never sees. It
+// overstates the target slightly - a click on empty stave space does nothing -
+// and understating it would be worse, since the one gesture that is not
+// discoverable is the one on the ghosts.
 .review__score {
   background-color: #ffffff;
   border-radius: 4px;
   min-height: 12rem;
   max-height: 34rem;
   overflow: auto;
+  cursor: pointer;
+}
+
+.review__click-hint {
+  margin: -0.35rem 0 0.6rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: $text-secondary;
+  max-width: 58ch;
+}
+
+// Always in the DOM, so the live region is registered before the first toggle;
+// the min-height keeps the score from jumping when it fills.
+.review__toggle {
+  margin: 0.5rem 0 0;
+  min-height: 1.1rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: $text-primary;
 }
 
 .review__placeholder {

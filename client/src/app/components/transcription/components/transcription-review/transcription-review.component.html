@@ -263,7 +263,26 @@
       [attr.aria-labelledby]="id.previewHeading"
     >
       <h2 class="review__heading" [id]="id.previewHeading">Score</h2>
+      <!--
+        The affordance. A grey notehead that silently becomes a black one when
+        clicked is not discoverable, and nothing else on this screen is
+        clickable-but-unlabelled - so the gesture is stated in words, next to
+        the thing it applies to, before it is used rather than after.
+      -->
+      <p class="review__click-hint">
+        Click a note to overrule the pipeline: a ghost becomes a real note, a
+        real note becomes a ghost. Clicking the same note again gives the
+        pipeline's own answer back.
+      </p>
       <div class="review__score" #previewContainer></div>
+      <!--
+        What the last click did. Polite rather than assertive, and present from
+        first render rather than added when there is something to say, so a
+        screen reader has the region registered before the first toggle. The
+        score redrawing is the sighted feedback; this is the other half of it,
+        and it is also the only place that says a toggle is reversible.
+      -->
+      <p class="review__toggle" aria-live="polite">{{ toggleNote }}</p>
       <p class="review__no-bars" *ngIf="hasScore && !hasBars">
         This derivation has no bars to draw.
       </p>

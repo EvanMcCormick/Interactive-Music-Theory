@@ -95,6 +95,20 @@ export interface AlphaTabSettings {
     fontDirectory?: string;
     /** Whether to use web workers */
     useWorkers?: boolean;
+    /**
+     * Whether to record where each individual note was drawn.
+     *
+     * Off in alphaTab by default, and the gate on `noteMouseDown`: the click
+     * handler asks `boundsLookup.getNoteAtPos` for the note under the pointer
+     * and only fires the event when it has one, so a renderer that never
+     * recorded note bounds reports beats and nothing finer. A panel that wants
+     * to know *which note* was clicked - the transcription review, whose whole
+     * gesture is overruling one note - has to ask for this.
+     *
+     * It costs a rectangle per note in the lookup, which is why it is not on
+     * for the composer, where the beat is the unit of selection.
+     */
+    includeNoteBounds?: boolean;
     /** Log level */
     logLevel?: number;
   };

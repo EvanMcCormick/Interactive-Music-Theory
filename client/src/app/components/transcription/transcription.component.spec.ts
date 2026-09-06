@@ -60,6 +60,7 @@ class StubReviewComponent {
   @Output() readonly timeSignatureChanged = new EventEmitter<TimeSignature>();
   @Output() readonly tempoChanged = new EventEmitter<number>();
   @Output() readonly downbeatNudged = new EventEmitter<number>();
+  @Output() readonly noteToggled = new EventEmitter<string>();
 }
 
 /** Records every call the host makes, and pushes whatever state a test wants. */
@@ -74,6 +75,7 @@ class FakeTranscriptionService {
   readonly meters: TimeSignature[] = [];
   readonly tempos: number[] = [];
   readonly nudges: number[] = [];
+  readonly toggles: string[] = [];
 
   getState(): Observable<TranscriptionState> {
     return this.stateSubject.asObservable();
@@ -98,6 +100,10 @@ class FakeTranscriptionService {
 
   nudgeDownbeat(beats: number): void {
     this.nudges.push(beats);
+  }
+
+  toggleNote(id: string): void {
+    this.toggles.push(id);
   }
 
   resets = 0;
@@ -345,7 +351,7 @@ describe('TranscriptionComponent', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // The four knobs the panel does not own
+  // The knobs and the clicks the panel does not own
   // ---------------------------------------------------------------------------
 
   it('routes each review output to its own service method', () => {
@@ -356,11 +362,15 @@ describe('TranscriptionComponent', () => {
     review.timeSignatureChanged.emit({ numerator: 3, denominator: 4, isCommon: false });
     review.tempoChanged.emit(96);
     review.downbeatNudged.emit(-1);
+    review.noteToggled.emit('n-7');
 
     expect(service.settings).toEqual([{ capo: 3 }]);
     expect(service.meters).toEqual([{ numerator: 3, denominator: 4, isCommon: false }]);
     expect(service.tempos).toEqual([96]);
     expect(service.nudges).toEqual([-1]);
+    // An id, not a verdict: which way the toggle goes is the service's to
+    // decide from the kept set, which the panel does not hold.
+    expect(service.toggles).toEqual(['n-7']);
   });
 
   // ---------------------------------------------------------------------------
