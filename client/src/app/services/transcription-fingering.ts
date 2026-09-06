@@ -90,6 +90,94 @@ const POSITION_HINT_WEIGHT = 0.5;
 const OPEN_STRING_MOVE_DISCOUNT = 0.25;
 
 /**
+ * Longest neck this pipeline will describe, in frets.
+ *
+ * Past any real instrument - a 27-fret Ibanez is the extreme - and the point is
+ * not to police lutherie but to keep the fret domain a domain: `candidatesFor`
+ * offers one candidate per string per pitch, and `nodeCost` scales linearly
+ * with the fret number, so an absurd neck is slow rather than wrong. The number
+ * matches the `max` the review panel's control carries, which is decoration on
+ * top of this rather than a second bound.
+ */
+export const MAX_FRET_LIMIT = 36;
+
+/**
+ * Fewest frets that may sit in front of the capo.
+ *
+ * Four, because that is where `correctOctaves` and `candidatesFor` stop
+ * agreeing. The fold works on one interval - lowest open string to highest
+ * fret - while each string reaches only `maxFret - capo` frets, and adjacent
+ * strings on a bass or a guitar are five semitones apart. At a reach of four
+ * the per-string bands still meet; at three they leave a gap, and a pitch
+ * folded into that gap is admitted by the fold and then found unplayable, so
+ * the note vanishes with `unplayable` as the only account of it.
+ *
+ * `score-derivation.ts` recorded that disagreement and dismissed it as
+ * unreachable, which was true of the tuning presets and false of `maxFret` and
+ * `capo`, both of which the user types. At a reach of zero - capo 12 with
+ * maxFret 12, both inside the spinner's own range - nothing but open strings is
+ * playable and the score collapses to a bar of rests.
+ */
+export const MIN_REACH_FRETS = 4;
+
+/**
+ * Why these settings do not describe a playable neck, or null when they do.
+ *
+ * The companion to `barGridFault`, asked of the settings this module consumes
+ * rather than of the meter. Same reason it exists: `capo`, `maxFret` and
+ * `positionHint` are live knobs, so a caller holding a working score needs to
+ * find out that a change is impossible before it destroys one, and an HTML
+ * `min`/`max` does not stop a typed or pasted value.
+ *
+ * The three are checked together because two of them only mean anything as a
+ * pair: `maxFret - capo` is the neck the player actually has, and neither
+ * number is wrong on its own.
+ *
+ * `positionHint` is deliberately *not* tied to `maxFret - capo`. It is a
+ * preference rather than a constraint - `nodeCost` charges distance from it and
+ * a hint past the last fret merely pins the hand at the top - so coupling them
+ * would refuse a legitimate `maxFret` reduction because of a hint set earlier,
+ * which is a worse outcome than an inert hint. What it cannot be is unbounded:
+ * at 1000 the hint term is `0.5 * 1000` against movement costs in single
+ * figures, so the Viterbi pass degenerates into "pick the highest fret" with
+ * nothing on screen to say why.
+ */
+export function fretboardFault(settings: DerivationSettings): string | null {
+  const { capo, maxFret, positionHint } = settings;
+
+  if (!Number.isInteger(capo) || capo < 0) {
+    return `capo ${capo} is not a whole number of frets`;
+  }
+
+  if (!Number.isInteger(maxFret) || maxFret < 1) {
+    return `maxFret ${maxFret} is not a whole number of frets`;
+  }
+
+  if (maxFret > MAX_FRET_LIMIT) {
+    return `maxFret ${maxFret} is longer than any neck this can write (${MAX_FRET_LIMIT})`;
+  }
+
+  if (maxFret - capo < MIN_REACH_FRETS) {
+    return (
+      `a capo at ${capo} leaves ${maxFret - capo} fret${maxFret - capo === 1 ? '' : 's'} ` +
+      `of a ${maxFret}-fret neck, and ${MIN_REACH_FRETS} is the fewest that can be played`
+    );
+  }
+
+  if (positionHint !== null) {
+    if (!Number.isInteger(positionHint) || positionHint < 0) {
+      return `position hint ${positionHint} is not a fret number`;
+    }
+
+    if (positionHint > MAX_FRET_LIMIT) {
+      return `position hint ${positionHint} is past the last fret this can write (${MAX_FRET_LIMIT})`;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Every string/fret pair that sounds `pitch` on this instrument.
  *
  * Frets are relative to the capo, the way tab writes them, so a capo at 5

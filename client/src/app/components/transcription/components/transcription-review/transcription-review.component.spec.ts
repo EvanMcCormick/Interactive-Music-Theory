@@ -12,7 +12,8 @@ import {
 import { AlphaTabService } from '../../../../services/alpha-tab.service';
 import { deriveScore } from '../../../../services/score-derivation';
 import { TranscriptionState } from '../../../../services/transcription.service';
-import { countDiscards, gridTempoBpm } from './review-controls';
+import { FoldedNote } from '../../../../services/transcription-octave';
+import { countDiscards, describeFolds, gridTempoBpm } from './review-controls';
 import { TranscriptionReviewComponent } from './transcription-review.component';
 
 /**
@@ -550,6 +551,74 @@ describe('TranscriptionReviewComponent', () => {
 
       expect(query<HTMLElement>('.control__refusal')).toBeNull();
     });
+
+    /*
+     * The three fret controls, whose values `fretboardFault` can turn away.
+     * Their `min`/`max` is decoration - a typed or pasted value walks past it -
+     * so the service is what refuses, and the panel has to be able to say which
+     * control the refusal belongs to. A message shown beside the wrong one is
+     * worse than none.
+     */
+    describe('the fret controls', () => {
+      const NECK_REFUSAL =
+        'Could not apply that change: a capo at 12 leaves 0 frets of a 12-fret neck, '
+        + 'and 4 is the fewest that can be played.';
+
+      /** The id of the input the one rendered refusal is sitting under. */
+      function refusalBesides(): string | undefined {
+        return query<HTMLElement>('.control__refusal')
+          .closest('.control')
+          ?.querySelector('input')?.id;
+      }
+
+      it('puts a refused capo beside the capo field', () => {
+        type(component.id.capo, '12');
+        push(readyState(makeSession(), { refusal: NECK_REFUSAL }));
+
+        expect(text('.control__refusal')).toBe(NECK_REFUSAL);
+        expect(refusalBesides()).toBe(component.id.capo);
+      });
+
+      it('puts a refused max fret beside the max fret field', () => {
+        type(component.id.maxFret, '2');
+        push(readyState(makeSession(), { refusal: NECK_REFUSAL }));
+
+        expect(refusalBesides()).toBe(component.id.maxFret);
+      });
+
+      it('puts a refused position hint beside the position hint field', () => {
+        type(component.id.position, '1000');
+        push(readyState(makeSession(), { refusal: NECK_REFUSAL }));
+
+        expect(refusalBesides()).toBe(component.id.position);
+      });
+
+      // The same one-cycle ordering the two selects have: the service is
+      // synchronous, so `ngModel` sees the bound value unchanged at both ends
+      // of the round trip and writes nothing without the explicit snap-back.
+      it('snaps a refused capo back when the refusal arrives in the same cycle', () => {
+        const refused = readyState(makeSession(), { refusal: NECK_REFUSAL });
+        component.settingsChanged.subscribe(() =>
+          fixture.componentRef.setInput('state', refused)
+        );
+
+        type(component.id.capo, '12');
+
+        expect(control<HTMLInputElement>(component.id.capo).value).toBe('0');
+      });
+
+      it('snaps a refused position hint back the same way', () => {
+        const refused = readyState(makeSession(), { refusal: NECK_REFUSAL });
+        component.settingsChanged.subscribe(() =>
+          fixture.componentRef.setInput('state', refused)
+        );
+
+        type(component.id.position, '1000');
+
+        // Blank, because the session's hint is null: the hand roams.
+        expect(control<HTMLInputElement>(component.id.position).value).toBe('');
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -827,6 +896,88 @@ describe('TranscriptionReviewComponent', () => {
 
     it('stacks them when the panel is narrow, whatever the window is doing', () => {
       expect(paneDirection('420px')).toBe('column');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Octave folds
+  //
+  // Not discards: the notes are in the score, at another octave. Before this
+  // line existed the discard counts were the panel's only account of what the
+  // pipeline did, and a switch from a bass tuning to a guitar one moved every
+  // note below E2 up an octave with nothing on screen to say so.
+  // ---------------------------------------------------------------------------
+
+  describe('octave folds', () => {
+    /** Guitar standard: the fold floor rises from MIDI 28 to 40. */
+    const GUITAR = [64, 59, 55, 50, 45, 40];
+
+    it('says nothing when every pitch was already on the neck', () => {
+      expect(query<HTMLElement>('.folds')).toBeNull();
+    });
+
+    it('says how many notes moved and how far', () => {
+      push(readyState(makeSession({ tuning: GUITAR }, GRID, [
+        note(28, 0),
+        note(33, 0.5),
+        note(50, 1.0)
+      ])));
+
+      expect(text('.folds')).toBe('Folded onto the neck: 2 notes up an octave.');
+    });
+
+    it('separates folds of different depths rather than totalling them', () => {
+      push(readyState(makeSession({ tuning: GUITAR }, GRID, [
+        note(20, 0),
+        note(28, 0.5),
+        note(33, 1.0)
+      ])));
+
+      // Deepest first: a two-octave fold is a different event from a routine
+      // one, and totalling would hide it.
+      expect(text('.folds')).toBe(
+        'Folded onto the neck: 1 note up two octaves, 2 notes up an octave.'
+      );
+    });
+
+    it('clears the line once the tuning that caused it goes away', () => {
+      const notes = [note(28, 0), note(33, 0.5)];
+      push(readyState(makeSession({ tuning: GUITAR }, GRID, notes)));
+      expect(query<HTMLElement>('.folds')).not.toBeNull();
+
+      push(readyState(makeSession({}, GRID, notes)));
+
+      expect(query<HTMLElement>('.folds')).toBeNull();
+    });
+  });
+
+  describe('describeFolds', () => {
+    const folded = (semitones: number[]): FoldedNote[] =>
+      semitones.map(amount => ({
+        note: note(40, 0),
+        detectedPitch: 40 - amount,
+        semitones: amount
+      }));
+
+    it('has nothing to say about a derivation that folded nothing', () => {
+      expect(describeFolds([])).toBeNull();
+    });
+
+    it('names the direction', () => {
+      expect(describeFolds(folded([12]))).toContain('up an octave');
+      expect(describeFolds(folded([-12]))).toContain('down an octave');
+      expect(describeFolds(folded([-24]))).toContain('down two octaves');
+    });
+
+    it('counts in words a reader can hear', () => {
+      expect(describeFolds(folded([12]))).toContain('1 note ');
+      expect(describeFolds(folded([12, 12]))).toContain('2 notes ');
+    });
+
+    it('says a distance in semitones rather than rounding it into a lie', () => {
+      // `correctOctaves` cannot produce this; a partial octave arriving here
+      // means something upstream changed, and saying "an octave" would hide it.
+      expect(describeFolds(folded([7]))).toContain('up 7 semitones');
     });
   });
 

@@ -243,6 +243,25 @@ $warning-color: #f39c12;
   border-top: 1px solid $border-color;
 }
 
+// Octave folds. Alongside the discards rather than styled as a warning: the
+// notes are in the score, they are simply not where the detector heard them.
+.folds {
+  margin: 1rem 0 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid $border-color;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: $text-secondary;
+  max-width: 46ch;
+
+  // The discard block draws its own rule directly underneath otherwise.
+  + .discards {
+    margin-top: 0.35rem;
+    padding-top: 0;
+    border-top: none;
+  }
+}
+
 .discards__line {
   margin: 0 0 0.35rem;
   font-size: 0.75rem;

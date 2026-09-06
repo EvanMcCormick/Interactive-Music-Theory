@@ -42,6 +42,7 @@
         <input
           class="control__input control__input--number"
           type="number"
+          #capoModel="ngModel"
           min="0"
           max="12"
           step="1"
@@ -49,6 +50,14 @@
           [ngModel]="capo"
           (ngModelChange)="onCapoChange($event)"
         />
+        <!--
+          The `min`/`max` above is decoration: a typed or pasted value walks
+          past it, so the bound that matters is `fretboardFault`'s and this is
+          where it reports. Same for max fret and the position hint.
+        -->
+        <p class="control__refusal" *ngIf="refusalFor('capo') as refusal">
+          {{ refusal }}
+        </p>
       </div>
 
       <div class="control">
@@ -111,6 +120,7 @@
         <input
           class="control__input control__input--number"
           type="number"
+          #positionModel="ngModel"
           min="0"
           max="24"
           step="1"
@@ -122,6 +132,9 @@
         <p class="control__hint" [id]="id.positionHint">
           The fret the hand is pinned near. Leave it blank to let it roam.
         </p>
+        <p class="control__refusal" *ngIf="refusalFor('positionHint') as refusal">
+          {{ refusal }}
+        </p>
       </div>
 
       <div class="control">
@@ -129,6 +142,7 @@
         <input
           class="control__input control__input--number"
           type="number"
+          #maxFretModel="ngModel"
           min="1"
           max="36"
           step="1"
@@ -139,6 +153,9 @@
         />
         <p class="control__hint" [id]="id.maxFretHint">
           Frets the neck actually has. Anything past it is unplayable.
+        </p>
+        <p class="control__refusal" *ngIf="refusalFor('maxFret') as refusal">
+          {{ refusal }}
         </p>
       </div>
 
@@ -216,6 +233,13 @@
           bar 1 before the audio does, which says the piece begins mid-bar.
         </p>
       </fieldset>
+
+      <!--
+        Not a discard: a folded note is in the score, at a different octave from
+        the one the detector reported. Its own line for that reason, and shown
+        even when nothing was discarded.
+      -->
+      <p class="folds" *ngIf="foldNote">{{ foldNote }}</p>
 
       <div class="discards" *ngIf="discardTotal > 0 || omittedCount > 0">
         <p class="discards__line" *ngIf="discardTotal > 0">

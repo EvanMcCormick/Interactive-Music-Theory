@@ -2,7 +2,7 @@ import {
   DetectedNote,
   createDefaultDerivationSettings
 } from '../models/transcription.model';
-import { correctOctaves } from './transcription-octave';
+import { FoldedNote, correctOctaves } from './transcription-octave';
 
 const SETTINGS = createDefaultDerivationSettings();
 
@@ -100,5 +100,59 @@ describe('correctOctaves', () => {
     const notes = [note(21)];
     correctOctaves(notes, SETTINGS);
     expect(notes[0].pitch).toBe(21);
+  });
+});
+
+/**
+ * A fold is interpretation, and interpretation has to be reportable.
+ *
+ * The correction is silent by construction - the note is in the score, at a
+ * different octave - so the only way a listener finds out is if the pipeline
+ * says so. Switching from a bass tuning to a guitar one raises the floor from
+ * MIDI 28 to 40 and moves every note below E2 up an octave.
+ */
+describe('correctOctaves, reporting what it moved', () => {
+  it('reports the note, the pitch it was heard at, and how far it went', () => {
+    const folded: FoldedNote[] = [];
+
+    correctOctaves([note(21)], SETTINGS, folded);
+
+    expect(folded.length).toBe(1);
+    expect(folded[0].detectedPitch).toBe(21);
+    expect(folded[0].semitones).toBe(12);
+    // The note as it was written, so a caller quoting it quotes the pitch that
+    // is actually in the score.
+    expect(folded[0].note.pitch).toBe(33);
+  });
+
+  it('signs the distance, and counts whole octaves', () => {
+    const folded: FoldedNote[] = [];
+
+    // 100 is two octaves above the highest playable pitch of 67.
+    correctOctaves([note(100)], SETTINGS, folded);
+
+    expect(folded[0].semitones).toBe(-36);
+  });
+
+  it('says nothing about a pitch it left alone', () => {
+    const folded: FoldedNote[] = [];
+
+    correctOctaves([note(45), note(33)], SETTINGS, folded);
+
+    expect(folded).toEqual([]);
+  });
+
+  it('reports the notes in the order it was handed them', () => {
+    const folded: FoldedNote[] = [];
+
+    correctOctaves([note(21), note(45), note(100)], SETTINGS, folded);
+
+    expect(folded.map(entry => entry.detectedPitch)).toEqual([21, 100]);
+  });
+
+  it('is unchanged when nobody asks', () => {
+    // The out-parameter is optional, in the manner of `quantizeBar`'s dropped
+    // list: most callers want the corrected notes and nothing else.
+    expect(correctOctaves([note(21)], SETTINGS)[0].pitch).toBe(33);
   });
 });

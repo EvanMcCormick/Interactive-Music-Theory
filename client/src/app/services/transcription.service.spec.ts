@@ -866,6 +866,91 @@ describe('TranscriptionService', () => {
     });
   });
 
+  /**
+   * The other half of the error contract, over the settings that describe a
+   * neck.
+   *
+   * `capo`, `maxFret` and `positionHint` used to be checked nowhere: the
+   * component tested `Number.isFinite` and the template carried a `min`/`max`,
+   * which a typed or pasted value walks straight past. Capo 12 with maxFret 12
+   * is reachable on the spinner arrows alone and collapses the score to a bar
+   * of rests, because nothing but an open string is left playable.
+   */
+  describe('settings a neck cannot express', () => {
+    it('refuses a capo that leaves no neck in front of it, keeping the score', async () => {
+      await service.transcribe(wavFile());
+      const derived = service.state.derived;
+      expect(struckFrets(service.state).length).toBeGreaterThan(0);
+
+      service.updateSettings({ capo: 12, maxFret: 12 });
+
+      expect(service.state.phase).toBe('ready');
+      expect(service.state.derived).toBe(derived!);
+      expect(service.state.session?.settings.capo).toBe(0);
+      expect(service.state.refusal).toContain('capo at 12');
+      expect(service.state.error).toBeNull();
+      expect(struckFrets(service.state).length).toBeGreaterThan(0);
+      checkInvariants(states);
+    });
+
+    it('refuses a position hint that would dwarf every other cost', async () => {
+      await service.transcribe(wavFile());
+      const frets = struckFrets(service.state);
+
+      // 0.5 * 1000 against movement costs in single figures: fingering
+      // degenerates into "pick the highest fret" with nothing to say why.
+      service.updateSettings({ positionHint: 1000 });
+
+      expect(service.state.session?.settings.positionHint).toBeNull();
+      expect(service.state.refusal).toContain('position hint');
+      expect(struckFrets(service.state)).toEqual(frets);
+    });
+
+    it('refuses a neck longer than anything it can write', async () => {
+      await service.transcribe(wavFile());
+
+      service.updateSettings({ maxFret: 1e6 });
+
+      expect(service.state.session?.settings.maxFret).toBe(24);
+      expect(service.state.refusal).not.toBeNull();
+    });
+
+    it('refuses rather than clamping, so nothing is applied by halves', async () => {
+      await service.transcribe(wavFile());
+
+      // A legal capo travelling with an illegal max fret. Applying the half
+      // that was fine would leave the state describing a change nobody made.
+      service.updateSettings({ capo: 2, maxFret: 0 });
+
+      expect(service.state.session?.settings.capo).toBe(0);
+      expect(service.state.session?.settings.maxFret).toBe(24);
+      expect(service.state.refusal).not.toBeNull();
+    });
+
+    it('stays usable: a legal neck still applies and clears the refusal', async () => {
+      await service.transcribe(wavFile());
+      service.updateSettings({ capo: 12, maxFret: 12 });
+      expect(service.state.refusal).not.toBeNull();
+
+      service.updateSettings({ capo: 5 });
+
+      expect(service.state.refusal).toBeNull();
+      expect(service.state.session?.settings.capo).toBe(5);
+      expect(detector.calls).toBe(1);
+      checkInvariants(states);
+    });
+
+    it('reports the refusal to subscribers rather than throwing at the caller', async () => {
+      await service.transcribe(wavFile());
+      const before = states.length;
+
+      expect(() => service.updateSettings({ capo: 99 })).not.toThrow();
+
+      expect(states.length).toBe(before + 1);
+      expect(states[states.length - 1].refusal).toBeTruthy();
+    });
+  });
+
   describe('dropped notes', () => {
     it('surfaces what derivation discarded, so M3 need not recompute it', async () => {
       await service.transcribe(wavFile());

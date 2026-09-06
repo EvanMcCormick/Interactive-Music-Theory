@@ -41,6 +41,7 @@ import {
   TimeSignaturePreset,
   TuningPreset,
   countDiscards,
+  describeFolds,
   gridTempoBpm,
   meterId,
   sameTuning,
@@ -117,8 +118,21 @@ const RENDER_DEBOUNCE_MS = 120;
 /** Distinguishes control ids when more than one panel is on a page. */
 let instanceCount = 0;
 
-/** Which knob a refusal is standing next to. */
-export type RefusableControl = 'finestDivision' | 'timeSignature';
+/**
+ * Which knob a refusal is standing next to.
+ *
+ * Every control whose value `TranscriptionService.rederive` can turn away:
+ * `barGridFault` answers for the first two and `fretboardFault` for the rest.
+ * A refusal shown beside the wrong control is worse than none, so a control
+ * added to either check has to be added here and given its own message slot in
+ * the template.
+ */
+export type RefusableControl =
+  | 'finestDivision'
+  | 'timeSignature'
+  | 'capo'
+  | 'maxFret'
+  | 'positionHint';
 
 @Component({
   selector: 'app-transcription-review',
@@ -143,10 +157,13 @@ export class TranscriptionReviewComponent
 
   @ViewChild('previewContainer') previewContainer?: ElementRef<HTMLDivElement>;
 
-  // The two controls a refusal can leave disagreeing with the score. See
+  // The controls a refusal can leave disagreeing with the score. See
   // `snapRefusedControlsBack`.
   @ViewChild('divisionModel') divisionModel?: NgModel;
   @ViewChild('meterModel') meterModel?: NgModel;
+  @ViewChild('capoModel') capoModel?: NgModel;
+  @ViewChild('maxFretModel') maxFretModel?: NgModel;
+  @ViewChild('positionModel') positionModel?: NgModel;
 
   readonly finestDivisions = FINEST_DIVISIONS;
   readonly minTempoBpm = MIN_TEMPO_BPM;
@@ -201,6 +218,17 @@ export class TranscriptionReviewComponent
   discardTotal = 0;
   /** Ghosts `buildPreviewDoc` could not place at all. */
   omittedCount = 0;
+  /**
+   * What octave correction moved, or null when it moved nothing.
+   *
+   * Beside the discard counts and deliberately not among them: a folded note is
+   * in the score, so it is not something the pipeline discarded. It is still
+   * something the pipeline decided, and until this line existed the panel's
+   * only account of the pipeline's decisions was the discard list - so
+   * switching from a bass tuning to a guitar one moved every note under E2 up
+   * an octave and the screen said nothing at all.
+   */
+  foldNote: string | null = null;
 
   /** Set when the user states a tempo outside the range the service accepts. */
   tempoNote: string | null = null;
@@ -253,6 +281,7 @@ export class TranscriptionReviewComponent
       this.discards = [];
       this.discardTotal = 0;
       this.omittedCount = 0;
+      this.foldNote = null;
       this.canNudgeBack = false;
       this.canNudgeForward = false;
       this.renderRequest$.next();
@@ -301,6 +330,7 @@ export class TranscriptionReviewComponent
     this.omittedCount = omitted.length;
     this.discards = countDiscards(derived.dropped, state?.suppressed ?? []);
     this.discardTotal = this.discards.reduce((total, entry) => total + entry.count, 0);
+    this.foldNote = describeFolds(derived.folded);
 
     this.renderRequest$.next();
   }
@@ -356,9 +386,21 @@ export class TranscriptionReviewComponent
     });
   }
 
+  /**
+   * States a capo position.
+   *
+   * The bound is `fretboardFault`'s, not this method's: a capo past the end of
+   * the neck is refused by the service and the refusal is rendered next to this
+   * control, rather than being pre-empted here. Checking in both places would
+   * mean two copies of the rule, and the one on the control is the copy that
+   * silently stops agreeing. The same goes for `onMaxFretChange` and
+   * `onPositionHintChange`; contrast `onTempoChange`, where the service refuses
+   * *silently* and the panel has to say so itself.
+   */
   onCapoChange(capo: number | null): void {
     if (capo === null || !Number.isFinite(capo)) return;
     this.capo = capo;
+    this.refusalControl = 'capo';
     this.settingsChanged.emit({ capo });
   }
 
@@ -379,12 +421,14 @@ export class TranscriptionReviewComponent
     const value =
       positionHint !== null && Number.isFinite(positionHint) ? positionHint : null;
     this.positionHint = value;
+    this.refusalControl = 'positionHint';
     this.settingsChanged.emit({ positionHint: value });
   }
 
   onMaxFretChange(maxFret: number | null): void {
     if (maxFret === null || !Number.isFinite(maxFret)) return;
     this.maxFret = maxFret;
+    this.refusalControl = 'maxFret';
     this.settingsChanged.emit({ maxFret });
   }
 
@@ -456,6 +500,9 @@ export class TranscriptionReviewComponent
 
     this.divisionModel?.control.setValue(this.finestDivision, options);
     this.meterModel?.control.setValue(this.timeSignatureId, options);
+    this.capoModel?.control.setValue(this.capo, options);
+    this.maxFretModel?.control.setValue(this.maxFret, options);
+    this.positionModel?.control.setValue(this.positionHint, options);
   }
 
   // -------------------------------------------------------------------------
@@ -465,11 +512,12 @@ export class TranscriptionReviewComponent
   /**
    * The refusal, if it belongs beside `control`.
    *
-   * Only `finestDivision` and the meter can produce one: `rederive` refuses on
-   * `barGridFault`, whose two arguments are exactly those, and a session in
-   * `ready` already derived cleanly once - so tempo and downbeat, which touch
-   * neither, cannot fail that check. Whichever of the two moved last is
-   * therefore the one that caused it.
+   * `rederive` refuses on `barGridFault` - `finestDivision` and the meter - or
+   * on `fretboardFault` - capo, max fret and position hint. A session sitting
+   * in `ready` already derived cleanly once, so whichever of those five moved
+   * last is the one that caused the refusal; tempo and downbeat touch neither
+   * check and the tuning select cannot fail either. Tempo has a note of its own
+   * because the service refuses a tempo *silently*.
    */
   refusalFor(control: RefusableControl): string | null {
     if (this.refusalControl !== control) return null;

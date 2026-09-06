@@ -11,7 +11,7 @@ import {
 } from '../models/composer.model';
 import { DetectedNote, TranscriptionSession } from '../models/transcription.model';
 import { assignFingering } from './transcription-fingering';
-import { correctOctaves } from './transcription-octave';
+import { FoldedNote, correctOctaves } from './transcription-octave';
 import { PlacedNote, chordToleranceBeats, quantizeBar } from './transcription-quantize';
 import { gridTempo, secondsToBeats } from './transcription-timing';
 
@@ -96,6 +96,26 @@ export interface DerivedScore {
    * onset order.
    */
   dropped: DroppedNote[];
+  /**
+   * Notes octave correction moved onto the neck, in ascending onset order.
+   *
+   * **A separate list rather than another `DropReason`**, because a fold is not
+   * a drop and the two would be read as the same kind of event by everything
+   * downstream. `dropped` means "this detection is not in the score": the panel
+   * counts it under "N detections not in the score", and `buildPreviewDoc`
+   * draws every one of them as a ghost. A folded note *is* in the score, so
+   * putting it there would inflate that count with notes that are present and
+   * draw each of them twice - once as a note in voice 1 and again as a ghost in
+   * voice 2, a slot apart, describing a collision that never happened.
+   *
+   * Worth reporting all the same, and this is the channel for it. Switching
+   * from a bass tuning to a guitar one raises the fold's floor from MIDI 28 to
+   * 40, so every note below E2 moves up an octave - half a bassline, silently
+   * transposed by a control that says "tuning". `dropped` and `suppressed`
+   * between them were the panel's only account of what the pipeline did, and
+   * neither of them has anything to say about it.
+   */
+  folded: FoldedNote[];
 }
 
 /**
@@ -245,6 +265,15 @@ export interface Placement {
    * octave correction left them at. Ascending onset order, never in `placed`.
    */
   unplayable: DetectedNote[];
+  /**
+   * Notes octave correction moved to bring them onto the neck, ascending.
+   *
+   * Reported alongside the placements rather than folded into them because a
+   * fold is the one interpretation this function makes that nothing else
+   * records: the note is placed, so it is not in `unplayable`, and it is in the
+   * score, so it is not a drop. See `DerivedScore.folded`.
+   */
+  folded: FoldedNote[];
 }
 
 /**
@@ -299,9 +328,12 @@ export function placeDetectedNotes(
   // correctOctaves folds onto one interval, lowest open string to highest
   // fret, while candidatesFor knows each string reaches only `maxFret - capo`
   // frets. Below four frets those bands stop overlapping and the two disagree;
-  // see "Deliberately not in M1". No instrument here is anywhere near that
-  // short, so nothing downstream compensates for it.
-  const corrected = correctOctaves(sorted, settings);
+  // see "Deliberately not in M1". Nothing downstream compensates for it - the
+  // pair is refused before it gets here, by `fretboardFault`, which is where
+  // the reach became a thing the user could type rather than a property of the
+  // presets.
+  const folded: FoldedNote[] = [];
+  const corrected = correctOctaves(sorted, settings, folded);
 
   const slotsPerBeat = settings.finestDivision / timeSignature.denominator;
   const slotsPerBar = timeSignature.numerator * slotsPerBeat;
@@ -382,7 +414,7 @@ export function placeDetectedNotes(
     });
   });
 
-  return { placed, unplayable };
+  return { placed, unplayable, folded };
 }
 
 /**
@@ -508,6 +540,11 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
       masterBars,
       tracks: [track]
     },
-    dropped
+    dropped,
+    // Only the folds that happened to the notes actually written. The ones
+    // below the confidence floor never reached `placeDetectedNotes`, and a
+    // fold reported for a note the score does not contain would be an account
+    // of something the reader cannot see.
+    folded: placement.folded
   };
 }

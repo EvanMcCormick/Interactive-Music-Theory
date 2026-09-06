@@ -1,6 +1,7 @@
 import { STANDARD_BASS_TUNING, STANDARD_GUITAR_TUNING, TimeSignature } from '../../../../models/composer.model';
 import { DetectedNote, FinestDivision } from '../../../../models/transcription.model';
 import { DropReason } from '../../../../services/score-derivation';
+import { FoldedNote } from '../../../../services/transcription-octave';
 
 /**
  * The reference data and arithmetic behind the review panel's controls.
@@ -157,6 +158,53 @@ export function withCurrentMeter(timeSignature: TimeSignature): TimeSignaturePre
     ...TIME_SIGNATURE_PRESETS
   ];
 }
+
+/**
+ * What octave correction did to this derivation, or null when it did nothing.
+ *
+ * The panel's only account of what the pipeline did was `countDiscards`, and a
+ * fold is not a discard - so switching from a bass tuning to a guitar one moved
+ * every note under E2 up an octave and the screen said nothing at all. This is
+ * the sentence that says it.
+ *
+ * Grouped by distance rather than totalled, because "3 notes moved" does not
+ * distinguish a routine octave fold from a pitch the detector missed by two.
+ * Ordered by distance, deepest fold first, so the largest correction is read
+ * first.
+ */
+export function describeFolds(folded: readonly FoldedNote[]): string | null {
+  if (folded.length === 0) return null;
+
+  const byDistance = new Map<number, number>();
+  for (const entry of folded) {
+    byDistance.set(entry.semitones, (byDistance.get(entry.semitones) ?? 0) + 1);
+  }
+
+  const parts = [...byDistance.entries()]
+    .sort((a, b) => Math.abs(b[0]) - Math.abs(a[0]) || b[0] - a[0])
+    .map(([semitones, count]) =>
+      `${count} ${count === 1 ? 'note' : 'notes'} ${describeDistance(semitones)}`
+    );
+
+  return `Folded onto the neck: ${parts.join(', ')}.`;
+}
+
+/** "up an octave", "down two octaves" - the distance as a reader says it. */
+function describeDistance(semitones: number): string {
+  const octaves = Math.abs(semitones) / 12;
+  const direction = semitones > 0 ? 'up' : 'down';
+
+  if (octaves === 1) return `${direction} an octave`;
+
+  // Not a whole number of octaves, which `correctOctaves` cannot produce - said
+  // in semitones rather than rounded into a lie.
+  if (!Number.isInteger(octaves)) return `${direction} ${Math.abs(semitones)} semitones`;
+
+  return `${direction} ${OCTAVE_WORDS[octaves] ?? octaves} octaves`;
+}
+
+/** Small counts read better as words; past these the number is the point. */
+const OCTAVE_WORDS: Readonly<Record<number, string>> = { 2: 'two', 3: 'three', 4: 'four' };
 
 /**
  * How many detections went each way, in the order a reader should read them.

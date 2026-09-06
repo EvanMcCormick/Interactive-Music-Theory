@@ -2,7 +2,12 @@ import {
   STANDARD_BASS_TUNING,
   createDefaultDerivationSettings
 } from '../models/transcription.model';
-import { assignFingering, candidatesFor } from './transcription-fingering';
+import {
+  MAX_FRET_LIMIT,
+  assignFingering,
+  candidatesFor,
+  fretboardFault
+} from './transcription-fingering';
 import { chordToleranceBeats } from './transcription-quantize';
 
 const SETTINGS = createDefaultDerivationSettings();
@@ -461,5 +466,74 @@ describe('assignFingering', () => {
       { kind: 'fretted', string: 3, fret: 0 },
       { kind: 'fretted', string: 3, fret: 3 }
     ]);
+  });
+});
+
+/**
+ * The settings this module consumes, checked before they reach it.
+ *
+ * `capo`, `maxFret` and `positionHint` are live knobs, and the module docblock
+ * of `beat-grid-edit.ts` sets out why the bound cannot live on the control: a
+ * `min`/`max` on a number input is one caller's decoration, not the contract,
+ * and a typed or pasted value walks straight past it.
+ */
+describe('fretboardFault', () => {
+  const settings = (partial: Partial<typeof SETTINGS>) => ({ ...SETTINGS, ...partial });
+
+  it('accepts the defaults', () => {
+    expect(fretboardFault(SETTINGS)).toBeNull();
+  });
+
+  it('refuses a capo that leaves no neck in front of it', () => {
+    // Capo 12 with maxFret 12, both reachable on the panel's spinner arrows.
+    // Only open strings remain playable, and the score collapses to rests.
+    expect(fretboardFault(settings({ capo: 12, maxFret: 12 }))).toContain('capo at 12');
+  });
+
+  it('refuses the reach where octave folding and fingering stop agreeing', () => {
+    // Three frets in front of the capo leaves a gap between adjacent strings'
+    // bands, so a folded pitch can be admitted and then found unplayable.
+    expect(fretboardFault(settings({ capo: 9, maxFret: 12 }))).not.toBeNull();
+    expect(fretboardFault(settings({ capo: 8, maxFret: 12 }))).toBeNull();
+  });
+
+  it('refuses a capo that is not a whole number of frets', () => {
+    for (const capo of [-1, 1.5, Number.NaN, Infinity]) {
+      expect(fretboardFault(settings({ capo }))).withContext(`capo ${capo}`).not.toBeNull();
+    }
+  });
+
+  it('refuses a neck longer than anything this can write', () => {
+    expect(fretboardFault(settings({ maxFret: MAX_FRET_LIMIT }))).toBeNull();
+    expect(fretboardFault(settings({ maxFret: MAX_FRET_LIMIT + 1 }))).toContain('neck');
+    expect(fretboardFault(settings({ maxFret: 1e6 }))).not.toBeNull();
+  });
+
+  it('refuses a max fret that is not a whole number of frets', () => {
+    for (const maxFret of [0, -4, 12.5, Number.NaN]) {
+      expect(fretboardFault(settings({ maxFret })))
+        .withContext(`maxFret ${maxFret}`)
+        .not.toBeNull();
+    }
+  });
+
+  it('refuses a position hint that would dwarf every other cost', () => {
+    // At 1000 the hint term is 0.5 * 1000 against movement costs in single
+    // figures: the Viterbi pass degenerates into "pick the highest fret".
+    expect(fretboardFault(settings({ positionHint: 1000 }))).toContain('position hint');
+    expect(fretboardFault(settings({ positionHint: -1 }))).not.toBeNull();
+    expect(fretboardFault(settings({ positionHint: 4.5 }))).not.toBeNull();
+  });
+
+  it('accepts a hint anywhere on a neck it could write', () => {
+    // Deliberately not tied to `maxFret - capo`: the hint is a preference
+    // rather than a constraint, and coupling them would refuse a legitimate
+    // max-fret reduction because of a hint set earlier.
+    expect(fretboardFault(settings({ positionHint: 0 }))).toBeNull();
+    expect(fretboardFault(settings({ positionHint: 30, maxFret: 12 }))).toBeNull();
+  });
+
+  it('accepts a hint of null, which lets the hand roam', () => {
+    expect(fretboardFault(settings({ positionHint: null }))).toBeNull();
   });
 });

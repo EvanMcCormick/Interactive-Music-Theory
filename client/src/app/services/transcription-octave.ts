@@ -46,6 +46,23 @@ export function isCorrectablePitch(pitch: number): boolean {
 }
 
 /**
+ * A note octave correction moved, and how far.
+ *
+ * A fold is not a drop. The note is in the score - it is simply not at the
+ * pitch the detector reported - so it has no business in `DerivedScore.dropped`
+ * or in the ghost display those feed, both of which mean "not in the score".
+ * See `DerivedScore.folded`.
+ */
+export interface FoldedNote {
+  /** The note as it was written, at the pitch the fold landed on. */
+  note: DetectedNote;
+  /** The MIDI pitch the detector reported. */
+  detectedPitch: number;
+  /** Signed semitones moved: a non-zero multiple of 12, positive is upwards. */
+  semitones: number;
+}
+
+/**
  * Folds out-of-range pitches back onto the instrument.
  *
  * Detectors are weakest in the bass register: fundamentals below 100 Hz sit
@@ -62,10 +79,19 @@ export function isCorrectablePitch(pitch: number): boolean {
  * sibling modules' habit of failing loudly on input they cannot handle rather
  * than misbehaving quietly. Nothing in `deriveScore` produces such a value,
  * but the alternative here is not a wrong answer, it is a hang.
+ *
+ * `folded`, if given, collects every note this moved, in the order it was
+ * handed them. An out-parameter in the manner of `quantizeBar`'s `dropped`,
+ * because the return type is the corrected notes and most callers want nothing
+ * else - but the correction is interpretation, and a listener who switches
+ * from a bass tuning to a guitar one raises the bottom of the range by an
+ * octave and moves every note under E2 without being told. See
+ * `DerivedScore.folded`.
  */
 export function correctOctaves(
   notes: DetectedNote[],
-  settings: DerivationSettings
+  settings: DerivationSettings,
+  folded?: FoldedNote[]
 ): DetectedNote[] {
   for (const note of notes) {
     if (!isCorrectablePitch(note.pitch)) {
@@ -88,6 +114,11 @@ export function correctOctaves(
     let pitch = note.pitch;
     while (pitch < lowest) pitch += 12;
     while (pitch > highest) pitch -= 12;
-    return pitch === note.pitch ? note : { ...note, pitch };
+    if (pitch === note.pitch) return note;
+
+    const moved = { ...note, pitch };
+    folded?.push({ note: moved, detectedPitch: note.pitch, semitones: pitch - note.pitch });
+
+    return moved;
   });
 }

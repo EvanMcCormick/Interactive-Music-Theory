@@ -786,3 +786,65 @@ describe('instrument voice', () => {
     expect(staffOf(withTuning(STANDARD_BASS_TUNING)).tuningLabel).toBe('Bass');
   });
 });
+
+/**
+ * Octave folds, reported alongside the score rather than inside `dropped`.
+ *
+ * A fold is not a drop: the note is in the score, at another octave. Putting it
+ * in `dropped` would inflate the panel's "N detections not in the score" count
+ * with notes that are, and `buildPreviewDoc` would draw each of them a second
+ * time as a ghost - a collision that never happened.
+ */
+describe('deriveScore folds', () => {
+  const guitar = (notes: DetectedNote[]): TranscriptionSession => ({
+    ...session(notes),
+    settings: {
+      ...createDefaultDerivationSettings(),
+      tuning: STANDARD_GUITAR_TUNING
+    }
+  });
+
+  it('says nothing when every pitch was already on the neck', () => {
+    expect(deriveScore(session([note(33, 0), note(40, 1.0)])).folded).toEqual([]);
+  });
+
+  it('reports a switch of tuning that transposed half the line', () => {
+    // The bass fold floor is min(tuning) = 28; the guitar's is 40. E1 and A1
+    // are under it and move up an octave; D2 and G2 are not and stay.
+    const notes = [note(28, 0), note(33, 0.5), note(50, 1.0), note(55, 1.5)];
+
+    const onBass = deriveScore(session(notes));
+    const onGuitar = deriveScore(guitar(notes));
+
+    expect(onBass.folded).toEqual([]);
+    expect(onGuitar.folded.length).toBe(2);
+    expect(onGuitar.folded.map(entry => entry.detectedPitch)).toEqual([28, 33]);
+    expect(onGuitar.folded.every(entry => entry.semitones === 12)).toBeTrue();
+  });
+
+  it('keeps folds out of the discard channel entirely', () => {
+    const notes = [note(28, 0), note(33, 0.5)];
+
+    const onGuitar = deriveScore(guitar(notes));
+
+    expect(onGuitar.folded.length).toBe(2);
+    // Folded, therefore playable, therefore written: nothing was discarded.
+    expect(onGuitar.dropped).toEqual([]);
+  });
+
+  it('reports folds in ascending onset order', () => {
+    const notes = [note(33, 2.0), note(28, 0.5), note(30, 1.0)];
+
+    const folded = deriveScore(guitar(notes)).folded;
+
+    expect(folded.map(entry => entry.note.onsetSec)).toEqual([0.5, 1.0, 2.0]);
+  });
+
+  it('says nothing about notes the confidence floor already removed', () => {
+    // Below the floor, so it never reaches placement - a fold reported for a
+    // note the score does not contain describes something no reader can see.
+    const notes = [note(28, 0, 0.01), note(50, 1.0)];
+
+    expect(deriveScore(guitar(notes)).folded).toEqual([]);
+  });
+});

@@ -92,6 +92,7 @@ import { nudgedDownbeat, withTempo } from './beat-grid-edit';
 import { messageOf } from './error-message';
 import { trackBeats } from './beat-tracking';
 import { DETECTION_SAMPLE_RATE, NoteDetector } from './note-detector';
+import { fretboardFault } from './transcription-fingering';
 import { DerivedScore, deriveScore } from './score-derivation';
 import { suppressHarmonics } from './transcription-harmonics';
 import { barGridFault } from './transcription-quantize';
@@ -376,8 +377,14 @@ export class TranscriptionService {
    * throwing at a UI whose slider the user has just dragged - would be worse
    * than doing nothing.
    *
-   * A `finestDivision` the current meter cannot be written on is refused
-   * rather than applied: the score stays as it was and `refusal` says why. See
+   * Settings that do not describe something writable are refused rather than
+   * applied: the score stays as it was and `refusal` says why. Two families of
+   * those - a `finestDivision` the current meter cannot be written on
+   * (`barGridFault`) and a neck that cannot be played (`fretboardFault`, which
+   * covers `capo`, `maxFret` and `positionHint`). The bound belongs here rather
+   * than on the controls, for the reason `beat-grid-edit.ts` sets out at
+   * length: a `min`/`max` on a number input is not this method's contract, it
+   * is one caller's decoration, and a typed or pasted value walks past it. See
    * `rederive`.
    *
    * Meter is not here because meter is not a `DerivationSettings` field; it
@@ -483,13 +490,23 @@ export class TranscriptionService {
    * nothing is pushed, and the UI goes on showing the old score with the
    * control in its new position, describing a state that does not exist.
    *
-   * So the impossible pair is checked *before* `deriveScore` sees it, and the
-   * change is refused - previous session, previous score, a message saying
-   * why. `finestDivision` and the meter's denominator are both live knobs and
-   * `quantizeBar` cannot write a bar whose beat the grid is coarser than: 6/8
-   * with a `finestDivision` of 4, or 4/16 with 8. Reaching that through two
-   * legal public calls takes nothing exotic - transcribe in 6/8, then drag
-   * `finestDivision` down.
+   * So the impossible combination is checked *before* `deriveScore` sees it,
+   * and the change is refused - previous session, previous score, a message
+   * saying why. Two checks, both over knobs the user turns:
+   *
+   * - `barGridFault`. `finestDivision` and the meter's denominator are both
+   *   live, and `quantizeBar` cannot write a bar whose beat the grid is coarser
+   *   than: 6/8 with a `finestDivision` of 4, or 4/16 with 8. Reaching that
+   *   through two legal public calls takes nothing exotic - transcribe in 6/8,
+   *   then drag `finestDivision` down.
+   * - `fretboardFault`. `capo`, `maxFret` and `positionHint` describe a neck
+   *   between them, and some of what they can say is not a neck: capo 12 on a
+   *   12-fret setting leaves nothing but open strings and collapses the score
+   *   to a bar of rests, and both numbers are on the spinner arrows.
+   *
+   * Refused rather than clamped, matching `withTempo` and `nudgedDownbeat`: a
+   * clamp applies a change nobody asked for, and the control then shows a value
+   * the score was not derived with.
    *
    * **Not a try/catch around `deriveScore`.** M1 warned that a throwing pure
    * function inside a live re-derive loop blanks the preview, and a catch that
@@ -507,7 +524,12 @@ export class TranscriptionService {
 
     const session = change(current.session);
 
-    const fault = barGridFault(session.grid.timeSignature, session.settings.finestDivision);
+    // Both faults are combinations of live knobs, and neither can be left to
+    // the controls: an HTML `min`/`max` is one caller's decoration, and a typed
+    // or pasted value walks straight past it.
+    const fault =
+      barGridFault(session.grid.timeSignature, session.settings.finestDivision)
+      ?? fretboardFault(session.settings);
     if (fault !== null) {
       // The whole change is turned away, not the offending half of it: a
       // partly applied settings object would leave the state describing
