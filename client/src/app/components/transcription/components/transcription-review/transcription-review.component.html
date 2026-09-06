@@ -235,26 +235,232 @@
       </fieldset>
 
       <!--
+        Harmonic suppression: the pipeline's largest discard, and until this
+        control existed the only one with no knob on it. Its own subheading
+        rather than a tenth entry in the list above, because these thresholds
+        are not `DerivationSettings` - they decide which detections are notes
+        at all, a step before anything above decides how a note is written.
+      -->
+      <h3 class="control__subheading">Harmonic suppression</h3>
+
+      <div class="control">
+        <label class="control__label" [attr.for]="id.partialRatio">
+          Partial confidence ratio
+        </label>
+        <div class="control__row">
+          <input
+            class="control__input control__input--range"
+            type="range"
+            min="0"
+            max="2"
+            step="0.01"
+            [id]="id.partialRatio"
+            [attr.aria-describedby]="id.partialRatioHint"
+            [ngModel]="harmonics.partialConfidenceRatio"
+            (ngModelChange)="onHarmonicChange('partialConfidenceRatio', $event)"
+          />
+          <output class="control__readout" [attr.for]="id.partialRatio">
+            {{ harmonics.partialConfidenceRatio | number: '1.2-2' }}
+          </output>
+        </div>
+        <p class="control__hint" [id]="id.partialRatioHint">
+          How sure of a partial the detector has to be, relative to the note
+          under it, before the partial is kept. Lower keeps more detections;
+          higher removes more. 0.65 was chosen against 120 candidate pairs.
+        </p>
+        <p
+          class="control__refusal"
+          *ngIf="harmonicNotes.partialConfidenceRatio as note"
+        >{{ note }}</p>
+      </div>
+
+      <!--
+        Collapsed, and labelled for what they are. Presenting these beside the
+        ratio above as four equals would imply four calibrations; there is one.
+      -->
+      <details class="control advanced">
+        <summary class="advanced__summary">Advanced thresholds</summary>
+        <p class="control__hint advanced__note" [id]="id.advancedHint">
+          Unmeasured. These three are the numbers M2 shipped with and nothing
+          has ever been fitted against a fixture, unlike the ratio above.
+          Move them to explore, not because a measurement says so.
+        </p>
+
+        <div class="control">
+          <label class="control__label" [attr.for]="id.tolerance">
+            Overlap tolerance
+          </label>
+          <div class="control__row">
+            <input
+              class="control__input control__input--number"
+              type="number"
+              min="0"
+              max="1"
+              step="0.005"
+              [id]="id.tolerance"
+              [attr.aria-describedby]="id.toleranceHint"
+              [ngModel]="harmonics.toleranceSec"
+              (ngModelChange)="onHarmonicChange('toleranceSec', $event)"
+            />
+            <span class="control__unit">s</span>
+          </div>
+          <p class="control__hint" [id]="id.toleranceHint">
+            Slack at both ends of a note's span, for detector jitter, when
+            asking whether a partial sounded inside it.
+          </p>
+          <p class="control__refusal" *ngIf="harmonicNotes.toleranceSec as note">
+            {{ note }}
+          </p>
+        </div>
+
+        <div class="control">
+          <label class="control__label" [attr.for]="id.unisonConfidence">
+            Unison confidence ratio
+          </label>
+          <input
+            class="control__input control__input--number"
+            type="number"
+            min="0"
+            max="2"
+            step="0.05"
+            [id]="id.unisonConfidence"
+            [attr.aria-describedby]="id.unisonConfidenceHint"
+            [ngModel]="harmonics.unisonConfidenceRatio"
+            (ngModelChange)="onHarmonicChange('unisonConfidenceRatio', $event)"
+          />
+          <p class="control__hint" [id]="id.unisonConfidenceHint">
+            A note at the same pitch counts as the detector hearing one note
+            twice only below this share of the first one's confidence.
+          </p>
+          <p class="control__refusal" *ngIf="harmonicNotes.unisonConfidenceRatio as note">
+            {{ note }}
+          </p>
+        </div>
+
+        <div class="control">
+          <label class="control__label" [attr.for]="id.unisonDuration">
+            Unison duration ratio
+          </label>
+          <input
+            class="control__input control__input--number"
+            type="number"
+            min="0"
+            max="2"
+            step="0.05"
+            [id]="id.unisonDuration"
+            [attr.aria-describedby]="id.unisonDurationHint"
+            [ngModel]="harmonics.unisonDurationRatio"
+            (ngModelChange)="onHarmonicChange('unisonDurationRatio', $event)"
+          />
+          <p class="control__hint" [id]="id.unisonDurationHint">
+            ...and below this share of its duration.
+          </p>
+          <p class="control__refusal" *ngIf="harmonicNotes.unisonDurationRatio as note">
+            {{ note }}
+          </p>
+        </div>
+      </details>
+
+      <!--
         Not a discard: a folded note is in the score, at a different octave from
         the one the detector reported. Its own line for that reason, and shown
         even when nothing was discarded.
       -->
       <p class="folds" *ngIf="foldNote">{{ foldNote }}</p>
 
-      <div class="discards" *ngIf="discardTotal > 0 || omittedCount > 0">
+      <!--
+        The index for the notes too small or too crowded to click, and the only
+        way to see the whole discard set at once. Grouped and collapsed rather
+        than printed flat: on real material this is dozens of rows and the
+        summary is what most readings need.
+      -->
+      <section
+        class="discards"
+        *ngIf="discardTotal > 0 || restored.length > 0"
+        [attr.aria-labelledby]="id.discardsHeading"
+      >
+        <h3 class="control__subheading" [id]="id.discardsHeading">
+          Not in the score
+        </h3>
+
         <p class="discards__line" *ngIf="discardTotal > 0">
-          {{ discardTotal }} detection{{ discardTotal === 1 ? '' : 's' }} not in the
-          score, drawn as ghosts:
-          <span
-            class="discards__reason"
-            *ngFor="let discard of discards; trackBy: trackByDiscard; let last = last"
-          >{{ discard.count }} {{ discard.label }}{{ last ? '.' : ', ' }}</span>
+          {{ discardTotal }} detection{{ discardTotal === 1 ? '' : 's' }}, drawn as
+          ghosts. Open a group to find one by name.
         </p>
         <p class="discards__line" *ngIf="omittedCount > 0">
           {{ omittedCount }} of them could not be drawn at all - no fret reaches
-          the pitch, or the slot was already taken.
+          the pitch, or the slot was already taken. Those are only reachable
+          from here.
         </p>
-      </div>
+
+        <details
+          class="discards__group"
+          *ngFor="let group of discards; trackBy: trackByDiscard"
+        >
+          <summary class="discards__summary">
+            <span class="discards__count">{{ group.count }}</span>
+            {{ group.label }}
+          </summary>
+          <ul class="discards__rows">
+            <li
+              class="discards__row"
+              *ngFor="let row of group.rows; trackBy: trackByRow"
+            >
+              <span class="discards__note">{{ row.label }}</span>
+              <!--
+                Said only when it is false. A ghost the reader can go and click
+                needs no annotation; one that is nowhere on the staff is the
+                case this list exists to cover.
+              -->
+              <span class="discards__nowhere" *ngIf="!row.drawn">not drawn</span>
+              <!--
+                Only where the gesture means what the label says. A note
+                derivation dropped is still in the kept set, so toggling it
+                *suppresses* it - which is what a button reading "Restore" did
+                until the browser pass pressed one.
+              -->
+              <button
+                type="button"
+                class="discards__action"
+                *ngIf="group.restorable"
+                (click)="onRestoreClicked(row.id)"
+              >
+                {{ group.reason === 'youSuppressed' ? 'Undo' : 'Restore' }}
+              </button>
+            </li>
+          </ul>
+          <p class="control__hint" *ngIf="group.remedy as remedy">{{ remedy }}</p>
+          <p class="control__hint" *ngIf="group.hidden > 0">
+            {{ group.hidden }} more not listed. They are still ghosts on the
+            staff, and still one click away there.
+          </p>
+        </details>
+      </section>
+
+      <!--
+        The other half of what is undoable. These notes are in the score, so no
+        list of discards would ever mention them - and after a restore the note
+        is a black notehead among black noteheads.
+      -->
+      <section class="discards restored" *ngIf="restored.length > 0">
+        <h3 class="control__subheading">Restored by you</h3>
+        <ul class="discards__rows">
+          <li
+            class="discards__row"
+            *ngFor="let row of restored; trackBy: trackByRow"
+          >
+            <span class="discards__note">{{ row.label }}</span>
+            <span class="discards__nowhere" *ngIf="!row.drawn">not drawn</span>
+            <button
+              type="button"
+              class="discards__action"
+              (click)="onRestoreClicked(row.id)"
+            >
+              Undo
+            </button>
+          </li>
+        </ul>
+      </section>
     </section>
 
     <section

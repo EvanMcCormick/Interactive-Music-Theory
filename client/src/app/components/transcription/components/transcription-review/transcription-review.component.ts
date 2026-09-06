@@ -20,7 +20,6 @@ import * as alphaTab from '@coderline/alphatab';
 import { ScoreDoc, TimeSignature } from '../../../../models/composer.model';
 import {
   DerivationSettings,
-  DetectedNote,
   FinestDivision
 } from '../../../../models/transcription.model';
 import { AlphaTabService } from '../../../../services/alpha-tab.service';
@@ -37,19 +36,27 @@ import {
   detectionAt
 } from '../../../../services/preview-score';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
+import {
+  DEFAULT_HARMONIC_OPTIONS,
+  HarmonicOptions
+} from '../../../../services/transcription-harmonics';
 import { TranscriptionState } from '../../../../services/transcription.service';
 import {
-  DiscardCount,
+  DiscardGroup,
+  DiscardRow,
   FINEST_DIVISIONS,
+  HARMONIC_REFUSALS,
   TIME_SIGNATURE_PRESETS,
   TUNING_PRESETS,
   TimeSignaturePreset,
   TuningPreset,
-  countDiscards,
   describeFolds,
   describeToggle,
+  drawnIds,
   gridTempoBpm,
+  groupDiscards,
   meterId,
+  restoredRows,
   sameTuning,
   withCurrentMeter,
   withCurrentTuning
@@ -171,6 +178,15 @@ export class TranscriptionReviewComponent
    * is two steps rather than three.
    */
   @Output() readonly noteToggled = new EventEmitter<string>();
+  /**
+   * A suppression threshold, which the service merges onto `session.harmonics`.
+   *
+   * Separate from `settingsChanged` because the two are separate contracts:
+   * `DerivationSettings` is what `deriveScore` consumes, and these four run a
+   * step earlier, deciding which detections are notes at all. One emitter
+   * carrying both would hand the host a union it had to take apart.
+   */
+  @Output() readonly harmonicsChanged = new EventEmitter<Partial<HarmonicOptions>>();
 
   @ViewChild('previewContainer') previewContainer?: ElementRef<HTMLDivElement>;
 
@@ -205,7 +221,17 @@ export class TranscriptionReviewComponent
     tempoHint: `txr-tempo-hint-${this.seq}`,
     downbeatHint: `txr-downbeat-hint-${this.seq}`,
     controlsHeading: `txr-controls-heading-${this.seq}`,
-    previewHeading: `txr-preview-heading-${this.seq}`
+    previewHeading: `txr-preview-heading-${this.seq}`,
+    partialRatio: `txr-partial-ratio-${this.seq}`,
+    partialRatioHint: `txr-partial-ratio-hint-${this.seq}`,
+    tolerance: `txr-tolerance-${this.seq}`,
+    toleranceHint: `txr-tolerance-hint-${this.seq}`,
+    unisonConfidence: `txr-unison-confidence-${this.seq}`,
+    unisonConfidenceHint: `txr-unison-confidence-hint-${this.seq}`,
+    unisonDuration: `txr-unison-duration-${this.seq}`,
+    unisonDurationHint: `txr-unison-duration-hint-${this.seq}`,
+    advancedHint: `txr-advanced-hint-${this.seq}`,
+    discardsHeading: `txr-discards-heading-${this.seq}`
   };
 
   // What the controls show. Set optimistically when one moves, then
@@ -218,6 +244,17 @@ export class TranscriptionReviewComponent
   maxFret = 24;
   timeSignatureId = '';
   tempoBpm: number | null = null;
+  /**
+   * What the four threshold controls show.
+   *
+   * One object rather than four fields, and replaced rather than mutated, for
+   * the reason the class docblock gives about the other mirrors: it is set
+   * optimistically when a control moves and overwritten from the arriving
+   * session, so a change the service turns away visibly snaps back. Sharing
+   * the session's own object between those two moments is safe because nothing
+   * here writes into it.
+   */
+  harmonics: HarmonicOptions = { ...DEFAULT_HARMONIC_OPTIONS };
 
   /** Presets plus, when the state matches none of them, the setting it is on. */
   tuningOptions: TuningPreset[] = [...TUNING_PRESETS];
@@ -231,10 +268,13 @@ export class TranscriptionReviewComponent
   canNudgeBack = false;
   canNudgeForward = false;
 
-  discards: DiscardCount[] = [];
+  /** Everything missing from the score, grouped by why. */
+  discards: DiscardGroup[] = [];
   discardTotal = 0;
-  /** Ghosts `buildPreviewDoc` could not place at all. */
+  /** Ghosts the preview could not place at all, across every group. */
   omittedCount = 0;
+  /** In the score only because the user put them back; undoable from here. */
+  restored: DiscardRow[] = [];
   /**
    * What octave correction moved, or null when it moved nothing.
    *
@@ -265,6 +305,11 @@ export class TranscriptionReviewComponent
 
   /** Set when the user states a tempo outside the range the service accepts. */
   tempoNote: string | null = null;
+  /**
+   * Why a threshold was not applied, by field; each is rendered beside its own
+   * control. Empty when all four are numbers. See `HARMONIC_REFUSALS`.
+   */
+  harmonicNotes: Partial<Record<keyof HarmonicOptions, string>> = {};
   /** Which control the current refusal belongs beside. */
   refusalControl: RefusableControl = 'finestDivision';
 
@@ -340,6 +385,9 @@ export class TranscriptionReviewComponent
       this.discards = [];
       this.discardTotal = 0;
       this.omittedCount = 0;
+      this.restored = [];
+      this.harmonics = { ...DEFAULT_HARMONIC_OPTIONS };
+      this.harmonicNotes = {};
       this.foldNote = null;
       this.canNudgeBack = false;
       this.canNudgeForward = false;
@@ -361,6 +409,12 @@ export class TranscriptionReviewComponent
     this.tempoBpm = gridTempoBpm(session.grid.beatsSec);
     this.tempoNote = null;
 
+    this.harmonics = session.harmonics;
+    // A state arriving means a change was applied, so a refusal standing beside
+    // a control would explain a value that is no longer in it. Same argument as
+    // `tempoNote` above.
+    this.harmonicNotes = {};
+
     this.tuningOptions = withCurrentTuning(settings.tuning);
     this.tuningPresetId =
       this.tuningOptions.find(option => sameTuning(option.tuning, settings.tuning))?.id ??
@@ -374,14 +428,13 @@ export class TranscriptionReviewComponent
     if (state?.refusal) this.snapRefusedControlsBack();
 
     // The preview is the only place the discards are actually drawn, and its
-    // out-parameter is the only record of the ones it could not draw - so the
-    // document and the counts printed under it are built in one pass.
-    const omitted: DetectedNote[] = [];
+    // index is the only record of which ones it managed to draw - so the
+    // document, the list under it and the counts on that list are one pass.
     try {
       // Document and index in one statement, never separately: a click is
       // resolved through the index against the pixels the document produced,
       // and the way that goes wrong is by their coming apart. See `noteIndex`.
-      const preview = buildPreviewDoc(session, derived, state?.suppressed ?? [], omitted);
+      const preview = buildPreviewDoc(session, derived, state?.suppressed ?? []);
       this.previewDoc = preview.doc;
       this.noteIndex = preview.index;
       this.renderError = null;
@@ -395,9 +448,20 @@ export class TranscriptionReviewComponent
     }
 
     this.hasBars = (this.previewDoc?.masterBars.length ?? 0) > 0;
-    this.omittedCount = omitted.length;
-    this.discards = countDiscards(derived.dropped, state?.suppressed ?? []);
-    this.discardTotal = this.discards.reduce((total, entry) => total + entry.count, 0);
+
+    // The one place the list and the staff could disagree, closed by reading
+    // the staff's own index rather than asking a second function what the
+    // score ought to contain. See `groupDiscards`.
+    const drawn = drawnIds(this.noteIndex);
+    this.discards = groupDiscards(
+      derived.dropped,
+      state?.suppressed ?? [],
+      session.decisions,
+      drawn
+    );
+    this.restored = restoredRows(session, drawn);
+    this.discardTotal = this.discards.reduce((total, group) => total + group.count, 0);
+    this.omittedCount = this.discards.reduce((total, group) => total + group.omitted, 0);
     this.foldNote = describeFolds(derived.folded);
     this.toggleNote = toggled === null ? null : describeToggle(session, toggled);
 
@@ -579,6 +643,47 @@ export class TranscriptionReviewComponent
     this.tempoChanged.emit(bpm);
   }
 
+  /**
+   * States one suppression threshold, or says why this value will not be used.
+   *
+   * The guard is the whole of the difference from the eight knobs above.
+   * `updateHarmonics` merges whatever it is handed straight onto the session
+   * and the pass compares against it unchecked, so a NaN loses every
+   * comparison it is in and suppresses *nothing* - a threshold that silently
+   * turns the entire stage off, with no error and no refusal anywhere. An
+   * empty number input produces exactly that, and three of the four controls
+   * are number inputs. So the bound is checked before the emit and the reason
+   * written next to the control, on the same argument `onTempoChange` makes.
+   *
+   * The mirror is still moved on a refusal, because the box is showing the bad
+   * value and a mirror that disagreed with it would be a second lie. What is
+   * not moved is the score: nothing is emitted, so the derivation stands at the
+   * last threshold that was a number.
+   *
+   * No range check beyond "is a number". A ratio of 0 suppresses nothing and a
+   * ratio of 5 suppresses nearly everything, and both are legitimate things to
+   * ask for while judging where the cut belongs - the score comes back and
+   * says what they did. The distributions this cuts between overlap from 0.49
+   * to 1.33, so the interesting band is not narrow enough to fence.
+   */
+  onHarmonicChange(field: keyof HarmonicOptions, value: number | null): void {
+    if (value === null || !Number.isFinite(value)) {
+      this.harmonicNotes = { ...this.harmonicNotes, [field]: HARMONIC_REFUSALS[field] };
+
+      return;
+    }
+
+    this.harmonics = { ...this.harmonics, [field]: value };
+    this.harmonicNotes = { ...this.harmonicNotes, [field]: undefined };
+    this.harmonicsChanged.emit({ [field]: value });
+  }
+
+  /** The list's own restore control, which is `onNoteClicked` by another route. */
+  onRestoreClicked(id: string): void {
+    this.pendingToggleId = id;
+    this.noteToggled.emit(id);
+  }
+
   /** Buttons that would do nothing are disabled, so this only ever moves the bar. */
   onNudgeDownbeat(beats: number): void {
     this.downbeatNudged.emit(beats);
@@ -650,8 +755,13 @@ export class TranscriptionReviewComponent
     return division.value;
   }
 
-  trackByDiscard(_index: number, discard: DiscardCount): string {
-    return discard.reason;
+  trackByDiscard(_index: number, group: DiscardGroup): string {
+    return group.reason;
+  }
+
+  /** By detection id, so restoring one row does not re-key the rest. */
+  trackByRow(_index: number, row: DiscardRow): string {
+    return row.id;
   }
 
   // -------------------------------------------------------------------------

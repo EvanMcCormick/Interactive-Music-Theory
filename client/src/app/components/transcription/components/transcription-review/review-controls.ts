@@ -4,7 +4,9 @@ import {
   FinestDivision,
   TranscriptionSession
 } from '../../../../models/transcription.model';
-import { DropReason } from '../../../../services/score-derivation';
+import { NoteIndex } from '../../../../services/preview-score';
+import { DropReason, DroppedNote } from '../../../../services/score-derivation';
+import { HarmonicOptions, NoteDecisions } from '../../../../services/transcription-harmonics';
 import { FoldedNote } from '../../../../services/transcription-octave';
 
 /**
@@ -36,13 +38,6 @@ export interface TimeSignaturePreset {
   id: string;
   label: string;
   value: TimeSignature;
-}
-
-/** One reason detections are missing from the score, and how many went that way. */
-export interface DiscardCount {
-  reason: DropReason | 'suppressed';
-  label: string;
-  count: number;
 }
 
 const meter = (numerator: number, denominator: number): TimeSignature => ({
@@ -87,14 +82,6 @@ export const FINEST_DIVISIONS: readonly { value: FinestDivision; label: string }
   { value: 32, label: 'Thirty-second note' },
   { value: 64, label: 'Sixty-fourth note' }
 ];
-
-const DISCARD_LABELS: Readonly<Record<DropReason | 'suppressed', string>> = {
-  belowConfidence: 'below the confidence floor',
-  unplayable: 'unplayable on this tuning',
-  beforeGrid: 'struck before the beat grid',
-  stringTaken: 'struck on a string already held',
-  suppressed: 'harmonic partials'
-};
 
 /**
  * The average tempo of a grid, in BPM, or null when it does not state one.
@@ -166,7 +153,7 @@ export function withCurrentMeter(timeSignature: TimeSignature): TimeSignaturePre
 /**
  * What octave correction did to this derivation, or null when it did nothing.
  *
- * The panel's only account of what the pipeline did was `countDiscards`, and a
+ * The panel's only account of what the pipeline did was the discard list, and a
  * fold is not a discard - so switching from a bass tuning to a guitar one moved
  * every note under E2 up an octave and the screen said nothing at all. This is
  * the sentence that says it.
@@ -209,44 +196,6 @@ function describeDistance(semitones: number): string {
 
 /** Small counts read better as words; past these the number is the point. */
 const OCTAVE_WORDS: Readonly<Record<number, string>> = { 2: 'two', 3: 'three', 4: 'four' };
-
-/**
- * How many detections went each way, in the order a reader should read them.
- *
- * Zero counts are left out rather than printed: "0 unplayable" is noise beside
- * the numbers that matter, and on real material the suppression figure is an
- * order of magnitude larger than the rest put together.
- *
- * `suppressed` comes from the state rather than the derivation, because
- * harmonic suppression happened at detection time - before derivation saw
- * anything - and a reader counting what is missing from the score needs both.
- */
-export function countDiscards(
-  dropped: readonly { reason: DropReason }[],
-  suppressed: readonly DetectedNote[]
-): DiscardCount[] {
-  const order: (DropReason | 'suppressed')[] = [
-    'belowConfidence',
-    'unplayable',
-    'beforeGrid',
-    'stringTaken',
-    'suppressed'
-  ];
-
-  const counts = new Map<DropReason | 'suppressed', number>();
-  for (const entry of dropped) {
-    counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
-  }
-  if (suppressed.length > 0) counts.set('suppressed', suppressed.length);
-
-  return order
-    .map(reason => ({
-      reason,
-      label: DISCARD_LABELS[reason],
-      count: counts.get(reason) ?? 0
-    }))
-    .filter(entry => entry.count > 0);
-}
 
 /**
  * Sharps only, deliberately.
@@ -326,3 +275,257 @@ export function describeToggle(session: TranscriptionSession, id: string): strin
   return `${verb} ${noteLabel(note)}. Click it again for the pipeline's own answer.`;
 }
 
+// ---------------------------------------------------------------------------
+// The discard list
+// ---------------------------------------------------------------------------
+
+/**
+ * Why one detection is not in the score, including "because you said so".
+ *
+ * `DropReason`'s four are derivation's; `suppressed` is the harmonic pass's;
+ * `youSuppressed` is the user's own, and is separated from `suppressed` rather
+ * than folded into it because the two want opposite treatment. A note the
+ * algorithm removed is a decision to *judge*, and the row offers to reverse
+ * it; a note the user removed is a decision already made, and the row offers to
+ * take it back. Reading them as one group would put the user's own gesture in
+ * a list headed "harmonic partials" and invite them to argue with themselves.
+ */
+export type DiscardReason = DropReason | 'suppressed' | 'youSuppressed';
+
+/** One detection the score does not contain, as the list prints it. */
+export interface DiscardRow {
+  /** `DetectedNote.id`: what a restore is addressed by. */
+  id: string;
+  /** "E2 at 0.50 s". */
+  label: string;
+  /**
+   * Whether the score draws it as a ghost.
+   *
+   * Read off the preview's own index rather than recomputed, so this cannot
+   * disagree with the staff beside it: see `groupDiscards`.
+   */
+  drawn: boolean;
+}
+
+/** Every detection that went one way, and how much of it the list will print. */
+export interface DiscardGroup {
+  reason: DiscardReason;
+  /** "harmonic partials" - reads after a number. */
+  label: string;
+  /**
+   * Whether a per-note toggle can put these back.
+   *
+   * True for the two suppression reasons and false for derivation's four, and
+   * the difference is not cosmetic: `toggleNote` moves a note across the
+   * *suppression* line, and a note derivation dropped never crossed it. It is
+   * still in `session.notes` - it survived suppression and was turned away
+   * later, for being too quiet, unplayable, early, or on a string another note
+   * held - so toggling it does not restore it. It suppresses it.
+   *
+   * A "Restore" button on those rows was therefore a button that did the
+   * opposite of what it said, and the browser pass caught it doing exactly
+   * that: pressing Restore on a note below the confidence floor removed it from
+   * the score. They get `remedy` instead, which names the knob that does work.
+   */
+  restorable: boolean;
+  /** For a group a toggle cannot help, the control that can. Null otherwise. */
+  remedy: string | null;
+  /** How many went this way, including any the list declined to print. */
+  count: number;
+  /** At most `MAX_LISTED_ROWS` of them, earliest first. */
+  rows: DiscardRow[];
+  /** `count - rows.length`: reachable by clicking the ghost, not from here. */
+  hidden: number;
+  /** How many of `count` are not in the score even as ghosts. */
+  omitted: number;
+}
+
+const DISCARD_LABELS: Readonly<Record<DiscardReason, string>> = {
+  belowConfidence: 'below the confidence floor',
+  unplayable: 'unplayable on this tuning',
+  beforeGrid: 'struck before the beat grid',
+  stringTaken: 'struck on a string already held',
+  suppressed: 'harmonic partials',
+  youSuppressed: 'suppressed by you'
+};
+
+/**
+ * What actually addresses each reason, for the four a toggle cannot.
+ *
+ * Every one of these notes is in `session.notes`: it passed suppression and
+ * `deriveScore` turned it away afterwards. So the fix is a `DerivationSettings`
+ * knob, or nothing - and saying which is the difference between a list that
+ * explains a discard and one that merely counts it.
+ */
+const DISCARD_REMEDIES: Readonly<Record<DiscardReason, string | null>> = {
+  belowConfidence: 'Lower the confidence floor to write these as notes.',
+  unplayable: 'No fret on this tuning reaches them. Another tuning or capo might.',
+  beforeGrid: 'They sound before bar 1. Nudge the downbeat back to make room.',
+  stringTaken: 'Another note held that string in that slot. A finer division may separate them.',
+  suppressed: null,
+  youSuppressed: null
+};
+
+/** The reasons a per-note toggle can undo: the ones suppression itself made. */
+const RESTORABLE: readonly DiscardReason[] = ['suppressed', 'youSuppressed'];
+
+/** The order the groups are read in; the largest one on real material is last. */
+const DISCARD_ORDER: readonly DiscardReason[] = [
+  'youSuppressed',
+  'belowConfidence',
+  'unplayable',
+  'beforeGrid',
+  'stringTaken',
+  'suppressed'
+];
+
+/**
+ * How many rows a single group will print before it stops.
+ *
+ * A long stem discards thousands of partials, and a row each would be a wall
+ * of text that is also a wall of DOM. The cap is not a loss of access: every
+ * note past it is still a ghost on the staff and still one click from being
+ * restored, and the group's heading still states the true total - so the list
+ * summarises rather than quietly under-reporting.
+ */
+export const MAX_LISTED_ROWS = 40;
+
+/**
+ * Everything missing from the score, grouped by why, in reading order.
+ *
+ * ## One computation, not two
+ *
+ * The score and this list say the same thing twice, and the way that goes
+ * wrong is by their being computed separately - a list built from
+ * `derived.dropped` plus `state.suppressed` while the staff is built from
+ * `buildPreviewDoc` would drift the moment one of them learned a rule the
+ * other did not, and a reader would have no way to tell which was lying.
+ *
+ * So `drawn` is the set of ids the preview's own index holds, which is not a
+ * second opinion about what the score contains: the index is written *as the
+ * document is written*, one entry per note actually put on a staff. A note
+ * this list marks as drawn is a note the reader can go and click, by
+ * construction rather than by agreement.
+ *
+ * The same fact supplies `omitted`. `buildPreviewDoc` guarantees every
+ * candidate is either drawn or lost, so a candidate absent from the index is
+ * exactly one that was lost - no fret reaches the pitch, the onset is not a
+ * time, or a ghost already held that string in that slot. The out-parameter
+ * that used to report it counted the same notes by a different route.
+ *
+ * ## What is not here
+ *
+ * Notes the user *restored*. They are in the score, so they are not discards;
+ * `restoredRows` lists those, and the two together are the whole of what the
+ * user can undo.
+ */
+export function groupDiscards(
+  dropped: readonly DroppedNote[],
+  suppressed: readonly DetectedNote[],
+  decisions: NoteDecisions,
+  drawn: ReadonlySet<string>
+): DiscardGroup[] {
+  const byReason = new Map<DiscardReason, DetectedNote[]>();
+  const add = (reason: DiscardReason, note: DetectedNote): void => {
+    const existing = byReason.get(reason);
+    if (existing) existing.push(note);
+    else byReason.set(reason, [note]);
+  };
+
+  for (const entry of dropped) add(entry.reason, entry.note);
+
+  const droppedByUser = new Set(decisions.drop);
+  for (const note of suppressed) {
+    add(droppedByUser.has(note.id) ? 'youSuppressed' : 'suppressed', note);
+  }
+
+  return DISCARD_ORDER.filter(reason => (byReason.get(reason)?.length ?? 0) > 0).map(
+    reason => {
+      const notes = byReason.get(reason) ?? [];
+      const rows = notes.slice(0, MAX_LISTED_ROWS).map(note => toRow(note, drawn));
+
+      return {
+        reason,
+        label: DISCARD_LABELS[reason],
+        restorable: RESTORABLE.includes(reason),
+        remedy: DISCARD_REMEDIES[reason],
+        count: notes.length,
+        rows,
+        hidden: notes.length - rows.length,
+        omitted: notes.filter(note => !drawn.has(note.id)).length
+      };
+    }
+  );
+}
+
+/**
+ * The notes in the score only because the user put them back.
+ *
+ * The other half of what is undoable, and it cannot live in `groupDiscards`
+ * for the reason that makes it useful: these notes are *in* the score, so they
+ * are not discards, and a list of discards would never mention them. Without
+ * this a restore is a one-way door from the panel - the note is a black
+ * notehead among black noteheads, and finding it again to click it means
+ * remembering where it was.
+ *
+ * Resolved against `rawNotes`, which is where the ids came from. An id naming
+ * no detection is skipped rather than printed as a blank row: `toggleNote`
+ * cannot create one, but `NoteDecisions` is a plain object on a session and
+ * this is a display, not a validator.
+ *
+ * `drawn` is not consulted. A restored note is one `deriveScore` was handed,
+ * so it is subject to the same four drop reasons as any other and may not
+ * have been written - in which case it appears in `groupDiscards` as well,
+ * under the reason that turned it away. That is the truth about it and both
+ * rows are worth having: one says the user asked for it, the other says what
+ * happened next.
+ */
+export function restoredRows(
+  session: TranscriptionSession,
+  drawn: ReadonlySet<string>
+): DiscardRow[] {
+  const byId = new Map(session.rawNotes.map(note => [note.id, note] as const));
+
+  return session.decisions.keep
+    .map(id => byId.get(id))
+    .filter((note): note is DetectedNote => note !== undefined)
+    .map(note => toRow(note, drawn));
+}
+
+function toRow(note: DetectedNote, drawn: ReadonlySet<string>): DiscardRow {
+  return { id: note.id, label: noteLabel(note), drawn: drawn.has(note.id) };
+}
+
+/** The ids the preview actually put on a staff, ghosts and kept notes alike. */
+export function drawnIds(index: NoteIndex): Set<string> {
+  return new Set(index.values());
+}
+
+// ---------------------------------------------------------------------------
+// The suppression thresholds
+// ---------------------------------------------------------------------------
+
+/**
+ * What to say beside a threshold that was not a number.
+ *
+ * Every one of the four is used unchecked in a comparison, and a NaN loses
+ * every comparison it is in - so a NaN `partialConfidenceRatio` makes
+ * `explains` false for every candidate and suppresses nothing at all, silently
+ * and without an error anywhere. `updateHarmonics` does not check, by design:
+ * it takes a `Partial<HarmonicOptions>` and its refusal contract is about
+ * settings combinations that cannot be *written*, which is a different
+ * question from a field that is not a number.
+ *
+ * So the control is where it is stopped, on the same argument `onTempoChange`
+ * makes: an empty number input is one keystroke away at all times, and a panel
+ * that emitted it would leave the score derived at a threshold the box no
+ * longer shows. The gap this does not close is a caller other than this panel
+ * handing `updateHarmonics` a NaN; nothing in the app does, and closing it
+ * belongs with the service rather than here.
+ */
+export const HARMONIC_REFUSALS: Readonly<Record<keyof HarmonicOptions, string>> = {
+  partialConfidenceRatio: 'Needs a number. Leaving it blank would suppress nothing.',
+  toleranceSec: 'Needs a number of seconds. Leaving it blank would suppress nothing.',
+  unisonConfidenceRatio: 'Needs a number. Leaving it blank would suppress nothing.',
+  unisonDurationRatio: 'Needs a number. Leaving it blank would suppress nothing.'
+};

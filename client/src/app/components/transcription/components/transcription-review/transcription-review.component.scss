@@ -258,14 +258,60 @@ $warning-color: #f39c12;
   max-width: 42ch;
 }
 
+// A second-level heading inside the controls column, for the two groups that
+// are not one of the nine knobs: the suppression thresholds and the discard
+// list. Smaller than `.review__heading` so the column still reads as one
+// section with parts, rather than three sections stacked.
+.control__subheading {
+  margin: 1.25rem 0 0.6rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid $border-color;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: $text-primary;
+}
+
+// ---------------------------------------------------------------------------
+// Advanced thresholds
+// ---------------------------------------------------------------------------
+
+.advanced {
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  padding: 0.5rem 0.6rem;
+}
+
+.advanced__summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: $text-primary;
+
+  &:focus-visible {
+    outline: 2px solid $accent-color;
+    outline-offset: 2px;
+  }
+}
+
+// The whole point of the group: these are not the measured number above.
+.advanced__note {
+  margin-top: 0.5rem;
+  padding-left: 0.45rem;
+  border-left: 3px solid $warning-color;
+  max-width: 42ch;
+}
+
+.advanced > .control:last-child {
+  margin-bottom: 0;
+}
+
 // ---------------------------------------------------------------------------
 // Discards
 // ---------------------------------------------------------------------------
 
 .discards {
   margin-top: 1rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid $border-color;
 }
 
 // Octave folds. Alongside the discards rather than styled as a warning: the
@@ -299,13 +345,97 @@ $warning-color: #f39c12;
   }
 }
 
-.discards__reason {
+.discards__group {
+  margin-bottom: 0.35rem;
+}
+
+.discards__summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: $text-secondary;
+
+  &:focus-visible {
+    outline: 2px solid $accent-color;
+    outline-offset: 2px;
+  }
+}
+
+.discards__count {
   color: $text-primary;
   font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+// Bounded rather than unbounded: a group is capped at forty rows, and forty
+// rows is still taller than the score beside it.
+.discards__rows {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.discards__row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0;
+  font-size: 0.73rem;
+}
+
+.discards__note {
+  color: $text-primary;
+  font-variant-numeric: tabular-nums;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+// Said only when a discard is not even a ghost, which is the one case the
+// staff cannot show and this list exists to cover.
+.discards__nowhere {
+  color: $warning-color;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+// Styled like `.control__button` rather than carrying its class. The two
+// answer different questions - "is this knob available?" versus "can this note
+// come back?" - and sharing a class made a spec asking whether the downbeat
+// buttons were disabled count every restore button on the panel. A selector
+// that means two things is one a test cannot ask about.
+.discards__action {
+  flex: 0 0 auto;
+  background-color: $nav-bg-secondary;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  color: $text-primary;
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.45rem;
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background-color: $accent-color;
+    border-color: $accent-hover;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $accent-color;
+    outline-offset: 2px;
+  }
+}
+
+// Narrow columns put the button under the pitch rather than squeezing both.
+@container review (max-width: 420px) {
+  .discards__row {
+    flex-wrap: wrap;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .control__button {
+  .control__button,
+  .discards__action {
     transition: none;
   }
 }

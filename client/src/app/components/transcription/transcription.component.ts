@@ -15,6 +15,7 @@ import { DerivationSettings } from '../../models/transcription.model';
 import { ComposerService } from '../../services/composer.service';
 import { messageOf } from '../../services/error-message';
 import { NoteDetector } from '../../services/note-detector';
+import { HarmonicOptions } from '../../services/transcription-harmonics';
 import {
   NOTE_DETECTOR,
   TranscriptionPhase,
@@ -259,6 +260,20 @@ export class TranscriptionComponent implements OnInit, OnDestroy {
    */
   onNoteToggled(id: string): void {
     this.transcription.toggleNote(id);
+  }
+
+  /**
+   * Moves a harmonic-suppression threshold.
+   *
+   * Its own method rather than a branch of `onSettingsChanged`, because the two
+   * are different contracts: `DerivationSettings` is what `deriveScore`
+   * consumes and these four run a step before it, deciding which detections are
+   * notes at all. `updateHarmonics` re-runs that pass over `session.rawNotes`
+   * and may rebuild the beat grid with it - the one knob on this screen that
+   * does.
+   */
+  onHarmonicsChanged(partial: Partial<HarmonicOptions>): void {
+    this.transcription.updateHarmonics(partial);
   }
 
   /**

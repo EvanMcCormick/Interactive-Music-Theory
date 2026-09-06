@@ -19,16 +19,20 @@ import {
 import { deriveScore } from '../../../../services/score-derivation';
 import {
   DEFAULT_HARMONIC_OPTIONS,
+  HarmonicOptions,
   NO_NOTE_DECISIONS
 } from '../../../../services/transcription-harmonics';
 import { TranscriptionState } from '../../../../services/transcription.service';
 import { FoldedNote } from '../../../../services/transcription-octave';
 import {
-  countDiscards,
+  MAX_LISTED_ROWS,
   describeFolds,
   describeToggle,
+  drawnIds,
   gridTempoBpm,
-  pitchName
+  groupDiscards,
+  pitchName,
+  restoredRows
 } from './review-controls';
 import { TranscriptionReviewComponent } from './transcription-review.component';
 
@@ -44,7 +48,6 @@ class FakeAlphaTabService {
   disposed = 0;
   renders = 0;
   readonly rendered: alphaTab.model.Score[] = [];
-
   /**
    * Every note-click handler registered, rather than the last one.
    *
@@ -217,6 +220,7 @@ describe('TranscriptionReviewComponent', () => {
   let tempoEmits: number[];
   let nudgeEmits: number[];
   let toggleEmits: string[];
+  let harmonicsEmits: Partial<HarmonicOptions>[];
 
   function query<T extends HTMLElement>(selector: string): T {
     return fixture.nativeElement.querySelector(selector) as T;
@@ -294,11 +298,13 @@ describe('TranscriptionReviewComponent', () => {
     tempoEmits = [];
     nudgeEmits = [];
     toggleEmits = [];
+    harmonicsEmits = [];
     component.settingsChanged.subscribe(v => settingsEmits.push(v));
     component.timeSignatureChanged.subscribe(v => meterEmits.push(v));
     component.tempoChanged.subscribe(v => tempoEmits.push(v));
     component.downbeatNudged.subscribe(v => nudgeEmits.push(v));
     component.noteToggled.subscribe(v => toggleEmits.push(v));
+    component.harmonicsChanged.subscribe(v => harmonicsEmits.push(v));
 
     push(readyState(makeSession()));
     tick(SETTLE_MS);
@@ -735,6 +741,114 @@ describe('TranscriptionReviewComponent', () => {
       expect(text('.discards')).toContain('2 harmonic partials');
     });
 
+    it('names every discarded note, with a control to restore it', () => {
+      push(
+        readyState(makeSession(), {
+          suppressed: [note(43, 0.25, 1, 'p1'), note(38, 2.75, 1, 'p2')]
+        })
+      );
+
+      const rows = fixture.nativeElement.querySelectorAll('.discards__row');
+      expect(rows.length).toBe(2);
+      expect(text('.discards')).toContain('G2 at 0.25 s');
+      expect(text('.discards')).toContain('D2 at 2.75 s');
+      expect(
+        fixture.nativeElement.querySelectorAll('.discards__action').length
+      ).toBe(2);
+    });
+
+    it('restores a note from its row, by the same route as a click', () => {
+      push(
+        readyState(makeSession(), { suppressed: [note(43, 0.25, 1, 'p1')] })
+      );
+
+      query<HTMLButtonElement>('.discards__action').click();
+
+      expect(toggleEmits).toEqual(['p1']);
+    });
+
+    // Found in the browser, on the real panel: pressing "Restore" on a note
+    // below the confidence floor *removed* it from the score. `toggleNote`
+    // moves a note across the suppression line, and a note derivation dropped
+    // never crossed it - it is still in `session.notes`, so toggling it
+    // suppresses it. The label said the opposite of what the button did.
+    it('offers no toggle on a discard a toggle cannot undo', () => {
+      push(readyState(makeSession({ confidenceFloor: 0.9 }, GRID, [
+        note(40, 0, 1, 'loud'),
+        note(45, 0.5, 0.2, 'quiet')
+      ])));
+
+      expect(fixture.nativeElement.querySelectorAll('.discards__action').length).toBe(0);
+      // ...and says what does address it, rather than leaving a bare row.
+      expect(text('.discards')).toContain('Lower the confidence floor');
+    });
+
+    it('marks exactly the two suppression reasons as restorable', () => {
+      const grouped = groupDiscards(
+        [
+          { note: note(40, 0, 1, 'a'), reason: 'belowConfidence' },
+          { note: note(41, 0.1, 1, 'b'), reason: 'unplayable' },
+          { note: note(42, 0.2, 1, 'c'), reason: 'beforeGrid' },
+          { note: note(43, 0.3, 1, 'd'), reason: 'stringTaken' }
+        ],
+        [note(80, 0.4, 1, 'e'), note(81, 0.5, 1, 'f')],
+        { keep: [], drop: ['f'] },
+        new Set<string>()
+      );
+
+      const restorable = grouped
+        .filter(group => group.restorable)
+        .map(group => group.reason);
+
+      expect(restorable.sort()).toEqual(['suppressed', 'youSuppressed']);
+      // The four a toggle cannot help all name the knob that can.
+      for (const group of grouped) {
+        expect(group.restorable ? group.remedy === null : group.remedy !== null)
+          .withContext(group.reason)
+          .toBeTrue();
+      }
+    });
+
+    it('separates what the user suppressed from what the algorithm did', () => {
+      const session = makeSession();
+      const dropped = note(40, 0, 1, '40@0');
+      push(
+        readyState(
+          {
+            ...session,
+            notes: session.notes.filter(candidate => candidate.id !== '40@0'),
+            decisions: { keep: [], drop: ['40@0'] }
+          },
+          { suppressed: [dropped, note(80, 0.2, 1, 'p1')] }
+        )
+      );
+
+      // Two groups, because a decision the user made is a decision to take
+      // back rather than one to judge.
+      expect(text('.discards')).toContain('1 suppressed by you');
+      expect(text('.discards')).toContain('1 harmonic partials');
+      expect(text('.discards')).toContain('Undo');
+    });
+
+    it('lists what the user restored, which no discard list would mention', () => {
+      const session = makeSession();
+      const restored = note(43, 0.25, 1, 'r1');
+      push(
+        readyState({
+          ...session,
+          notes: [...session.notes, restored],
+          rawNotes: [...session.notes, restored],
+          decisions: { keep: ['r1'], drop: [] }
+        })
+      );
+
+      expect(text('.restored')).toContain('Restored by you');
+      expect(text('.restored')).toContain('G2 at 0.25 s');
+
+      query<HTMLButtonElement>('.restored .discards__action').click();
+      expect(toggleEmits).toEqual(['r1']);
+    });
+
     // The conservation law `buildPreviewDoc` states: every candidate is either
     // drawn or counted here. Five partials struck together on a four-string
     // bass cannot all be drawn, and this count is the only record of the ones
@@ -750,28 +864,170 @@ describe('TranscriptionReviewComponent', () => {
       expect(text('.discards')).toContain('could not be drawn at all');
     });
 
-    it('totals every reason it lists', () => {
-      const counted = countDiscards(
+    // The one failure this whole design is arranged to prevent: the staff and
+    // the list are two views of one decision, so they are read off one
+    // structure - the index the preview built while it was writing the
+    // document - rather than computed twice from the same inputs.
+    it('marks a row undrawn exactly when the score has no ghost for it', () => {
+      const crowded = [
+        note(40, 0, 1, 'a'),
+        note(45, 0, 1, 'b'),
+        note(50, 0, 1, 'c'),
+        note(55, 0, 1, 'd'),
+        note(60, 0, 1, 'e')
+      ];
+      const state = readyState(makeSession(), { suppressed: crowded });
+      push(state);
+
+      const drawn = drawnIds(previewIndex(state));
+      const rows = component.discards.flatMap(group => group.rows);
+
+      expect(rows.length).toBe(5);
+      for (const row of rows) expect(row.drawn).toBe(drawn.has(row.id));
+
+      // Five partials struck together on a four-string bass cannot all be
+      // drawn, so this is not a vacuous comparison.
+      expect(rows.some(row => !row.drawn)).toBeTrue();
+      expect(component.omittedCount).toBe(rows.filter(row => !row.drawn).length);
+    });
+
+    it('totals every reason it lists, in reading order', () => {
+      const grouped = groupDiscards(
         [
-          { reason: 'belowConfidence' },
-          { reason: 'belowConfidence' },
-          { reason: 'unplayable' },
-          { reason: 'stringTaken' }
+          { note: note(40, 0, 1, 'a'), reason: 'belowConfidence' },
+          { note: note(41, 0.1, 1, 'b'), reason: 'belowConfidence' },
+          { note: note(42, 0.2, 1, 'c'), reason: 'unplayable' },
+          { note: note(43, 0.3, 1, 'd'), reason: 'stringTaken' }
         ],
-        [note(80, 0.2)]
+        [note(80, 0.4, 1, 'e'), note(81, 0.5, 1, 'f')],
+        { keep: [], drop: ['f'] },
+        new Set<string>()
       );
 
-      expect(counted.map(entry => entry.count)).toEqual([2, 1, 1, 1]);
-      expect(counted.map(entry => entry.reason)).toEqual([
+      expect(grouped.map(group => group.reason)).toEqual([
+        'youSuppressed',
         'belowConfidence',
         'unplayable',
         'stringTaken',
         'suppressed'
       ]);
+      expect(grouped.map(group => group.count)).toEqual([1, 2, 1, 1, 1]);
     });
 
     it('leaves out the reasons that cost nothing', () => {
-      expect(countDiscards([{ reason: 'unplayable' }], []).length).toBe(1);
+      const grouped = groupDiscards(
+        [{ note: note(42, 0, 1, 'c'), reason: 'unplayable' }],
+        [],
+        { keep: [], drop: [] },
+        new Set<string>()
+      );
+
+      expect(grouped.length).toBe(1);
+    });
+
+    // A long stem discards thousands of partials, and a row each would be a
+    // wall of text that is also a wall of DOM.
+    it('stops listing a group past the cap, and says how many it stopped at', () => {
+      const many = Array.from({ length: MAX_LISTED_ROWS + 7 }, (_, i) =>
+        note(80, i * 0.01, 1, `p${i}`)
+      );
+      const grouped = groupDiscards([], many, { keep: [], drop: [] }, new Set<string>());
+
+      expect(grouped[0].count).toBe(MAX_LISTED_ROWS + 7);
+      expect(grouped[0].rows.length).toBe(MAX_LISTED_ROWS);
+      expect(grouped[0].hidden).toBe(7);
+    });
+
+    it('skips a restore decision naming no detection rather than printing a blank', () => {
+      const session = makeSession();
+
+      expect(
+        restoredRows(
+          { ...session, decisions: { keep: ['ghost-of-a-ghost'], drop: [] } },
+          new Set<string>()
+        )
+      ).toEqual([]);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // (e) The suppression thresholds.
+  // ---------------------------------------------------------------------------
+
+  describe('the suppression thresholds', () => {
+    // fakeAsync because `NgModel` writes to the view in a microtask rather than
+    // in the change-detection pass that read the new value - so a synchronous
+    // spec reads the box before Angular has filled it, and would fail on a
+    // control that is perfectly correct in a browser.
+    it('shows the thresholds the session ran with', fakeAsync(() => {
+      push(
+        readyState({
+          ...makeSession(),
+          harmonics: {
+            toleranceSec: 0.05,
+            unisonConfidenceRatio: 0.7,
+            unisonDurationRatio: 0.4,
+            partialConfidenceRatio: 0.8
+          }
+        })
+      );
+      tick(SETTLE_MS);
+
+      expect(control<HTMLInputElement>(component.id.partialRatio).value).toBe('0.8');
+      expect(control<HTMLInputElement>(component.id.tolerance).value).toBe('0.05');
+      expect(control<HTMLInputElement>(component.id.unisonConfidence).value).toBe('0.7');
+      expect(control<HTMLInputElement>(component.id.unisonDuration).value).toBe('0.4');
+    }));
+
+    it('sends the measured ratio on its own', () => {
+      type(component.id.partialRatio, '0.4');
+
+      expect(harmonicsEmits).toEqual([{ partialConfidenceRatio: 0.4 }]);
+    });
+
+    it('sends each unmeasured threshold on its own', () => {
+      type(component.id.tolerance, '0.05');
+      type(component.id.unisonConfidence, '0.9');
+      type(component.id.unisonDuration, '0.6');
+
+      expect(harmonicsEmits).toEqual([
+        { toleranceSec: 0.05 },
+        { unisonConfidenceRatio: 0.9 },
+        { unisonDurationRatio: 0.6 }
+      ]);
+    });
+
+    // The failure Task 1 flagged: a NaN loses every comparison it is in, so a
+    // blank box would suppress nothing at all, with no error anywhere.
+    it('refuses a threshold that is not a number, beside its own control', () => {
+      type(component.id.tolerance, '');
+
+      expect(harmonicsEmits).toEqual([]);
+      expect(text('.advanced .control__refusal')).toContain('Needs a number');
+    });
+
+    it('goes on refusing until the box holds a number again', () => {
+      type(component.id.unisonConfidence, '');
+      expect(harmonicsEmits).toEqual([]);
+
+      type(component.id.unisonConfidence, '0.9');
+
+      expect(harmonicsEmits).toEqual([{ unisonConfidenceRatio: 0.9 }]);
+      expect(text('.advanced .control__refusal')).toBe('');
+    });
+
+    it('says the ratio is the measured one and the other three are not', () => {
+      expect(text(`#${component.id.partialRatioHint}`)).toContain('120 candidate pairs');
+      expect(text(`#${component.id.partialRatioHint}`)).toContain('Lower keeps more');
+      expect(text('.advanced__note')).toContain('Unmeasured');
+    });
+
+    it('attaches the hint to the control that it explains', () => {
+      expect(
+        control<HTMLInputElement>(component.id.partialRatio).getAttribute(
+          'aria-describedby'
+        )
+      ).toBe(component.id.partialRatioHint);
     });
   });
 
@@ -916,7 +1172,10 @@ describe('TranscriptionReviewComponent', () => {
         fixture.nativeElement.querySelectorAll('.review__controls input, .review__controls select')
       );
 
-      expect(controls.length).toBe(8);
+      // Nine knobs less the two downbeat buttons, plus the four suppression
+      // thresholds. A control added without a label fails the loop below; this
+      // number is what catches one added without being counted at all.
+      expect(controls.length).toBe(12);
       for (const element of controls) {
         const label = fixture.nativeElement.querySelector(`label[for="${element.id}"]`);
         expect(element.id)
