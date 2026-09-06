@@ -79,11 +79,25 @@ function asGhosts(beats: BeatDoc[]): BeatDoc[] {
  * identity between the two arrays, and re-deriving it by pitch and onset would
  * be a second, weaker rule.
  *
- * `omitted`, if given, collects the candidates that do not appear: a pitch no
- * fingering can reach, and an onset that is not a time in seconds. Neither has
- * anywhere to sit on a tab staff. An out-parameter rather than a widened
- * return, following `quantizeBar`: the document is what callers are here for,
- * and the count is a footnote a review panel prints under it.
+ * `omitted`, if given, collects the candidates that do not appear, and every
+ * candidate either appears or lands there:
+ *
+ *     candidates === ghost heads drawn + omitted.length
+ *
+ * Three ways a candidate is lost, and all three report here. A pitch no
+ * fingering can reach and an onset that is not a time in seconds have nowhere
+ * to sit on a tab staff at all. The third is a ghost struck on a string
+ * another ghost in the same slot already holds: `quantizeBar` keeps one note
+ * per string, so it turns the second away, and the `dropped` out-parameter is
+ * the only record of it. Not passing that argument is what made this docblock
+ * false for a while - on the pinned detector fixture at a 0.7 confidence
+ * floor, thirteen of thirty-three candidates disappeared with no glyph and no
+ * count, because a higher floor shortens `derived.doc` and the ghosts from the
+ * vanished bars all pile onto the last one, where collisions are certain.
+ *
+ * An out-parameter rather than a widened return, following `quantizeBar`: the
+ * document is what callers are here for, and the count is a footnote a review
+ * panel prints under it.
  *
  * A ghost past the end of the derived score is held in its last bar rather
  * than given a bar of its own. Extending the document would mean writing voice
@@ -148,6 +162,39 @@ export function buildPreviewDoc(
   const { timeSignature } = session.grid;
   const { finestDivision } = session.settings;
 
+  // Keyed by the `PlacedNote` object rather than by an id the type does not
+  // carry, exactly as `deriveScore` names its own quantization losses.
+  const source = new Map<PlacedNote, DetectedNote>();
+  for (const entry of placement.placed) source.set(entry.placed, entry.note);
+
+  // Quantized once per bar index, *outside* the staff mapper below. A document
+  // can carry several staves and each would otherwise re-quantize the same
+  // ghosts, counting every string collision once per staff and reporting a
+  // total larger than the number of candidates. The resulting beat lists are
+  // then shared by reference across staves, which is the same stance the
+  // module already takes on voice 1: nothing here or downstream writes to a
+  // `BeatDoc`.
+  const ghostBars: BeatDoc[][] = Array.from({ length: lastBar + 1 }, (_, index) => {
+    // One array per bar, drained straight into `omitted`, so the losses come
+    // out in bar order and nothing has to be matched up afterwards.
+    const taken: PlacedNote[] = [];
+    // `quantizeBar([])` is the full-bar rest a discard-free bar gets.
+    const beats = quantizeBar(byBar.get(index) ?? [], timeSignature, finestDivision, taken);
+
+    for (const note of taken) {
+      const origin = source.get(note);
+      // Sound: every element of `byBar` was registered in `source` above, and
+      // `quantizeBar` only ever hands back notes it was given.
+      if (origin) omitted?.push(origin);
+    }
+
+    return asGhosts(beats);
+  });
+
+  // A staff longer than `masterBars` is malformed, but it costs one line to
+  // give its trailing bars the ghost voice too rather than an undefined one.
+  const restBar = asGhosts(quantizeBar([], timeSignature, finestDivision));
+
   const withGhosts = (bar: BarDoc, index: number): BarDoc => ({
     ...bar,
     voices: [
@@ -155,12 +202,7 @@ export function buildPreviewDoc(
       // sharing it is the strongest available statement that rendering the
       // preview cannot alter what *Open in Composer* exports.
       ...bar.voices,
-      {
-        beats: asGhosts(
-          // `quantizeBar([])` is the full-bar rest a discard-free bar gets.
-          quantizeBar(byBar.get(index) ?? [], timeSignature, finestDivision)
-        )
-      }
+      { beats: ghostBars[index] ?? restBar }
     ]
   });
 

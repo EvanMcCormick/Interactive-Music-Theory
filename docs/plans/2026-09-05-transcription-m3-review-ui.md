@@ -251,15 +251,33 @@ M1 reports every dropped note and why; M2 reports the harmonic partials it remov
 export function buildPreviewDoc(
   session: TranscriptionSession,
   derived: DerivedScore,
-  suppressed: DetectedNote[]
+  suppressed: DetectedNote[],
+  omitted?: DetectedNote[]
 ): ScoreDoc;
 ```
 
 It clones `derived.doc`, places `derived.dropped.map(d => d.note)` plus `suppressed` through the same placement, quantizes them per bar with the session's settings, marks every resulting note `effects.isGhost = true`, and adds them as **voice 2** of each bar. Voice 1 is untouched.
 
-Notes that `assignFingering` cannot place (genuinely unplayable) have nowhere to go on a tab staff — leave them out and let the component report the count.
+**`omitted` is the conservation law, not a diagnostic.** Some candidates cannot be drawn, and every one of them has to be counted or the panel above the score lies:
 
-Tests: voice 1 is deep-equal to `derived.doc`'s voice 1; every note in voice 2 is a ghost; a discarded note lands in the bar its onset falls in; a clean session produces a document with no ghost content; unplayable notes are excluded rather than crashing.
+```
+candidates === ghost heads drawn + omitted.length
+```
+
+Three ways to lose one. A pitch `assignFingering` cannot place and an onset that is not a time in seconds have nowhere to go on a tab staff. The third is a ghost struck on a string another ghost in the same slot already holds — `addToChord` keeps one note per string and turns the second away, reporting it through `quantizeBar`'s fourth argument. **Pass that argument.** Omitting it is silent: `deriveScore` passes one and reports the loss as `stringTaken`, and a preview that does not simply drops the note with no glyph and no count.
+
+It bites hardest at exactly the setting a user reaches for to inspect discards. Raising `confidenceFloor` removes the later notes, `derived.doc` collapses to fewer bars, and `Math.min(lastBar, entry.bar)` piles every ghost from the vanished bars into the last one, where collisions are certain. Measured on the pinned basic-pitch fixture, before the fourth argument was passed:
+
+| floor | candidates | ghosts drawn | `omitted` | vanished |
+|---|---|---|---|---|
+| 0.3 | 26 | 26 | 0 | 0 |
+| 0.6 | 28 | 28 | 0 | 0 |
+| 0.7 | 33 | 20 | 0 | **13** |
+| 0.9 | 34 | 20 | 0 | **14** |
+
+**Quantize once per bar index, outside the staff mapper.** A document can carry several staves; quantizing inside the per-staff map counts every collision once per staff and reports more omissions than there were candidates. Share the resulting `BeatDoc[]` across staves — the module already shares voice 1 by reference, and nothing writes to a `BeatDoc`.
+
+Tests: voice 1 is *identical* (`toBe`, not `toEqual`) to `derived.doc`'s voice 1; every note in voice 2 is a ghost; a discarded note lands in the bar its onset falls in; a clean session produces a document with no ghost content; unplayable notes are excluded rather than crashing. And the conservation law above, over the real pinned fixture, swept across `confidenceFloor` at 0.3, 0.6, 0.7 and 0.9. Count *heads* — non-rest voice-2 beats whose first note is not tied — since a split span writes tied continuations that would be counted twice.
 
 **Verify in the browser before committing.** Render a preview document through the existing alphaTab path and look at it. The open question this plan cannot answer from a spec is whether a bar whose voice 2 is entirely rests renders visible clutter. If it does, add voice 2 only to bars that actually carry ghosts, and say so in your report.
 
