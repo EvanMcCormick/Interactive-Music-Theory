@@ -20,11 +20,19 @@
  * on the state, because deciding a note is an artefact is interpretation and
  * interpretation has to be reversible.
  *
+ * That dependency is why moving suppression into `rederive` had to bring beat
+ * tracking with it. A threshold change is a different tracker input, so the
+ * grid is rebuilt - except where the user has already corrected it by hand,
+ * which outranks anything the tracker would infer. `rederive` argues that rule
+ * out.
+ *
  * **Detection and derivation are separated by the session.** `deriveScore` is
  * pure and fast, so `updateSettings` re-derives from `session.notes` - plain
  * objects, kept for exactly this - without touching the detector. That is M1's
  * two-layer model paying off: changing tuning, capo, grid or confidence floor
- * costs a millisecond, not a re-run of a model.
+ * costs a millisecond, not a re-run of a model. `updateHarmonics` reaches one
+ * step further back, to `session.rawNotes`, and still never asks the detector
+ * anything: suppression is a pure function of that list and four thresholds.
  *
  * ## Buffer ownership
  *
@@ -73,9 +81,14 @@
  * injection token, which would leave two files that have to be read together,
  * or the docblocks, which are the part worth keeping next to the code.
  *
- * If the *code* grows past the ceiling the answer is different: suppression
- * moving into the re-derive path is the change that would do it, and at that
- * point the pipeline assembly in `transcribe` becomes a module of its own.
+ * If the *code* grows past the ceiling the answer is different. Suppression
+ * moving into the re-derive path was named here as the change that would do
+ * it; it has now happened, and it did not - the code went from roughly 190
+ * lines to roughly 236, because the pass itself is one call and the rule about
+ * the beat grid is `resuppressed`, a pure function at the foot of the file
+ * that a reader can take or leave. The file is longer, and all of the growth
+ * is the argument for that rule. If it does cross, the extraction is still the
+ * one named: the pipeline assembly in `transcribe` becomes a module of its own.
  */
 
 import { InjectionToken, Injectable, inject } from '@angular/core';
@@ -94,7 +107,11 @@ import { trackBeats } from './beat-tracking';
 import { DETECTION_SAMPLE_RATE, NoteDetector } from './note-detector';
 import { fretboardFault } from './transcription-fingering';
 import { DerivedScore, deriveScore } from './score-derivation';
-import { suppressHarmonics } from './transcription-harmonics';
+import {
+  DEFAULT_HARMONIC_OPTIONS,
+  HarmonicOptions,
+  suppressHarmonics
+} from './transcription-harmonics';
 import { barGridFault } from './transcription-quantize';
 
 export type TranscriptionPhase =
@@ -127,9 +144,11 @@ export interface TranscriptionState {
    *
    * At state level rather than on the session because it is what the current
    * suppression pass concluded, not a fact about the audio - `session.rawNotes`
-   * is that. Today it is fixed at detection time; when suppression moves into
-   * the re-derive path it becomes a per-derivation answer, which is where a
-   * state field is the right home.
+   * is that. It was fixed at detection time and is now a per-derivation answer:
+   * `rederive` re-runs the pass whenever a threshold moves, and this is the
+   * list that pass produced. The same array as long as the decisions hold, so a
+   * change that leaves the kept set alone does not hand a subscriber a
+   * new-but-equal list to re-render.
    *
    * Empty rather than null when there is nothing: a run with no partials and a
    * run that has not happened are both "nothing was suppressed", and the phase
@@ -296,10 +315,16 @@ export class TranscriptionService {
 
       // Nothing the detector reported is thrown away here: the partials go on
       // the state for M3 to render, and the whole raw list stays on the
-      // session, so suppression can one day be re-run with different options
-      // without re-running the model.
+      // session beside the thresholds this ran with, so `rederive` can re-run
+      // suppression on different numbers without re-running the model.
+      //
+      // Copied rather than aliased to the exported default, which is a shared
+      // const: `updateHarmonics` replaces the object rather than mutating it,
+      // but a session holding the module's own default would be one careless
+      // caller away from changing every session there will ever be.
+      const harmonics: HarmonicOptions = { ...DEFAULT_HARMONIC_OPTIONS };
       const suppressed: DetectedNote[] = [];
-      const notes = suppressHarmonics(detection.notes, {}, suppressed);
+      const notes = suppressHarmonics(detection.notes, harmonics, suppressed);
 
       // Tracked once, kept twice. `grid` is the working copy that `updateTempo`
       // and `nudgeDownbeat` replace; `trackedGrid` is what the tracker actually
@@ -321,6 +346,7 @@ export class TranscriptionService {
         // The suppressed notes, not `detection.notes`. See the module docblock.
         grid: tracked,
         trackedGrid: tracked,
+        harmonics,
         settings
       };
 
@@ -379,11 +405,16 @@ export class TranscriptionService {
   /**
    * Re-derives the score from the session already in hand.
    *
-   * Synchronous, and the reason the raw events are kept: no decode, no
-   * detection, no beat tracking - just `deriveScore` over the same
-   * `session.notes`, which are plain objects untouched by either of the
-   * pipeline's buffer transfers. Milliseconds, so every setting can be a live
-   * knob rather than a form with an Apply button.
+   * Synchronous, and the reason the raw events are kept: no decode and no
+   * detection, just `deriveScore` over `session.notes`, which are plain objects
+   * untouched by either of the pipeline's buffer transfers. A change that moves
+   * a suppression threshold does re-run suppression and may re-track the beat
+   * as well - see `rederive` - and that costs about a millisecond on real
+   * material against a tenth of one for `deriveScore` alone. Measured on the
+   * largest accuracy fixture, 31 detections: 0.8 ms median and 1.5 ms worst
+   * with a re-track, under 0.1 ms without one, where the re-track is nearly all
+   * of it. So every setting here stays a live knob rather than a form with an
+   * Apply button.
    *
    * A no-op unless a transcription has succeeded: there is nothing to re-derive
    * before the first run, during one, or after a failure, and the alternative -
@@ -402,6 +433,8 @@ export class TranscriptionService {
    *
    * Meter is not here because meter is not a `DerivationSettings` field; it
    * lives on the beat grid. `updateTimeSignature` changes it, at the same cost.
+   * Nor are the suppression thresholds, for the reason set out on
+   * `TranscriptionSession.harmonics`; `updateHarmonics` changes those.
    */
   updateSettings(partial: Partial<DerivationSettings>): void {
     this.rederive(session => ({
@@ -414,6 +447,35 @@ export class TranscriptionService {
         // copies the tuning for the same reason.
         tuning: [...(partial.tuning ?? session.settings.tuning)]
       }
+    }));
+  }
+
+  /**
+   * Moves a harmonic-suppression threshold and re-runs the pass on the raw
+   * detection.
+   *
+   * The knob M2 had no way to offer. Suppression removes about three quarters
+   * of what the detector reports - more than any other stage - and it ran
+   * inside `transcribe` on hardcoded defaults, so a real note it destroyed
+   * could only be recovered by re-uploading the file, which is deterministic
+   * and gives the same answer. `session.rawNotes` was already kept for exactly
+   * this; `session.harmonics` is the other half, and this is the door.
+   *
+   * Routed through `rederive` and not around it, so it inherits the whole
+   * refusal contract: a no-op unless a transcription has succeeded, and a
+   * combination that cannot be written turns the change away rather than
+   * throwing out of the handler that moved the control.
+   *
+   * **May rebuild the beat grid**, which no other knob here does. Beat tracking
+   * runs on the suppressed notes by design, so a different kept set is a
+   * different tracker input; `rederive` re-tracks unless the user has already
+   * corrected the beats by hand, in which case their correction stands. That
+   * rule and why it is drawn where it is are set out on `rederive`.
+   */
+  updateHarmonics(partial: Partial<HarmonicOptions>): void {
+    this.rederive(session => ({
+      ...session,
+      harmonics: { ...session.harmonics, ...partial }
     }));
   }
 
@@ -536,6 +598,51 @@ export class TranscriptionService {
    * be quietly absorbed instead of surfacing. Those still throw, and should:
    * a session sitting in `ready` derived successfully once already, so they are
    * bugs rather than user-facing failures.
+   *
+   * ## Suppression, and the beat grid it drags behind it
+   *
+   * Suppression used to run once, inside `transcribe`. It runs here now, over
+   * `session.rawNotes` and `session.harmonics`, which is what makes those four
+   * thresholds live knobs instead of constants a re-upload could not change.
+   *
+   * It is skipped when neither input moved, and that is not an optimisation of
+   * the answer - it is the same answer, since the pass is a pure function of
+   * exactly those two. What the skip buys is identity: `notes` and `suppressed`
+   * stay the arrays they were, so a tuning change does not hand a subscriber a
+   * new-but-equal discard list to re-render.
+   *
+   * When the kept set does move, the beat grid is stale. **Beat tracking runs
+   * on the suppressed notes**, deliberately - harmonic partials carry onsets of
+   * their own and an onset-driven tracker fed them follows the artefacts - so a
+   * different kept set is a different tracker input, and a grid tracked from
+   * the old one describes a note list that no longer exists.
+   *
+   * Rebuilding it is right *unless the user has already corrected it*, in which
+   * case rebuilding would silently throw that correction away, and an explicit
+   * correction outranks an inference. `session.trackedGrid` is what makes the
+   * question answerable: it is what `trackBeats` returned, `grid` is what is in
+   * force, and `withTempo` and `nudgedDownbeat` replace only the latter.
+   *
+   * The test is on `beatsSec` by identity rather than on the grid object,
+   * which matters: `updateTimeSignature` spreads the grid to restamp the meter
+   * and so replaces the object every time, including with a meter equal to the
+   * one already there. `grid !== trackedGrid` would read that as a beat
+   * correction and stop re-tracking for the rest of the session - a wrong
+   * answer arrived at silently. A meter change moves no beats, and it is beats
+   * the tracker would overwrite, so `beatsSec` is the field the question is
+   * actually about. The meter itself survives either way: a re-track is handed
+   * `session.grid.timeSignature`, which is the corrected one.
+   *
+   * After a re-track **both** fields take the new grid. A `trackedGrid` left
+   * behind would differ from `grid` by identity from then on, and the next
+   * threshold change would read a correction nobody made.
+   *
+   * A grid the user has corrected outlives the notes it was tracked from, and
+   * that is coherent rather than a compromise: `BeatGrid` is a list of times in
+   * seconds against audio that has not changed, and `deriveScore` reads it as
+   * one - `secondsToBeats` places a note against the beats and extrapolates
+   * past both ends. Nothing downstream asks which note list produced the grid,
+   * because there is nothing it could do with the answer.
    */
   private rederive(
     change: (session: TranscriptionSession) => TranscriptionSession
@@ -543,14 +650,18 @@ export class TranscriptionService {
     const current = this.state;
     if (current.phase !== 'ready' || current.session === null) return;
 
-    const session = change(current.session);
+    const changed = change(current.session);
 
+    // Checked before any work is done rather than after: neither suppression
+    // nor beat tracking can turn a faulted combination into a sound one, and
+    // re-tracking does not touch the meter this reads.
+    //
     // Both faults are combinations of live knobs, and neither can be left to
     // the controls: an HTML `min`/`max` is one caller's decoration, and a typed
     // or pasted value walks straight past it.
     const fault =
-      barGridFault(session.grid.timeSignature, session.settings.finestDivision)
-      ?? fretboardFault(session.settings);
+      barGridFault(changed.grid.timeSignature, changed.settings.finestDivision)
+      ?? fretboardFault(changed.settings);
     if (fault !== null) {
       // The whole change is turned away, not the offending half of it: a
       // partly applied settings object would leave the state describing
@@ -560,14 +671,19 @@ export class TranscriptionService {
       return;
     }
 
+    const suppressed: DetectedNote[] = [];
+    const session = resuppressed(changed, current.session, suppressed);
+
     this.push({
       phase: 'ready',
       progress: 1,
       session,
       derived: deriveScore(session),
-      // Carried, not recomputed: suppression runs once, at detection time.
-      // When it moves into this path it becomes another line above.
-      suppressed: current.suppressed,
+      // The array `resuppressed` filled, or - when it handed `changed` straight
+      // back, meaning it found nothing to redo - the one already on the state.
+      // Session identity is the signal, so this cannot drift out of step with
+      // what was actually recomputed.
+      suppressed: session === changed ? current.suppressed : suppressed,
       error: null,
       refusal: null
     });
@@ -597,6 +713,79 @@ export class TranscriptionService {
   private push(state: TranscriptionState): void {
     this.stateSubject.next(state);
   }
+}
+
+/**
+ * `session` with `notes` rebuilt from `rawNotes` and `harmonics`, re-tracking
+ * the beat grid if that moved the tracker's input.
+ *
+ * `previous` is the session the change was made from, and is read for one
+ * thing only: whether either suppression input is the same object it was. The
+ * pass is pure in exactly those two, so when neither moved the answer cannot
+ * have, and the whole function is `return session` - which keeps `notes` the
+ * array it already was rather than replacing it with an equal one.
+ *
+ * `suppressed` collects the partials removed, matching `suppressHarmonics`'
+ * own out-parameter, and is filled **only when the kept set actually changed**.
+ * Untouched otherwise, and in that case `session` itself comes straight back
+ * by identity - which is how `rederive` tells the two apart without comparing
+ * two equal lists to find out that nothing happened.
+ *
+ * The re-track rule, and why the test is `beatsSec` rather than the grid, are
+ * argued at length on `TranscriptionService.rederive`.
+ */
+function resuppressed(
+  session: TranscriptionSession,
+  previous: TranscriptionSession,
+  suppressed: DetectedNote[]
+): TranscriptionSession {
+  if (
+    session.rawNotes === previous.rawNotes &&
+    session.harmonics === previous.harmonics
+  ) {
+    return session;
+  }
+
+  const removed: DetectedNote[] = [];
+  const notes = suppressHarmonics(session.rawNotes, session.harmonics, removed);
+
+  // A threshold that moved without changing a single decision - which is most
+  // of a drag along a slider, since the thresholds are continuous and the
+  // decisions are not. Nothing downstream has anything to do about it, and
+  // re-tracking here would rebuild the grid for an unchanged note list.
+  if (sameNotes(notes, session.notes)) return session;
+
+  // One at a time rather than spread: a long stem discards thousands of
+  // partials, and `push(...removed)` would eventually hit the argument limit.
+  // `suppressHarmonics` avoids it for the same reason.
+  for (const note of removed) suppressed.push(note);
+
+  const suppressedSession: TranscriptionSession = { ...session, notes };
+
+  // Their correction outranks the tracker's inference, and rebuilding would
+  // discard it without saying so.
+  if (session.grid.beatsSec !== session.trackedGrid.beatsSec) return suppressedSession;
+
+  // The session's own meter, not the tracked grid's: a meter correction is not
+  // a beat correction and has to survive this.
+  const tracked = trackBeats(notes, session.durationSec, session.grid.timeSignature);
+
+  // Both, so `beatsSec` identity goes on answering "has the user corrected
+  // this?". A `trackedGrid` left at the old object would answer yes forever.
+  return { ...suppressedSession, grid: tracked, trackedGrid: tracked };
+}
+
+/**
+ * Whether two kept sets are the same notes in the same order.
+ *
+ * By element identity, which is exact rather than approximate here:
+ * `suppressHarmonics` returns the objects it was given, from one array, under
+ * one comparator. Two runs that reached the same decisions therefore return the
+ * same objects in the same order, and any difference in decision shows up as a
+ * difference in this.
+ */
+function sameNotes(a: DetectedNote[], b: DetectedNote[]): boolean {
+  return a.length === b.length && a.every((note, index) => note === b[index]);
 }
 
 /** Matches the id shape `ComposerService` and `ComposerLibraryService` use. */

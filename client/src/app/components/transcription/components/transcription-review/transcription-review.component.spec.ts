@@ -11,6 +11,7 @@ import {
 } from '../../../../models/transcription.model';
 import { AlphaTabService } from '../../../../services/alpha-tab.service';
 import { deriveScore } from '../../../../services/score-derivation';
+import { DEFAULT_HARMONIC_OPTIONS } from '../../../../services/transcription-harmonics';
 import { TranscriptionState } from '../../../../services/transcription.service';
 import { FoldedNote } from '../../../../services/transcription-octave';
 import { countDiscards, describeFolds, gridTempoBpm } from './review-controls';
@@ -102,6 +103,7 @@ function makeSession(
     bendFrameRateHz: 86.13,
     grid,
     trackedGrid: grid,
+    harmonics: DEFAULT_HARMONIC_OPTIONS,
     settings: { ...createDefaultDerivationSettings(), ...settings }
   };
 }

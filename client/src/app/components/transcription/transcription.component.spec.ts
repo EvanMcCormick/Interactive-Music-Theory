@@ -21,6 +21,7 @@ import {
 import { ComposerService } from '../../services/composer.service';
 import { DetectionResult, NoteDetector } from '../../services/note-detector';
 import { deriveScore } from '../../services/score-derivation';
+import { DEFAULT_HARMONIC_OPTIONS } from '../../services/transcription-harmonics';
 import {
   NOTE_DETECTOR,
   TranscriptionService,
@@ -171,6 +172,7 @@ function makeSession(settings: Partial<DerivationSettings> = {}): TranscriptionS
     bendFrameRateHz: 86.13,
     grid: GRID,
     trackedGrid: GRID,
+    harmonics: DEFAULT_HARMONIC_OPTIONS,
     settings: { ...createDefaultDerivationSettings(), ...settings }
   };
 }

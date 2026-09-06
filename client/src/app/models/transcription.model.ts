@@ -12,6 +12,12 @@
  *
  * `BeatGrid` sits on the interpretation side despite looking like measured
  * data; see its docblock.
+ *
+ * `TranscriptionSession.harmonics` is a third group of knobs, on the same side
+ * of the line as `DerivationSettings` but a step earlier: it decides which
+ * detections are notes at all, where `DerivationSettings` decides how the
+ * surviving ones are written. `deriveScore` never reads it, which is exactly
+ * why it is not a `DerivationSettings` field.
  */
 
 import {
@@ -20,6 +26,13 @@ import {
   STANDARD_BASS_TUNING,
   TimeSignature
 } from './composer.model';
+// The one import here that points at a service, and deliberately `import
+// type`: `HarmonicOptions` is calibration - every field of it is justified by a
+// measurement printed in `harmonic-eval/`, and that argument belongs beside the
+// code it justifies rather than out here. A type-only import is erased, so the
+// cycle it would otherwise close with `transcription-harmonics.ts`'s own
+// `DetectedNote` import never exists at runtime.
+import type { HarmonicOptions } from '../services/transcription-harmonics';
 
 // Instrument reference data lives in composer.model.ts alongside
 // STANDARD_GUITAR_TUNING; re-exported here so transcription callers can reach
@@ -164,17 +177,21 @@ export interface TranscriptionSession {
   /**
    * The notes derivation works from: the detector's output with harmonic
    * partials removed.
+   *
+   * Derived, not given: `suppressHarmonics(rawNotes, harmonics)` is the whole
+   * of it, and `TranscriptionService.rederive` recomputes it whenever either
+   * input moves. Still the same objects `rawNotes` holds - see below.
    */
   notes: DetectedNote[];
   /**
    * Everything the detector reported, before suppression.
    *
    * Kept because of the two-layer model at the top of this file: these are the
-   * facts, and harmonic suppression is a five-parameter heuristic calibrated on
-   * one fixture — interpretation, on the facts side of the line only because
-   * M2 runs it once at detection time. Three quarters of a real detection goes
-   * through it, so discarding the input would mean re-running the model to undo
-   * a heuristic. `notes` is a subset of this, not a transformation of it: the
+   * facts, and harmonic suppression is a four-threshold heuristic — an
+   * interpretation, which M2 ran once at detection time and which now re-runs
+   * on every derivation from this list and `harmonics`. Three quarters of a
+   * real detection goes through it, so discarding the input would mean
+   * re-running the model to undo a heuristic. `notes` is a subset of this, not a transformation of it: the
    * objects are the same ones.
    */
   rawNotes: DetectedNote[];
@@ -214,6 +231,23 @@ export interface TranscriptionSession {
    * `nudgeDownbeat` both spread the session and replace `grid` alone.
    */
   trackedGrid: BeatGrid;
+  /**
+   * The thresholds the suppressor ran with. Live: changing them re-derives.
+   *
+   * Here rather than in `DerivationSettings` because that type is the contract
+   * `deriveScore` consumes, and suppression happens a step before it: these
+   * four numbers decide which detections `notes` holds, not how those notes are
+   * written. A field `deriveScore` had to ignore would blur a line M1 drew and
+   * M2 and M3 both rest on.
+   *
+   * Kept alongside `rawNotes` for the same reason `rawNotes` is kept at all.
+   * Suppression is the pipeline's largest discard - three quarters of a real
+   * detection - and until these were on the session the only way to re-run it
+   * with different numbers was to re-upload the file. Together the pair is
+   * everything the pass needs, so `notes` is a derived quantity rather than a
+   * fact, and `TranscriptionService.rederive` rebuilds it.
+   */
+  harmonics: HarmonicOptions;
   settings: DerivationSettings;
 }
 

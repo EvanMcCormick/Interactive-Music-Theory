@@ -9,7 +9,7 @@ import { trackBeats } from './beat-tracking';
 import { detectionsOf } from './harmonic-eval/detections.fixture';
 import { buildPreviewDoc } from './preview-score';
 import { DerivedScore, deriveScore } from './score-derivation';
-import { suppressHarmonics } from './transcription-harmonics';
+import { DEFAULT_HARMONIC_OPTIONS, suppressHarmonics } from './transcription-harmonics';
 
 /**
  * The preview is only trustworthy if voice 1 is provably the document that
@@ -50,6 +50,7 @@ function session(
     bendFrameRateHz: 86.13,
     grid: GRID,
     trackedGrid: GRID,
+    harmonics: DEFAULT_HARMONIC_OPTIONS,
     settings: createDefaultDerivationSettings()
   };
 }
@@ -410,6 +411,7 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
         // two fields, exactly as `transcribe` assembles it.
         grid: tracked,
         trackedGrid: tracked,
+        harmonics: DEFAULT_HARMONIC_OPTIONS,
         settings: { ...createDefaultDerivationSettings(), confidenceFloor }
       }
     };

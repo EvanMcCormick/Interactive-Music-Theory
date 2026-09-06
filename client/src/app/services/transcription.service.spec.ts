@@ -5,7 +5,7 @@ import { trackBeats } from './beat-tracking';
 import { detectionsOf } from './harmonic-eval/detections.fixture';
 import { MATERIAL } from './harmonic-eval/material';
 import { DetectionResult, NoteDetector } from './note-detector';
-import { suppressHarmonics } from './transcription-harmonics';
+import { DEFAULT_HARMONIC_OPTIONS, suppressHarmonics } from './transcription-harmonics';
 import {
   NOTE_DETECTOR,
   TranscriptionService,
@@ -50,6 +50,20 @@ const PLAYED_PITCHES: number[] = (
  * the played line comes back exactly.
  */
 const KEPT_COUNT = 18;
+
+/**
+ * A `partialConfidenceRatio` that keeps more than the default does, measured.
+ *
+ * The clause is `note.confidence < root.confidence * ratio`, so lowering it
+ * makes the suppressor harder to convince: on `walking` the default 0.65 keeps
+ * eighteen of the twenty-eight detections and this keeps twenty-three. Chosen
+ * because it moves the answer in the direction the whole milestone exists for -
+ * a threshold the user can back off when the pipeline has eaten a real note.
+ */
+const LOOSE_RATIO = 0.3;
+
+/** What `LOOSE_RATIO` keeps of the twenty-eight, measured not chosen. */
+const LOOSE_KEPT_COUNT = 23;
 
 /**
  * A `NoteDetector` that returns a fixed answer without a worker or a model.
@@ -1129,6 +1143,229 @@ describe('TranscriptionService', () => {
       service.updateTimeSignature({ numerator: 3, denominator: 4, isCommon: false });
 
       expect(service.state.session?.trackedGrid).toBe(trackedGrid!);
+    });
+  });
+
+  /**
+   * The largest discard in the pipeline, and until now the only one that could
+   * not be argued with.
+   *
+   * Suppression ran inside `transcribe` on hardcoded defaults, so a real note
+   * it destroyed - three across the sixteen accuracy fixtures - could only be
+   * recovered by re-uploading the file, which is deterministic and gives the
+   * same answer. These are the tests that say it is a knob now.
+   */
+  describe('updateHarmonics', () => {
+    it('changes the kept set without asking the detector again', async () => {
+      await service.transcribe(wavFile());
+      expect(service.state.session?.notes.length).toBe(KEPT_COUNT);
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      // The whole point: a different answer out of the same detection.
+      expect(detector.calls).toBe(1);
+      expect(service.state.session?.notes.length).toBe(LOOSE_KEPT_COUNT);
+      expect(service.state.session?.notes.map(n => n.id)).toEqual(
+        suppressHarmonics(DETECTED, { partialConfidenceRatio: LOOSE_RATIO }).map(n => n.id)
+      );
+      expect(service.state.session?.harmonics.partialConfidenceRatio).toBe(LOOSE_RATIO);
+    });
+
+    it('leaves the other three thresholds where they were', async () => {
+      await service.transcribe(wavFile());
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      expect(service.state.session?.harmonics).toEqual({
+        ...DEFAULT_HARMONIC_OPTIONS,
+        partialConfidenceRatio: LOOSE_RATIO
+      });
+    });
+
+    it('moves the discard list with the kept set', async () => {
+      await service.transcribe(wavFile());
+      expect(service.state.suppressed.length).toBe(DETECTED.length - KEPT_COUNT);
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      // Refilled from the new call site, not carried from the old pass: the
+      // ghosts M3 renders have to describe the suppression now in force.
+      const suppressed = service.state.suppressed;
+      expect(suppressed.length).toBe(DETECTED.length - LOOSE_KEPT_COUNT);
+
+      // ...and the two still partition the detection with nothing left over.
+      const kept = new Set(service.state.session?.notes.map(n => n.id));
+      expect(suppressed.every(n => !kept.has(n.id))).toBeTrue();
+      expect(suppressed.length + kept.size).toBe(DETECTED.length);
+    });
+
+    it('keeps notes a subset of rawNotes rather than a copy of one', async () => {
+      // What the docblocks on both fields claim: the same objects, not equal
+      // ones. A suppressor that rebuilt them would break every id-based thing
+      // downstream without failing anything that only compares values.
+      await service.transcribe(wavFile());
+      const rawNotes = service.state.session?.rawNotes ?? [];
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      const raw = new Set<DetectedNote>(rawNotes);
+      expect(service.state.session?.notes.every(n => raw.has(n))).toBeTrue();
+      expect(service.state.suppressed.every(n => raw.has(n))).toBeTrue();
+      expect(service.state.session?.rawNotes).toBe(rawNotes);
+    });
+
+    it('does not disturb anything when the numbers did not move', async () => {
+      await service.transcribe(wavFile());
+      const before = service.state;
+
+      // A control set back to the value it already had, or dragged too little
+      // to change a decision. The thresholds are continuous and the decisions
+      // they arbitrate are not, so this is most of a drag along a slider.
+      service.updateHarmonics({
+        partialConfidenceRatio: DEFAULT_HARMONIC_OPTIONS.partialConfidenceRatio
+      });
+
+      expect(service.state.session?.notes).toBe(before.session!.notes);
+      expect(service.state.suppressed).toBe(before.suppressed);
+      expect(service.state.session?.grid).toBe(before.session!.grid);
+    });
+
+    it('is a no-op before a transcription has succeeded', () => {
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      expect(service.state.phase).toBe('idle');
+      expect(service.state.session).toBeNull();
+    });
+
+    it('goes through the same machinery, so it clears a standing refusal', async () => {
+      await service.transcribe(wavFile());
+      service.updateSettings({ capo: 30 });
+      expect(service.state.refusal).not.toBeNull();
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      expect(service.state.refusal).toBeNull();
+      expect(service.state.phase).toBe('ready');
+    });
+  });
+
+  /**
+   * The complication under a live suppression threshold.
+   *
+   * Beat tracking runs on the suppressed notes by design, so moving a
+   * threshold moves the tracker's input, and a grid tracked from the old kept
+   * set describes a note list that no longer exists. It has to be rebuilt -
+   * unless the user has already corrected it by hand, in which case rebuilding
+   * would throw that away silently, and an explicit correction outranks an
+   * inference.
+   *
+   * `session.trackedGrid` is what makes the question answerable, and these are
+   * as much about keeping it answerable as about either branch.
+   */
+  describe('the beat grid under a suppression change', () => {
+    /** Where the tracker would put the beats for a given threshold. */
+    const beatsFor = (ratio: number, timeSignature = FOUR_FOUR): number[] =>
+      trackBeats(
+        suppressHarmonics(DETECTED, { partialConfidenceRatio: ratio }),
+        DURATION_SEC,
+        timeSignature
+      ).beatsSec;
+
+    it('has something to say: the two note sets track differently', () => {
+      // Without this every branch below would pass on a service that never
+      // re-tracked at all.
+      expect(beatsFor(LOOSE_RATIO)).not.toEqual(
+        beatsFor(DEFAULT_HARMONIC_OPTIONS.partialConfidenceRatio)
+      );
+    });
+
+    it('re-tracks when the user has not corrected it', async () => {
+      await service.transcribe(wavFile());
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      expect(service.state.session?.grid.beatsSec).toEqual(beatsFor(LOOSE_RATIO));
+    });
+
+    it('moves trackedGrid with it, so the next change asks the same question', async () => {
+      await service.transcribe(wavFile());
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      // Both fields, or the identity test reads a correction nobody made and
+      // every later threshold change silently stops re-tracking.
+      expect(service.state.session?.trackedGrid).toBe(service.state.session!.grid);
+
+      // Which is what this proves: a second change re-tracks too.
+      service.updateHarmonics({
+        partialConfidenceRatio: DEFAULT_HARMONIC_OPTIONS.partialConfidenceRatio
+      });
+
+      expect(service.state.session?.grid.beatsSec).toEqual(
+        beatsFor(DEFAULT_HARMONIC_OPTIONS.partialConfidenceRatio)
+      );
+      expect(service.state.session?.trackedGrid).toBe(service.state.session!.grid);
+    });
+
+    it('keeps a tempo the user corrected', async () => {
+      await service.transcribe(wavFile());
+      service.updateTempo(90);
+      const corrected = service.state.session?.grid.beatsSec ?? [];
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      expect(service.state.session?.grid.beatsSec).toEqual(corrected);
+      // ...and the change still happened, so this is not a silent refusal.
+      expect(service.state.session?.notes.length).toBe(LOOSE_KEPT_COUNT);
+    });
+
+    it('keeps a downbeat the user nudged', async () => {
+      await service.transcribe(wavFile());
+      service.nudgeDownbeat(1);
+      const corrected = service.state.session?.grid.beatsSec ?? [];
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      expect(service.state.session?.grid.beatsSec).toEqual(corrected);
+      expect(service.state.session?.notes.length).toBe(LOOSE_KEPT_COUNT);
+    });
+
+    it('leaves trackedGrid alone when it keeps the user grid', async () => {
+      await service.transcribe(wavFile());
+      const tracked = service.state.session?.trackedGrid;
+      service.updateTempo(90);
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      // Still the measured pulse, which is the only copy of it and the whole
+      // reason the field exists.
+      expect(service.state.session?.trackedGrid).toBe(tracked!);
+    });
+
+    it('does not read a meter change as a beat correction', async () => {
+      // `updateTimeSignature` spreads the grid to restamp the meter, so it
+      // replaces the grid *object* every time without moving a single beat. A
+      // `grid !== trackedGrid` test would call that a correction and stop
+      // re-tracking for the rest of the session.
+      const three: TimeSignature = { numerator: 3, denominator: 4, isCommon: false };
+      await service.transcribe(wavFile());
+      service.updateTimeSignature(three);
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      expect(service.state.session?.grid.beatsSec).toEqual(beatsFor(LOOSE_RATIO, three));
+      // The corrected meter survives the re-track: what goes back to the
+      // tracker is the session's meter, not the tracked grid's.
+      expect(service.state.session?.grid.timeSignature).toEqual(three);
+    });
+
+    it('leaves the grid alone when only a derivation setting moved', async () => {
+      await service.transcribe(wavFile());
+      const grid = service.state.session?.grid;
+
+      service.updateSettings({ capo: 3 });
+
+      expect(service.state.session?.grid).toBe(grid!);
     });
   });
 
