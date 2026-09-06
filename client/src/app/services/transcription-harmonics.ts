@@ -87,6 +87,41 @@ import { DetectedNote } from '../models/transcription.model';
  * something. `harmonic-accuracy.spec.ts` reports the trade-off curve the
  * default was chosen from.
  *
+ * ## On real audio the confidence ratio separates nothing, and no value of it
+ * ## would
+ *
+ * The paragraphs above are true of the sixteen Karplus-Strong materials the
+ * ratio was calibrated on. `harmonic-eval/real-material-accuracy.spec.ts`
+ * measures the same quantity on a real bass stem — 1224 frozen detections, the
+ * first real material this module has ever been shown — and the calibration
+ * does not survive it. Restricted to pairs struck together at a partial
+ * interval, which is the population the partial branch actually arbitrates:
+ *
+ * | population                        |   n | min  |  q1  | med  |  q3  | max  |
+ * |-----------------------------------|-----|------|------|------|------|------|
+ * | synthetic **artefacts**           |  59 | 0.33 | 0.44 | 0.49 | 0.55 | 0.94 |
+ * | synthetic **real notes**          |   6 | 0.96 | 1.07 | 2.46 | 2.48 | 2.55 |
+ * | **real stem, partials**           | 218 | 0.37 | 0.50 | 0.60 | 0.73 | 1.41 |
+ *
+ * On synthesis the two populations do not touch — 0.94 against 0.96 — so any
+ * cut in that 0.02-wide gap is perfect and 0.65 sits in it. Real material
+ * fills the gap: 15 % of its partials sit above 0.81, the first quartile of
+ * the synthetic real-note population, and 67 of them survive the pass on this
+ * clause and on nothing else — not the onset guard, not the overlap window,
+ * not a missing interval.
+ *
+ * So `partialConfidenceRatio` was never miscalibrated. The fixture was too
+ * easy, and it hid that the discriminator has no separating power on real
+ * audio. Moving it does not help, because on real material there is nothing on
+ * the other side of any cut: a flat 1.20 takes the surviving pairs from 86 to
+ * 10 and destroys **24** real notes on synthesis against the current three.
+ * Two hypotheses that would have kept the ratio and scaled it were measured
+ * and refuted; `real-material-accuracy.spec.ts` carries both, so neither gets
+ * retried from memory.
+ *
+ * `monophonic` below is what this module does about it, and it is deliberately
+ * not another threshold.
+ *
  * Pure, and independent of any detector.
  */
 
@@ -185,6 +220,35 @@ export const DEFAULT_HARMONIC_OPTIONS: HarmonicOptions = {
   unisonDurationRatio: 0.5,
   partialConfidenceRatio: 0.65
 };
+
+/**
+ * How far apart two onsets may fall and still be one attack, for `monophonic`.
+ *
+ * ## It is a frame count, not a threshold, and it must not be rounded off
+ *
+ * Basic Pitch reports on frames of 256 samples at 22.05 kHz, so an onset lag
+ * is quantised to multiples of **11.61 ms** and this number cannot vary
+ * continuously: it picks how many frames count as together, and every value
+ * between two grid points names the same rule.
+ * `harmonic-eval/real-material-accuracy.spec.ts` prints the grid off the real
+ * stem and asserts it. Under 50 ms the lags that occur are 0, 11.6, 23.2,
+ * 34.8 and 46.4 ms, plus a 1.3 ms step that appears at model-window
+ * boundaries.
+ *
+ * So three grid points sit at or under 30 ms and the next is clear of it, with
+ * 6.8 ms of margin below and 4.8 ms above — anything from about 24 to 34 ms is
+ * this same rule. Measured on the real stem, one frame (a 20 ms window) leaves
+ * **16** surviving pairs at a partial interval, all of them a clean two frames
+ * apart; two frames takes them all, to zero. That is where the number comes
+ * from, and 25 ms or 35 ms would not be a different setting.
+ *
+ * A different detector, or a different hop, moves the grid and this with it.
+ *
+ * Not on `HarmonicOptions`, and not a knob: the three ratios there are a
+ * calibration over a population, and this is arithmetic about the detector's
+ * output format. There is nothing here for a listener to trade off.
+ */
+export const MONOPHONIC_ATTACK_SEC = 0.03;
 
 /**
  * Per-note verdicts that outrank the thresholds, by `DetectedNote.id`.
@@ -294,11 +358,24 @@ function byOnsetThenPitch(a: DetectedNote, b: DetectedNote): number {
  * override in play. It is the *option* overrides: a partial `HarmonicOptions`
  * spread over the defaults. Renamed rather than left sitting next to a
  * parameter that overrides something else entirely.
+ *
+ * `monophonic` is a statement about the **source**, not a fourth threshold.
+ * See `explains`, which is where it acts, for what it does and why it is not
+ * one. `false` — the default — is the pass exactly as it was: the clause is
+ * one `if` that cannot be reached, and the accuracy harness runs without it so
+ * that it keeps measuring the algorithm rather than the declaration.
+ *
+ * It sits before `suppressed` rather than after it because `suppressed` is an
+ * out-parameter and out-parameters go last; the cost was that every existing
+ * four-argument call had to say what kind of source it is transcribing, which
+ * the compiler asked for one site at a time. That is the right question to
+ * have been made to answer.
  */
 export function suppressHarmonics(
   notes: DetectedNote[],
   thresholds: Partial<HarmonicOptions> = {},
   decisions: NoteDecisions = NO_NOTE_DECISIONS,
+  monophonic = false,
   suppressed?: DetectedNote[]
 ): DetectedNote[] {
   const options: HarmonicOptions = { ...DEFAULT_HARMONIC_OPTIONS, ...thresholds };
@@ -326,7 +403,10 @@ export function suppressHarmonics(
     // so the notes it explains meet it as a root a few iterations later.
     if (keep.has(note.id)) {
       kept.push(note);
-    } else if (drop.has(note.id) || kept.some(root => explains(root, note, options))) {
+    } else if (
+      drop.has(note.id) ||
+      kept.some(root => explains(root, note, options, monophonic))
+    ) {
       removed.push(note);
     } else {
       kept.push(note);
@@ -344,11 +424,95 @@ export function suppressHarmonics(
   return kept.sort(byOnsetThenPitch);
 }
 
-/** True when `note` is a partial, or a re-detection, of the lower `root`. */
+/**
+ * True when `note` is a partial, or a re-detection, of the lower `root`.
+ *
+ * ## `monophonic` is a source declaration, not a smarter threshold
+ *
+ * On a source that can only sound one note at a time, two detections sharing
+ * an attack a harmonic interval apart *are* a partial and its fundamental, by
+ * construction. Nothing has to be inferred from the pair, so nothing is: the
+ * clause below returns true without reading `partialConfidenceRatio` at all.
+ *
+ * That is the honest framing and it is worth insisting on, because the shape
+ * of the change invites the other one. This is not a better discriminator. The
+ * module docblock's table is why there is no better discriminator to find: on
+ * real audio the ratio's two populations run straight through each other, so
+ * asking the question at all is what was wrong. A caller who can say what the
+ * source is answers it from outside instead.
+ *
+ * ## Measured
+ *
+ * On the real stem, same-attack pairs at a partial interval go **67 → 0** and
+ * the monophonic share of kept notes 66.4 % → 76.9 %.
+ * `harmonic-eval/real-material-accuracy.spec.ts` holds both.
+ *
+ * On the sixteen synthetic fixtures, given only to the ones that are actually
+ * monophonic, precision goes 61.2 → 61.5 with recall and the three destroyed
+ * real notes unmoved: it removes artefacts and costs nothing.
+ *
+ * **That last number rests on two fixtures.** Only `walking` and `guitar` of
+ * the sixteen are monophonic — no two of their ground-truth notes overlap —
+ * so "costs nothing on synthesis" is measured over two materials and is
+ * weakly established, whatever the aggregate figures look like. Applied
+ * blanketly to all sixteen, which is what a caller declaring a polyphonic
+ * stem monophonic would be doing, it costs seven real notes rather than three
+ * and takes F1 from 65.5 to 64.6. The gate is load-bearing and the evidence
+ * that it is safe is thin; a second real stem, ideally chordal, is what would
+ * settle it.
+ *
+ * ## What it does not do
+ *
+ * **It does not touch the unison branch.** Interval 0 has its own two-clause
+ * test, and on a monophonic source a same-attack unison is a re-detection by
+ * exactly the argument above, so the question is real. It is left alone for
+ * two reasons and neither is inertia.
+ *
+ * The first is that there is nothing to act on, anywhere. Measured on the
+ * real stem, the detector reports **no** same-attack unison pair at all — not
+ * one in 1224 detections, before suppression or after — and neither of the two
+ * monophonic synthetic fixtures produces one either. A re-detection of the
+ * same pitch arrives staggered, which is what the two-clause test was built
+ * for and what its duration clause reads.
+ *
+ * Measured, then, extending the prior to interval 0 is exactly free: the
+ * harness scores it and every column is identical to the shipped rule's. That
+ * is not evidence for it. "It costs nothing" and "it does nothing" are the
+ * same measurement here, and shipping a rule on it would repeat in a new
+ * costume the mistake this module's docblock exists to undo — reading a number
+ * gathered under conditions that could not produce it as though it were a
+ * verdict. `HARMONIC_SEMITONES`' `+28` and `+31` are the same situation and
+ * are treated the same way.
+ *
+ * The second is that the branches want to stay disjoint. A same-attack unison
+ * on a monophonic source is a re-detection, but a *staggered* one is a
+ * repeated note, which basslines are full of and which this module can
+ * already destroy. One rule responsible for interval 0 keeps that failure to
+ * one place. `measures the prior against the unison branch it does not touch`
+ * in the harness carries both figures, so the day a capture produces such a
+ * pair, this paragraph fails rather than quietly going stale.
+ *
+ * **It does not outrank the listener.** `keep` is read before this function is
+ * ever called, so an explicit override still wins — see `NoteDecisions`. That
+ * ordering matters more here than it did for the thresholds: a threshold is a
+ * calibration the user can argue with note by note, and this is a claim about
+ * the whole recording that is simply false for the one bar where they overdub
+ * a double stop.
+ *
+ * **It does not say so afterwards.** `suppressed` collects the notes this
+ * removes with no note of why, exactly as it does for the ratio, so a note
+ * lost to the declaration is indistinguishable in the UI from one lost to the
+ * calibration. They are not equally actionable — the first is undone by
+ * unticking a box and the second is not — and carrying a reason out of here is
+ * follow-up work rather than a widening to make in passing.
+ * `harmonic-eval/removal-attribution.ts` can already attribute both, so the
+ * measurement side can tell them apart even though the app cannot.
+ */
 function explains(
   root: DetectedNote,
   note: DetectedNote,
-  options: HarmonicOptions
+  options: HarmonicOptions,
+  monophonic: boolean
 ): boolean {
   const interval = note.pitch - root.pitch;
   if (!HARMONIC_SEMITONES.includes(interval)) return false;
@@ -368,6 +532,23 @@ function explains(
     // straddles the onset of the note it duplicates, and the symmetric
     // overlap above is what catches the earlier half of such a pair.
     if (note.onsetSec < root.onsetSec - options.toleranceSec) return false;
+
+    // The declared source, before the calibration and instead of it. Two
+    // notes struck together on something that plays one note at a time are a
+    // partial and its fundamental whatever the model thought of either, so
+    // `partialConfidenceRatio` is not consulted rather than being consulted
+    // and overruled. See this function's docblock.
+    //
+    // Symmetric, and it has to be: the guard above already allows the partial
+    // to be detected up to `toleranceSec` *before* its own fundamental, and a
+    // one-sided window would let exactly those pairs through to a clause that
+    // cannot judge them.
+    if (
+      monophonic &&
+      Math.abs(note.onsetSec - root.onsetSec) <= MONOPHONIC_ATTACK_SEC
+    ) {
+      return true;
+    }
 
     // Overlap alone would delete real music: an octave leap over a ringing
     // low note, a slapped pop over its thumbed root, pumping octave eighths.

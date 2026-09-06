@@ -290,6 +290,44 @@ export interface TranscriptionSession {
    */
   harmonics: HarmonicOptions;
   /**
+   * Whether this recording can sound only one note at a time, or `null` to
+   * infer it from the tuning family.
+   *
+   * A statement about the **source**, which is why it is here rather than in
+   * `harmonics` beside the ratios. Those are a calibration over a population
+   * of candidate pairs and this is a fact about the audio: on a monophonic
+   * stem two detections sharing an attack a harmonic interval apart *are* a
+   * partial and its fundamental, and `suppressHarmonics` acts on that without
+   * consulting `partialConfidenceRatio` at all. `explains` argues why that is
+   * not a fourth threshold in a trench coat, and the module docblock above it
+   * carries the measurement — on real audio the ratio's two populations run
+   * straight through each other, so the discriminator being skipped is one
+   * that provably cannot answer.
+   *
+   * ## `null` is the third state and it is the interesting one
+   *
+   * Not "false". `null` means nobody has said, and the answer is then taken
+   * from `settings.tuning`: a bass tuning is read as monophonic and a guitar
+   * tuning as not. That is the same shape as `tuningLabel` and `key`, which
+   * also fall back to something derived rather than to a placeholder.
+   *
+   * Deriving it live rather than once at `transcribe` is the whole point.
+   * `createDefaultDerivationSettings` starts every session on a bass tuning,
+   * because the instrument is chosen in the review panel *after* the file is
+   * transcribed — so a default fixed at session creation would be "monophonic"
+   * for every guitar upload there will ever be, which is the case that deletes
+   * real notes. Reading the tuning at each derivation means picking "Guitar,
+   * standard" turns the prior off, and it is why `resuppressed` compares the
+   * resolved value rather than the three inputs it used to.
+   *
+   * A `true` or `false` here is the listener's own declaration and outranks
+   * the tuning from then on, in both directions: an inference that overwrote
+   * an explicit answer would be the beat grid's mistake made again. The
+   * listener's per-note `decisions` outrank this in turn — `keep` is read
+   * before `explains` is ever called.
+   */
+  monophonic: boolean | null;
+  /**
    * Notes the user has overruled the suppressor on, by `DetectedNote.id`.
    *
    * `harmonics` moves the whole population at once and this moves one note.

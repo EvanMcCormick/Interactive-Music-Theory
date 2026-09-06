@@ -130,6 +130,23 @@ interface Candidate {
   ratioFor?: (root: DetectedNote) => number;
   /** Suppress a same-attack harmonic pair outright, on a monophonic source. */
   monoWindowSec?: number;
+  /**
+   * Apply `monoWindowSec` only to material that is actually monophonic.
+   *
+   * What the shipped rule does. Without it a candidate is measured blanketly
+   * over all sixteen synthetic fixtures, fourteen of which are polyphonic and
+   * would never be handed the declaration - which is the honest way to price
+   * a caller getting the declaration wrong, and not the way to price the
+   * rule.
+   */
+  gated?: boolean;
+  /**
+   * Extend `monoWindowSec` to interval 0 as well.
+   *
+   * Not shipped. `explains` in `transcription-harmonics.ts` says why the
+   * unison branch is left alone; this is what measures the claim.
+   */
+  unison?: boolean;
   /** Partial intervals to consider. Defaults to `HARMONIC_SEMITONES`. */
   intervals?: readonly number[];
 }
@@ -142,18 +159,19 @@ function explains(root: DetectedNote, note: DetectedNote, candidate: Candidate):
   if (note.onsetSec > root.offsetSec + o.toleranceSec) return false;
   if (root.onsetSec > note.offsetSec + o.toleranceSec) return false;
 
+  const sameAttack =
+    candidate.monoWindowSec !== undefined &&
+    Math.abs(note.onsetSec - root.onsetSec) <= candidate.monoWindowSec;
+
   if (interval > 0) {
     if (note.onsetSec < root.onsetSec - o.toleranceSec) return false;
-    if (
-      candidate.monoWindowSec !== undefined &&
-      Math.abs(note.onsetSec - root.onsetSec) <= candidate.monoWindowSec
-    ) {
-      return true;
-    }
+    if (sameAttack) return true;
     const ratio = candidate.ratioFor?.(root) ?? o.partialConfidenceRatio;
 
     return note.confidence < root.confidence * ratio;
   }
+
+  if (candidate.unison && sameAttack) return true;
 
   return (
     note.confidence < root.confidence * o.unisonConfidenceRatio &&
@@ -235,6 +253,33 @@ interface Cost {
   destroyed: number;
 }
 
+/**
+ * Whether a material's ground truth ever sounds two notes at once.
+ *
+ * Read off the truth rather than off the detections, which is the point: it
+ * asks what was *played*, so it answers the same question a listener answers
+ * when they tick the box, and it cannot be moved by a suppression change.
+ *
+ * Two of the sixteen come back true - see `finds only two monophonic fixtures
+ * to gate on`, which is where scope decision 2's caveat is asserted rather
+ * than merely written down.
+ */
+function isMonophonic(notes: readonly { onsetSec: number; durationSec: number }[]): boolean {
+  const end = (note: { onsetSec: number; durationSec: number }): number =>
+    note.onsetSec + note.durationSec;
+
+  return !notes.some(a =>
+    notes.some(b => b !== a && a.onsetSec < end(b) && b.onsetSec < end(a))
+  );
+}
+
+/** The candidate as this material would actually be given it. See `gated`. */
+function asGiven(candidate: Candidate, material: (typeof MATERIAL)[number]): Candidate {
+  if (!candidate.gated || isMonophonic(material.notes)) return candidate;
+
+  return { ...candidate, monoWindowSec: undefined };
+}
+
 /** The sixteen synthetic fixtures, scored under a candidate rule. */
 function syntheticCost(candidate: Candidate): Cost {
   const scores = [];
@@ -242,7 +287,7 @@ function syntheticCost(candidate: Candidate): Cost {
   for (const material of MATERIAL) {
     const detections = detectionsOf(material.name);
     const before = score(material.notes, detections);
-    const after = score(material.notes, keepUnder(detections, candidate));
+    const after = score(material.notes, keepUnder(detections, asGiven(candidate, material)));
     scores.push(after);
     material.notes.forEach((_, index) => {
       if (before.matchOf[index] !== -1 && after.matchOf[index] === -1) destroyed++;
@@ -272,6 +317,67 @@ describe('harmonic suppression on real material', () => {
     expect(kept.length).toBe(986);
   });
 
+  it('finds only two monophonic fixtures to gate on', () => {
+    // Scope decision 2, asserted rather than written down. The gated numbers
+    // in the candidate table rest on this: fourteen of the sixteen synthetic
+    // materials sound two notes at once somewhere, so they are never handed
+    // the declaration and contribute nothing but their unchanged scores.
+    const mono = MATERIAL.filter(material => isMonophonic(material.notes));
+
+    log('');
+    log(`GATE  monophonic of ${MATERIAL.length} synthetic materials: ` +
+      mono.map(material => material.name).join(' '));
+
+    expect(mono.map(material => material.name)).toEqual(['walking', 'guitar']);
+
+    // And the real stem is the third piece of material in the whole harness,
+    // the only real one, and the only one with more than a handful of notes.
+    // One file is one file: this is why "costs nothing" is reported as weakly
+    // measured wherever it is quoted.
+    expect(mono.length).toBeLessThan(MATERIAL.length / 4);
+  });
+
+  it('measures the prior against the unison branch it does not touch', () => {
+    // Decision (b), taken deliberately rather than by omission. `explains` in
+    // `transcription-harmonics.ts` confines the prior to `interval > 0`. On a
+    // monophonic source a same-attack *unison* is a re-detection by exactly
+    // the same argument, so the question is real - and the answer is that
+    // there is nothing to act on.
+    const unisons = sameAttackPairs(raw).filter(pair => pair.interval === 0);
+
+    log('');
+    log(`UNI   raw same-attack unison pairs: ${unisons.length}`);
+    log(`UNI   surviving same-attack unison pairs: ` +
+      String(sameAttackPairs(kept).filter(pair => pair.interval === 0).length));
+
+    // Not one, in 1224 detections. A re-detection of the same pitch arrives
+    // staggered - which is what the existing two-clause test reads, and why it
+    // reads duration - so extending the prior to interval 0 would fire zero
+    // times on the only real material there is.
+    expect(unisons.length).toBe(0);
+    expect(sameAttackPairs(kept).filter(pair => pair.interval === 0).length).toBe(0);
+
+    // It is free on synthesis too, and that is the finding rather than an
+    // argument for doing it: `monophony prior, gated + unison` in the table
+    // below is identical to `monophony prior, gated` in every column, because
+    // the two monophonic fixtures produce no same-attack unison either. So the
+    // extension has never been offered a case anywhere, on any material, and
+    // "it costs nothing" and "it does nothing" are the same measurement.
+    //
+    // Shipping it on that would repeat the mistake this whole file exists to
+    // document: reading a number gathered under conditions that could not
+    // produce it as though it were a verdict. `HARMONIC_SEMITONES`' `+28` and
+    // `+31` are the same situation and are treated the same way - kept on the
+    // physics, flagged as unmeasured - and the difference here is that the
+    // unison branch already has a rule, so leaving it alone costs nothing
+    // either. The day a capture produces such a pair, this expectation fails
+    // rather than quietly going stale.
+    for (const material of MATERIAL.filter(m => isMonophonic(m.notes))) {
+      const pairs = sameAttackPairs(detectionsOf(material.name));
+      expect(pairs.filter(pair => pair.interval === 0).length).toBe(0);
+    }
+  });
+
   it('matches the shipped suppressor exactly at its own settings', () => {
     // The local `explains` above is a copy, and copies rot. This is what stops
     // it: at the defaults it must reproduce `suppressHarmonics` note for note,
@@ -279,6 +385,20 @@ describe('harmonic suppression on real material', () => {
     const mine = keepUnder(raw, CURRENT);
     expect(mine.length).toBe(kept.length);
     expect(mine.map(note => note.id)).toEqual(kept.map(note => note.id));
+
+    // And with the prior on, which is the half that matters now: the shipped
+    // rule and the candidate this file scores have to be the same rule, or the
+    // table below is measuring something that does not ship.
+    const declared = suppressHarmonics(raw, {}, undefined, true);
+    const mineDeclared = keepUnder(raw, { name: 'mono', monoWindowSec: SAME_ATTACK_SEC });
+    expect(mineDeclared.map(note => note.id)).toEqual(declared.map(note => note.id));
+
+    // Off, the shipped pass is byte-identical to what it was before the prior
+    // existed. Stated as an identity between the two calls rather than as a
+    // count, so it holds whatever the counts become.
+    expect(suppressHarmonics(raw, {}, undefined, false).map(note => note.id)).toEqual(
+      kept.map(note => note.id)
+    );
   });
 
   it('leaves a monophonic stem sounding two notes at once', () => {
@@ -373,8 +493,9 @@ describe('harmonic suppression on real material', () => {
 
     // Three grid points at or under 30 ms and the next one clear of it, and
     // the window has 6.8 ms of margin below and 4.8 ms above. One frame - a
-    // 20 ms window - leaves every pair exactly two frames apart, and there are
-    // 16 of those; two frames takes them. So anything from about 24 ms to
+    // 20 ms window - leaves every pair that is exactly two frames apart, which
+    // the candidate table below prices at 16 surviving pairs at a partial
+    // interval; two frames takes them all. So anything from about 24 ms to
     // 34 ms is this same rule, which is why 30 ms is a frame count rather than
     // a threshold anyone should try to tune.
     const under = seconds.filter(lag => lag <= SAME_ATTACK_SEC);
@@ -526,7 +647,14 @@ describe('harmonic suppression on real material', () => {
       { name: 'register ramp 1.0, -0.02/st', ratioFor: ramp(1.0, 0.02, 0.65) },
       { name: 'interval tolerance +-1', intervals: widened },
       { name: 'monophony prior, 20 ms', monoWindowSec: 0.02 },
-      { name: 'monophony prior, 30 ms', monoWindowSec: 0.03 }
+      { name: 'monophony prior, 30 ms', monoWindowSec: 0.03 },
+      { name: 'monophony prior, gated', monoWindowSec: 0.03, gated: true },
+      {
+        name: 'monophony prior, gated + unison',
+        monoWindowSec: 0.03,
+        gated: true,
+        unison: true
+      }
     ];
 
     log('');
@@ -552,11 +680,32 @@ describe('harmonic suppression on real material', () => {
       at(name).pairs.filter(pair => known(pair.interval)).length;
 
     // The monophony prior is the only candidate that reaches zero doubled
-    // pairs at a partial interval, and it is the cheapest of the three on
-    // synthesis - even measured, as here, applied blanketly to sixteen
-    // fixtures of which fourteen are polyphonic and would never be given it.
+    // pairs at a partial interval. Blanketly - handed to all sixteen fixtures,
+    // fourteen of which are polyphonic and would never be given it - it costs
+    // seven real notes against the current three, which is the honest price of
+    // a caller declaring a chordal stem monophonic.
     expect(knownPairs('monophony prior, 30 ms')).toBe(0);
     expect(at('monophony prior, 30 ms').cost.destroyed).toBe(7);
+
+    // Gated to the material that is actually monophonic - which is what ships
+    // - it is free. Identical on the real stem, because the real stem is
+    // monophonic and is given it either way; and on synthesis it gains a
+    // precision point while destroying the same three real notes as the
+    // current rule, none extra.
+    //
+    // **That is two fixtures' worth of evidence.** `walking` and `guitar` are
+    // the only monophonic materials of the sixteen, so the fourteen others
+    // contribute nothing but their unchanged scores to this comparison. "Costs
+    // nothing on synthesis" is true of what has been measured and is weakly
+    // established; a second real stem, ideally chordal, is what would settle
+    // it. See `finds only two monophonic fixtures to gate on`.
+    const gated = at('monophony prior, gated');
+    expect(knownPairs('monophony prior, gated')).toBe(0);
+    expect(gated.pairs.length).toBe(at('monophony prior, 30 ms').pairs.length);
+    expect(gated.cost.destroyed).toBe(at(CURRENT.name).cost.destroyed);
+    expect(gated.cost.recall).toBeCloseTo(at(CURRENT.name).cost.recall, 6);
+    expect(gated.cost.precision).toBeGreaterThan(at(CURRENT.name).cost.precision);
+    expect(gated.cost.f1).toBeGreaterThan(at(CURRENT.name).cost.f1);
 
     // A register-scaled threshold cannot get there, and costs far more getting
     // nowhere near: nineteen real notes destroyed against three.

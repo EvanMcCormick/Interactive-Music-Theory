@@ -144,7 +144,7 @@ describe('harmonic suppression accuracy', () => {
     for (const material of MATERIAL) {
       const detections = detectionsOf(material.name);
       const removed: DetectedNote[] = [];
-      const kept = suppressHarmonics(detections, {}, NO_NOTE_DECISIONS, removed);
+      const kept = suppressHarmonics(detections, {}, NO_NOTE_DECISIONS, false, removed);
 
       const before = score(material.notes, detections);
       const after = score(material.notes, kept);

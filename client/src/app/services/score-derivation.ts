@@ -235,14 +235,23 @@ const HIGHEST_BASS_STRING = 52;
  *
  * Exported because the review panel's presets and this rule have to agree
  * about what "Guitar, standard" means, and a second copy of the threshold is
- * how they would stop agreeing.
+ * how they would stop agreeing. `TranscriptionSession.monophonic` is the
+ * second caller and it wants the predicate rather than the voice: what it
+ * asks the tuning is not which clef to draw but whether the source is likely
+ * to be played one note at a time.
  *
  * An empty tuning gives `-Infinity`, and a tuning carrying a NaN gives NaN;
  * both compare false against the threshold and land on bass, which is the
- * pipeline's default instrument.
+ * pipeline's default instrument. Written as a negated `>` so NaN keeps
+ * landing there rather than falling through a `<=`.
  */
+export function isBassTuning(tuning: readonly number[]): boolean {
+  return !(Math.max(...tuning) > HIGHEST_BASS_STRING);
+}
+
+/** The clef, program and label that family is written with. */
 export function instrumentVoiceFor(tuning: readonly number[]): InstrumentVoice {
-  return Math.max(...tuning) > HIGHEST_BASS_STRING ? GUITAR_VOICE : BASS_VOICE;
+  return isBassTuning(tuning) ? BASS_VOICE : GUITAR_VOICE;
 }
 
 const C_MAJOR: KeySignature = { fifths: 0, mode: 'major' };

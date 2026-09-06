@@ -18,19 +18,34 @@
  * removal is attributable: the moment this copy drifts from the real rule,
  * some removal stops being explainable and the suite fails.
  *
+ * ## The monophony prior is attributable here and nowhere else
+ *
+ * `suppressHarmonics` can now remove a same-attack harmonic pair because the
+ * caller declared the source monophonic, without reading
+ * `partialConfidenceRatio` at all. That is a different reason from the ratio's
+ * and a differently actionable one - a note lost to the declaration comes back
+ * by unticking a box - but the shipped `suppressed` list carries notes and not
+ * reasons, so the app cannot tell them apart. `rootOf` takes the flag so that
+ * the measurement side can: pass what the pass was given, and every removal
+ * stays attributable under either rule.
+ *
  * Reporting only. Nothing here decides anything; it just says what did.
  *
  * Test-support code. Nothing in the shipped app imports it.
  */
 
 import { DetectedNote } from '../../models/transcription.model';
-import { DEFAULT_HARMONIC_OPTIONS, HARMONIC_SEMITONES } from '../transcription-harmonics';
+import {
+  DEFAULT_HARMONIC_OPTIONS,
+  HARMONIC_SEMITONES,
+  MONOPHONIC_ATTACK_SEC
+} from '../transcription-harmonics';
 
 /** How long a detection sounds for. */
 export const span = (n: DetectedNote): number => n.offsetSec - n.onsetSec;
 
 /** `explains`, which is private to the suppressor, reproduced for reporting. */
-function explains(root: DetectedNote, note: DetectedNote): boolean {
+function explains(root: DetectedNote, note: DetectedNote, monophonic: boolean): boolean {
   const o = DEFAULT_HARMONIC_OPTIONS;
   const interval = note.pitch - root.pitch;
   if (!HARMONIC_SEMITONES.includes(interval)) return false;
@@ -39,6 +54,9 @@ function explains(root: DetectedNote, note: DetectedNote): boolean {
 
   if (interval > 0) {
     if (note.onsetSec < root.onsetSec - o.toleranceSec) return false;
+    if (monophonic && Math.abs(note.onsetSec - root.onsetSec) <= MONOPHONIC_ATTACK_SEC) {
+      return true;
+    }
 
     return note.confidence < root.confidence * o.partialConfidenceRatio;
   }
@@ -52,12 +70,19 @@ function explains(root: DetectedNote, note: DetectedNote): boolean {
 /**
  * The kept note that explains `note`'s removal, or undefined if none does.
  *
- * The sort is the load-bearing part; see this file's docblock.
+ * The sort is the load-bearing part; see this file's docblock. `monophonic`
+ * must be what the pass being reported on was given, or a removal the prior
+ * made comes back unattributed and one the prior did not make is credited to
+ * it.
  */
-export function rootOf(kept: DetectedNote[], note: DetectedNote): DetectedNote | undefined {
+export function rootOf(
+  kept: DetectedNote[],
+  note: DetectedNote,
+  monophonic = false
+): DetectedNote | undefined {
   return [...kept]
     .sort((a, b) => a.pitch - b.pitch || b.confidence - a.confidence || a.onsetSec - b.onsetSec)
-    .find(root => explains(root, note));
+    .find(root => explains(root, note, monophonic));
 }
 
 /** One removal, in the terms a threshold could be chosen in. */

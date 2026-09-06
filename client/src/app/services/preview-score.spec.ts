@@ -71,6 +71,7 @@ function session(
     trackedGrid: GRID,
     beatsPerPulse: 1,
     harmonics: DEFAULT_HARMONIC_OPTIONS,
+    monophonic: null,
     decisions: NO_NOTE_DECISIONS,
     settings: createDefaultDerivationSettings()
   };
@@ -416,7 +417,7 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
     suppressed: DetectedNote[];
   } {
     const suppressed: DetectedNote[] = [];
-    const notes = suppressHarmonics(DETECTED, {}, NO_NOTE_DECISIONS, suppressed);
+    const notes = suppressHarmonics(DETECTED, {}, NO_NOTE_DECISIONS, false, suppressed);
     const tracked = trackBeats(notes, DURATION_SEC, FOUR_FOUR);
 
     return {
@@ -434,6 +435,7 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
         trackedGrid: tracked,
         beatsPerPulse: 1,
         harmonics: DEFAULT_HARMONIC_OPTIONS,
+        monophonic: null,
         decisions: NO_NOTE_DECISIONS,
         settings: { ...createDefaultDerivationSettings(), confidenceFloor }
       }
@@ -888,7 +890,7 @@ describe('the preview index over every captured material', () => {
   } {
     const detections = detectionsOf(name);
     const suppressed: DetectedNote[] = [];
-    const notes = suppressHarmonics(detections, {}, NO_NOTE_DECISIONS, suppressed);
+    const notes = suppressHarmonics(detections, {}, NO_NOTE_DECISIONS, false, suppressed);
     const durationSec =
       Math.ceil(Math.max(...detections.map(entry => entry.offsetSec))) + 1;
     const tracked = trackBeats(notes, durationSec, FOUR_FOUR);
@@ -904,6 +906,7 @@ describe('the preview index over every captured material', () => {
       trackedGrid: tracked,
       beatsPerPulse: 1,
       harmonics: DEFAULT_HARMONIC_OPTIONS,
+      monophonic: null,
       decisions: NO_NOTE_DECISIONS,
       settings: { ...createDefaultDerivationSettings(), confidenceFloor }
     };

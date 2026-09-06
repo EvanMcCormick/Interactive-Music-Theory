@@ -32,7 +32,8 @@
  * two-layer model paying off: changing tuning, capo, grid or confidence floor
  * costs a millisecond, not a re-run of a model. `updateHarmonics` reaches one
  * step further back, to `session.rawNotes`, and still never asks the detector
- * anything: suppression is a pure function of that list and four thresholds.
+ * anything: suppression is a pure function of that list, three thresholds, the
+ * per-note overrides and one declaration about the source.
  *
  * ## Buffer ownership
  *
@@ -113,7 +114,7 @@ import { messageOf } from './error-message';
 import { trackBeats } from './beat-tracking';
 import { DETECTION_SAMPLE_RATE, NoteDetector } from './note-detector';
 import { fretboardFault } from './transcription-fingering';
-import { DerivedScore, deriveScore } from './score-derivation';
+import { DerivedScore, deriveScore, isBassTuning } from './score-derivation';
 import {
   DEFAULT_HARMONIC_OPTIONS,
   HarmonicOptions,
@@ -338,10 +339,16 @@ export class TranscriptionService {
       // new object rather than mutating one, so there is nothing for a
       // careless caller to reach through. Its identity is also how `rederive`
       // tells that a session has never overridden anything.
+      // The tuning read directly rather than through `monophonicSource`, which
+      // wants a session there is not one of yet. It resolves to the same
+      // answer: `monophonic` below is `null` - nobody has declared anything -
+      // and the settings here are always `createDefaultDerivationSettings`',
+      // so this is the bass default the review panel can then move.
       const notes = suppressHarmonics(
         detection.notes,
         harmonics,
         NO_NOTE_DECISIONS,
+        isBassTuning(settings.tuning),
         suppressed
       );
 
@@ -376,6 +383,11 @@ export class TranscriptionService {
         // that shows it, where a listener can see the numbers and override it.
         beatsPerPulse: 1,
         harmonics,
+        // Undeclared, so read off the tuning family until a listener says
+        // otherwise. See `TranscriptionSession.monophonic`: the instrument is
+        // chosen after transcription, so a value frozen here would be the bass
+        // default for every guitar upload there will ever be.
+        monophonic: null,
         decisions: NO_NOTE_DECISIONS,
         settings
       };
@@ -507,6 +519,36 @@ export class TranscriptionService {
       ...session,
       harmonics: { ...session.harmonics, ...partial }
     }));
+  }
+
+  /**
+   * States whether the recording can sound more than one note at a time.
+   *
+   * Not a threshold, which is why it is not `updateHarmonics`. The three
+   * ratios there are a calibration over a population of candidate pairs; this
+   * is a fact about the audio, and on a monophonic source it lets the pass
+   * suppress a same-attack harmonic pair without consulting a discriminator
+   * that - measured on real material - cannot separate those pairs from real
+   * notes at any setting. `TranscriptionSession.monophonic` and `explains`
+   * carry the argument and the numbers.
+   *
+   * `null` hands the question back to the tuning family: bass monophonic,
+   * guitar not. Passing it is how a listener takes back a declaration rather
+   * than replacing it with the opposite one, and it is the state a session
+   * starts in.
+   *
+   * **Re-runs suppression, and may rebuild the beat grid.** It changes the
+   * kept set, and beat tracking runs on the kept set; `rederive` re-tracks
+   * unless the user has already corrected the beats by hand. Everything else
+   * about it is `updateHarmonics`: a no-op unless a transcription has
+   * succeeded, and refused on the same terms.
+   *
+   * Nothing here refuses a declaration for disagreeing with the tuning. A
+   * chordal bass part and a single-line guitar solo both exist, and the
+   * listener has heard the recording.
+   */
+  declareMonophonic(monophonic: boolean | null): void {
+    this.rederive(session => ({ ...session, monophonic }));
   }
 
   /**
@@ -752,16 +794,19 @@ export class TranscriptionService {
    * ## Suppression, and the beat grid it drags behind it
    *
    * Suppression used to run once, inside `transcribe`. It runs here now, over
-   * `session.rawNotes`, `session.harmonics` and `session.decisions`, which is
-   * what makes those four thresholds live knobs instead of constants a
-   * re-upload could not change - and what lets one note be overruled without a
-   * second place deciding the kept set.
+   * `session.rawNotes`, `session.harmonics`, `session.decisions` and the
+   * monophony declaration `monophonicSource` resolves, which is what makes
+   * those four thresholds live knobs instead of constants a re-upload could
+   * not change - and what lets one note be overruled without a second place
+   * deciding the kept set.
    *
-   * It is skipped when none of the three moved, and that is not an
+   * It is skipped when none of the four moved, and that is not an
    * optimisation of the answer - it is the same answer, since the pass is a
-   * pure function of exactly those three. What the skip buys is identity:
-   * `notes` and `suppressed` stay the arrays they were, so a tuning change
-   * does not hand a subscriber a new-but-equal discard list to re-render.
+   * pure function of exactly those four. What the skip buys is identity:
+   * `notes` and `suppressed` stay the arrays they were, so a capo change does
+   * not hand a subscriber a new-but-equal discard list to re-render. A
+   * *tuning* change can move the fourth one - see `resuppressed` - and then
+   * the pass does re-run, deliberately.
    *
    * When the kept set does move - whether a threshold moved it or a single
    * toggle did - the beat grid is stale. **Beat tracking runs on the
@@ -885,11 +930,23 @@ export class TranscriptionService {
  * the beat grid if that moved the tracker's input.
  *
  * `previous` is the session the change was made from, and is read for one
- * thing only: whether any of the three suppression inputs is the same object
- * it was. The pass is pure in exactly `rawNotes`, `harmonics` and `decisions`,
- * so when none of them moved the answer cannot have, and the whole function is
- * `return session` - which keeps `notes` the array it already was rather than
- * replacing it with an equal one.
+ * thing only: whether any suppression input has moved. Three are compared by
+ * identity - `rawNotes`, `harmonics`, `decisions` - and the fourth by value,
+ * because it is a boolean and because it is *resolved* rather than stored: an
+ * undeclared session takes it from `settings.tuning`, so the question is what
+ * `monophonicSource` now answers and not which fields were spread.
+ *
+ * That fourth input is why a **tuning change can now re-run suppression**,
+ * which no `DerivationSettings` change used to do. Switching from a bass
+ * preset to a guitar one on an undeclared session withdraws the monophony
+ * prior, and that is a different kept set rather than a different clef. It is
+ * the intended behaviour and not a leak: the declaration moved, so the answer
+ * did. Every other tuning change resolves to the same boolean and still costs
+ * nothing.
+ *
+ * When nothing moved the whole function is `return session` - which keeps
+ * `notes` the array it already was rather than replacing it with an equal
+ * one.
  *
  * `decisions` earns its place in that test twice over. Leaving it out would
  * not merely miss an optimisation, it would skip the pass outright on a
@@ -905,15 +962,33 @@ export class TranscriptionService {
  * The re-track rule, and why the test is `beatsSec` rather than the grid, are
  * argued at length on `TranscriptionService.rederive`.
  */
+/**
+ * Whether the suppressor should treat this session's audio as monophonic.
+ *
+ * The declaration if there is one, and the tuning family otherwise:
+ * `TranscriptionSession.monophonic` argues why `null` is a third state rather
+ * than a defaulted `false`, and why the inference reads the tuning at every
+ * derivation instead of being frozen at `transcribe`.
+ *
+ * One function, and the only place the fallback is written, because a second
+ * copy is how the panel's checkbox and the pass would come to disagree about
+ * what an unticked-but-undeclared box means.
+ */
+export function monophonicSource(session: TranscriptionSession): boolean {
+  return session.monophonic ?? isBassTuning(session.settings.tuning);
+}
+
 function resuppressed(
   session: TranscriptionSession,
   previous: TranscriptionSession,
   suppressed: DetectedNote[]
 ): TranscriptionSession {
+  const monophonic = monophonicSource(session);
   if (
     session.rawNotes === previous.rawNotes &&
     session.harmonics === previous.harmonics &&
-    session.decisions === previous.decisions
+    session.decisions === previous.decisions &&
+    monophonic === monophonicSource(previous)
   ) {
     return session;
   }
@@ -923,6 +998,7 @@ function resuppressed(
     session.rawNotes,
     session.harmonics,
     session.decisions,
+    monophonic,
     removed
   );
 

@@ -7,7 +7,13 @@ import { gridTempo } from './transcription-timing';
 import { detectionsOf } from './harmonic-eval/detections.fixture';
 import { MATERIAL } from './harmonic-eval/material';
 import { DetectionResult, NoteDetector } from './note-detector';
-import { DEFAULT_HARMONIC_OPTIONS, suppressHarmonics } from './transcription-harmonics';
+import {
+  DEFAULT_HARMONIC_OPTIONS,
+  HarmonicOptions,
+  NO_NOTE_DECISIONS,
+  NoteDecisions,
+  suppressHarmonics
+} from './transcription-harmonics';
 import {
   NOTE_DETECTOR,
   TranscriptionService,
@@ -45,27 +51,61 @@ const PLAYED_PITCHES: number[] = (
 /**
  * What suppression leaves of those twenty-eight, measured not chosen.
  *
- * Eighteen, not twelve: on this material suppression removes ten artefacts and
- * every note the detector found survives, but six artefacts survive with them.
- * `harmonic-eval/harmonic-accuracy.spec.ts` is where that is measured across
- * all sixteen materials - 61.2 % precision - and `guitar` is the only one where
- * the played line comes back exactly.
+ * Seventeen, not twelve: on this material suppression removes eleven artefacts
+ * and every note the detector found survives, but five artefacts survive with
+ * them. `harmonic-eval/harmonic-accuracy.spec.ts` is where that is measured
+ * across all sixteen materials - 61.2 % precision - and `guitar` is the only
+ * one where the played line comes back exactly.
+ *
+ * It was eighteen until the monophony prior. A session starts on
+ * `createDefaultDerivationSettings`' bass tuning and undeclared, so
+ * `monophonicSource` reads it as monophonic, and the eleventh artefact is the
+ * 2f0 of the opening E1 detected one frame after it - which the confidence
+ * ratio kept, at 0.6610 against a 0.65 cut. `transcription-harmonics.spec.ts`
+ * pins that pair in isolation. `walking` is a bass line and one of the two
+ * materials in the set whose ground truth never sounds two notes at once, so
+ * the declaration this default makes about it is true.
  */
-const KEPT_COUNT = 18;
+const KEPT_COUNT = 17;
 
 /**
  * A `partialConfidenceRatio` that keeps more than the default does, measured.
  *
  * The clause is `note.confidence < root.confidence * ratio`, so lowering it
  * makes the suppressor harder to convince: on `walking` the default 0.65 keeps
- * eighteen of the twenty-eight detections and this keeps twenty-three. Chosen
+ * seventeen of the twenty-eight detections and this keeps nineteen. Chosen
  * because it moves the answer in the direction the whole milestone exists for -
  * a threshold the user can back off when the pipeline has eaten a real note.
+ *
+ * It moves the answer by less than it did - twenty-three before the monophony
+ * prior - and that is the prior working as described rather than a weakened
+ * knob. Four of the notes a loose ratio used to readmit are same-attack
+ * partials on a source declared monophonic, and the ratio is not consulted
+ * about those at all. Backing the threshold off no longer readmits them;
+ * `declareMonophonic(false)` or a per-note `keep` does.
  */
 const LOOSE_RATIO = 0.3;
 
 /** What `LOOSE_RATIO` keeps of the twenty-eight, measured not chosen. */
-const LOOSE_KEPT_COUNT = 23;
+const LOOSE_KEPT_COUNT = 19;
+
+/**
+ * `walking` under the pass the service actually runs.
+ *
+ * The fourth argument is the whole reason this exists. A session starts
+ * undeclared on `createDefaultDerivationSettings`' bass tuning, so
+ * `monophonicSource` resolves the monophony prior to **on**, and a bare
+ * `suppressHarmonics(DETECTED)` is therefore a different rule from the one the
+ * service applied. Recomputing an expectation with the bare call would be
+ * asserting against a pass that does not ship - which is exactly the failure
+ * mode this file's fixture docblock is about, one layer up.
+ */
+function servicePass(
+  thresholds: Partial<HarmonicOptions> = {},
+  decisions: NoteDecisions = NO_NOTE_DECISIONS
+): DetectedNote[] {
+  return suppressHarmonics(DETECTED, thresholds, decisions, true);
+}
 
 /**
  * A `NoteDetector` that returns a fixed answer without a worker or a model.
@@ -323,7 +363,7 @@ describe('TranscriptionService', () => {
       // through: twenty-eight in, eighteen out, and the eighteen are the ones
       // the suppressor picks rather than some other eighteen.
       expect(notes.length).toBe(KEPT_COUNT);
-      expect(notes.map(n => n.id)).toEqual(suppressHarmonics(DETECTED).map(n => n.id));
+      expect(notes.map(n => n.id)).toEqual(servicePass().map(n => n.id));
 
       // ...and the musical claim underneath the counts: every pitch `walking`
       // plays that the detector found is still on the session. Suppression
@@ -341,7 +381,7 @@ describe('TranscriptionService', () => {
       // The ordering hazard, stated as a test. Ten of the twenty-eight
       // detections are partials carrying onsets of their own, so a tracker fed
       // the raw list follows those instead of the rhythm.
-      const fromSuppressed = trackBeats(suppressHarmonics(DETECTED), DURATION_SEC, FOUR_FOUR);
+      const fromSuppressed = trackBeats(servicePass(), DURATION_SEC, FOUR_FOUR);
       const fromRaw = trackBeats(DETECTED, DURATION_SEC, FOUR_FOUR);
 
       // Without this the test would pass on a service that got the order wrong.
@@ -1262,7 +1302,7 @@ describe('TranscriptionService', () => {
 
       const session = service.state.session;
       expect(session?.trackedGrid.beatsSec).toEqual(
-        trackBeats(suppressHarmonics(DETECTED), session?.durationSec ?? 0, FOUR_FOUR).beatsSec
+        trackBeats(servicePass(), session?.durationSec ?? 0, FOUR_FOUR).beatsSec
       );
       expect(session?.trackedGrid).toBe(session!.grid);
     });
@@ -1309,6 +1349,132 @@ describe('TranscriptionService', () => {
    * recovered by re-uploading the file, which is deterministic and gives the
    * same answer. These are the tests that say it is a knob now.
    */
+  /**
+   * The source declaration, at the level the pipeline reads it.
+   *
+   * `transcription-harmonics.spec.ts` pins the rule on one captured pair.
+   * These are about where the answer comes from: `null` means nobody has said
+   * and the tuning family answers, and a stated value outranks the tuning
+   * from then on in both directions.
+   */
+  describe('declareMonophonic', () => {
+    /** MIDI pitches of a standard six-string guitar, highest string first. */
+    const GUITAR_TUNING = [64, 59, 55, 50, 45, 40];
+
+    it('starts undeclared, and reads a bass tuning as monophonic', async () => {
+      await service.transcribe(wavFile());
+
+      // Nobody has said anything, so the session records that rather than a
+      // defaulted false - and the pass it ran is the monophonic one, because
+      // `createDefaultDerivationSettings` starts on a bass tuning.
+      expect(service.state.session?.monophonic).toBeNull();
+      expect(service.state.session?.notes.map(n => n.id)).toEqual(
+        servicePass().map(n => n.id)
+      );
+      expect(service.state.session?.notes.length).toBe(KEPT_COUNT);
+    });
+
+    it('withdraws the prior when the tuning says guitar', async () => {
+      // Why the inference is read at every derivation rather than frozen at
+      // `transcribe`: the instrument is chosen in the review panel, *after*
+      // the file has been transcribed. A default fixed at session creation
+      // would be "monophonic" for every guitar upload there will ever be, and
+      // guitar is frequently chordal.
+      await service.transcribe(wavFile());
+
+      service.updateSettings({ tuning: GUITAR_TUNING });
+
+      expect(service.state.session?.monophonic).toBeNull();
+      expect(service.state.session?.notes.map(n => n.id)).toEqual(
+        suppressHarmonics(DETECTED).map(n => n.id)
+      );
+      expect(service.state.session?.notes.length).toBeGreaterThan(KEPT_COUNT);
+      expect(detector.calls).toBe(1);
+    });
+
+    it('outranks the tuning once someone has actually said', async () => {
+      await service.transcribe(wavFile());
+
+      service.declareMonophonic(false);
+      expect(service.state.session?.monophonic).toBeFalse();
+      const withoutPrior = service.state.session?.notes.map(n => n.id);
+      expect(withoutPrior).toEqual(suppressHarmonics(DETECTED).map(n => n.id));
+
+      // A guitar tuning now changes nothing about suppression, because the
+      // inference is not being consulted. An inference that overwrote an
+      // explicit answer would be the beat grid's mistake made again.
+      service.updateSettings({ tuning: GUITAR_TUNING });
+      expect(service.state.session?.monophonic).toBeFalse();
+      expect(service.state.session?.notes.map(n => n.id)).toEqual(withoutPrior);
+
+      // ...and in the other direction too: a guitar stem the listener knows is
+      // a single line gets the prior back.
+      service.declareMonophonic(true);
+      expect(service.state.session?.notes.map(n => n.id)).toEqual(
+        servicePass().map(n => n.id)
+      );
+    });
+
+    it('hands the question back to the tuning when the declaration is dropped', async () => {
+      await service.transcribe(wavFile());
+      service.declareMonophonic(false);
+
+      service.declareMonophonic(null);
+
+      expect(service.state.session?.monophonic).toBeNull();
+      expect(service.state.session?.notes.map(n => n.id)).toEqual(
+        servicePass().map(n => n.id)
+      );
+    });
+
+    it('loses to a per-note keep, which is the listener at closer range', async () => {
+      // The ordering `NoteDecisions` established, asserted through the
+      // service: `keep` is read before `explains` is ever called, so a note
+      // the declaration would take survives anyway. `d1` is the 2f0 of the
+      // opening E1 one frame later - the pair the prior exists for.
+      await service.transcribe(wavFile());
+      const kept = (id: string): boolean =>
+        (service.state.session?.notes ?? []).some(note => note.id === id);
+      expect(kept('d1')).toBeFalse();
+
+      service.toggleNote('d1');
+
+      expect(kept('d1')).toBeTrue();
+      expect(service.state.session?.decisions.keep).toEqual(['d1']);
+      // And the threshold cannot do this: moving the ratio does not readmit a
+      // note the declaration took, because the ratio is not what took it.
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+      expect(kept('d1')).toBeTrue();
+      service.toggleNote('d1');
+      expect(kept('d1')).toBeFalse();
+    });
+
+    it('does not disturb anything when the answer did not move', async () => {
+      await service.transcribe(wavFile());
+      const before = service.state;
+
+      // Declaring what the tuning already implied. The resolved value is what
+      // `resuppressed` compares, so this is the same answer and has to leave
+      // the arrays alone rather than handing subscribers new equal ones.
+      service.declareMonophonic(true);
+
+      expect(service.state.session?.notes).toBe(before.session!.notes);
+      expect(service.state.suppressed).toBe(before.suppressed);
+      expect(service.state.session?.grid).toBe(before.session!.grid);
+
+      // A capo change is the control: it moves no suppression input at all.
+      service.updateSettings({ capo: 3 });
+      expect(service.state.session?.notes).toBe(before.session!.notes);
+    });
+
+    it('is a no-op before a transcription has succeeded', () => {
+      service.declareMonophonic(false);
+
+      expect(service.state.phase).toBe('idle');
+      expect(service.state.session).toBeNull();
+    });
+  });
+
   describe('updateHarmonics', () => {
     it('changes the kept set without asking the detector again', async () => {
       await service.transcribe(wavFile());
@@ -1320,7 +1486,7 @@ describe('TranscriptionService', () => {
       expect(detector.calls).toBe(1);
       expect(service.state.session?.notes.length).toBe(LOOSE_KEPT_COUNT);
       expect(service.state.session?.notes.map(n => n.id)).toEqual(
-        suppressHarmonics(DETECTED, { partialConfidenceRatio: LOOSE_RATIO }).map(n => n.id)
+        servicePass({ partialConfidenceRatio: LOOSE_RATIO }).map(n => n.id)
       );
       expect(service.state.session?.harmonics.partialConfidenceRatio).toBe(LOOSE_RATIO);
     });
@@ -1450,7 +1616,7 @@ describe('TranscriptionService', () => {
     /** What the tracker would return for a given threshold. */
     const gridFor = (ratio: number, timeSignature = FOUR_FOUR): BeatGrid =>
       trackBeats(
-        suppressHarmonics(DETECTED, { partialConfidenceRatio: ratio }),
+        servicePass({ partialConfidenceRatio: ratio }),
         DURATION_SEC,
         timeSignature
       );
@@ -1679,7 +1845,7 @@ describe('TranscriptionService', () => {
 
     /** What the algorithm alone says about `id` at `ratio`. */
     const algorithmKeeps = (id: string, ratio: number): boolean =>
-      suppressHarmonics(DETECTED, { partialConfidenceRatio: ratio }).some(n => n.id === id);
+      servicePass({ partialConfidenceRatio: ratio }).some(n => n.id === id);
 
     it('restores a suppressed note without asking the detector again', async () => {
       await service.transcribe(wavFile());
@@ -1719,7 +1885,7 @@ describe('TranscriptionService', () => {
       expect(service.state.session?.decisions).toEqual({ keep: [], drop: [] });
       expect(isKept(ALWAYS_DROPPED)).toBeFalse();
       expect(service.state.session?.notes.map(n => n.id)).toEqual(
-        suppressHarmonics(DETECTED).map(n => n.id)
+        servicePass().map(n => n.id)
       );
     });
 
@@ -1732,7 +1898,7 @@ describe('TranscriptionService', () => {
       expect(service.state.session?.decisions).toEqual({ keep: [], drop: [] });
       expect(isKept(ALWAYS_KEPT)).toBeTrue();
       expect(service.state.session?.notes.map(n => n.id)).toEqual(
-        suppressHarmonics(DETECTED).map(n => n.id)
+        servicePass().map(n => n.id)
       );
     });
 
@@ -1778,10 +1944,16 @@ describe('TranscriptionService', () => {
     });
 
     it('holds a note in place while the threshold crosses the cut that flips it', async () => {
-      // `walking`, captured: a B2 at 1.8228 (confidence 0.3263) an octave over
-      // the B1 at 1.846 (0.7437). The ratio is 0.439, which 0.65 removes and
+      // `walking`, captured: a G2 at 4.2866 (confidence 0.3228) an octave over
+      // the G1 at 4.2402 (0.6677). The ratio is 0.483, which 0.65 removes and
       // 0.30 does not, so this is a note the threshold genuinely decides.
-      const FLIPS = 'd12';
+      //
+      // It has to be a *staggered* pair, and that is new. The B2 at 1.8228
+      // this spec used to name sits one frame after its own root, so the
+      // monophony prior takes it whatever the threshold says and the note no
+      // longer flips - which is the prior doing its job, not a fixture going
+      // stale. Four frames apart, this one is left entirely to the ratio.
+      const FLIPS = 'd21';
       expect(algorithmKeeps(FLIPS, DEFAULT_HARMONIC_OPTIONS.partialConfidenceRatio)).toBeFalse();
       expect(algorithmKeeps(FLIPS, LOOSE_RATIO)).toBeTrue();
 
@@ -1807,7 +1979,7 @@ describe('TranscriptionService', () => {
 
       expect(service.state.session?.decisions).toEqual({ keep: [], drop: [] });
       expect(service.state.session?.notes.map(n => n.id)).toEqual(
-        suppressHarmonics(DETECTED).map(n => n.id)
+        servicePass().map(n => n.id)
       );
     });
 
@@ -1885,7 +2057,7 @@ describe('TranscriptionService', () => {
       /** Where the tracker would put the beats with `MOVES_THE_BEAT` restored. */
       const restoredBeats = (): number[] =>
         trackBeats(
-          suppressHarmonics(DETECTED, {}, { keep: [MOVES_THE_BEAT], drop: [] }),
+          servicePass({}, { keep: [MOVES_THE_BEAT], drop: [] }),
           DURATION_SEC,
           FOUR_FOUR
         ).beatsSec;

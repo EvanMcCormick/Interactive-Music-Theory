@@ -319,6 +319,7 @@ describe('nudging the grid a score is derived from', () => {
     trackedGrid: grid,
     beatsPerPulse: 1,
     harmonics: DEFAULT_HARMONIC_OPTIONS,
+    monophonic: null,
     decisions: NO_NOTE_DECISIONS,
     settings: createDefaultDerivationSettings()
   });
@@ -760,6 +761,7 @@ describe('deriving a score at a metrical level', () => {
     trackedGrid: TRACKED_DOTTED,
     beatsPerPulse: 1,
     harmonics: DEFAULT_HARMONIC_OPTIONS,
+    monophonic: null,
     decisions: NO_NOTE_DECISIONS,
     settings: createDefaultDerivationSettings()
   });

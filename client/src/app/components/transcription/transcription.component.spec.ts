@@ -183,6 +183,7 @@ function makeSession(settings: Partial<DerivationSettings> = {}): TranscriptionS
     trackedGrid: GRID,
     beatsPerPulse: 1,
     harmonics: DEFAULT_HARMONIC_OPTIONS,
+    monophonic: null,
     decisions: NO_NOTE_DECISIONS,
     settings: { ...createDefaultDerivationSettings(), ...settings }
   };

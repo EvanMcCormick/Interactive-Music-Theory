@@ -45,6 +45,7 @@ import { detection, detectionsOf } from './harmonic-eval/detections.fixture';
 import { MATERIAL } from './harmonic-eval/material';
 import {
   HARMONIC_SEMITONES,
+  MONOPHONIC_ATTACK_SEC,
   NO_NOTE_DECISIONS,
   NoteDecisions,
   suppressHarmonics
@@ -494,7 +495,7 @@ describe('suppressHarmonics', () => {
       // that many artefacts. The claim that survives is the one that matters:
       // whatever it removes, it hands back.
       const suppressed: DetectedNote[] = [];
-      const kept = suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, suppressed);
+      const kept = suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, false, suppressed);
 
       expect(kept.length).toBe(18);
       expect(suppressed.length).toBe(WALKING.length - kept.length);
@@ -506,7 +507,7 @@ describe('suppressHarmonics', () => {
 
     it('reports them in onset order, like the kept notes', () => {
       const suppressed: DetectedNote[] = [];
-      suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, suppressed);
+      suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, false, suppressed);
 
       // An empty list is trivially sorted, so this has to say there is one.
       expect(suppressed.length).toBe(10);
@@ -516,10 +517,10 @@ describe('suppressHarmonics', () => {
 
     it('appends rather than replacing, so one array can collect several passes', () => {
       const suppressed: DetectedNote[] = [];
-      suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, suppressed);
+      suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, false, suppressed);
       const first = suppressed.length;
 
-      suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, suppressed);
+      suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, false, suppressed);
 
       // ...and 0 * 2 is 0, so the same guard again.
       expect(first).toBe(10);
@@ -535,6 +536,7 @@ describe('suppressHarmonics', () => {
         [detection('walking', 33, 1.2423), detection('walking', 35, 1.6834)],
         {},
         NO_NOTE_DECISIONS,
+        false,
         suppressed
       );
 
@@ -600,6 +602,170 @@ describe('suppressHarmonics', () => {
    * into a run with no overrides would move the accuracy harness's floors, and
    * the first spec below is the one that would catch it.
    */
+  /**
+   * The source declaration, and the one clause that does not read a threshold.
+   *
+   * `explains` in `transcription-harmonics.ts` carries the argument; these are
+   * the four things it has to be true of. The pair below is the honest one to
+   * make them on: `walking`'s opening E1 with its own 2f0 an 11.6 ms frame
+   * later, at a confidence ratio of 0.6610 - just above the 0.65 cut, so the
+   * calibrated rule keeps it and the whole difference between the two rules is
+   * visible in one pair. `walking` is also one of the two materials in the
+   * sixteen whose ground truth never sounds two notes at once, so the
+   * declaration is true of it rather than merely convenient.
+   */
+  describe('the monophony prior', () => {
+    const root = detection('walking', 28, 0.0116);
+    const partial = detection('walking', 40, 0.0232);
+
+    it('removes a same-attack octave the confidence ratio keeps', () => {
+      // The ratio's answer first, so the two are being compared rather than
+      // asserted separately. 0.6610 against a 0.65 cut: the calibration says
+      // keep, by three thousandths.
+      expect(partial.confidence / root.confidence).toBeCloseTo(0.661, 4);
+      expect(suppressHarmonics([root, partial]).map(n => n.pitch)).toEqual([28, 40]);
+
+      // Declared monophonic, the ratio is not consulted at all. Two notes
+      // struck together on a source that plays one at a time are a partial and
+      // its fundamental whatever the model made of either.
+      expect(
+        suppressHarmonics([root, partial], {}, NO_NOTE_DECISIONS, true).map(n => n.pitch)
+      ).toEqual([28]);
+    });
+
+    it('leaves a staggered octave alone, however monophonic the source', () => {
+      // `loudOverQuiet`, captured: E1 at 0.0116 ringing 1.2 s with an E2
+      // struck 395 ms into it. A monophonic instrument plays that - it is an
+      // octave leap over a note the detector still reports as ringing - and it
+      // is 34 frames outside the window, not one.
+      const leap = detection('loudOverQuiet', 40, 0.4063);
+      const held = detection('loudOverQuiet', 28, 0.0116);
+      expect(leap.onsetSec - held.onsetSec).toBeGreaterThan(0.03);
+
+      expect(
+        suppressHarmonics([held, leap], {}, NO_NOTE_DECISIONS, true).map(n => n.pitch)
+      ).toEqual([28, 40]);
+
+      // Which is the point of scope decision 3: the prior is aimed at doubled
+      // attacks and claims nothing about ring-over. On the real stem 132 of the
+      // 147 overlapping pairs it leaves behind are staggered, and they stay.
+    });
+
+    it('loses to an explicit keep, which every rule here does', () => {
+      // The contract `NoteDecisions` established, and the one this rule most
+      // needs to honour: a threshold is a calibration the listener can argue
+      // with note by note, and this is a claim about the whole recording that
+      // is simply false for the one bar they overdub a double stop. `keep` is
+      // read before `explains` is ever called, so the clause never runs.
+      expect(
+        suppressHarmonics(
+          [root, partial],
+          {},
+          { keep: [partial.id], drop: [] },
+          true
+        ).map(n => n.pitch)
+      ).toEqual([28, 40]);
+
+      // And `drop` still wins the other way, so the declaration has not
+      // quietly become the only thing that removes a note.
+      expect(
+        suppressHarmonics([root, partial], {}, { keep: [], drop: [root.id] }, true).map(
+          n => n.pitch
+        )
+      ).toEqual([40]);
+    });
+
+    it('decides each note once, in the same pitch-ascending walk', () => {
+      // The prior is a clause inside `explains`, not a second pass, so it
+      // cannot consider a note twice: the loop takes each detection once and
+      // asks the notes already kept about it. Two things follow and both are
+      // worth pinning, because a rule that removed more notes could plausibly
+      // have disturbed either.
+      //
+      // First, a fundamental is still seen before anything it explains. The
+      // sort is by pitch ascending and a partial is always *above* its
+      // fundamental, so that holds by construction and the prior does not
+      // touch the sort - but the prior removes notes, and a removed note is
+      // not in `kept` and cannot act as a root for anything above it. The
+      // chain still resolves, because the intervals compose: the 4f0 two
+      // octaves over a root is +24 from the root as well as +12 from the 2f0
+      // the prior just took.
+      const root = detection('quietOverLoud', 36, 6.5635);
+      const octave = detection('quietOverLoud', 48, 6.5635);
+      const twoOctaves = detection('quietOverLoud', 60, 6.5635);
+      expect(octave.confidence / root.confidence).toBeCloseTo(0.6071, 4);
+      expect(twoOctaves.confidence / octave.confidence).toBeCloseTo(0.9447, 4);
+
+      // The ratio takes the octave and leaves the 4f0 - it is 0.94 of the
+      // partial above it, and the root is 24 semitones down where the clause
+      // reads 0.5735 and removes it anyway. The prior takes both, and the
+      // second one is explained by the root rather than by the note it just
+      // removed.
+      expect(
+        suppressHarmonics([root, octave, twoOctaves], {}, NO_NOTE_DECISIONS, true).map(
+          n => n.pitch
+        )
+      ).toEqual([36]);
+
+      // Second, the answer is still independent of the order the detector
+      // reported the notes in - the same claim `gives the same answer whatever
+      // order the detector reported the notes in` makes for the ratio, made
+      // again for the rule that now decides some of the same pairs.
+      const expected = suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, true).map(n => n.id);
+      for (let trial = 0; trial < 25; trial++) {
+        const shuffled = [...WALKING];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+
+        expect(
+          suppressHarmonics(shuffled, {}, NO_NOTE_DECISIONS, true).map(n => n.id)
+        ).toEqual(expected);
+      }
+    });
+
+    it('changes nothing at all when it is off', () => {
+      // The claim the whole accuracy harness rests on. Asserted over every
+      // captured material rather than over the pair above, and against the
+      // default spelling as well as the explicit one, so a `false` that leaked
+      // into a different code path would show up here.
+      for (const material of MATERIAL) {
+        const notes = detectionsOf(material.name);
+        const expected = suppressHarmonics(notes).map(n => n.id);
+
+        expect(
+          suppressHarmonics(notes, {}, NO_NOTE_DECISIONS, false).map(n => n.id)
+        ).toEqual(expected);
+      }
+    });
+
+    it('reads the window as two detector frames rather than as 30 ms', () => {
+      // `MONOPHONIC_ATTACK_SEC` is a frame count. The pair above is one frame
+      // apart, so a window of one frame catches it and anything under one does
+      // not - and there is nothing between those two answers to tune.
+      expect(MONOPHONIC_ATTACK_SEC).toBe(0.03);
+      expect(partial.onsetSec - root.onsetSec).toBeCloseTo(0.0116, 4);
+
+      // Symmetric, which the guard above it does not make redundant: a
+      // re-detected partial can arrive up to `toleranceSec` *before* its own
+      // fundamental, and those are the pairs a one-sided window would hand to
+      // the clause that cannot judge them. `run`, captured, is such a pair -
+      // the 2f0 at 2.5555 precedes the G1 at 2.5787 that produced it.
+      const early = detection('run', 43, 2.5555);
+      const late = detection('run', 31, 2.5787);
+      expect(early.onsetSec).toBeLessThan(late.onsetSec);
+      expect(early.confidence / late.confidence).toBeGreaterThan(0.65);
+
+      // Returned in onset order, so the partial is listed first - which is
+      // exactly the pair a one-sided window would mishandle.
+      expect(suppressHarmonics([late, early]).map(n => n.pitch)).toEqual([43, 31]);
+      expect(
+        suppressHarmonics([late, early], {}, NO_NOTE_DECISIONS, true).map(n => n.pitch)
+      ).toEqual([31]);
+    });
+  });
+
   describe('per-note overrides', () => {
     /**
      * `quietOverLoud`, captured: an A1 at 2.8341 (confidence 0.7722) with a
@@ -632,7 +798,7 @@ describe('suppressHarmonics', () => {
       ).toEqual(suppressHarmonics(WALKING, { partialConfidenceRatio: 0.3 }).map(n => n.id));
 
       const suppressed: DetectedNote[] = [];
-      suppressHarmonics(WALKING, {}, empty, suppressed);
+      suppressHarmonics(WALKING, {}, empty, false, suppressed);
       expect(suppressed.length).toBe(10);
     });
 
@@ -661,6 +827,7 @@ describe('suppressHarmonics', () => {
         [root, soft],
         {},
         { keep: [], drop: [soft.id] },
+        false,
         suppressed
       );
 
