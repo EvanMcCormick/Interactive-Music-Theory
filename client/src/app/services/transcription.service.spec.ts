@@ -2,6 +2,8 @@ import { TestBed } from '@angular/core/testing';
 import { TimeSignature } from '../models/composer.model';
 import { DetectedNote } from '../models/transcription.model';
 import { trackBeats } from './beat-tracking';
+import { detectionsOf } from './harmonic-eval/detections.fixture';
+import { MATERIAL } from './harmonic-eval/material';
 import { DetectionResult, NoteDetector } from './note-detector';
 import { suppressHarmonics } from './transcription-harmonics';
 import {
@@ -12,50 +14,42 @@ import {
 
 const FOUR_FOUR: TimeSignature = { numerator: 4, denominator: 4, isCommon: true };
 
-/** [onsetSec, midiPitch, durationSec, amplitude] */
-type Raw = [number, number, number, number];
+/**
+ * The detector's frozen output on `walking` - twelve notes of a bass line,
+ * twenty-eight detections, ten of them partials carrying onsets of their own.
+ *
+ * It is here rather than a tidy twelve-note list because the ordering hazard
+ * this spec exists to catch only shows up on material where suppression
+ * changes the rhythm: feed these raw onsets to the beat tracker and it tracks
+ * the partials instead of the notes.
+ *
+ * This used to be thirty-four rows of `SPIKE_OUTPUT` pasted in here, in
+ * `transcription-harmonics.spec.ts` and in `preview-score.spec.ts` - three
+ * copies of one array whose audio, it turned out, had the discredited duration
+ * rule's premise built into it. `harmonic-eval/detections.fixture.ts` now
+ * holds one copy of sixteen captures from honest Karplus-Strong material, and
+ * that spec's docblock has the measurement.
+ */
+const DETECTED: DetectedNote[] = detectionsOf('walking');
 
-function note([onsetSec, pitch, duration, amplitude]: Raw, index: number): DetectedNote {
-  return {
-    id: `n${index}`,
-    pitch,
-    onsetSec,
-    offsetSec: onsetSec + duration,
-    confidence: amplitude,
-    bendCents: []
-  };
-}
+/** How long the fixture runs, rounded up: the stub returns notes out to 7.2 s. */
+const DURATION_SEC = 8;
+
+/** The twelve pitches `walking` actually plays, in order. */
+const PLAYED_PITCHES: number[] = (
+  MATERIAL.find(m => m.name === 'walking')?.notes ?? []
+).map(n => n.pitch);
 
 /**
- * Verbatim output of @spotify/basic-pitch on a synthetic bassline of eight
- * notes - E1 A1 D2 G2 twice - the same fixture `transcription-harmonics.spec.ts`
- * is pinned against. Thirty-four notes for eight played, twenty-six of them
- * partials carrying onsets of their own.
+ * What suppression leaves of those twenty-eight, measured not chosen.
  *
- * It is here rather than a tidy eight-note list because the ordering hazard
- * this spec exists to catch only shows up on material where suppression changes
- * the rhythm: feed these raw onsets to the beat tracker and it tracks the
- * partials instead of the notes.
+ * Eighteen, not twelve: on this material suppression removes ten artefacts and
+ * every note the detector found survives, but six artefacts survive with them.
+ * `harmonic-eval/harmonic-accuracy.spec.ts` is where that is measured across
+ * all sixteen materials - 61.2 % precision - and `guitar` is the only one where
+ * the played line comes back exactly.
  */
-const SPIKE_OUTPUT: Raw[] = [
-  [0.000, 28, 0.464, 0.565], [0.058, 52, 0.244, 0.377], [0.093, 40, 0.267, 0.552],
-  [0.093, 47, 0.104, 0.343], [0.488, 33, 0.395, 0.687], [0.488, 45, 0.081, 0.264],
-  [0.546, 57, 0.267, 0.328], [0.557, 52, 0.070, 0.329], [0.569, 45, 0.313, 0.514],
-  [0.882, 33, 0.093, 0.445], [0.894, 38, 0.081, 0.299], [0.975, 38, 0.418, 0.712],
-  [1.022, 62, 0.081, 0.352], [1.045, 50, 0.360, 0.484], [1.393, 38, 0.070, 0.415],
-  [1.486, 43, 0.476, 0.666], [1.521, 55, 0.383, 0.428], [1.823, 28, 0.628, 0.520],
-  [2.056, 52, 0.244, 0.381], [2.091, 40, 0.267, 0.548], [2.091, 47, 0.104, 0.345],
-  [2.486, 33, 0.395, 0.688], [2.486, 45, 0.081, 0.264], [2.544, 57, 0.267, 0.329],
-  [2.555, 52, 0.070, 0.329], [2.567, 45, 0.313, 0.514], [2.881, 33, 0.093, 0.443],
-  [2.892, 38, 0.081, 0.297], [2.973, 38, 0.488, 0.676], [3.020, 62, 0.081, 0.352],
-  [3.043, 50, 0.372, 0.485], [3.496, 43, 0.476, 0.667], [3.519, 55, 0.383, 0.424],
-  [3.519, 67, 0.070, 0.349]
-];
-
-const DETECTED: DetectedNote[] = SPIKE_OUTPUT.map(note);
-
-/** The eight of those that are notes rather than partials. */
-const PLAYED_PITCHES = [28, 33, 38, 43, 28, 33, 38, 43];
+const KEPT_COUNT = 18;
 
 /**
  * A `NoteDetector` that returns a fixed answer without a worker or a model.
@@ -135,7 +129,7 @@ function silentWav(seconds: number, sampleRate = 44100): ArrayBuffer {
   return buffer;
 }
 
-function wavFile(name = 'bassline.wav', seconds = 4): File {
+function wavFile(name = 'bassline.wav', seconds = DURATION_SEC): File {
   return new File([silentWav(seconds)], name, { type: 'audio/wav' });
 }
 
@@ -268,21 +262,25 @@ describe('TranscriptionService', () => {
     });
 
     it('produces a score from a real file', async () => {
-      // KNOWN RED since the partial branch moved to `partialConfidenceRatio`:
-      // suppression now keeps 17 of the fixture's 34 detections rather than 8.
-      // The fixture's audio gives partial `h` a decay rate `h` times the
-      // fundamental's, which is the old rule's premise written into the
-      // signal; `transcription-harmonics.spec.ts`'s docblock has the
-      // measurement and the reason this is left failing rather than re-pinned.
       await service.transcribe(wavFile('walk.wav'));
 
       const state = service.state;
       expect(state.phase).toBe('ready');
       expect(state.session?.sourceName).toBe('walk.wav');
-      expect(state.session?.durationSec).toBeCloseTo(4, 2);
+      expect(state.session?.durationSec).toBeCloseTo(DURATION_SEC, 2);
       expect(state.derived?.doc.tracks.length).toBe(1);
       expect(state.derived?.doc.tracks[0].staves[0].bars.length).toBeGreaterThan(0);
-      expect(struckFrets(state).length).toBe(PLAYED_PITCHES.length);
+      // Thirteen, measured. Eighteen detections survive suppression; two of
+      // them fall under the default 0.3 confidence floor before derivation,
+      // and quantisation stacks several of the rest onto beats they share, so
+      // a struck fret is not one per surviving note.
+      //
+      // Nor is it one per note played. Twelve would mean suppression had
+      // recovered the line exactly, which it does on one of the sixteen
+      // captured materials and not on this one; six of the eighteen survivors
+      // are artefacts. `harmonic-eval/harmonic-accuracy.spec.ts` is where that
+      // is measured rather than asserted.
+      expect(struckFrets(state).length).toBe(13);
     });
 
     it('hands the detector the decoded audio at the rate it expects', async () => {
@@ -302,23 +300,33 @@ describe('TranscriptionService', () => {
     });
 
     it('suppresses the harmonics the detector reported', async () => {
-      // KNOWN RED since the partial branch moved to `partialConfidenceRatio`:
-      // suppression now keeps 17 of the fixture's 34 detections rather than 8.
-      // The fixture's audio gives partial `h` a decay rate `h` times the
-      // fundamental's, which is the old rule's premise written into the
-      // signal; `transcription-harmonics.spec.ts`'s docblock has the
-      // measurement and the reason this is left failing rather than re-pinned.
       await service.transcribe(wavFile());
 
-      expect(service.state.session?.notes.map(n => n.pitch)).toEqual(PLAYED_PITCHES);
+      const notes = service.state.session?.notes ?? [];
+      // The service has to run suppression, not carry the detector's list
+      // through: twenty-eight in, eighteen out, and the eighteen are the ones
+      // the suppressor picks rather than some other eighteen.
+      expect(notes.length).toBe(KEPT_COUNT);
+      expect(notes.map(n => n.id)).toEqual(suppressHarmonics(DETECTED).map(n => n.id));
+
+      // ...and the musical claim underneath the counts: every pitch `walking`
+      // plays that the detector found is still on the session. Suppression
+      // costs this material nothing.
+      const kept = new Set(notes.map(n => n.pitch));
+      const found = new Set(
+        DETECTED.filter(d => PLAYED_PITCHES.includes(d.pitch)).map(d => d.pitch)
+      );
+      for (const pitch of found) {
+        expect(kept.has(pitch)).withContext(`MIDI ${pitch}`).toBeTrue();
+      }
     });
 
     it('tracks the beat on the suppressed notes, not the raw ones', async () => {
-      // The ordering hazard, stated as a test. Twenty-six of the thirty-four
+      // The ordering hazard, stated as a test. Ten of the twenty-eight
       // detections are partials carrying onsets of their own, so a tracker fed
       // the raw list follows those instead of the rhythm.
-      const fromSuppressed = trackBeats(suppressHarmonics(DETECTED), 4, FOUR_FOUR);
-      const fromRaw = trackBeats(DETECTED, 4, FOUR_FOUR);
+      const fromSuppressed = trackBeats(suppressHarmonics(DETECTED), DURATION_SEC, FOUR_FOUR);
+      const fromRaw = trackBeats(DETECTED, DURATION_SEC, FOUR_FOUR);
 
       // Without this the test would pass on a service that got the order wrong.
       expect(fromRaw.beatsSec).not.toEqual(fromSuppressed.beatsSec);
@@ -965,42 +973,48 @@ describe('TranscriptionService', () => {
 
   describe('dropped notes', () => {
     it('surfaces what derivation discarded, so M3 need not recompute it', async () => {
-      // KNOWN RED since the partial branch moved to `partialConfidenceRatio`:
-      // suppression now keeps 17 of the fixture's 34 detections rather than 8.
-      // The fixture's audio gives partial `h` a decay rate `h` times the
-      // fundamental's, which is the old rule's premise written into the
-      // signal; `transcription-harmonics.spec.ts`'s docblock has the
-      // measurement and the reason this is left failing rather than re-pinned.
       await service.transcribe(wavFile());
-      expect(service.state.derived?.dropped).toEqual([]);
+      // Two of the eighteen survivors are already under the default 0.3 floor
+      // - the capture's weakest detections are 0.2648 and 0.28 - so this
+      // starts at two rather than at nothing, and what the spec is about is
+      // that it moves with the floor.
+      expect(service.state.derived?.dropped.length).toBe(2);
 
       service.updateSettings({ confidenceFloor: 0.95 });
 
       const dropped = service.state.derived?.dropped ?? [];
-      expect(dropped.length).toBe(PLAYED_PITCHES.length);
+      // A floor of 0.95 is above every confidence the detector reported on
+      // this material, so derivation drops every note suppression handed it.
+      expect(dropped.length).toBe(KEPT_COUNT);
       expect(dropped.every(entry => entry.reason === 'belowConfidence')).toBeTrue();
     });
   });
 
   /**
-   * Twenty-six of the fixture's thirty-four detections are partials. Until M2's
-   * review they were removed and then unrecoverable: `session.notes` was the
-   * post-suppression list, so the largest discard in the pipeline was invisible
-   * to the mechanism `DerivedScore.dropped` exists for.
+   * Ten of this fixture's twenty-eight detections are removed before derivation
+   * ever sees them. Until M2's review they were removed and then unrecoverable:
+   * `session.notes` was the post-suppression list, so the largest discard in
+   * the pipeline was invisible to the mechanism `DerivedScore.dropped` exists
+   * for.
    */
   describe('suppressed partials', () => {
     it('reports the partials it removed rather than dropping them silently', async () => {
-      // KNOWN RED since the partial branch moved to `partialConfidenceRatio`:
-      // suppression now keeps 17 of the fixture's 34 detections rather than 8.
-      // The fixture's audio gives partial `h` a decay rate `h` times the
-      // fundamental's, which is the old rule's premise written into the
-      // signal; `transcription-harmonics.spec.ts`'s docblock has the
-      // measurement and the reason this is left failing rather than re-pinned.
       await service.transcribe(wavFile());
 
       const suppressed = service.state.suppressed;
-      expect(suppressed.length).toBe(DETECTED.length - PLAYED_PITCHES.length);
-      expect(suppressed.length).toBeGreaterThan(service.state.session?.notes.length ?? 0);
+      expect(suppressed.length).toBe(DETECTED.length - KEPT_COUNT);
+
+      // This used to assert that the discard was *larger* than what survived -
+      // twenty-six removed against eight kept - and that is no longer true on
+      // any of the sixteen captured materials. It stopped being true when the
+      // partial branch moved from a duration ratio to a confidence one: the
+      // duration rule removed 62 of 92 candidate artefacts and took 20 of 28
+      // real notes with them, so a great deal of what made that discard large
+      // was the music. Ten of twenty-eight is what removing mostly artefacts
+      // looks like. The claim worth keeping was never the size of the discard
+      // but that none of it disappears silently, which is what the partition
+      // below says.
+      expect(suppressed.length).toBeGreaterThan(0);
 
       // Every one of them is a note the detector reported and derivation never
       // saw, so the two lists partition the detection with nothing left over.
@@ -1012,6 +1026,8 @@ describe('TranscriptionService', () => {
     it('reports them in reading order, like the kept notes', async () => {
       await service.transcribe(wavFile());
 
+      // An empty list is trivially sorted, so this has to say there is one.
+      expect(service.state.suppressed.length).toBe(DETECTED.length - KEPT_COUNT);
       const onsets = service.state.suppressed.map(n => n.onsetSec);
       expect(onsets).toEqual([...onsets].sort((a, b) => a - b));
     });

@@ -24,13 +24,15 @@
  *
  * ## What comes out
  *
- * Basic Pitch over-detects a plucked bass line about fourfold: on the spike's
- * synthetic bassline eight played notes came back as thirty-four, every
- * spurious one a harmonic partial *above* its fundamental. Recall is what this
- * adapter is responsible for; `suppressHarmonics` is responsible for precision.
- * Constraining the model's own `minFreq`/`maxFreq` is not a substitute —
- * measured, it removed exactly one of the twenty-six partials, because they
- * sit inside a bass's range too — so the model's defaults are used unaltered.
+ * Basic Pitch over-detects a plucked bass line: across the sixteen
+ * Karplus-Strong materials in `harmonic-eval/`, 182 played notes come back as
+ * **310**, at 72.0 % recall and 42.3 % precision, with the spurious ones
+ * overwhelmingly harmonic partials *above* a fundamental. Recall is what this
+ * adapter is responsible for; `suppressHarmonics` is responsible for
+ * precision. Constraining the model's own `minFreq`/`maxFreq` is not a
+ * substitute — measured on the spike's bassline, it removed exactly one of
+ * the twenty-six partials, because they sit inside a bass's range too — so
+ * the model's defaults are used unaltered.
  */
 
 import {

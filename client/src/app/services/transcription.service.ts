@@ -11,8 +11,8 @@
  * ## Two things about the order that are not arbitrary
  *
  * **Beat tracking runs on the suppressed notes, not the raw ones.** Harmonic
- * partials carry onsets of their own - twenty-six of them in the thirty-four
- * notes the detector returned for an eight-note fixture - and an onset-driven
+ * partials carry onsets of their own - ten of the twenty-eight notes the
+ * detector returns for the twelve-note `walking` fixture - and an onset-driven
  * beat tracker fed those follows the artefacts rather than the rhythm. The
  * suppression pass is not a cosmetic filter applied to the output; it is a
  * precondition of the step after it. It is not, however, allowed to destroy
@@ -117,8 +117,13 @@ export interface TranscriptionState {
    * Alongside `derived.dropped` rather than inside it: those are notes
    * *derivation* turned away, and M3 renders both greyed for the same reason -
    * a note the pipeline decided against is worth showing as a decision rather
-   * than as an absence. On real material this is the larger list by an order
-   * of magnitude, twenty-six of the thirty-four notes in the fixture.
+   * than as an absence. On real material it is a third of the detection: ten
+   * of the twenty-eight notes on the `walking` fixture, and 101 of 310 across
+   * the sixteen accuracy fixtures.
+   *
+   * It used to be described here as larger than what survived by an order of
+   * magnitude - twenty-six of thirty-four. That was true of one fixture and of
+   * one discriminator, and both are gone; see `transcription-harmonics.ts`.
    *
    * At state level rather than on the session because it is what the current
    * suppression pass concluded, not a fact about the audio - `session.rawNotes`

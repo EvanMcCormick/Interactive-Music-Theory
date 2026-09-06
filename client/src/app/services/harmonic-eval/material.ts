@@ -337,7 +337,12 @@ export const MATERIAL: Material[] = [
 ];
 
 export function materialDurationSec(material: Material): number {
-  return Math.max(...material.notes.map(n => n.onsetSec + n.durationSec)) + 0.3;
+  return notesDurationSec(material.notes);
+}
+
+/** The same, for a bare list of notes that is not a named material. */
+export function notesDurationSec(notes: GroundTruthNote[]): number {
+  return Math.max(...notes.map(n => n.onsetSec + n.durationSec)) + 0.3;
 }
 
 /**
@@ -354,9 +359,27 @@ export function materialDurationSec(material: Material): number {
  * should find easier.
  */
 export function render(material: Material, rate: number): Float32Array {
-  const out = new Float32Array(Math.ceil(materialDurationSec(material) * rate));
+  return renderNotes(material.notes, rate);
+}
 
-  material.notes.forEach((note, index) => {
+/**
+ * The same synthesis, for a line that is not one of the sixteen materials.
+ *
+ * `basic-pitch-detector.spec.ts` and `worker-detector.spec.ts` each used to
+ * carry their own copy of a `pluck` function built by adding four sinusoids,
+ * the `h`th damping `h` times as fast as the fundamental - the same discredited
+ * premise the detection fixtures in `transcription-harmonics.spec.ts` were
+ * captured from, in audio rather than in numbers. They call this instead, so
+ * there is one string model in the repository and every measurement of the
+ * detector is made on material whose harmonic structure nobody chose.
+ *
+ * `render` delegates here so the sixteen frozen captures cannot drift apart
+ * from what a spec renders.
+ */
+export function renderNotes(notes: GroundTruthNote[], rate: number): Float32Array {
+  const out = new Float32Array(Math.ceil(notesDurationSec(notes) * rate));
+
+  notes.forEach((note, index) => {
     const voice = karplusStrong(
       440 * Math.pow(2, (note.pitch - 69) / 12),
       note.durationSec,

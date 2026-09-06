@@ -25,30 +25,9 @@
 
 import { DetectedNote } from '../../models/transcription.model';
 import { DEFAULT_HARMONIC_OPTIONS, HARMONIC_SEMITONES } from '../transcription-harmonics';
-import { DETECTIONS, RawDetection } from './detections.fixture';
 
 /** How long a detection sounds for. */
 export const span = (n: DetectedNote): number => n.offsetSec - n.onsetSec;
-
-/**
- * A frozen `[onsetSec, pitch, durationSec, amplitude]` row as a `DetectedNote`.
- *
- * `bendCents` is empty because the capture never recorded it: suppression does
- * not read it, so freezing it would be bytes nothing consumes.
- */
-export function toNote([onsetSec, pitch, length, amplitude]: RawDetection, i: number): DetectedNote {
-  return {
-    id: `d${i}`,
-    pitch,
-    onsetSec,
-    offsetSec: onsetSec + length,
-    confidence: amplitude,
-    bendCents: []
-  };
-}
-
-/** Every frozen detection for one material, in the order it was captured. */
-export const notesOf = (name: string): DetectedNote[] => DETECTIONS[name].map(toNote);
 
 /** `explains`, which is private to the suppressor, reproduced for reporting. */
 function explains(root: DetectedNote, note: DetectedNote): boolean {

@@ -92,7 +92,8 @@ import {
 import { MATERIAL } from './material';
 import { ONSET_TOLERANCE_SEC, pct, score, totals } from './note-matching';
 import type { Scores } from './note-matching';
-import { band, notesOf, rootOf, span } from './removal-attribution';
+import { detectionsOf } from './detections.fixture';
+import { band, rootOf, span } from './removal-attribution';
 import type { Removal } from './removal-attribution';
 
 /** The second window reported beside the headline. See the docblock. */
@@ -140,7 +141,7 @@ describe('harmonic suppression accuracy', () => {
 
   beforeAll(() => {
     for (const material of MATERIAL) {
-      const detections = notesOf(material.name);
+      const detections = detectionsOf(material.name);
       const removed: DetectedNote[] = [];
       const kept = suppressHarmonics(detections, {}, removed);
 
@@ -253,9 +254,9 @@ describe('harmonic suppression accuracy', () => {
   /** Scores the whole set at one onset window, both stages. */
   function overall(toleranceSec: number): { raw: Scores; kept: Scores } {
     return {
-      raw: totals(MATERIAL.map(m => score(m.notes, notesOf(m.name), toleranceSec))),
+      raw: totals(MATERIAL.map(m => score(m.notes, detectionsOf(m.name), toleranceSec))),
       kept: totals(
-        MATERIAL.map(m => score(m.notes, suppressHarmonics(notesOf(m.name)), toleranceSec))
+        MATERIAL.map(m => score(m.notes, suppressHarmonics(detectionsOf(m.name)), toleranceSec))
       )
     };
   }
@@ -482,7 +483,7 @@ describe('harmonic suppression accuracy', () => {
     const o = DEFAULT_HARMONIC_OPTIONS;
 
     for (const material of MATERIAL) {
-      const detections = notesOf(material.name);
+      const detections = detectionsOf(material.name);
       const byPitch = [...detections].sort((a, b) => a.pitch - b.pitch);
 
       for (const note of detections) {
@@ -579,7 +580,7 @@ describe('harmonic suppression accuracy', () => {
     let real = 0;
 
     for (const material of MATERIAL) {
-      const detections = notesOf(material.name);
+      const detections = detectionsOf(material.name);
       for (const note of detections) {
         for (const root of detections) {
           if (root === note) continue;

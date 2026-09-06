@@ -34,6 +34,8 @@
  * Test-support code. Nothing in the shipped app imports it.
  */
 
+import { DetectedNote } from '../../models/transcription.model';
+
 /** `[onsetSec, midiPitch, durationSec, amplitude]` */
 export type RawDetection = [number, number, number, number];
 
@@ -178,3 +180,59 @@ export const DETECTIONS: Record<string, RawDetection[]> = {
     [4.1589, 48, 0.4412, 0.7205]
   ],
 };
+
+/**
+ * A frozen row as a `DetectedNote`, so a spec can feed one straight to
+ * `suppressHarmonics`.
+ *
+ * This lives here rather than in each spec because until M3's review the same
+ * thirty-four hand-copied rows appeared verbatim in three spec files, and the
+ * audio behind them turned out to encode the very premise the rule they were
+ * testing rested on. One place to change is what makes a bad fixture fixable.
+ *
+ * `bendCents` is empty because the capture never recorded it: suppression does
+ * not read it, so freezing it would be bytes nothing consumes.
+ */
+export function toDetectedNote(
+  [onsetSec, pitch, durationSec, confidence]: RawDetection,
+  index: number
+): DetectedNote {
+  return {
+    id: `d${index}`,
+    pitch,
+    onsetSec,
+    offsetSec: onsetSec + durationSec,
+    confidence,
+    bendCents: []
+  };
+}
+
+/** Every frozen detection for one material, in the order it was captured. */
+export function detectionsOf(name: string): DetectedNote[] {
+  const rows = DETECTIONS[name];
+  if (!rows) throw new Error(`no captured detections for material "${name}"`);
+
+  return rows.map(toDetectedNote);
+}
+
+/**
+ * The one detection of `name` at exactly this pitch and onset.
+ *
+ * Specs name a captured note by what it *is* rather than by where it sits in
+ * the array, so a re-capture that moves it fails loudly here instead of
+ * quietly pointing a test at a different note. Throws rather than returning
+ * undefined for the same reason: a missing fixture note is never something to
+ * carry on past.
+ */
+export function detection(name: string, pitch: number, onsetSec: number): DetectedNote {
+  const found = detectionsOf(name).filter(
+    note => note.pitch === pitch && Math.abs(note.onsetSec - onsetSec) < 1e-6
+  );
+  if (found.length !== 1) {
+    throw new Error(
+      `expected exactly one ${name} detection of MIDI ${pitch} at ${onsetSec} s, found ${found.length}`
+    );
+  }
+
+  return found[0];
+}

@@ -1,5 +1,6 @@
 import { DETECTION_SAMPLE_RATE } from './note-detector';
 import { BasicPitchDetector } from './basic-pitch-detector';
+import { GroundTruthNote, renderNotes } from './harmonic-eval/material';
 import { DetectionResult } from './note-detector';
 import { suppressHarmonics } from './transcription-harmonics';
 
@@ -22,10 +23,11 @@ import { suppressHarmonics } from './transcription-harmonics';
  * the adapter is written around.
  *
  * What they assert is **recall, not precision**. Basic Pitch over-detects a
- * plucked bass line roughly fourfold by design, and turning that back into the
- * played line is `suppressHarmonics`' job, pinned against real output in its
- * own spec. Asserting a note count here would be asserting the same thing
- * twice, badly.
+ * plucked bass line by design - across the sixteen captured accuracy fixtures
+ * it returns 310 notes for 182 played, at 42.3 % precision - and turning that
+ * back into the played line is `suppressHarmonics`' job, pinned against real
+ * output in its own spec. Asserting a note count here would be asserting the
+ * same thing twice, badly.
  */
 
 const E1 = 28;
@@ -33,65 +35,30 @@ const A1 = 33;
 const D2 = 38;
 const G2 = 43;
 
-/** The line the fixture plays: open E, A, D and G on a bass. */
-const PLAYED = [E1, A1, D2, G2];
 const SPACING_SEC = 0.5;
 
-const midiToHz = (midi: number): number => 440 * Math.pow(2, (midi - 69) / 12);
-
 /**
- * One plucked bass note.
+ * The line the fixture plays: open E, A, D and G on a bass, one every
+ * `SPACING_SEC` and each left to ring for that long.
  *
- * Fundamental plus 2nd, 3rd and 4th harmonics, each quieter than the one below
- * it and each damping `h` times as fast.
- *
- * The first of those is what a real string does. **The second is not**, and
- * this comment used to claim it was. Measured on a Karplus-Strong string,
- * where per-partial decay comes out of a loop filter rather than out of a
- * typed-in exponent, partials 1 through 8 of an E1 damp at -20.0 to -20.7
- * dB/s: a spread of 0.7 dB/s, not a factor of eight. What actually differs
- * between a partial and its fundamental is where it *starts* - 8 to 35 dB
- * lower - so it crosses the detector's frame threshold sooner and is reported
- * as a shorter note.
- *
- * That mattered, because `suppressHarmonics` used to arbitrate partials on
- * exactly the property this synthesis asserts. It no longer does; see
- * `transcription-harmonics.ts`. This audio is left as it is rather than
- * quietly fixed, because a spec below still fails on it and the failure is
- * the record.
+ * Synthesised by `harmonic-eval/material.ts`'s Karplus-Strong string, which is
+ * the same model the sixteen accuracy fixtures are captured from. This spec
+ * used to carry its own `pluck` - four sinusoids, the `h`th damping `h` times
+ * as fast as the fundamental - and so did `worker-detector.spec.ts`:
+ * two copies of an assertion about strings that turns out to be false.
+ * Measured on a string
+ * model that asserts nothing of the kind, partials 1 through 8 of an E1 damp
+ * at -20.0 to -20.7 dB/s, a spread of 0.7 dB/s across the whole series. The
+ * suppression rule those fixtures were used to justify rested on exactly that
+ * difference, which made the measurement circular; see
+ * `transcription-harmonics.ts`.
  */
-function pluck(midi: number, seconds: number, rate: number): Float32Array {
-  const frames = Math.round(seconds * rate);
-  const out = new Float32Array(frames);
-  const f0 = midiToHz(midi);
-
-  for (let i = 0; i < frames; i++) {
-    const t = i / rate;
-    // 1 ms of attack and 20 ms of release. A bare step at either end would put
-    // a broadband click there, and a click is exactly what an onset detector
-    // is built to notice.
-    const envelope = Math.min(1, t / 0.001, (seconds - t) / 0.02);
-
-    let sample = 0;
-    for (let h = 1; h <= 4; h++) {
-      sample += (1 / h) * Math.exp(-2.5 * h * t) * Math.sin(2 * Math.PI * f0 * h * t);
-    }
-
-    out[i] = envelope * sample * 0.4;
-  }
-
-  return out;
-}
-
-/** `pitches` played in turn, one every `SPACING_SEC`. */
-function bassline(pitches: number[], rate: number): Float32Array {
-  const stride = Math.round(SPACING_SEC * rate);
-  const out = new Float32Array(pitches.length * stride);
-
-  pitches.forEach((pitch, index) => out.set(pluck(pitch, SPACING_SEC, rate), index * stride));
-
-  return out;
-}
+const PLAYED = [E1, A1, D2, G2];
+const LINE: GroundTruthNote[] = PLAYED.map((pitch, index) => ({
+  pitch,
+  onsetSec: index * SPACING_SEC,
+  durationSec: SPACING_SEC
+}));
 
 describe('BasicPitchDetector', () => {
   let result: DetectionResult;
@@ -99,7 +66,7 @@ describe('BasicPitchDetector', () => {
 
   beforeAll(async () => {
     const detector = new BasicPitchDetector();
-    const audio = bassline(PLAYED, DETECTION_SAMPLE_RATE);
+    const audio = renderNotes(LINE, DETECTION_SAMPLE_RATE);
 
     result = await detector.detect(audio, DETECTION_SAMPLE_RATE, fraction =>
       progress.push(fraction)
@@ -126,9 +93,10 @@ describe('BasicPitchDetector', () => {
         Infinity
       );
 
-      // Measured, on this fixture: 0 ms, 47 ms, 25 ms, 14 ms. The spike put
-      // the error at 10-25 ms and the A1 here is twice that, so the bound is
-      // set well clear of what was actually observed rather than just past it.
+      // Measured on this audio: 23 ms, 34 ms, 22 ms, 26 ms - two, three and
+      // two of the model's own 11.6 ms frames. The bound is set well clear of
+      // that rather than just past it, because it is a property of a model on
+      // a low register and not something this repository controls.
       expect(Math.abs(nearest - expected)).toBeLessThan(0.08);
     });
   });
@@ -140,17 +108,36 @@ describe('BasicPitchDetector', () => {
     expect(result.notes.length).toBeGreaterThan(PLAYED.length);
   });
 
-  it('recovers the played line once the partials are suppressed', () => {
-    // The end-to-end claim of the milestone's detection half: raw audio in,
-    // the notes actually played out.
-  // KNOWN RED since the partial branch moved from a duration ratio to
-  // `partialConfidenceRatio`. The audio this fixture is detected from gives
-  // partial `h` a decay rate `h` times the fundamental's, which builds the old
-  // rule's premise into the signal; measured on a string model that asserts
-  // nothing of the kind, partials 1-8 of an E1 damp within 0.7 dB/s of each
-  // other. See `transcription-harmonics.spec.ts`'s docblock. Left failing on
-  // purpose until Task 5 rebuilds the fixture; do not re-pin it.
-    expect(suppressHarmonics(result.notes).map(note => note.pitch)).toEqual(PLAYED);
+  it('leaves the played line standing once the partials are suppressed', () => {
+    // The end-to-end claim of the milestone's detection half, stated as
+    // strongly as honest audio supports: raw audio in, and every note that was
+    // played still there afterwards.
+    //
+    // Not `toEqual(PLAYED)`. That is what this spec asserted while it ran on
+    // additive synthesis whose partials damped `h` times as fast as their
+    // fundamentals, and it passed because the fixture agreed with the rule.
+    // On a real string model suppression recovers the played line exactly on
+    // one of sixteen materials and improves it on the rest;
+    // `harmonic-eval/harmonic-accuracy.spec.ts` measures that at 61.2 %
+    // precision and 70.3 % recall. Pinning an exact recovery here would be
+    // pinning a thing that is not true of this algorithm.
+    //
+    // What this line cannot say, and a reader should not read into it: no two
+    // of E1, A1, D2 and G2 are a partial's interval apart, so suppression has
+    // no opportunity to destroy one of them however wrong it is. The two
+    // halves below bracket it from the other side instead - one fails if
+    // suppression removes a played pitch, the other if it stops removing
+    // anything. The figures suppression really can destroy are `octaves`,
+    // `leaps` and `slap` in `transcription-harmonics.spec.ts`.
+    const kept = suppressHarmonics(result.notes);
+    const pitches = new Set(kept.map(note => note.pitch));
+
+    for (const pitch of PLAYED) {
+      expect(pitches.has(pitch)).withContext(`MIDI ${pitch}`).toBe(true);
+    }
+    // ...and suppression is doing something, rather than passing this by
+    // keeping everything the detector said.
+    expect(kept.length).toBeLessThan(result.notes.length);
   });
 
   it('returns notes in onset order', () => {

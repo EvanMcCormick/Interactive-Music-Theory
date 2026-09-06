@@ -6,11 +6,17 @@ import { DetectedNote } from '../models/transcription.model';
  *
  * A plucked string radiates most of its energy at the fundamental but plenty
  * at 2f0, 3f0, 4f0 and beyond, and a pitch detector reports those as notes.
- * Measured on a clean synthetic bassline, Basic Pitch returns thirty-four
- * notes for eight played — recall is perfect and precision is 24 %, with every
- * spurious note a partial *above* its fundamental. Constraining the detector's
- * frequency range barely helps, because the partials fall inside the
- * instrument's range too.
+ * Measured across the sixteen Karplus-Strong materials in `harmonic-eval/`,
+ * Basic Pitch returns **310 notes for 182 played** — 72.0 % recall at 42.3 %
+ * precision — with the spurious ones overwhelmingly partials *above* a
+ * fundamental. Constraining the detector's frequency range barely helps,
+ * because the partials fall inside the instrument's range too.
+ *
+ * That headline used to read "thirty-four notes for eight played, precision
+ * 24 %", off a synthetic bassline whose partials were given decay rates the
+ * rule below then claimed to exploit. The figure was true of that audio and
+ * useless as evidence; `transcription-harmonics.spec.ts` says what went wrong
+ * with it.
  *
  * What makes this tractable is that a partial is always *above* its
  * fundamental — physics, not a heuristic. So: consider notes lowest first, and

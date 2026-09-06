@@ -6,6 +6,7 @@ import {
   createDefaultDerivationSettings
 } from '../models/transcription.model';
 import { trackBeats } from './beat-tracking';
+import { detectionsOf } from './harmonic-eval/detections.fixture';
 import { buildPreviewDoc } from './preview-score';
 import { DerivedScore, deriveScore } from './score-derivation';
 import { suppressHarmonics } from './transcription-harmonics';
@@ -352,56 +353,40 @@ describe('buildPreviewDoc', () => {
  * catches a silent loss, because a loss is invisible in the document by
  * definition: what comes back is a perfectly well-formed score with fewer
  * ghosts in it than there were discards. Dropping `quantizeBar`'s `dropped`
- * argument from `buildPreviewDoc` is exactly that bug, and it lost thirteen of
- * thirty-three candidates here before anything objected.
+ * argument from `buildPreviewDoc` is exactly that bug: on the fixture of the
+ * day it lost thirteen of thirty-three candidates before anything objected,
+ * and on this one it loses twelve of twenty-eight.
  *
  * Swept across the confidence floor rather than asserted at one setting,
  * because the floor is what makes it bite. Raising it shortens the derived
  * document, and every ghost from the bars that vanished is held in the last
  * one - where several land on the same string in the same slot and
- * `addToChord` has to turn them away. At 0.3 nothing collides at all.
+ * `addToChord` has to turn them away. At 0.2 nothing is dropped and nothing
+ * collides; at 0.9 nothing survives, the score is one bar, and twelve of the
+ * twenty-eight candidates cannot be placed.
  */
 describe('buildPreviewDoc over the pinned detector fixture', () => {
-  /** [onsetSec, midiPitch, durationSec, amplitude] */
-  type Raw = [number, number, number, number];
-
-  const raw = ([onsetSec, pitch, duration, amplitude]: Raw, index: number): DetectedNote => ({
-    id: `n${index}`,
-    pitch,
-    onsetSec,
-    offsetSec: onsetSec + duration,
-    confidence: amplitude,
-    bendCents: []
-  });
-
   /**
-   * Verbatim output of @spotify/basic-pitch on a synthetic bassline of eight
-   * notes - E1 A1 D2 G2 twice. The same fixture `transcription-harmonics.spec.ts`
-   * and `transcription.service.spec.ts` are pinned against; thirty-four notes
-   * for eight played, twenty-six of them partials.
+   * The detector's frozen output on `walking`, from
+   * `harmonic-eval/detections.fixture.ts`.
    *
    * A hand-written list would not do here. The collisions this test is about
    * come from partials of the same fundamental sharing a string, which is a
    * property of what the model actually emits.
+   *
+   * It used to be thirty-four rows pasted in here, and the same thirty-four
+   * pasted into `transcription-harmonics.spec.ts` and
+   * `transcription.service.spec.ts`. Besides being three copies of one array,
+   * the audio behind them had the discredited duration rule's premise built
+   * into the signal; that spec's docblock has the measurement. Nothing in
+   * *this* file was ever about suppression's rule, so nothing below changes
+   * except the numbers.
    */
-  const SPIKE_OUTPUT: Raw[] = [
-    [0.000, 28, 0.464, 0.565], [0.058, 52, 0.244, 0.377], [0.093, 40, 0.267, 0.552],
-    [0.093, 47, 0.104, 0.343], [0.488, 33, 0.395, 0.687], [0.488, 45, 0.081, 0.264],
-    [0.546, 57, 0.267, 0.328], [0.557, 52, 0.070, 0.329], [0.569, 45, 0.313, 0.514],
-    [0.882, 33, 0.093, 0.445], [0.894, 38, 0.081, 0.299], [0.975, 38, 0.418, 0.712],
-    [1.022, 62, 0.081, 0.352], [1.045, 50, 0.360, 0.484], [1.393, 38, 0.070, 0.415],
-    [1.486, 43, 0.476, 0.666], [1.521, 55, 0.383, 0.428], [1.823, 28, 0.628, 0.520],
-    [2.056, 52, 0.244, 0.381], [2.091, 40, 0.267, 0.548], [2.091, 47, 0.104, 0.345],
-    [2.486, 33, 0.395, 0.688], [2.486, 45, 0.081, 0.264], [2.544, 57, 0.267, 0.329],
-    [2.555, 52, 0.070, 0.329], [2.567, 45, 0.313, 0.514], [2.881, 33, 0.093, 0.443],
-    [2.892, 38, 0.081, 0.297], [2.973, 38, 0.488, 0.676], [3.020, 62, 0.081, 0.352],
-    [3.043, 50, 0.372, 0.485], [3.496, 43, 0.476, 0.667], [3.519, 55, 0.383, 0.424],
-    [3.519, 67, 0.070, 0.349]
-  ];
+  const DETECTED: DetectedNote[] = detectionsOf('walking');
 
   const FOUR_FOUR: TimeSignature = { numerator: 4, denominator: 4, isCommon: true };
-  const DETECTED: DetectedNote[] = SPIKE_OUTPUT.map(raw);
-  const DURATION_SEC = 4;
+  /** Rounded up past the last detection, which ends at 7.19 s. */
+  const DURATION_SEC = 8;
 
   /** The pipeline up to derivation, exactly as `TranscriptionService` runs it. */
   function detected(confidenceFloor: number): {
@@ -430,9 +415,11 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
     };
   }
 
-  // 0.3 leaves nothing colliding; 0.7 and 0.9 collapse the score to one bar and
-  // pile every ghost into it. 0.6 sits between the two.
-  for (const floor of [0.3, 0.6, 0.7, 0.9]) {
+  // Measured on this capture: 0.2 drops nothing and collides nothing, 0.3
+  // drops two, 0.7 is the first floor at which a ghost cannot be placed, and
+  // 0.9 collapses the score to one bar and piles all twenty-eight candidates
+  // into it.
+  for (const floor of [0.2, 0.3, 0.7, 0.9]) {
     it(`draws or reports every candidate at a confidence floor of ${floor}`, () => {
       const { input, suppressed } = detected(floor);
       const derived = deriveScore(input);
@@ -443,26 +430,21 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
       const candidates = derived.dropped.length + suppressed.length;
 
       // Guards the sweep itself: a floor that discarded nothing would satisfy
-      // the conservation law by having no candidates to lose.
-      //
-      // KNOWN RED at floor 0.3 since the partial branch moved to
-      // `partialConfidenceRatio`: suppression leaves 17 candidates on this
-      // fixture where it used to leave 26. The conservation law below still
-      // holds; it is only this guard that no longer clears its own bar. The
-      // fixture's audio builds the old duration rule's premise into the
-      // signal - see `transcription-harmonics.spec.ts`'s docblock - so it is
-      // left failing until Task 5 rebuilds it rather than re-pinned to 17.
-      expect(candidates).toBeGreaterThan(20);
+      // the conservation law by having no candidates to lose. Ten of the
+      // twenty-eight detections are suppressed before derivation, and the
+      // floor adds its own on top, so the smallest this ever gets is ten.
+      expect(candidates).toBeGreaterThanOrEqual(10);
       expect(ghostHeads(preview) + omitted.length).toBe(candidates);
     });
   }
 
   it('reports the ghosts it could not place on a taken string', () => {
-    // At 0.7 the derived score is one bar, so the ghosts of the second bar are
-    // held in it and thirteen of them land on a string already spoken for. The
-    // count is the point: a panel printing `omitted.length` understated it by
-    // some 40 % while these were vanishing instead.
-    const { input, suppressed } = detected(0.7);
+    // At 0.9 nothing clears the floor, so the derived score is a single bar
+    // and every one of the twenty-eight candidates is held in it - where
+    // twelve land on a string already spoken for. The count is the point: a
+    // panel printing `omitted.length` understated it by some 40 % while these
+    // were vanishing instead.
+    const { input, suppressed } = detected(0.9);
     const omitted: DetectedNote[] = [];
 
     const derived = deriveScore(input);
@@ -470,16 +452,25 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
 
     buildPreviewDoc(input, derived, suppressed, omitted);
 
-    expect(omitted.length).toBe(13);
+    expect(omitted.length).toBe(12);
   });
 
   it('loses nothing at a floor low enough that no ghost collides', () => {
-    const { input, suppressed } = detected(0.3);
+    // 0.2 is under the lowest confidence in the capture (0.2648), so
+    // derivation discards nothing and the only candidates are the ten
+    // suppression removed. All ten get drawn.
+    const { input, suppressed } = detected(0.2);
     const omitted: DetectedNote[] = [];
 
-    const preview = buildPreviewDoc(input, deriveScore(input), suppressed, omitted);
+    const derived = deriveScore(input);
+    expect(derived.dropped).toEqual([]);
+
+    const preview = buildPreviewDoc(input, derived, suppressed, omitted);
 
     expect(omitted).toEqual([]);
+    // Naming the count as well as the equality: with no ghosts at all this
+    // would be 0 === 0 and would hold however badly the preview lost them.
+    expect(suppressed.length).toBe(10);
     expect(ghostHeads(preview)).toBe(suppressed.length);
   });
 });

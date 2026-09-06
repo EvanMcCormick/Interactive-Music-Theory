@@ -159,6 +159,16 @@ Rebuild both from **real captured detector output** rather than hand-built numbe
 
 Audit the rest of the file the same way: any test whose fixture asserts values the detector never emits is decoration. Report which ones you found.
 
+**Outcome.** The M2 fixture is gone in both the forms it existed in. The thirty-four `SPIKE_OUTPUT` rows were pasted into three specs; the `pluck()` additive synthesis that produced them had two further copies, in `basic-pitch-detector.spec.ts` and `worker-detector.spec.ts`, where they were still generating audio for real inference. All five now read one place: `harmonic-eval/detections.fixture.ts` for frozen detections, `harmonic-eval/material.ts`'s Karplus-Strong string for audio. `detection(material, pitch, onsetSec)` picks a captured note out by identity, so a re-capture that moves one fails loudly rather than re-pointing a test at a different note.
+
+Twelve red specs: eleven rebuilt against captured pairs and re-pinned, one turned into a statement of a limitation. `suppresses a partial that is louder than its own fundamental` is now `cannot suppress a partial the detector is as sure of as the note under it`, on `repeats` A1 0.3695 with an A2 artefact at 0.4102 — a ratio of 1.110, which no setting of `partialConfidenceRatio` below 1 can reach without deleting every real octave in the set. `suppressed.length > notes.length` is gone: the discard is now ten of twenty-eight rather than twenty-six of thirty-four, because the duration rule's discard was largely music. The claim kept is the partition — nothing removed disappears silently.
+
+Four passing-but-vacuous specs were rebuilt, and the audit found four more that were not on the list: `keeps a root and the fifth above it` (no captured +7 pair would be suppressed even if +7 were added — the detector is 1.11–2.13 times as sure of the fifth as of the root, so the mistake it claimed to guard against would be invisible; replaced by a played twelfth at +19 and by a whole tone that only the interval list keeps), and three whose emptiness made them vacuous under a `no-report` mutation (`reports them in onset order`, `appends rather than replacing`, `loses nothing at a floor low enough that no ghost collides`, each now naming its count as well as its property).
+
+Every rebuilt spec was verified by mutation: 22 mutations of `transcription-harmonics.ts`, each killing at least the specs whose protection it removes. Two findings came out of that. The sort's third key, onset, is unreachable — no captured pair ties on both pitch and confidence, and two that did could not suppress each other anyway — so it is documented as belt-and-braces rather than tested. And the detector integration line (E1 A1 D2 G2) contains no two notes a partial's interval apart, so suppression cannot destroy one of them however wrong it is; that spec is bracketed by `explains-always` and `explains-never` instead, and says so.
+
+Suite: **573 passing, 0 failing.** Accuracy unchanged by the rebuild: 61.2 / 70.3 / 65.5, three real notes destroyed.
+
 Commit: `test: Rebuild the suppression fixtures from real detector output`
 
 ---
