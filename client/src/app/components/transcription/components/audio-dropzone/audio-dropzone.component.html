@@ -1,0 +1,49 @@
+<div
+  class="dropzone"
+  [class.dropzone--active]="isDragActive"
+  (dragenter)="onDragEnter($event)"
+  (dragover)="onDragOver($event)"
+  (dragleave)="onDragLeave($event)"
+  (drop)="onDrop($event)"
+>
+  <p class="dropzone__headline">Drop an audio file here</p>
+
+  <p class="dropzone__hint" [id]="hintId">
+    WAV, MP3, M4A, FLAC, OGG or AIFF — one file at a time.
+  </p>
+
+  <!--
+    The input is the control; the label is what you see. Clipped rather than
+    display: none so it keeps its place in the tab order — the SCSS draws the
+    focus ring on the label.
+  -->
+  <input
+    class="dropzone__input"
+    type="file"
+    accept="audio/*"
+    [id]="inputId"
+    [attr.aria-describedby]="describedBy"
+    (change)="onInputChange($event)"
+  />
+  <label class="dropzone__label" [attr.for]="inputId">Choose an audio file</label>
+
+  <p class="dropzone__selection" *ngIf="selectedFile">
+    <span class="dropzone__file-name">{{ selectedFile.name }}</span>
+    <span class="dropzone__file-size">{{ selectedSize }}</span>
+  </p>
+
+  <!--
+    Present from first render and never removed, so a screen reader has the
+    region registered before there is anything to announce. Only refusals and
+    the multi-file note go in it; there is no phase churn to leak here.
+  -->
+  <div class="dropzone__message-region" [id]="messageId" aria-live="polite">
+    <p
+      class="dropzone__message"
+      [class.dropzone__message--error]="messageKind === 'error'"
+      *ngIf="message"
+    >
+      {{ message }}
+    </p>
+  </div>
+</div>

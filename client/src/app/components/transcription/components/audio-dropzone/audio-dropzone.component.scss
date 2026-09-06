@@ -1,0 +1,127 @@
+// Audio dropzone, matching the app's dark theme.
+
+$nav-bg: #2c3e50;
+$nav-bg-secondary: #34495e;
+$accent-color: #3498db;
+$accent-hover: #2980b9;
+$text-primary: #ecf0f1;
+$text-secondary: #bdc3c7;
+$surface-color: #1a252f;
+$border-color: #465666;
+$error-color: #e74c3c;
+
+// Spacing is done with margins rather than flex `gap` on purpose: the live
+// region below is always in the DOM, and a `gap` would reserve space for it
+// even while it is empty. Margins on the children cost nothing when a child
+// renders nothing, which is what lets the region stay permanently mounted.
+.dropzone {
+  background-color: $surface-color;
+  border: 2px dashed $border-color;
+  border-radius: 8px;
+  color: $text-primary;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 1.5rem;
+  text-align: center;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+// Only ever set by the drag counter, so it survives the pointer crossing the
+// label, the hint and the file summary on its way across the zone.
+.dropzone--active {
+  border-color: $accent-color;
+  background-color: $nav-bg;
+}
+
+.dropzone__headline {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.dropzone__hint {
+  margin: 0 0 0.9rem;
+  font-size: 0.8rem;
+  color: $text-secondary;
+}
+
+// Hidden from sight, not from the tab order or the accessibility tree.
+// `display: none` or `visibility: hidden` would drop the control out of both,
+// leaving the label clickable but the picker unreachable by keyboard.
+.dropzone__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.dropzone__label {
+  background-color: $nav-bg-secondary;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  color: $text-primary;
+  cursor: pointer;
+  display: inline-block;
+  font-size: 0.85rem;
+  padding: 0.45rem 1rem;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+
+  &:hover {
+    background-color: $accent-color;
+    border-color: $accent-hover;
+  }
+}
+
+// The clipped input still takes focus, so the ring has to be drawn on the
+// thing the user can actually see.
+.dropzone__input:focus-visible + .dropzone__label {
+  outline: 3px solid $accent-color;
+  outline-offset: 3px;
+}
+
+.dropzone__selection {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.9rem 0 0;
+  font-size: 0.85rem;
+}
+
+.dropzone__file-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.dropzone__file-size {
+  color: $text-secondary;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+// Deliberately has no box of its own. The margin lives on the message inside
+// it, so an empty region occupies nothing while still being mounted.
+.dropzone__message {
+  margin: 0.9rem 0 0;
+  font-size: 0.8rem;
+  color: $text-secondary;
+  max-width: 40ch;
+}
+
+.dropzone__message--error {
+  color: $error-color;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dropzone,
+  .dropzone__label {
+    transition: none;
+  }
+}
