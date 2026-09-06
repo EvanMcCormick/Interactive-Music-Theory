@@ -149,6 +149,28 @@ $warning-color: #f39c12;
   }
 }
 
+// Secondary to *Open in Composer*: it throws the current score away, so it is
+// outlined rather than filled.
+.transcription__another {
+  background-color: transparent;
+  color: $text-primary;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  padding: 0.55rem 1.1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    background-color: $nav-bg-secondary;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $text-primary;
+    outline-offset: 2px;
+  }
+}
+
 .transcription__actions-hint {
   margin: 0;
   color: $text-secondary;

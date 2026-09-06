@@ -92,6 +92,15 @@ import { TranscriptionReviewComponent } from './components/transcription-review/
  * The service itself is the root instance rather than a component-scoped one,
  * so a finished transcription survives the trip to the composer and back. The
  * worker is the expensive thing to hold open; the session is three arrays.
+ *
+ * ## Transcribing a second file
+ *
+ * That same root scope is why *Transcribe another file* has to exist. The
+ * dropzone is on screen when there is no session, and after one success there
+ * is a session for the life of the tab - leaving `/transcribe` and returning
+ * replays it. `transcribeAnother` calls `TranscriptionService.reset`, which
+ * clears the state and deliberately does not touch the detector, so the second
+ * run reuses the worker rather than paying for the model download again.
  */
 
 /** A detector that can be told to stop, which `NoteDetector` does not require. */
@@ -222,6 +231,19 @@ export class TranscriptionComponent implements OnInit, OnDestroy {
 
   onDownbeatNudged(beats: number): void {
     this.transcription.nudgeDownbeat(beats);
+  }
+
+  /**
+   * Clears the finished transcription, bringing the dropzone back.
+   *
+   * The way out of the review screen, and the reason `showDropzone` is a
+   * function of the state rather than a latch: `session` is non-null from the
+   * first success onwards, so without this the primary flow works exactly once
+   * per page load. `TranscriptionService.reset` leaves the detector alone, so
+   * the second file reuses the worker that the first one paid to start.
+   */
+  transcribeAnother(): void {
+    this.transcription.reset();
   }
 
   /**

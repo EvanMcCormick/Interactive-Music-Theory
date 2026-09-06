@@ -333,6 +333,36 @@ export class TranscriptionService {
   }
 
   /**
+   * Throws the finished transcription away and goes back to `idle`.
+   *
+   * The counterpart `transcribe` always implied and never had. Its docblock
+   * says a run clears whatever the last one produced, which is true of the
+   * *state* and not of the way out: `session` is non-null from the first
+   * success onwards, and a UI that shows the dropzone only while it is null
+   * therefore never shows it again. The service is `providedIn: 'root'`, so
+   * leaving the route and coming back restores the same session rather than
+   * clearing it. This is the door.
+   *
+   * **The detector is deliberately untouched.** Resetting is about the state,
+   * not the worker: the model download and the shader compiles are what make
+   * the first detection the expensive one, and throwing them away between two
+   * files would make the second run pay for them again. Terminating is a
+   * separate decision, taken by whoever injected `NOTE_DETECTOR` - see the
+   * lifecycle note at the top of this file.
+   *
+   * A no-op while a run is in flight, because the run's terminal state would
+   * land on top of the idle one a moment later and the user would be looking at
+   * a score they had just cleared. `busy` is how a caller asks first. Also a
+   * no-op when the state is already idle, so a control that is pressed twice
+   * does not push a state that says nothing new.
+   */
+  reset(): void {
+    if (this.inFlight !== null || this.state.phase === 'idle') return;
+
+    this.push(IDLE_STATE);
+  }
+
+  /**
    * Re-derives the score from the session already in hand.
    *
    * Synchronous, and the reason the raw events are kept: no decode, no

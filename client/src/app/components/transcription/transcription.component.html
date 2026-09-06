@@ -58,9 +58,22 @@
       >
         Open in Composer
       </button>
+      <!--
+        The way back to the dropzone. Without it the primary flow works once
+        per page load: the review panel is shown whenever there is a session,
+        and the service is root-scoped, so nothing else ever clears one.
+      -->
+      <button
+        type="button"
+        class="transcription__another"
+        (click)="transcribeAnother()"
+      >
+        Transcribe another file
+      </button>
       <p class="transcription__actions-hint">
         Sends the score without its ghosts. The composer's undo puts back
-        whatever was open there before.
+        whatever was open there before. Transcribing another file clears this
+        one.
       </p>
     </div>
 

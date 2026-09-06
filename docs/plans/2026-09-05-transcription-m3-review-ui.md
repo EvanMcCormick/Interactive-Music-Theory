@@ -480,6 +480,7 @@ Commit: `feat: Add the transcription review panel`
 The route host. Owns `TranscriptionService`, shows the dropzone until there is a session and the review panel after, and provides *Open in Composer* → `ComposerService.replaceDocument(state.derived.doc)` then `router.navigate(['/composer'])`.
 
 - Progress while detecting. **One** `aria-live="polite"` region, announcing completion and refusal only — not every phase.
+- **A way back to the dropzone.** `showDropzone` is `session === null && !working`, and a session is non-null from the first success onwards, so without a control that clears one the primary flow works exactly once per page load — and because `TranscriptionService` is `providedIn: 'root'`, leaving `/transcribe` and returning replays the same session rather than clearing it. Only a *failed* run brought the dropzone back, which is the one path nobody wants. Add `TranscriptionService.reset()` (back to `IDLE_STATE`; a no-op while a run is in flight, since the terminal state would land on top of it a moment later) and a *Transcribe another file* button beside *Open in Composer*. **`reset` must not touch the detector**: the model download and the shader compiles are what make the first detection expensive, so the second file reuses the worker. The spec that catches this has to run the host against the **real** service — the stubbed-service suite cannot see it, because the bug is in what a real session does to `showDropzone`.
 - **The dropzone already owns a polite region of its own**, for the file-type refusals it handles itself; those never reach `TranscriptionService` and so are not in its state. Do not re-announce them here, or `/transcribe` ends up with two polite regions saying overlapping things about the same drop. The page-level region announces what the *service* reports; the dropzone announces what it rejected before the service saw it.
 - Call `WorkerDetector.terminate()` in `ngOnDestroy`. `TranscriptionService` deliberately does not own the worker; a component that wants inference cancelled on destroy injects `NOTE_DETECTOR` and terminates it. That is the documented contract.
 - `takeUntil(destroy$)` on the state subscription.
@@ -499,6 +500,7 @@ Commit: `feat: Add the transcription route`
 - Every one of the design doc's nine live knobs has a control, and each re-renders without re-running detection.
 - Discarded notes are visible as ghosts.
 - *Open in Composer* opens the clean document, and undo works (`replaceDocument` is already wrapped by the composer's undo stack).
+- A second file can be transcribed without reloading the page: the dropzone comes back, the new score replaces the old one, and the detector's worker is reused rather than rebuilt.
 
 ## Deliberately not in M3
 

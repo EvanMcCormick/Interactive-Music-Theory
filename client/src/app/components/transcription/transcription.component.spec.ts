@@ -8,7 +8,7 @@ import {
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { Router } from '@angular/router';
-import { BehaviorSubject, Observable } from 'rxjs';
+import { BehaviorSubject, Observable, filter, firstValueFrom, skip } from 'rxjs';
 
 import { ScoreDoc, TimeSignature } from '../../models/composer.model';
 import {
@@ -94,6 +94,13 @@ class FakeTranscriptionService {
 
   nudgeDownbeat(beats: number): void {
     this.nudges.push(beats);
+  }
+
+  resets = 0;
+
+  reset(): void {
+    this.resets += 1;
+    this.stateSubject.next(IDLE_STATE);
   }
 }
 
@@ -377,6 +384,28 @@ describe('TranscriptionComponent', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Transcribing another file
+  // ---------------------------------------------------------------------------
+
+  it('offers a way back to the dropzone once there is a score', () => {
+    push(readyState());
+
+    expect(query('.transcription__another')).not.toBeNull();
+  });
+
+  it('clears the session through the service, bringing the dropzone back', () => {
+    push(readyState());
+    expect(query('app-audio-dropzone')).toBeNull();
+
+    (query('.transcription__another') as HTMLButtonElement).click();
+    fixture.detectChanges();
+
+    expect(service.resets).toBe(1);
+    expect(query('app-audio-dropzone')).not.toBeNull();
+    expect(query('app-transcription-review')).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------------
   // The one polite region
   // ---------------------------------------------------------------------------
 
@@ -479,5 +508,161 @@ describe('canTerminate', () => {
 
   it('turns away one that cannot', () => {
     expect(canTerminate(new BareDetector())).toBe(false);
+  });
+});
+
+/**
+ * A RIFF/WAVE file of `seconds` of silence, 44.1 kHz mono 16-bit.
+ *
+ * Silence, because the detector below is stubbed and the only thing the
+ * pipeline reads off the audio is how long it is - but a real file put through
+ * the real browser decoder, so nothing about the decode step is mocked away.
+ * The same helper `transcription.service.spec.ts` uses, for the same reason.
+ */
+function silentWav(seconds: number, sampleRate = 44100): ArrayBuffer {
+  const frames = Math.round(seconds * sampleRate);
+  const dataBytes = frames * 2;
+  const buffer = new ArrayBuffer(44 + dataBytes);
+  const view = new DataView(buffer);
+  const ascii = (offset: number, characters: string): void => {
+    for (let i = 0; i < characters.length; i++) {
+      view.setUint8(offset + i, characters.charCodeAt(i));
+    }
+  };
+
+  ascii(0, 'RIFF');
+  view.setUint32(4, 36 + dataBytes, true);
+  ascii(8, 'WAVE');
+  ascii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  ascii(36, 'data');
+  view.setUint32(40, dataBytes, true);
+
+  return buffer;
+}
+
+/** Reports the same four fretted notes every time, and counts its calls. */
+class CountingDetector implements NoteDetector {
+  calls = 0;
+  terminations = 0;
+
+  async detect(): Promise<DetectionResult> {
+    this.calls += 1;
+    // A microtask, so nothing can accidentally depend on a synchronous
+    // detector: the real one is a round trip to a worker.
+    await Promise.resolve();
+
+    return { notes: NOTES.slice(0, 4), bendFrameRateHz: 86.13 };
+  }
+
+  terminate(): void {
+    this.terminations += 1;
+  }
+}
+
+/**
+ * The whole loop, twice: dropzone -> host -> the real `TranscriptionService` ->
+ * state -> dropzone again.
+ *
+ * The suite above stubs the service, which is what makes the wiring assertable
+ * in isolation and is also why it could not have caught the bug this exists
+ * for. `showDropzone` is `session === null`, a real session is non-null from
+ * the first success onwards, and the service is `providedIn: 'root'` - so with
+ * the real one behind the host, the primary flow worked exactly once. Only a
+ * second run through the real service can say otherwise.
+ */
+describe('TranscriptionComponent, second run through the real service', () => {
+  let fixture: ComponentFixture<TranscriptionComponent>;
+  let service: TranscriptionService;
+  let detector: CountingDetector;
+
+  const wav = (name: string): File =>
+    new File([silentWav(4)], name, { type: 'audio/wav' });
+
+  function query(selector: string): HTMLElement | null {
+    return fixture.nativeElement.querySelector(selector) as HTMLElement | null;
+  }
+
+  /** Hands a file over the way the dropzone does, and waits for the run to end. */
+  async function transcribe(name: string): Promise<void> {
+    // Subscribed before the file is handed over, and past the replayed current
+    // state, so a run that has already finished cannot resolve this early.
+    const settled = firstValueFrom(
+      service
+        .getState()
+        .pipe(skip(1), filter(state => state.phase === 'ready' || state.phase === 'failed'))
+    );
+
+    const dropzone = fixture.debugElement.query(By.directive(AudioDropzoneComponent))
+      .componentInstance as AudioDropzoneComponent;
+    dropzone.fileSelected.emit(wav(name));
+    fixture.detectChanges();
+
+    await settled;
+    fixture.detectChanges();
+  }
+
+  beforeEach(() => {
+    TestBed.resetTestingModule();
+    detector = new CountingDetector();
+
+    TestBed.configureTestingModule({
+      imports: [TranscriptionComponent],
+      providers: [
+        { provide: NOTE_DETECTOR, useValue: detector },
+        { provide: Router, useValue: { navigate: jasmine.createSpy('navigate').and.resolveTo(true) } }
+      ]
+    });
+
+    TestBed.overrideComponent(TranscriptionComponent, {
+      remove: { imports: [TranscriptionReviewComponent] },
+      add: { imports: [StubReviewComponent] }
+    });
+
+    service = TestBed.inject(TranscriptionService);
+    fixture = TestBed.createComponent(TranscriptionComponent);
+    fixture.detectChanges();
+  });
+
+  it('transcribes a second file after the first, without a reload', async () => {
+    await transcribe('first.wav');
+
+    expect(service.state.phase).toBe('ready');
+    expect(query('app-transcription-review')).not.toBeNull();
+    expect(query('app-audio-dropzone')).toBeNull();
+
+    const first = service.state;
+    expect(first.derived?.doc.title).toBe('first.wav');
+
+    (query('.transcription__another') as HTMLButtonElement).click();
+    fixture.detectChanges();
+
+    // The dropzone is back, which is the whole point: before `reset` existed,
+    // `session` stayed non-null and this element never returned.
+    expect(query('app-audio-dropzone')).not.toBeNull();
+    expect(query('app-transcription-review')).toBeNull();
+
+    await transcribe('second.wav');
+
+    expect(service.state.phase).toBe('ready');
+    expect(query('app-transcription-review')).not.toBeNull();
+
+    // A new session and a new score, not the first one still standing.
+    expect(service.state.session?.sourceName).toBe('second.wav');
+    expect(service.state.session?.id).not.toBe(first.session?.id ?? '');
+    expect(service.state.derived?.doc.title).toBe('second.wav');
+    expect(service.state.derived).not.toBe(first.derived!);
+    expect(service.state.derived?.doc.tracks[0].staves[0].bars.length).toBeGreaterThan(0);
+
+    // Detection actually ran again, and the worker was reused rather than torn
+    // down and rebuilt between the two files.
+    expect(detector.calls).toBe(2);
+    expect(detector.terminations).toBe(0);
   });
 });

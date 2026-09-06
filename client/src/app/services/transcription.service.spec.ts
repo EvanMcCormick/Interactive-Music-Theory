@@ -433,6 +433,85 @@ describe('TranscriptionService', () => {
     });
   });
 
+  /**
+   * The way out of a finished run.
+   *
+   * Without it `session` is non-null from the first success onwards, and every
+   * UI that shows a dropzone "until there is a session" shows it exactly once
+   * per page load - the service is root-scoped, so navigating away and back
+   * replays the same state.
+   */
+  describe('reset', () => {
+    it('returns to idle, throwing the finished score away', async () => {
+      await service.transcribe(wavFile());
+      expect(service.state.phase).toBe('ready');
+
+      service.reset();
+
+      expect(service.state).toEqual({
+        phase: 'idle',
+        progress: 0,
+        session: null,
+        derived: null,
+        suppressed: [],
+        error: null,
+        refusal: null
+      });
+      checkInvariants(states);
+    });
+
+    it('clears a failure as well as a success', async () => {
+      detector.failWith = 'gone wrong';
+      await service.transcribe(wavFile());
+      expect(service.state.phase).toBe('failed');
+
+      service.reset();
+
+      expect(service.state.phase).toBe('idle');
+      expect(service.state.error).toBeNull();
+    });
+
+    it('lets a second file be transcribed, on the same detector', async () => {
+      await service.transcribe(wavFile('first.wav'));
+      const first = service.state.session;
+
+      service.reset();
+      await service.transcribe(wavFile('second.wav'));
+
+      expect(service.state.phase).toBe('ready');
+      expect(service.state.session?.sourceName).toBe('second.wav');
+      expect(service.state.session?.id).not.toBe(first?.id ?? '');
+      expect(service.state.derived?.doc.title).toBe('second.wav');
+      // The worker is what makes the first detection expensive, so a reset
+      // must not throw it away: two runs, one detector, two calls.
+      expect(detector.calls).toBe(2);
+      checkInvariants(states);
+    });
+
+    it('is a no-op while a run is still going', async () => {
+      const first = service.transcribe(wavFile('first.wav'));
+      const before = states.length;
+
+      service.reset();
+
+      // Anything else would be cleared and then immediately overwritten by the
+      // terminal state of the run that is still in flight.
+      expect(states.length).toBe(before);
+      await first;
+      expect(service.state.phase).toBe('ready');
+    });
+
+    it('says nothing new when there is nothing to clear', () => {
+      const before = states.length;
+
+      service.reset();
+      service.reset();
+
+      expect(states.length).toBe(before);
+      expect(service.state.phase).toBe('idle');
+    });
+  });
+
   describe('updateSettings', () => {
     it('re-derives without running detection again', async () => {
       await service.transcribe(wavFile());
