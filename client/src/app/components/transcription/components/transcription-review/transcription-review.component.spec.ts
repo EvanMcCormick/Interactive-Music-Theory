@@ -378,6 +378,62 @@ describe('TranscriptionReviewComponent', () => {
 
       expect(shownOption(component.id.division)).toBe('Sixteenth note');
     }));
+
+    /*
+     * The two above hand the refusal back in a *later* change-detection cycle
+     * than the one the control moved in, and that is not how the panel is
+     * wired. `TranscriptionService` is synchronous: the emit, the refusal and
+     * the replacement state all happen inside the `change` handler, before a
+     * single binding is checked. `ngModel` then compares the bound value
+     * against the one it last saw, finds them equal, and writes nothing - so
+     * the select goes on showing the refused option.
+     *
+     * These two reproduce that ordering by replacing the input from inside the
+     * output subscription, the way the host does. Both failed against the
+     * mirror fields alone; both were found by driving the real `/transcribe`
+     * page rather than by either spec above.
+     */
+    it('snaps a refused meter back when the refusal arrives in the same cycle', () => {
+      const refused = readyState(makeSession(), {
+        refusal: 'Could not apply that change: finestDivision 4 cannot express a 6/8 bar.'
+      });
+      component.timeSignatureChanged.subscribe(() =>
+        fixture.componentRef.setInput('state', refused)
+      );
+
+      choose(component.id.meter, '6/8');
+
+      expect(shownOption(component.id.meter)).toBe('4/4');
+    });
+
+    it('snaps a refused division back when the refusal arrives in the same cycle', () => {
+      const refused = readyState(makeSession({ finestDivision: 16 }), {
+        refusal: 'Could not apply that change: finestDivision 4 cannot express a 6/8 bar.'
+      });
+      component.settingsChanged.subscribe(() =>
+        fixture.componentRef.setInput('state', refused)
+      );
+
+      choose(component.id.division, 'Quarter note');
+
+      expect(shownOption(component.id.division)).toBe('Sixteenth note');
+    });
+
+    // The snap-back writes through the value accessor, which is one flag away
+    // from firing `ngModelChange` and posting the refused change straight back
+    // out of the component - an emit the state it came from cannot answer.
+    it('does not re-emit the change it just undid', () => {
+      const refused = readyState(makeSession(), {
+        refusal: 'Could not apply that change: finestDivision 4 cannot express a 6/8 bar.'
+      });
+      component.timeSignatureChanged.subscribe(() =>
+        fixture.componentRef.setInput('state', refused)
+      );
+
+      choose(component.id.meter, '6/8');
+
+      expect(meterEmits.length).toBe(1);
+    });
   });
 
   describe('the downbeat buttons', () => {

@@ -55,6 +55,7 @@
         <label class="control__label" [attr.for]="id.division">Finest division</label>
         <select
           class="control__input"
+          #divisionModel="ngModel"
           [id]="id.division"
           [attr.aria-describedby]="id.divisionHint"
           [ngModel]="finestDivision"
@@ -145,6 +146,7 @@
         <label class="control__label" [attr.for]="id.meter">Time signature</label>
         <select
           class="control__input"
+          #meterModel="ngModel"
           [id]="id.meter"
           [ngModel]="timeSignatureId"
           (ngModelChange)="onTimeSignatureChange($event)"

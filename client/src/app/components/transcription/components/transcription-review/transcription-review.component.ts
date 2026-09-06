@@ -13,7 +13,7 @@ import {
   ViewChild
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
+import { FormsModule, NgModel } from '@angular/forms';
 import { Subject, debounceTime, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
@@ -73,6 +73,12 @@ import {
  * the bound value unchanged, `ngModel` has nothing to write, and the control
  * would sit showing a setting the score was never derived with.
  *
+ * The mirror fields are necessary and, for the two controls a *refusal* can
+ * touch, not sufficient - the round trip happens inside one change-detection
+ * cycle, so `ngModel` sees the same bound value at both ends of it and writes
+ * nothing. `snapRefusedControlsBack` is the other half; read it before
+ * changing either.
+ *
  * `@Input` state must be replaced rather than mutated - `OnPush` plus
  * `ngOnChanges` is the whole update path. `TranscriptionService` pushes a new
  * object every time, including on a refusal.
@@ -82,6 +88,17 @@ import {
  * `buildPreviewDoc`, not `derived.doc`: voice 1 is shared by identity with the
  * document that exports, and voice 2 carries the discards. *Open in Composer*
  * is Task 5's job and sends `derived.doc`, never this.
+ *
+ * ## Past CLAUDE.md's 500-line ceiling, deliberately
+ *
+ * 303 of these lines are code and the rest is prose, and the same argument
+ * `transcription.service.ts` makes applies: the rule exists so a file stays
+ * small enough to hold in the head, and the only extractions on offer here are
+ * the docblocks - which are the part worth keeping next to the code. The knob
+ * table, the preset lists and the discard grouping already live in
+ * `review-controls.ts`. If the *code* grows past the ceiling the answer
+ * changes, and splitting the preview rendering out into a child component is
+ * the shape that would take.
  *
  * Rendering follows `ComposerScoreComponent` exactly - one alphaTab instance, a
  * debounced render request, and a `ResizeObserver`, because alphaTab silently
@@ -125,6 +142,11 @@ export class TranscriptionReviewComponent
   @Output() readonly downbeatNudged = new EventEmitter<number>();
 
   @ViewChild('previewContainer') previewContainer?: ElementRef<HTMLDivElement>;
+
+  // The two controls a refusal can leave disagreeing with the score. See
+  // `snapRefusedControlsBack`.
+  @ViewChild('divisionModel') divisionModel?: NgModel;
+  @ViewChild('meterModel') meterModel?: NgModel;
 
   readonly finestDivisions = FINEST_DIVISIONS;
   readonly minTempoBpm = MIN_TEMPO_BPM;
@@ -261,6 +283,8 @@ export class TranscriptionReviewComponent
     this.canNudgeBack = canNudgeDownbeat(session.grid, -1);
     this.canNudgeForward = canNudgeDownbeat(session.grid, 1);
 
+    if (state?.refusal) this.snapRefusedControlsBack();
+
     // The preview is the only place the discards are actually drawn, and its
     // out-parameter is the only record of the ones it could not draw - so the
     // document and the counts printed under it are built in one pass.
@@ -384,6 +408,42 @@ export class TranscriptionReviewComponent
   /** Buttons that would do nothing are disabled, so this only ever moves the bar. */
   onNudgeDownbeat(beats: number): void {
     this.downbeatNudged.emit(beats);
+  }
+
+  /**
+   * Rewrites the two refusable selects from the state, when a change was
+   * refused.
+   *
+   * The mirror fields on their own are not enough, and the reason is an
+   * ordering the panel's own spec could not see. `TranscriptionService` is
+   * synchronous: the emit, the refusal and the replacement state all happen
+   * inside the `change` handler, before Angular checks a single binding. So
+   * `finestDivision` is set to 4 optimistically and back to 16 by `ngOnChanges`
+   * within one cycle, `NgModel` compares the bound value against the one it
+   * last saw - 16, both times - concludes nothing changed, and never writes to
+   * the view. The select goes on showing "Quarter note" beside a score written
+   * in sixteenths, which is precisely the state the mirror fields exist to
+   * prevent.
+   *
+   * A spec that pushes the refusal in a later change-detection cycle than the
+   * one the control moved in inserts the missing comparison and passes. Found
+   * in the browser, on the real wiring, driving `/transcribe`.
+   *
+   * `FormControl.setValue` writes through the value accessor unconditionally,
+   * which is the whole point of reaching for it here. Both flags matter:
+   * `emitViewToModelChange: false` stops it firing `ngModelChange` and looping
+   * the refused change straight back out of the component, and `emitEvent:
+   * false` keeps it off `valueChanges`.
+   *
+   * Only on a refusal, because that is the only way the two can disagree. Every
+   * other control emits a change the service applies, so the state that comes
+   * back already carries it.
+   */
+  private snapRefusedControlsBack(): void {
+    const options = { emitViewToModelChange: false, emitEvent: false };
+
+    this.divisionModel?.control.setValue(this.finestDivision, options);
+    this.meterModel?.control.setValue(this.timeSignatureId, options);
   }
 
   // -------------------------------------------------------------------------

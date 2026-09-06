@@ -1,0 +1,75 @@
+<div class="transcription">
+  <header class="transcription__header">
+    <h1 class="transcription__title">Transcribe audio</h1>
+    <p class="transcription__lede">
+      Drop a bass or guitar stem and it is detected, barred and written as tab.
+      Every setting below the score re-derives it instantly, so nothing here
+      re-runs the model.
+    </p>
+  </header>
+
+  <!--
+    The one polite region on this page. It carries completions and refusals the
+    service reported; the dropzone owns a region of its own for the files it
+    turns away before the service sees them. Present from first render and never
+    removed, so a screen reader has it registered before there is anything to
+    say.
+  -->
+  <div class="transcription__announcer" aria-live="polite">{{ announcement }}</div>
+
+  <app-audio-dropzone
+    *ngIf="showDropzone"
+    (fileSelected)="onFileSelected($event)"
+  ></app-audio-dropzone>
+
+  <p class="transcription__busy-note" *ngIf="busyNote">{{ busyNote }}</p>
+
+  <!--
+    A progress bar rather than a spinner, because detection reports a real
+    fraction. `role="progressbar"` is polled by a screen reader on demand, which
+    is why the phase name is safe to show here and would not be in the region
+    above.
+  -->
+  <section class="progress" *ngIf="showProgress" aria-label="Transcription progress">
+    <p class="progress__phase">{{ phaseLabel }}</p>
+    <div
+      class="progress__track"
+      role="progressbar"
+      [attr.aria-valuenow]="progressPercent"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      [attr.aria-valuetext]="phaseLabel + ', ' + progressPercent + ' percent'"
+    >
+      <div class="progress__fill" [style.width.%]="progressPercent"></div>
+    </div>
+  </section>
+
+  <p class="transcription__failure" *ngIf="state?.phase === 'failed'" role="alert">
+    {{ state?.error }}
+  </p>
+
+  <ng-container *ngIf="showReview">
+    <div class="transcription__actions">
+      <button
+        type="button"
+        class="transcription__open"
+        [disabled]="!canOpenInComposer"
+        (click)="openInComposer()"
+      >
+        Open in Composer
+      </button>
+      <p class="transcription__actions-hint">
+        Sends the score without its ghosts. The composer's undo puts back
+        whatever was open there before.
+      </p>
+    </div>
+
+    <app-transcription-review
+      [state]="state"
+      (settingsChanged)="onSettingsChanged($event)"
+      (timeSignatureChanged)="onTimeSignatureChanged($event)"
+      (tempoChanged)="onTempoChanged($event)"
+      (downbeatNudged)="onDownbeatNudged($event)"
+    ></app-transcription-review>
+  </ng-container>
+</div>
