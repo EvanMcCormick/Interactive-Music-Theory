@@ -310,6 +310,7 @@ describe('nudging the grid a score is derived from', () => {
     rawNotes: notes,
     bendFrameRateHz: 86.13,
     grid,
+    trackedGrid: grid,
     settings: createDefaultDerivationSettings()
   });
 

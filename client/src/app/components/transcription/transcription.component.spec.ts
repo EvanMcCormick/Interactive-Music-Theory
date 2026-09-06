@@ -170,6 +170,7 @@ function makeSession(settings: Partial<DerivationSettings> = {}): TranscriptionS
     rawNotes: NOTES,
     bendFrameRateHz: 86.13,
     grid: GRID,
+    trackedGrid: GRID,
     settings: { ...createDefaultDerivationSettings(), ...settings }
   };
 }
@@ -294,9 +295,16 @@ describe('TranscriptionComponent', () => {
   });
 
   it('reports a failure without a live region shouting it twice', () => {
+    push({ ...IDLE_STATE, phase: 'decoding' });
     push({ ...IDLE_STATE, phase: 'failed', error: 'Could not decode that.' });
 
-    expect(query('.transcription__failure')?.textContent).toContain('Could not decode');
+    // The assertive region says it; the polite one stays out of the way. Both
+    // saying it is one failure read twice, and the name of this test claimed
+    // that was checked long before anything here read the region.
+    expect(query('.transcription__failure[role="alert"]')?.textContent)
+      .toContain('Could not decode');
+    expect(announcement()).toBe('');
+
     // Back to the dropzone: a failure leaves nothing to review.
     expect(query('app-audio-dropzone')).not.toBeNull();
   });
@@ -454,11 +462,24 @@ describe('TranscriptionComponent', () => {
     expect(announcement()).toContain('too coarse');
   });
 
-  it('announces a failure', () => {
+  it('leaves a failure to the alert region, which interrupts on its own', () => {
     push({ ...IDLE_STATE, phase: 'detecting' });
     push({ ...IDLE_STATE, phase: 'failed', error: 'Could not transcribe "bass.wav": bad file.' });
 
-    expect(announcement()).toContain('Could not transcribe');
+    expect(query('.transcription__failure')?.textContent).toContain('Could not transcribe');
+    expect(announcement()).toBe('');
+  });
+
+  it('does not leave a completion standing when the next run fails', () => {
+    push({ ...IDLE_STATE, phase: 'deriving' });
+    push(readyState());
+    expect(announcement()).not.toBe('');
+
+    push({ ...IDLE_STATE, phase: 'failed', error: 'Could not decode that.' });
+
+    // The old completion would otherwise be read alongside the new alert,
+    // describing a score that is no longer on screen.
+    expect(announcement()).toBe('');
   });
 
   it('keeps its refusals separate from the dropzone, which owns its own region', () => {

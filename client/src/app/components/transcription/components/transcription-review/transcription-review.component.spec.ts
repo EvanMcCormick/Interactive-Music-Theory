@@ -101,6 +101,7 @@ function makeSession(
     rawNotes: notes,
     bendFrameRateHz: 86.13,
     grid,
+    trackedGrid: grid,
     settings: { ...createDefaultDerivationSettings(), ...settings }
   };
 }

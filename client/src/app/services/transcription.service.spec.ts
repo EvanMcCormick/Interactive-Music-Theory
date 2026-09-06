@@ -1034,6 +1034,64 @@ describe('TranscriptionService', () => {
     });
   });
 
+  /**
+   * `updateTempo` and `nudgeDownbeat` are the two knobs that cannot be undone.
+   *
+   * The tracker measures every beat separately - the fixture comes back as
+   * [0.49, 0.49, 0.51, 0.5, ...] - and `withTempo` replaces those measurements
+   * with an even pulse, so typing the original BPM back gives an even grid
+   * rather than the one that followed the performance. `nudgedDownbeat` drops
+   * beats off the front for good. Nothing can rebuild either without re-running
+   * the tracker, which means re-running suppression, which means the detector.
+   *
+   * So the tracked grid is kept. The control that offers it back is follow-up
+   * work; the fact it preserves is destroyed at the first correction, which is
+   * why the field cannot wait for the control.
+   */
+  describe('the tracked grid', () => {
+    it('is what the tracker measured, and starts out the working grid', async () => {
+      await service.transcribe(wavFile());
+
+      const session = service.state.session;
+      expect(session?.trackedGrid.beatsSec).toEqual(
+        trackBeats(suppressHarmonics(DETECTED), session?.durationSec ?? 0, FOUR_FOUR).beatsSec
+      );
+      expect(session?.trackedGrid).toBe(session!.grid);
+    });
+
+    it('survives a tempo correction that replaced the working grid', async () => {
+      await service.transcribe(wavFile());
+      const tracked = service.state.session?.trackedGrid.beatsSec ?? [];
+      expect(tracked.length).toBeGreaterThan(2);
+
+      service.updateTempo(90);
+
+      expect(service.state.session?.grid.beatsSec).not.toEqual(tracked);
+      expect(service.state.session?.trackedGrid.beatsSec).toEqual(tracked);
+    });
+
+    it('survives a downbeat nudge, which drops beats for good', async () => {
+      await service.transcribe(wavFile());
+      const tracked = service.state.session?.trackedGrid.beatsSec ?? [];
+
+      service.nudgeDownbeat(1);
+      service.updateTempo(200);
+      service.nudgeDownbeat(1);
+
+      expect(service.state.session?.trackedGrid.beatsSec).toEqual(tracked);
+    });
+
+    it('survives an ordinary re-derivation', async () => {
+      await service.transcribe(wavFile());
+      const trackedGrid = service.state.session?.trackedGrid;
+
+      service.updateSettings({ capo: 3 });
+      service.updateTimeSignature({ numerator: 3, denominator: 4, isCommon: false });
+
+      expect(service.state.session?.trackedGrid).toBe(trackedGrid!);
+    });
+  });
+
   describe('session identity', () => {
     it('gives each run its own session id', async () => {
       await service.transcribe(wavFile());

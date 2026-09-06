@@ -295,6 +295,13 @@ export class TranscriptionService {
       // without re-running the model.
       const suppressed: DetectedNote[] = [];
       const notes = suppressHarmonics(detection.notes, {}, suppressed);
+
+      // Tracked once, kept twice. `grid` is the working copy that `updateTempo`
+      // and `nudgeDownbeat` replace; `trackedGrid` is what the tracker actually
+      // measured, and it is the only copy of that - both corrections destroy
+      // the per-beat measurements and neither can rebuild them.
+      const tracked = trackBeats(notes, decoded.durationSec, timeSignature);
+
       const session: TranscriptionSession = {
         id: nextSessionId(),
         sourceName: file.name,
@@ -307,7 +314,8 @@ export class TranscriptionService {
         // at this rate and is uninterpretable without it.
         bendFrameRateHz: detection.bendFrameRateHz,
         // The suppressed notes, not `detection.notes`. See the module docblock.
-        grid: trackBeats(notes, decoded.durationSec, timeSignature),
+        grid: tracked,
+        trackedGrid: tracked,
         settings
       };
 
@@ -441,6 +449,14 @@ export class TranscriptionService {
    * a render that does not return rather than a wrong answer; see
    * `withTempo`. A no-op unless a transcription has succeeded, and refused on
    * the same terms as `updateSettings`.
+   *
+   * **Not reversible from the grid it leaves behind**, which is what
+   * `session.trackedGrid` is for. Typing the original BPM back produces an even
+   * pulse at that tempo, not the measured one the tracker returned, because the
+   * measurements are what this replaces. `nudgeDownbeat` is the same shape: it
+   * drops beats off the front for good. Seven of the nine knobs are reversible
+   * and these two are not; the tracked grid is kept so a "restore tracked
+   * tempo" control can exist, and that control is follow-up work.
    */
   updateTempo(bpm: number): void {
     this.rederive(session => ({

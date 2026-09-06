@@ -21,7 +21,7 @@ npx ng test --watch=false --browsers=ChromeHeadless
 npx ng test --watch=false --browsers=ChromeHeadless --include='**/NAME.spec.ts'
 ```
 
-Baseline: **297 tests, 0 failures.**
+Baseline: **297 tests, 0 failures.** M3 ends at **548**.
 
 ### What M3 has to fix, not just display
 
@@ -485,7 +485,7 @@ Commit: `feat: Add the transcription review panel`
 
 The route host. Owns `TranscriptionService`, shows the dropzone until there is a session and the review panel after, and provides *Open in Composer* → `ComposerService.replaceDocument(state.derived.doc)` then `router.navigate(['/composer'])`.
 
-- Progress while detecting. **One** `aria-live="polite"` region, announcing completion and refusal only — not every phase.
+- Progress while detecting. **One** `aria-live="polite"` region, announcing completion and refusal only — not every phase, and **not the failure**. The failure is already rendered in a `role="alert"` region, which is assertive and announces itself; putting the same string in the polite region in the same pass has a screen reader read one failure twice. Of the two, the alert region is the one to keep — a run that produced nothing is exactly the case for interrupting. A test named for this has to actually read the polite region: checking the paragraph and the dropzone leaves the behaviour its name claims completely uncovered.
 - **A way back to the dropzone.** `showDropzone` is `session === null && !working`, and a session is non-null from the first success onwards, so without a control that clears one the primary flow works exactly once per page load — and because `TranscriptionService` is `providedIn: 'root'`, leaving `/transcribe` and returning replays the same session rather than clearing it. Only a *failed* run brought the dropzone back, which is the one path nobody wants. Add `TranscriptionService.reset()` (back to `IDLE_STATE`; a no-op while a run is in flight, since the terminal state would land on top of it a moment later) and a *Transcribe another file* button beside *Open in Composer*. **`reset` must not touch the detector**: the model download and the shader compiles are what make the first detection expensive, so the second file reuses the worker. The spec that catches this has to run the host against the **real** service — the stubbed-service suite cannot see it, because the bug is in what a real session does to `showDropzone`.
 - **The dropzone already owns a polite region of its own**, for the file-type refusals it handles itself; those never reach `TranscriptionService` and so are not in its state. Do not re-announce them here, or `/transcribe` ends up with two polite regions saying overlapping things about the same drop. The page-level region announces what the *service* reports; the dropzone announces what it rejected before the service saw it.
 - Call `WorkerDetector.terminate()` in `ngOnDestroy`. `TranscriptionService` deliberately does not own the worker; a component that wants inference cancelled on destroy injects `NOTE_DETECTOR` and terminates it. That is the documented contract.
@@ -501,12 +501,51 @@ Commit: `feat: Add the transcription route`
 
 ## Done when
 
-- Full suite green, `npx tsc -p tsconfig.spec.json --noEmit` clean, `npm run build` succeeds with the main bundle near 716 kB and TF.js still confined to the worker chunk.
+- Full suite green, `npx tsc -p tsconfig.spec.json --noEmit` clean, `npm run build` succeeds with **no alphaTab and no TF.js in `main`**, which is the containment that actually matters. The bundle figure is re-baselined: "near 716 kB" was stale before M3 began — `main` on the base branch measures 739.27 kB, and source-map analysis puts M3's own eager contribution under ~2 kB. It measures 740.39 kB at the end of this milestone. See the note under Limitations.
 - `/transcribe` takes a real audio file to a rendered score in the browser.
-- Every one of the design doc's nine live knobs has a control, and each re-renders without re-running detection.
+- **Eight of the design doc's nine live knobs have a control**, and each re-renders without re-running detection: tuning, capo, finest division, confidence floor, position hint, time signature, tempo and downbeat. The ninth — `allowTriplets` — has neither a control nor an implementation; the table in Task 4 substituted `maxFret` for it, so the original "every one of the nine" was met against a different nine. `maxFret` has a control and is worth having; it is not one of the design doc's nine. See Limitations.
 - Discarded notes are visible as ghosts.
 - *Open in Composer* opens the clean document, and undo works (`replaceDocument` is already wrapped by the composer's undo stack).
 - A second file can be transcribed without reloading the page: the dropzone comes back, the new score replaces the old one, and the detector's worker is reused rather than rebuilt.
+
+## Limitations, recorded at the end of M3
+
+Each of these is known, none is fixed here, and none is a reason to hold the milestone. They are written down so the next reader does not have to rediscover them.
+
+### Tempo and downbeat are one-way doors, and only half of that is fixed
+
+`updateTempo` replaces `session.grid` with an even pulse and `nudgeDownbeat` drops beats off the front. The tracker measures each beat separately — the pinned fixture comes back as `[0.49, 0.49, 0.51, 0.5, ...]` — so typing the original BPM back gives an *even* grid at that tempo, not the one that followed the performance, and nothing on screen says so. Seven of the nine knobs are reversible and these two are not.
+
+**Fixed here:** `TranscriptionSession.trackedGrid` keeps what `trackBeats` returned, untouched by either correction. It has to exist now rather than alongside the control that uses it, because the measurements are destroyed at the first correction and cannot be rebuilt without re-running the tracker — which means re-running suppression, which means the detector.
+
+**Follow-up:** a *restore tracked tempo* control, and a note beside the tempo field saying that the value in it is a respacing rather than a measurement.
+
+### Ghosts relocate when bars collapse
+
+`buildPreviewDoc` places a ghost with `Math.min(lastBar, entry.bar)`. Raising `confidenceFloor` removes the later notes, `derived.doc` collapses to fewer bars, and every ghost from a vanished bar is piled into the last surviving one *at its original `beatInBar`*. `omitted` counts the ones that then collided on a taken string; the ones that merely relocated are drawn, uncounted, in a bar they were never struck in. The docblock's justification — a ghost is drawn where the decision was taken — holds for a full-length score and not for a collapsed one. The honest fix is to draw ghosts against a bar count that spans the candidates as well as the keepers, which changes what the preview document *is*.
+
+### `allowTriplets` has no control and no implementation
+
+It is one of the design doc's nine knobs and one of `DerivationSettings`' fields, and nothing in `client/src` reads it — `quantizeBar` writes binary divisions only. The Task 4 table substituted `maxFret`, so the Done-when's "every one of the nine has a control" was met against a different nine. Corrected above. Implementing it means triplet-aware duration selection in `transcription-quantize.ts`, which is real work rather than a control.
+
+### Re-derivation is O(bars × notes), and the preview is not debounced on input
+
+`deriveScore` filters the whole `placed` array once per bar, where `buildPreviewDoc` does the same grouping with a `Map`. On the fixtures here that is invisible; on a five-minute file at a fine division it is quadratic in the wrong quantity. Separately, `ngOnChanges` calls `buildPreviewDoc` synchronously on every input change, and a `range` input fires one per drag tick — only the alphaTab *render* is debounced, not the document build. The plan's "0.10 ms" is a measurement on an eight-note fixture and carries no cap on file duration; it should not be quoted as a property of the pipeline.
+
+### The host's own loop is only partly closed in tests
+
+`transcription.component.spec.ts` stubs the review panel *and* the service, so the round trip control → output → host → real service → new state → control is never exercised there, and `markForCheck()` is unverifiable by construction. The second-run spec added in this milestone closes the loop for the *file* path — dropzone → host → real service → state → dropzone — but not for the knobs. Also uncovered: the `ResizeObserver` callback and both of its branches, `disconnect()` on destroy, and both `renderError` messages.
+
+### Weak assertions worth tightening later
+
+- `expect(buttons().every(b => b.disabled)).toBeFalse()` passes with one button wrongly disabled. It should name each button.
+- A `rendered.length > 0` assertion whose `beforeEach` has already rendered once, so it cannot fail for the reason it is written for.
+- A test promising the tempo field is rewritten that never asserts the field's value.
+- `beat-grid-edit.spec.ts` asserts `nudgedDownbeat` against `canNudgeDownbeat`, which is `nudgedDownbeat`'s own first line — so the two agree by construction rather than by test.
+
+### The bundle figure was stale before M3
+
+Done-when said "near 716 kB". `main` on the base branch is 739.27 kB and measures 740.39 kB at the end of this milestone; source-map analysis puts M3's own eager contribution under ~2 kB. Containment holds: neither alphaTab nor TF.js appears in `main`. The remaining gap is worth one specific change — moving the `NOTE_DETECTOR` token out of `transcription.service.ts` into `note-detector.ts` would let the whole derivation pipeline go lazy behind the `/transcribe` route, and probably closes most of it.
 
 ## Deliberately not in M3
 

@@ -48,6 +48,7 @@ function session(
     rawNotes,
     bendFrameRateHz: 86.13,
     grid: GRID,
+    trackedGrid: GRID,
     settings: createDefaultDerivationSettings()
   };
 }
@@ -409,6 +410,7 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
   } {
     const suppressed: DetectedNote[] = [];
     const notes = suppressHarmonics(DETECTED, {}, suppressed);
+    const tracked = trackBeats(notes, DURATION_SEC, FOUR_FOUR);
 
     return {
       suppressed,
@@ -419,8 +421,10 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
         notes,
         rawNotes: DETECTED,
         bendFrameRateHz: 86.13,
-        // Tracked from the suppressed notes, as the service does.
-        grid: trackBeats(notes, DURATION_SEC, FOUR_FOUR),
+        // Tracked from the suppressed notes, as the service does. One call,
+        // two fields, exactly as `transcribe` assembles it.
+        grid: tracked,
+        trackedGrid: tracked,
         settings: { ...createDefaultDerivationSettings(), confidenceFloor }
       }
     };

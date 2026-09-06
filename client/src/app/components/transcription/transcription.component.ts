@@ -57,6 +57,14 @@ import { TranscriptionReviewComponent } from './components/transcription-review/
  * which is `role="progressbar"` precisely so it is polled rather than
  * announced.
  *
+ * **Nor a failure.** The template renders it in a `role="alert"` region, which
+ * is assertive and announces itself; putting the same string in the polite
+ * region in the same pass had a screen reader read one failure twice. Of the
+ * two, the alert region is the one to keep - a run that produced nothing is
+ * exactly the case for interrupting - so this one stays quiet and says so
+ * below. The two halves of that bug shipped together and the spec named for it
+ * checked the paragraph and the dropzone without ever reading the region.
+ *
  * Nor the *successful* settings changes, which arrive as a new `ready` state on
  * every knob turn. The score visibly re-renders; announcing each one would put
  * the churn back under a different name. That is why a completion is announced
@@ -293,19 +301,17 @@ export class TranscriptionComponent implements OnInit, OnDestroy {
    * applied says nothing, because the score redrawing is the feedback and it
    * does not need narrating nine different ways.
    *
-   * A failure already standing is not re-read either. `failed` is terminal, so
-   * the only way to see it twice is a re-subscription, and a screen reader
-   * repeating the same sentence is how a live region becomes noise.
+   * A failure is empty too, and that is the point rather than an omission: the
+   * template already renders it in a `role="alert"` region. Announcing it here
+   * as well put the same sentence through a screen reader twice in one pass.
    */
   private announcementFor(
     state: TranscriptionState,
     previousPhase: TranscriptionPhase
   ): string {
-    if (state.phase === 'failed') {
-      if (previousPhase === 'failed') return this.announcement;
-
-      return state.error ?? 'The transcription failed.';
-    }
+    // Said by the alert region, which interrupts - the right treatment for a
+    // run that produced nothing, and the reason this one stays quiet.
+    if (state.phase === 'failed') return '';
 
     if (state.phase === 'ready' && WORKING_PHASES.includes(previousPhase)) {
       return this.completionMessage(state);

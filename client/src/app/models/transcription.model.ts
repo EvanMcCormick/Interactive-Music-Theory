@@ -192,6 +192,28 @@ export interface TranscriptionSession {
    */
   bendFrameRateHz: number;
   grid: BeatGrid;
+  /**
+   * The grid `trackBeats` returned, before any correction was made to it.
+   *
+   * `updateTempo` replaces `grid` with an even pulse and `nudgeDownbeat` drops
+   * beats off its front, and both are one-way doors without this: the tracker
+   * measures every beat separately - a real grid runs [0.49, 0.49, 0.51, 0.5,
+   * ...] - so typing the original BPM back gives an even grid rather than the
+   * one that followed the performance, and the measurements are gone. Seven of
+   * the nine knobs are reversible and these two were not.
+   *
+   * Kept so that they can be. Nothing reads it yet: the control that offers
+   * "restore the tracked tempo" is follow-up work, and the field is here
+   * because the fact it preserves is destroyed at the moment of the first
+   * correction and cannot be recovered afterwards without re-running the
+   * tracker - which means re-running suppression, which means the detector.
+   *
+   * On the session rather than the state, alongside `rawNotes`, and for the
+   * same reason: it is what the tracker observed about this audio, not what the
+   * current interpretation says. Never rewritten - `updateTempo` and
+   * `nudgeDownbeat` both spread the session and replace `grid` alone.
+   */
+  trackedGrid: BeatGrid;
   settings: DerivationSettings;
 }
 

@@ -54,6 +54,7 @@ function session(
     // notes here carry no bends.
     bendFrameRateHz: 86.13,
     grid,
+    trackedGrid: grid,
     settings: createDefaultDerivationSettings()
   };
 }
