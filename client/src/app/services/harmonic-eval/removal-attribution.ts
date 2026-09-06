@@ -61,11 +61,11 @@ function explains(root: DetectedNote, note: DetectedNote): boolean {
   if (interval > 0) {
     if (note.onsetSec < root.onsetSec - o.toleranceSec) return false;
 
-    return span(note) < span(root) * o.partialDurationRatio;
+    return note.confidence < root.confidence * o.partialConfidenceRatio;
   }
 
   return (
-    note.confidence < root.confidence * o.unisonAmplitudeRatio &&
+    note.confidence < root.confidence * o.unisonConfidenceRatio &&
     span(note) < span(root) * o.unisonDurationRatio
   );
 }
@@ -89,7 +89,13 @@ export interface Removal {
   costTheNote: boolean;
   interval: number;
   spanRatio: number;
-  amplitudeRatio: number;
+  /**
+   * `note.confidence / root.confidence`. Named for the field it divides: it
+   * is a ratio of mean frame activations, not of levels, and calling it an
+   * amplitude ratio is how the rule it now arbitrates was mis-justified once
+   * already. See `transcription-harmonics.ts`.
+   */
+  confidenceRatio: number;
   onsetLagSec: number;
 }
 

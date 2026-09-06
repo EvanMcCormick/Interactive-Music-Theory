@@ -42,10 +42,23 @@ const midiToHz = (midi: number): number => 440 * Math.pow(2, (midi - 69) / 12);
 /**
  * One plucked bass note.
  *
- * Fundamental plus 2nd, 3rd and 4th harmonics — each quieter than the one
- * below it, and each damping faster. Both of those are what a real string
- * does, and the second is what the transcription chain leans on: the partials
- * a detector reports above a note die away before the note itself does.
+ * Fundamental plus 2nd, 3rd and 4th harmonics, each quieter than the one below
+ * it and each damping `h` times as fast.
+ *
+ * The first of those is what a real string does. **The second is not**, and
+ * this comment used to claim it was. Measured on a Karplus-Strong string,
+ * where per-partial decay comes out of a loop filter rather than out of a
+ * typed-in exponent, partials 1 through 8 of an E1 damp at -20.0 to -20.7
+ * dB/s: a spread of 0.7 dB/s, not a factor of eight. What actually differs
+ * between a partial and its fundamental is where it *starts* - 8 to 35 dB
+ * lower - so it crosses the detector's frame threshold sooner and is reported
+ * as a shorter note.
+ *
+ * That mattered, because `suppressHarmonics` used to arbitrate partials on
+ * exactly the property this synthesis asserts. It no longer does; see
+ * `transcription-harmonics.ts`. This audio is left as it is rather than
+ * quietly fixed, because a spec below still fails on it and the failure is
+ * the record.
  */
 function pluck(midi: number, seconds: number, rate: number): Float32Array {
   const frames = Math.round(seconds * rate);
@@ -130,6 +143,13 @@ describe('BasicPitchDetector', () => {
   it('recovers the played line once the partials are suppressed', () => {
     // The end-to-end claim of the milestone's detection half: raw audio in,
     // the notes actually played out.
+  // KNOWN RED since the partial branch moved from a duration ratio to
+  // `partialConfidenceRatio`. The audio this fixture is detected from gives
+  // partial `h` a decay rate `h` times the fundamental's, which builds the old
+  // rule's premise into the signal; measured on a string model that asserts
+  // nothing of the kind, partials 1-8 of an E1 damp within 0.7 dB/s of each
+  // other. See `transcription-harmonics.spec.ts`'s docblock. Left failing on
+  // purpose until Task 5 rebuilds the fixture; do not re-pin it.
     expect(suppressHarmonics(result.notes).map(note => note.pitch)).toEqual(PLAYED);
   });
 

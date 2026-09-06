@@ -444,6 +444,14 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
 
       // Guards the sweep itself: a floor that discarded nothing would satisfy
       // the conservation law by having no candidates to lose.
+      //
+      // KNOWN RED at floor 0.3 since the partial branch moved to
+      // `partialConfidenceRatio`: suppression leaves 17 candidates on this
+      // fixture where it used to leave 26. The conservation law below still
+      // holds; it is only this guard that no longer clears its own bar. The
+      // fixture's audio builds the old duration rule's premise into the
+      // signal - see `transcription-harmonics.spec.ts`'s docblock - so it is
+      // left failing until Task 5 rebuilds it rather than re-pinned to 17.
       expect(candidates).toBeGreaterThan(20);
       expect(ghostHeads(preview) + omitted.length).toBe(candidates);
     });

@@ -108,11 +108,15 @@ Swap the partial branch's duration clause for an amplitude clause. **Choose the 
 
 Report the trade-off curve you chose from: for a range of cuts, artefacts removed against real notes destroyed. Pick a point and justify it. Losing real notes is worse than keeping artefacts — an artefact is visible as a ghost and ignorable; a destroyed note has no path back — so weight accordingly and say what weighting you used.
 
-Correct the docblock. It currently justifies the rule with "a partial decays faster than its fundamental, so it sounds for less of it". Measured, that is 0.7 dB/s of difference and not what separates them. The honest statement is that partials **start 8–35 dB below** their fundamental, which is what an amplitude ratio measures directly and a duration ratio measures only by proxy through the detector's threshold.
+Correct the docblock. It currently justifies the rule with "a partial decays faster than its fundamental, so it sounds for less of it". Measured, that is 0.7 dB/s of difference and not what separates them.
 
-Keep `partialDurationRatio` only if it earns its place *alongside* amplitude on the data. If it does not, remove it rather than leaving a parameter that does nothing.
+> **Correction, written while executing this task.** The replacement justification this section proposed — that partials "start 8–35 dB below their fundamental, which is what an amplitude ratio measures directly" — is also wrong, and Task 2 is what measured it. `DetectedNote.confidence` is the detector's **mean frame activation** over a note's span, floored by the model's own 0.3 frame threshold. It is not amplitude: r = 0.182 against velocity over 49 notes spanning 17.7 dB, and the softest notes average 0.954 of the loudest against a physical ratio near 0.3. On `accents`, offbeat octaves plucked at a third of the downbeats' strength come back *higher*. So the rule that shipped is **not** an amplitude rule; its separating power comes from the model being less certain about a partial than about the note that produced it — a claim about the detector, argued from the measurement, and named accordingly (`partialConfidenceRatio`). This also explains why the best cut did not move when dynamics were added: it was never tracking dynamics.
 
-**Re-measure and report the full table.** The gate is: precision up, and real notes destroyed strictly down from 12.
+Keep `partialDurationRatio` only if it earns its place *alongside* the new clause on the data. If it does not, remove it rather than leaving a parameter that does nothing.
+
+**Re-measure and report the full table.** The gate is: precision up, and real notes destroyed strictly down from 22 (12 over the ten pre-dynamics materials).
+
+**Outcome.** `partialConfidenceRatio: 0.65`, chosen from the 120-pair curve weighting one destroyed real note as five kept artefacts. Over the sixteen fixtures: precision 56.5 → 61.2, recall 59.9 → 70.3, F1 58.1 → 65.5, real notes destroyed 22 → 3. `partialDurationRatio` removed: at the chosen cut a second length clause adds at most one artefact in ninety-two before it starts costing real notes. Five per-fixture rows where suppression was worse than the raw detector closed (`fifths`, `leaps`, `slap`, `quietOverLoud`, `loudOverQuiet`); `ghosts` did not. Twelve tests built on the M2 spike fixture now fail and are left failing — that fixture's audio gives partial `h` a decay rate `h` times the fundamental's, so it encodes the discredited premise; Task 5 rebuilds it.
 
 Commit: `fix: Discriminate partials by amplitude, not duration`
 

@@ -4,9 +4,9 @@
  *
  * The fixture `transcription-harmonics.spec.ts` is built on was made by adding
  * sinusoids at hand-picked amplitudes and hand-picked decay rates. Measuring
- * `suppressHarmonics` against that is close to circular: its
- * `partialDurationRatio` rests on partials decaying faster than fundamentals,
- * which is exactly what those hand-picked decays assert.
+ * `suppressHarmonics` against that is close to circular: the duration rule it
+ * used to arbitrate partials with rested on them decaying faster than their
+ * fundamentals, which is exactly what those hand-picked decays assert.
  *
  * Karplus-Strong asserts nothing of the kind. An excitation circulates in a
  * delay line one period long, through a low-pass filter. The harmonic series
@@ -44,8 +44,11 @@
  * "simplify" this back to a burst: it invalidates every accuracy number
  * without failing anything else.
  *
- * Per-partial *decay*, which is the only thing `partialDurationRatio` rests
- * on, is untouched by any of this: it comes from the loop filter alone.
+ * Per-partial *decay* is untouched by any of this: it comes from the loop
+ * filter alone. Measuring it is what showed the duration rule had no mechanism
+ * behind it - partials 1 through 8 of an E1 come out at -20.0 to -20.7 dB/s, a
+ * spread of 0.7 dB/s across the whole series - and the rule was replaced on
+ * that evidence. The synthesis stays able to state the number either way.
  *
  * ## How hard the string is plucked
  *

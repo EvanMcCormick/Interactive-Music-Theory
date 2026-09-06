@@ -32,7 +32,12 @@ const SPACING_SEC = 0.5;
 
 const midiToHz = (midi: number): number => 440 * Math.pow(2, (midi - 69) / 12);
 
-/** One plucked bass note: fundamental plus three harmonics, each damping faster. */
+/**
+ * One plucked bass note: fundamental plus three harmonics, each damping `h`
+ * times as fast - which is not what a string does. See the same function in
+ * `basic-pitch-detector.spec.ts` for the measurement that says so and for why
+ * the spec below is left failing rather than repaired.
+ */
 function pluck(midi: number, seconds: number, rate: number): Float32Array {
   const frames = Math.round(seconds * rate);
   const out = new Float32Array(frames);
@@ -126,6 +131,13 @@ describe('WorkerDetector', () => {
   });
 
   it('recovers the played line once the partials are suppressed', () => {
+  // KNOWN RED since the partial branch moved from a duration ratio to
+  // `partialConfidenceRatio`. The audio this fixture is detected from gives
+  // partial `h` a decay rate `h` times the fundamental's, which builds the old
+  // rule's premise into the signal; measured on a string model that asserts
+  // nothing of the kind, partials 1-8 of an E1 damp within 0.7 dB/s of each
+  // other. See `transcription-harmonics.spec.ts`'s docblock. Left failing on
+  // purpose until Task 5 rebuilds the fixture; do not re-pin it.
     // The same end-to-end claim `basic-pitch-detector.spec.ts` makes, made
     // again across the worker boundary: what comes back through `postMessage`
     // is not a lossy copy of what the detector produced.

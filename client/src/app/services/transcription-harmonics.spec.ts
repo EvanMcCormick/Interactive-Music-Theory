@@ -1,3 +1,52 @@
+/**
+ * KNOWN RED, deliberately. Five specs in this file fail, and they are left
+ * failing rather than repaired, because what they fail on is the finding.
+ *
+ * `SPIKE_OUTPUT` below is verbatim detector output, but the audio behind it
+ * was additive synthesis in which each partial was given a decay rate
+ * `h` times the fundamental's - the 4th partial damping four times as fast.
+ * Measured on a string model that asserts nothing of the kind, partials 1
+ * through 8 of an E1 damp at -20.0 to -20.7 dB/s: a spread of 0.7 dB/s across
+ * the whole series. The fixture's audio therefore builds the old duration
+ * rule's premise into the signal, and every "recovers the played line" claim
+ * resting on it is circular. `harmonic-eval/karplus-strong.ts` says the same
+ * thing about the same fixture.
+ *
+ * The partial branch now arbitrates on `partialConfidenceRatio` instead,
+ * chosen over sixteen captured fixtures where it takes precision from 56.5 to
+ * 61.2 and cuts real notes destroyed from 22 to 3. On this one fixture it does
+ * worse, because these partials come back at 0.98 and 1.05 of their
+ * fundamental's `confidence` - which is a genuine limitation of the new rule
+ * and one worth having a red test for.
+ *
+ * Three failures are that limitation and should be read as evidence:
+ *   - `recovers the played line from the raw detector output` (17 kept, not 8)
+ *   - `suppresses a partial that is louder than its own fundamental`
+ *   - `hands back the partials it suppressed`
+ *
+ * Two are collateral - their subject is `toleranceSec`, and they fail only
+ * because a hand-picked upper amplitude of 0.50 against 0.70 no longer clears
+ * the clause:
+ *   - `allows the root a little slack past its offset, and not much`
+ *   - `takes that slack from the options it is handed`
+ *
+ * Four more specs still pass but no longer test what their names say, and are
+ * for Task 5 as well:
+ *   - `pins how much shorter than its root a partial has to be` pins nothing
+ *     about length any more. Its pair survives on a confidence ratio of 0.97.
+ *   - `keeps an octave leap over a note that is still ringing` and `keeps a
+ *     slapped pop two octaves over the thumbed note under it` construct the
+ *     upper note as long as the root - ratios 1.0 and 1.11 - where real
+ *     detector output for those figures gives 0.40-0.74 and 0.26. They passed
+ *     before the change and pass after it, and protected nothing either time.
+ *   - `keeps octave eighths pumping against each other` passes on a confidence
+ *     ratio of 0.94 rather than on anything about eighths.
+ *
+ * Task 5 rebuilds this file's fixtures from captured output. Nothing here is
+ * to be deleted or re-pinned before then: re-pinning an assertion to whatever
+ * the new rule happens to do is how the old one came to assert nothing.
+ */
+
 import { DetectedNote } from '../models/transcription.model';
 import { HARMONIC_SEMITONES, suppressHarmonics } from './transcription-harmonics';
 

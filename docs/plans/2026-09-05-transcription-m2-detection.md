@@ -38,7 +38,7 @@ A throwaway spike answered the questions this plan would otherwise have guessed 
 ### Facts about the library that the design doc got wrong
 
 - The model frame rate is **86.13 fps** (`22050 / 256`), not the ~172 the design doc states. `pitchBends` carries one entry per frame at that rate. It is carried all the way to `TranscriptionSession.bendFrameRateHz`: a bend array is a list of numbers with no time axis without it, and `DetectedNote` deliberately does not record it, so whoever hands the notes on hands the rate on too.
-- `noteFramesToTime` returns `amplitude`, not a confidence. We feed it to `DetectedNote.confidence` as a proxy and say so in the docblock.
+- ~~`noteFramesToTime` returns `amplitude`, not a confidence. We feed it to `DetectedNote.confidence` as a proxy and say so in the docblock.~~ **Backwards, corrected 2026-09-06.** It returns a mean frame activation — that *is* a confidence, and it is a poor proxy for amplitude. Measured over the harmonic-accuracy fixtures, its correlation with pluck strength across 17.7 dB is r = 0.182, and the softest notes average 0.954 of the loudest against a physical ratio near 0.3. Reading it the other way round is how `partialDurationRatio` came to be justified by an acoustic story it could not support; see `basic-pitch-detector.ts` and `transcription-harmonics.ts`.
 - **`amplitude` is the mean, not the peak.** Corrected after review — the docblock claimed peak activation. `toMidi.ts` computes it at both construction sites as `frames.slice(start, end).reduce(...) / (end - start)`, and the second carries the numpy line it came from (`np.mean(...)`) as a comment. It matters: a mean over a decaying activation penalises long sustained notes relative to short punchy ones, the opposite of "peak"'s bias.
 - **`confidenceFloor` is very nearly a no-op at its default,** which follows from the above. `outputToNotesPoly` builds a note's span out of exactly the frames that cleared `frameThresh`, so the mean of those frames is bounded below by it. `frameThresh` defaults to 0.3 and `DerivationSettings.confidenceFloor` defaults to 0.3 — the same threshold applied twice, the second time to numbers the first has already guaranteed. Measured on the spike fixture, post-suppression amplitudes cluster in **0.520–0.712**, so every floor from 0 up to 0.52 gives identical output and the knob does nothing until it is raised 0.22 above where it sits. **Not re-tuned here:** one synthetic fixture cannot pick the number, and picking it wrong throws away real notes. A calibration question for M3, where real stems are available.
 - `outputToNotesPoly` returns notes in **no particular order**. Sort by `startTimeSeconds`.
@@ -994,7 +994,7 @@ The mapping:
 | `pitchMidi` | `pitch` |
 | `startTimeSeconds` | `onsetSec` |
 | `startTimeSeconds + durationSeconds` | `offsetSec` |
-| `amplitude` | `confidence` — peak activation, used as a proxy; say so in the docblock |
+| `amplitude` | `confidence` — **mean** frame activation, which is a confidence rather than a level; say so in the docblock. Not "used as a proxy": it is a poor proxy for amplitude (r = 0.182 against pluck strength), and the docblock says that too |
 | `pitchBends ?? []` | `bendCents` |
 
 Give each note a stable `id`.

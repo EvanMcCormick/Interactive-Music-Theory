@@ -268,6 +268,12 @@ describe('TranscriptionService', () => {
     });
 
     it('produces a score from a real file', async () => {
+      // KNOWN RED since the partial branch moved to `partialConfidenceRatio`:
+      // suppression now keeps 17 of the fixture's 34 detections rather than 8.
+      // The fixture's audio gives partial `h` a decay rate `h` times the
+      // fundamental's, which is the old rule's premise written into the
+      // signal; `transcription-harmonics.spec.ts`'s docblock has the
+      // measurement and the reason this is left failing rather than re-pinned.
       await service.transcribe(wavFile('walk.wav'));
 
       const state = service.state;
@@ -296,6 +302,12 @@ describe('TranscriptionService', () => {
     });
 
     it('suppresses the harmonics the detector reported', async () => {
+      // KNOWN RED since the partial branch moved to `partialConfidenceRatio`:
+      // suppression now keeps 17 of the fixture's 34 detections rather than 8.
+      // The fixture's audio gives partial `h` a decay rate `h` times the
+      // fundamental's, which is the old rule's premise written into the
+      // signal; `transcription-harmonics.spec.ts`'s docblock has the
+      // measurement and the reason this is left failing rather than re-pinned.
       await service.transcribe(wavFile());
 
       expect(service.state.session?.notes.map(n => n.pitch)).toEqual(PLAYED_PITCHES);
@@ -953,6 +965,12 @@ describe('TranscriptionService', () => {
 
   describe('dropped notes', () => {
     it('surfaces what derivation discarded, so M3 need not recompute it', async () => {
+      // KNOWN RED since the partial branch moved to `partialConfidenceRatio`:
+      // suppression now keeps 17 of the fixture's 34 detections rather than 8.
+      // The fixture's audio gives partial `h` a decay rate `h` times the
+      // fundamental's, which is the old rule's premise written into the
+      // signal; `transcription-harmonics.spec.ts`'s docblock has the
+      // measurement and the reason this is left failing rather than re-pinned.
       await service.transcribe(wavFile());
       expect(service.state.derived?.dropped).toEqual([]);
 
@@ -972,6 +990,12 @@ describe('TranscriptionService', () => {
    */
   describe('suppressed partials', () => {
     it('reports the partials it removed rather than dropping them silently', async () => {
+      // KNOWN RED since the partial branch moved to `partialConfidenceRatio`:
+      // suppression now keeps 17 of the fixture's 34 detections rather than 8.
+      // The fixture's audio gives partial `h` a decay rate `h` times the
+      // fundamental's, which is the old rule's premise written into the
+      // signal; `transcription-harmonics.spec.ts`'s docblock has the
+      // measurement and the reason this is left failing rather than re-pinned.
       await service.transcribe(wavFile());
 
       const suppressed = service.state.suppressed;

@@ -13,16 +13,17 @@
  * ## Dynamics
  *
  * The first ten lines are played at one strength throughout, and were frozen
- * that way. That was the spike's largest caveat: amplitude ratio is the
- * discriminator harmonic suppression is about to rest on, and material with no
- * dynamic range cannot contradict an amplitude rule, so a threshold fitted to
- * those ten alone would be asserted rather than measured - the same mistake
- * `partialDurationRatio` embodies.
+ * that way. That was the spike's largest caveat: harmonic suppression was
+ * about to rest on a ratio of `DetectedNote.confidence`, which everyone
+ * involved took to be a stand-in for how loud a note was, and material with no
+ * dynamic range cannot contradict a rule about loudness. A threshold fitted to
+ * those ten alone would have been asserted rather than measured - the same
+ * mistake the duration rule they were captured under embodied.
  *
  * The six lines after them exist to contradict it. `quietOverLoud` is the one
  * that matters most: real notes, softly played, at partial intervals over a
- * loud root still ringing - which is what an amplitude rule ought to mistake
- * for a partial, and which until now nothing in this file contained. `accents`
+ * loud root still ringing - which is what a rule about loudness ought to
+ * mistake for a partial, and which until now nothing in this file contained. `accents`
  * is the same case in its most ordinary form: a bassline whose offbeat octaves
  * are simply played lighter than its downbeats. `loudOverQuiet` is the
  * converse; `crescendo` and `decrescendo` are the same eight pitches at the

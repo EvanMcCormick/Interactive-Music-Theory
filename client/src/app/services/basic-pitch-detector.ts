@@ -185,15 +185,27 @@ export class BasicPitchDetector implements NoteDetector {
 }
 
 /**
- * `amplitude` becomes `confidence`.
+ * `amplitude` becomes `confidence` - and it is the library's field name that
+ * is wrong, not ours.
  *
  * It is the **mean** of the note's frame activations across its span, not a
- * peak and not a calibrated probability. Both of `toMidi.ts`'s construction
- * sites compute it as `frames.slice(start, end).reduce(...) / (end - start)`;
- * the second even carries the numpy line it came from as a comment. The
- * library offers no confidence and this is the only signal it does offer.
+ * peak, not a calibrated probability, and not a level. Both of `toMidi.ts`'s
+ * construction sites compute it as
+ * `frames.slice(start, end).reduce(...) / (end - start)`; the second even
+ * carries the numpy line it came from as a comment.
  *
- * Two things follow, and neither is what "peak" would imply.
+ * The M2 plan called this "amplitude, used as a proxy for confidence". That is
+ * backwards, and the mistake was load-bearing: it is a confidence, and a poor
+ * proxy for amplitude. Measured across the six accuracy fixtures that carry
+ * dynamics - 49 detected notes spanning 17.7 dB of pluck strength - its
+ * correlation with how hard the note was played is **r = 0.182**, and the mean
+ * over the softest notes is 0.954 of the mean over the loudest against a
+ * physical amplitude ratio near 0.3. On the `accents` fixture the offbeats,
+ * plucked at a third of the downbeats' strength, come back *higher*. Do not
+ * read a low `confidence` as a quiet note; `harmonic-accuracy.spec.ts`
+ * measures this and will say so if a model change ever makes it untrue.
+ *
+ * Two more things follow, and neither is what "peak" would imply.
  *
  * **It is biased against long notes.** A mean over a decaying activation falls
  * as the note is held, so a sustained note scores below a short punchy one of
@@ -212,8 +224,12 @@ export class BasicPitchDetector implements NoteDetector {
  * has real stems. See the plan.
  *
  * What it cannot do at any setting: separate a real note from a harmonic
- * partial. In the spike's output a partial came back 5 % louder than the note
- * that produced it.
+ * partial, because it is a threshold on one note rather than a comparison
+ * between two. In the spike's output a partial came back 5 % *higher* than the
+ * note that produced it. The comparison does carry real information -
+ * `transcription-harmonics.ts` suppresses partials on the ratio between a note
+ * and the one below it, and argues there why the model is less sure of a
+ * partial than of a note - but no floor can see that.
  */
 function toDetectedNote(event: NoteEventTime, index: number): DetectedNote {
   return {
