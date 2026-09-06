@@ -30,7 +30,10 @@ import {
   MetricalLevelVerdict,
   SubdivisionFit
 } from '../../../../services/metrical-level-inference';
-import { TranscriptionState } from '../../../../services/transcription.service';
+import {
+  NO_DECLARATION_REMOVALS,
+  TranscriptionState
+} from '../../../../services/transcription.service';
 import { FoldedNote } from '../../../../services/transcription-octave';
 import {
   MAX_LISTED_ROWS,
@@ -278,6 +281,7 @@ function readyState(
     session,
     derived: deriveScore(session),
     suppressed: [],
+    declarationRemovals: NO_DECLARATION_REMOVALS,
     error: null,
     refusal: null,
     ...extra
@@ -296,6 +300,7 @@ describe('TranscriptionReviewComponent', () => {
   let levelEmits: number[];
   let toggleEmits: string[];
   let harmonicsEmits: Partial<HarmonicOptions>[];
+  let monophonyEmits: (boolean | null)[];
 
   function query<T extends HTMLElement>(selector: string): T {
     return fixture.nativeElement.querySelector(selector) as T;
@@ -375,6 +380,7 @@ describe('TranscriptionReviewComponent', () => {
     levelEmits = [];
     toggleEmits = [];
     harmonicsEmits = [];
+    monophonyEmits = [];
     component.settingsChanged.subscribe(v => settingsEmits.push(v));
     component.timeSignatureChanged.subscribe(v => meterEmits.push(v));
     component.tempoChanged.subscribe(v => tempoEmits.push(v));
@@ -382,6 +388,7 @@ describe('TranscriptionReviewComponent', () => {
     component.metricalLevelChanged.subscribe(v => levelEmits.push(v));
     component.noteToggled.subscribe(v => toggleEmits.push(v));
     component.harmonicsChanged.subscribe(v => harmonicsEmits.push(v));
+    component.monophonyDeclared.subscribe(v => monophonyEmits.push(v));
 
     push(readyState(makeSession()));
     tick(SETTLE_MS);
@@ -920,6 +927,47 @@ describe('TranscriptionReviewComponent', () => {
       }
     });
 
+    it('gives the declaration a remedy as well as a button, unlike the ratio', () => {
+      const grouped = groupDiscards(
+        [],
+        [note(80, 0.4, 1, 'e'), note(81, 0.5, 1, 'f')],
+        { keep: [], drop: [] },
+        new Set<string>(),
+        new Set(['f'])
+      );
+
+      // The one group that is both. Restorable, because each row is one click
+      // from the score like any other suppression - and remedied, because
+      // there is a single control that brings back every row at once, which no
+      // amount of clicking rows substitutes for. `partialConfidenceRatio` is
+      // not that control for the ratio's own group: it is a cut over every
+      // candidate pair on the recording, so naming it beside one note would
+      // promise something it does not do.
+      const declaration = grouped.find(group => group.reason === 'declaredMonophonic');
+      expect(declaration?.restorable).toBeTrue();
+      expect(declaration?.remedy).toContain('Monophonic source');
+
+      const ratio = grouped.find(group => group.reason === 'suppressed');
+      expect(ratio?.restorable).toBeTrue();
+      expect(ratio?.remedy).toBeNull();
+    });
+
+    it('leaves a note the user dropped under their own name, not the declaration', () => {
+      // The declaration is read after the override and not before it. A note
+      // in `drop` is the listener's own decision whatever the pipeline would
+      // have done with it, and filing it here would offer to bring it back by
+      // withdrawing a declaration that is not what removed it.
+      const grouped = groupDiscards(
+        [],
+        [note(80, 0.4, 1, 'e')],
+        { keep: [], drop: ['e'] },
+        new Set<string>(),
+        new Set(['e'])
+      );
+
+      expect(grouped.map(group => group.reason)).toEqual(['youSuppressed']);
+    });
+
     it('separates what the user suppressed from what the algorithm did', () => {
       const session = makeSession();
       const dropped = note(40, 0, 1, '40@0');
@@ -1115,6 +1163,183 @@ describe('TranscriptionReviewComponent', () => {
   // ---------------------------------------------------------------------------
   // (e) The suppression thresholds.
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // The declaration, which has three states and one control.
+  // ---------------------------------------------------------------------------
+
+  describe('the monophony declaration', () => {
+    const INFERRED_BASS = 'Inferred from the tuning: yes (a bass)';
+    const INFERRED_GUITAR = 'Inferred from the tuning: no (a guitar)';
+    const YES = 'Yes - it plays one note at a time';
+    const NO = 'No - it plays chords';
+
+    it('offers three answers, not two', () => {
+      const select = control<HTMLSelectElement>(component.id.monophony);
+
+      // `TranscriptionSession.monophonic` is `boolean | null` and `null` is a
+      // state rather than a defaulted false, so a two-state control would have
+      // to collapse it. See `monophonyOptions`.
+      expect(Array.from(select.options).map(option => (option.textContent ?? '').trim()))
+        .toEqual([INFERRED_BASS, YES, NO]);
+    });
+
+    it('shows the inference rather than an answer nobody gave', () => {
+      // The session is undeclared and on the bass default, so the prior is on -
+      // and the control says so *and* says who decided it.
+      expect(shownOption(component.id.monophony)).toBe(INFERRED_BASS);
+    });
+
+    it('relabels the inference when the tuning changes under it', fakeAsync(() => {
+      push(readyState(makeSession({ tuning: [64, 59, 55, 50, 45, 40] })));
+      tick(SETTLE_MS);
+
+      // The one place a tuning change withdrawing the prior is visible as
+      // something other than a redrawn score. The *selection* has not moved.
+      expect(shownOption(component.id.monophony)).toBe(INFERRED_GUITAR);
+      expect(component.monophonyOptionId).toBe('inferred');
+    }));
+
+    it('goes on naming the inference after an answer has overruled it', fakeAsync(() => {
+      push(readyState({ ...makeSession(), monophonic: false }));
+      tick(SETTLE_MS);
+
+      // Read off the tuning and not off the resolved value: the way back has
+      // to say what withdrawing the declaration would do, which on this bass
+      // session is "yes", not the "no" currently in force.
+      expect(shownOption(component.id.monophony)).toBe(NO);
+      const select = control<HTMLSelectElement>(component.id.monophony);
+      expect((select.options[0].textContent ?? '').trim()).toBe(INFERRED_BASS);
+    }));
+
+    it('sends a declaration each way, and null to take one back', () => {
+      choose(component.id.monophony, YES);
+      choose(component.id.monophony, NO);
+      choose(component.id.monophony, INFERRED_BASS);
+
+      expect(monophonyEmits).toEqual([true, false, null]);
+    });
+
+    it('shows the declaration the state carries', fakeAsync(() => {
+      push(readyState({ ...makeSession(), monophonic: true }));
+      tick(SETTLE_MS);
+      expect(shownOption(component.id.monophony)).toBe(YES);
+
+      push(readyState({ ...makeSession(), monophonic: false }));
+      tick(SETTLE_MS);
+      expect(shownOption(component.id.monophony)).toBe(NO);
+    }));
+
+    it('says what it is doing to this score, not only what it means', () => {
+      push(
+        readyState({ ...makeSession(), monophonic: true }, {
+          suppressed: [note(52, 0, 1, 'p1'), note(57, 0.5, 1, 'p2')],
+          declarationRemovals: { restored: ['p1'], displaced: [] }
+        })
+      );
+
+      expect(text(`#${component.id.monophonyEffect}`)).toContain('1 detection is out of the score');
+    });
+
+    it('warns that withdrawing it costs notes as well as returning them', () => {
+      // The cascade, measured at two notes on the real stem: a note the prior
+      // removed cannot act as a root, so withdrawing the declaration lets a
+      // restored note explain something that had survived. A control that
+      // promised only the restoring half would describe a change it does not
+      // make.
+      push(
+        readyState({ ...makeSession(), monophonic: true }, {
+          suppressed: [note(52, 0, 1, 'p1')],
+          declarationRemovals: { restored: ['p1'], displaced: ['k1', 'k2'] }
+        })
+      );
+
+      const effect = text(`#${component.id.monophonyEffect}`);
+      expect(effect).toContain('1 detection is out of the score');
+      expect(effect).toContain('would also take 2 notes out');
+    });
+
+    it('says nothing about a cascade there is not one of', () => {
+      push(
+        readyState({ ...makeSession(), monophonic: true }, {
+          suppressed: [note(52, 0, 1, 'p1')],
+          declarationRemovals: { restored: ['p1'], displaced: [] }
+        })
+      );
+
+      expect(text(`#${component.id.monophonyEffect}`)).not.toContain('would also take');
+    });
+
+    it('says so when it is off, rather than going quiet', () => {
+      push(readyState({ ...makeSession(), monophonic: false }));
+
+      expect(text(`#${component.id.monophonyEffect}`)).toContain('Off');
+    });
+
+    it('answers a declaration that changed nothing, rather than standing still', () => {
+      // Recorded and inert: the panel's standing obligation for a change with
+      // no visible effect, the same one the tempo box and the metrical level
+      // discharge. It is not a refusal - the answer outranks the tuning from
+      // here on - and it says that.
+      choose(component.id.monophony, YES);
+      push(readyState({ ...makeSession(), monophonic: true }));
+
+      expect(text('.control__refusal')).toContain('Recorded, but the score did not move');
+    });
+
+    it('says nothing of the kind on a file that simply arrived inferred', () => {
+      // Not a gesture, so not a sentence. The inference landing on "on, and it
+      // removed nothing" is the ordinary state of a clean bass stem.
+      push(readyState(makeSession()));
+
+      expect(component.monophonyNote).toBeNull();
+    });
+
+    it('drops that sentence once the declaration does move the score', () => {
+      choose(component.id.monophony, YES);
+      push(readyState({ ...makeSession(), monophonic: true }));
+      expect(component.monophonyNote).not.toBeNull();
+
+      choose(component.id.monophony, NO);
+      push(readyState({ ...makeSession(), monophonic: false }));
+      expect(component.monophonyNote).toBeNull();
+    });
+
+    it('splits the discard list by which rule took the note', () => {
+      push(
+        readyState({ ...makeSession(), monophonic: true }, {
+          suppressed: [note(52, 0, 1, 'p1'), note(57, 0.5, 1, 'p2')],
+          declarationRemovals: { restored: ['p2'], displaced: [] }
+        })
+      );
+
+      const listed = text('.discards');
+      expect(listed).toContain('1 harmonic partials, on the confidence ratio');
+      expect(listed).toContain(
+        '1 harmonic partials, because the source plays one note at a time'
+      );
+      // And the group that one control undoes says which control.
+      expect(listed).toContain('Monophonic source');
+    });
+
+    it('leaves the list as it was when nothing is attributable to the prior', () => {
+      push(readyState(makeSession(), { suppressed: [note(52, 0, 1, 'p1')] }));
+
+      expect(text('.discards')).toContain('1 harmonic partials, on the confidence ratio');
+      expect(text('.discards')).not.toContain('one note at a time');
+    });
+
+    it('clears itself with the rest of the panel when there is no score', fakeAsync(() => {
+      push(readyState({ ...makeSession(), monophonic: false }));
+      tick(SETTLE_MS);
+      push(null);
+      tick(SETTLE_MS);
+
+      expect(component.monophonyOptionId).toBe('inferred');
+      expect(component.monophonyEffect).toBe('');
+      expect(component.monophonyNote).toBeNull();
+    }));
+  });
 
   describe('the suppression thresholds', () => {
     // fakeAsync because `NgModel` writes to the view in a microtask rather than
@@ -1330,6 +1555,7 @@ describe('TranscriptionReviewComponent', () => {
           session: null,
           derived: null,
           suppressed: [],
+          declarationRemovals: NO_DECLARATION_REMOVALS,
           error: null,
           refusal: null
         });
@@ -1346,6 +1572,7 @@ describe('TranscriptionReviewComponent', () => {
         session: null,
         derived: null,
         suppressed: [],
+        declarationRemovals: NO_DECLARATION_REMOVALS,
         error: 'Could not transcribe "bassline.wav": the file would not decode.',
         refusal: null
       });
@@ -1385,11 +1612,12 @@ describe('TranscriptionReviewComponent', () => {
         fixture.nativeElement.querySelectorAll('.review__controls input, .review__controls select')
       );
 
-      // Ten knobs less the two downbeat buttons, plus the four suppression
-      // thresholds. A control added without a label fails
-      // the loop below; this number is what catches one added without being
-      // counted at all.
-      expect(controls.length).toBe(13);
+      // Ten knobs less the two downbeat buttons, plus the monophony
+      // declaration and the four suppression thresholds. A control added
+      // without a label fails the loop below; this number is what catches one
+      // added without being counted at all - which is exactly what it did when
+      // the monophony select arrived.
+      expect(controls.length).toBe(14);
       for (const element of controls) {
         const label = fixture.nativeElement.querySelector(`label[for="${element.id}"]`);
         expect(element.id)

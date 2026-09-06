@@ -27,6 +27,7 @@ import {
 } from '../../services/transcription-harmonics';
 import {
   NOTE_DETECTOR,
+  NO_DECLARATION_REMOVALS,
   TranscriptionService,
   TranscriptionState
 } from '../../services/transcription.service';
@@ -142,6 +143,7 @@ const IDLE_STATE: TranscriptionState = {
   session: null,
   derived: null,
   suppressed: [],
+  declarationRemovals: NO_DECLARATION_REMOVALS,
   error: null,
   refusal: null
 };
@@ -198,6 +200,7 @@ function readyState(extra: Partial<TranscriptionState> = {}): TranscriptionState
     session,
     derived: deriveScore(session),
     suppressed: [],
+    declarationRemovals: NO_DECLARATION_REMOVALS,
     error: null,
     refusal: null,
     ...extra
@@ -388,6 +391,7 @@ describe('TranscriptionComponent', () => {
       session,
       derived,
       suppressed: [],
+      declarationRemovals: NO_DECLARATION_REMOVALS,
       error: null,
       refusal: null
     });

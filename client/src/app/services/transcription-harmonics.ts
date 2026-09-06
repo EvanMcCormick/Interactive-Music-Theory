@@ -499,14 +499,23 @@ export function suppressHarmonics(
  * the whole recording that is simply false for the one bar where they overdub
  * a double stop.
  *
- * **It does not say so afterwards.** `suppressed` collects the notes this
- * removes with no note of why, exactly as it does for the ratio, so a note
- * lost to the declaration is indistinguishable in the UI from one lost to the
- * calibration. They are not equally actionable — the first is undone by
- * unticking a box and the second is not — and carrying a reason out of here is
- * follow-up work rather than a widening to make in passing.
- * `harmonic-eval/removal-attribution.ts` can already attribute both, so the
- * measurement side can tell them apart even though the app cannot.
+ * **It still does not say so afterwards, and it does not have to.**
+ * `suppressed` collects the notes this removes with no note of why, exactly as
+ * it does for the ratio. The two are not equally actionable — one is undone by
+ * answering a control differently and the other is not — and the review panel
+ * now separates them, but not by reading a reason out of here.
+ * `TranscriptionState.declarationRemovals` runs this function twice, once with
+ * the flag and once without, and differences the kept sets.
+ *
+ * That is not a way of dodging a widening; it is the only form of the answer
+ * that is right. A note this clause removes cannot then act as a root, so
+ * withdrawing the declaration does two things — it restores notes, and it lets
+ * restored notes explain others. Measured on the real stem, withdrawing it
+ * restores 67 detections and removes 2, so the kept sets differ by 65 and
+ * neither number on its own describes what the control does. A per-note reason
+ * carried out of this function would have reported the 67 and been silent about
+ * the 2. `harmonic-eval/removal-attribution.ts` takes the flag for the same
+ * purpose on the measurement side, where a per-pair verdict is what is wanted.
  */
 function explains(
   root: DetectedNote,

@@ -288,6 +288,20 @@ export class TranscriptionComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * States whether the stem plays one note at a time.
+   *
+   * Its own method rather than a fifth field on `onHarmonicsChanged`, matching
+   * the split `TranscriptionService` draws: the four thresholds are a
+   * calibration over candidate pairs and this is a fact about the source, and
+   * `declareMonophonic` is the door for it. `null` is not a missing answer - it
+   * hands the question back to the tuning family - so it is passed straight
+   * through rather than being defaulted here.
+   */
+  onMonophonyDeclared(monophonic: boolean | null): void {
+    this.transcription.declareMonophonic(monophonic);
+  }
+
+  /**
    * Clears the finished transcription, bringing the dropzone back.
    *
    * The way out of the review screen, and the reason `showDropzone` is a

@@ -15,6 +15,7 @@ import { NoteIndex } from '../../../../services/preview-score';
 import { DropReason, DroppedNote } from '../../../../services/score-derivation';
 import { isCompoundMeter } from '../../../../services/transcription-quantize';
 import { HarmonicOptions, NoteDecisions } from '../../../../services/transcription-harmonics';
+import { DeclarationRemovals } from '../../../../services/transcription.service';
 import { FoldedNote } from '../../../../services/transcription-octave';
 
 /**
@@ -29,24 +30,31 @@ import { FoldedNote } from '../../../../services/transcription-octave';
  *
  * ## And past that ceiling itself
  *
- * **399 of these 944 lines are code**, counted as non-blank lines outside
+ * **468 of these 1160 lines are code**, counted as non-blank lines outside
  * block comments and `//` lines. A file that exists because another one grew
  * too long has to answer for its own length, and the answer is the same
  * accounting the component's docblock gives: the ceiling is about how much
- * code a reader holds in their head, the code here is two tables, seven small
+ * code a reader holds in their head, the code here is three tables, ten small
  * pure functions and one grouping pass, and what makes the file long is the
- * argument beside each - why the discard reasons are split into six rather
+ * argument beside each - why the discard reasons are split into seven rather
  * than five, why the cap yields to an undrawn row, why the margin is quoted
- * against the losing hypothesis rather than the runner-up. Extracting those
- * would move the reasoning away from the code it justifies, which is the thing
- * the rule is trying to protect.
+ * against the losing hypothesis rather than the runner-up, why the monophony
+ * control is a select and not the checkbox its plan asked for. Extracting
+ * those would move the reasoning away from the code it justifies, which is the
+ * thing the rule is trying to protect.
  *
- * If a split is wanted here, the metrical level is the piece that comes away:
- * the four functions under "The metrical level" are the panel's only ones that
- * read a service module rather than a model, and they answer to one control.
- * That is about a hundred lines and there is no second caller for them, so it
- * would be a file per control rather than a seam - which is why it has not
- * been done.
+ * **This file is now 32 code lines from the ceiling itself**, up from 399 when
+ * the metrical level landed: the monophony declaration brought a preset
+ * builder, two lookups and two sentence functions. Two splits are on offer and
+ * they are not equal. The metrical level is the piece that comes away
+ * cleanest - the four functions under "The metrical level" are the panel's
+ * only ones that read a service module rather than a model, and they answer to
+ * one control; that is about a hundred lines with no second caller, so it
+ * would be a file per control rather than a seam. The discard list is the
+ * better seam and the larger piece: `DiscardReason` through `drawnIds` is a
+ * self-contained model of what is missing from a score and why, with one
+ * caller and no knowledge of any control. That is the cut to make when the
+ * code here reaches 500.
  *
  * The presets are reference data in `CLAUDE.md`'s sense: string pitches are
  * facts about instruments, not settings. They are handed out by copy at the
@@ -335,15 +343,40 @@ export function describeToggle(session: TranscriptionSession, id: string): strin
 /**
  * Why one detection is not in the score, including "because you said so".
  *
- * `DropReason`'s four are derivation's; `suppressed` is the harmonic pass's;
- * `youSuppressed` is the user's own, and is separated from `suppressed` rather
- * than folded into it because the two want opposite treatment. A note the
- * algorithm removed is a decision to *judge*, and the row offers to reverse
- * it; a note the user removed is a decision already made, and the row offers to
- * take it back. Reading them as one group would put the user's own gesture in
- * a list headed "harmonic partials" and invite them to argue with themselves.
+ * `DropReason`'s four are derivation's; `suppressed` and `declaredMonophonic`
+ * are the harmonic pass's; `youSuppressed` is the user's own, and is separated
+ * from `suppressed` rather than folded into it because the two want opposite
+ * treatment. A note the algorithm removed is a decision to *judge*, and the row
+ * offers to reverse it; a note the user removed is a decision already made, and
+ * the row offers to take it back. Reading them as one group would put the
+ * user's own gesture in a list headed "harmonic partials" and invite them to
+ * argue with themselves.
+ *
+ * ## Why the harmonic pass gets two rows rather than one
+ *
+ * The suppressor removes on two rules and until this split the list said only
+ * that it had removed. They are not equally actionable, which is the whole test
+ * for whether a distinction belongs on screen: a note the *declaration* took
+ * comes back by answering one control differently, all of them at once, and a
+ * note `partialConfidenceRatio` took does not - the ratio is a calibration over
+ * every candidate pair on the recording, so moving it to recover one note moves
+ * it for all of them. One heading over both would offer a remedy that works for
+ * a quarter of the rows under it.
+ *
+ * Measured, that quarter is the point: on the real bass stem the declaration
+ * accounts for 67 of the 303 removals and the ratio for the rest, which is
+ * large enough to be the reader's first question and small enough that the two
+ * groups are worth reading separately. (67 and not the 65 the two kept sets
+ * differ by: withdrawing the declaration also *takes out* two notes that were
+ * in the score only because the prior removed what would have explained them.
+ * `TranscriptionState.declarationRemovals` carries both halves and
+ * `describeMonophony` says the second one.)
  */
-export type DiscardReason = DropReason | 'suppressed' | 'youSuppressed';
+export type DiscardReason =
+  | DropReason
+  | 'suppressed'
+  | 'declaredMonophonic'
+  | 'youSuppressed';
 
 /** One detection the score does not contain, as the list prints it. */
 export interface DiscardRow {
@@ -381,7 +414,23 @@ export interface DiscardGroup {
    * the score. They get `remedy` instead, which names the knob that does work.
    */
   restorable: boolean;
-  /** For a group a toggle cannot help, the control that can. Null otherwise. */
+  /**
+   * The control that moves this whole group, or null when none does.
+   *
+   * Two different jobs, and both are "what to do about a row of this kind".
+   * For derivation's four, where `restorable` is false, it is the *only* thing
+   * a reader can do - the row has no button, because a toggle there suppresses
+   * rather than restores. For `declaredMonophonic` the rows do have buttons and
+   * this is the shortcut past them: one answer to one control brings back all
+   * sixty-five at once, which no amount of clicking rows is a substitute for.
+   *
+   * Null for `suppressed` and `youSuppressed`, and that is the honest answer
+   * rather than a gap. `partialConfidenceRatio` is on this screen, but it is a
+   * calibration over every candidate pair on the recording: naming it here
+   * would read as "move this to get that note back", and what it actually does
+   * is move the cut for all of them. The per-note button is the remedy for
+   * those, and it is already on the row.
+   */
   remedy: string | null;
   /** How many went this way, including any the list declined to print. */
   count: number;
@@ -413,7 +462,8 @@ const DISCARD_LABELS: Readonly<Record<DiscardReason, string>> = {
   unplayable: 'unplayable on this tuning',
   beforeGrid: 'struck before the beat grid',
   stringTaken: 'struck on a string already held',
-  suppressed: 'harmonic partials',
+  suppressed: 'harmonic partials, on the confidence ratio',
+  declaredMonophonic: 'harmonic partials, because the source plays one note at a time',
   youSuppressed: 'suppressed by you'
 };
 
@@ -431,11 +481,20 @@ const DISCARD_REMEDIES: Readonly<Record<DiscardReason, string | null>> = {
   beforeGrid: 'They sound before bar 1. Nudge the downbeat back to make room.',
   stringTaken: 'Another note held that string in that slot. A finer division may separate them.',
   suppressed: null,
+  declaredMonophonic:
+    'These share an attack with the note below them, which on a source that plays '
+    + 'one note at a time makes them partials of it. Answer "Monophonic source" '
+    + 'above with "No" and every one of them comes back; a single row can be '
+    + 'restored on its own without withdrawing the declaration.',
   youSuppressed: null
 };
 
 /** The reasons a per-note toggle can undo: the ones suppression itself made. */
-const RESTORABLE: readonly DiscardReason[] = ['suppressed', 'youSuppressed'];
+const RESTORABLE: readonly DiscardReason[] = [
+  'suppressed',
+  'declaredMonophonic',
+  'youSuppressed'
+];
 
 /**
  * What to say about a derivation drop that `DISCARD_REMEDIES` has no answer for.
@@ -492,6 +551,11 @@ const DISCARD_ORDER: readonly DiscardReason[] = [
   'unplayable',
   'beforeGrid',
   'stringTaken',
+  // The declaration before the ratio, and both last. On the real bass stem
+  // these are 67 and the rest of 303, so the two largest groups sit together at
+  // the bottom - and the one with a remedy is read first, because it is the one
+  // a reader can do something wholesale about.
+  'declaredMonophonic',
   'suppressed'
 ];
 
@@ -550,12 +614,25 @@ export const MAX_LISTED_ROWS = 40;
  * Notes the user *restored*. They are in the score, so they are not discards;
  * `restoredRows` lists those, and the two together are the whole of what the
  * user can undo.
+ *
+ * ## Which suppression rule took a note
+ *
+ * `byDeclaration` is `TranscriptionState.declarationRemovals`, and it is read
+ * *after* the user's own overrides rather than before: a note the listener
+ * explicitly dropped is theirs whatever the pipeline would have done with it,
+ * and filing it under the declaration would offer to bring it back by
+ * withdrawing a declaration that is not what removed it. The service computes
+ * the set by running the pass with the prior off and differencing, so an id in
+ * it is one that unticking the control genuinely restores - see
+ * `TranscriptionState.declarationRemovals`, which is also why nothing here
+ * reproduces the rule.
  */
 export function groupDiscards(
   dropped: readonly DroppedNote[],
   suppressed: readonly DetectedNote[],
   decisions: NoteDecisions,
-  drawn: ReadonlySet<string>
+  drawn: ReadonlySet<string>,
+  byDeclaration: ReadonlySet<string> = new Set<string>()
 ): DiscardGroup[] {
   const byReason = new Map<DiscardReason, DetectedNote[]>();
   const add = (reason: DiscardReason, note: DetectedNote): void => {
@@ -568,7 +645,8 @@ export function groupDiscards(
 
   const droppedByUser = new Set(decisions.drop);
   for (const note of suppressed) {
-    add(droppedByUser.has(note.id) ? 'youSuppressed' : 'suppressed', note);
+    if (droppedByUser.has(note.id)) add('youSuppressed', note);
+    else add(byDeclaration.has(note.id) ? 'declaredMonophonic' : 'suppressed', note);
   }
 
   return DISCARD_ORDER.filter(reason => (byReason.get(reason)?.length ?? 0) > 0).map(
@@ -639,6 +717,145 @@ function toRow(note: DetectedNote, drawn: ReadonlySet<string>): DiscardRow {
 /** The ids the preview actually put on a staff, ghosts and kept notes alike. */
 export function drawnIds(index: NoteIndex): Set<string> {
   return new Set(index.values());
+}
+
+// ---------------------------------------------------------------------------
+// The monophony declaration
+// ---------------------------------------------------------------------------
+
+/** One answer to "can this stem sound two notes at once". */
+export interface MonophonyOption {
+  id: string;
+  label: string;
+  /** What `TranscriptionSession.monophonic` becomes. */
+  value: boolean | null;
+}
+
+/**
+ * A select rather than a checkbox, because the setting has three states.
+ *
+ * `TranscriptionSession.monophonic` is `boolean | null` and `null` is not a
+ * defaulted `false` - it means nobody has said, and the tuning family answers
+ * until somebody does. A plain checkbox has two states and would have to
+ * collapse that: either it shows the inference ticked, and a listener cannot
+ * tell the app's guess from their own answer, or it shows unticked and lies
+ * about a bass stem the prior is running on.
+ *
+ * ### The two shapes that were considered and are not this
+ *
+ * **An indeterminate checkbox.** `input.indeterminate` renders as a third
+ * *appearance*, and it announces as `aria-checked="mixed"` - which means
+ * "some of the things under this are checked". That is a real and different
+ * idea from "we inferred this", and borrowing it would tell a screen-reader
+ * listener something untrue about a control with nothing under it. It is also
+ * a DOM property `ngModel` cannot write, so the mirror-field pattern the rest
+ * of this panel is built on would not reach it.
+ *
+ * **A checkbox showing the inferred value, plus a button back to undeclared.**
+ * Two controls for one setting, a second refusal surface, and - the reason it
+ * loses on its own terms - the checkbox still shows the inference *as though
+ * it were an answer*. The fact that would have to be recovered by a sentence
+ * beside the control is exactly the fact a select puts inside it.
+ *
+ * So: three options, and the undeclared one names the inference and where it
+ * came from in its own label. A listener reading the control sees "Inferred
+ * from the tuning: yes (a bass)" and knows both that nothing was declared and
+ * what is in force - and when the tuning select moves, this label moves with
+ * it, which is the visible half of a tuning change now re-running suppression.
+ *
+ * The panel's other selects hold a `string` id and so does this, rather than
+ * binding `boolean | null` through `[ngValue]`. Consistency is the smaller
+ * half; the larger is that `ngValue` with a `null` member makes the empty-value
+ * case indistinguishable from "no option matched", which is the failure
+ * `withCurrentTuning` exists to prevent one control over.
+ */
+export function monophonyOptions(inferred: boolean): MonophonyOption[] {
+  return [
+    {
+      id: 'inferred',
+      label: inferred
+        ? 'Inferred from the tuning: yes (a bass)'
+        : 'Inferred from the tuning: no (a guitar)',
+      value: null
+    },
+    { id: 'yes', label: 'Yes - it plays one note at a time', value: true },
+    { id: 'no', label: 'No - it plays chords', value: false }
+  ];
+}
+
+/** The option id for a declaration; `'inferred'` for the undeclared `null`. */
+export function monophonyId(declared: boolean | null): string {
+  if (declared === null) return 'inferred';
+
+  return declared ? 'yes' : 'no';
+}
+
+/**
+ * What the declaration is doing to this score, in one sentence.
+ *
+ * Always present rather than shown when something happened, because the
+ * question a reader has at this control is "is it on, and did it do anything",
+ * and silence answers neither. It is also the line that ties the control to the
+ * group in the discard list below, which is the only place the notes themselves
+ * can be seen.
+ *
+ * `removals` is `TranscriptionState.declarationRemovals`, whose `restored` half
+ * is the notes a second pass with the prior off gets back - so the count here
+ * and the group under "Not in the score" are the same set counted once.
+ *
+ * `displaced` is the other half and is said only when there is one. It is the
+ * cascade: a note the prior removed cannot act as a root, so a few notes are in
+ * the score only because it ate what would have explained them, and withdrawing
+ * the declaration takes those out. Two of them on the real bass stem against
+ * 67 restored - small, and not nothing, and a control that promised only the
+ * restoring half would be describing a change it does not make. See
+ * `TranscriptionState.declarationRemovals`.
+ */
+export function describeMonophony(
+  resolved: boolean,
+  removals: DeclarationRemovals
+): string {
+  if (!resolved) {
+    return 'Off. A pair sharing an attack is judged on the confidence ratio like any other.';
+  }
+
+  if (removals.restored.length === 0) {
+    return 'On, and it has removed nothing: no two detections here share an attack '
+      + 'a harmonic interval apart.';
+  }
+
+  const n = removals.restored.length;
+  const displaced = removals.displaced.length;
+
+  return `On. ${n} detection${n === 1 ? ' is' : 's are'} out of the score because of it, `
+    + 'listed below under "Not in the score".'
+    + (displaced === 0
+      ? ''
+      : ` Answering "No" would also take ${displaced} note${displaced === 1 ? '' : 's'} `
+        + 'out: they are in the score only because the prior removed what would have '
+        + 'explained them.');
+}
+
+/**
+ * What to say when a declaration was applied and moved nothing.
+ *
+ * The panel's standing obligation for a change with no visible effect, the same
+ * one `onTempoChange` and `onMetricalLevelChange` discharge. This one is not a
+ * refusal - the declaration *was* recorded, and it outranks the tuning from
+ * here on - so the sentence says that rather than implying the click was lost.
+ *
+ * Only for a listener's own answer, and only in the direction that could have
+ * done something. Declaring a stem polyphonic removes nothing by construction,
+ * and the standing line from `describeMonophony` already says so.
+ */
+export function describeIdleDeclaration(
+  resolved: boolean,
+  removals: DeclarationRemovals
+): string | null {
+  if (!resolved || removals.restored.length > 0) return null;
+
+  return 'Recorded, but the score did not move: nothing in this stem is a '
+    + 'same-attack harmonic pair. It still outranks the tuning from now on.';
 }
 
 // ---------------------------------------------------------------------------

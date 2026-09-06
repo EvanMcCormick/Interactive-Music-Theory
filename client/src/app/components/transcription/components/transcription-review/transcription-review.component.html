@@ -281,6 +281,57 @@
       -->
       <h3 class="control__subheading">Harmonic suppression</h3>
 
+      <!--
+        First under the heading because it can bypass everything below it. On a
+        source that plays one note at a time a same-attack harmonic pair *is* a
+        partial and its fundamental, so the ratio is not consulted for those at
+        all - which makes this the setting that decides how much of the rest of
+        this section is even reached.
+
+        A select and not a checkbox: the setting has three states and the third
+        one - undeclared, answered by the tuning - is the one a listener most
+        needs to be able to see. `monophonyOptions` argues it at length.
+      -->
+      <div class="control">
+        <label class="control__label" [attr.for]="id.monophony">
+          Monophonic source
+        </label>
+        <select
+          class="control__input"
+          [id]="id.monophony"
+          [attr.aria-describedby]="monophonyDescribedBy"
+          [ngModel]="monophonyOptionId"
+          (ngModelChange)="onMonophonyChange($event)"
+        >
+          <option
+            *ngFor="let choice of monophonyChoices; trackBy: trackByPreset"
+            [value]="choice.id"
+          >
+            {{ choice.label }}
+          </option>
+        </select>
+        <p class="control__hint" [id]="id.monophonyHint">
+          Two detections that share an attack a harmonic interval apart cannot
+          both be notes on a source that plays one at a time, so the upper one is
+          read as a partial of the lower without weighing the confidence ratio
+          below. Right for most bass stems; wrong for chordal playing, where it
+          deletes real notes. A note you restore by clicking it stays restored
+          either way.
+        </p>
+        <!--
+          Whether it is on and what it has taken out of this score. Its own line
+          rather than part of the hint above, because the hint is the rule and
+          never changes and this is the only reading of the current file.
+        -->
+        <p class="control__hint" [id]="id.monophonyEffect">{{ monophonyEffect }}</p>
+        <!--
+          Not a refusal - `onMonophonyChange` explains why this control has no
+          refusal to show - but it uses the slot, because "your change was
+          applied and did nothing" is the same thing the reader needs from it.
+        -->
+        <p class="control__refusal" *ngIf="monophonyNote">{{ monophonyNote }}</p>
+      </div>
+
       <div class="control">
         <label class="control__label" [attr.for]="id.partialRatio">
           Partial confidence ratio

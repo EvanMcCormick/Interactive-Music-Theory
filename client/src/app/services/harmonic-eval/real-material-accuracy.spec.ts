@@ -401,6 +401,59 @@ describe('harmonic suppression on real material', () => {
     );
   });
 
+  it('attributes each removal to the rule that made it, and prices the checkbox', () => {
+    // What the panel's discard list is split on. `TranscriptionState`
+    // computes it as a difference of two kept sets rather than as a per-note
+    // verdict, and this is the number that reaches the screen: how many notes
+    // answering "Monophonic source" with "No" puts back.
+    const declared = suppressHarmonics(raw, {}, undefined, true);
+    const withoutPrior = suppressHarmonics(raw, {}, undefined, false);
+    const declaredIds = new Set(declared.map(note => note.id));
+    const restored = withoutPrior.filter(note => !declaredIds.has(note.id));
+
+    // The other direction, and it is not empty. A note the prior removes cannot
+    // act as a root, so turning the prior off does two things: it restores
+    // notes, and it lets restored notes explain others. Two detections here are
+    // in the score only because the prior ate what would have explained them,
+    // and withdrawing the declaration takes them out.
+    const withoutIds = new Set(withoutPrior.map(note => note.id));
+    const displaced = declared.filter(note => !withoutIds.has(note.id));
+
+    log('');
+    log(`ATTR  kept with the declaration ${declared.length}, without it ${withoutPrior.length}`);
+    log(`ATTR    restored by withdrawing it  ${restored.length}`);
+    log(`ATTR    displaced by withdrawing it ${displaced.length}`);
+    log(`ATTR    net ${withoutPrior.length - declared.length}`);
+
+    // The counts the panel prints on this stem, pinned. None is a target.
+    //
+    // **67 and 2, not 65.** The kept sets differ by 65 and it is tempting to
+    // call that the size of the declaration's effect; it is the *net* of two
+    // effects going opposite ways. A panel that said "65 come back" would be
+    // wrong about the group it is heading, and a per-note attribution rule -
+    // asking of each removed note whether the prior's clause is what fired -
+    // would have reported 67 and missed the two entirely. This is the
+    // measurement that made `declarationRemovals` a difference of two kept sets
+    // rather than a verdict per note.
+    expect(restored.length).toBe(67);
+    expect(displaced.length).toBe(2);
+    expect(withoutPrior.length - declared.length).toBe(65);
+
+    // Nothing is lost or invented between the two passes: every note is in
+    // exactly one of the four buckets.
+    expect(declared.length + restored.length).toBe(withoutPrior.length + displaced.length);
+
+    // Every restored note is one the shipped pass actually removed, and every
+    // displaced note is one it kept - so the group in the discard list is a
+    // partition of `suppressed` rather than a fifth list beside it, and the
+    // warning beside the control is about notes that are really in the score.
+    const suppressedIds = new Set(
+      raw.filter(note => !declaredIds.has(note.id)).map(note => note.id)
+    );
+    expect(restored.every(note => suppressedIds.has(note.id))).toBeTrue();
+    expect(displaced.every(note => declaredIds.has(note.id))).toBeTrue();
+  });
+
   it('leaves a monophonic stem sounding two notes at once', () => {
     const before = sameAttackPairs(raw);
     const after = sameAttackPairs(kept);

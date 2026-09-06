@@ -132,6 +132,32 @@ export type TranscriptionPhase =
   | 'ready'
   | 'failed';
 
+/**
+ * The two halves of what withdrawing the monophony declaration would do.
+ *
+ * See `TranscriptionState.declarationRemovals`, which is where the argument
+ * for the shape lives - in particular why this is a difference of two kept
+ * sets rather than a per-note verdict, and why the second half is not zero.
+ */
+export interface DeclarationRemovals {
+  /** In `suppressed` only because of the declaration; withdrawing it restores these. */
+  restored: readonly string[];
+  /** In the score only because of the declaration; withdrawing it removes these. */
+  displaced: readonly string[];
+}
+
+/**
+ * Shared: the answer on every source the prior is not running on.
+ *
+ * Frozen, and shared rather than rebuilt, for `NO_NOTE_DECISIONS`' reason: it
+ * is handed out on every derivation of a polyphonic session, and its identity
+ * is what tells a subscriber that nothing about the attribution moved.
+ */
+export const NO_DECLARATION_REMOVALS: DeclarationRemovals = Object.freeze({
+  restored: Object.freeze([]),
+  displaced: Object.freeze([])
+});
+
 export interface TranscriptionState {
   phase: TranscriptionPhase;
   /** 0-1 within the current phase. */
@@ -165,6 +191,51 @@ export interface TranscriptionState {
    * already says which.
    */
   suppressed: DetectedNote[];
+  /**
+   * What the monophony declaration is doing to this score, both ways round.
+   *
+   * `suppressed` says a note is not in the score; this says which of the two
+   * suppression rules took it, and the difference is the difference between a
+   * discard the listener can undo with one control and one they cannot.
+   * `partialConfidenceRatio` removed a note because the detector was not sure
+   * enough of it - moving the ratio to bring it back moves it for every pair on
+   * the recording. The declaration removed a note because the source was said,
+   * or inferred, to play one note at a time - and every note it took comes back
+   * together the moment that is withdrawn.
+   *
+   * ## Defined by the answer, not by a reproduction of the rule
+   *
+   * `restored` is exactly the ids `suppressHarmonics` keeps when it is handed
+   * `monophonic = false` and does not keep when it is handed the session's own
+   * resolved value. Not "the notes the prior's clause returned true on" - that
+   * would be a second copy of `explains` living outside the suppressor, which
+   * is the arrangement `harmonic-eval/removal-attribution.ts` exists to keep
+   * honest and is not one to ship. It is the pass itself, run twice, so the
+   * sentence the panel prints - *withdrawing this brings these back* - is the
+   * literal output of withdrawing it rather than a prediction about it.
+   *
+   * ## `displaced` is why that had to be a difference of sets
+   *
+   * A note the prior removes is a note that cannot act as a root, so switching
+   * the prior off does not only restore notes: it lets restored notes explain
+   * others, and a few notes in the score are there only because the prior ate
+   * what would have explained them. Those are `displaced`, and withdrawing the
+   * declaration takes them out.
+   *
+   * Small and not zero. Measured on the real bass stem, withdrawing it restores
+   * **67** detections and displaces **2**, for the net 65 the kept counts
+   * differ by - so a panel that said "65 come back" would be wrong twice over,
+   * and a per-note attribution rule would have reported 67 and missed the two
+   * entirely. `harmonic-eval/real-material-accuracy.spec.ts` pins both.
+   *
+   * Empty whenever the resolved source is polyphonic, without running anything:
+   * the prior's clause is unreachable then, so the second pass is the first one.
+   *
+   * Ids rather than notes. Every `restored` id is already in `suppressed` and
+   * every `displaced` id is already in `session.notes`; a second array of the
+   * same objects invites the two to disagree.
+   */
+  declarationRemovals: DeclarationRemovals;
   error: string | null;
   /**
    * Why the last settings change was turned away, or null when it was applied.
@@ -208,6 +279,7 @@ const IDLE_STATE: TranscriptionState = {
   session: null,
   derived: null,
   suppressed: [],
+  declarationRemovals: NO_DECLARATION_REMOVALS,
   error: null,
   refusal: null
 };
@@ -398,6 +470,7 @@ export class TranscriptionService {
         session,
         derived: deriveScore(session),
         suppressed,
+        declarationRemovals: removedByDeclaration(session, notes),
         error: null,
         refusal: null
       };
@@ -883,6 +956,13 @@ export class TranscriptionService {
 
     const suppressed: DetectedNote[] = [];
     const session = resuppressed(changed, current.session, suppressed);
+    // Both lists are the previous ones when the pass did not re-run. That is
+    // sound for the attribution as well as for the discards: `resuppressed`
+    // hands `changed` back only when the kept set did not move, and a kept set
+    // that did not move cannot have moved between the two rules either - the
+    // prior takes nothing when it is off, and taking nothing is what "did not
+    // move" means when it comes on.
+    const redone = session !== changed;
 
     this.push({
       phase: 'ready',
@@ -893,7 +973,10 @@ export class TranscriptionService {
       // back, meaning it found nothing to redo - the one already on the state.
       // Session identity is the signal, so this cannot drift out of step with
       // what was actually recomputed.
-      suppressed: session === changed ? current.suppressed : suppressed,
+      suppressed: redone ? suppressed : current.suppressed,
+      declarationRemovals: redone
+        ? removedByDeclaration(session, session.notes)
+        : current.declarationRemovals,
       error: null,
       refusal: null
     });
@@ -976,6 +1059,52 @@ export class TranscriptionService {
  */
 export function monophonicSource(session: TranscriptionSession): boolean {
   return session.monophonic ?? isBassTuning(session.settings.tuning);
+}
+
+/**
+ * What withdrawing this session's monophony declaration would do to `kept`.
+ *
+ * The pass, run a second time with the prior off, differenced against the kept
+ * set that actually shipped - in both directions. See
+ * `TranscriptionState.declarationRemovals` for why that rather than an
+ * attribution rule, and for the measured size of the second direction.
+ *
+ * `kept` is passed rather than read off `session.notes` because the one caller
+ * inside `transcribe` builds the session *from* the notes and does not have one
+ * yet. Handing the wrong list would report the wrong difference silently, so
+ * both callers pass the array they just derived.
+ *
+ * Nothing runs when the resolved source is polyphonic, and the frozen shared
+ * answer comes back. That is not an optimisation of the answer either: with
+ * `monophonic` false the prior's clause in `explains` cannot be reached, so the
+ * second pass would return `kept` and both differences would be empty by
+ * construction.
+ *
+ * The cost is one extra pass over `rawNotes` per derivation that re-suppressed,
+ * on a monophonic source. Measured on the real bass stem - 1224 detections,
+ * 921 kept - the pair of passes runs in single-digit milliseconds against a
+ * `deriveScore` that is far larger, and `resuppressed` already declines to run
+ * either pass when no suppression input moved.
+ */
+function removedByDeclaration(
+  session: TranscriptionSession,
+  kept: readonly DetectedNote[]
+): DeclarationRemovals {
+  if (!monophonicSource(session)) return NO_DECLARATION_REMOVALS;
+
+  const withoutPrior = suppressHarmonics(
+    session.rawNotes,
+    session.harmonics,
+    session.decisions,
+    false
+  );
+  const keptIds = new Set(kept.map(note => note.id));
+  const withoutIds = new Set(withoutPrior.map(note => note.id));
+
+  return {
+    restored: withoutPrior.filter(note => !keptIds.has(note.id)).map(note => note.id),
+    displaced: kept.filter(note => !withoutIds.has(note.id)).map(note => note.id)
+  };
 }
 
 function resuppressed(

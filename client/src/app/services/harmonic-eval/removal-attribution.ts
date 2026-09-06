@@ -23,11 +23,17 @@
  * `suppressHarmonics` can now remove a same-attack harmonic pair because the
  * caller declared the source monophonic, without reading
  * `partialConfidenceRatio` at all. That is a different reason from the ratio's
- * and a differently actionable one - a note lost to the declaration comes back
- * by unticking a box - but the shipped `suppressed` list carries notes and not
- * reasons, so the app cannot tell them apart. `rootOf` takes the flag so that
- * the measurement side can: pass what the pass was given, and every removal
- * stays attributable under either rule.
+ * and a differently actionable one, so `rootOf` takes the flag: pass what the
+ * pass was given, and every removal stays attributable under either rule.
+ *
+ * The app tells them apart too now, and deliberately not this way.
+ * `TranscriptionState.declarationRemovals` runs the pass twice and differences
+ * the kept sets, because what a listener is owed is *what withdrawing the
+ * declaration would do* - and a note the prior removed cannot act as a root, so
+ * withdrawing it also removes a few notes that only survived because it did.
+ * A per-note verdict cannot see those; a difference of kept sets is exactly
+ * them. What this file is for is the other question - which root, at which
+ * interval, at which ratio - and that is per-pair by nature.
  *
  * Reporting only. Nothing here decides anything; it just says what did.
  *

@@ -16,6 +16,7 @@ import {
 } from './transcription-harmonics';
 import {
   NOTE_DETECTOR,
+  NO_DECLARATION_REMOVALS,
   TranscriptionService,
   TranscriptionState
 } from './transcription.service';
@@ -282,6 +283,7 @@ describe('TranscriptionService', () => {
         session: null,
         derived: null,
         suppressed: [],
+        declarationRemovals: NO_DECLARATION_REMOVALS,
         error: null,
         refusal: null
       });
@@ -530,6 +532,7 @@ describe('TranscriptionService', () => {
         session: null,
         derived: null,
         suppressed: [],
+        declarationRemovals: NO_DECLARATION_REMOVALS,
         error: null,
         refusal: null
       });
@@ -1472,6 +1475,112 @@ describe('TranscriptionService', () => {
 
       expect(service.state.phase).toBe('idle');
       expect(service.state.session).toBeNull();
+    });
+
+    // -----------------------------------------------------------------------
+    // Which rule took a note, which is not the same question as whether one did.
+    // -----------------------------------------------------------------------
+
+    describe('declarationRemovals', () => {
+      it('names exactly the notes withdrawing the declaration brings back', async () => {
+        await service.transcribe(wavFile());
+        const attributed = service.state.declarationRemovals;
+        expect(attributed.restored.length).toBeGreaterThan(0);
+
+        // The definition, asserted rather than described: the panel's sentence
+        // is *unticking this brings these back*, and this is unticking it. A
+        // reproduction of `explains` living outside the suppressor could pass a
+        // per-note check and still be wrong about the set, because a note the
+        // prior removes is also a note that cannot act as a root.
+        const before = new Set(service.state.session!.notes.map(n => n.id));
+        service.declareMonophonic(false);
+        const after = service.state.session!.notes.map(n => n.id);
+
+        expect(after.filter(id => !before.has(id)).sort()).toEqual(
+          [...attributed.restored].sort()
+        );
+      });
+
+      it('is a strict part of the discard list, never a fifth wheel', async () => {
+        await service.transcribe(wavFile());
+
+        const suppressed = new Set(service.state.suppressed.map(n => n.id));
+        expect(service.state.declarationRemovals.restored.every(id => suppressed.has(id)))
+          .toBeTrue();
+      });
+
+      it('is empty on a source the prior is not running on', async () => {
+        await service.transcribe(wavFile());
+
+        service.declareMonophonic(false);
+        expect(service.state.declarationRemovals).toBe(NO_DECLARATION_REMOVALS);
+
+        // ...and by the inference as well as by the declaration. The clause
+        // cannot be reached with the prior off, so there is nothing to run.
+        service.declareMonophonic(null);
+        service.updateSettings({ tuning: GUITAR_TUNING });
+        expect(service.state.declarationRemovals).toBe(NO_DECLARATION_REMOVALS);
+      });
+
+      it('follows the ratio, because the two rules compete for the same notes', async () => {
+        await service.transcribe(wavFile());
+        const before = service.state.declarationRemovals.restored.length;
+
+        // A ratio loose enough to keep almost nothing out is a ratio that
+        // stops explaining these pairs on its own - so more of them fall to
+        // the declaration, not fewer. An attribution that ignored the
+        // thresholds would report the same number twice.
+        service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+        expect(service.state.declarationRemovals.restored.length).toBeGreaterThan(before);
+      });
+
+      it('is left alone when nothing re-suppressed', async () => {
+        await service.transcribe(wavFile());
+        const before = service.state.declarationRemovals;
+
+        // Same identity contract as `suppressed`: a capo change moves no
+        // suppression input, so nothing downstream is handed a new equal list.
+        service.updateSettings({ capo: 3 });
+
+        expect(service.state.declarationRemovals).toBe(before);
+      });
+
+      it('drops a note the listener restored, which is no longer removed at all', async () => {
+        await service.transcribe(wavFile());
+        expect(service.state.declarationRemovals.restored).toContain('d1');
+
+        service.toggleNote('d1');
+
+        // `keep` is read before `explains`, so the note is in the score and
+        // cannot be in a list of what is missing from it.
+        expect(service.state.declarationRemovals.restored).not.toContain('d1');
+        expect(service.state.suppressed.map(n => n.id)).not.toContain('d1');
+      });
+
+      it('survives the declaration being toggled around a restored note', async () => {
+        // (b) from the browser pass, asserted where it can be asserted
+        // exactly. An explicit `keep` outranks the prior in both directions,
+        // so a note restored by hand stays restored through any number of
+        // declarations.
+        await service.transcribe(wavFile());
+        service.toggleNote('d1');
+        const kept = (): boolean =>
+          (service.state.session?.notes ?? []).some(note => note.id === 'd1');
+
+        service.declareMonophonic(false);
+        expect(kept()).toBeTrue();
+        service.declareMonophonic(true);
+        expect(kept()).toBeTrue();
+        service.declareMonophonic(false);
+        expect(kept()).toBeTrue();
+
+        expect(service.state.session?.decisions.keep).toEqual(['d1']);
+      });
+
+      it('is the shared frozen answer on a state that has no session', () => {
+        expect(service.state.declarationRemovals).toBe(NO_DECLARATION_REMOVALS);
+      });
     });
   });
 
