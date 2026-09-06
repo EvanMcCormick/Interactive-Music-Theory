@@ -5,6 +5,42 @@ import { suppressHarmonics } from './transcription-harmonics';
 import { WorkerDetector } from './worker-detector';
 
 /**
+ * A `Worker` that does nothing but let a spec dispatch events at it.
+ *
+ * Everything else in this file wants a real worker and says why. The specs at
+ * the bottom cannot use one: the two failures they tell apart are *a module
+ * that would not load* and *a module that threw*, and a real worker cannot be
+ * made to do the first on demand - its URL is fixed at build time and the
+ * module is known to load. What distinguishes them is only which event the
+ * browser dispatches, and an event is dispatchable.
+ */
+class StubWorker extends EventTarget {
+  static instances: StubWorker[] = [];
+
+  /** The worker `WorkerDetector` most recently constructed. */
+  static get last(): StubWorker {
+    const worker = StubWorker.instances[StubWorker.instances.length - 1];
+    if (!worker) throw new Error('No stub worker has been constructed.');
+
+    return worker;
+  }
+
+  /** Swallowed: nothing answers, and the spec settles the detection itself. */
+  postMessage(): void {
+    return;
+  }
+
+  terminate(): void {
+    return;
+  }
+
+  constructor() {
+    super();
+    StubWorker.instances.push(this);
+  }
+}
+
+/**
  * Integration tests, like `basic-pitch-detector.spec.ts`: a real worker, the
  * real model fetched over HTTP from inside it, real WebGL shaders and real
  * inference. There is nothing worth asserting about a stubbed worker, because
@@ -243,5 +279,77 @@ describe('WorkerDetector lifecycle', () => {
       detector.terminate();
       detector.terminate();
     }).not.toThrow();
+  });
+});
+
+describe('WorkerDetector error reporting', () => {
+  let detector: WorkerDetector;
+  let realWorker: typeof Worker;
+
+  beforeEach(() => {
+    StubWorker.instances = [];
+    realWorker = globalThis.Worker;
+    // A stub only has to satisfy the three members `WorkerDetector` touches -
+    // the constructor, `postMessage` and `terminate` - so it is cast rather
+    // than made to implement the whole of `Worker`.
+    globalThis.Worker = StubWorker as unknown as typeof Worker;
+    detector = new WorkerDetector();
+  });
+
+  afterEach(() => {
+    globalThis.Worker = realWorker;
+  });
+
+  /** Starts a detection and hands the worker `event` instead of an answer. */
+  function detectionFailingWith(event: Event): Promise<DetectionResult> {
+    const running = detector.detect(new Float32Array(64), DETECTION_SAMPLE_RATE, () => undefined);
+
+    StubWorker.last.dispatchEvent(event);
+
+    return running;
+  }
+
+  it('says the worker never loaded when the browser reports a bare event', async () => {
+    // Measured in Chrome: a worker whose script 404s dispatches a plain
+    // `Event` - not an `ErrorEvent` - with no `message`, `filename` or
+    // `lineno` at all. Every failure raised *inside* a running worker arrives
+    // as a real `ErrorEvent` carrying text. Reporting one generic string for
+    // both sent a user hunting their audio for a fault in the bundle.
+    await expectAsync(detectionFailingWith(new Event('error'))).toBeRejectedWithError(
+      /could not be loaded/
+    );
+  });
+
+  it('does not blame the audio for a worker that never loaded', async () => {
+    // The whole point of separating the two. A chunk that did not load is
+    // file-independent, so "try a different file" is advice that cannot work
+    // and the message has to say so.
+    await expectAsync(detectionFailingWith(new Event('error'))).toBeRejectedWithError(
+      /not in the audio/
+    );
+  });
+
+  it('reads an ErrorEvent with no message as a load failure too', async () => {
+    // Firefox and Safari answer a worker script that would not load with an
+    // `ErrorEvent` whose `message` is empty rather than with a bare `Event`.
+    // The distinction that matters is whether there is anything to report,
+    // not which constructor the browser reached for.
+    await expectAsync(
+      detectionFailingWith(new ErrorEvent('error', { message: '' }))
+    ).toBeRejectedWithError(/could not be loaded/);
+  });
+
+  it('repeats what the worker said when the worker itself failed', async () => {
+    // The other half: a live worker that threw knows more about the failure
+    // than this class ever will, so its text is passed through unaltered.
+    await expectAsync(
+      detectionFailingWith(new ErrorEvent('error', { message: 'Uncaught Error: boom from worker' }))
+    ).toBeRejectedWithError('Uncaught Error: boom from worker');
+  });
+
+  it('clears the detection so a later one can run', async () => {
+    await expectAsync(detectionFailingWith(new Event('error'))).toBeRejected();
+
+    expect(detector.busy).toBe(false);
   });
 });

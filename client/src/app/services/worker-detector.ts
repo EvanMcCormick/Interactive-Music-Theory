@@ -41,6 +41,45 @@ interface PendingDetection {
   onProgress: (fraction: number) => void;
 }
 
+/**
+ * What to tell the user about an uncaught `error` from the worker.
+ *
+ * Two very different failures arrive on this one event, and the difference is
+ * the whole message. Measured in Chrome: when a worker's **script fails to
+ * fetch**, the browser dispatches a bare `Event` - `instanceof ErrorEvent` is
+ * false and there is no `message`, `filename` or `lineno` at all. Every
+ * failure raised *inside* a worker that did start arrives as a real
+ * `ErrorEvent` carrying text:
+ *
+ * | what happened | event | `message` |
+ * |---|---|---|
+ * | script URL 404s | `Event` | absent |
+ * | script throws | `ErrorEvent` | `Uncaught Error: ...` |
+ * | script is not JS | `ErrorEvent` | `Uncaught SyntaxError: ...` |
+ *
+ * The handler's type says `ErrorEvent` - `WorkerEventMap` maps `error` to it -
+ * and that is the lie this function exists to correct. Reading `.message` off
+ * a bare `Event` yields `undefined`, and one generic fallback for both cases
+ * cost a user a debugging session spent on their audio when the worker chunk
+ * simply had not downloaded. A chunk that did not load is *file-independent*,
+ * so the message has to say so out loud: "try another file" is advice that
+ * cannot work, and a reader will otherwise assume it.
+ *
+ * An `ErrorEvent` whose `message` is empty is treated as a load failure too.
+ * Firefox and Safari report an unloadable worker script that way rather than
+ * with a bare `Event`, and either way there is nothing to relay.
+ */
+function describeWorkerError(event: Event): string {
+  const reported = event instanceof ErrorEvent ? event.message : '';
+
+  return (
+    reported ||
+    'The detection worker could not be loaded, so detection never started. ' +
+      'The fault is in the app and not in the audio you gave it, so a ' +
+      'different file will not help; reload the page and try again.'
+  );
+}
+
 export class WorkerDetector implements NoteDetector {
   private worker: Worker | null = null;
   private pending: PendingDetection | null = null;
@@ -165,9 +204,7 @@ export class WorkerDetector implements NoteDetector {
       // otherwise arrive after a replacement worker had been created and kill
       // that one instead.
       if (this.worker === worker) this.dispose();
-      this.settle(pending =>
-        pending.reject(new Error(event.message || 'The detection worker failed.'))
-      );
+      this.settle(pending => pending.reject(new Error(describeWorkerError(event))));
     });
     worker.addEventListener('messageerror', () =>
       this.settle(pending =>
