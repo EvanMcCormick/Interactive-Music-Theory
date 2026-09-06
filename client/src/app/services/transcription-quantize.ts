@@ -233,19 +233,33 @@ export interface MetricFrame {
   halfBar: number | null;
 }
 
+/**
+ * Whether the felt beat groups the denominator unit in threes.
+ *
+ * 6/8, 9/8 and 12/8 are felt in dotted-quarter groups of three eighths. 3/8 is
+ * not: it is three beats, not one group of three - which is why the numerator
+ * has to exceed three rather than merely divide by it.
+ *
+ * Exported because it is the same question `metrical-level-inference.ts` has to
+ * ask before it calls a pulse that divides in three a tracker error: in a
+ * compound meter that pulse is the beat. Two copies of this test could drift
+ * apart and the two answers would then contradict each other on the same
+ * session.
+ */
+export function isCompoundMeter(timeSignature: TimeSignature): boolean {
+  return (
+    (timeSignature.denominator === 8 || timeSignature.denominator === 16)
+    && timeSignature.numerator % 3 === 0
+    && timeSignature.numerator > 3
+  );
+}
+
 /** Reads the felt beat and the half-bar off a time signature. */
 export function metricFrame(
   timeSignature: TimeSignature,
   slotsPerBeat: number
 ): MetricFrame {
-  // 6/8, 9/8 and 12/8 are felt in dotted-quarter groups of three eighths. 3/8
-  // is not: it is three beats, not one group of three.
-  const isCompound =
-    (timeSignature.denominator === 8 || timeSignature.denominator === 16)
-    && timeSignature.numerator % 3 === 0
-    && timeSignature.numerator > 3;
-
-  const beatUnit = slotsPerBeat * (isCompound ? 3 : 1);
+  const beatUnit = slotsPerBeat * (isCompoundMeter(timeSignature) ? 3 : 1);
   const totalSlots = timeSignature.numerator * slotsPerBeat;
   const feltBeats = totalSlots / beatUnit;
 

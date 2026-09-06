@@ -366,10 +366,14 @@ export class TranscriptionService {
         grid: tracked,
         trackedGrid: tracked,
         // The tracked pulse is taken to be the beat until someone says
-        // otherwise, which is what the tracker itself claims. Inferring a level
-        // here is follow-up work, and it has to read the meter to do it: a
-        // pulse that subdivides in three is the beat in 6/8 and 12/8, so a
-        // "correction" there would turn a right answer into a wrong one.
+        // otherwise, which is what the tracker itself claims.
+        //
+        // `inferMetricalLevel` can say otherwise, and deliberately is not
+        // called here: it *proposes* a level with the evidence behind it, and
+        // that evidence separates the real case by only about 20 % - a
+        // proposal that applied itself on arrival would be a silent answer
+        // that is sometimes confidently wrong. It belongs beside the control
+        // that shows it, where a listener can see the numbers and override it.
         beatsPerPulse: 1,
         harmonics,
         decisions: NO_NOTE_DECISIONS,
