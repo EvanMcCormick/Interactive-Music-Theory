@@ -62,6 +62,20 @@
  * in its contract. A component that wants inference cancelled on destroy
  * injects `NOTE_DETECTOR` itself and calls `WorkerDetector.terminate`. Nothing
  * here subscribes to anything, so there is nothing else to unsubscribe from.
+ *
+ * ## Past CLAUDE.md's 500-line ceiling, deliberately
+ *
+ * Roughly 190 of these lines are code and the rest is prose. The rule exists so
+ * that a file stays small enough to hold in the head, and splitting this one to
+ * satisfy the count would work against that: what is here is a single state
+ * machine over one `BehaviorSubject`, and every public method is one call into
+ * `rederive`. The candidates for extraction are the state type and the
+ * injection token, which would leave two files that have to be read together,
+ * or the docblocks, which are the part worth keeping next to the code.
+ *
+ * If the *code* grows past the ceiling the answer is different: suppression
+ * moving into the re-derive path is the change that would do it, and at that
+ * point the pipeline assembly in `transcribe` becomes a module of its own.
  */
 
 import { InjectionToken, Injectable, inject } from '@angular/core';

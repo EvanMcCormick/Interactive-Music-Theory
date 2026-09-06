@@ -270,6 +270,26 @@ describe('buildPreviewDoc', () => {
     expect(everyGhostNote(preview)).toEqual([]);
   });
 
+  it('leaves out a suppressed note whose pitch is not a MIDI pitch', () => {
+    // `suppressed` notes never went through `correctOctaves` - suppression
+    // removed them at detection time, before derivation saw anything - so a
+    // pitch `deriveScore` would have thrown on can reach here having been
+    // checked by nothing. Defensive against a detector that emits 0-127, but
+    // an exception on the re-derive path blanks a preview that had a score.
+    const absurd = note(1e9, 1.0, 1, 'absurd');
+    const kept = [note(43, 0.0)];
+    const input = session(kept, [...kept, absurd]);
+    const omitted: DetectedNote[] = [];
+
+    let preview!: ReturnType<typeof buildPreviewDoc>;
+    expect(() => {
+      preview = buildPreviewDoc(input, deriveScore(input), [absurd], omitted);
+    }).not.toThrow();
+
+    expect(omitted).toEqual([absurd]);
+    expect(everyGhostNote(preview)).toEqual([]);
+  });
+
   it('leaves out a ghost whose onset is not a time', () => {
     const timeless = note(45, Number.NaN, 0.1);
     const input = session([note(43, 0.0), timeless]);

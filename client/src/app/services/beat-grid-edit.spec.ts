@@ -11,6 +11,7 @@ import {
   MAX_DOWNBEAT_NUDGE_BEATS,
   MAX_TEMPO_BPM,
   MIN_TEMPO_BPM,
+  canNudgeDownbeat,
   nudgedDownbeat,
   withTempo
 } from './beat-grid-edit';
@@ -74,6 +75,20 @@ describe('withTempo', () => {
   it('keeps the time signature', () => {
     expect(withTempo(GRID, 90).timeSignature).toEqual(FOUR_FOUR);
   });
+
+  it('refuses a grid whose ends are not times', () => {
+    // `Math.max(2, NaN)` is NaN and `Array.from({ length: NaN })` is `[]`, so
+    // without the guard this returned an empty grid - and `secondsToBeats`
+    // reads a grid of under two beats as position 0 for every note there is.
+    // Unreachable from `trackBeats`; the point is that the floor is a floor.
+    for (const bad of [NaN, Infinity]) {
+      const broken: BeatGrid = { beatsSec: [bad, 0.5, 1.0], timeSignature: FOUR_FOUR };
+      const brokenEnd: BeatGrid = { beatsSec: [0, 0.5, bad], timeSignature: FOUR_FOUR };
+
+      expect(withTempo(broken, 120)).toBe(broken);
+      expect(withTempo(brokenEnd, 120)).toBe(brokenEnd);
+    }
+  });
 });
 
 describe('nudgedDownbeat', () => {
@@ -135,6 +150,55 @@ describe('nudgedDownbeat', () => {
   it('accepts a nudge exactly at the bound', () => {
     expect(nudgedDownbeat(GRID, -MAX_DOWNBEAT_NUDGE_BEATS).beatsSec.length)
       .toBe(GRID.beatsSec.length + MAX_DOWNBEAT_NUDGE_BEATS);
+  });
+
+  it('hands back the same grid when the forward clamp leaves nothing to do', () => {
+    // Two beats is the floor, so there is nothing to drop. Before this it
+    // returned `source.slice(0)` - a new array, equal to the old one, which the
+    // caller could not tell from an applied nudge.
+    const floored: BeatGrid = { beatsSec: [1.0, 1.5], timeSignature: FOUR_FOUR };
+
+    expect(nudgedDownbeat(floored, 1)).toBe(floored);
+  });
+});
+
+/**
+ * The predicate a disabled button keys on.
+ *
+ * `nudgedDownbeat` returning the grid unchanged is the honest answer, but a
+ * control cannot act on it after the fact: by then a re-derivation has already
+ * been asked for. This is the same set of refusals, asked in advance.
+ */
+describe('canNudgeDownbeat', () => {
+  it('agrees with what nudgedDownbeat actually does', () => {
+    const grids: BeatGrid[] = [
+      GRID,
+      { beatsSec: [1.0, 1.5], timeSignature: FOUR_FOUR },
+      { beatsSec: [1.0], timeSignature: FOUR_FOUR }
+    ];
+    const nudges = [-99, -8, -1, 0, 0.5, 1, 2, 3, 8, 99];
+
+    for (const grid of grids) {
+      for (const beats of nudges) {
+        // Identity is the whole contract: a refused nudge is the same object.
+        expect(nudgedDownbeat(grid, beats) !== grid).toBe(canNudgeDownbeat(grid, beats));
+      }
+    }
+  });
+
+  it('is false for a forward nudge with no beats left to drop', () => {
+    const floored: BeatGrid = { beatsSec: [1.0, 1.5], timeSignature: FOUR_FOUR };
+
+    expect(canNudgeDownbeat(floored, 1)).toBe(false);
+    // Backwards always has somewhere to go: it builds the beats it needs.
+    expect(canNudgeDownbeat(floored, -1)).toBe(true);
+  });
+
+  it('is false past the bound and true inside it', () => {
+    expect(canNudgeDownbeat(GRID, MAX_DOWNBEAT_NUDGE_BEATS)).toBe(true);
+    expect(canNudgeDownbeat(GRID, MAX_DOWNBEAT_NUDGE_BEATS + 1)).toBe(false);
+    expect(canNudgeDownbeat(GRID, -MAX_DOWNBEAT_NUDGE_BEATS)).toBe(true);
+    expect(canNudgeDownbeat(GRID, -MAX_DOWNBEAT_NUDGE_BEATS - 1)).toBe(false);
   });
 });
 

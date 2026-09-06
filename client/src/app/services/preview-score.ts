@@ -1,6 +1,7 @@
 import { BarDoc, BeatDoc, ScoreDoc, StaffDoc, TrackDoc } from '../models/composer.model';
 import { DetectedNote, TranscriptionSession } from '../models/transcription.model';
 import { DerivedScore, placeDetectedNotes } from './score-derivation';
+import { isCorrectablePitch } from './transcription-octave';
 import { PlacedNote, quantizeBar } from './transcription-quantize';
 
 /**
@@ -15,10 +16,28 @@ import { PlacedNote, quantizeBar } from './transcription-quantize';
  * place and the rhythm where it was made.
  *
  * So the discards go back into the score as ghost notes, in the bar their
- * onset falls in, positioned by exactly the rules that positioned the notes
- * around them - `placeDetectedNotes` is shared with `deriveScore` for that
- * reason, and duplicating it here would produce ghosts that drift out of step
- * with the score they annotate.
+ * onset falls in, *placed* by exactly the rules that placed the notes around
+ * them - `placeDetectedNotes` is shared with `deriveScore` for that reason, and
+ * duplicating it here would produce ghosts that drift out of step with the
+ * score they annotate.
+ *
+ * ## Placed by the same rules; not always drawn in the same slot
+ *
+ * Placement is shared. Quantization is not, and cannot be: voice 2 is
+ * quantized separately from voice 1, so `snapToSlots` clusters the ghosts on
+ * their own. A discard and a keeper struck together would have been one cluster
+ * and rounded to one slot; separated into two voices they are two clusters and
+ * round independently, and if the pair straddles a slot midpoint inside the
+ * chord tolerance they land a slot apart. Reproduced at one sixteenth on a
+ * sixteenth grid.
+ *
+ * Bounded at one slot and not worth removing - merging the voices to fix it
+ * would cost the guarantee this module exists for - but it is the specific way
+ * this display can mislead: a ghost can sit a sixteenth from the note it was
+ * actually struck with. A milder relative is that `assignFingering` is
+ * path-dependent, running over the ghost batch rather than the kept one, so an
+ * identical pitch can be drawn on a different string in voice 2 than in voice 1.
+ * Neither changes which bar or which beat a ghost belongs to.
  *
  * They go in as **voice 2**. Merging them into voice 1 could not offer the
  * guarantee that makes this trustworthy: adding onsets changes clustering,
@@ -47,6 +66,25 @@ import { PlacedNote, quantizeBar } from './transcription-quantize';
  */
 
 /**
+ * Whether a detection can be placed at all, before anything tries to.
+ *
+ * Two ways it cannot, and both are the difference between an omission and a
+ * crash. A non-finite onset defeats every downstream stage - `placeDetectedNotes`
+ * throws on it. And a pitch more than ten octaves outside MIDI makes
+ * `correctOctaves` throw, which matters here because `suppressed` notes have
+ * never been through it: they were removed at detection time, before derivation
+ * saw them, so a value `deriveScore` would have rejected can reach this module
+ * having been checked by nothing.
+ *
+ * Defensive on today's inputs - the detector emits 0-127 - but the failure it
+ * prevents is the one M1 warned about: an exception on the re-derive path
+ * blanks a preview that had a perfectly good score to draw.
+ */
+function canBeGhosted(note: DetectedNote): boolean {
+  return Number.isFinite(note.onsetSec) && isCorrectablePitch(note.pitch);
+}
+
+/**
  * Ghost candidates gathered from a derivation and its detection.
  *
  * The two sources are disjoint by construction: `dropped` comes from
@@ -62,12 +100,12 @@ function ghostCandidates(
   const candidates: DetectedNote[] = [];
 
   for (const note of derived.dropped) {
-    if (Number.isFinite(note.note.onsetSec)) candidates.push(note.note);
+    if (canBeGhosted(note.note)) candidates.push(note.note);
     else omitted?.push(note.note);
   }
 
   for (const note of suppressed) {
-    if (Number.isFinite(note.onsetSec)) candidates.push(note);
+    if (canBeGhosted(note)) candidates.push(note);
     else omitted?.push(note);
   }
 
@@ -100,11 +138,12 @@ function asGhosts(beats: BeatDoc[]): BeatDoc[] {
  *     candidates === ghost heads drawn + omitted.length
  *
  * Three ways a candidate is lost, and all three report here. A pitch no
- * fingering can reach and an onset that is not a time in seconds have nowhere
- * to sit on a tab staff at all. The third is a ghost struck on a string
- * another ghost in the same slot already holds: `quantizeBar` keeps one note
- * per string, so it turns the second away, and the `dropped` out-parameter is
- * the only record of it. Not passing that argument is what made this docblock
+ * fingering can reach, and an onset or pitch that is not a number the pipeline
+ * can use, have nowhere to sit on a tab staff at all. The third is a ghost
+ * struck on a string another ghost in the same slot already holds:
+ * `quantizeBar` keeps one note per string, so it turns the second away, and the
+ * `dropped` out-parameter is the only record of it. Not passing that argument
+ * is what made this docblock
  * false for a while - on the pinned detector fixture at a 0.7 confidence
  * floor, thirteen of thirty-three candidates disappeared with no glyph and no
  * count, because a higher floor shortens `derived.doc` and the ghosts from the
@@ -159,12 +198,12 @@ export function buildPreviewDoc(
   // for a document with no tracks at all.
   const lastBar = doc.masterBars.length - 1;
 
+  // A document with no bars has nowhere to put anything. `deriveScore` never
+  // writes one - it floors the count at 1 - but nothing here needs it to.
+  if (lastBar < 0) return { ...doc, tracks: [...doc.tracks] };
+
   const byBar = new Map<number, PlacedNote[]>();
   for (const entry of placement.placed) {
-    // A document with no bars has nowhere to put anything. `deriveScore` never
-    // writes one - it floors the count at 1 - but nothing here needs it to.
-    if (lastBar < 0) break;
-
     const bar = Math.min(lastBar, entry.bar);
     const inBar = byBar.get(bar);
     if (inBar) inBar.push(entry.placed);

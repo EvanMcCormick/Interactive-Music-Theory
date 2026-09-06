@@ -78,7 +78,17 @@ export function withTempo(grid: BeatGrid, bpm: number): BeatGrid {
   if (beats.length < 2) return grid;
 
   const start = beats[0];
-  const span = beats[beats.length - 1] - start;
+  const last = beats[beats.length - 1];
+
+  // Makes the `Math.max(2, ...)` floor below an actual floor. `Math.max(2, NaN)`
+  // is NaN and `Array.from({ length: NaN })` is `[]`, so a single non-finite
+  // beat anywhere at the two ends would hand back an *empty* grid - and
+  // `secondsToBeats` reads a grid of under two beats as position 0 for every
+  // note in the piece. Unreachable from `trackBeats`, but a guard that reads
+  // like one and is not is worse than no guard at all.
+  if (!Number.isFinite(start) || !Number.isFinite(last)) return grid;
+
+  const span = last - start;
   const interval = 60 / bpm;
   const count = Math.max(2, Math.round(span / interval) + 1);
 
@@ -126,13 +136,17 @@ export function withTempo(grid: BeatGrid, bpm: number): BeatGrid {
  * A note struck after `b1` is therefore placed identically across a round trip.
  * One struck inside the rebuilt interval moves by up to that error, which on a
  * sixteenth grid is at most a slot.
+ *
+ * Returns the grid it was given, by identity, whenever it would not move the
+ * bar line - which `canNudgeDownbeat` answers in advance.
  */
 export function nudgedDownbeat(grid: BeatGrid, beats: number): BeatGrid {
   const source = grid.beatsSec;
-  if (source.length < 2 || !Number.isInteger(beats) || beats === 0) return grid;
-  if (Math.abs(beats) > MAX_DOWNBEAT_NUDGE_BEATS) return grid;
+  if (!canNudgeDownbeat(grid, beats)) return grid;
 
   if (beats > 0) {
+    // Bounded by the beats there are, and `canNudgeDownbeat` has already ruled
+    // out a bound of zero - so this always drops at least one.
     const drop = Math.min(beats, source.length - 2);
     return { ...grid, beatsSec: source.slice(drop) };
   }
@@ -144,4 +158,28 @@ export function nudgedDownbeat(grid: BeatGrid, beats: number): BeatGrid {
   ).reverse();
 
   return { ...grid, beatsSec: [...added, ...source] };
+}
+
+/**
+ * Whether `nudgedDownbeat` would actually move the bar line.
+ *
+ * Exported so a control can be *disabled* rather than left to do nothing. The
+ * forward clamp is otherwise silent: at the two-beat floor `Math.min` gives a
+ * drop of zero, `slice(0)` hands back a new-but-equal array, and the caller
+ * sees a fresh grid it cannot distinguish from an applied nudge - so
+ * `TranscriptionService.rederive` pushes a state and the panel re-renders for
+ * a correction that did not happen. `nudgedDownbeat` now returns the same grid
+ * by identity in that case, and this is how a caller finds out before pressing.
+ *
+ * False for every reason the nudge is refused - a fractional or zero count, a
+ * grid of under two beats, a count past `MAX_DOWNBEAT_NUDGE_BEATS`, and a
+ * forward nudge with no beats left to drop.
+ */
+export function canNudgeDownbeat(grid: BeatGrid, beats: number): boolean {
+  const source = grid.beatsSec;
+  if (source.length < 2 || !Number.isInteger(beats) || beats === 0) return false;
+  if (Math.abs(beats) > MAX_DOWNBEAT_NUDGE_BEATS) return false;
+
+  // Backwards always has somewhere to go: it builds the beats it needs.
+  return beats < 0 || source.length - 2 >= 1;
 }

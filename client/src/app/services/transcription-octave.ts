@@ -28,6 +28,24 @@ import { DetectedNote, DerivationSettings } from '../models/transcription.model'
 const PITCH_LIMIT = 127 + 120;
 
 /**
+ * Whether `correctOctaves` would accept this pitch or throw on it.
+ *
+ * The same test, asked as a question. `correctOctaves` throwing is right for
+ * `deriveScore`, which is handling the notes a detector actually reported and
+ * has no better answer than failing loudly. `buildPreviewDoc` is not in that
+ * position: it runs *after* a successful derivation, on notes that derivation
+ * set aside, and throwing there would blank a preview that had a score to draw
+ * - the failure M1 warned about. So it filters first, using this rather than a
+ * second copy of the bound.
+ *
+ * Negated rather than `Math.abs(...) > PITCH_LIMIT`, so NaN - which compares
+ * false against everything - is rejected by the same test as Infinity.
+ */
+export function isCorrectablePitch(pitch: number): boolean {
+  return Math.abs(pitch) <= PITCH_LIMIT;
+}
+
+/**
  * Folds out-of-range pitches back onto the instrument.
  *
  * Detectors are weakest in the bass register: fundamentals below 100 Hz sit
@@ -50,9 +68,7 @@ export function correctOctaves(
   settings: DerivationSettings
 ): DetectedNote[] {
   for (const note of notes) {
-    // Negated rather than `Math.abs(...) > PITCH_LIMIT` so NaN, which compares
-    // false against everything, is rejected by the same test as Infinity.
-    if (!(Math.abs(note.pitch) <= PITCH_LIMIT)) {
+    if (!isCorrectablePitch(note.pitch)) {
       throw new Error(`note ${note.id} has pitch ${note.pitch}, which is not a MIDI pitch`);
     }
   }

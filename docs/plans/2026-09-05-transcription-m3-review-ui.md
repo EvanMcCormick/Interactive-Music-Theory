@@ -253,7 +253,15 @@ export function withTempo(grid: BeatGrid, bpm: number): BeatGrid {
   if (beats.length < 2) return grid;
 
   const start = beats[0];
-  const span = beats[beats.length - 1] - start;
+  const last = beats[beats.length - 1];
+
+  // Makes the `Math.max(2, …)` floor below an actual floor: `Math.max(2, NaN)`
+  // is NaN and `Array.from({ length: NaN })` is `[]`, so a non-finite beat at
+  // either end would hand back an *empty* grid — and `secondsToBeats` reads a
+  // grid of under two beats as position 0 for every note in the piece.
+  if (!Number.isFinite(start) || !Number.isFinite(last)) return grid;
+
+  const span = last - start;
   const interval = 60 / bpm;
   const count = Math.max(2, Math.round(span / interval) + 1);
 
@@ -294,8 +302,7 @@ export function withTempo(grid: BeatGrid, bpm: number): BeatGrid {
  */
 export function nudgedDownbeat(grid: BeatGrid, beats: number): BeatGrid {
   const source = grid.beatsSec;
-  if (source.length < 2 || !Number.isInteger(beats) || beats === 0) return grid;
-  if (Math.abs(beats) > MAX_DOWNBEAT_NUDGE_BEATS) return grid;
+  if (!canNudgeDownbeat(grid, beats)) return grid;
 
   if (beats > 0) {
     const drop = Math.min(beats, source.length - 2);
@@ -310,6 +317,26 @@ export function nudgedDownbeat(grid: BeatGrid, beats: number): BeatGrid {
 
   return { ...grid, beatsSec: [...added, ...source] };
 }
+
+/**
+ * Whether `nudgedDownbeat` would actually move the bar line.
+ *
+ * Exported so Task 4 can *disable* a button rather than leave it to do nothing.
+ * The forward clamp is otherwise silent: at the two-beat floor `Math.min` gives
+ * a drop of zero, `slice(0)` hands back a new-but-equal array, and `rederive`
+ * pushes a state the panel re-renders for a correction that did not happen.
+ * `nudgedDownbeat` now returns the same grid by identity in that case, and this
+ * is how a caller finds out before pressing. The component reads
+ * `state.session.grid` and calls this directly — no service method needed.
+ */
+export function canNudgeDownbeat(grid: BeatGrid, beats: number): boolean {
+  const source = grid.beatsSec;
+  if (source.length < 2 || !Number.isInteger(beats) || beats === 0) return false;
+  if (Math.abs(beats) > MAX_DOWNBEAT_NUDGE_BEATS) return false;
+
+  // Backwards always has somewhere to go: it builds the beats it needs.
+  return beats < 0 || source.length - 2 >= 1;
+}
 ```
 
 **The round-trip tests need an unevenly headed grid.** Every fixture above is evenly spaced, which makes the leading, trailing and median intervals the same number: the choice of interval is untested and `+1` then `-1` reproduces the array exactly whatever it picks. Add `[0, 0.42, 0.92, 1.42, 1.92]` and assert what the docblock actually claims — that `-1`/`+1` is exact, that `+1`/`-1` writes `2·b1 − b2` and so does *not* restore `beatsSec`, that the drift is confined to the first beat and bounded by one interval, that a second cycle changes nothing, and that the backward nudge extends by 0.42 rather than the 0.5 median. Then run it through `deriveScore`: notes struck after the second beat are written in the same slots on both grids, which is the claim worth making; a note in front of the second beat moves by up to one sixteenth, which is worth stating rather than hiding.
@@ -317,6 +344,8 @@ export function nudgedDownbeat(grid: BeatGrid, beats: number): BeatGrid {
 **Step 4: Add the service methods**
 
 In `transcription.service.ts`, add `updateTempo(bpm: number)` and `nudgeDownbeat(beats: number)`. Both replace `session.grid` and re-derive through the **same path** `updateSettings` uses — including the `barGridFault` check, so they cannot throw into a caller's event handler either. Add tests mirroring the existing `updateSettings` ones: the detector spy must stay at one call.
+
+This takes `transcription.service.ts` past `CLAUDE.md`'s 500-line ceiling, at roughly 190 lines of code and the rest docblock. **Deviate deliberately and say so in the module docblock**, rather than splitting: the file is one state machine over one `BehaviorSubject` and every public method is a single call into `rederive`, so the only extractions available are the state type and the injection token — two files that must then be read together — or the prose, which is the part worth keeping next to the code. If the *code* grows past the ceiling the answer changes, and moving suppression into the re-derive path is the change that would do it.
 
 **Step 5: Run the full suite, then commit**
 
@@ -371,6 +400,10 @@ It bites hardest at exactly the setting a user reaches for to inspect discards. 
 | 0.9 | 34 | 20 | 0 | **14** |
 
 **Quantize once per bar index, outside the staff mapper.** A document can carry several staves; quantizing inside the per-staff map counts every collision once per staff and reports more omissions than there were candidates. Share the resulting `BeatDoc[]` across staves — the module already shares voice 1 by reference, and nothing writes to a `BeatDoc`.
+
+**Say what the ghosts do and do not guarantee.** Placement is shared with `deriveScore`; quantization is not, and cannot be. Voice 2 is quantized on its own, so `snapToSlots` clusters the ghosts separately: a discard and a keeper struck together would have been one cluster rounding to one slot, and as two voices they round independently. If the pair straddles a slot midpoint inside the chord tolerance they land a slot apart — reproduced at one sixteenth. Bounded at one slot and not worth fixing (merging the voices would cost the guarantee the module exists for), but it is the specific way this display can mislead, so the docblock must not claim ghosts are "positioned by exactly the rules that positioned the notes around them". *Placed* by those rules, yes. Milder relative worth noting alongside it: `assignFingering` is path-dependent and runs over the ghost batch, so an identical pitch can be drawn on a different string in voice 2 than in voice 1.
+
+**Filter pitches, not just onsets.** `suppressed` notes never went through `correctOctaves` — suppression removed them at detection time, before derivation saw anything — so a pitch beyond ±247 can reach `buildPreviewDoc` having been checked by nothing, and `correctOctaves` throws on it inside a render path. Defensive against a detector that emits 0–127, but it is the blank-preview failure M1 warned about, so the candidate filter checks `isCorrectablePitch` as well as a finite onset.
 
 **Voice 1 is shared for provenance, not safety.** Sharing is what would let a mutation *propagate*; a deep copy is what would stop one. What object identity buys is a checkable statement that the previewed voice 1 was carried across rather than rebuilt under slightly different rules — the one failure a preview must not have — and it is free. The safety rests on the callers: `ScoreDocMapperService` only reads the document, and `ComposerService.commit` `structuredClone`s before handing a draft to any mutation. Both are dependencies rather than guarantees, so say so in the docblock.
 
@@ -447,6 +480,7 @@ Commit: `feat: Add the transcription review panel`
 The route host. Owns `TranscriptionService`, shows the dropzone until there is a session and the review panel after, and provides *Open in Composer* → `ComposerService.replaceDocument(state.derived.doc)` then `router.navigate(['/composer'])`.
 
 - Progress while detecting. **One** `aria-live="polite"` region, announcing completion and refusal only — not every phase.
+- **The dropzone already owns a polite region of its own**, for the file-type refusals it handles itself; those never reach `TranscriptionService` and so are not in its state. Do not re-announce them here, or `/transcribe` ends up with two polite regions saying overlapping things about the same drop. The page-level region announces what the *service* reports; the dropzone announces what it rejected before the service saw it.
 - Call `WorkerDetector.terminate()` in `ngOnDestroy`. `TranscriptionService` deliberately does not own the worker; a component that wants inference cancelled on destroy injects `NOTE_DETECTOR` and terminates it. That is the documented contract.
 - `takeUntil(destroy$)` on the state subscription.
 

@@ -2,7 +2,6 @@ import {
   BarDoc,
   KeySignature,
   MasterBarDoc,
-  NotePitch,
   ScoreDoc,
   StaffDoc,
   TrackDoc,
