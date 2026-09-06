@@ -1,8 +1,8 @@
 import { BarDoc, BeatDoc, ScoreDoc, StaffDoc, TrackDoc } from '../models/composer.model';
 import { DetectedNote, TranscriptionSession } from '../models/transcription.model';
-import { DerivedScore, placeDetectedNotes } from './score-derivation';
+import { DerivedScore, WrittenDetection, placeDetectedNotes } from './score-derivation';
 import { isCorrectablePitch } from './transcription-octave';
-import { PlacedNote, quantizeBar } from './transcription-quantize';
+import { PlacedNote, WrittenNote, quantizeBar } from './transcription-quantize';
 
 /**
  * Draws what the pipeline threw away, alongside what it kept.
@@ -124,6 +124,183 @@ function asGhosts(beats: BeatDoc[]): BeatDoc[] {
 }
 
 /**
+ * Voice 0 of every bar: what `deriveScore` wrote, carried through unchanged.
+ *
+ * Named rather than written as a bare 0 because the whole index turns on the
+ * two voices being exactly these two. `deriveScore` gives every bar one voice
+ * and `withGhosts` below appends the second, so the ghost voice is 1 in every
+ * bar of every staff - a fact of the producer, not something this module can
+ * read off the document it is handed.
+ */
+const KEPT_VOICE = 0;
+
+/** Voice 1 of every bar: the ghosts `withGhosts` appends. */
+const GHOST_VOICE = 1;
+
+/**
+ * The way back from a note on the page to the detection behind it.
+ *
+ * Keys are `renderedNoteKey` strings; values are `DetectedNote.id`. A key that
+ * is absent means the note has no detection behind it - a rest, or anything
+ * this index does not claim to cover - and a reader must treat that as "no
+ * answer" rather than as a note.
+ *
+ * A plain map of strings rather than a richer structure because both ends have
+ * to agree on it without sharing an object: it is built while the document is,
+ * and consulted much later against an `alphaTab.model.Note` that knows nothing
+ * of any of this.
+ */
+export type NoteIndex = ReadonlyMap<string, string>;
+
+/** A preview document and the way back from its notes to the detections. */
+export interface PreviewScore {
+  doc: ScoreDoc;
+  /** See `NoteIndex`. Empty when nothing in the document has a detection. */
+  index: NoteIndex;
+}
+
+/**
+ * What the index addresses a note by.
+ *
+ * Bar, voice, beat and string, and nothing else. Four numbers that a `ScoreDoc`
+ * states while it is being written and that an `alphaTab.model.Note` can be
+ * asked for when it is clicked, which is the only requirement: a key no reader
+ * can compute indexes nothing.
+ *
+ * ## The string is the tab's, not alphaTab's
+ *
+ * `ScoreDocMapperService` flips string numbers on the way into alphaTab - the
+ * tab convention numbers from the highest-pitched string, alphaTab from the
+ * lowest - so "string 2" means two different lines depending on which side of
+ * the mapper you are standing on. The index speaks the document's convention,
+ * because that is the one the whole derivation pipeline speaks and the one a
+ * failing assertion is legible in. `detectionAt` is where the flip happens,
+ * once, for readers coming from the other side.
+ *
+ * ## Track and staff are deliberately absent
+ *
+ * `deriveScore` writes one track with one staff, so there is nothing to
+ * disambiguate. And in the general case leaving them out is the *more* correct
+ * choice for the ghosts: `buildPreviewDoc` quantizes them once and shares the
+ * resulting beat lists across every staff by reference, so the same key in two
+ * staves names the same notes and must give the same answer.
+ */
+export function renderedNoteKey(
+  bar: number,
+  voice: number,
+  beat: number,
+  string: number
+): string {
+  return `${bar}:${voice}:${beat}:${string}`;
+}
+
+/**
+ * The parts of a rendered note this index reads.
+ *
+ * Structural rather than `alphaTab.model.Note` itself, so this module keeps the
+ * no-dependency stance the docblock at the top claims: a real Note satisfies it
+ * exactly - `note.string`, `note.beat.index`, `note.beat.voice.index`,
+ * `note.beat.voice.bar.index` and `Staff.tuning` are all present on alphaTab's
+ * own model, and the spec passes real ones through to prove it - while nothing
+ * here imports a renderer or forces one into the bundle.
+ */
+export interface RenderedNote {
+  /**
+   * alphaTab's string numbering, where 1 is the *lowest*-pitched string, and
+   * -1 on a note that is not on a string at all.
+   */
+  string: number;
+  beat: {
+    index: number;
+    voice: {
+      index: number;
+      bar: {
+        index: number;
+        /** `Staff.tuning`, whose length is what the flip below needs. */
+        staff: { tuning: number[] };
+      };
+    };
+  };
+}
+
+/**
+ * The detection behind a rendered note, or null if there is none.
+ *
+ * Null is the answer for every note this index does not cover, and a caller may
+ * treat it as "do nothing" without distinguishing cases: a rest has no `Note`
+ * to click in the first place, and a note that is not on a string, a staff with
+ * no tuning, or a bar the index does not describe all produce a key nothing
+ * holds. Nothing here throws, because the caller is an event handler.
+ *
+ * It does *not* check that the note came from the document the index was built
+ * with. It cannot: an `alphaTab.model.Note` says nothing about which derivation
+ * produced it. Reading an index against a stale render is a real way to get a
+ * confident wrong answer, and the defence against it is structural - see
+ * `buildPreviewDoc`, which hands the two back together for exactly that reason.
+ */
+export function detectionAt(index: NoteIndex, note: RenderedNote): string | null {
+  const { beat } = note;
+  const { voice } = beat;
+  const { bar } = voice;
+
+  // alphaTab counts strings from the lowest, `StaffDoc.tuning` from the
+  // highest, and `flipString` is its own inverse - the same arithmetic
+  // `ScoreDocMapperService` applied on the way in, undone here.
+  const string = bar.staff.tuning.length - note.string + 1;
+
+  return index.get(renderedNoteKey(bar.index, voice.index, beat.index, string)) ?? null;
+}
+
+/**
+ * Files a voice's written notes into the index, refusing to guess.
+ *
+ * Two notes cannot share a bar, a voice, a beat and a string unless something
+ * upstream is broken: `quantizeBar` puts one chord on a slot and `addToChord`
+ * keeps one note per string in a chord, turning the second away into the
+ * caller's `dropped` array rather than writing it. A collision here therefore
+ * means the *document* is malformed too - two numbers on one tab line, which is
+ * the exact thing `addToChord` exists to prevent - and not merely that the
+ * index is ambiguous.
+ *
+ * So it throws, rather than overwriting. Overwriting would leave a plausible
+ * index that answers a click with a note the reader did not click, and an
+ * override applied to the wrong note is worse than no override: the pipeline's
+ * answer was at least the algorithm's, and this would be neither. The cost of
+ * throwing is bounded - `TranscriptionReviewComponent` already catches around
+ * `buildPreviewDoc` and shows the message instead of a score - and a score it
+ * declines to draw is the right outcome for a bar it cannot write correctly.
+ *
+ * The same id landing on one key twice is not a collision and is allowed: it
+ * says one detection was written there, which is what the index would record
+ * anyway.
+ */
+function indexVoice(
+  index: Map<string, string>,
+  voice: number,
+  written: readonly WrittenDetection[]
+): void {
+  for (const entry of written) {
+    // Only a fretted note has a string to be addressed by. `assignFingering`
+    // returns nothing else, so this skips nothing today; a pitched note would
+    // simply not be clickable rather than take a key that cannot be recomputed
+    // from a `Note`.
+    if (entry.pitch.kind !== 'fretted') continue;
+
+    const key = renderedNoteKey(entry.bar, voice, entry.beat, entry.pitch.string);
+    const existing = index.get(key);
+
+    if (existing !== undefined && existing !== entry.note.id) {
+      throw new Error(
+        `bar ${entry.bar}, voice ${voice}, beat ${entry.beat} writes two notes on `
+        + `string ${entry.pitch.string}: ${existing} and ${entry.note.id}`
+      );
+    }
+
+    index.set(key, entry.note.id);
+  }
+}
+
+/**
  * Adds discarded detections to a derived score as ghost notes in voice 2.
  *
  * `suppressed` is what harmonic suppression removed at detection time -
@@ -180,15 +357,40 @@ function asGhosts(beats: BeatDoc[]): BeatDoc[] {
  * same rule read the other way: the voice count is uniform either way, so
  * alphaTab is satisfied, and a clean transcription is not annotated with a
  * column of rests saying so.
+ *
+ * ## The index comes back with the document
+ *
+ * Both voices, and for the same reason each: a ghost has to be resolvable so
+ * the decision that removed it can be reversed, and a kept note has to be
+ * resolvable so a decision that kept it can be. See `NoteIndex`.
+ *
+ * Returned together rather than offered as a second call, because they are one
+ * answer about one document, and the way this goes wrong is by their coming
+ * apart. A re-derivation replaces both; a click arriving against the older of
+ * the two is answered from a page that is no longer on screen. What that costs
+ * depends on how far apart they drifted: an id that no longer exists is
+ * harmless, since `TranscriptionService.toggleNote` ignores an id it does not
+ * recognise, but an id that still exists and names a *different* note is a
+ * decision applied to the wrong note - and nothing downstream can tell.
+ *
+ * There is no runtime check for it, so the defence is that there is nothing to
+ * hold apart: they arrive as one value, and a caller that stores the document
+ * has to go out of its way not to store the index with it.
  */
 export function buildPreviewDoc(
   session: TranscriptionSession,
   derived: DerivedScore,
   suppressed: DetectedNote[],
   omitted?: DetectedNote[]
-): ScoreDoc {
+): PreviewScore {
   const doc = derived.doc;
   const candidates = ghostCandidates(derived, suppressed, omitted);
+
+  // Voice 0 first, and outside every early return below: the kept notes are in
+  // the document whether or not anything was discarded, so a preview with no
+  // ghosts at all still has an index for them.
+  const index = new Map<string, string>();
+  indexVoice(index, KEPT_VOICE, derived.written);
 
   const placement = placeDetectedNotes(candidates, session);
   if (omitted) omitted.push(...placement.unplayable);
@@ -200,7 +402,7 @@ export function buildPreviewDoc(
 
   // A document with no bars has nowhere to put anything. `deriveScore` never
   // writes one - it floors the count at 1 - but nothing here needs it to.
-  if (lastBar < 0) return { ...doc, tracks: [...doc.tracks] };
+  if (lastBar < 0) return { doc: { ...doc, tracks: [...doc.tracks] }, index };
 
   const byBar = new Map<number, PlacedNote[]>();
   for (const entry of placement.placed) {
@@ -211,7 +413,7 @@ export function buildPreviewDoc(
   }
 
   // Nothing to ghost, nothing to add: the preview is the derived score.
-  if (byBar.size === 0) return { ...doc, tracks: [...doc.tracks] };
+  if (byBar.size === 0) return { doc: { ...doc, tracks: [...doc.tracks] }, index };
 
   const { timeSignature } = session.grid;
   const { finestDivision } = session.settings;
@@ -228,12 +430,20 @@ export function buildPreviewDoc(
   // then shared by reference across staves, which is the same stance the
   // module already takes on voice 1: nothing here or downstream writes to a
   // `BeatDoc`.
-  const ghostBars: BeatDoc[][] = Array.from({ length: lastBar + 1 }, (_, index) => {
+  const ghostBars: BeatDoc[][] = Array.from({ length: lastBar + 1 }, (_, bar) => {
     // One array per bar, drained straight into `omitted`, so the losses come
-    // out in bar order and nothing has to be matched up afterwards.
+    // out in bar order and nothing has to be matched up afterwards. `wrote` is
+    // the same arrangement for the ghosts that did get drawn.
     const taken: PlacedNote[] = [];
+    const wrote: WrittenNote[] = [];
     // `quantizeBar([])` is the full-bar rest a discard-free bar gets.
-    const beats = quantizeBar(byBar.get(index) ?? [], timeSignature, finestDivision, taken);
+    const beats = quantizeBar(
+      byBar.get(bar) ?? [],
+      timeSignature,
+      finestDivision,
+      taken,
+      wrote
+    );
 
     for (const note of taken) {
       const origin = source.get(note);
@@ -242,6 +452,26 @@ export function buildPreviewDoc(
       if (origin) omitted?.push(origin);
     }
 
+    // Bar by bar rather than in one pass at the end, because the bar number a
+    // ghost is indexed under is the one it was *drawn* in - after the clamp
+    // above, not the one `placeDetectedNotes` gave it. A ghost held in the last
+    // bar because the score got shorter is a ghost a reader finds in the last
+    // bar, and a click there has to name it.
+    const written: WrittenDetection[] = [];
+    for (const entry of wrote) {
+      const origin = source.get(entry.note);
+      if (origin) {
+        written.push({
+          bar,
+          beat: entry.beat,
+          pitch: entry.note.pitch,
+          note: origin,
+          isTied: entry.isTied
+        });
+      }
+    }
+    indexVoice(index, GHOST_VOICE, written);
+
     return asGhosts(beats);
   });
 
@@ -249,14 +479,14 @@ export function buildPreviewDoc(
   // give its trailing bars the ghost voice too rather than an undefined one.
   const restBar = asGhosts(quantizeBar([], timeSignature, finestDivision));
 
-  const withGhosts = (bar: BarDoc, index: number): BarDoc => ({
+  const withGhosts = (bar: BarDoc, at: number): BarDoc => ({
     ...bar,
     voices: [
       // Carried by reference, not copied: object identity is a checkable
       // statement that this voice was not rebuilt. See the module docblock -
       // sharing is about provenance, not safety.
       ...bar.voices,
-      { beats: ghostBars[index] ?? restBar }
+      { beats: ghostBars[at] ?? restBar }
     ]
   });
 
@@ -270,5 +500,5 @@ export function buildPreviewDoc(
     staves: track.staves.map(previewStaff)
   });
 
-  return { ...doc, tracks: doc.tracks.map(previewTrack) };
+  return { doc: { ...doc, tracks: doc.tracks.map(previewTrack) }, index };
 }

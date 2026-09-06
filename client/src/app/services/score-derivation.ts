@@ -3,6 +3,7 @@ import {
   ClefKind,
   KeySignature,
   MasterBarDoc,
+  NotePitch,
   ScoreDoc,
   StaffDoc,
   TrackDoc,
@@ -12,7 +13,12 @@ import {
 import { DetectedNote, TranscriptionSession } from '../models/transcription.model';
 import { assignFingering } from './transcription-fingering';
 import { FoldedNote, correctOctaves } from './transcription-octave';
-import { PlacedNote, chordToleranceBeats, quantizeBar } from './transcription-quantize';
+import {
+  PlacedNote,
+  WrittenNote,
+  chordToleranceBeats,
+  quantizeBar
+} from './transcription-quantize';
 import { gridTempo, secondsToBeats } from './transcription-timing';
 
 /**
@@ -78,6 +84,46 @@ export interface DroppedNote {
 }
 
 /**
+ * A note on the page and the detection behind it.
+ *
+ * The link a `ScoreDoc` deliberately does not carry. A document is notation:
+ * bars, beats, strings and frets, with no room for a detector's id, and
+ * `quantizeBar` copies the pitch rather than aliasing it so not even object
+ * identity survives into it. Yet a reader who clicks a notehead is asking about
+ * the detection, not the glyph - which decision produced this, and can I
+ * overrule it - and there is no way back from one to the other unless the stage
+ * that made the drawing says so as it draws.
+ *
+ * `bar`, `beat` and the string of `pitch` are exactly what an alphaTab `Note`
+ * can be asked for at click time (`note.beat.voice.bar.index`,
+ * `note.beat.index`, `note.string`), which is why they are the fields here: the
+ * point of this type is to be addressable from the rendered side. See
+ * `renderedNoteKey` in `preview-score.ts`, which is the only intended consumer.
+ *
+ * One entry per written fragment, so a tie reports once per fragment and all of
+ * them name the same detection.
+ */
+export interface WrittenDetection {
+  /** 0-based bar, matching `StaffDoc.bars` and alphaTab's `Bar.index`. */
+  bar: number;
+  /** 0-based index of the beat within its voice, matching `Beat.index`. */
+  beat: number;
+  /**
+   * How it is written: for a fretted note, the tab string number
+   * `StaffDoc.tuning` uses, where 1 is the highest-pitched string.
+   *
+   * **Not alphaTab's numbering**, which counts from the lowest string;
+   * `ScoreDocMapperService` flips between the two, and anything reading this
+   * against a rendered note has to flip as well.
+   */
+  pitch: NotePitch;
+  /** The detection that produced it, after octave correction. */
+  note: DetectedNote;
+  /** True for the held fragments of a tie, false for the struck head. */
+  isTied: boolean;
+}
+
+/**
  * A derived score and everything derivation had to throw away to write it.
  *
  * The discards are half the answer, not a diagnostic. A `ScoreDoc` on its own
@@ -90,6 +136,20 @@ export interface DroppedNote {
  */
 export interface DerivedScore {
   doc: ScoreDoc;
+  /**
+   * Where every note in `doc` came from, in bar then beat order.
+   *
+   * The counterpart of `dropped`: that says which detections are *not* in the
+   * score, this says which one each note in it is. Both exist for the same
+   * reason - a `ScoreDoc` is the answer with the working thrown away, and a
+   * review UI is entirely about the working.
+   *
+   * Describes voice 0 of the single staff this function writes. Nothing here
+   * numbers the voice, the staff or the track, because there is only ever one
+   * of each; `buildPreviewDoc`, which appends a second voice, is where the
+   * voice number is supplied.
+   */
+  written: WrittenDetection[];
   /**
    * Grouped by the stage that discarded them: the confidence floor first, in
    * the session's own order, then the fingering and quantization losses in
@@ -441,6 +501,9 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
   // can lose one. Collected as they happen rather than reconstructed at the
   // end: only the stage that discarded a note knows why.
   const dropped: DroppedNote[] = [];
+  // Filled bar by bar below, so it comes out in the order a reader would walk
+  // the page.
+  const written: WrittenDetection[] = [];
 
   const audible: DetectedNote[] = [];
   for (const note of session.notes) {
@@ -481,9 +544,32 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
       .map(entry => entry.placed);
 
     // One array per bar, drained straight into `dropped`, so the losses come
-    // out in bar order and nothing has to be matched up afterwards.
+    // out in bar order and nothing has to be matched up afterwards. `wrote` is
+    // the same arrangement for the notes that survived.
     const taken: PlacedNote[] = [];
-    const beatDocs = quantizeBar(inBar, timeSignature, settings.finestDivision, taken);
+    const wrote: WrittenNote[] = [];
+    const beatDocs = quantizeBar(
+      inBar,
+      timeSignature,
+      settings.finestDivision,
+      taken,
+      wrote
+    );
+
+    for (const entry of wrote) {
+      const origin = source.get(entry.note);
+      // Sound for the same reason `taken` is: `quantizeBar` only reports notes
+      // it was given, and every one of them was registered above.
+      if (origin) {
+        written.push({
+          bar: index,
+          beat: entry.beat,
+          pitch: entry.note.pitch,
+          note: origin.note,
+          isTied: entry.isTied
+        });
+      }
+    }
 
     for (const entry of taken) {
       const origin = source.get(entry);
@@ -540,6 +626,7 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
       masterBars,
       tracks: [track]
     },
+    written,
     dropped,
     // Only the folds that happened to the notes actually written. The ones
     // below the confidence floor never reached `placeDetectedNotes`, and a

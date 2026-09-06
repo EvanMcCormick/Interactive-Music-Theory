@@ -1,4 +1,12 @@
-import { BarDoc, NotePitch, TimeSignature } from '../models/composer.model';
+import * as alphaTab from '@coderline/alphatab';
+
+import {
+  BarDoc,
+  NotePitch,
+  STANDARD_BASS_TUNING,
+  ScoreDoc,
+  TimeSignature
+} from '../models/composer.model';
 import {
   BeatGrid,
   DetectedNote,
@@ -6,9 +14,16 @@ import {
   createDefaultDerivationSettings
 } from '../models/transcription.model';
 import { trackBeats } from './beat-tracking';
-import { detectionsOf } from './harmonic-eval/detections.fixture';
-import { buildPreviewDoc } from './preview-score';
-import { DerivedScore, deriveScore } from './score-derivation';
+import { DETECTIONS, detectionsOf } from './harmonic-eval/detections.fixture';
+import {
+  NoteIndex,
+  RenderedNote,
+  buildPreviewDoc,
+  detectionAt,
+  renderedNoteKey
+} from './preview-score';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
+import { DerivedScore, WrittenDetection, deriveScore } from './score-derivation';
 import {
   DEFAULT_HARMONIC_OPTIONS,
   NO_NOTE_DECISIONS,
@@ -123,7 +138,7 @@ describe('buildPreviewDoc', () => {
     const derived = deriveScore(input);
     const before = JSON.parse(JSON.stringify(derived.doc));
 
-    const preview = buildPreviewDoc(input, derived, []);
+    const preview = buildPreviewDoc(input, derived, []).doc;
 
     preview.tracks[0].staves[0].bars.forEach((bar, index) => {
       expect(bar.voices[0]).toEqual(before.tracks[0].staves[0].bars[index].voices[0]);
@@ -139,7 +154,7 @@ describe('buildPreviewDoc', () => {
     const input = quiet();
     const derived = deriveScore(input);
 
-    const preview = buildPreviewDoc(input, derived, []);
+    const preview = buildPreviewDoc(input, derived, []).doc;
     const derivedBars = derived.doc.tracks[0].staves[0].bars;
 
     expect(preview.tracks[0].staves[0].bars.length).toBe(derivedBars.length);
@@ -160,7 +175,7 @@ describe('buildPreviewDoc', () => {
 
   it('marks every note it adds as a ghost', () => {
     const input = quiet();
-    const preview = buildPreviewDoc(input, deriveScore(input), []);
+    const preview = buildPreviewDoc(input, deriveScore(input), []).doc;
     const ghosts = everyGhostNote(preview);
 
     expect(ghosts.length).toBeGreaterThan(0);
@@ -169,7 +184,7 @@ describe('buildPreviewDoc', () => {
 
   it('never marks a note of voice 1 as a ghost', () => {
     const input = quiet();
-    const preview = buildPreviewDoc(input, deriveScore(input), []);
+    const preview = buildPreviewDoc(input, deriveScore(input), []).doc;
 
     const struck = preview.tracks[0].staves[0].bars.flatMap(bar =>
       bar.voices[0].beats.flatMap(beat => beat.notes)
@@ -183,7 +198,7 @@ describe('buildPreviewDoc', () => {
     // The kept notes at 0 s and 2 s make the score two bars long; 2.5 s is
     // beat 5 of the grid, which is beat 2 of bar 2.
     const input = session([note(43, 0.0), note(47, 2.0), note(45, 2.5, 0.1)]);
-    const preview = buildPreviewDoc(input, deriveScore(input), []);
+    const preview = buildPreviewDoc(input, deriveScore(input), []).doc;
     const bars = preview.tracks[0].staves[0].bars;
 
     expect(bars.length).toBe(2);
@@ -196,7 +211,7 @@ describe('buildPreviewDoc', () => {
     // three beats of rest and then the note - four slots per beat on a
     // sixteenth grid, however those twelve slots end up spelled.
     const input = session([note(43, 0.0), note(45, 1.5, 0.1)]);
-    const preview = buildPreviewDoc(input, deriveScore(input), []);
+    const preview = buildPreviewDoc(input, deriveScore(input), []).doc;
     const ghostVoice = preview.tracks[0].staves[0].bars[0].voices[1];
 
     expect(ghostVoice).toBeDefined();
@@ -218,7 +233,7 @@ describe('buildPreviewDoc', () => {
     const partial = note(55, 0.0, 1, 'partial');
     const input = session(kept, [...kept, partial]);
 
-    const preview = buildPreviewDoc(input, deriveScore(input), [partial]);
+    const preview = buildPreviewDoc(input, deriveScore(input), [partial]).doc;
 
     expect(everyGhostNote(preview).length).toBeGreaterThan(0);
   });
@@ -229,7 +244,7 @@ describe('buildPreviewDoc', () => {
 
     expect(derived.dropped).toEqual([]);
 
-    const preview = buildPreviewDoc(input, derived, []);
+    const preview = buildPreviewDoc(input, derived, []).doc;
     const bars = preview.tracks[0].staves[0].bars;
 
     expect(bars.every(bar => bar.voices.length === 1)).toBe(true);
@@ -242,7 +257,7 @@ describe('buildPreviewDoc', () => {
     // carrying voice 2 followed by a bar without one throws out of
     // `Score.finish` before a note is drawn.
     const input = session([note(43, 0.0), note(47, 2.0), note(45, 2.5, 0.1)]);
-    const preview = buildPreviewDoc(input, deriveScore(input), []);
+    const preview = buildPreviewDoc(input, deriveScore(input), []).doc;
     const bars = preview.tracks[0].staves[0].bars;
 
     expect(bars.length).toBe(2);
@@ -251,7 +266,7 @@ describe('buildPreviewDoc', () => {
 
   it('fills the ghost voice of a bar that discarded nothing with rests', () => {
     const input = session([note(43, 0.0), note(47, 2.0), note(45, 2.5, 0.1)]);
-    const preview = buildPreviewDoc(input, deriveScore(input), []);
+    const preview = buildPreviewDoc(input, deriveScore(input), []).doc;
     const quiet = preview.tracks[0].staves[0].bars[0].voices[1];
 
     expect(quiet.beats.every(beat => beat.isRest)).toBe(true);
@@ -272,7 +287,7 @@ describe('buildPreviewDoc', () => {
     const derived = deriveScore(input);
     expect(derived.dropped).toEqual([{ note: unplayable, reason: 'unplayable' }]);
 
-    const preview = buildPreviewDoc(input, derived, [], omitted);
+    const preview = buildPreviewDoc(input, derived, [], omitted).doc;
 
     expect(omitted).toEqual([unplayable]);
     expect(everyGhostNote(preview)).toEqual([]);
@@ -289,9 +304,9 @@ describe('buildPreviewDoc', () => {
     const input = session(kept, [...kept, absurd]);
     const omitted: DetectedNote[] = [];
 
-    let preview!: ReturnType<typeof buildPreviewDoc>;
+    let preview!: ScoreDoc;
     expect(() => {
-      preview = buildPreviewDoc(input, deriveScore(input), [absurd], omitted);
+      preview = buildPreviewDoc(input, deriveScore(input), [absurd], omitted).doc;
     }).not.toThrow();
 
     expect(omitted).toEqual([absurd]);
@@ -303,7 +318,7 @@ describe('buildPreviewDoc', () => {
     const input = session([note(43, 0.0), timeless]);
     const omitted: DetectedNote[] = [];
 
-    const preview = buildPreviewDoc(input, deriveScore(input), [], omitted);
+    const preview = buildPreviewDoc(input, deriveScore(input), [], omitted).doc;
 
     expect(omitted).toEqual([timeless]);
     expect(everyGhostNote(preview)).toEqual([]);
@@ -313,7 +328,7 @@ describe('buildPreviewDoc', () => {
     // The kept note sizes the score at one bar; the discard is two bars later.
     const input = session([note(43, 0.0), note(45, 4.5, 0.1)], undefined, 8);
     const derived = deriveScore(input);
-    const preview = buildPreviewDoc(input, derived, []);
+    const preview = buildPreviewDoc(input, derived, []).doc;
     const bars = preview.tracks[0].staves[0].bars;
 
     expect(bars.length).toBe(derived.doc.tracks[0].staves[0].bars.length);
@@ -331,7 +346,7 @@ describe('buildPreviewDoc', () => {
 
   it('keeps the ghost bar exactly as full as the bar it sits under', () => {
     const input = session([note(43, 0.0), note(45, 1.5, 0.1)]);
-    const preview = buildPreviewDoc(input, deriveScore(input), []);
+    const preview = buildPreviewDoc(input, deriveScore(input), []).doc;
 
     for (const bar of preview.tracks[0].staves[0].bars) {
       const slots = (voice: { beats: { duration: number; dots: number }[] }): number =>
@@ -433,7 +448,7 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
       const derived = deriveScore(input);
       const omitted: DetectedNote[] = [];
 
-      const preview = buildPreviewDoc(input, derived, suppressed, omitted);
+      const preview = buildPreviewDoc(input, derived, suppressed, omitted).doc;
 
       const candidates = derived.dropped.length + suppressed.length;
 
@@ -473,12 +488,469 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
     const derived = deriveScore(input);
     expect(derived.dropped).toEqual([]);
 
-    const preview = buildPreviewDoc(input, derived, suppressed, omitted);
+    const preview = buildPreviewDoc(input, derived, suppressed, omitted).doc;
 
     expect(omitted).toEqual([]);
     // Naming the count as well as the equality: with no ghosts at all this
     // would be 0 === 0 and would hold however badly the preview lost them.
     expect(suppressed.length).toBe(10);
     expect(ghostHeads(preview)).toBe(suppressed.length);
+  });
+});
+
+/**
+ * The way back from a note on the page to the detection behind it.
+ *
+ * A rendered note is a glyph: a string, a fret and a place in a bar. The thing
+ * a reader wants to argue with is the *decision* - this partial was suppressed,
+ * this note was kept - and a `ScoreDoc` carries no trace of which detection
+ * produced which notehead. These tests are about that link surviving the trip
+ * through placement, quantization and, in the last group, alphaTab's own model.
+ *
+ * The tests below read the keys off the document rather than predicting them.
+ * Predicting a beat index means reimplementing `snapToSlots`, and a test that
+ * reimplements the thing it is testing agrees with it by construction.
+ */
+
+/** One fretted notehead as it appears on the page. */
+interface RenderedFret {
+  bar: number;
+  voice: number;
+  beat: number;
+  /** Tab numbering, the one `StaffDoc.tuning` counts in. */
+  string: number;
+  fret: number;
+  /** True on the held fragments of a tie. */
+  isTied: boolean;
+}
+
+/** Every fretted notehead of a document's first staff, in reading order. */
+function frettedNotes(doc: ScoreDoc): RenderedFret[] {
+  const out: RenderedFret[] = [];
+  const staff = doc.tracks[0]?.staves[0];
+  if (!staff) return out;
+
+  staff.bars.forEach((bar, barIndex) => {
+    bar.voices.forEach((voice, voiceIndex) => {
+      voice.beats.forEach((beat, beatIndex) => {
+        for (const written of beat.notes) {
+          if (written.pitch.kind !== 'fretted') continue;
+          out.push({
+            bar: barIndex,
+            voice: voiceIndex,
+            beat: beatIndex,
+            string: written.pitch.string,
+            fret: written.pitch.fret,
+            isTied: written.isTied
+          });
+        }
+      });
+    });
+  });
+
+  return out;
+}
+
+/** What the index says about a notehead, addressed from the document side. */
+function idAt(index: NoteIndex, note: RenderedFret): string | undefined {
+  return index.get(renderedNoteKey(note.bar, note.voice, note.beat, note.string));
+}
+
+/**
+ * A click on the rendered side, shaped the way `detectionAt` reads one.
+ *
+ * `string` is alphaTab's - counted from the lowest - because that is what a
+ * real `Note` carries. The tuning is only ever measured for its length.
+ */
+function clicked(
+  bar: number,
+  voice: number,
+  beat: number,
+  alphaTabString: number,
+  strings = STANDARD_BASS_TUNING.length
+): RenderedNote {
+  return {
+    string: alphaTabString,
+    beat: {
+      index: beat,
+      voice: {
+        index: voice,
+        bar: { index: bar, staff: { tuning: new Array<number>(strings).fill(0) } }
+      }
+    }
+  };
+}
+
+describe('the preview index', () => {
+  /** A session whose middle note is too quiet to reach the score. */
+  const quiet = (): TranscriptionSession =>
+    session([note(43, 0.0), note(45, 1.0, 0.1), note(47, 2.0)]);
+
+  it('resolves a ghost to the detection it was drawn for', () => {
+    const input = quiet();
+    const { doc, index } = buildPreviewDoc(input, deriveScore(input), []);
+
+    const ghosts = frettedNotes(doc).filter(entry => entry.voice === 1 && !entry.isTied);
+
+    expect(ghosts.length).toBe(1);
+    expect(idAt(index, ghosts[0])).toBe('45@1');
+  });
+
+  it('resolves a ghost that harmonic suppression removed', () => {
+    // The direction the milestone is actually for: this note is not in
+    // `session.notes` at all, so nothing but `suppressed` knows it exists.
+    const kept = [note(43, 0.0), note(43, 1.0)];
+    const partial = note(55, 0.0, 1, 'partial');
+    const input = session(kept, [...kept, partial]);
+
+    const { doc, index } = buildPreviewDoc(input, deriveScore(input), [partial]);
+    const ghosts = frettedNotes(doc).filter(entry => entry.voice === 1 && !entry.isTied);
+
+    expect(ghosts.length).toBe(1);
+    expect(idAt(index, ghosts[0])).toBe('partial');
+  });
+
+  it('resolves a kept note too, so a decision can be reversed either way', () => {
+    const input = quiet();
+    const { doc, index } = buildPreviewDoc(input, deriveScore(input), []);
+
+    const kept = frettedNotes(doc).filter(entry => entry.voice === 0);
+
+    expect(kept.map(entry => idAt(index, entry))).toEqual(['43@0', '47@2']);
+  });
+
+  it('resolves every fragment of a tie to the one note it spells', () => {
+    // Struck a sixteenth into the bar and left ringing. Fifteen slots is a
+    // span no single value writes, so `slotsToDurations` cuts it at the beat
+    // and at the half bar: a dotted eighth tied to a quarter tied to a half.
+    // Three noteheads, one detection - and a reader who clicks the held half
+    // of a tie is pointing at the note they can see.
+    const input = session([note(43, 0.125)]);
+    const { doc, index } = buildPreviewDoc(input, deriveScore(input), []);
+
+    const fragments = frettedNotes(doc).filter(entry => entry.bar === 0);
+
+    expect(fragments.map(entry => entry.isTied)).toEqual([false, true, true]);
+    expect(fragments.map(entry => idAt(index, entry))).toEqual([
+      '43@0.125',
+      '43@0.125',
+      '43@0.125'
+    ]);
+  });
+
+  it('covers every rendered note and claims nothing else', () => {
+    const input = quiet();
+    const { doc, index } = buildPreviewDoc(input, deriveScore(input), []);
+    const rendered = frettedNotes(doc);
+
+    // Both halves matter. Every notehead resolving says there are no gaps; the
+    // size matching says the index is not also holding keys for notes that are
+    // not on the page, which is how a stale entry would look.
+    expect(rendered.length).toBeGreaterThan(0);
+    for (const entry of rendered) expect(idAt(index, entry)).toBeDefined();
+    expect(index.size).toBe(rendered.length);
+  });
+
+  it('indexes the kept notes even when there is nothing to ghost', () => {
+    // The early return: no discards, so no second voice is added and the
+    // document comes straight back. The index still has to describe voice 1.
+    const input = session([note(43, 0.0), note(45, 1.0), note(47, 2.0)]);
+    const derived = deriveScore(input);
+
+    expect(derived.dropped).toEqual([]);
+
+    const { doc, index } = buildPreviewDoc(input, derived, []);
+
+    expect(doc.tracks[0].staves[0].bars.every(bar => bar.voices.length === 1)).toBe(true);
+    expect(index.size).toBe(frettedNotes(doc).length);
+    expect(index.size).toBe(3);
+  });
+
+  it('answers nothing for a rest, and for anything else it does not hold', () => {
+    const input = quiet();
+    const { doc, index } = buildPreviewDoc(input, deriveScore(input), []);
+
+    // Bar 0 beat 0 of the ghost voice is a rest: the discard is at 1.0 s.
+    expect(doc.tracks[0].staves[0].bars[0].voices[1].beats[0].isRest).toBe(true);
+    expect(detectionAt(index, clicked(0, 1, 0, 1))).toBeNull();
+
+    // And a bar the score does not have.
+    expect(detectionAt(index, clicked(99, 0, 0, 4))).toBeNull();
+  });
+
+  it('answers nothing for a note that is not on a string', () => {
+    // alphaTab leaves `string` at -1 on a note that is not fretted, which
+    // produces a key nothing holds rather than an exception or a wrong note.
+    const input = quiet();
+    const { index } = buildPreviewDoc(input, deriveScore(input), []);
+
+    expect(detectionAt(index, clicked(0, 0, 0, -1))).toBeNull();
+  });
+
+  it('reads a click in alphaTab string numbering, not the tab convention', () => {
+    const input = quiet();
+    const { doc, index } = buildPreviewDoc(input, deriveScore(input), []);
+
+    const first = frettedNotes(doc).filter(entry => entry.voice === 0)[0];
+    const strings = doc.tracks[0].staves[0].tuning.length;
+    const flipped = strings - first.string + 1;
+
+    // Guards the test: on a four-string bass no string number is its own flip,
+    // so an implementation that forgot to flip would have to answer wrongly
+    // rather than accidentally right.
+    expect(flipped).not.toBe(first.string);
+
+    expect(detectionAt(index, clicked(first.bar, first.voice, first.beat, flipped)))
+      .toBe(idAt(index, first) ?? null);
+    expect(
+      detectionAt(index, clicked(first.bar, first.voice, first.beat, first.string))
+    ).not.toBe(idAt(index, first) ?? null);
+  });
+
+  it('refuses to guess when two notes claim one place on the page', () => {
+    // Impossible from `quantizeBar`, which keeps one note per string per slot
+    // - so this is what the index does if that ever stops being true. Silently
+    // overwriting would leave a plausible index that answers a click with a
+    // note the reader did not click, and an override applied to the wrong note
+    // is worse than none.
+    const input = quiet();
+    const derived = deriveScore(input);
+    const collision: DerivedScore = {
+      ...derived,
+      written: [
+        {
+          bar: 0,
+          beat: 0,
+          pitch: { kind: 'fretted', string: 1, fret: 0 },
+          note: note(43, 0.0),
+          isTied: false
+        },
+        {
+          bar: 0,
+          beat: 0,
+          pitch: { kind: 'fretted', string: 1, fret: 0 },
+          note: note(45, 0.0),
+          isTied: false
+        }
+      ]
+    };
+
+    expect(() => buildPreviewDoc(input, collision, [])).toThrowError(
+      /bar 0, voice 0, beat 0 writes two notes on string 1/
+    );
+  });
+
+  it('accepts the same detection named twice in one place', () => {
+    // Not a collision: it says one note is written there, which is what the
+    // index would record anyway.
+    const input = quiet();
+    const derived = deriveScore(input);
+    const twice: WrittenDetection = {
+      bar: 0,
+      beat: 0,
+      pitch: { kind: 'fretted', string: 1, fret: 0 },
+      note: note(43, 0.0),
+      isTied: false
+    };
+
+    const { index } = buildPreviewDoc(input, { ...derived, written: [twice, twice] }, []);
+
+    expect(index.get(renderedNoteKey(0, 0, 0, 1))).toBe('43@0');
+  });
+});
+
+/**
+ * The index against the model that actually gets clicked.
+ *
+ * Everything above addresses notes from the document side, where the key is
+ * assembled from the same numbers that wrote it. The interesting failure is on
+ * the other side: `ScoreDocMapperService` flips string numbers on the way into
+ * alphaTab, so an index that spoke the wrong convention would pass every test
+ * above and answer a real click with the wrong note - or, on a four-string
+ * bass, with the note on the mirrored string.
+ *
+ * So this walks a rendered `alphaTab.model.Score` note by note and asks
+ * `detectionAt` about each one, which is exactly what a click handler will do.
+ */
+describe('detectionAt over a rendered alphaTab score', () => {
+  const mapper = new ScoreDocMapperService();
+
+  /**
+   * One bar carrying two kept notes and two ghosts, on four separate slots.
+   *
+   * Separate slots on purpose: a bar with two ghosts on one slot is a bar where
+   * `addToChord` turns one of them away, and this group is about the mapping
+   * rather than about what survives placement. The quiet note is a derivation
+   * discard and the partial is a suppression one, so both routes into voice 2
+   * are represented.
+   */
+  function rendered(): {
+    doc: ScoreDoc;
+    index: NoteIndex;
+    score: alphaTab.model.Score;
+  } {
+    const kept = [note(43, 0.0), note(38, 1.0), note(45, 1.5, 0.1)];
+    const partial = note(55, 0.5, 1, 'partial');
+    const input = session(kept, [...kept, partial]);
+
+    const { doc, index } = buildPreviewDoc(input, deriveScore(input), [partial]);
+    return { doc, index, score: mapper.toScore(doc, new alphaTab.Settings()) };
+  }
+
+  it('gives every rendered note the answer the document gives', () => {
+    const { doc, index, score } = rendered();
+    const staff = score.tracks[0].staves[0];
+    let checked = 0;
+    let flipped = 0;
+
+    doc.tracks[0].staves[0].bars.forEach((barDoc, barIndex) => {
+      barDoc.voices.forEach((voiceDoc, voiceIndex) => {
+        voiceDoc.beats.forEach((beatDoc, beatIndex) => {
+          beatDoc.notes.forEach((noteDoc, noteIndex) => {
+            if (noteDoc.pitch.kind !== 'fretted') return;
+
+            const drawn = staff.bars[barIndex].voices[voiceIndex].beats[beatIndex]
+              .notes[noteIndex];
+
+            // The two numberings really are different here, so a missing flip
+            // could not pass by coincidence.
+            if (drawn.string !== noteDoc.pitch.string) flipped++;
+
+            expect(detectionAt(index, drawn)).toBe(
+              index.get(
+                renderedNoteKey(barIndex, voiceIndex, beatIndex, noteDoc.pitch.string)
+              ) ?? null
+            );
+            checked++;
+          });
+        });
+      });
+    });
+
+    expect(checked).toBeGreaterThan(0);
+    expect(flipped).toBe(checked);
+  });
+
+  it('names the ghost and the kept note a reader would click', () => {
+    const { index, score } = rendered();
+    const bars = score.tracks[0].staves[0].bars;
+
+    const struck = (voice: number): alphaTab.model.Note[] =>
+      bars.flatMap(bar =>
+        bar.voices[voice].beats.flatMap(beat =>
+          beat.notes.filter(drawn => !drawn.isTieDestination)
+        )
+      );
+
+    // Voice 2 is the discards: the quiet note and the suppressed partial.
+    expect(struck(1).map(drawn => detectionAt(index, drawn)).sort()).toEqual([
+      '45@1.5',
+      'partial'
+    ]);
+    // Voice 1 is what the score kept.
+    expect(struck(0).map(drawn => detectionAt(index, drawn))).toEqual(['43@0', '38@1']);
+  });
+
+  it('answers nothing for a rest, which has no note to click', () => {
+    const { index, score } = rendered();
+    const rest = score.tracks[0].staves[0].bars[0].voices[1].beats[0];
+
+    expect(rest.notes.length).toBe(0);
+    expect(detectionAt(index, clicked(0, 1, 0, 1))).toBeNull();
+  });
+});
+
+/**
+ * The uniqueness the index rests on, over every capture the accuracy work has.
+ *
+ * `indexVoice` throws rather than overwrite, so a bar that writes two notes on
+ * one string in one beat takes the whole preview down. That is the right
+ * failure - the document would be malformed too - but only if it cannot happen,
+ * and "cannot" is a claim about `addToChord` over real detector output rather
+ * than over three hand-written notes.
+ *
+ * Swept across the confidence floor for the reason the conservation law above
+ * is: a high floor collapses the score and `buildPreviewDoc` clamps every ghost
+ * from the vanished bars into the last surviving one, which is where collisions
+ * are certain. `addToChord` turns those away into `omitted` before they are
+ * ever written, so the index still sees one note per string per beat - and each
+ * ghost that *is* drawn still answers with its own detection rather than a
+ * neighbour's.
+ */
+describe('the preview index over every captured material', () => {
+  const FOUR_FOUR: TimeSignature = { numerator: 4, denominator: 4, isCommon: true };
+
+  function pipeline(name: string, confidenceFloor: number): {
+    doc: ScoreDoc;
+    index: NoteIndex;
+  } {
+    const detections = detectionsOf(name);
+    const suppressed: DetectedNote[] = [];
+    const notes = suppressHarmonics(detections, {}, NO_NOTE_DECISIONS, suppressed);
+    const durationSec =
+      Math.ceil(Math.max(...detections.map(entry => entry.offsetSec))) + 1;
+    const tracked = trackBeats(notes, durationSec, FOUR_FOUR);
+
+    const input: TranscriptionSession = {
+      id: 's1',
+      sourceName: `${name}.wav`,
+      durationSec,
+      notes,
+      rawNotes: detections,
+      bendFrameRateHz: 86.13,
+      grid: tracked,
+      trackedGrid: tracked,
+      harmonics: DEFAULT_HARMONIC_OPTIONS,
+      decisions: NO_NOTE_DECISIONS,
+      settings: { ...createDefaultDerivationSettings(), confidenceFloor }
+    };
+
+    return buildPreviewDoc(input, deriveScore(input), suppressed);
+  }
+
+  for (const name of Object.keys(DETECTIONS)) {
+    it(`indexes every note of ${name} exactly once`, () => {
+      for (const floor of [0.2, 0.5, 0.9]) {
+        // The uniqueness assertion itself: `buildPreviewDoc` throws if two
+        // notes claim one key.
+        const { doc, index } = pipeline(name, floor);
+        const drawn = frettedNotes(doc);
+
+        for (const entry of drawn) {
+          expect(idAt(index, entry))
+            .withContext(`${name} at floor ${floor}, ${JSON.stringify(entry)}`)
+            .toBeDefined();
+        }
+
+        expect(index.size)
+          .withContext(`${name} at floor ${floor}`)
+          .toBe(drawn.length);
+
+        // One detection per struck notehead, over both voices. Ties share an
+        // id across fragments, so only the heads are counted; anything else
+        // would mean two noteheads were drawn for one detection, or one
+        // detection answered for two.
+        const heads = drawn.filter(entry => !entry.isTied);
+        expect(new Set(heads.map(entry => idAt(index, entry))).size)
+          .withContext(`${name} at floor ${floor}`)
+          .toBe(heads.length);
+      }
+    });
+  }
+
+  it('keeps each piled ghost distinct when a high floor collapses the score', () => {
+    // The clamp: at 0.9 nothing on `walking` clears the floor, the derived
+    // score is one bar, and all twenty-eight candidates are held in it. Twelve
+    // land on a string already spoken for and never reach the page; the
+    // sixteen that do each keep their own detection.
+    const { doc, index } = pipeline('walking', 0.9);
+    const ghosts = frettedNotes(doc).filter(entry => entry.voice === 1);
+
+    expect(doc.masterBars.length).toBe(1);
+    expect(ghosts.every(entry => entry.bar === 0)).toBe(true);
+
+    const heads = ghosts.filter(entry => !entry.isTied);
+    expect(heads.length).toBe(16);
+    expect(new Set(heads.map(entry => idAt(index, entry))).size).toBe(16);
   });
 });

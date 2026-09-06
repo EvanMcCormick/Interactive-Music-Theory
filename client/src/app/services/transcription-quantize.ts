@@ -32,6 +32,31 @@ export interface PlacedNote {
   pitch: NotePitch;
 }
 
+/**
+ * Where a placed note ended up on the written page.
+ *
+ * The one fact about a bar that only this module holds. A `BeatDoc` records
+ * what is drawn, never which detection it was drawn for: `emit` copies the
+ * pitch rather than aliasing it, so even object identity is gone by the time a
+ * caller has the beat list back. Reconstructing the link afterwards means
+ * re-deriving `snapToSlots`' clustering and rounding from the same inputs -
+ * a second copy of the rules this module exists to be the only copy of.
+ *
+ * Reported per *fragment*, not per attack. A span no single value can write
+ * comes back as a tie, and every fragment of it is the same musical note, so
+ * each one names the note it continues; `isTied` says which is the head. That
+ * is what lets a reader who clicks the held half of a tie be answered with the
+ * note they can see rather than with nothing.
+ */
+export interface WrittenNote {
+  /** Index into the beat list `quantizeBar` returned. */
+  beat: number;
+  /** The note that was written, by identity with the one handed in. */
+  note: PlacedNote;
+  /** True for the held fragments of a tie, false for the struck head. */
+  isTied: boolean;
+}
+
 /** One writable duration: a note value plus 0-2 augmentation dots. */
 export interface DurationUnit {
   duration: DurationValue;
@@ -115,7 +140,7 @@ export function chordToleranceBeats(slotsPerBeat: number): number {
  * has one fewer note in it than the performance did.
  */
 function addToChord(
-  chord: NotePitch[],
+  chord: PlacedNote[],
   note: PlacedNote,
   dropped: PlacedNote[] | undefined
 ): void {
@@ -123,13 +148,15 @@ function addToChord(
 
   if (
     pitch.kind === 'fretted'
-    && chord.some(taken => taken.kind === 'fretted' && taken.string === pitch.string)
+    && chord.some(
+      taken => taken.pitch.kind === 'fretted' && taken.pitch.string === pitch.string
+    )
   ) {
     dropped?.push(note);
     return;
   }
 
-  chord.push(pitch);
+  chord.push(note);
 }
 
 /**
@@ -147,7 +174,7 @@ function snapToSlots(
   slotsPerBeat: number,
   totalSlots: number,
   dropped: PlacedNote[] | undefined
-): Map<number, NotePitch[]> {
+): Map<number, PlacedNote[]> {
   const tolerance = chordToleranceBeats(slotsPerBeat) * slotsPerBeat;
   const sorted = [...notes].sort((a, b) => a.beatInBar - b.beatInBar);
 
@@ -166,7 +193,7 @@ function snapToSlots(
     }
   }
 
-  const chords = new Map<number, NotePitch[]>();
+  const chords = new Map<number, PlacedNote[]>();
   for (const cluster of clusters) {
     const centre =
       cluster.onsets.reduce((sum, onset) => sum + onset, 0) / cluster.onsets.length;
@@ -386,12 +413,19 @@ export function barGridFault(
  * because the return type is what the whole module is about and nine call sites
  * in the spec do not care - `score-derivation.ts` passes an array, unwraps
  * nothing, and reports upward.
+ *
+ * `written`, likewise, collects the other half of that account: where each note
+ * that *was* written ended up. See `WrittenNote`. Together the two are
+ * exhaustive - every note handed in appears in exactly one of them, once per
+ * tie fragment in the second - which is the property a caller building an index
+ * from rendered note back to source note needs and cannot check for itself.
  */
 export function quantizeBar(
   notes: PlacedNote[],
   timeSignature: TimeSignature,
   finestDivision: FinestDivision,
-  dropped?: PlacedNote[]
+  dropped?: PlacedNote[],
+  written?: WrittenNote[]
 ): BeatDoc[] {
   const fault = barGridFault(timeSignature, finestDivision);
   if (fault !== null) throw new Error(fault);
@@ -403,18 +437,21 @@ export function quantizeBar(
   const frame = metricFrame(timeSignature, slotsPerBeat);
   const beats: BeatDoc[] = [];
 
-  const emit = (start: number, slots: number, pitches: NotePitch[] | null): void => {
+  const emit = (start: number, slots: number, chord: PlacedNote[] | null): void => {
     slotsToDurations(slots, finestDivision, start, frame).forEach((unit, index) => {
+      // Read before the push, so it names the beat this fragment becomes.
+      const beat = beats.length;
+
       beats.push({
         duration: unit.duration,
         dots: unit.dots,
         tuplet: null,
-        isRest: pitches === null,
-        notes: (pitches ?? []).map(pitch => ({
+        isRest: chord === null,
+        notes: (chord ?? []).map(placed => ({
           // Copied, not aliased: `ComposerService.replaceDocument` stores the
           // document by reference, so every NoteDoc needs a pitch of its own
           // or editing one tied fragment would edit the whole tie.
-          pitch: { ...pitch },
+          pitch: { ...placed.pitch },
           // Only the first fragment is struck; the rest are held over.
           isTied: index > 0,
           accidental: 'auto' as const,
@@ -425,6 +462,14 @@ export function quantizeBar(
         text: null,
         effects: createDefaultBeatEffects()
       });
+
+      // In step with the `notes` array above, note for note: both walk `chord`
+      // in order, so `written[k].note` is the source of `beats[beat].notes[k]`.
+      if (written) {
+        for (const placed of chord ?? []) {
+          written.push({ beat, note: placed, isTied: index > 0 });
+        }
+      }
     });
   };
 

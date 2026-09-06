@@ -319,7 +319,14 @@ export class TranscriptionReviewComponent
     // document and the counts printed under it are built in one pass.
     const omitted: DetectedNote[] = [];
     try {
-      this.previewDoc = buildPreviewDoc(session, derived, state?.suppressed ?? [], omitted);
+      // The index comes back with it and is what the next gesture on this
+      // panel will resolve a click through; nothing here reads it yet.
+      this.previewDoc = buildPreviewDoc(
+        session,
+        derived,
+        state?.suppressed ?? [],
+        omitted
+      ).doc;
       this.renderError = null;
     } catch (error) {
       this.previewDoc = null;
