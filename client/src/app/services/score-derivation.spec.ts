@@ -12,7 +12,7 @@ import { ComposerService } from './composer.service';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { candidatesFor } from './transcription-fingering';
 import { beatSlots } from './transcription-quantize';
-import { deriveScore } from './score-derivation';
+import { deriveScore, placeDetectedNotes } from './score-derivation';
 
 /**
  * The score alone, for the cases that are not about what derivation discarded.
@@ -634,5 +634,92 @@ describe('deriveScore', () => {
     }
 
     expect(unaccounted).toEqual([]);
+  });
+});
+
+/**
+ * The placement step on its own, which is new public API with a contract no
+ * other spec states.
+ *
+ * `deriveScore` and `buildPreviewDoc` both call it, and the reason it is
+ * exported at all is that they must not answer this question differently - so
+ * what it promises has to be pinned somewhere other than in the two callers'
+ * end-to-end results, where a change of rule would show up as a moved note and
+ * be indistinguishable from a change of intent.
+ */
+describe('placeDetectedNotes', () => {
+  it('returns the placements in ascending onset order', () => {
+    const shuffled = [note(43, 2.0), note(28, 0.0), note(38, 1.0)];
+
+    const placement = placeDetectedNotes(shuffled, session(shuffled));
+
+    expect(placement.placed.map(entry => entry.note.onsetSec)).toEqual([0.0, 1.0, 2.0]);
+  });
+
+  it('does not reorder the caller\'s array', () => {
+    // `assignFingering` needs ascending onsets, so this function sorts. Doing
+    // it in place would silently rewrite `session.notes` - the array the whole
+    // re-derive path reads - for every caller that ever placed anything.
+    const shuffled = [note(43, 2.0), note(28, 0.0), note(38, 1.0)];
+    const before = [...shuffled];
+
+    placeDetectedNotes(shuffled, session(shuffled));
+
+    expect(shuffled).toEqual(before);
+  });
+
+  it('reports unplayable pitches in ascending onset order', () => {
+    // One string, five frets: 28 to 33 and nothing else. The range is narrower
+    // than an octave, so `correctOctaves` has no safe fold and leaves the two
+    // outliers where the detector put them.
+    const notes = [note(100, 2.0), note(30, 1.0), note(101, 0.5)];
+    const input: TranscriptionSession = {
+      ...session(notes),
+      settings: { ...createDefaultDerivationSettings(), tuning: [28], maxFret: 5 }
+    };
+
+    const placement = placeDetectedNotes(notes, input);
+
+    expect(placement.unplayable.map(n => n.onsetSec)).toEqual([0.5, 2.0]);
+    expect(placement.placed.map(entry => entry.note.onsetSec)).toEqual([1.0]);
+  });
+
+  it('never reports the same note as placed and unplayable', () => {
+    const notes = [note(100, 0.0), note(30, 0.5), note(31, 1.0)];
+    const input: TranscriptionSession = {
+      ...session(notes),
+      settings: { ...createDefaultDerivationSettings(), tuning: [28], maxFret: 5 }
+    };
+
+    const placement = placeDetectedNotes(notes, input);
+    const placedNotes = placement.placed.map(entry => entry.note);
+
+    expect(placement.placed.length + placement.unplayable.length).toBe(notes.length);
+    for (const missed of placement.unplayable) {
+      expect(placedNotes).not.toContain(missed);
+    }
+  });
+
+  it('places a note far below any confidence floor', () => {
+    // Deliberately absent, and the reason `buildPreviewDoc` can exist: the
+    // floor decides which notes are worth placing, and the preview places the
+    // ones it rejected. A floor applied here would draw no ghosts at all.
+    const inaudible = note(38, 1.0, 0);
+    const input = session([inaudible]);
+
+    expect(input.settings.confidenceFloor).toBeGreaterThan(0);
+
+    const placement = placeDetectedNotes([inaudible], input);
+
+    expect(placement.placed.length).toBe(1);
+    expect(placement.placed[0].note.confidence).toBe(0);
+  });
+
+  it('refuses an onset that is not a time in seconds', () => {
+    const timeless = note(38, Number.NaN);
+
+    expect(() => placeDetectedNotes([timeless], session([timeless]))).toThrowError(
+      /onset NaN/
+    );
   });
 });

@@ -273,6 +273,24 @@ export function withTempo(grid: BeatGrid, bpm: number): BeatGrid {
  *
  * Bounded at `MAX_DOWNBEAT_NUDGE_BEATS` in *both* directions. Forward was
  * already limited by the beats there are to drop; backward had no limit at all.
+ *
+ * ## What a round trip costs, on a grid that is not evenly spaced
+ *
+ * The *leading* interval, not the median, because it is the one the prepended
+ * beat is adjacent to. On a tracked grid the two differ — the pinned fixture
+ * comes back as [0.49, 0.49, 0.51, 0.5, 0.5, 0.49, 0.51] — so the two round
+ * trips are asymmetric, and it is worth writing down:
+ *
+ * - **`-1` then `+1` is exact.** The prepended beat is the dropped beat.
+ * - **`+1` then `-1` is not.** `b0` is gone for good and `2·b1 − b2` is written
+ *   in its place. The error is the difference between two adjacent intervals,
+ *   so under one interval, and it lands entirely on the first beat.
+ * - **It does not accumulate.** The second cycle rebuilds from the same `b1`
+ *   and `b2`, so it reproduces the first cycle's answer.
+ *
+ * A note struck after `b1` is placed identically across a round trip; one
+ * struck inside the rebuilt interval moves by up to that error, at most a slot
+ * on a sixteenth grid.
  */
 export function nudgedDownbeat(grid: BeatGrid, beats: number): BeatGrid {
   const source = grid.beatsSec;
@@ -293,6 +311,8 @@ export function nudgedDownbeat(grid: BeatGrid, beats: number): BeatGrid {
   return { ...grid, beatsSec: [...added, ...source] };
 }
 ```
+
+**The round-trip tests need an unevenly headed grid.** Every fixture above is evenly spaced, which makes the leading, trailing and median intervals the same number: the choice of interval is untested and `+1` then `-1` reproduces the array exactly whatever it picks. Add `[0, 0.42, 0.92, 1.42, 1.92]` and assert what the docblock actually claims — that `-1`/`+1` is exact, that `+1`/`-1` writes `2·b1 − b2` and so does *not* restore `beatsSec`, that the drift is confined to the first beat and bounded by one interval, that a second cycle changes nothing, and that the backward nudge extends by 0.42 rather than the 0.5 median. Then run it through `deriveScore`: notes struck after the second beat are written in the same slots on both grids, which is the claim worth making; a note in front of the second beat moves by up to one sixteenth, which is worth stating rather than hiding.
 
 **Step 4: Add the service methods**
 
@@ -317,6 +337,8 @@ git commit -m "feat: Let the listener correct tempo and downbeat"
 M1 reports every dropped note and why; M2 reports the harmonic partials it removed. None of it is visible. This puts them in the score, in rhythm, where the decision actually happened.
 
 **First, a small refactor.** `deriveScore` computes each note's bar and position inline. Extract that into an exported function — something like `placeDetectedNotes(notes, session): PlacedInBar[]` returning bar index, `beatInBar` and `NotePitch` — and have `deriveScore` use it. `buildPreviewDoc` then places ghosts by exactly the same rules, so the two cannot drift. Do not duplicate the logic.
+
+**Give it its own spec.** It is public API precisely because two callers must not answer its question differently, so its contract cannot be left to the callers' end-to-end results — there a changed rule shows up as a moved note, indistinguishable from a changed intent. Pin: `placed` in ascending onset order; `unplayable` ascending and never also in `placed`; the confidence floor deliberately *absent*, since the preview exists to place the notes it rejected; a non-finite onset throwing rather than corrupting a bar count; and the caller's array left in the order it arrived — the sort is a copy, and sorting in place would silently rewrite `session.notes`, the array the whole re-derive path reads.
 
 **Then:**
 
@@ -349,6 +371,8 @@ It bites hardest at exactly the setting a user reaches for to inspect discards. 
 | 0.9 | 34 | 20 | 0 | **14** |
 
 **Quantize once per bar index, outside the staff mapper.** A document can carry several staves; quantizing inside the per-staff map counts every collision once per staff and reports more omissions than there were candidates. Share the resulting `BeatDoc[]` across staves — the module already shares voice 1 by reference, and nothing writes to a `BeatDoc`.
+
+**Voice 1 is shared for provenance, not safety.** Sharing is what would let a mutation *propagate*; a deep copy is what would stop one. What object identity buys is a checkable statement that the previewed voice 1 was carried across rather than rebuilt under slightly different rules — the one failure a preview must not have — and it is free. The safety rests on the callers: `ScoreDocMapperService` only reads the document, and `ComposerService.commit` `structuredClone`s before handing a draft to any mutation. Both are dependencies rather than guarantees, so say so in the docblock.
 
 Tests: voice 1 is *identical* (`toBe`, not `toEqual`) to `derived.doc`'s voice 1; every note in voice 2 is a ghost; a discarded note lands in the bar its onset falls in; a clean session produces a document with no ghost content; unplayable notes are excluded rather than crashing. And the conservation law above, over the real pinned fixture, swept across `confidenceFloor` at 0.3, 0.6, 0.7 and 0.9. Count *heads* — non-rest voice-2 beats whose first note is not tied — since a split span writes tied continuations that would be counted twice.
 

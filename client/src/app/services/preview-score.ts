@@ -27,6 +27,21 @@ import { PlacedNote, quantizeBar } from './transcription-quantize';
  * voice 1 here is `derived.doc`'s voice 1 - the same objects, not a copy of
  * them.
  *
+ * ## Why voice 1 is shared rather than copied
+ *
+ * Not for safety. Sharing is what would let a mutation *propagate*; a deep copy
+ * is what would stop one. What sharing buys is provenance and cost: object
+ * identity is a checkable statement that the previewed voice 1 was carried
+ * across rather than rebuilt under slightly different rules, which is the one
+ * failure a preview must not have, and it is free.
+ *
+ * The safety rests on two facts about the callers instead. `ScoreDocMapperService`
+ * only reads the document - it walks it into alphaTab's own model and writes
+ * nothing back. And `ComposerService.commit` `structuredClone`s the document
+ * before it hands a draft to any mutation, so an edit made in the composer
+ * cannot reach either of these. Neither is something this module enforces; both
+ * are things it depends on, which is why they are written down here.
+ *
  * Pure, with no Angular or audio dependency, following the `staff-pitch.ts`
  * precedent.
  */
@@ -198,9 +213,9 @@ export function buildPreviewDoc(
   const withGhosts = (bar: BarDoc, index: number): BarDoc => ({
     ...bar,
     voices: [
-      // Carried by reference, not copied. Nothing here writes to voice 1, and
-      // sharing it is the strongest available statement that rendering the
-      // preview cannot alter what *Open in Composer* exports.
+      // Carried by reference, not copied: object identity is a checkable
+      // statement that this voice was not rebuilt. See the module docblock -
+      // sharing is about provenance, not safety.
       ...bar.voices,
       { beats: ghostBars[index] ?? restBar }
     ]

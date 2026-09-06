@@ -122,6 +122,24 @@ describe('buildPreviewDoc', () => {
     });
   });
 
+  it('carries voice 1 across by reference rather than rebuilding it', () => {
+    // The module's headline guarantee, and `toEqual` above cannot make it: a
+    // `structuredClone(bar.voices)` inside `withGhosts` would satisfy every
+    // other test here while destroying the thing the docblock claims - that
+    // voice 1 of the preview *is* voice 1 of the document that exports, so it
+    // provably was not re-derived under different rules.
+    const input = quiet();
+    const derived = deriveScore(input);
+
+    const preview = buildPreviewDoc(input, derived, []);
+    const derivedBars = derived.doc.tracks[0].staves[0].bars;
+
+    expect(preview.tracks[0].staves[0].bars.length).toBe(derivedBars.length);
+    preview.tracks[0].staves[0].bars.forEach((bar, index) => {
+      expect(bar.voices[0]).toBe(derivedBars[index].voices[0]);
+    });
+  });
+
   it('does not disturb the document it was given', () => {
     const input = quiet();
     const derived = deriveScore(input);

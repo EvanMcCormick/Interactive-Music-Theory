@@ -106,6 +106,9 @@ describe('nudgedDownbeat', () => {
   });
 
   it('restores the original spacing on a round trip', () => {
+    // True here only because `GRID` is evenly spaced, so the interval the
+    // backward nudge reconstructs from is the one it destroyed. `UNEVEN` below
+    // is the case that actually exercises the reconstruction.
     const there = nudgedDownbeat(GRID, 1);
     const back = nudgedDownbeat(there, -1);
 
@@ -132,6 +135,71 @@ describe('nudgedDownbeat', () => {
   it('accepts a nudge exactly at the bound', () => {
     expect(nudgedDownbeat(GRID, -MAX_DOWNBEAT_NUDGE_BEATS).beatsSec.length)
       .toBe(GRID.beatsSec.length + MAX_DOWNBEAT_NUDGE_BEATS);
+  });
+});
+
+/**
+ * What the backward nudge reconstructs, on a grid that can tell.
+ *
+ * Every other fixture here is evenly spaced at the head, which makes the
+ * leading, trailing and median intervals the same number - so the choice of
+ * interval is untested and a forward-then-back round trip reproduces the array
+ * exactly whatever it picks. A real tracked grid is not like that: the pinned
+ * detector fixture comes back as [0.49, 0.49, 0.51, 0.5, 0.5, 0.49, 0.51].
+ *
+ * The head is 0.42 against 0.5 for everything after it, so:
+ *
+ * - **`-1` then `+1` is an exact inverse.** The prepended beat is dropped again
+ *   and nothing else was touched.
+ * - **`+1` then `-1` is not.** The forward nudge discards `b0`, and the
+ *   backward one rebuilds it from the interval that is now leading, writing
+ *   `2·b1 − b2` where `b0` was. The error is `|b1 − b0| − |b2 − b1|`, strictly
+ *   under one interval, and it lands entirely on the first beat: nothing after
+ *   `b1` moves at all.
+ * - **It does not accumulate.** A second cycle rebuilds `2·b1 − b2` from the
+ *   same `b1` and `b2` and so returns the same array. The drift is one
+ *   interval's worth once, not once per press.
+ */
+describe('nudgedDownbeat on an unevenly headed grid', () => {
+  const UNEVEN: BeatGrid = {
+    beatsSec: [0, 0.42, 0.92, 1.42, 1.92],
+    timeSignature: FOUR_FOUR
+  };
+
+  it('extends backwards by the leading interval, not the median', () => {
+    // 0.42, the interval the prepended beat is adjacent to. The median and the
+    // trailing interval are both 0.5, so this is the assertion that says which
+    // one is used - and no other fixture here can make it.
+    expect(nudgedDownbeat(UNEVEN, -1).beatsSec[0]).toBeCloseTo(-0.42, 9);
+  });
+
+  it('is an exact inverse when nudged back and then forward', () => {
+    const back = nudgedDownbeat(UNEVEN, -1);
+
+    expect(nudgedDownbeat(back, 1).beatsSec).toEqual(UNEVEN.beatsSec);
+  });
+
+  it('does not restore the beat times when nudged forward and then back', () => {
+    const round = nudgedDownbeat(nudgedDownbeat(UNEVEN, 1), -1);
+
+    // 2·0.42 − 0.92. The head interval is gone and cannot be recovered.
+    expect(round.beatsSec[0]).toBeCloseTo(-0.08, 9);
+    expect(round.beatsSec).not.toEqual(UNEVEN.beatsSec);
+  });
+
+  it('confines the drift to the first beat and bounds it by one interval', () => {
+    const round = nudgedDownbeat(nudgedDownbeat(UNEVEN, 1), -1);
+
+    expect(round.beatsSec.slice(1)).toEqual(UNEVEN.beatsSec.slice(1));
+    expect(Math.abs(round.beatsSec[0] - UNEVEN.beatsSec[0]))
+      .toBeLessThan(UNEVEN.beatsSec[1] - UNEVEN.beatsSec[0]);
+  });
+
+  it('does not accumulate drift over repeated round trips', () => {
+    const once = nudgedDownbeat(nudgedDownbeat(UNEVEN, 1), -1);
+    const twice = nudgedDownbeat(nudgedDownbeat(once, 1), -1);
+
+    expect(twice.beatsSec).toEqual(once.beatsSec);
   });
 });
 
@@ -170,16 +238,24 @@ describe('nudging the grid a score is derived from', () => {
     bendCents: []
   }));
 
-  const session = (grid: BeatGrid): TranscriptionSession => ({
+  const session = (grid: BeatGrid, notes: DetectedNote[] = NOTES): TranscriptionSession => ({
     id: 's1',
     sourceName: 'bassline.wav',
     durationSec: 4,
-    notes: NOTES,
-    rawNotes: NOTES,
+    notes,
+    rawNotes: notes,
     bendFrameRateHz: 86.13,
     grid,
     settings: createDefaultDerivationSettings()
   });
+
+  /** The same two notes, struck `sec` seconds later. */
+  const struckAt = (...onsets: number[]): DetectedNote[] =>
+    NOTES.map((note, index) => ({
+      ...note,
+      onsetSec: onsets[index],
+      offsetSec: onsets[index] + 0.4
+    }));
 
   /**
    * Which sixteenth slot of `bar` the first attack sits on.
@@ -229,5 +305,49 @@ describe('nudging the grid a score is derived from', () => {
     const back = nudgedDownbeat(there, 1);
 
     expect(firstAttackSlot(deriveScore(session(back)).doc, 0)).toBe(0);
+  });
+
+  /**
+   * The round trip that matters, on a grid whose head interval is not the
+   * others.
+   *
+   * `TRACKED` is evenly spaced, so `+1` then `-1` reproduces `beatsSec`
+   * exactly and the test above would pass comparing the arrays. This is the
+   * claim the docblock actually makes: the beat *times* do not come back, and
+   * the notes are written where they were anyway.
+   */
+  const UNEVEN: BeatGrid = {
+    beatsSec: [0, 0.42, 0.92, 1.42, 1.92],
+    timeSignature: FOUR_FOUR
+  };
+
+  it('writes the notes back where they were, though the beats did not return', () => {
+    const round = nudgedDownbeat(nudgedDownbeat(UNEVEN, 1), -1);
+
+    // The grid is not the one it started as: the head interval was 0.42 and is
+    // rebuilt as 0.5, putting bar 1 at -0.08 s instead of 0.
+    expect(round.beatsSec).not.toEqual(UNEVEN.beatsSec);
+
+    // Struck after the second beat, where the drift stops.
+    const notes = struckAt(1.0, 2.0);
+    const before = deriveScore(session(UNEVEN, notes));
+    const after = deriveScore(session(round, notes));
+
+    expect(firstAttackSlot(before.doc, 0)).toBe(9);
+    expect(firstAttackSlot(after.doc, 0)).toBe(firstAttackSlot(before.doc, 0));
+    expect(firstAttackSlot(after.doc, 1)).toBe(firstAttackSlot(before.doc, 1));
+    expect(after.doc.masterBars.length).toBe(before.doc.masterBars.length);
+    expect(after.dropped).toEqual([]);
+  });
+
+  it('moves a note in front of the second beat by at most the drift', () => {
+    // The honest limit of the guarantee above. A note inside the interval the
+    // round trip rebuilt is placed against the rebuilt one, and 0.08 s is 0.16
+    // of a beat - two thirds of a sixteenth slot, which rounds to one.
+    const round = nudgedDownbeat(nudgedDownbeat(UNEVEN, 1), -1);
+    const notes = struckAt(0.0, 2.0);
+
+    expect(firstAttackSlot(deriveScore(session(UNEVEN, notes)).doc, 0)).toBe(0);
+    expect(firstAttackSlot(deriveScore(session(round, notes)).doc, 0)).toBe(1);
   });
 });

@@ -100,6 +100,32 @@ export function withTempo(grid: BeatGrid, bpm: number): BeatGrid {
  * direction was already limited by the beats there are to drop; the backward
  * one had no limit at all, and every beat it prepends is an array element it
  * builds first.
+ *
+ * ## What a round trip costs, on a grid that is not evenly spaced
+ *
+ * The *leading* interval, not the median, because it is the one the prepended
+ * beat is adjacent to: a real tracked grid drifts, and rebuilding the head from
+ * an average of the whole piece would be a worse answer than rebuilding it from
+ * its neighbour. On a tracked fixture the intervals run
+ * [0.49, 0.49, 0.51, 0.5, 0.5, 0.49, 0.51], so the two differ.
+ *
+ * That makes the two round trips asymmetric, and it is worth writing down so
+ * the next reader does not have to derive it again:
+ *
+ * - **`-1` then `+1` is exact.** The beat that was prepended is the beat that
+ *   is dropped, and nothing else was touched.
+ * - **`+1` then `-1` is not.** The forward nudge discards `b0` for good, and
+ *   the backward one writes `2·b1 - b2` in its place. The error is
+ *   `(b1 - b0) - (b2 - b1)` - the difference between two adjacent intervals,
+ *   so strictly less than one interval - and it lands entirely on the first
+ *   beat, since nothing from `b1` on is rewritten.
+ * - **It does not accumulate.** The second cycle rebuilds `2·b1 - b2` from the
+ *   same `b1` and `b2`, so it reproduces the first cycle's answer exactly. The
+ *   drift is one interval's worth once, not once per press.
+ *
+ * A note struck after `b1` is therefore placed identically across a round trip.
+ * One struck inside the rebuilt interval moves by up to that error, which on a
+ * sixteenth grid is at most a slot.
  */
 export function nudgedDownbeat(grid: BeatGrid, beats: number): BeatGrid {
   const source = grid.beatsSec;
