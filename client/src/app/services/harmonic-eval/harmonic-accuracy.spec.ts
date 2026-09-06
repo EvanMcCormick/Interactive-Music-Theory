@@ -55,10 +55,22 @@
  * is describing a state that never existed.
  *
  * The suppressed numbers are asserted as **floors**. They are still not good -
- * 61.2 % precision means two of every five surviving notes is an artefact -
- * and Task 4 exists to raise them further. The point of pinning them is the
- * opposite of aspiration: an optimisation, a refactor or a "tidy up" of the
- * suppressor that quietly costs accuracy has nothing else to fail against.
+ * 61.2 % precision means two of every five surviving notes is an artefact. The
+ * point of pinning them is the opposite of aspiration: an optimisation, a
+ * refactor or a "tidy up" of the suppressor that quietly costs accuracy has
+ * nothing else to fail against.
+ *
+ * ## Re-measuring the intervals did not move them
+ *
+ * The interval list was re-measured after the discriminator changed, and every
+ * one of the six earned its place or was never given a chance to lose it - so
+ * nothing was pruned and these numbers are unchanged by that pass.
+ * `re-measures every partial interval now that the discriminator works` below
+ * carries the table and the reasoning; `HARMONIC_SEMITONES` carries the
+ * conclusion. The short version is that +24 read as pure harm under the
+ * duration clause (0 artefacts, 4 real notes) and reads as 3 artefacts for 0
+ * real notes under this one, which is why the plan forbade pruning on the
+ * earlier numbers.
  *
  * ## Onset window
  *
@@ -458,6 +470,8 @@ describe('harmonic suppression accuracy', () => {
    */
   interface Pair {
     onRealNote: boolean;
+    /** Semitones between the pair, so the population can be split by interval. */
+    interval: number;
     spanRatio: number;
     confidenceRatio: number;
     onsetLagSec: number;
@@ -489,6 +503,7 @@ describe('harmonic suppression accuracy', () => {
               ref.pitch === note.pitch &&
               Math.abs(ref.onsetSec - note.onsetSec) <= ONSET_TOLERANCE_SEC
           ),
+          interval: note.pitch - root.pitch,
           spanRatio: span(note) / span(root),
           confidenceRatio: note.confidence / root.confidence,
           onsetLagSec: note.onsetSec - root.onsetSec
@@ -549,6 +564,98 @@ describe('harmonic suppression accuracy', () => {
     );
 
     expect(pairs.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * Every (root, note) pair at `interval` that the partial clause was offered:
+   * overlapping, upper note starting no earlier, everything except the
+   * confidence test itself. Every root, not just the first — the question here
+   * is how often the clause got to decide at this interval, and a note with
+   * two possible roots was two chances to be wrong.
+   */
+  function opportunitiesAt(interval: number): { artefact: number; real: number } {
+    const o = DEFAULT_HARMONIC_OPTIONS;
+    let artefact = 0;
+    let real = 0;
+
+    for (const material of MATERIAL) {
+      const detections = notesOf(material.name);
+      for (const note of detections) {
+        for (const root of detections) {
+          if (root === note) continue;
+          if (note.pitch - root.pitch !== interval) continue;
+          if (note.onsetSec > root.offsetSec + o.toleranceSec) continue;
+          if (root.onsetSec > note.offsetSec + o.toleranceSec) continue;
+          if (interval > 0 && note.onsetSec < root.onsetSec - o.toleranceSec) continue;
+
+          const onRealNote = material.notes.some(
+            ref =>
+              ref.pitch === note.pitch &&
+              Math.abs(ref.onsetSec - note.onsetSec) <= ONSET_TOLERANCE_SEC
+          );
+          if (onRealNote) real++;
+          else artefact++;
+        }
+      }
+    }
+
+    return { artefact, real };
+  }
+
+  it('re-measures every partial interval now that the discriminator works', () => {
+    // Task 4. The interval list had to be re-measured rather than pruned on
+    // the numbers that were already in hand, because those were gathered under
+    // the duration clause and describe it rather than the intervals. Under
+    // that clause +19 came out net harmful (4 artefacts against 5 real notes)
+    // and +24 came out pure harm - 0 artefacts, 4 real notes destroyed. Both
+    // reversed when the clause changed.
+    log('');
+    log('ACC per-interval evidence, under the confidence clause');
+    log('ACC  interval   artefacts   dupes of a   real notes   pairs the clause');
+    log('ACC              removed    kept note     destroyed   was ever offered');
+
+    for (const interval of HARMONIC_SEMITONES) {
+      const at = removals.filter(r => r.interval === interval);
+      const artefacts = at.filter(r => !r.onRealNote && !r.costTheNote).length;
+      const dupes = at.filter(r => r.onRealNote && !r.costTheNote).length;
+      const cost = at.filter(r => r.costTheNote).length;
+      const offered = opportunitiesAt(interval);
+
+      log(
+        `ACC  +${String(interval).padStart(2)}       ${String(artefacts).padStart(9)}   ` +
+          `${String(dupes).padStart(10)}   ${String(cost).padStart(10)}   ` +
+          `${String(offered.artefact + offered.real).padStart(6)} ` +
+          `(${offered.artefact} artefact, ${offered.real} real)`
+      );
+
+      // The pruning rule, executable. An interval earns its place by removing
+      // at least five artefacts for every real note it costs - the same 5:1
+      // weighting `partialConfidenceRatio` was chosen under, applied to the
+      // interval rather than to the threshold. +24 under the old clause scored
+      // 0 against 4 and would fail here; under this one it scores 3 against 0.
+      expect(artefacts).toBeGreaterThanOrEqual(5 * cost);
+    }
+
+    // ...and the two that have never fired. This is the distinction the whole
+    // task turns on: +19 and +24 fire and are now right, so they stay on
+    // evidence; +28 and +31 have never been offered a single pair, so they
+    // stay on physics with nothing measured either way. A triangular pluck
+    // rolls off as 1/k^2, which puts the 5th and 6th modes 28-34 dB down,
+    // where this detector does not report them - so the silence is a property
+    // of the synthesis, not a verdict on the intervals.
+    //
+    // A tripwire, not a target: if a re-capture ever produces such a pair,
+    // this fails, and whoever sees it has real evidence to decide on for the
+    // first time. Deleting the two on today's silence would be the same
+    // mistake as pruning +24 would have been.
+    for (const interval of [28, 31]) {
+      const offered = opportunitiesAt(interval);
+      log(
+        `ACC  +${interval} has never fired: ${offered.artefact + offered.real} pairs in the whole ` +
+          'fixture. Kept on physics, unmeasured - not kept on evidence.'
+      );
+      expect(offered.artefact + offered.real).toBe(0);
+    }
   });
 
   it('shows the trade-off curve the shipped cut was read off', () => {

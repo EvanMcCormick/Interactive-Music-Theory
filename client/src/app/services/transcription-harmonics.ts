@@ -91,10 +91,48 @@ import { DetectedNote } from '../models/transcription.model';
  *
  * 0 is included: a unison "partial" is the detector reporting one note twice.
  *
- * +28 and +31 are here on physical grounds alone. The synthetic bassline the
- * fixture came from carried only 2nd, 3rd and 4th harmonics, so no pair in it
- * is 28 or 31 semitones apart and no measurement has yet confirmed a detector
- * reports those two. Real recordings should say.
+ * ## Every one of these was re-measured after the discriminator changed
+ *
+ * They had to be. Under the duration rule this list looked half rotten: +19
+ * was net harmful (4 artefacts against 5 real notes), and +24 was **pure
+ * harm** — 0 artefacts removed, 4 real notes destroyed. Pruning on that would
+ * have been the obvious move and it would have been wrong, because those
+ * numbers were a property of the clause doing the arbitrating and not of the
+ * intervals. Re-measured over the same sixteen fixtures with the confidence
+ * clause in place (`harmonic-eval/harmonic-accuracy.spec.ts` prints this):
+ *
+ * | interval | artefacts removed | duplicates of a surviving note | real notes destroyed |
+ * |----------|-------------------|--------------------------------|----------------------|
+ * |       +0 |                16 |                             12 |                    1 |
+ * |      +12 |                58 |                              0 |                    2 |
+ * |      +19 |                 9 |                              0 |                    0 |
+ * |      +24 |                 3 |                              0 |                    0 |
+ * |      +28 |                 0 |                              0 |                    0 |
+ * |      +31 |                 0 |                              0 |                    0 |
+ *
+ * +24 reversed outright: 0-for-4 became 3-for-0. Dropping it from this array
+ * and re-running the whole measurement costs 0.3 points of F1 and 0.5 of
+ * precision for nothing back. +19 the same, at 1.3 points. So nothing here is
+ * pruned: no interval both fires and is wrong.
+ *
+ * ## +28 and +31 are unmeasured, which is not the same as unsupported
+ *
+ * They have never fired, on any material. That is the whole of what is known
+ * about them, and it is not evidence against them: across all 310 detections
+ * there are exactly **two** pairs 28 semitones apart and two 31 apart, and
+ * none of the four overlap in time, so the clause has never once been offered
+ * the choice. The reason is in the synthesis rather than in the detector — a
+ * triangular pluck rolls off as 1/k², putting the 5th and 6th modes 28-34 dB
+ * below the fundamental, where the model does not report them at all.
+ *
+ * Removing them on that silence would repeat, in a new costume, exactly the
+ * mistake this whole exercise exists to undo: reading a number gathered under
+ * conditions that could not produce it as though it were a verdict. They stay,
+ * on the physics, flagged as unmeasured. Real recordings — with body
+ * resonance, inharmonicity and a pickup that does not roll off at 1/k² — are
+ * what would say. `harmonic-accuracy.spec.ts` asserts that the fixture still
+ * contains no such pair, so the day a capture produces one, the claim in this
+ * paragraph fails rather than quietly going stale.
  */
 export const HARMONIC_SEMITONES: number[] = [0, 12, 19, 24, 28, 31];
 

@@ -132,6 +132,19 @@ Under the old discriminator: +12 was the workhorse (35 artefacts, 2 real), +19 n
 
 Remove any interval that still removes nothing and costs real notes. Be careful about the difference between *evidence against* and *absence of evidence*: +28 and +31 never firing on synthetic material is weak grounds for removal, whereas +24 firing four times and being wrong every time is real evidence. Say which category each falls into.
 
+**Outcome. Nothing was pruned, and the reason is the whole point of the sequencing.** Re-measured over the sixteen fixtures under `partialConfidenceRatio`:
+
+| interval | artefacts removed | duplicates of a kept note | real notes destroyed | pairs it was ever offered | F1 cost of dropping it |
+|---|---|---|---|---|---|
+| +0  | 16 | 12 | 1 | 154 | −3.9 |
+| +12 | 58 | 0  | 2 | 119 | −7.2 |
+| +19 | 9  | 0  | 0 | 25  | −1.3 |
+| +24 | 3  | 0  | 0 | 14  | −0.3 |
+| +28 | 0  | 0  | 0 | **0** | 0.0 |
+| +31 | 0  | 0  | 0 | **0** | 0.0 |
+
++24 reversed outright — 0-for-4 under the duration clause, 3-for-0 under this one — and +19 went from net harmful to 9-for-0. Both were *evidence against* that turned out to be evidence about the clause. +28 and +31 are *absence of evidence*: across all 310 detections there is no overlapping pair at either interval, so the clause has never once been offered the choice, because a triangular pluck's 1/k² roll-off puts the 5th and 6th modes 28–34 dB down where the model does not report them at all. They stay, flagged unmeasured, with an assertion that fails the day a capture produces such a pair.
+
 Commit: `fix: Keep only the partial intervals the data supports`
 
 ---
