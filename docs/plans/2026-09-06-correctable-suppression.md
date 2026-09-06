@@ -237,3 +237,41 @@ The existing spec could not catch this: it never pushed an intervening state.
 The new one does, and fails against the old code.
 
 Commit: `fix: Snap a refused threshold back like every other control`
+
+### C. Two documented guarantees that were not true
+
+**C1. Notes past the row cap that were never drawn.** `groupDiscards` took
+`notes.slice(0, MAX_LISTED_ROWS)` and computed `omitted` over the whole group.
+The template then claimed, of omitted notes, "Those are only reachable from
+here", and of capped notes, "They are still ghosts on the staff, and still one
+click away there". An undrawn note at position 41 satisfied neither.
+
+The cap now yields to an undrawn row: those are listed first and in full, and
+the cap governs what fills the remainder. A group with more than forty undrawn
+notes prints all of them and nothing else. Both sentences are then true by
+construction rather than by coincidence — the wall the cap was protecting
+against is a wall of rows each reachable another way, and a row reachable
+nowhere else is not one of those.
+
+**C2. The stale-index bound was incomplete.** `noteIndex` was replaced in
+`ngOnChanges` while the render is debounced 120 ms, which is bounded and was
+argued. Two exits from `renderPreview` leave it ahead of the pixels
+*indefinitely*: `element.clientWidth === 0`, which alphaTab refuses and never
+retries, and a throw from `mapper.toScore`, which leaves the previous score
+drawn and clickable under an error message. In the second the reader is looking
+at a stale score whose noteheads resolve through a different index — the
+confident wrong answer `preview-score.ts` says the arrangement defends against.
+
+The new index now waits in `pendingIndex` and is promoted to `noteIndex` inside
+`renderPreview`, after `renderScore` has been handed the document it describes.
+Index and pixels come from one derivation by construction, which is the stance
+`buildPreviewDoc` already takes a level down, and it closes the debounce window
+as well. What remains is alphaTab's own asynchrony — a frame, not a debounce or
+a resize. The one path that draws nothing *and* supersedes what is on screen,
+a document with no bars, empties the index instead, which is the behaviour that
+was there before.
+
+`groupDiscards` reads `pendingIndex`, because the list describes the derivation
+that has just arrived rather than the one on screen.
+
+Commit: `fix: Keep the note index in step with what is drawn`

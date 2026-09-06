@@ -332,9 +332,24 @@ export interface DiscardGroup {
   remedy: string | null;
   /** How many went this way, including any the list declined to print. */
   count: number;
-  /** At most `MAX_LISTED_ROWS` of them, earliest first. */
+  /**
+   * The ones the list prints: every undrawn note, then drawn ones to the cap.
+   *
+   * Earliest first within each of those two, which is the order they arrived
+   * in. The partition is not cosmetic - it is what makes the two sentences the
+   * template prints true. A note the staff never drew is reachable from this
+   * list and from nowhere else, so `MAX_LISTED_ROWS` is not allowed to
+   * displace one; a note past the cap is therefore always a ghost the reader
+   * can go and click. See `MAX_LISTED_ROWS`.
+   */
   rows: DiscardRow[];
-  /** `count - rows.length`: reachable by clicking the ghost, not from here. */
+  /**
+   * `count - rows.length`, and every one of them drawn.
+   *
+   * Which is what lets the template say they are still ghosts on the staff and
+   * still one click away there. Guaranteed by the ordering above rather than
+   * asserted.
+   */
   hidden: number;
   /** How many of `count` are not in the score even as ghosts. */
   omitted: number;
@@ -435,6 +450,22 @@ const DISCARD_ORDER: readonly DiscardReason[] = [
  * note past it is still a ghost on the staff and still one click from being
  * restored, and the group's heading still states the true total - so the list
  * summarises rather than quietly under-reporting.
+ *
+ * That argument only holds for notes the staff actually drew, and it was
+ * applied to all of them. `groupDiscards` took the first forty and counted
+ * `omitted` over the whole group, so a note at position 41 that no ghost was
+ * drawn for satisfied neither sentence the panel prints: not "still one click
+ * away there", because there is no glyph, and not "only reachable from here",
+ * because the list stopped before it. Not a hypothetical - `preview-score.ts`
+ * records thirteen of thirty-three candidates disappearing at a 0.7 floor,
+ * once a shorter score piles the ghosts into the last bar and voice-2
+ * collisions become certain.
+ *
+ * So the cap yields to an undrawn row. Those are listed first and in full, and
+ * the cap governs what fills the remainder; a group with more undrawn notes
+ * than this prints all of them and no others. The wall this was protecting
+ * against is a wall of rows that were each reachable another way, and a row
+ * that is reachable nowhere else is not one of those.
  */
 export const MAX_LISTED_ROWS = 40;
 
@@ -490,7 +521,15 @@ export function groupDiscards(
   return DISCARD_ORDER.filter(reason => (byReason.get(reason)?.length ?? 0) > 0).map(
     reason => {
       const notes = byReason.get(reason) ?? [];
-      const rows = notes.slice(0, MAX_LISTED_ROWS).map(note => toRow(note, drawn));
+      // The undrawn ones first and in full: this list is the only record of
+      // them, so the cap governs what fills the remainder rather than what
+      // gets in at all. See `MAX_LISTED_ROWS` and `DiscardGroup.rows`.
+      const undrawn = notes.filter(note => !drawn.has(note.id));
+      const onStaff = notes.filter(note => drawn.has(note.id));
+      const rows = [
+        ...undrawn,
+        ...onStaff.slice(0, Math.max(0, MAX_LISTED_ROWS - undrawn.length))
+      ].map(note => toRow(note, drawn));
 
       return {
         reason,
@@ -500,7 +539,7 @@ export function groupDiscards(
         count: notes.length,
         rows,
         hidden: notes.length - rows.length,
-        omitted: notes.filter(note => !drawn.has(note.id)).length
+        omitted: undrawn.length
       };
     }
   );

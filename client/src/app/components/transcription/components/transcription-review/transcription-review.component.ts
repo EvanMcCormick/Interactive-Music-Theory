@@ -130,6 +130,9 @@ import {
 /** Coalesces renders, so dragging the confidence slider re-engraves once. */
 const RENDER_DEBOUNCE_MS = 120;
 
+/** Shared: `NoteIndex` is a `ReadonlyMap` and nothing here writes to one. */
+const EMPTY_INDEX: NoteIndex = new Map<string, string>();
+
 /** Distinguishes control ids when more than one panel is on a page. */
 let instanceCount = 0;
 
@@ -337,21 +340,40 @@ export class TranscriptionReviewComponent
 
   private previewDoc: ScoreDoc | null = null;
   /**
-   * The way back from a note on the page to the detection behind it.
+   * The way back from a note **on the page** to the detection behind it.
    *
-   * Replaced in the same statement that replaces `previewDoc`, because
-   * `buildPreviewDoc` hands the two back together for exactly that reason: an
-   * index read against a document it did not describe answers a click with a
-   * different note, and nothing downstream can tell. See `NoteIndex`.
+   * On the page, not in the latest state: this is only ever replaced by
+   * `renderPreview`, once `renderScore` has been handed the document it
+   * describes. `buildPreviewDoc` hands the document and the index back together
+   * because an index read against a document it did not describe answers a
+   * click with a different note and nothing downstream can tell - and this
+   * field is where that guarantee has to survive the trip through a renderer.
    *
-   * One window where they are legitimately apart, and it is bounded: the
-   * render is debounced by `RENDER_DEBOUNCE_MS`, so for that long the index is
-   * the new one and the pixels are the old. A click landing there resolves
-   * against a page that is about to be replaced. Shortening the debounce would
-   * trade that for re-engraving on every frame of a slider drag, and the
-   * failure it causes is one stale toggle the user can repeat.
+   * Assigning it in `ngOnChanges` alongside `previewDoc` looked like the same
+   * thing and was not, because three paths leave `ngOnChanges` without anything
+   * being drawn. The render is debounced by `RENDER_DEBOUNCE_MS`, so for that
+   * long the pixels are the previous score's. `renderPreview` returns without
+   * drawing when the container has no width yet, and alphaTab never retries on
+   * its own, so that gap lasts until the pane is laid out. And `mapper.toScore`
+   * can throw, which leaves the previous score drawn and clickable under an
+   * error message. In the last two the index would have run ahead of the pixels
+   * indefinitely - a click on a notehead the reader can see, answered through
+   * the index of a score they cannot, which is the confident wrong answer
+   * `preview-score.ts` says the whole arrangement defends against.
+   *
+   * So the new index waits in `pendingIndex` and is promoted here after the
+   * draw. Index and pixels then come from one derivation by construction, which
+   * is the stance `buildPreviewDoc` already takes one level down. What remains
+   * is alphaTab's own asynchrony - `renderScore` returns before the glyphs are
+   * painted - and that window is a frame rather than a debounce or a resize.
    */
-  private noteIndex: NoteIndex = new Map<string, string>();
+  private noteIndex: NoteIndex = EMPTY_INDEX;
+  /**
+   * The index for the document that has not been drawn yet.
+   *
+   * Written by `ngOnChanges` and read only by `renderPreview`. See `noteIndex`.
+   */
+  private pendingIndex: NoteIndex = EMPTY_INDEX;
   /** The id of the click awaiting the state it produced; see `toggleNote`. */
   private pendingToggleId: string | null = null;
   private readonly destroy$ = new Subject<void>();
@@ -401,7 +423,9 @@ export class TranscriptionReviewComponent
     if (!session || !derived) {
       this.hasBars = false;
       this.previewDoc = null;
-      this.noteIndex = new Map<string, string>();
+      // `noteIndex` is left alone here and cleared by `renderPreview`, which is
+      // the only place that knows what is on the page. See `noteIndex`.
+      this.pendingIndex = EMPTY_INDEX;
       this.toggleNote = null;
       this.renderError = null;
       this.discards = [];
@@ -456,17 +480,18 @@ export class TranscriptionReviewComponent
     try {
       // Document and index in one statement, never separately: a click is
       // resolved through the index against the pixels the document produced,
-      // and the way that goes wrong is by their coming apart. See `noteIndex`.
+      // and the way that goes wrong is by their coming apart. `renderPreview`
+      // promotes the index once the document has been drawn. See `noteIndex`.
       const preview = buildPreviewDoc(session, derived, state?.suppressed ?? []);
       this.previewDoc = preview.doc;
-      this.noteIndex = preview.index;
+      this.pendingIndex = preview.index;
       this.renderError = null;
     } catch (error) {
       this.previewDoc = null;
-      // An index kept alongside a document that failed to build would resolve
-      // clicks on the score still drawn from the *previous* derivation, which
-      // is the one case where a confident wrong answer is available.
-      this.noteIndex = new Map<string, string>();
+      // Nothing will be drawn, so `renderPreview` will empty `noteIndex` and
+      // clicks on the score still on screen - from the *previous* derivation -
+      // get no answer at all rather than a plausible wrong one.
+      this.pendingIndex = EMPTY_INDEX;
       this.renderError = `Could not build the preview: ${messageOf(error)}`;
     }
 
@@ -474,8 +499,13 @@ export class TranscriptionReviewComponent
 
     // The one place the list and the staff could disagree, closed by reading
     // the staff's own index rather than asking a second function what the
-    // score ought to contain. See `groupDiscards`.
-    const drawn = drawnIds(this.noteIndex);
+    // score ought to contain. The pending one and not `noteIndex`, because this
+    // list describes the derivation that has just arrived and `noteIndex` still
+    // describes the one on screen - the list runs ahead of the staff by the
+    // render debounce either way, which is a different and much older thing
+    // from an index running ahead of the pixels it resolves against. See
+    // `groupDiscards` and `noteIndex`.
+    const drawn = drawnIds(this.pendingIndex);
     this.discards = groupDiscards(
       derived.dropped,
       state?.suppressed ?? [],
@@ -834,12 +864,23 @@ export class TranscriptionReviewComponent
   // Preview rendering
   // -------------------------------------------------------------------------
 
+  /**
+   * Draws the pending document, and only then lets its index answer clicks.
+   *
+   * The promotion is the point, and it is placed after `renderScore` rather
+   * than beside `previewDoc` because two of the exits below draw nothing and
+   * leave the previous score on the page: see `noteIndex`.
+   */
   private renderPreview(): void {
     const element = this.previewContainer?.nativeElement;
     if (!element || !this.alphaTabService.getApi()) return;
 
     const doc = this.previewDoc;
     if (!doc || doc.masterBars.length === 0) {
+      // Nothing will be drawn and nothing will replace what is on screen, which
+      // came from a derivation that has been superseded. Neither index
+      // describes something a click should act on, so clicks get no answer.
+      this.noteIndex = EMPTY_INDEX;
       this.renderPending = false;
       return;
     }
@@ -847,6 +888,7 @@ export class TranscriptionReviewComponent
     // alphaTab logs "skipped rendering because of width=0" and never retries,
     // which is what the observer below is for. The pane starts hidden until
     // there is a score, so this is an ordinary path rather than a corner of one.
+    // `noteIndex` stays where it is: the pixels have not moved either.
     if (element.clientWidth === 0) {
       this.renderPending = true;
       return;
@@ -859,6 +901,10 @@ export class TranscriptionReviewComponent
         score,
         score.tracks.map((_, index) => index)
       );
+      // Only here, and only after the draw was asked for. A throw above leaves
+      // the previous score drawn under an error message, and the index that
+      // describes it is the previous one.
+      this.noteIndex = this.pendingIndex;
       this.renderError = null;
     } catch (error) {
       this.renderError = `Could not draw the preview: ${messageOf(error)}`;

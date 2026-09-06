@@ -17,6 +17,7 @@ import {
   buildPreviewDoc
 } from '../../../../services/preview-score';
 import { DropReason, deriveScore } from '../../../../services/score-derivation';
+import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import {
   DEFAULT_HARMONIC_OPTIONS,
   HarmonicOptions,
@@ -932,11 +933,62 @@ describe('TranscriptionReviewComponent', () => {
       const many = Array.from({ length: MAX_LISTED_ROWS + 7 }, (_, i) =>
         note(80, i * 0.01, 1, `p${i}`)
       );
-      const grouped = groupDiscards([], many, { keep: [], drop: [] }, new Set<string>());
+      // Every one of them a ghost on the staff, which is the condition the cap
+      // rests on: what it stops printing is still one click away over there.
+      const drawn = new Set(many.map(candidate => candidate.id));
+      const grouped = groupDiscards([], many, { keep: [], drop: [] }, drawn);
 
       expect(grouped[0].count).toBe(MAX_LISTED_ROWS + 7);
       expect(grouped[0].rows.length).toBe(MAX_LISTED_ROWS);
       expect(grouped[0].hidden).toBe(7);
+    });
+
+    /*
+     * What the cap must not do.
+     *
+     * The panel prints two sentences about notes it does not list: an omitted
+     * one is "only reachable from here", and a capped one is "still a ghost on
+     * the staff, and still one click away there". A note the preview could not
+     * draw, sitting past position 40 of its group, satisfied neither - the
+     * list stopped before it and there is no glyph to click. Thirteen of
+     * thirty-three ghost candidates vanish that way on the pinned fixture at a
+     * 0.7 floor, so the arithmetic is not hypothetical.
+     */
+    it('never lets the cap displace a row that is reachable from nowhere else', () => {
+      const many = Array.from({ length: MAX_LISTED_ROWS + 7 }, (_, i) =>
+        note(80, i * 0.01, 1, `p${i}`)
+      );
+      // The last five could not be drawn, and they are the ones the old
+      // ordering discarded: past the cap, and not on the staff either.
+      const drawn = new Set(
+        many.slice(0, MAX_LISTED_ROWS + 2).map(candidate => candidate.id)
+      );
+      const grouped = groupDiscards([], many, { keep: [], drop: [] }, drawn);
+
+      const listed = new Set(grouped[0].rows.map(row => row.id));
+      expect(grouped[0].rows.length).toBe(MAX_LISTED_ROWS);
+      expect(grouped[0].omitted).toBe(5);
+      for (const missing of many.slice(MAX_LISTED_ROWS + 2)) {
+        expect(listed.has(missing.id)).withContext(missing.id).toBeTrue();
+      }
+
+      // ...and everything the list did stop at is on the staff, which is the
+      // other sentence.
+      const notListed = many.filter(candidate => !listed.has(candidate.id));
+      expect(notListed.length).toBe(grouped[0].hidden);
+      expect(notListed.every(candidate => drawn.has(candidate.id))).toBeTrue();
+    });
+
+    it('lets the cap go rather than leave a whole group unreachable', () => {
+      const many = Array.from({ length: MAX_LISTED_ROWS + 7 }, (_, i) =>
+        note(80, i * 0.01, 1, `p${i}`)
+      );
+      // Nothing drawn at all. Every row is then the only record of its note,
+      // so there is nothing the cap could hide that is reachable elsewhere.
+      const grouped = groupDiscards([], many, { keep: [], drop: [] }, new Set<string>());
+
+      expect(grouped[0].rows.length).toBe(MAX_LISTED_ROWS + 7);
+      expect(grouped[0].hidden).toBe(0);
     });
 
     it('skips a restore decision naming no detection rather than printing a blank', () => {
@@ -1478,6 +1530,71 @@ describe('TranscriptionReviewComponent', () => {
 
       expect(toggleEmits).toEqual(['ghost-1']);
     }));
+
+    /*
+     * The index answers for the pixels, not for the newest state.
+     *
+     * `ngOnChanges` builds an index for every derivation that arrives, and two
+     * paths through `renderPreview` then draw nothing: a container with no
+     * width, which alphaTab refuses and never retries, and a `toScore` that
+     * throws, which leaves the previous score drawn and clickable under an
+     * error. In both the previous score is what the reader is looking at, so
+     * the previous index is the one that names what they click. The promotion
+     * happens after the draw for exactly this.
+     */
+    describe('the index and the pixels', () => {
+      it('answers for the score still drawn when a render throws', fakeAsync(() => {
+        const state = readyState(withGhost(), { suppressed: [GHOST] });
+        push(state);
+        tick(SETTLE_MS);
+        const key = keyFor(previewIndex(state), 'ghost-1');
+
+        spyOn(TestBed.inject(ScoreDocMapperService), 'toScore').and.throwError(
+          'no staff to write on'
+        );
+        // A derivation with no ghost at all, so its index has nothing at this
+        // key: reading through it would answer the visible notehead with null.
+        push(readyState(makeSession()));
+        tick(SETTLE_MS);
+        expect(text('.review__render-error')).toContain('Could not draw');
+
+        alphaTabStub.clickNote(clickTarget(key, 4));
+
+        expect(toggleEmits).toEqual(['ghost-1']);
+      }));
+
+      it('answers for it too while the container has no width to draw into', fakeAsync(() => {
+        const state = readyState(withGhost(), { suppressed: [GHOST] });
+        push(state);
+        tick(SETTLE_MS);
+        const key = keyFor(previewIndex(state), 'ghost-1');
+
+        query<HTMLElement>('.review__score').style.display = 'none';
+        push(readyState(makeSession()));
+        tick(SETTLE_MS);
+
+        alphaTabStub.clickNote(clickTarget(key, 4));
+
+        expect(toggleEmits).toEqual(['ghost-1']);
+      }));
+
+      // The other side of it: once the new score is actually on the page, the
+      // old keys stop meaning anything. Without this the promotion could be
+      // omitted entirely and the two above would still pass.
+      it('stops answering for it once the new score is drawn', fakeAsync(() => {
+        const state = readyState(withGhost(), { suppressed: [GHOST] });
+        push(state);
+        tick(SETTLE_MS);
+        const key = keyFor(previewIndex(state), 'ghost-1');
+
+        push(readyState(makeSession()));
+        tick(SETTLE_MS);
+
+        alphaTabStub.clickNote(clickTarget(key, 4));
+
+        expect(toggleEmits).toEqual([]);
+      }));
+    });
 
     it('reads what the click did off the state that came back', fakeAsync(() => {
       const state = readyState(withGhost(), { suppressed: [GHOST] });
