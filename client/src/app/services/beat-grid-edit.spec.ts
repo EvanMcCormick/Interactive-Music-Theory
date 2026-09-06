@@ -6,7 +6,7 @@ import {
   createDefaultDerivationSettings
 } from '../models/transcription.model';
 import { deriveScore } from './score-derivation';
-import { DEFAULT_HARMONIC_OPTIONS } from './transcription-harmonics';
+import { DEFAULT_HARMONIC_OPTIONS, NO_NOTE_DECISIONS } from './transcription-harmonics';
 import { beatSlots } from './transcription-quantize';
 import {
   MAX_DOWNBEAT_NUDGE_BEATS,
@@ -313,6 +313,7 @@ describe('nudging the grid a score is derived from', () => {
     grid,
     trackedGrid: grid,
     harmonics: DEFAULT_HARMONIC_OPTIONS,
+    decisions: NO_NOTE_DECISIONS,
     settings: createDefaultDerivationSettings()
   });
 

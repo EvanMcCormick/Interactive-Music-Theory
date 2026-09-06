@@ -11,7 +11,7 @@ import {
 import { ComposerService } from './composer.service';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { candidatesFor } from './transcription-fingering';
-import { DEFAULT_HARMONIC_OPTIONS } from './transcription-harmonics';
+import { DEFAULT_HARMONIC_OPTIONS, NO_NOTE_DECISIONS } from './transcription-harmonics';
 import { beatSlots } from './transcription-quantize';
 import { deriveScore, instrumentVoiceFor, placeDetectedNotes } from './score-derivation';
 
@@ -57,6 +57,7 @@ function session(
     grid,
     trackedGrid: grid,
     harmonics: DEFAULT_HARMONIC_OPTIONS,
+    decisions: NO_NOTE_DECISIONS,
     settings: createDefaultDerivationSettings()
   };
 }

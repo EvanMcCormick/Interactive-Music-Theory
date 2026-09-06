@@ -43,7 +43,12 @@
 import { DetectedNote } from '../models/transcription.model';
 import { detection, detectionsOf } from './harmonic-eval/detections.fixture';
 import { MATERIAL } from './harmonic-eval/material';
-import { HARMONIC_SEMITONES, suppressHarmonics } from './transcription-harmonics';
+import {
+  HARMONIC_SEMITONES,
+  NO_NOTE_DECISIONS,
+  NoteDecisions,
+  suppressHarmonics
+} from './transcription-harmonics';
 
 /** [onsetSec, midiPitch, durationSec, confidence] - for the few synthetic pairs left. */
 type Raw = [number, number, number, number];
@@ -489,7 +494,7 @@ describe('suppressHarmonics', () => {
       // that many artefacts. The claim that survives is the one that matters:
       // whatever it removes, it hands back.
       const suppressed: DetectedNote[] = [];
-      const kept = suppressHarmonics(WALKING, {}, suppressed);
+      const kept = suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, suppressed);
 
       expect(kept.length).toBe(18);
       expect(suppressed.length).toBe(WALKING.length - kept.length);
@@ -501,7 +506,7 @@ describe('suppressHarmonics', () => {
 
     it('reports them in onset order, like the kept notes', () => {
       const suppressed: DetectedNote[] = [];
-      suppressHarmonics(WALKING, {}, suppressed);
+      suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, suppressed);
 
       // An empty list is trivially sorted, so this has to say there is one.
       expect(suppressed.length).toBe(10);
@@ -511,10 +516,10 @@ describe('suppressHarmonics', () => {
 
     it('appends rather than replacing, so one array can collect several passes', () => {
       const suppressed: DetectedNote[] = [];
-      suppressHarmonics(WALKING, {}, suppressed);
+      suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, suppressed);
       const first = suppressed.length;
 
-      suppressHarmonics(WALKING, {}, suppressed);
+      suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS, suppressed);
 
       // ...and 0 * 2 is 0, so the same guard again.
       expect(first).toBe(10);
@@ -529,6 +534,7 @@ describe('suppressHarmonics', () => {
       suppressHarmonics(
         [detection('walking', 33, 1.2423), detection('walking', 35, 1.6834)],
         {},
+        NO_NOTE_DECISIONS,
         suppressed
       );
 
@@ -578,6 +584,178 @@ describe('suppressHarmonics', () => {
 
       expect(suppressHarmonics(shuffled).map(n => n.id)).toEqual(expected);
     }
+  });
+
+  /**
+   * The user's word against the calibration's.
+   *
+   * `partialConfidenceRatio` was fitted to 120 candidate pairs whose two
+   * distributions overlap from 0.49 to 1.33, so it is wrong about individual
+   * notes by construction and no value of it stops being wrong about them:
+   * across the sixteen materials the default still destroys three real notes
+   * and still keeps sixty artefacts. These are the tests that say the last
+   * word belongs to whoever can hear the recording.
+   *
+   * They are also where the default case is pinned. An override path leaking
+   * into a run with no overrides would move the accuracy harness's floors, and
+   * the first spec below is the one that would catch it.
+   */
+  describe('per-note overrides', () => {
+    /**
+     * `quietOverLoud`, captured: an A1 at 2.8341 (confidence 0.7722) with a
+     * softly played A2 over it at 3.2405 (0.5176). The ratio is 0.6703 - the
+     * closest any real note in the sixteen materials comes to the 0.65 cut,
+     * and the pair `pins how much less sure of a partial the detector has to
+     * be` measures the whole margin on. Which makes it the honest pair to
+     * override: it is the note the thresholds most nearly get wrong.
+     */
+    const root = detection('quietOverLoud', 33, 2.8341);
+    const soft = detection('quietOverLoud', 45, 3.2405);
+
+    it('changes nothing when no note is named', () => {
+      // The claim the accuracy harness rests on: with no overrides this is the
+      // function it was before there were any. Asserted against both spellings
+      // of "none", since `NO_NOTE_DECISIONS` is a shared frozen object and a
+      // caller assembling its own empty pair has to get the same answer.
+      const expected = suppressHarmonics(WALKING).map(n => n.id);
+      const empty: NoteDecisions = { keep: [], drop: [] };
+
+      expect(suppressHarmonics(WALKING, {}, NO_NOTE_DECISIONS).map(n => n.id)).toEqual(
+        expected
+      );
+      expect(suppressHarmonics(WALKING, {}, empty).map(n => n.id)).toEqual(expected);
+
+      // ...and at a threshold that is not the default either, so this cannot
+      // pass by both sides being wrong in the same way.
+      expect(
+        suppressHarmonics(WALKING, { partialConfidenceRatio: 0.3 }, empty).map(n => n.id)
+      ).toEqual(suppressHarmonics(WALKING, { partialConfidenceRatio: 0.3 }).map(n => n.id));
+
+      const suppressed: DetectedNote[] = [];
+      suppressHarmonics(WALKING, {}, empty, suppressed);
+      expect(suppressed.length).toBe(10);
+    });
+
+    it('keeps a note the thresholds would have suppressed', () => {
+      // 0.68 is the cut this pair falls to - three hundredths above its 0.6703
+      // ratio, and why the margin is called thin rather than comfortable.
+      const ratio = { partialConfidenceRatio: 0.68 };
+      expect(suppressHarmonics([root, soft], ratio).map(n => n.pitch)).toEqual([33]);
+
+      expect(
+        suppressHarmonics([root, soft], ratio, { keep: [soft.id], drop: [] }).map(
+          n => n.pitch
+        )
+      ).toEqual([33, 45]);
+    });
+
+    it('suppresses a note the thresholds would have kept', () => {
+      // The same pair at the default, where the A2 survives with 0.0203 to
+      // spare. The algorithm keeps sixty artefacts across the sixteen
+      // materials and no threshold removes them without removing real notes
+      // too, so this direction is not the lesser half of the gesture.
+      expect(suppressHarmonics([root, soft]).map(n => n.pitch)).toEqual([33, 45]);
+
+      const suppressed: DetectedNote[] = [];
+      const kept = suppressHarmonics(
+        [root, soft],
+        {},
+        { keep: [], drop: [soft.id] },
+        suppressed
+      );
+
+      expect(kept.map(n => n.pitch)).toEqual([33]);
+      // Reported as a discard like any other, so the ghost M3 renders and the
+      // list M5 prints describe it without a second source of truth.
+      expect(suppressed.map(n => n.id)).toEqual([soft.id]);
+    });
+
+    it('lets a restored note explain its own partials', () => {
+      // The consequence of applying decisions at the decision point rather
+      // than to the returned lists, and what makes that placement worth a
+      // parameter.
+      //
+      // `ballad`, captured: an A1 at 4.8323 held 1.03 s (confidence 0.7807), a
+      // second A1 at 4.7627 lasting 70 ms (0.4536), and an A2 at 4.7975
+      // (0.2853) between them.
+      //
+      // The short A1 is suppressed as a re-detection of the long one. The A2
+      // survives on the onset guard - it starts 34.8 ms before the long A1,
+      // just past the 30 ms tolerance, so that note cannot be its root. The
+      // short A1 can: it starts earlier still, and 0.2853 / 0.4536 = 0.629 is
+      // under the cut.
+      //
+      // So restoring the short A1 costs the A2, which is the intended bargain.
+      // If the user says the low note was played, the octave sitting on top of
+      // it is that note's partial.
+      //
+      // It works because the walk is pitch-ascending and the decision is read
+      // inside it: the restored A1 joins `kept` at pitch 33, and the A2 at
+      // pitch 45 meets it as a root twelve semitones later. A partial is
+      // always above its fundamental, so a restored note is always in place
+      // before anything it could explain.
+      const notes = detectionsOf('ballad');
+      const short = detection('ballad', 33, 4.7627);
+      const octave = detection('ballad', 45, 4.7975);
+
+      const before = suppressHarmonics(notes).map(n => n.id);
+      expect(before).not.toContain(short.id);
+      expect(before).toContain(octave.id);
+
+      const after = suppressHarmonics(notes, {}, { keep: [short.id], drop: [] }).map(
+        n => n.id
+      );
+
+      expect(after).toContain(short.id);
+      expect(after).not.toContain(octave.id);
+    });
+
+    it('puts a restored note back in reading order, not on the end', () => {
+      // The other half of what the placement buys. Patching the returned list
+      // afterwards would append, and everything downstream reads these onsets
+      // as the rhythm.
+      //
+      // `walking`, captured: a G1 at 0.5457 the pass removes, sitting between
+      // a G#1 at 0.3715 and a G2 at 0.6037 that it keeps.
+      const restored = detection('walking', 31, 0.5457);
+      const kept = suppressHarmonics(WALKING, {}, { keep: [restored.id], drop: [] });
+
+      const onsets = kept.map(n => n.onsetSec);
+      expect([...onsets].sort((a, b) => a - b)).toEqual(onsets);
+      expect(kept.map(n => n.id).indexOf(restored.id)).toBe(
+        kept.findIndex(n => n.onsetSec === 0.6037) - 1
+      );
+    });
+
+    it('ignores an id that names no note here', () => {
+      // A click resolved against one session can land after a second
+      // `transcribe` has replaced it, and the ids that arrive are then a
+      // session out of date. Nothing enumerates the two lists, so an id
+      // matching no note costs a `Set` entry and changes no answer.
+      const expected = suppressHarmonics(WALKING).map(n => n.id);
+
+      expect(
+        suppressHarmonics(WALKING, {}, { keep: ['d99', 'gone'], drop: ['also-gone'] }).map(
+          n => n.id
+        )
+      ).toEqual(expected);
+    });
+
+    it('keeps a note named in both lists', () => {
+      // Stated rather than left to whichever `Set` is read first.
+      // `TranscriptionService.toggleNote` cannot produce the overlap, but this
+      // function is exported and pure, and the tie goes the way the whole
+      // calibration leans: `partialConfidenceRatio` was chosen weighting one
+      // destroyed real note as five kept artefacts.
+      const ratio = { partialConfidenceRatio: 0.68 };
+
+      expect(
+        suppressHarmonics([root, soft], ratio, {
+          keep: [soft.id],
+          drop: [soft.id]
+        }).map(n => n.pitch)
+      ).toEqual([33, 45]);
+    });
   });
 
   it('lists the partials of a plucked string, unison first', () => {

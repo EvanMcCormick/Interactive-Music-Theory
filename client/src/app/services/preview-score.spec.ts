@@ -9,7 +9,11 @@ import { trackBeats } from './beat-tracking';
 import { detectionsOf } from './harmonic-eval/detections.fixture';
 import { buildPreviewDoc } from './preview-score';
 import { DerivedScore, deriveScore } from './score-derivation';
-import { DEFAULT_HARMONIC_OPTIONS, suppressHarmonics } from './transcription-harmonics';
+import {
+  DEFAULT_HARMONIC_OPTIONS,
+  NO_NOTE_DECISIONS,
+  suppressHarmonics
+} from './transcription-harmonics';
 
 /**
  * The preview is only trustworthy if voice 1 is provably the document that
@@ -51,6 +55,7 @@ function session(
     grid: GRID,
     trackedGrid: GRID,
     harmonics: DEFAULT_HARMONIC_OPTIONS,
+    decisions: NO_NOTE_DECISIONS,
     settings: createDefaultDerivationSettings()
   };
 }
@@ -395,7 +400,7 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
     suppressed: DetectedNote[];
   } {
     const suppressed: DetectedNote[] = [];
-    const notes = suppressHarmonics(DETECTED, {}, suppressed);
+    const notes = suppressHarmonics(DETECTED, {}, NO_NOTE_DECISIONS, suppressed);
     const tracked = trackBeats(notes, DURATION_SEC, FOUR_FOUR);
 
     return {
@@ -412,6 +417,7 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
         grid: tracked,
         trackedGrid: tracked,
         harmonics: DEFAULT_HARMONIC_OPTIONS,
+        decisions: NO_NOTE_DECISIONS,
         settings: { ...createDefaultDerivationSettings(), confidenceFloor }
       }
     };

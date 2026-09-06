@@ -73,7 +73,7 @@
  *
  * ## Past CLAUDE.md's 500-line ceiling, deliberately
  *
- * Roughly 190 of these lines are code and the rest is prose. The rule exists so
+ * Roughly 260 of these lines are code and the rest is prose. The rule exists so
  * that a file stays small enough to hold in the head, and splitting this one to
  * satisfy the count would work against that: what is here is a single state
  * machine over one `BehaviorSubject`, and every public method is one call into
@@ -83,12 +83,14 @@
  *
  * If the *code* grows past the ceiling the answer is different. Suppression
  * moving into the re-derive path was named here as the change that would do
- * it; it has now happened, and it did not - the code went from roughly 190
- * lines to roughly 236, because the pass itself is one call and the rule about
- * the beat grid is `resuppressed`, a pure function at the foot of the file
- * that a reader can take or leave. The file is longer, and all of the growth
- * is the argument for that rule. If it does cross, the extraction is still the
- * one named: the pipeline assembly in `transcribe` becomes a module of its own.
+ * it; it has now happened, and per-note overrides after it, and neither did -
+ * the code went from roughly 190 lines to roughly 236 and then to 264, because
+ * each pass is one call and the rules around them are `resuppressed` and
+ * `toggledDecisions`, pure functions at the foot of the file that a reader can
+ * take or leave. The file is much longer, and nearly all of the growth is the
+ * argument for those rules. If the code does cross, the extraction is still
+ * the one named: the pipeline assembly in `transcribe` becomes a module of its
+ * own.
  */
 
 import { InjectionToken, Injectable, inject } from '@angular/core';
@@ -110,6 +112,8 @@ import { DerivedScore, deriveScore } from './score-derivation';
 import {
   DEFAULT_HARMONIC_OPTIONS,
   HarmonicOptions,
+  NO_NOTE_DECISIONS,
+  NoteDecisions,
   suppressHarmonics
 } from './transcription-harmonics';
 import { barGridFault } from './transcription-quantize';
@@ -324,7 +328,17 @@ export class TranscriptionService {
       // caller away from changing every session there will ever be.
       const harmonics: HarmonicOptions = { ...DEFAULT_HARMONIC_OPTIONS };
       const suppressed: DetectedNote[] = [];
-      const notes = suppressHarmonics(detection.notes, harmonics, suppressed);
+      // `NO_NOTE_DECISIONS` shared rather than copied, unlike the thresholds
+      // above: it is frozen, and every producer of a `NoteDecisions` builds a
+      // new object rather than mutating one, so there is nothing for a
+      // careless caller to reach through. Its identity is also how `rederive`
+      // tells that a session has never overridden anything.
+      const notes = suppressHarmonics(
+        detection.notes,
+        harmonics,
+        NO_NOTE_DECISIONS,
+        suppressed
+      );
 
       // Tracked once, kept twice. `grid` is the working copy that `updateTempo`
       // and `nudgeDownbeat` replace; `trackedGrid` is what the tracker actually
@@ -347,6 +361,7 @@ export class TranscriptionService {
         grid: tracked,
         trackedGrid: tracked,
         harmonics,
+        decisions: NO_NOTE_DECISIONS,
         settings
       };
 
@@ -480,6 +495,58 @@ export class TranscriptionService {
   }
 
   /**
+   * Overrules the suppressor on one note, or takes back an overruling.
+   *
+   * `updateHarmonics` moves the whole population and this moves one note, and
+   * both are needed for the same reason: `partialConfidenceRatio` is a
+   * calibration over 120 candidate pairs whose two distributions overlap from
+   * 0.49 to 1.33, so the cut that recovers the real note the pass ate readmits
+   * artefacts everywhere else. The note in front of the user is the one they
+   * can actually judge.
+   *
+   * **Symmetric**, because the algorithm's two failure modes are. It destroys
+   * three real notes across the sixteen accuracy fixtures and keeps sixty
+   * artefacts, so a control that only restored would leave the larger half
+   * unaddressable. A suppressed note becomes kept; a kept note becomes
+   * suppressed.
+   *
+   * **Toggling twice returns the note to the algorithm's own answer**, rather
+   * than pinning it in place with a second override. So an override taken by
+   * mistake is undone by repeating the gesture, and a note is never held down
+   * by a decision the user has forgotten making. That is why the two existing
+   * overrides are tested before the current verdict is: a note in `keep` is
+   * kept, so "a kept note becomes suppressed" would otherwise send it to
+   * `drop` and leave it stuck one gesture away from the algorithm in either
+   * direction.
+   *
+   * It is also what keeps an id out of both lists: this only ever adds to the
+   * list the id is absent from, having found it absent from the other.
+   *
+   * **An id naming no detection is ignored**, and ignored *silently* - no
+   * push, so not even a re-derivation of the identical score. Not a
+   * hypothetical: a click is resolved against the session that was rendered,
+   * and a second `transcribe` can replace that session while the click is in
+   * flight. There is nothing to say about it and nobody to say it to.
+   *
+   * Checked here rather than inside the change function because `rederive`
+   * has no notion of a change that turned out to be nothing: handed back an
+   * unchanged session it would re-derive it and push a new state object,
+   * telling every subscriber to re-render a score that did not move.
+   *
+   * Otherwise it is `updateHarmonics` in every respect - routed through
+   * `rederive`, so it inherits the refusal contract, and it re-tracks the beat
+   * grid on the same rule, since restoring or dropping a note changes what the
+   * tracker sees exactly as moving a threshold does.
+   */
+  toggleNote(id: string): void {
+    const current = this.state;
+    if (current.phase !== 'ready' || current.session === null) return;
+    if (!current.session.rawNotes.some(note => note.id === id)) return;
+
+    this.rederive(session => ({ ...session, decisions: toggledDecisions(session, id) }));
+  }
+
+  /**
    * Re-bars the score in a different meter, from the beats already tracked.
    *
    * The beat positions do not move: `trackBeats` uses the time signature only
@@ -602,17 +669,20 @@ export class TranscriptionService {
    * ## Suppression, and the beat grid it drags behind it
    *
    * Suppression used to run once, inside `transcribe`. It runs here now, over
-   * `session.rawNotes` and `session.harmonics`, which is what makes those four
-   * thresholds live knobs instead of constants a re-upload could not change.
+   * `session.rawNotes`, `session.harmonics` and `session.decisions`, which is
+   * what makes those four thresholds live knobs instead of constants a
+   * re-upload could not change - and what lets one note be overruled without a
+   * second place deciding the kept set.
    *
-   * It is skipped when neither input moved, and that is not an optimisation of
-   * the answer - it is the same answer, since the pass is a pure function of
-   * exactly those two. What the skip buys is identity: `notes` and `suppressed`
-   * stay the arrays they were, so a tuning change does not hand a subscriber a
-   * new-but-equal discard list to re-render.
+   * It is skipped when none of the three moved, and that is not an
+   * optimisation of the answer - it is the same answer, since the pass is a
+   * pure function of exactly those three. What the skip buys is identity:
+   * `notes` and `suppressed` stay the arrays they were, so a tuning change
+   * does not hand a subscriber a new-but-equal discard list to re-render.
    *
-   * When the kept set does move, the beat grid is stale. **Beat tracking runs
-   * on the suppressed notes**, deliberately - harmonic partials carry onsets of
+   * When the kept set does move - whether a threshold moved it or a single
+   * toggle did - the beat grid is stale. **Beat tracking runs on the
+   * suppressed notes**, deliberately - harmonic partials carry onsets of
    * their own and an onset-driven tracker fed them follows the artefacts - so a
    * different kept set is a different tracker input, and a grid tracked from
    * the old one describes a note list that no longer exists.
@@ -720,10 +790,16 @@ export class TranscriptionService {
  * the beat grid if that moved the tracker's input.
  *
  * `previous` is the session the change was made from, and is read for one
- * thing only: whether either suppression input is the same object it was. The
- * pass is pure in exactly those two, so when neither moved the answer cannot
- * have, and the whole function is `return session` - which keeps `notes` the
- * array it already was rather than replacing it with an equal one.
+ * thing only: whether any of the three suppression inputs is the same object
+ * it was. The pass is pure in exactly `rawNotes`, `harmonics` and `decisions`,
+ * so when none of them moved the answer cannot have, and the whole function is
+ * `return session` - which keeps `notes` the array it already was rather than
+ * replacing it with an equal one.
+ *
+ * `decisions` earns its place in that test twice over. Leaving it out would
+ * not merely miss an optimisation, it would skip the pass outright on a
+ * toggle: `toggleNote` moves nothing else, so the note would stay exactly
+ * where the thresholds put it and the click would do nothing at all.
  *
  * `suppressed` collects the partials removed, matching `suppressHarmonics`'
  * own out-parameter, and is filled **only when the kept set actually changed**.
@@ -741,13 +817,19 @@ function resuppressed(
 ): TranscriptionSession {
   if (
     session.rawNotes === previous.rawNotes &&
-    session.harmonics === previous.harmonics
+    session.harmonics === previous.harmonics &&
+    session.decisions === previous.decisions
   ) {
     return session;
   }
 
   const removed: DetectedNote[] = [];
-  const notes = suppressHarmonics(session.rawNotes, session.harmonics, removed);
+  const notes = suppressHarmonics(
+    session.rawNotes,
+    session.harmonics,
+    session.decisions,
+    removed
+  );
 
   // A threshold that moved without changing a single decision - which is most
   // of a drag along a slider, since the thresholds are continuous and the
@@ -773,6 +855,31 @@ function resuppressed(
   // Both, so `beatsSec` identity goes on answering "has the user corrected
   // this?". A `trackedGrid` left at the old object would answer yes forever.
   return { ...suppressedSession, grid: tracked, trackedGrid: tracked };
+}
+
+/**
+ * `session.decisions` with the verdict on `id` moved one step round the cycle
+ * override-removed -> overridden -> override-removed.
+ *
+ * The two lists are read before `session.notes` is, which is what makes the
+ * cycle two steps rather than three: a note already overridden is *at* the
+ * verdict its override names, so asking "is it kept?" first would read the
+ * override's own effect and push a second override on top of it.
+ *
+ * New arrays every time, and never a mutation: `NoteDecisions` is shared with
+ * whatever is rendering it, and `resuppressed` compares the object by identity
+ * to decide whether the pass has to run again.
+ */
+function toggledDecisions(session: TranscriptionSession, id: string): NoteDecisions {
+  const { keep, drop } = session.decisions;
+
+  if (keep.includes(id)) return { keep: keep.filter(other => other !== id), drop };
+  if (drop.includes(id)) return { keep, drop: drop.filter(other => other !== id) };
+
+  // Neither list holds it, so whichever list it joins, it joins alone.
+  return session.notes.some(note => note.id === id)
+    ? { keep, drop: [...drop, id] }
+    : { keep: [...keep, id], drop };
 }
 
 /**

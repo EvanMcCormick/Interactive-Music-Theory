@@ -186,6 +186,80 @@ export const DEFAULT_HARMONIC_OPTIONS: HarmonicOptions = {
   partialConfidenceRatio: 0.65
 };
 
+/**
+ * Per-note verdicts that outrank the thresholds, by `DetectedNote.id`.
+ *
+ * The thresholds above are a calibration over 120 candidate pairs, and a
+ * calibration is a statement about a population rather than about the note in
+ * front of the user. Measured over the sixteen accuracy fixtures the pass
+ * still destroys three real notes and still keeps sixty artefacts, and no
+ * value of `partialConfidenceRatio` fixes either without making the other
+ * worse - the two distributions overlap from 0.49 to 1.33. So the last word
+ * has to belong to whoever can hear the recording.
+ *
+ * ## These are decisions, not hints
+ *
+ * A note in `keep` is not weighted towards survival, it survives: the
+ * `explains` clause is never asked about it. A note in `drop` is removed
+ * without being offered a root. That is the point of applying them here rather
+ * than patching the returned lists afterwards, which would put the notes back
+ * in the wrong order and give the kept set two places to be decided.
+ *
+ * ## A kept note can then explain its own partials
+ *
+ * Deliberate, and a consequence of applying them at the decision point. The
+ * greedy loop only ever consults notes already in `kept`, and it walks the
+ * detection lowest pitch first, so a restored note joins `kept` at its own
+ * pitch - strictly before anything it could explain, since a partial is always
+ * *above* its fundamental. If the user says a note is real then its partials
+ * are real partials, and they become suppressible in the same pass rather than
+ * needing a second one.
+ *
+ * ## `keep` wins a note listed in both
+ *
+ * The two fields contradict each other and something has to give, so it is
+ * stated here rather than left to whichever `Set` is consulted first.
+ * `TranscriptionService.toggleNote` cannot produce the overlap - it removes an
+ * id from one list rather than adding it to the other - but this function is
+ * exported and pure, and a caller assembling `NoteDecisions` by hand deserves
+ * an answer that does not depend on the order of two lines.
+ *
+ * `keep` rather than `drop` because that is the direction the whole
+ * calibration leans: `partialConfidenceRatio`'s default was chosen weighting
+ * one destroyed real note as five kept artefacts, and a tie broken towards
+ * suppression would be the one place in the module that valued them the other
+ * way round.
+ *
+ * ## An id in neither list, and an id in neither detection
+ *
+ * Both are ignored. The sets are consulted by id and nothing enumerates them,
+ * so an id naming no note here costs a `Set` entry and changes no answer. That
+ * matters because the ids arrive from a UI: a click resolved against one
+ * session can land after a second `transcribe` has replaced it, and a throw
+ * there would escape into a mouse handler.
+ */
+export interface NoteDecisions {
+  /** Never suppress these, whatever the thresholds say. */
+  keep: readonly string[];
+  /** Always suppress these, whatever the thresholds say. */
+  drop: readonly string[];
+}
+
+/**
+ * No note overridden - what the pass runs with until the user says otherwise.
+ *
+ * Frozen, and shared rather than rebuilt per caller. Every producer of a
+ * `NoteDecisions` in this codebase builds a new object rather than mutating
+ * one, so sharing is safe; freezing is what keeps it so. Sharing also gives
+ * the identity `TranscriptionService.rederive` skips work on - a session that
+ * has never overridden anything holds this exact object, so "did the decisions
+ * move?" is a reference comparison.
+ */
+export const NO_NOTE_DECISIONS: NoteDecisions = Object.freeze({
+  keep: Object.freeze([]),
+  drop: Object.freeze([])
+});
+
 /** Reading order for both lists this module hands back: earliest first. */
 function byOnsetThenPitch(a: DetectedNote, b: DetectedNote): number {
   return a.onsetSec - b.onsetSec || a.pitch - b.pitch;
@@ -207,13 +281,33 @@ function byOnsetThenPitch(a: DetectedNote, b: DetectedNote): number {
  * An out-parameter rather than a widened return, matching `quantizeBar`: the
  * kept notes are what the whole module is about, and twenty-eight call sites
  * in the specs assert on them and nothing else.
+ *
+ * `decisions` are the user's per-note overrides, and they are consulted here,
+ * inside the greedy walk, rather than applied to the two lists afterwards. See
+ * `NoteDecisions`: the ordering, the eligibility of a restored note to act as
+ * a root, and the arbitration of a note named in both lists all follow from
+ * that placement. With `NO_NOTE_DECISIONS` - the default - nothing about the
+ * pass changes, which is what keeps the accuracy harness measuring the
+ * algorithm rather than the override path.
+ *
+ * `thresholds` was called `overrides`, from when there was only one kind of
+ * override in play. It is the *option* overrides: a partial `HarmonicOptions`
+ * spread over the defaults. Renamed rather than left sitting next to a
+ * parameter that overrides something else entirely.
  */
 export function suppressHarmonics(
   notes: DetectedNote[],
-  overrides: Partial<HarmonicOptions> = {},
+  thresholds: Partial<HarmonicOptions> = {},
+  decisions: NoteDecisions = NO_NOTE_DECISIONS,
   suppressed?: DetectedNote[]
 ): DetectedNote[] {
-  const options: HarmonicOptions = { ...DEFAULT_HARMONIC_OPTIONS, ...overrides };
+  const options: HarmonicOptions = { ...DEFAULT_HARMONIC_OPTIONS, ...thresholds };
+
+  // Membership is asked once per note against every list, so the lists become
+  // sets before the loop rather than inside it. `keep` is built first and read
+  // first, which is the whole of how a note in both is arbitrated.
+  const keep = new Set(decisions.keep);
+  const drop = new Set(decisions.drop);
 
   // Lowest first, so a fundamental is always considered before its own
   // partials, whatever their relative loudness. Confidence then orders notes of
@@ -227,8 +321,16 @@ export function suppressHarmonics(
   const kept: DetectedNote[] = [];
   const removed: DetectedNote[] = [];
   for (const note of byPitch) {
-    if (kept.some(root => explains(root, note, options))) removed.push(note);
-    else kept.push(note);
+    // The user's verdict is read before the thresholds are, not blended with
+    // them, and a kept note joins `kept` here - inside the ascending walk -
+    // so the notes it explains meet it as a root a few iterations later.
+    if (keep.has(note.id)) {
+      kept.push(note);
+    } else if (drop.has(note.id) || kept.some(root => explains(root, note, options))) {
+      removed.push(note);
+    } else {
+      kept.push(note);
+    }
   }
 
   if (suppressed) {

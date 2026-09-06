@@ -1369,6 +1369,328 @@ describe('TranscriptionService', () => {
     });
   });
 
+  /**
+   * The threshold moved one note at a time.
+   *
+   * `updateHarmonics` moves the whole population, which is the only move a
+   * calibration can offer: `partialConfidenceRatio`'s two distributions
+   * overlap from 0.49 to 1.33, so the cut that recovers the real note the pass
+   * ate readmits artefacts everywhere else. These are the tests for the note
+   * the user can actually judge.
+   *
+   * The notes below are named by what the captured `walking` output does with
+   * them at each threshold, measured not chosen:
+   *
+   * | id  | 0.30 | 0.65 | 0.90 | what it is                               |
+   * |-----|------|------|------|------------------------------------------|
+   * | d4  | drop | drop | drop | a G1 at 0.5457 no threshold recovers     |
+   * | d12 | keep | drop | drop | a B2 at 1.8228 that flips across the cut |
+   * | d14 | keep | drop | drop | a C3 at 2.4045 the beat tracker notices  |
+   * | d26 | keep | keep | keep | an A2 at 6.6099 no threshold removes     |
+   */
+  describe('toggleNote', () => {
+    /**
+     * A detection the pass removes at every threshold in play here.
+     *
+     * `walking`, captured: a G1 at 0.5457 lasting 93 ms with a confidence of
+     * 0.3414, under the G1 at 0.6385 - a re-detection the unison clause takes,
+     * and one `partialConfidenceRatio` does not arbitrate at all. Restoring it
+     * is therefore a decision no threshold could have reached.
+     */
+    const ALWAYS_DROPPED = 'd4';
+
+    /**
+     * A detection the pass keeps at every threshold in play here.
+     *
+     * `walking`, captured: an A2 at 6.6099 with a confidence of 0.28, an
+     * octave over the A1 at 6.6448 that produced it. It survives only on the
+     * onset guard - it starts 34.9 ms before that A1, just past the 30 ms
+     * tolerance - so no confidence ratio reaches it either. It is exactly the
+     * artefact a symmetric toggle exists for.
+     */
+    const ALWAYS_KEPT = 'd26';
+
+    /** Whether the note is in the score's note list, rather than the discards. */
+    const isKept = (id: string): boolean =>
+      service.state.session?.notes.some(n => n.id === id) ?? false;
+
+    /** What the algorithm alone says about `id` at `ratio`. */
+    const algorithmKeeps = (id: string, ratio: number): boolean =>
+      suppressHarmonics(DETECTED, { partialConfidenceRatio: ratio }).some(n => n.id === id);
+
+    it('restores a suppressed note without asking the detector again', async () => {
+      await service.transcribe(wavFile());
+      expect(isKept(ALWAYS_DROPPED)).toBeFalse();
+
+      service.toggleNote(ALWAYS_DROPPED);
+
+      expect(detector.calls).toBe(1);
+      expect(isKept(ALWAYS_DROPPED)).toBeTrue();
+      expect(service.state.session?.notes.length).toBe(KEPT_COUNT + 1);
+      expect(service.state.session?.decisions.keep).toEqual([ALWAYS_DROPPED]);
+      // Out of the discard list as well, so the ghost and the note cannot both
+      // be rendered.
+      expect(service.state.suppressed.some(n => n.id === ALWAYS_DROPPED)).toBeFalse();
+    });
+
+    it('suppresses a kept note', async () => {
+      await service.transcribe(wavFile());
+      expect(isKept(ALWAYS_KEPT)).toBeTrue();
+
+      service.toggleNote(ALWAYS_KEPT);
+
+      expect(isKept(ALWAYS_KEPT)).toBeFalse();
+      expect(service.state.session?.notes.length).toBe(KEPT_COUNT - 1);
+      expect(service.state.session?.decisions.drop).toEqual([ALWAYS_KEPT]);
+      expect(service.state.suppressed.some(n => n.id === ALWAYS_KEPT)).toBeTrue();
+    });
+
+    it('returns a restored note to the algorithm when toggled again', async () => {
+      await service.transcribe(wavFile());
+
+      service.toggleNote(ALWAYS_DROPPED);
+      service.toggleNote(ALWAYS_DROPPED);
+
+      // The override is gone rather than replaced by its opposite: a second
+      // click undoes the first instead of pinning the note down the other way.
+      expect(service.state.session?.decisions).toEqual({ keep: [], drop: [] });
+      expect(isKept(ALWAYS_DROPPED)).toBeFalse();
+      expect(service.state.session?.notes.map(n => n.id)).toEqual(
+        suppressHarmonics(DETECTED).map(n => n.id)
+      );
+    });
+
+    it('returns a suppressed note to the algorithm when toggled again', async () => {
+      await service.transcribe(wavFile());
+
+      service.toggleNote(ALWAYS_KEPT);
+      service.toggleNote(ALWAYS_KEPT);
+
+      expect(service.state.session?.decisions).toEqual({ keep: [], drop: [] });
+      expect(isKept(ALWAYS_KEPT)).toBeTrue();
+      expect(service.state.session?.notes.map(n => n.id)).toEqual(
+        suppressHarmonics(DETECTED).map(n => n.id)
+      );
+    });
+
+    it('never lists a note as both kept and dropped', async () => {
+      await service.transcribe(wavFile());
+
+      // Eight gestures over two notes going opposite ways, which is what a
+      // user with a mouse produces.
+      for (let i = 0; i < 4; i++) {
+        service.toggleNote(ALWAYS_DROPPED);
+        service.toggleNote(ALWAYS_KEPT);
+      }
+
+      const decisions = service.state.session?.decisions;
+      const keep = new Set(decisions?.keep ?? []);
+      expect((decisions?.drop ?? []).some(id => keep.has(id))).toBeFalse();
+    });
+
+    it('leaves an overridden keep alone at a threshold that would suppress it', async () => {
+      await service.transcribe(wavFile());
+      service.toggleNote(ALWAYS_DROPPED);
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      // The user's decision outranks the algorithm at whichever threshold is
+      // in force, and the control says the algorithm would still remove it.
+      expect(algorithmKeeps(ALWAYS_DROPPED, LOOSE_RATIO)).toBeFalse();
+      expect(isKept(ALWAYS_DROPPED)).toBeTrue();
+      // ...and the threshold change did happen: 23 of the 28 rather than 18,
+      // plus the one the user put back.
+      expect(service.state.session?.notes.length).toBe(LOOSE_KEPT_COUNT + 1);
+    });
+
+    it('leaves an overridden drop alone at a threshold that would keep it', async () => {
+      await service.transcribe(wavFile());
+      service.toggleNote(ALWAYS_KEPT);
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      expect(algorithmKeeps(ALWAYS_KEPT, LOOSE_RATIO)).toBeTrue();
+      expect(isKept(ALWAYS_KEPT)).toBeFalse();
+      expect(service.state.session?.notes.length).toBe(LOOSE_KEPT_COUNT - 1);
+    });
+
+    it('holds a note in place while the threshold crosses the cut that flips it', async () => {
+      // `walking`, captured: a B2 at 1.8228 (confidence 0.3263) an octave over
+      // the B1 at 1.846 (0.7437). The ratio is 0.439, which 0.65 removes and
+      // 0.30 does not, so this is a note the threshold genuinely decides.
+      const FLIPS = 'd12';
+      expect(algorithmKeeps(FLIPS, DEFAULT_HARMONIC_OPTIONS.partialConfidenceRatio)).toBeFalse();
+      expect(algorithmKeeps(FLIPS, LOOSE_RATIO)).toBeTrue();
+
+      await service.transcribe(wavFile());
+      service.toggleNote(FLIPS);
+      expect(isKept(FLIPS)).toBeTrue();
+
+      // Over the cut and back. The algorithm's answer changes twice under it
+      // and the user's does not change at all.
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+      expect(isKept(FLIPS)).toBeTrue();
+
+      service.updateHarmonics({
+        partialConfidenceRatio: DEFAULT_HARMONIC_OPTIONS.partialConfidenceRatio
+      });
+
+      expect(isKept(FLIPS)).toBeTrue();
+      expect(service.state.session?.decisions.keep).toEqual([FLIPS]);
+    });
+
+    it('starts a session with nothing overridden, so the pass is untouched', async () => {
+      await service.transcribe(wavFile());
+
+      expect(service.state.session?.decisions).toEqual({ keep: [], drop: [] });
+      expect(service.state.session?.notes.map(n => n.id)).toEqual(
+        suppressHarmonics(DETECTED).map(n => n.id)
+      );
+    });
+
+    it('ignores an id that names no detection, without pushing anything', async () => {
+      await service.transcribe(wavFile());
+      const before = service.state;
+
+      // Reachable: a click is resolved against the session that was rendered,
+      // and a second `transcribe` can replace that session while it is in
+      // flight. Not a throw, and not a re-derivation of an identical score
+      // either - the whole state object has to be the one it was, or every
+      // subscriber re-renders for nothing.
+      service.toggleNote('no-such-note');
+
+      expect(service.state).toBe(before);
+    });
+
+    it('is a no-op before a transcription has succeeded', () => {
+      service.toggleNote('d0');
+
+      expect(service.state.phase).toBe('idle');
+      expect(service.state.session).toBeNull();
+    });
+
+    it('goes through the same machinery, so it clears a standing refusal', async () => {
+      await service.transcribe(wavFile());
+      service.updateSettings({ capo: 30 });
+      expect(service.state.refusal).not.toBeNull();
+
+      service.toggleNote(ALWAYS_DROPPED);
+
+      expect(service.state.refusal).toBeNull();
+      expect(service.state.phase).toBe('ready');
+    });
+
+    it('keeps notes a subset of rawNotes rather than a copy of one', async () => {
+      // The ids a click arrives with are `rawNotes` ids, and they only stay
+      // resolvable across a re-derivation because the lists hold the same
+      // objects. An override that rebuilt a note would break the next click on
+      // it without failing anything that compares values.
+      await service.transcribe(wavFile());
+      const rawNotes = service.state.session?.rawNotes ?? [];
+
+      service.toggleNote(ALWAYS_DROPPED);
+      service.toggleNote(ALWAYS_KEPT);
+
+      const raw = new Set<DetectedNote>(rawNotes);
+      expect(service.state.session?.notes.every(n => raw.has(n))).toBeTrue();
+      expect(service.state.suppressed.every(n => raw.has(n))).toBeTrue();
+      expect(service.state.session?.rawNotes).toBe(rawNotes);
+    });
+
+    /**
+     * A toggle changes the tracker's input exactly as a threshold does, so it
+     * has to obey the same rule: re-track unless the user has corrected the
+     * grid by hand.
+     */
+    describe('the beat grid under a toggle', () => {
+      /**
+       * A restore the tracker reacts to.
+       *
+       * `walking`, captured: a C3 at 2.4045 the pass removes as an octave
+       * partial of the C2 at 2.4278. Restoring it puts an onset back 23 ms
+       * before that C2 and the tracked beats move.
+       *
+       * Named separately from `ALWAYS_DROPPED` because most single toggles do
+       * *not* move the grid - the tracker blurs onsets over 20 ms and fits a
+       * pulse across the whole span, so one note in twenty-eight usually
+       * changes nothing. That is worth knowing rather than worth hiding: a
+       * spec asserting the re-track rule on a note the tracker ignores would
+       * pass against a service that never re-tracked at all.
+       */
+      const MOVES_THE_BEAT = 'd14';
+
+      /** Where the tracker would put the beats with `MOVES_THE_BEAT` restored. */
+      const restoredBeats = (): number[] =>
+        trackBeats(
+          suppressHarmonics(DETECTED, {}, { keep: [MOVES_THE_BEAT], drop: [] }),
+          DURATION_SEC,
+          FOUR_FOUR
+        ).beatsSec;
+
+      it('has something to say: the two note sets track differently', async () => {
+        // Without this every branch below would pass on a service that never
+        // re-tracked at all.
+        await service.transcribe(wavFile());
+
+        expect(restoredBeats()).not.toEqual(service.state.session?.grid.beatsSec ?? []);
+      });
+
+      it('re-tracks when the user has not corrected it', async () => {
+        await service.transcribe(wavFile());
+
+        service.toggleNote(MOVES_THE_BEAT);
+
+        expect(service.state.session?.grid.beatsSec).toEqual(restoredBeats());
+        // Both fields, or the identity test reads a correction nobody made and
+        // every later change silently stops re-tracking.
+        expect(service.state.session?.trackedGrid).toBe(service.state.session!.grid);
+      });
+
+      it('keeps a tempo the user corrected', async () => {
+        await service.transcribe(wavFile());
+        service.updateTempo(90);
+        const corrected = service.state.session?.grid.beatsSec ?? [];
+        const tracked = service.state.session?.trackedGrid;
+
+        service.toggleNote(MOVES_THE_BEAT);
+
+        expect(service.state.session?.grid.beatsSec).toEqual(corrected);
+        // Still the measured pulse, which is the only copy of it.
+        expect(service.state.session?.trackedGrid).toBe(tracked!);
+        // ...and the toggle still happened, so this is not a silent refusal.
+        expect(isKept(MOVES_THE_BEAT)).toBeTrue();
+      });
+
+      it('keeps a downbeat the user nudged', async () => {
+        await service.transcribe(wavFile());
+        service.nudgeDownbeat(1);
+        const corrected = service.state.session?.grid.beatsSec ?? [];
+
+        service.toggleNote(MOVES_THE_BEAT);
+
+        expect(service.state.session?.grid.beatsSec).toEqual(corrected);
+        expect(isKept(MOVES_THE_BEAT)).toBeTrue();
+      });
+
+      it('tracks its way back when the toggle is undone', async () => {
+        await service.transcribe(wavFile());
+        const tracked = service.state.session?.trackedGrid.beatsSec ?? [];
+
+        service.toggleNote(MOVES_THE_BEAT);
+        expect(service.state.session?.grid.beatsSec).not.toEqual(tracked);
+
+        service.toggleNote(MOVES_THE_BEAT);
+
+        // By value, not by identity: the second pass re-runs from scratch and
+        // hands back an equal grid rather than the original object. The skip
+        // that preserves identity is for an input that did not move at all,
+        // and both of these moved it.
+        expect(service.state.session?.grid.beatsSec).toEqual(tracked);
+        expect(service.state.session?.trackedGrid).toBe(service.state.session!.grid);
+      });
+    });
+  });
+
   describe('session identity', () => {
     it('gives each run its own session id', async () => {
       await service.transcribe(wavFile());

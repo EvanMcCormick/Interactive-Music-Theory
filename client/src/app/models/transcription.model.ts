@@ -17,7 +17,9 @@
  * of the line as `DerivationSettings` but a step earlier: it decides which
  * detections are notes at all, where `DerivationSettings` decides how the
  * surviving ones are written. `deriveScore` never reads it, which is exactly
- * why it is not a `DerivationSettings` field.
+ * why it is not a `DerivationSettings` field. `TranscriptionSession.decisions`
+ * sits beside it and overrules it note by note, for the cases where a
+ * threshold calibrated over a population gets one note wrong.
  */
 
 import {
@@ -29,10 +31,12 @@ import {
 // The one import here that points at a service, and deliberately `import
 // type`: `HarmonicOptions` is calibration - every field of it is justified by a
 // measurement printed in `harmonic-eval/`, and that argument belongs beside the
-// code it justifies rather than out here. A type-only import is erased, so the
-// cycle it would otherwise close with `transcription-harmonics.ts`'s own
-// `DetectedNote` import never exists at runtime.
-import type { HarmonicOptions } from '../services/transcription-harmonics';
+// code it justifies rather than out here. `NoteDecisions` rides along for the
+// same reason: what a per-note override means is a statement about the pass
+// that honours it. A type-only import is erased, so the cycle it would
+// otherwise close with `transcription-harmonics.ts`'s own `DetectedNote`
+// import never exists at runtime.
+import type { HarmonicOptions, NoteDecisions } from '../services/transcription-harmonics';
 
 // Instrument reference data lives in composer.model.ts alongside
 // STANDARD_GUITAR_TUNING; re-exported here so transcription callers can reach
@@ -248,6 +252,29 @@ export interface TranscriptionSession {
    * fact, and `TranscriptionService.rederive` rebuilds it.
    */
   harmonics: HarmonicOptions;
+  /**
+   * Notes the user has overruled the suppressor on, by `DetectedNote.id`.
+   *
+   * `harmonics` moves the whole population at once and this moves one note.
+   * Both are needed: the thresholds are a calibration over 120 candidate pairs
+   * whose two distributions overlap heavily, so a cut that recovers a real
+   * note the pass ate also readmits artefacts everywhere else, and the note in
+   * front of the user is the only one they can actually judge.
+   *
+   * Applied by `suppressHarmonics` at its decision point rather than to the
+   * lists it returns; `NoteDecisions` argues why, and settles what an id in
+   * both lists, or in neither detection, means.
+   *
+   * The ids are `rawNotes` ids, and they are stable across re-derivation
+   * because `notes` and the suppressed list hold the objects `rawNotes` holds
+   * rather than copies of them. That is what lets a decision taken against one
+   * derivation still name the same note after a threshold moves.
+   *
+   * Not persisted, and lost with the session - like everything else here. A
+   * session survives leaving the route and coming back, because the service is
+   * `providedIn: 'root'`, and nothing further.
+   */
+  decisions: NoteDecisions;
   settings: DerivationSettings;
 }
 

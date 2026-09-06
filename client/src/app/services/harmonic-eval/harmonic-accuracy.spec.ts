@@ -87,6 +87,7 @@ import { DetectedNote } from '../../models/transcription.model';
 import {
   DEFAULT_HARMONIC_OPTIONS,
   HARMONIC_SEMITONES,
+  NO_NOTE_DECISIONS,
   suppressHarmonics
 } from '../transcription-harmonics';
 import { MATERIAL } from './material';
@@ -143,7 +144,7 @@ describe('harmonic suppression accuracy', () => {
     for (const material of MATERIAL) {
       const detections = detectionsOf(material.name);
       const removed: DetectedNote[] = [];
-      const kept = suppressHarmonics(detections, {}, removed);
+      const kept = suppressHarmonics(detections, {}, NO_NOTE_DECISIONS, removed);
 
       const before = score(material.notes, detections);
       const after = score(material.notes, kept);
