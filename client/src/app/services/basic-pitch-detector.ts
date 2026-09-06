@@ -15,12 +15,16 @@
  * every `await ...array()`. The CPU backend would sidestep the readback
  * problem and is roughly 100x slower, which is not a trade worth making.
  *
- * Nothing here is a fork or a patch. Every piece it calls — `prepareData`,
+ * Nothing here is a fork or a patch. Every piece it calls —
  * `evaluateSingleFrame`, `unwrapOutput`, the `model` promise — is public API;
  * only the three lines that read tensors back differ.
  *
  * The loop also releases the tensors it allocates, which `evaluateModel` does
  * not. On a long stem that is tens of megabytes of GPU textures.
+ *
+ * The one piece it does *not* call is `prepareData`, whose framing crashes the
+ * shader compiler on a sixteenth of song-length inputs. `detection-framing.ts`
+ * replaces it and explains itself at length.
  *
  * ## What comes out
  *
@@ -44,13 +48,11 @@ import {
 import type { NoteEventTime } from '@spotify/basic-pitch';
 
 import { DetectedNote } from '../models/transcription.model';
+import { FFT_HOP, frameForModel } from './detection-framing';
 import { DETECTION_SAMPLE_RATE, DetectionResult, NoteDetector } from './note-detector';
 
 /** Where `angular.json` copies the weights bundled with the npm package. */
 export const BASIC_PITCH_MODEL_URL = '/basic-pitch-model/model.json';
-
-/** Samples per model frame. Mirrors `FFT_HOP`. */
-const FFT_HOP = 256;
 
 /**
  * Rate at which the model reports frames, and so the rate `bendCents` is
@@ -133,13 +135,20 @@ export class BasicPitchDetector implements NoteDetector {
    * trim-to-original-length arithmetic, which is the subtle part: the model
    * runs over overlapping two-second windows, so the concatenated output
    * overshoots the input and the last useful batch has to be cut short.
+   *
+   * `frameForModel` stands in for `prepareData`, and the trim is measured
+   * against `audio.length` - the audio as handed in - exactly as the original
+   * measures it against `prepareData`'s second return value. Anything that
+   * ever makes the framed input longer than the audio, silence included, must
+   * leave that number alone, or the extra windows' frames would be kept.
    */
   private async infer(
     audio: Float32Array,
     onBatch: (posteriorgrams: Posteriorgrams) => void,
     onProgress: (fraction: number) => void
   ): Promise<void> {
-    const [reshapedInput, audioOriginalLength] = await this.basicPitch.prepareData(audio);
+    const audioOriginalLength = audio.length;
+    const reshapedInput = frameForModel(audio);
 
     try {
       // The library floors the frame rate to count output frames, and this

@@ -114,11 +114,16 @@
               "src/styles.css"
             ],
             "scripts": [],
-            "exclude": ["**/harmonic-capture.spec.ts"]
+            "exclude": ["**/harmonic-capture.spec.ts", "**/long-file-detection.spec.ts"]
           },
           "configurations": {
             "capture": {
               "include": ["**/harmonic-capture.spec.ts"],
+              "exclude": [],
+              "karmaConfig": "karma.capture.conf.js"
+            },
+            "longform": {
+              "include": ["**/long-file-detection.spec.ts"],
               "exclude": [],
               "karmaConfig": "karma.capture.conf.js"
             }
