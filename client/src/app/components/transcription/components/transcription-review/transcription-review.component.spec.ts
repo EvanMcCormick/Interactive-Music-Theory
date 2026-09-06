@@ -222,7 +222,21 @@ describe('TranscriptionReviewComponent', () => {
     it('sends the tuning as MIDI pitches, highest string first', () => {
       choose(component.id.tuning, 'Guitar, standard (E B G D A E)');
 
-      expect(settingsEmits).toEqual([{ tuning: [64, 59, 55, 50, 45, 40] }]);
+      // The label travels with the pitches: only this control knows which entry
+      // was picked, and `deriveScore` writes it onto the staff.
+      expect(settingsEmits).toEqual([
+        { tuning: [64, 59, 55, 50, 45, 40], tuningLabel: 'Guitar, standard (E B G D A E)' }
+      ]);
+    });
+
+    it('names no instrument for the synthetic "current tuning" entry', () => {
+      push(readyState(makeSession({ tuning: [50, 45, 40] })));
+
+      choose(component.id.tuning, 'Current (3 strings)');
+
+      // A description of the control, not of an instrument - so derivation
+      // infers a family from the pitches instead of writing this on the staff.
+      expect(settingsEmits[0].tuningLabel).toBeNull();
     });
 
     it('does not hand out the preset array itself', () => {

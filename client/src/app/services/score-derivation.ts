@@ -1,5 +1,6 @@
 import {
   BarDoc,
+  ClefKind,
   KeySignature,
   MasterBarDoc,
   ScoreDoc,
@@ -27,6 +28,15 @@ import { gridTempo, secondsToBeats } from './transcription-timing';
  * Pure, with no Angular or audio dependency, following the `staff-pitch.ts`
  * precedent. Nothing is memoised and nothing is cached: re-deriving is cheap
  * enough that every setting can be a live knob.
+ *
+ * ## The tuning decides more than the tab
+ *
+ * Clef, playback program and staff name all come off `settings.tuning` through
+ * `instrumentVoiceFor`. They were fixed at bass for as long as a bass was the
+ * only instrument reachable; once the review panel offered guitar tunings, a
+ * guitar preset changed the tab's line count - which the mapper reads straight
+ * off `staff.tuning` - and left the notation staff drawing guitar pitches on a
+ * bass clef and the exported track playing them on a bass program.
  */
 
 /** Why a detected note is not in the score. */
@@ -88,8 +98,72 @@ export interface DerivedScore {
   dropped: DroppedNote[];
 }
 
-/** General MIDI program 33: electric bass, finger. */
-const BASS_PROGRAM = 33;
+/**
+ * How a tuning is written and how it sounds back.
+ *
+ * Three answers that have to agree with each other and with the tuning the
+ * user picked: a guitar part written on a bass clef and played by a bass
+ * program is wrong three times over, and *Open in Composer* lands it in the
+ * composer as a bass track.
+ */
+export interface InstrumentVoice {
+  clef: ClefKind;
+  /** General MIDI program number, 0-based, as `PlaybackInfoDoc.program` wants it. */
+  program: number;
+  /** What the staff is called when the caller did not name the tuning itself. */
+  label: string;
+}
+
+/** General MIDI 33, electric bass (finger), on the bass clef. */
+const BASS_VOICE: InstrumentVoice = { clef: 'f4', program: 33, label: 'Bass' };
+
+/**
+ * General MIDI 27, electric guitar (clean), on the treble clef.
+ *
+ * `clefOttava` stays `regular` rather than `8vb`, matching `createDefaultBar`'s
+ * guitar staff, so a transcription and a score started in the composer are
+ * written the same way. Guitar notation conventionally sounds an octave below
+ * the written pitch; expressing that is `StaffDoc.displayTranspose`'s job and
+ * a change to make for every guitar staff at once rather than only for these.
+ */
+const GUITAR_VOICE: InstrumentVoice = { clef: 'g2', program: 27, label: 'Guitar' };
+
+/**
+ * Highest open string that still reads as a bass, in MIDI.
+ *
+ * The two families are far apart at the top and the gap is where the threshold
+ * goes: the highest string of every bass offered is G2 (43), a six-string bass
+ * reaches C3 (48), and the lowest guitar offered is a half step down at Eb4
+ * (63). E3 (52) sits in the middle of that fifteen-semitone gap, an octave
+ * under the guitar's own top string.
+ *
+ * Read off `Math.max(...tuning)` rather than the string count, because string
+ * count does not separate them - five-string basses and six-string basses both
+ * exist, and a six-string bass and a six-string guitar share nothing but the
+ * number of lines.
+ *
+ * A threshold is cheap and wrong at the edges: a baritone guitar or a piccolo
+ * bass would be misfiled, and what that costs is a clef and a timbre, both of
+ * which the composer can change. Telling instruments apart properly means an
+ * instrument field on `DerivationSettings`, which is the right answer once
+ * there is a third family to tell apart rather than a boundary to place.
+ */
+const HIGHEST_BASS_STRING = 52;
+
+/**
+ * Which family `tuning` belongs to.
+ *
+ * Exported because the review panel's presets and this rule have to agree
+ * about what "Guitar, standard" means, and a second copy of the threshold is
+ * how they would stop agreeing.
+ *
+ * An empty tuning gives `-Infinity`, and a tuning carrying a NaN gives NaN;
+ * both compare false against the threshold and land on bass, which is the
+ * pipeline's default instrument.
+ */
+export function instrumentVoiceFor(tuning: readonly number[]): InstrumentVoice {
+  return Math.max(...tuning) > HIGHEST_BASS_STRING ? GUITAR_VOICE : BASS_VOICE;
+}
 
 const C_MAJOR: KeySignature = { fifths: 0, mode: 'major' };
 
@@ -363,6 +437,12 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
 
   const key = settings.key ?? C_MAJOR;
 
+  // Inferred once, from the tuning the score is actually being written on. The
+  // tuning was already the only setting the mapper read - it gives the tab its
+  // line count - so before this a guitar preset changed the number of lines and
+  // nothing else, and the notation staff drew guitar pitches on a bass clef.
+  const voice = instrumentVoiceFor(settings.tuning);
+
   const bars: BarDoc[] = Array.from({ length: barCount }, (_, index) => {
     const inBar: PlacedNote[] = placement.placed
       .filter(entry => entry.bar === index)
@@ -386,7 +466,7 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
     }
 
     return {
-      clef: 'f4',
+      clef: voice.clef,
       clefOttava: 'regular',
       keySignature: key,
       voices: [{ beats: beatDocs }]
@@ -395,7 +475,10 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
 
   const staff: StaffDoc = {
     tuning: [...settings.tuning],
-    tuningLabel: 'Transcribed',
+    // The preset's own name when the caller stated one, so the staff says what
+    // the user picked. Falling back to the inferred family rather than to a
+    // placeholder: "Transcribed" named the process, not the instrument.
+    tuningLabel: settings.tuningLabel ?? voice.label,
     capo: settings.capo,
     transpose: 0,
     displayTranspose: 0,
@@ -411,7 +494,7 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
     name: 'Transcription',
     shortName: 'Trn',
     color: '#2c3e50',
-    playback: createDefaultPlaybackInfo(BASS_PROGRAM),
+    playback: createDefaultPlaybackInfo(voice.program),
     staves: [staff]
   };
 

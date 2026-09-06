@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import * as alphaTab from '@coderline/alphatab';
-import { ScoreDoc } from '../models/composer.model';
+import { STANDARD_GUITAR_TUNING, ScoreDoc } from '../models/composer.model';
 import {
   BeatGrid,
   DetectedNote,
@@ -12,7 +12,7 @@ import { ComposerService } from './composer.service';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { candidatesFor } from './transcription-fingering';
 import { beatSlots } from './transcription-quantize';
-import { deriveScore, placeDetectedNotes } from './score-derivation';
+import { deriveScore, instrumentVoiceFor, placeDetectedNotes } from './score-derivation';
 
 /**
  * The score alone, for the cases that are not about what derivation discarded.
@@ -721,5 +721,68 @@ describe('placeDetectedNotes', () => {
     expect(() => placeDetectedNotes([timeless], session([timeless]))).toThrowError(
       /onset NaN/
     );
+  });
+});
+
+/**
+ * Clef, playback program and staff name follow the tuning.
+ *
+ * They were fixed at bass for as long as a bass was the only instrument
+ * reachable. The review panel's `TUNING_PRESETS` made guitar reachable, and the
+ * only thing that changed was the tab's line count - which the mapper reads off
+ * `staff.tuning` - so a guitar part was written on a bass clef and exported as
+ * a bass track.
+ */
+describe('instrument voice', () => {
+  const withTuning = (tuning: number[], tuningLabel: string | null = null) => {
+    const notes = [note(40, 0), note(45, 0.5)];
+
+    return derived({
+      ...session(notes),
+      settings: { ...createDefaultDerivationSettings(), tuning, tuningLabel }
+    });
+  };
+
+  const staffOf = (score: ScoreDoc) => score.tracks[0].staves[0];
+
+  it('writes a bass tuning on the bass clef, played by a bass program', () => {
+    const score = withTuning(STANDARD_BASS_TUNING);
+
+    expect(staffOf(score).bars.every(bar => bar.clef === 'f4')).toBeTrue();
+    expect(score.tracks[0].playback.program).toBe(33);
+  });
+
+  it('writes a guitar tuning on the treble clef, played by a guitar program', () => {
+    const score = withTuning(STANDARD_GUITAR_TUNING);
+
+    expect(staffOf(score).bars.length).toBeGreaterThan(0);
+    expect(staffOf(score).bars.every(bar => bar.clef === 'g2')).toBeTrue();
+    expect(score.tracks[0].playback.program).toBe(27);
+  });
+
+  it('reads the family off the highest string, not the string count', () => {
+    // A five-string bass and a six-string guitar: the counts say nothing, and
+    // a six-string bass tops out at C3, well under the threshold.
+    expect(instrumentVoiceFor([43, 38, 33, 28, 23]).clef).toBe('f4');
+    expect(instrumentVoiceFor([48, 43, 38, 33, 28, 23]).clef).toBe('f4');
+    expect(instrumentVoiceFor(STANDARD_GUITAR_TUNING).clef).toBe('g2');
+    // Half a step down, the lowest guitar the panel offers.
+    expect(instrumentVoiceFor([63, 58, 54, 49, 44, 39]).clef).toBe('g2');
+  });
+
+  it('falls back to bass for a tuning that states nothing', () => {
+    expect(instrumentVoiceFor([]).clef).toBe('f4');
+    expect(instrumentVoiceFor([Number.NaN]).clef).toBe('f4');
+  });
+
+  it('names the staff after the preset the user picked', () => {
+    expect(staffOf(withTuning(STANDARD_GUITAR_TUNING, 'Guitar, drop D')).tuningLabel)
+      .toBe('Guitar, drop D');
+  });
+
+  it('names the family when the caller stated no label', () => {
+    // Not "Transcribed", which named the process rather than the instrument.
+    expect(staffOf(withTuning(STANDARD_GUITAR_TUNING)).tuningLabel).toBe('Guitar');
+    expect(staffOf(withTuning(STANDARD_BASS_TUNING)).tuningLabel).toBe('Bass');
   });
 });

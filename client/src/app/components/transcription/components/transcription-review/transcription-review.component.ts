@@ -334,6 +334,15 @@ export class TranscriptionReviewComponent
   // The nine knobs
   // -------------------------------------------------------------------------
 
+  /**
+   * States a tuning, and what it is called.
+   *
+   * The label travels with the pitches because only this control knows it: the
+   * array says which notes the open strings sound and nothing about which entry
+   * in the list the user picked, and `deriveScore` writes it onto the staff. The
+   * synthetic "Current (N strings)" entry names no instrument, so it sends
+   * `null` and lets derivation infer a family from the pitches instead.
+   */
   onTuningChange(presetId: string): void {
     this.tuningPresetId = presetId;
     const preset = this.tuningOptions.find(option => option.id === presetId);
@@ -341,7 +350,10 @@ export class TranscriptionReviewComponent
 
     // Copied: the service copies it again, but handing out a preset's own array
     // would put shared reference data on the session.
-    this.settingsChanged.emit({ tuning: [...preset.tuning] });
+    this.settingsChanged.emit({
+      tuning: [...preset.tuning],
+      tuningLabel: preset.id === 'custom' ? null : preset.label
+    });
   }
 
   onCapoChange(capo: number | null): void {

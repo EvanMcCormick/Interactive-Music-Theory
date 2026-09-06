@@ -114,6 +114,18 @@ export type FinestDivision = Extract<DurationValue, 4 | 8 | 16 | 32 | 64>;
 export interface DerivationSettings {
   /** MIDI pitch per open string, highest string first. */
   tuning: number[];
+  /**
+   * What to call `tuning` on the staff, or `null` to name it from the pitches.
+   *
+   * The tuning array says which notes the open strings sound and nothing about
+   * what the user thought they were choosing: "Guitar, drop D" and "Bass, five
+   * string" are facts about the control that was moved, and only the caller
+   * that moved it has them. `deriveScore` falls back to the family it can infer
+   * — see `instrumentVoiceFor` — rather than to a placeholder, so a session
+   * assembled without a label still names an instrument rather than the
+   * process that produced it.
+   */
+  tuningLabel: string | null;
   /** Frets. 0 = no capo. */
   capo: number;
   /** Shortest note that may be written. 16 = sixteenth note. */
@@ -188,6 +200,7 @@ export function createDefaultDerivationSettings(
 ): DerivationSettings {
   return {
     tuning: [...tuning],
+    tuningLabel: null,
     capo: 0,
     finestDivision: 16,
     allowTriplets: false,
