@@ -10,13 +10,36 @@
  *
  * ## Two kinds of loss, kept apart
  *
- * 40 of the 122 ground-truth notes are never detected at all - 71 % of `run`,
- * 56 % of `octaves`. Those are the detector's limits and nothing in
- * `transcription-harmonics.ts` can recover them. Suppression's own losses are
- * 12 notes. Pooling the two would let a change that destroys real notes hide
- * behind a detector that was never going to find them, so the table carries
- * them as separate columns (`miss` and `lost`) and the two listings below name
- * every note in each.
+ * 51 of the 182 ground-truth notes are never detected at all - 71 % of `run`,
+ * 56 % of `octaves`, 62 % of `ghosts`. Those are the detector's limits and
+ * nothing in `transcription-harmonics.ts` can recover them. Suppression's own
+ * losses are 22 notes. Pooling the two would let a change that destroys real
+ * notes hide behind a detector that was never going to find them, so the table
+ * carries them as separate columns (`miss` and `lost`) and the two listings
+ * below name every note in each.
+ *
+ * ## What adding dynamics did to these numbers
+ *
+ * The first ten materials are played at one strength; the six after them are
+ * not, and they were added because an amplitude discriminator cannot be
+ * measured on material that has no dynamic range. Over the ten, the headline
+ * was 55.6 / 57.4 / 56.5 with **12** real notes destroyed. Over the sixteen it
+ * is 56.5 / 59.9 / 58.1 with **22**.
+ *
+ * The headline barely moved and that is misleading, so read the `lost` column
+ * instead. Suppression makes three of the six new rows *worse* than the raw
+ * detector: `quietOverLoud` 55.2 -> 42.1, `loudOverQuiet` 66.7 -> 60.0,
+ * `ghosts` 35.7 -> 30.0. On `loudOverQuiet` it destroys three of the six notes
+ * in the line. The proportion of detected notes that suppression destroys went
+ * from 12 in 82 to 22 in 131 - 15 % against 17 %, so the rate is up as well as
+ * the count, and it is up because the new material contains cases the old
+ * material could not.
+ *
+ * The last spec below is where that shows most sharply. Over the ten, the best
+ * amplitude cut cost 1 real note in 12; over the sixteen the same cut costs 5
+ * in 28. Amplitude ratio still wins - it removes 68 of 92 artefacts where the
+ * best length cut removes 41 - but it is not nearly the clean separator the
+ * uniform-velocity material made it look.
  *
  * ## The assertions are a regression floor, not a target
  *
@@ -25,7 +48,7 @@
  * files was edited without the other being re-captured, and every number here
  * is describing a state that never existed.
  *
- * The suppressed numbers are asserted as **floors**. They are not good - 55.6 %
+ * The suppressed numbers are asserted as **floors**. They are not good - 56.5 %
  * precision means most of what survives is still an artefact - and the plan
  * this harness was built for exists to raise them. The point of pinning them
  * is the opposite of aspiration: an optimisation, a refactor or a "tidy up" of
@@ -67,18 +90,21 @@ const WIDE_TOLERANCE_SEC = 0.075;
  */
 const MEASURED = {
   /** Exact: the frozen fixture and the frozen material fix all three. */
-  referenceNotes: 122,
-  rawDetections: 193,
-  rawMatched: 82,
+  referenceNotes: 182,
+  rawDetections: 310,
+  rawMatched: 131,
   /** Exact: a detector miss is decided before suppression ever runs. */
-  detectorMisses: 40,
-  /** Floors: 55.6 / 57.4 / 56.5 at 50 ms, 66.1 F1 at 75 ms. */
-  keptPrecision: 0.555,
-  keptRecall: 0.573,
-  keptF1: 0.564,
-  keptF1Wide: 0.66,
-  /** Ceiling: 12 real notes destroyed. Task 3's gate is to lower this. */
-  realNotesDestroyed: 12
+  detectorMisses: 51,
+  /** Floors: 56.5 / 59.9 / 58.1 at 50 ms, 67.7 F1 at 75 ms. */
+  keptPrecision: 0.564,
+  keptRecall: 0.598,
+  keptF1: 0.58,
+  keptF1Wide: 0.676,
+  /**
+   * Ceiling: 22 real notes destroyed, up from 12 over the ten materials that
+   * had no dynamics. Task 3's gate is to lower this.
+   */
+  realNotesDestroyed: 22
 };
 
 const log = (line: string): void => console.log(line); // eslint-disable-line no-console
@@ -90,6 +116,8 @@ describe('harmonic suppression accuracy', () => {
   const destroyed: string[] = [];
   const undetected: string[] = [];
   const removals: Removal[] = [];
+  /** How hard a note was played against what the detector said about it. */
+  const dynamics: { velocity: number; confidence: number }[] = [];
   let unattributed = 0;
 
   beforeAll(() => {
@@ -110,7 +138,7 @@ describe('harmonic suppression accuracy', () => {
       const lost = before.matched - after.matched;
 
       table.push(
-        `${material.name.padEnd(9)} ${String(before.reference).padStart(4)} ` +
+        `${material.name.padEnd(13)} ${String(before.reference).padStart(4)} ` +
           `${String(before.estimate).padStart(5)} ${pct(before.precision)} ` +
           `${pct(before.recall)} ${pct(before.f1)}  ` +
           `${String(after.estimate).padStart(5)} ${pct(after.precision)} ` +
@@ -148,6 +176,15 @@ describe('harmonic suppression accuracy', () => {
         });
       }
 
+      if (material.notes.some(note => note.velocity !== undefined)) {
+        material.notes.forEach((ref, index) => {
+          const est = before.matchOf[index];
+          if (est !== -1) {
+            dynamics.push({ velocity: ref.velocity ?? 1, confidence: detections[est].confidence });
+          }
+        });
+      }
+
       material.notes.forEach((ref, index) => {
         if (before.matchOf[index] === -1) {
           const near = detections
@@ -155,7 +192,7 @@ describe('harmonic suppression accuracy', () => {
             .map(d => `${d.pitch}@${d.onsetSec.toFixed(3)}`)
             .join(' ');
           undetected.push(
-            `  ${material.name.padEnd(9)} MIDI ${String(ref.pitch).padStart(2)} ` +
+            `  ${material.name.padEnd(13)} MIDI ${String(ref.pitch).padStart(2)} ` +
               `@${ref.onsetSec.toFixed(2)} - near it: ${near || '(nothing)'}`
           );
 
@@ -169,21 +206,25 @@ describe('harmonic suppression accuracy', () => {
             d.pitch === ref.pitch && Math.abs(d.onsetSec - ref.onsetSec) <= ONSET_TOLERANCE_SEC
         )) {
           const root = rootOf(kept, casualty);
+          // Both ratios, on every casualty, whichever clause did the
+          // killing. The duration one is what fired; the amplitude one is
+          // what Task 3 is about to fire instead, and it can only be judged
+          // on the notes the rule actually reaches.
           const why =
             root === undefined
               ? 'UNATTRIBUTED'
               : casualty.pitch === root.pitch
                 ? `unison of ${root.pitch}@${root.onsetSec.toFixed(3)} ` +
-                  `(amp ${casualty.confidence.toFixed(2)}/${root.confidence.toFixed(2)}, ` +
+                  `(amp ${(casualty.confidence / root.confidence).toFixed(2)}, ` +
                   `len ${(span(casualty) / span(root)).toFixed(2)})`
                 : `+${casualty.pitch - root.pitch} under ${root.pitch}` +
                   `@${root.onsetSec.toFixed(3)} ` +
-                  `(len ${span(casualty).toFixed(2)}/${span(root).toFixed(2)} = ` +
-                  `${(span(casualty) / span(root)).toFixed(2)} < ` +
-                  `${DEFAULT_HARMONIC_OPTIONS.partialDurationRatio})`;
+                  `(len ${(span(casualty) / span(root)).toFixed(2)} < ` +
+                  `${DEFAULT_HARMONIC_OPTIONS.partialDurationRatio}, ` +
+                  `amp ${(casualty.confidence / root.confidence).toFixed(2)})`;
 
           destroyed.push(
-            `  ${material.name.padEnd(9)} MIDI ${String(ref.pitch).padStart(2)} ` +
+            `  ${material.name.padEnd(13)} MIDI ${String(ref.pitch).padStart(2)} ` +
               `@${ref.onsetSec.toFixed(2)} lost as ${why}`
           );
         }
@@ -203,7 +244,7 @@ describe('harmonic suppression accuracy', () => {
 
   function overallRow(label: string, raw: Scores, kept: Scores): string {
     return (
-      `${label.padEnd(9)} ${String(raw.reference).padStart(4)} ` +
+      `${label.padEnd(13)} ${String(raw.reference).padStart(4)} ` +
       `${String(raw.estimate).padStart(5)} ${pct(raw.precision)} ` +
       `${pct(raw.recall)} ${pct(raw.f1)}  ` +
       `${String(kept.estimate).padStart(5)} ${pct(kept.precision)} ` +
@@ -220,8 +261,8 @@ describe('harmonic suppression accuracy', () => {
 
     log('');
     log(`ACC exact pitch; headline window +-${ONSET_TOLERANCE_SEC * 1000} ms`);
-    log('ACC                        raw detector                after suppression   detector  supp.');
-    log('ACC  fixture   ref   est     P     R    F1    est     P     R    F1   miss  lost');
+    log('ACC                            raw detector                after suppression   detector  supp.');
+    log('ACC  fixture        ref   est     P     R    F1    est     P     R    F1   miss  lost');
     for (const row of table) log(`ACC  ${row}`);
     log(`ACC  ${overallRow('OVERALL', rawAll, keptAll)}`);
     log(`ACC  ${overallRow('@75ms', wide.raw, wide.kept)}`);
@@ -336,6 +377,66 @@ describe('harmonic suppression accuracy', () => {
 
     expect(removals.length).toBeGreaterThan(0);
     expect(cost.length).toBeLessThanOrEqual(MEASURED.realNotesDestroyed);
+  });
+
+  it('shows that what the detector reports is not how hard the note was played', () => {
+    // The reason six materials with dynamics were added is that Task 3 means
+    // to discriminate partials by amplitude ratio, and a rule about amplitude
+    // measured on material with one dynamic level is asserted rather than
+    // measured. This is what the new material says back, and it is not what
+    // was expected.
+    //
+    // `DetectedNote.confidence` is not amplitude. `basic-pitch-detector.ts`
+    // says what it is - the *mean frame activation* over the note's span,
+    // bounded below by the model's own 0.3 frame threshold by construction -
+    // and across a 17.7 dB range of pluck strength it barely moves. On
+    // `accents` the loud downbeat roots come back at 0.46 while the offbeat
+    // octaves played at a third of their strength come back at 0.62: the
+    // quiet notes score *higher*.
+    //
+    // That cuts both ways for Task 3, and both ways are worth stating.
+    // Favourably: an amplitude-ratio cut is not going to be knocked over by
+    // dynamics, because it cannot see them - which is why the best cut is
+    // still 0.761 on this expanded set, exactly where it was on the uniform
+    // one. Unfavourably: the justification for the rule cannot be that
+    // partials start 8-35 dB below their fundamental and an amplitude ratio
+    // measures that. It does not measure it. Whatever separating power the
+    // ratio has comes from the model being less certain about a partial than
+    // about a note, which is a different claim and has to be argued as one.
+    const soft = dynamics.filter(d => d.velocity <= 0.35).map(d => d.confidence);
+    const hard = dynamics.filter(d => d.velocity >= 0.85).map(d => d.confidence);
+    const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const velocities = dynamics.map(d => d.velocity);
+
+    log('');
+    log(
+      `ACC ${dynamics.length} detected notes across the six materials that carry dynamics, ` +
+        `plucked from ${Math.min(...velocities).toFixed(2)} to ` +
+        `${Math.max(...velocities).toFixed(2)} of full strength ` +
+        `(${(20 * Math.log10(Math.max(...velocities) / Math.min(...velocities))).toFixed(1)} dB)`
+    );
+    log(
+      `ACC  mean confidence  softest (velocity <= 0.35) ${mean(soft).toFixed(3)} over ${soft.length}` +
+        `   hardest (>= 0.85) ${mean(hard).toFixed(3)} over ${hard.length}` +
+        `   ratio ${(mean(soft) / mean(hard)).toFixed(3)}`
+    );
+    log(
+      'ACC  a ratio near 1 where the plucks differ by a factor of three is the finding: ' +
+        'confidence is a mean frame activation, not a level'
+    );
+
+    // The material really does carry dynamics - if this fails, the fixtures
+    // stopped testing what they were added to test.
+    expect(Math.min(...velocities)).toBeLessThan(0.2);
+    expect(Math.max(...velocities)).toBe(1);
+
+    // ...and the detector reports them as very nearly the same note.
+    // Measured 0.954 against a physical amplitude ratio near 0.3; the bound
+    // is loose because the point is the order of magnitude, not the digit.
+    // If a detector change ever makes confidence track dynamics, this fails,
+    // and it should: every threshold chosen on this fixture would need
+    // revisiting.
+    expect(mean(soft) / mean(hard)).toBeGreaterThan(0.8);
   });
 
   it('scores the discriminators over every pair the duration clause arbitrates', () => {

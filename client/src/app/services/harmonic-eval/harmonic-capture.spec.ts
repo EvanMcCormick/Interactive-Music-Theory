@@ -9,12 +9,11 @@
  *
  * ## This spec is excluded from the default suite, deliberately
  *
- * Ten materials, each a model load and a WebGL inference run, all inside one
- * `it`. Karma's `browserNoActivityTimeout` is 30 s, and a browser that spends
- * longer than that in a single spec is indistinguishable from a dead one - so
- * including this in `npm test` ends the whole run at
- * `Executed 448 of 559 DISCONNECTED`, taking every later spec's result down
- * with it. It is excluded by an `exclude` glob on the `test` target in
+ * Sixteen materials, each a WebGL inference run, all inside one `it`. Karma's
+ * `browserNoActivityTimeout` is 30 s, and a browser that spends longer than
+ * that in a single spec is indistinguishable from a dead one - so including
+ * this in `npm test` ends the whole run at `Executed 448 of 559 DISCONNECTED`,
+ * taking every later spec's result down with it. It is excluded by an `exclude` glob on the `test` target in
  * `angular.json`, not by being renamed or commented out, so `tsc -p
  * tsconfig.spec.json --noEmit` still type-checks it on every run.
  *
@@ -23,9 +22,11 @@
  *     npm test -- --configuration=capture --watch=false
  *
  * That configuration selects this file and swaps in `karma.capture.conf.js`,
- * which is the ordinary config with a no-activity budget that matches the
- * jasmine timeout below. Then paste the `CAPTURE <name> [...]` lines it prints
- * into `detections.fixture.ts`.
+ * which is the ordinary config with the three browser budgets raised to match
+ * the jasmine timeout below - the no-activity one, and also the socket ping,
+ * which an inference run on the software rasteriser is long enough to miss.
+ * Then paste the `CAPTURE <name> [...]` lines it prints into
+ * `detections.fixture.ts`.
  *
  * It also prints the scores it measures live, from the detector's real output
  * rather than the freeze. If those ever disagree with what
@@ -54,6 +55,10 @@ describe('harmonic capture', () => {
     const kept: Scores[] = [];
 
     for (const material of MATERIAL) {
+      // Ten of these predate dynamics and must re-freeze to exactly what they
+      // froze to before, or the before-and-after comparison in
+      // `harmonic-accuracy.spec.ts` is between two different instruments.
+      // Diff the `CAPTURE` lines for `walking`..`ballad` against the file.
       const audio = render(material, DETECTION_SAMPLE_RATE);
       const result = await detector.detect(audio, DETECTION_SAMPLE_RATE, () => undefined);
 

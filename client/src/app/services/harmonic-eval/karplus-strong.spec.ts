@@ -27,6 +27,15 @@
  *     reports partials as much shorter notes. That gap is what finding 3 of
  *     the accuracy plan rests on.
  *  4. **A pluck envelope**: loudest at the attack, monotonically down after.
+ *  5. **Velocity is a pluck, not a gain.** Six of the sixteen materials carry
+ *     dynamics, and the discriminator the accuracy plan is about to adopt
+ *     reads amplitude - so if velocity were only a multiplier on the rendered
+ *     voice, the new material would test that discriminator with a knob that
+ *     changes nothing about the sound. It is not: scaling the initial
+ *     displacement while the finger's release transient stays where it is
+ *     lifts the residue above the 4th partial from 0.07 of the fundamental at
+ *     full strength to 0.16-0.24 at a tenth of it. A gain cannot move that
+ *     ratio at all, because it is scale-invariant and the loop is linear.
  *
  * If a change to `karplus-strong.ts` breaks any of these, the accuracy
  * fixtures are measuring a different instrument and every conclusion drawn
@@ -141,6 +150,70 @@ describe('Karplus-Strong', () => {
     // is for an RMS window straddling a zero crossing, not for a real rise.
     for (let i = 1; i < envelope.length; i++) {
       expect(envelope[i]).toBeLessThanOrEqual(envelope[i - 1] * 1.02);
+    }
+  });
+
+  /**
+   * The assertion that keeps velocity honest.
+   *
+   * Task 3 chooses an amplitude threshold, and it can only be measured on
+   * material with dynamics. If those dynamics were a gain on the rendered
+   * voice, they would still make a note quieter in the mix - but they would
+   * make it quieter in a way no physical pluck is quieter, and a detector
+   * reading a spectrum would be handed a loud note with the volume turned
+   * down rather than a soft note.
+   *
+   * The difference is measurable because the finger's release transient does
+   * not scale with how far the string is pulled. Below velocity 1 the
+   * displacement shrinks and the transient does not, so the residue above the
+   * 4th partial grows as a share of the fundamental. That share is a *ratio*,
+   * so a gain leaves it exactly where it was - which is what makes it the
+   * right thing to measure here.
+   */
+  it('takes velocity as a pluck, not as a gain on the output', () => {
+    /** Energy above the 4th partial, as a share of the fundamental. */
+    const residueShare = (audio: Float32Array, f0: number): number => {
+      const fundamental = partial(audio, f0, 1, 0.05, 0.3);
+      let residue = 0;
+      for (let k = 4; k <= 12; k++) {
+        const m = partial(audio, f0, k, 0.05, 0.3);
+        residue += m * m;
+      }
+
+      return Math.sqrt(residue) / fundamental;
+    };
+
+    for (const midi of [28, 33, 40, 52]) {
+      const f0 = midiToHz(midi);
+      const shares = [1, 0.5, 0.32, 0.22, 0.12].map(velocity => ({
+        velocity,
+        share: residueShare(karplusStrong(f0, 1.2, RATE, 1.2, 5000 + midi, velocity), f0)
+      }));
+
+      log(
+        `KS-VELOCITY midi ${String(midi).padStart(2)}  residue/fundamental  ` +
+          shares.map(s => `v${s.velocity} ${s.share.toFixed(3)}`).join('  ')
+      );
+
+      // Softer is proportionally noisier, all the way down. Measured 0.069 ->
+      // 0.161 at E1 and 0.043 -> 0.178 at E3.
+      for (let i = 1; i < shares.length; i++) {
+        expect(shares[i].share).toBeGreaterThan(shares[i - 1].share);
+      }
+      expect(shares[shares.length - 1].share).toBeGreaterThan(shares[0].share * 2);
+
+      // ...and the same note at full strength, multiplied down to the same
+      // level afterwards, has exactly the share it had before - which is what
+      // "velocity is not a gain" means, stated as an equality rather than as
+      // prose.
+      const loud = karplusStrong(f0, 1.2, RATE, 1.2, 5000 + midi, 1);
+      const gained = loud.map(x => x * 0.12);
+      expect(residueShare(gained, f0)).toBeCloseTo(shares[0].share, 6);
+
+      // It is still a dynamic: the soft note really is quieter.
+      const soft = karplusStrong(f0, 1.2, RATE, 1.2, 5000 + midi, 0.22);
+      const peak = (x: Float32Array): number => x.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+      expect(peak(soft)).toBeLessThan(peak(loud) * 0.4);
     }
   });
 

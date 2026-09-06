@@ -10,12 +10,41 @@
  * documentation for whoever reads a per-fixture row of the accuracy table and
  * wants to know why that row exists; nothing computes on it.
  *
- * Known limitation, and the reason Task 2 of the accuracy plan exists: **every
- * note here is plucked at identical strength.** Any discriminator that reads
- * amplitude therefore has an easier job on this material than it would on real
- * music, because the case that would defeat it - a quiet real note over a loud
- * ringing root - cannot occur. Do not choose an amplitude threshold from these
- * fixtures alone.
+ * ## Dynamics
+ *
+ * The first ten lines are played at one strength throughout, and were frozen
+ * that way. That was the spike's largest caveat: amplitude ratio is the
+ * discriminator harmonic suppression is about to rest on, and material with no
+ * dynamic range cannot contradict an amplitude rule, so a threshold fitted to
+ * those ten alone would be asserted rather than measured - the same mistake
+ * `partialDurationRatio` embodies.
+ *
+ * The six lines after them exist to contradict it. `quietOverLoud` is the one
+ * that matters most: real notes, softly played, at partial intervals over a
+ * loud root still ringing - which is what an amplitude rule ought to mistake
+ * for a partial, and which until now nothing in this file contained. `accents`
+ * is the same case in its most ordinary form: a bassline whose offbeat octaves
+ * are simply played lighter than its downbeats. `loudOverQuiet` is the
+ * converse; `crescendo` and `decrescendo` are the same eight pitches at the
+ * same eight onsets with the velocity ramp reversed, so the two rows differ by
+ * dynamics and nothing else; `ghosts` puts dead notes at a tenth of full
+ * strength next to notes at full strength.
+ *
+ * Velocity is not a level applied afterwards. It is how far the finger pulls
+ * the string, and it enters the synthesis there; `karplus-strong.ts` says what
+ * that changes that a gain would not. Notes that state no velocity are played
+ * at full strength, which is why the first ten fixtures are byte-for-byte the
+ * audio they were captured from.
+ *
+ * What these six then revealed is not what they were added to reveal, and
+ * anyone choosing a velocity here should know it before choosing:
+ * `DetectedNote.confidence` barely responds to how hard a note is played. Over
+ * the 17.7 dB these fixtures span it moves by 5 %. It is a mean frame
+ * activation and not a level - `basic-pitch-detector.ts` says so, and
+ * `harmonic-accuracy.spec.ts` measures it. So do not reach for a lower
+ * velocity expecting a lower `confidence`; what a lower velocity actually buys
+ * is a note the detector may miss entirely, which is why `ghosts` contributes
+ * eight of the fifty-one notes nothing ever found.
  *
  * Test-support code. Nothing in the shipped app imports it.
  */
@@ -28,6 +57,15 @@ export interface GroundTruthNote {
   onsetSec: number;
   /** How long the string is left to ring. */
   durationSec: number;
+  /**
+   * How hard it is plucked, 0 to 1. Absent means full strength.
+   *
+   * Absent rather than defaulted at every call site on purpose: the ten
+   * fixtures that predate dynamics say nothing about velocity and so render
+   * exactly the audio they were captured from, and a reader can see at a
+   * glance which lines are about dynamics and which are not.
+   */
+  velocity?: number;
 }
 
 export interface Material {
@@ -35,6 +73,11 @@ export interface Material {
   /** What it is meant to break. */
   stresses: string;
   notes: GroundTruthNote[];
+}
+
+/** A linear velocity ramp from `from` to `to` across `count` notes. */
+function ramp(from: number, to: number, count: number, index: number): number {
+  return count < 2 ? to : from + ((to - from) * index) / (count - 1);
 }
 
 /** `pitches` one every `spacingSec`, each ringing `durationSec`. */
@@ -70,6 +113,9 @@ const B3 = 59;
 const C4 = 60;
 const D4 = 62;
 const E4 = 64;
+
+/** Shared by `crescendo` and `decrescendo`, so the two differ only in dynamics. */
+const CRESCENDO_PITCHES: number[] = [E1, E2, G1, G2, A1, A2, C2, C3];
 
 export const MATERIAL: Material[] = [
   {
@@ -178,6 +224,114 @@ export const MATERIAL: Material[] = [
     name: 'ballad',
     stresses: 'long ring-out, where a partial has time to be reported as a long note',
     notes: line([E1, C2, G1, D2, A1, E2], 1.2, 1.6)
+  },
+  {
+    name: 'quietOverLoud',
+    stresses:
+      'the case no other fixture contains: a real note played softly at a ' +
+      "partial's interval over a loud root that is still ringing",
+    // Three loud roots, each with a soft melody note above it at +12, +19 or
+    // +24, plucked at a fifth to a third of the root's strength. Two of the
+    // soft notes ring nearly as long as the root under them, so a length rule
+    // has little to go on and an amplitude rule ought to have everything.
+    //
+    // Measured, it does not: the detector reports these notes at 0.70-0.90 of
+    // the root's `confidence` despite being 12-14 dB under it, because
+    // `confidence` is a mean frame activation rather than a level. The line
+    // is still doing its job - it is the only place the question can be asked
+    // - but the answer it gave was about the feature, not about the notes.
+    notes: [
+      { pitch: E1, onsetSec: 0, durationSec: 2.4 },
+      { pitch: E2, onsetSec: 0.45, durationSec: 1.9, velocity: 0.22 },
+      { pitch: B2, onsetSec: 1.3, durationSec: 0.55, velocity: 0.26 },
+      { pitch: A1, onsetSec: 2.8, durationSec: 2.4 },
+      { pitch: A2, onsetSec: 3.25, durationSec: 1.9, velocity: 0.2 },
+      { pitch: E3, onsetSec: 3.95, durationSec: 0.6, velocity: 0.3 },
+      { pitch: C2, onsetSec: 5.6, durationSec: 2.4 },
+      { pitch: C4, onsetSec: 6.05, durationSec: 1.8, velocity: 0.25 },
+      // Not a partial's interval, so suppression cannot touch it however
+      // quiet it is. It says whether the detector can hear a note this soft
+      // at all, which is the difference between a fixture that measures
+      // suppression and one that measures the detector.
+      { pitch: G2, onsetSec: 6.9, durationSec: 0.6, velocity: 0.28 }
+    ]
+  },
+  {
+    name: 'loudOverQuiet',
+    stresses: 'the converse: a loud note at a partial interval over a quiet root',
+    notes: [
+      { pitch: E1, onsetSec: 0, durationSec: 2.2, velocity: 0.28 },
+      { pitch: E2, onsetSec: 0.4, durationSec: 1.6 },
+      { pitch: A1, onsetSec: 2.6, durationSec: 2.2, velocity: 0.25 },
+      { pitch: E3, onsetSec: 3.0, durationSec: 1.6 },
+      { pitch: C2, onsetSec: 5.2, durationSec: 2.2, velocity: 0.3 },
+      { pitch: C4, onsetSec: 5.6, durationSec: 1.6, velocity: 0.95 }
+    ]
+  },
+  {
+    name: 'crescendo',
+    stresses: 'octave pairs whose pluck strength climbs through the whole dynamic range',
+    // Root, octave, root, octave up the neck, getting louder. Each note rings
+    // under the two after it, so every octave is a live root/partial pair -
+    // and because the line grows, the upper note of each pair is always the
+    // louder one. `decrescendo` is the same eight notes at the same eight
+    // onsets with the ramp reversed, which makes the two rows a controlled
+    // pair: they differ by dynamics and by nothing else.
+    notes: CRESCENDO_PITCHES.map((pitch, i) => ({
+      pitch,
+      onsetSec: i * 0.45,
+      durationSec: 0.9,
+      velocity: ramp(0.22, 1, CRESCENDO_PITCHES.length, i)
+    }))
+  },
+  {
+    name: 'decrescendo',
+    stresses: 'the same octave pairs played the other way round, loud down to soft',
+    notes: CRESCENDO_PITCHES.map((pitch, i) => ({
+      pitch,
+      onsetSec: i * 0.45,
+      durationSec: 0.9,
+      velocity: ramp(1, 0.22, CRESCENDO_PITCHES.length, i)
+    }))
+  },
+  {
+    name: 'ghosts',
+    stresses: 'dead notes at a tenth of full strength, beside notes at full strength',
+    notes: [
+      { pitch: E1, onsetSec: 0, durationSec: 0.75 },
+      { pitch: E2, onsetSec: 0.3, durationSec: 0.12, velocity: 0.12 },
+      { pitch: E1, onsetSec: 0.6, durationSec: 0.12, velocity: 0.1 },
+      { pitch: E1, onsetSec: 0.9, durationSec: 0.75 },
+      { pitch: G1, onsetSec: 1.2, durationSec: 0.12, velocity: 0.1 },
+      { pitch: A1, onsetSec: 1.8, durationSec: 0.75 },
+      { pitch: A2, onsetSec: 2.1, durationSec: 0.12, velocity: 0.14 },
+      { pitch: A1, onsetSec: 2.4, durationSec: 0.12, velocity: 0.1 },
+      { pitch: C2, onsetSec: 2.7, durationSec: 0.75 },
+      { pitch: C3, onsetSec: 3.0, durationSec: 0.12, velocity: 0.13 },
+      { pitch: C2, onsetSec: 3.3, durationSec: 0.55, velocity: 0.95 },
+      { pitch: G2, onsetSec: 3.9, durationSec: 0.12, velocity: 0.11 },
+      { pitch: E1, onsetSec: 4.2, durationSec: 0.9 }
+    ]
+  },
+  {
+    name: 'accents',
+    stresses: 'the ordinary case: offbeat octaves played lighter than the downbeat roots under them',
+    // Sixteen eighths at 108 BPM, root on the beat and its octave off it, the
+    // offbeats plucked at a third of the weight. This is a bassline anyone
+    // would play, and every offbeat in it is a real note at +12 over a root
+    // three times its strength - the shape an amplitude cut is built to
+    // delete. What the detector hands back for those offbeats is a
+    // *confidence* around 1.3 times the root's, not 0.3, which is the
+    // clearest single illustration in the set that the two are not the same
+    // quantity.
+    notes: [E1, E2, E1, E2, G1, G2, G1, G2, A1, A2, A1, A2, C2, C3, C2, C3].map(
+      (pitch, i) => ({
+        pitch,
+        onsetSec: (i * 60) / 108 / 2,
+        durationSec: 0.45,
+        velocity: i % 2 === 0 ? 1 : 0.32
+      })
+    )
   }
 ];
 
@@ -188,9 +342,15 @@ export function materialDurationSec(material: Material): number {
 /**
  * Renders a material to mono audio at `rate`.
  *
- * Every note is plucked at the same strength and the mix is normalised once at
- * the end, so nothing here encodes a view about which notes a detector should
- * find easier.
+ * Velocity reaches the string as the pluck it is - `karplusStrong` scales the
+ * initial displacement - rather than as a gain on the voice it returns. The
+ * mix is then normalised once, at the end, over the whole material: that is
+ * what makes a note at velocity 0.22 actually quiet *relative to the root
+ * ringing beside it*, and it is why scaling the rendered output instead would
+ * be a strict no-op here rather than a dynamic.
+ *
+ * Nothing else in this function encodes a view about which notes a detector
+ * should find easier.
  */
 export function render(material: Material, rate: number): Float32Array {
   const out = new Float32Array(Math.ceil(materialDurationSec(material) * rate));
@@ -202,7 +362,8 @@ export function render(material: Material, rate: number): Float32Array {
       rate,
       note.durationSec,
       // A different burst per note, stable across runs.
-      1000 + index * 7919
+      1000 + index * 7919,
+      note.velocity ?? 1
     );
     const at = Math.round(note.onsetSec * rate);
     for (let i = 0; i < voice.length && at + i < out.length; i++) out[at + i] += voice[i];

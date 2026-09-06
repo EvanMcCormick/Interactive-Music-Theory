@@ -18,14 +18,27 @@
 // karma would have no way to honour at 30. So the budget is raised to match
 // the spec rather than left to sit a few seconds under it.
 //
-// A separate file rather than raising the timeout globally: 30 s is a useful
+// A separate file rather than raising the timeouts globally: 30 s is a useful
 // alarm on every other spec in the suite, and a hang there should fail rather
 // than sit for ten minutes.
+//
+// `browserNoActivityTimeout` alone turned out not to be enough, and the way it
+// fails is misleading. Karma also holds a socket.io ping between server and
+// browser on a separate 5 s budget, and an inference run on the SwiftShader
+// rasteriser keeps the browser busy for longer than that. The browser misses a
+// ping, karma gives up on it, and the run ends
+// `Executed 0 of 1 DISCONNECTED - reconnect failed before timeout of 2000ms
+// (ping timeout)` - which reads like a hang and is really a busy tab. The
+// smallest of the budgets decides, so `pingTimeout` has to move with the other
+// one. Nothing else does: with the ping honoured, the disconnect path this was
+// failing down is never entered, so its own timeouts are left at their
+// defaults where they can still catch a browser that has genuinely died.
 const base = require('./karma.conf');
 
 module.exports = function (config) {
   base(config);
   config.set({
-    browserNoActivityTimeout: 600000
+    browserNoActivityTimeout: 600000,
+    pingTimeout: 600000
   });
 };

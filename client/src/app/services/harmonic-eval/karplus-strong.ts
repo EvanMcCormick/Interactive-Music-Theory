@@ -47,6 +47,37 @@
  * Per-partial *decay*, which is the only thing `partialDurationRatio` rests
  * on, is untouched by any of this: it comes from the loop filter alone.
  *
+ * ## How hard the string is plucked
+ *
+ * `velocity` is how far the finger pulls the string before letting go: it
+ * scales the triangular displacement, and only that. It is applied inside the
+ * excitation, before the delay line, because that is where a player's dynamics
+ * actually enter - and because the alternative, multiplying the rendered
+ * output, is not the same thing in either of the two places it matters.
+ *
+ * *In the mix*, decisively so. `render` sums the voices and normalises the
+ * result once. A note synthesised at 0.25 sits 12 dB under the root ringing
+ * beside it in the same file, with that root's tail and the mix's own floor
+ * exactly where they were; scaling the rendered material by 0.25 instead moves
+ * everything together and the normalisation puts it straight back. One is a
+ * dynamic, the other is a no-op.
+ *
+ * *Within one note*, in the release transient. The delay loop is linear, so
+ * the triangle's contribution does scale exactly like a gain - that much is
+ * arithmetic and there is no point pretending otherwise. What does not scale
+ * is `PICK_NOISE`, the broadband click of a finger letting go: that comes from
+ * the finger leaving the string rather than from how far the string was
+ * pulled, so it stays at its own level while the displacement shrinks. A soft
+ * pluck therefore comes back with a markedly worse harmonic-to-noise ratio
+ * than a hard one, which is what a soft pluck on a real string does and what a
+ * gain cannot produce. `karplus-strong.spec.ts` measures the size of that
+ * difference rather than asserting it exists.
+ *
+ * At `velocity` 1 the excitation is bit-identical to what this function
+ * produced before velocity existed - `1 * line + 0 * share` - which is
+ * what lets the ten original fixtures stay frozen while new ones are added
+ * beside them.
+ *
  * Test-support code. Nothing in the shipped app imports it.
  */
 
@@ -80,15 +111,19 @@ export const midiToHz = (midi: number): number => 440 * Math.pow(2, (midi - 69) 
 /**
  * One plucked string.
  *
- * @param decaySec time for the loop gain to take the note down 60 dB. The one
- *   performance parameter, uniform across partials.
+ * @param decaySec time for the loop gain to take the note down 60 dB. How long
+ *   the string is left to ring, uniform across partials.
+ * @param velocity how far the finger pulls the string, 0 to 1. Scales the
+ *   triangular displacement and nothing else; see this file's docblock for why
+ *   that is not the same as scaling the output.
  */
 export function karplusStrong(
   freqHz: number,
   seconds: number,
   rate: number,
   decaySec: number,
-  seed: number
+  seed: number,
+  velocity = 1
 ): Float32Array {
   const total = Math.max(1, Math.round(seconds * rate));
   const out = new Float32Array(total);
@@ -104,13 +139,22 @@ export function karplusStrong(
 
   const rng = mulberry32(seed);
   const apex = Math.max(1, Math.round(PLUCK_POSITION * size));
+  // Plain doubles, not a Float32Array: rounding the transient to single
+  // precision before it is added would shift `line` by an ulp, and the ten
+  // fixtures captured before velocity existed would no longer re-freeze to
+  // the same numbers.
+  const transient: number[] = new Array<number>(size);
   let mean = 0;
+  let transientMean = 0;
   for (let i = 0; i < size; i++) {
     const displacement = i < apex ? i / apex : (size - i) / (size - apex);
-    line[i] = displacement + PICK_NOISE * (rng() * 2 - 1);
+    transient[i] = PICK_NOISE * (rng() * 2 - 1);
+    transientMean += transient[i];
+    line[i] = displacement + transient[i];
     mean += line[i];
   }
   mean /= size;
+  transientMean /= size;
   // The triangle has a large non-zero mean, and the averaging filter passes DC
   // at unity - so the offset would survive as a subsonic thump the whole
   // length of the note. Removing it is bookkeeping, not voicing: a real
@@ -119,6 +163,22 @@ export function karplusStrong(
   let peak = 0;
   for (let i = 0; i < size; i++) peak = Math.max(peak, Math.abs(line[i]));
   if (peak > 0) for (let i = 0; i < size; i++) line[i] /= peak;
+
+  // How hard it was plucked. `line` is displacement + transient; subtracting
+  // the transient's own share leaves the displacement, so this is
+  // `velocity * displacement + transient` written to leave the loop below
+  // reading one array. The transient keeps its level while the displacement
+  // shrinks, which is the whole difference between a dynamic and a gain.
+  //
+  // Both terms are normalised by the same `peak` as `line`, so at velocity 1
+  // this is `1 * line[i] + 0 * share` and the excitation is bit-for-bit what
+  // it was before velocity existed. The ten original fixtures depend on that.
+  if (peak > 0) {
+    for (let i = 0; i < size; i++) {
+      const share = (transient[i] - transientMean) / peak;
+      line[i] = velocity * line[i] + (1 - velocity) * share;
+    }
+  }
 
   const rho = Math.pow(0.001, 1 / Math.max(1, freqHz * decaySec));
 
