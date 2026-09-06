@@ -7,7 +7,13 @@ import {
 } from '../models/transcription.model';
 import { deriveScore } from './score-derivation';
 import { beatSlots } from './transcription-quantize';
-import { nudgedDownbeat, withTempo } from './beat-grid-edit';
+import {
+  MAX_DOWNBEAT_NUDGE_BEATS,
+  MAX_TEMPO_BPM,
+  MIN_TEMPO_BPM,
+  nudgedDownbeat,
+  withTempo
+} from './beat-grid-edit';
 
 const FOUR_FOUR: TimeSignature = { numerator: 4, denominator: 4, isCommon: true };
 
@@ -44,6 +50,27 @@ describe('withTempo', () => {
     }
   });
 
+  it('refuses a tempo outside the musical range', () => {
+    for (const bad of [MIN_TEMPO_BPM - 1, MAX_TEMPO_BPM + 1, 9999, 1e6]) {
+      expect(withTempo(GRID, bad)).toBe(GRID);
+    }
+  });
+
+  it('accepts both ends of the range', () => {
+    expect(withTempo(GRID, MIN_TEMPO_BPM)).not.toBe(GRID);
+    expect(withTempo(GRID, MAX_TEMPO_BPM)).not.toBe(GRID);
+  });
+
+  it('cannot be asked for more bars than a score can hold', () => {
+    // The hazard the ceiling exists for: bar count scales linearly with tempo,
+    // and every bar is a MasterBarDoc, a quantizeBar call and a bar of rests.
+    // Five minutes of audio at the top of the range, in beats.
+    const fiveMinutes: BeatGrid = { beatsSec: [0, 0.5, 300], timeSignature: FOUR_FOUR };
+
+    expect(withTempo(fiveMinutes, MAX_TEMPO_BPM).beatsSec.length).toBeLessThan(2100);
+    expect(withTempo(fiveMinutes, 9999).beatsSec).toBe(fiveMinutes.beatsSec);
+  });
+
   it('keeps the time signature', () => {
     expect(withTempo(GRID, 90).timeSignature).toEqual(FOUR_FOUR);
   });
@@ -67,7 +94,9 @@ describe('nudgedDownbeat', () => {
   });
 
   it('never leaves fewer than two beats', () => {
-    expect(nudgedDownbeat(GRID, 99).beatsSec.length).toBe(2);
+    // The grid has five beats and the nudge asks for eight, which is the most
+    // it will take at all.
+    expect(nudgedDownbeat(GRID, MAX_DOWNBEAT_NUDGE_BEATS).beatsSec.length).toBe(2);
   });
 
   it('lets the grid start before the audio does', () => {
@@ -85,6 +114,24 @@ describe('nudgedDownbeat', () => {
 
   it('refuses a fractional nudge', () => {
     expect(nudgedDownbeat(GRID, 0.5)).toBe(GRID);
+  });
+
+  it('refuses a nudge further than the bound, in either direction', () => {
+    const tooFar = MAX_DOWNBEAT_NUDGE_BEATS + 1;
+
+    expect(nudgedDownbeat(GRID, tooFar)).toBe(GRID);
+    expect(nudgedDownbeat(GRID, -tooFar)).toBe(GRID);
+  });
+
+  it('does not build an array per beat for an absurd backward nudge', () => {
+    // Before the bound this reached `Array.from({ length: 1e9 })`. The
+    // assertion is that it returns at all; `toBe` is what says it did nothing.
+    expect(nudgedDownbeat(GRID, -1e9)).toBe(GRID);
+  });
+
+  it('accepts a nudge exactly at the bound', () => {
+    expect(nudgedDownbeat(GRID, -MAX_DOWNBEAT_NUDGE_BEATS).beatsSec.length)
+      .toBe(GRID.beatsSec.length + MAX_DOWNBEAT_NUDGE_BEATS);
   });
 });
 

@@ -103,6 +103,25 @@ describe('withTempo', () => {
     }
   });
 
+  it('refuses a tempo outside the musical range', () => {
+    for (const bad of [MIN_TEMPO_BPM - 1, MAX_TEMPO_BPM + 1, 9999, 1e6]) {
+      expect(withTempo(GRID, bad)).toBe(GRID);
+    }
+  });
+
+  it('accepts both ends of the range', () => {
+    expect(withTempo(GRID, MIN_TEMPO_BPM)).not.toBe(GRID);
+    expect(withTempo(GRID, MAX_TEMPO_BPM)).not.toBe(GRID);
+  });
+
+  it('cannot be asked for more bars than a score can hold', () => {
+    // Five minutes of audio, at the top of the range.
+    const fiveMinutes: BeatGrid = { beatsSec: [0, 0.5, 300], timeSignature: FOUR_FOUR };
+
+    expect(withTempo(fiveMinutes, MAX_TEMPO_BPM).beatsSec.length).toBeLessThan(2100);
+    expect(withTempo(fiveMinutes, 9999).beatsSec).toBe(fiveMinutes.beatsSec);
+  });
+
   it('keeps the time signature', () => {
     expect(withTempo(GRID, 90).timeSignature).toEqual(FOUR_FOUR);
   });
@@ -126,7 +145,8 @@ describe('nudgedDownbeat', () => {
   });
 
   it('never leaves fewer than two beats', () => {
-    expect(nudgedDownbeat(GRID, 99).beatsSec.length).toBe(2);
+    // Five beats, and the nudge asks for the most it will take at all.
+    expect(nudgedDownbeat(GRID, MAX_DOWNBEAT_NUDGE_BEATS).beatsSec.length).toBe(2);
   });
 
   it('lets the grid start before the audio does', () => {
@@ -144,6 +164,23 @@ describe('nudgedDownbeat', () => {
 
   it('refuses a fractional nudge', () => {
     expect(nudgedDownbeat(GRID, 0.5)).toBe(GRID);
+  });
+
+  it('refuses a nudge further than the bound, in either direction', () => {
+    const tooFar = MAX_DOWNBEAT_NUDGE_BEATS + 1;
+
+    expect(nudgedDownbeat(GRID, tooFar)).toBe(GRID);
+    expect(nudgedDownbeat(GRID, -tooFar)).toBe(GRID);
+  });
+
+  it('does not build an array per beat for an absurd backward nudge', () => {
+    // Before the bound this reached `Array.from({ length: 1e9 })`.
+    expect(nudgedDownbeat(GRID, -1e9)).toBe(GRID);
+  });
+
+  it('accepts a nudge exactly at the bound', () => {
+    expect(nudgedDownbeat(GRID, -MAX_DOWNBEAT_NUDGE_BEATS).beatsSec.length)
+      .toBe(GRID.beatsSec.length + MAX_DOWNBEAT_NUDGE_BEATS);
   });
 });
 ```
@@ -169,7 +206,37 @@ import { BeatGrid } from '../models/transcription.model';
  * tuning the tracker fixes and which a listener spots instantly.
  *
  * Both functions return a new grid, so the caller can re-derive and compare.
+ *
+ * Both corrections are bounded here rather than in the UI. These are public
+ * service methods and a `min`/`max` on a number input is one caller's
+ * decoration, not their contract; what is on the far side of the bound is not a
+ * wrong answer but a hang. Out-of-range values are refused rather than clamped,
+ * matching how both functions already treat input they cannot use, so the
+ * caller can compare by identity.
  */
+
+/** Slowest tempo a listener can state — below Larghissimo, under the tracker's 50 BPM floor. */
+export const MIN_TEMPO_BPM = 20;
+
+/**
+ * Fastest tempo a listener can state.
+ *
+ * Twice Prestissimo and past the tracker's 210 BPM ceiling, so a listener who
+ * hears the tracked pulse as half-time can double it. Bar count scales linearly
+ * with tempo: `updateTempo(9999)` on a five-minute file asks for some 12,500
+ * bars, each a `MasterBarDoc`, a `quantizeBar` call and a bar of rests, then an
+ * alphaTab render that does not return. At 400 BPM the same file is 500 bars.
+ */
+export const MAX_TEMPO_BPM = 400;
+
+/**
+ * Furthest the downbeat can be moved, either way — two bars of 4/4.
+ *
+ * "Which pulse is beat 1" is settled inside one bar. Past two bars it is a trim
+ * rather than a phase correction, and backwards it is an array element per beat
+ * asked for: `nudgeDownbeat(-1e9)` went straight to `Array.from({length: 1e9})`.
+ */
+export const MAX_DOWNBEAT_NUDGE_BEATS = 8;
 
 /**
  * Respaces a grid to a new tempo, anchored on its first beat.
@@ -178,7 +245,9 @@ import { BeatGrid } from '../models/transcription.model';
  * controls, so a tempo change must not move it.
  */
 export function withTempo(grid: BeatGrid, bpm: number): BeatGrid {
-  if (!Number.isFinite(bpm) || bpm <= 0) return grid;
+  // A range test rather than `> 0` plus a ceiling, so NaN — which compares
+  // false against everything — is refused by the same expression.
+  if (!(bpm >= MIN_TEMPO_BPM && bpm <= MAX_TEMPO_BPM)) return grid;
 
   const beats = grid.beatsSec;
   if (beats.length < 2) return grid;
@@ -201,10 +270,14 @@ export function withTempo(grid: BeatGrid, bpm: number): BeatGrid {
  * ones extend backwards using the leading interval, which can place the first
  * beat before zero — that is correct, and means the piece begins mid-bar.
  * `secondsToBeats` extrapolates before the grid by design.
+ *
+ * Bounded at `MAX_DOWNBEAT_NUDGE_BEATS` in *both* directions. Forward was
+ * already limited by the beats there are to drop; backward had no limit at all.
  */
 export function nudgedDownbeat(grid: BeatGrid, beats: number): BeatGrid {
   const source = grid.beatsSec;
   if (source.length < 2 || !Number.isInteger(beats) || beats === 0) return grid;
+  if (Math.abs(beats) > MAX_DOWNBEAT_NUDGE_BEATS) return grid;
 
   if (beats > 0) {
     const drop = Math.min(beats, source.length - 2);

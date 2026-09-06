@@ -385,7 +385,9 @@ export class TranscriptionService {
    * and a tempo control that moved the bar lines would undo that work.
    *
    * Costs a re-derivation and no detection, like every other knob here. A
-   * tempo that is not a positive, finite number leaves the grid alone; see
+   * tempo outside `MIN_TEMPO_BPM`..`MAX_TEMPO_BPM` leaves the grid alone,
+   * because bar count scales linearly with it and the far side of that bound is
+   * a render that does not return rather than a wrong answer; see
    * `withTempo`. A no-op unless a transcription has succeeded, and refused on
    * the same terms as `updateSettings`.
    */
@@ -414,7 +416,9 @@ export class TranscriptionService {
    *
    * A no-op unless a transcription has succeeded, and refused on the same
    * terms as `updateSettings`. A fractional or zero nudge leaves the grid
-   * alone; see `nudgedDownbeat`.
+   * alone, as does one further than `MAX_DOWNBEAT_NUDGE_BEATS` - which is a
+   * trim rather than a phase correction, and backwards is an array element per
+   * beat asked for; see `nudgedDownbeat`.
    */
   nudgeDownbeat(beats: number): void {
     this.rederive(session => ({
