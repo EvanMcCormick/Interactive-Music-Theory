@@ -266,34 +266,56 @@ export const MAX_BEATS_PER_PULSE = 4;
  *
  * A `beatsPerPulse` outside `MIN_BEATS_PER_PULSE`..`MAX_BEATS_PER_PULSE`, or
  * not a number at all, leaves the grid alone - refused rather than clamped,
- * like every other correction in this module, so a caller can compare by
- * identity and say the level was not applied.
+ * like every other correction in this module. Identity does not report that,
+ * because level 1 is applied and also returns the grid; `canApplyMetricalLevel`
+ * is the question a caller asks instead, and the one this is written in terms
+ * of.
  */
 export function atMetricalLevel(tracked: BeatGrid, beatsPerPulse: number): BeatGrid {
-  // A range test rather than `> 0` plus a ceiling, so NaN - false against
-  // everything - is refused by the same expression. `withTempo` does the same.
-  if (!(beatsPerPulse >= MIN_BEATS_PER_PULSE && beatsPerPulse <= MAX_BEATS_PER_PULSE)) {
-    return tracked;
-  }
-
-  const beats = tracked.beatsSec;
-  if (beats.length < 2) return tracked;
-
-  const last = beats.length - 1;
-
-  // No length hazard here - the count comes off the index span, not off the
-  // times - but a non-finite end would make every interpolated time non-finite,
-  // and `withTempo` already refuses this grid. Handing back a grid of NaNs
-  // would be worse than handing back the one that was given.
-  if (!Number.isFinite(beats[0]) || !Number.isFinite(beats[last])) return tracked;
-
+  if (!canApplyMetricalLevel(tracked, beatsPerPulse)) return tracked;
   if (beatsPerPulse === 1) return tracked;
 
+  const beats = tracked.beatsSec;
+  const last = beats.length - 1;
   const count = Math.max(2, Math.floor(last * beatsPerPulse) + 1);
   const beatsSec: number[] = [];
   for (let i = 0; i < count; i++) beatsSec.push(timeAtBeat(beats, i / beatsPerPulse));
 
   return { ...tracked, beatsSec };
+}
+
+/**
+ * Whether `atMetricalLevel` can resample `grid` at this level at all.
+ *
+ * The same shape as `canNudgeDownbeat` and there for a related reason, but a
+ * different question. A refused level and an applied one both hand back a
+ * grid, and at level 1 they hand back *the same* grid, so identity cannot tell
+ * a caller which happened - and a caller that recorded the level anyway would
+ * leave a session claiming a level its grid is not at.
+ *
+ * So this answers applicability rather than effect: **true at level 1**, which
+ * is applied and is the identity, and false only where the resampling could
+ * not happen - a level outside the bounds or not a number, a grid of under two
+ * beats, or one whose ends are not times.
+ *
+ * `atMetricalLevel` is written in terms of this rather than repeating the
+ * conditions, so the two cannot drift apart.
+ */
+export function canApplyMetricalLevel(grid: BeatGrid, beatsPerPulse: number): boolean {
+  // A range test rather than `> 0` plus a ceiling, so NaN - false against
+  // everything - is refused by the same expression. `withTempo` does the same.
+  if (!(beatsPerPulse >= MIN_BEATS_PER_PULSE && beatsPerPulse <= MAX_BEATS_PER_PULSE)) {
+    return false;
+  }
+
+  const beats = grid.beatsSec;
+  if (beats.length < 2) return false;
+
+  // No length hazard in the resampling - the count comes off the index span,
+  // not off the times - but a non-finite end would make every interpolated
+  // time non-finite, and `withTempo` already refuses this grid. Handing back a
+  // grid of NaNs would be worse than handing back the one that was given.
+  return Number.isFinite(beats[0]) && Number.isFinite(beats[beats.length - 1]);
 }
 
 /**

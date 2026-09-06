@@ -56,6 +56,7 @@ function session(
     bendFrameRateHz: 86.13,
     grid,
     trackedGrid: grid,
+    beatsPerPulse: 1,
     harmonics: DEFAULT_HARMONIC_OPTIONS,
     decisions: NO_NOTE_DECISIONS,
     settings: createDefaultDerivationSettings()

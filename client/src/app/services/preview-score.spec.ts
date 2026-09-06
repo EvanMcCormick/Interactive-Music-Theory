@@ -69,6 +69,7 @@ function session(
     bendFrameRateHz: 86.13,
     grid: GRID,
     trackedGrid: GRID,
+    beatsPerPulse: 1,
     harmonics: DEFAULT_HARMONIC_OPTIONS,
     decisions: NO_NOTE_DECISIONS,
     settings: createDefaultDerivationSettings()
@@ -431,6 +432,7 @@ describe('buildPreviewDoc over the pinned detector fixture', () => {
         // two fields, exactly as `transcribe` assembles it.
         grid: tracked,
         trackedGrid: tracked,
+        beatsPerPulse: 1,
         harmonics: DEFAULT_HARMONIC_OPTIONS,
         decisions: NO_NOTE_DECISIONS,
         settings: { ...createDefaultDerivationSettings(), confidenceFloor }
@@ -900,6 +902,7 @@ describe('the preview index over every captured material', () => {
       bendFrameRateHz: 86.13,
       grid: tracked,
       trackedGrid: tracked,
+      beatsPerPulse: 1,
       harmonics: DEFAULT_HARMONIC_OPTIONS,
       decisions: NO_NOTE_DECISIONS,
       settings: { ...createDefaultDerivationSettings(), confidenceFloor }

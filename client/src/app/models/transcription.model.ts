@@ -223,18 +223,54 @@ export interface TranscriptionSession {
    * one that followed the performance, and the measurements are gone. Seven of
    * the nine knobs are reversible and these two were not.
    *
-   * Kept so that they can be. Nothing reads it yet: the control that offers
-   * "restore the tracked tempo" is follow-up work, and the field is here
-   * because the fact it preserves is destroyed at the moment of the first
-   * correction and cannot be recovered afterwards without re-running the
-   * tracker - which means re-running suppression, which means the detector.
+   * Kept so that they can be, and now read as well as kept:
+   * `updateMetricalLevel` resamples *this* rather than the current grid, which
+   * is what makes levels commutative and lossless, and `resuppressed` compares
+   * against the grid the current level makes of it to decide whether the user
+   * has corrected the beats by hand.
    *
    * On the session rather than the state, alongside `rawNotes`, and for the
    * same reason: it is what the tracker observed about this audio, not what the
-   * current interpretation says. Never rewritten - `updateTempo` and
-   * `nudgeDownbeat` both spread the session and replace `grid` alone.
+   * current interpretation says. `updateTempo`, `nudgeDownbeat` and
+   * `updateMetricalLevel` all spread the session and replace `grid` alone. The
+   * one thing that rewrites it is a re-track - a suppression change is a
+   * different tracker input, so the measurements themselves are new - and that
+   * rewrites `grid` with it.
    */
   trackedGrid: BeatGrid;
+  /**
+   * Grid beats per tracked pulse: which note value the tracker actually found.
+   *
+   * 1 says it found the beat. 1.5 says it found a dotted quarter where the
+   * music is in quarters, 2 a half note, 0.5 an eighth. `grid` is
+   * `atMetricalLevel(trackedGrid, beatsPerPulse)` whenever the user has not
+   * since corrected the beats by hand, which is what makes this a *statement
+   * about the tracker* rather than a fourth way of setting the tempo.
+   *
+   * It is here and not in `DerivationSettings` for the reason `harmonics` is:
+   * `deriveScore` never reads it. What it describes is how the grid was built,
+   * a step before derivation, and by the time a score is derived the answer is
+   * already in `grid.beatsSec`.
+   *
+   * ## Why the level is kept rather than only its effect
+   *
+   * Because the grid can be rebuilt underneath it. A suppression threshold
+   * change re-tracks - beat tracking runs on the suppressed notes - and the new
+   * tracked grid arrives at the tracker's level, not the corrected one. Without
+   * this number there is nothing to re-apply, and moving a threshold would
+   * silently undo the correction. `resuppressed` is where that is handled.
+   *
+   * It also settles what `grid.beatsSec !== trackedGrid.beatsSec` means. That
+   * test used to read "the user corrected the beats", and a level makes the two
+   * arrays differ without anyone having touched a beat; the question is now
+   * asked against the grid this level implies.
+   *
+   * Bounded by `MIN_BEATS_PER_PULSE`..`MAX_BEATS_PER_PULSE`, and only ever
+   * written by `TranscriptionService.updateMetricalLevel`, which refuses
+   * anything `canApplyMetricalLevel` turns down rather than recording a level
+   * the grid is not at.
+   */
+  beatsPerPulse: number;
   /**
    * The thresholds the suppressor ran with. Live: changing them re-derives.
    *

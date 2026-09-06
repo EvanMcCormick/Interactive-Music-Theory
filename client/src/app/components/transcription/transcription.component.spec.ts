@@ -181,6 +181,7 @@ function makeSession(settings: Partial<DerivationSettings> = {}): TranscriptionS
     bendFrameRateHz: 86.13,
     grid: GRID,
     trackedGrid: GRID,
+    beatsPerPulse: 1,
     harmonics: DEFAULT_HARMONIC_OPTIONS,
     decisions: NO_NOTE_DECISIONS,
     settings: { ...createDefaultDerivationSettings(), ...settings }

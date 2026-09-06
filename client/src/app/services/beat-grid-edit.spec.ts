@@ -16,6 +16,7 @@ import {
   MIN_BEATS_PER_PULSE,
   MIN_TEMPO_BPM,
   atMetricalLevel,
+  canApplyMetricalLevel,
   canNudgeDownbeat,
   nudgedDownbeat,
   withTempo
@@ -316,6 +317,7 @@ describe('nudging the grid a score is derived from', () => {
     bendFrameRateHz: 86.13,
     grid,
     trackedGrid: grid,
+    beatsPerPulse: 1,
     harmonics: DEFAULT_HARMONIC_OPTIONS,
     decisions: NO_NOTE_DECISIONS,
     settings: createDefaultDerivationSettings()
@@ -673,5 +675,131 @@ describe('atMetricalLevel', () => {
       expect(atMetricalLevel(broken, 1.5)).toBe(broken);
       expect(atMetricalLevel(brokenEnd, 1.5)).toBe(brokenEnd);
     }
+  });
+});
+
+/**
+ * The question a caller asks before recording a level.
+ *
+ * `atMetricalLevel` hands back the grid it was given both when it refuses and
+ * when the level is 1, so identity cannot tell a caller which happened - unlike
+ * `nudgedDownbeat`, where it can. A session that recorded a refused level would
+ * claim a level its grid is not at, and `resuppressed` would then read a hand
+ * correction where there is none and stop re-tracking.
+ */
+describe('canApplyMetricalLevel', () => {
+  it('is true at level 1, which is applied and is the identity', () => {
+    expect(canApplyMetricalLevel(GRID, 1)).toBeTrue();
+    expect(atMetricalLevel(GRID, 1)).toBe(GRID);
+  });
+
+  it('is false for every level atMetricalLevel refuses', () => {
+    for (const bad of [0, -1, NaN, Infinity, MAX_BEATS_PER_PULSE + 1, 1e6]) {
+      expect(canApplyMetricalLevel(GRID, bad)).toBeFalse();
+      expect(atMetricalLevel(GRID, bad)).toBe(GRID);
+    }
+  });
+
+  it('is false for a grid it cannot resample, at any level', () => {
+    const short: BeatGrid = { beatsSec: [1.0], timeSignature: FOUR_FOUR };
+    const broken: BeatGrid = { beatsSec: [0, 0.5, NaN], timeSignature: FOUR_FOUR };
+
+    for (const level of [0.5, 1, 1.5, 2]) {
+      expect(canApplyMetricalLevel(short, level)).toBeFalse();
+      expect(canApplyMetricalLevel(broken, level)).toBeFalse();
+    }
+  });
+
+  it('is true across the range on a grid that can take it', () => {
+    for (const level of [MIN_BEATS_PER_PULSE, 0.5, 1, 1.5, 2, 3, MAX_BEATS_PER_PULSE]) {
+      expect(canApplyMetricalLevel(GRID, level)).toBeTrue();
+    }
+  });
+});
+
+/**
+ * What the level is for, checked through derivation rather than on the array.
+ *
+ * `BeatGrid.beatsSec` is one beat of the time signature's *denominator*, and
+ * after a resampling at 1.5 those entries are quarters where they were dotted
+ * quarters. Nothing downstream may assume the grid came straight from
+ * `trackBeats` - `deriveScore` reaches it only through `secondsToBeats`,
+ * `gridTempo` and the bar count, all of which read it as a list of beat times -
+ * and this is the assertion that says so out loud.
+ *
+ * The case is the real one in miniature: a line played in quarters, tracked as
+ * dotted quarters. At level 1 the beats the tracker found are written as the
+ * beat, and a line on the true quarters lands off the grid; at 1.5 it lands on
+ * it.
+ */
+describe('deriving a score at a metrical level', () => {
+  /** Six dotted quarters of 0.6 s: 100 BPM as tracked, 150 BPM as played. */
+  const TRACKED_DOTTED: BeatGrid = {
+    beatsSec: [0, 0.6, 1.2, 1.8, 2.4, 3.0],
+    timeSignature: FOUR_FOUR
+  };
+
+  /** Four notes on the true quarters, 0.4 s apart, on four different strings. */
+  const QUARTER_NOTES: DetectedNote[] = [28, 33, 38, 43].map((pitch, index) => ({
+    id: `q${index}`,
+    pitch,
+    onsetSec: index * 0.4,
+    offsetSec: index * 0.4 + 0.3,
+    confidence: 1,
+    bendCents: []
+  }));
+
+  const session = (grid: BeatGrid): TranscriptionSession => ({
+    id: 's1',
+    sourceName: 'tresillo.wav',
+    durationSec: 3.2,
+    notes: QUARTER_NOTES,
+    rawNotes: QUARTER_NOTES,
+    bendFrameRateHz: 86.13,
+    grid,
+    trackedGrid: TRACKED_DOTTED,
+    beatsPerPulse: 1,
+    harmonics: DEFAULT_HARMONIC_OPTIONS,
+    decisions: NO_NOTE_DECISIONS,
+    settings: createDefaultDerivationSettings()
+  });
+
+  /** Which sixteenth slot of `bar` each attack sits on. */
+  function attackSlots(doc: ScoreDoc, bar: number): number[] {
+    const beats = doc.tracks[0].staves[0].bars[bar].voices[0].beats;
+
+    return beats.flatMap((beat, index) =>
+      beat.isRest || beat.notes[0].isTied ? [] : [beatSlots(beats.slice(0, index), 16)]
+    );
+  }
+
+  it('writes the line off the beat at the level the tracker found', () => {
+    // 0.4 s is two thirds of a tracked beat, so the second note is written on
+    // the third sixteenth of the bar - a dotted eighth into a line of
+    // quarters. This is the bug, in one array.
+    expect(attackSlots(deriveScore(session(TRACKED_DOTTED)).doc, 0))
+      .toEqual([0, 3, 5, 8]);
+  });
+
+  it('writes it on the beat at the corrected level', () => {
+    const corrected = atMetricalLevel(TRACKED_DOTTED, 1.5);
+
+    // One note per beat, which is what was played. A sixteenth slot is a
+    // quarter of a beat, so the four quarters are slots 0, 4, 8 and 12.
+    expect(attackSlots(deriveScore(session(corrected)).doc, 0)).toEqual([0, 4, 8, 12]);
+  });
+
+  it('reads the resampled entries as the denominator unit', () => {
+    const corrected = atMetricalLevel(TRACKED_DOTTED, 1.5);
+
+    // 100 BPM of dotted quarters is 150 BPM of quarters, and the score says so
+    // because `gridTempo` reads the interval it is given rather than asking
+    // where the grid came from.
+    expect(deriveScore(session(TRACKED_DOTTED)).doc.tempo).toBe(100);
+    expect(deriveScore(session(corrected)).doc.tempo).toBe(150);
+  });
+
+  it('loses nothing to the correction', () => {
+    expect(deriveScore(session(atMetricalLevel(TRACKED_DOTTED, 1.5))).dropped).toEqual([]);
   });
 });

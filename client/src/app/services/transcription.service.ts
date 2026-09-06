@@ -103,7 +103,12 @@ import {
   createDefaultDerivationSettings
 } from '../models/transcription.model';
 import { decodeToMono } from './audio-decode';
-import { nudgedDownbeat, withTempo } from './beat-grid-edit';
+import {
+  atMetricalLevel,
+  canApplyMetricalLevel,
+  nudgedDownbeat,
+  withTempo
+} from './beat-grid-edit';
 import { messageOf } from './error-message';
 import { trackBeats } from './beat-tracking';
 import { DETECTION_SAMPLE_RATE, NoteDetector } from './note-detector';
@@ -360,6 +365,12 @@ export class TranscriptionService {
         // The suppressed notes, not `detection.notes`. See the module docblock.
         grid: tracked,
         trackedGrid: tracked,
+        // The tracked pulse is taken to be the beat until someone says
+        // otherwise, which is what the tracker itself claims. Inferring a level
+        // here is follow-up work, and it has to read the meter to do it: a
+        // pulse that subdivides in three is the beat in 6/8 and 12/8, so a
+        // "correction" there would turn a right answer into a wrong one.
+        beatsPerPulse: 1,
         harmonics,
         decisions: NO_NOTE_DECISIONS,
         settings
@@ -600,6 +611,74 @@ export class TranscriptionService {
   }
 
   /**
+   * States which note value the tracker found, and rebuilds the grid at the
+   * one the music is actually in.
+   *
+   * The correction `updateTempo` cannot make. A beat tracker can be right about
+   * *where* the beats are and wrong about *which* note value they are: a user's
+   * 3+3+2 tresillo bassline at 153 BPM tracked at 100.96, a clean 3:2 error,
+   * because the strongest onset periodicity in the line is the three-eighth
+   * grouping - and the tracked positions were still good to 23 ms against the
+   * true eighth grid. `updateMetricalLevel(1.5)` says "that pulse is a dotted
+   * quarter" and resamples the measurements at the quarter.
+   *
+   * Typing 153 into the tempo box instead gets the number right and the timing
+   * wrong: `withTempo` lays a uniform pulse and discards every per-beat
+   * measurement, and the take is human - local tempo wanders 150.5 to 153.8, so
+   * an even grid is right for about fifteen bars and at chance half a minute
+   * in. `atMetricalLevel` argues the contrast at length.
+   *
+   * ## Always from `trackedGrid`, never from the current grid
+   *
+   * So levels are commutative and lossless: 1 to 1.5 and back returns the
+   * original beats exactly, because the second call resamples the same pristine
+   * measurements rather than a resampling of them. Chaining would compound the
+   * interpolation error and a round trip would land somewhere new.
+   *
+   * ## Which means it discards a beat correction, deliberately
+   *
+   * A tempo typed into the box and a downbeat nudged by hand are both replaced,
+   * because both are edits to a grid this rebuilds from source. That is the
+   * right answer for the tempo - the two are ways of setting the same thing and
+   * the level is the better one - and it is the only available answer for the
+   * nudge: a phase correction is whole beats at the level it was made at, and
+   * one beat of a dotted quarter is two thirds of a quarter, which
+   * `nudgedDownbeat` cannot express. A UI has to say so rather than let it
+   * happen quietly.
+   *
+   * The **meter** survives, because it is not a beat correction: the resampled
+   * grid is restamped with `session.grid.timeSignature`, which is the corrected
+   * one, rather than with the meter the tracker ran under.
+   *
+   * A level `canApplyMetricalLevel` turns down - outside
+   * `MIN_BEATS_PER_PULSE`..`MAX_BEATS_PER_PULSE`, not a number, or a grid too
+   * short to resample - changes nothing, and in particular does not record
+   * itself: a session claiming a level its grid is not at would make
+   * `resuppressed` read a hand correction where there is none. Refused rather
+   * than clamped, like every other correction on this service.
+   *
+   * Costs a re-derivation and no detection, like every other knob here, and a
+   * no-op unless a transcription has succeeded.
+   */
+  updateMetricalLevel(beatsPerPulse: number): void {
+    this.rederive(session => {
+      if (!canApplyMetricalLevel(session.trackedGrid, beatsPerPulse)) return session;
+
+      return {
+        ...session,
+        beatsPerPulse,
+        grid: {
+          ...atMetricalLevel(session.trackedGrid, beatsPerPulse),
+          // At level 1 this spreads the tracked grid, so `beatsSec` is still
+          // the tracked array itself and `resuppressed` goes on reading the
+          // question by identity.
+          timeSignature: session.grid.timeSignature
+        }
+      };
+    });
+  }
+
+  /**
    * Moves the bar lines by whole beats, without moving the beats themselves.
    *
    * The correction M2 left undone. `trimBeats` starts the grid at the first
@@ -691,21 +770,33 @@ export class TranscriptionService {
    * case rebuilding would silently throw that correction away, and an explicit
    * correction outranks an inference. `session.trackedGrid` is what makes the
    * question answerable: it is what `trackBeats` returned, `grid` is what is in
-   * force, and `withTempo` and `nudgedDownbeat` replace only the latter.
+   * force, and `withTempo`, `nudgedDownbeat` and `updateMetricalLevel` replace
+   * only the latter.
    *
-   * The test is on `beatsSec` by identity rather than on the grid object,
-   * which matters: `updateTimeSignature` spreads the grid to restamp the meter
-   * and so replaces the object every time, including with a meter equal to the
-   * one already there. `grid !== trackedGrid` would read that as a beat
-   * correction and stop re-tracking for the rest of the session - a wrong
-   * answer arrived at silently. A meter change moves no beats, and it is beats
-   * the tracker would overwrite, so `beatsSec` is the field the question is
-   * actually about. The meter itself survives either way: a re-track is handed
+   * The test is on `beatsSec` rather than on the grid object, which matters:
+   * `updateTimeSignature` spreads the grid to restamp the meter and so replaces
+   * the object every time, including with a meter equal to the one already
+   * there. `grid !== trackedGrid` would read that as a beat correction and stop
+   * re-tracking for the rest of the session - a wrong answer arrived at
+   * silently. A meter change moves no beats, and it is beats the tracker would
+   * overwrite, so `beatsSec` is the field the question is actually about. The
+   * meter itself survives either way: a re-track is handed
    * `session.grid.timeSignature`, which is the corrected one.
    *
-   * After a re-track **both** fields take the new grid. A `trackedGrid` left
-   * behind would differ from `grid` by identity from then on, and the next
-   * threshold change would read a correction nobody made.
+   * **A metrical level moves the beats without being a hand correction**, and
+   * that is the second way this test could be read wrong. `grid` is then a
+   * resampling of `trackedGrid` and the two arrays differ by construction, so
+   * the identity test would answer "corrected" for a session nobody has
+   * corrected - and a threshold change would stop re-tracking. The question is
+   * therefore asked against `atMetricalLevel(trackedGrid, beatsPerPulse)`,
+   * which is the grid the current level implies; at level 1 that is the tracked
+   * array itself and the test is the identity one it always was.
+   *
+   * After a re-track **both** fields take the new grid, `grid` at the level in
+   * force. A `trackedGrid` left behind would differ from `grid` from then on,
+   * and the next threshold change would read a correction nobody made; a level
+   * not re-applied would revert the user's correction just as quietly, since
+   * the tracker returns its own level every time.
    *
    * A grid the user has corrected outlives the notes it was tracked from, and
    * that is coherent rather than a compromise: `BeatGrid` is a list of times in
@@ -846,15 +937,44 @@ function resuppressed(
 
   // Their correction outranks the tracker's inference, and rebuilding would
   // discard it without saying so.
-  if (session.grid.beatsSec !== session.trackedGrid.beatsSec) return suppressedSession;
+  //
+  // The comparison is against the grid the *level* makes of the tracked one,
+  // not against the tracked one itself. At level 1 those are the same array and
+  // this is the identity test it has always been; at any other level they
+  // differ by construction, and asking the old question would read the level as
+  // a hand correction and stop re-tracking for the rest of the session.
+  const leveled = atMetricalLevel(session.trackedGrid, session.beatsPerPulse);
+  if (!sameBeats(session.grid.beatsSec, leveled.beatsSec)) return suppressedSession;
 
   // The session's own meter, not the tracked grid's: a meter correction is not
   // a beat correction and has to survive this.
   const tracked = trackBeats(notes, session.durationSec, session.grid.timeSignature);
 
-  // Both, so `beatsSec` identity goes on answering "has the user corrected
-  // this?". A `trackedGrid` left at the old object would answer yes forever.
-  return { ...suppressedSession, grid: tracked, trackedGrid: tracked };
+  // Both, so the question above goes on being answerable: `trackedGrid` is
+  // what the tracker just measured and `grid` is that at the level in force. A
+  // `trackedGrid` left at the old object would answer "corrected" forever.
+  //
+  // Re-applying the level here is the whole reason the session carries it. The
+  // tracker returns its own level every time, so without this a threshold
+  // change would quietly revert the correction the user made.
+  return {
+    ...suppressedSession,
+    grid: atMetricalLevel(tracked, session.beatsPerPulse),
+    trackedGrid: tracked
+  };
+}
+
+/**
+ * Whether two beat lists hold the same times.
+ *
+ * By identity first, which is the level-1 case and costs nothing, then by
+ * value - because the list a level implies is *recomputed* rather than kept,
+ * and a fresh array of the same numbers is the same grid. `atMetricalLevel` is
+ * pure and deterministic, so equal inputs give bit-identical outputs and this
+ * is exact rather than approximate.
+ */
+function sameBeats(a: number[], b: number[]): boolean {
+  return a === b || (a.length === b.length && a.every((sec, i) => sec === b[i]));
 }
 
 /**

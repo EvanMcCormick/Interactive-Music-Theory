@@ -1,7 +1,9 @@
 import { TestBed } from '@angular/core/testing';
 import { TimeSignature } from '../models/composer.model';
-import { DetectedNote } from '../models/transcription.model';
+import { BeatGrid, DetectedNote } from '../models/transcription.model';
+import { atMetricalLevel } from './beat-grid-edit';
 import { trackBeats } from './beat-tracking';
+import { gridTempo } from './transcription-timing';
 import { detectionsOf } from './harmonic-eval/detections.fixture';
 import { MATERIAL } from './harmonic-eval/material';
 import { DetectionResult, NoteDetector } from './note-detector';
@@ -736,6 +738,158 @@ describe('TranscriptionService', () => {
     });
   });
 
+  /**
+   * Which note value the tracker found, corrected by the listener.
+   *
+   * The knob for the failure `updateTempo` cannot address: a tracker that is
+   * right about where the beats are and wrong about which note value they are.
+   * A 3+3+2 tresillo bassline at 153 BPM tracks at 100.96 - a clean 3:2 error -
+   * with its beat positions still good to 23 ms.
+   *
+   * Everything here rests on the level being resampled from `trackedGrid`
+   * rather than from the current grid, which is what makes it commutative and
+   * lossless, and on the resampling keeping the tracker's local timing, which
+   * is what makes it different from typing a tempo. The arithmetic for the
+   * second is in `beat-grid-edit.spec.ts`; these are about the session.
+   */
+  describe('updateMetricalLevel', () => {
+    it('re-derives at the corrected level without running detection again', async () => {
+      await service.transcribe(wavFile());
+      const tracked = service.state.session?.trackedGrid;
+
+      service.updateMetricalLevel(1.5);
+
+      expect(detector.calls).toBe(1);
+      expect(service.state.session?.beatsPerPulse).toBe(1.5);
+      expect(service.state.session?.grid.beatsSec)
+        .toEqual(atMetricalLevel(tracked!, 1.5).beatsSec);
+      // ...and that is a different grid, so the assertion above has something
+      // to say on this fixture.
+      expect(service.state.session?.grid.beatsSec).not.toEqual(tracked!.beatsSec);
+    });
+
+    it('re-bars the score at the corrected level', async () => {
+      await service.transcribe(wavFile());
+      const bars = service.state.derived?.doc.tracks[0].staves[0].bars.length ?? 0;
+
+      service.updateMetricalLevel(1.5);
+
+      // Half again as many beats in the same audio is half again as many bars.
+      // `deriveScore` reads the resampled entries as the denominator unit
+      // without asking where the grid came from, which is the whole of what a
+      // level has to mean downstream.
+      expect(service.state.derived?.doc.tracks[0].staves[0].bars.length)
+        .toBeGreaterThan(bars);
+    });
+
+    it('reports the corrected tempo on the score', async () => {
+      await service.transcribe(wavFile());
+      const tracked = gridTempo(service.state.session!.trackedGrid);
+
+      service.updateMetricalLevel(1.5);
+
+      // A dotted quarter read as a quarter: half again as fast, which on the
+      // real file is 100.96 becoming 151.
+      expect(service.state.derived?.doc.tempo).toBe(Math.round(tracked * 1.5));
+    });
+
+    it('leaves the tracked grid pristine', async () => {
+      await service.transcribe(wavFile());
+      const tracked = service.state.session?.trackedGrid;
+
+      service.updateMetricalLevel(1.5);
+
+      // The only copy of what the tracker measured, and every level is
+      // resampled from it. A level that consumed it would make the next one a
+      // resampling of a resampling.
+      expect(service.state.session?.trackedGrid).toBe(tracked!);
+    });
+
+    it('returns the original grid exactly on a round trip', async () => {
+      await service.transcribe(wavFile());
+      const original = service.state.session?.grid.beatsSec;
+
+      service.updateMetricalLevel(1.5);
+      service.updateMetricalLevel(1);
+
+      // Not `toEqual`: the same array, because level 1 of the tracked grid is
+      // the tracked grid. Levels are resampled from source rather than chained,
+      // so nothing here accumulates interpolation error.
+      expect(service.state.session?.grid.beatsSec).toBe(original!);
+      expect(service.state.session?.beatsPerPulse).toBe(1);
+    });
+
+    it('is commutative: the level reached is the only thing that matters', async () => {
+      await service.transcribe(wavFile());
+
+      service.updateMetricalLevel(2);
+      service.updateMetricalLevel(0.5);
+      service.updateMetricalLevel(1.5);
+      const viaOthers = service.state.session?.grid.beatsSec;
+
+      service.updateMetricalLevel(1);
+      service.updateMetricalLevel(1.5);
+
+      expect(service.state.session?.grid.beatsSec).toEqual(viaOthers!);
+    });
+
+    it('keeps a meter the user corrected', async () => {
+      const three: TimeSignature = { numerator: 3, denominator: 4, isCommon: false };
+      await service.transcribe(wavFile());
+      service.updateTimeSignature(three);
+
+      service.updateMetricalLevel(1.5);
+
+      // The resampled grid carries the tracked grid's meter, which is the one
+      // the tracker ran under. Restamping it with the session's is what stops a
+      // level change reverting a meter correction.
+      expect(service.state.session?.grid.timeSignature).toEqual(three);
+    });
+
+    it('discards a tempo the user typed, and a downbeat they nudged', async () => {
+      await service.transcribe(wavFile());
+      const tracked = service.state.session?.trackedGrid;
+      service.updateTempo(90);
+      service.nudgeDownbeat(1);
+
+      service.updateMetricalLevel(1.5);
+
+      // Deliberate, and both for the same reason: this rebuilds the grid from
+      // the tracked measurements, so anything written over them is gone. The
+      // tempo is a duplicate of what the level says anyway; the nudge cannot be
+      // carried across, because one beat of a dotted quarter is two thirds of a
+      // quarter and `nudgedDownbeat` only moves whole beats. A UI has to say
+      // so rather than let it happen quietly.
+      expect(service.state.session?.grid.beatsSec)
+        .toEqual(atMetricalLevel(tracked!, 1.5).beatsSec);
+    });
+
+    it('leaves everything alone for a level it cannot apply', async () => {
+      await service.transcribe(wavFile());
+      const beats = service.state.session?.grid.beatsSec ?? [];
+
+      for (const bad of [0, -1.5, NaN, Infinity, 1e6]) {
+        service.updateMetricalLevel(bad);
+
+        expect(service.state.phase).toBe('ready');
+        expect(service.state.session?.grid.beatsSec).toEqual(beats);
+        // Not recorded either: a session claiming a level its grid is not at
+        // would make the re-track rule read a correction nobody made.
+        expect(service.state.session?.beatsPerPulse).toBe(1);
+      }
+
+      expect(detector.calls).toBe(1);
+      checkInvariants(states);
+    });
+
+    it('is a no-op before anything has been transcribed', () => {
+      service.updateMetricalLevel(1.5);
+
+      expect(service.state.phase).toBe('idle');
+      expect(states.length).toBe(1);
+    });
+  });
+
   describe('nudgeDownbeat', () => {
     it('moves the bar lines without running detection again', async () => {
       await service.transcribe(wavFile());
@@ -1293,13 +1447,17 @@ describe('TranscriptionService', () => {
    * as much about keeping it answerable as about either branch.
    */
   describe('the beat grid under a suppression change', () => {
-    /** Where the tracker would put the beats for a given threshold. */
-    const beatsFor = (ratio: number, timeSignature = FOUR_FOUR): number[] =>
+    /** What the tracker would return for a given threshold. */
+    const gridFor = (ratio: number, timeSignature = FOUR_FOUR): BeatGrid =>
       trackBeats(
         suppressHarmonics(DETECTED, { partialConfidenceRatio: ratio }),
         DURATION_SEC,
         timeSignature
-      ).beatsSec;
+      );
+
+    /** Where it would put the beats. */
+    const beatsFor = (ratio: number, timeSignature = FOUR_FOUR): number[] =>
+      gridFor(ratio, timeSignature).beatsSec;
 
     it('has something to say: the two note sets track differently', () => {
       // Without this every branch below would pass on a service that never
@@ -1396,6 +1554,81 @@ describe('TranscriptionService', () => {
       service.updateSettings({ capo: 3 });
 
       expect(service.state.session?.grid).toBe(grid!);
+    });
+
+    /**
+     * A metrical level makes `grid.beatsSec` differ from `trackedGrid.beatsSec`
+     * without anybody having corrected a beat, which is exactly the kind of
+     * interaction that breaks quietly: the identity test above would read it as
+     * a hand correction and stop re-tracking for the rest of the session, and
+     * the level would be reverted the moment a threshold moved.
+     */
+    it('re-applies a level to the grid it re-tracks', async () => {
+      await service.transcribe(wavFile());
+      service.updateMetricalLevel(1.5);
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      // The new tracker output at the corrected level - not the old grid, and
+      // not the tracker's own level.
+      expect(service.state.session?.beatsPerPulse).toBe(1.5);
+      expect(service.state.session?.grid.beatsSec)
+        .toEqual(atMetricalLevel(gridFor(LOOSE_RATIO), 1.5).beatsSec);
+      expect(service.state.session?.trackedGrid.beatsSec).toEqual(beatsFor(LOOSE_RATIO));
+    });
+
+    it('has something to say: the level and the re-track both moved the grid', async () => {
+      // Without this the assertion above could pass on a service that ignored
+      // the threshold, or on one that ignored the level.
+      const straight = beatsFor(LOOSE_RATIO);
+
+      expect(atMetricalLevel(gridFor(LOOSE_RATIO), 1.5).beatsSec).not.toEqual(straight);
+      expect(atMetricalLevel(gridFor(LOOSE_RATIO), 1.5).beatsSec)
+        .not.toEqual(
+          atMetricalLevel(
+            gridFor(DEFAULT_HARMONIC_OPTIONS.partialConfidenceRatio),
+            1.5
+          ).beatsSec
+        );
+    });
+
+    it('goes on asking the same question after a re-track at a level', async () => {
+      await service.transcribe(wavFile());
+      service.updateMetricalLevel(1.5);
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+      const loose = service.state.session?.grid.beatsSec ?? [];
+
+      // `trackedGrid` is the measurements and `grid` is those at the level, so
+      // the two differ by construction - and the rule has to keep telling that
+      // apart from a hand correction. Which is what this proves: a second
+      // threshold change re-tracks too.
+      service.updateHarmonics({
+        partialConfidenceRatio: DEFAULT_HARMONIC_OPTIONS.partialConfidenceRatio
+      });
+
+      // The grid moved back, rather than sitting where the first change left
+      // it. Without this the expectation below would be satisfied by a service
+      // that stopped re-tracking at the level change, since the default
+      // threshold's grid is the one the session started with.
+      expect(service.state.session?.grid.beatsSec).not.toEqual(loose);
+      expect(service.state.session?.grid.beatsSec).toEqual(
+        atMetricalLevel(gridFor(DEFAULT_HARMONIC_OPTIONS.partialConfidenceRatio), 1.5)
+          .beatsSec
+      );
+    });
+
+    it('still keeps a beat correction made on top of a level', async () => {
+      await service.transcribe(wavFile());
+      service.updateMetricalLevel(1.5);
+      service.nudgeDownbeat(1);
+      const corrected = service.state.session?.grid.beatsSec ?? [];
+
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+
+      // The level is not a licence to overwrite the beats: what is in force is
+      // no longer what the level implies, so it is the user's, and it stands.
+      expect(service.state.session?.grid.beatsSec).toEqual(corrected);
+      expect(service.state.session?.notes.length).toBe(LOOSE_KEPT_COUNT);
     });
   });
 
