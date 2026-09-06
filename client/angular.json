@@ -113,7 +113,15 @@
             "styles": [
               "src/styles.css"
             ],
-            "scripts": []
+            "scripts": [],
+            "exclude": ["**/harmonic-capture.spec.ts"]
+          },
+          "configurations": {
+            "capture": {
+              "include": ["**/harmonic-capture.spec.ts"],
+              "exclude": [],
+              "karmaConfig": "karma.capture.conf.js"
+            }
           }
         }
       }
