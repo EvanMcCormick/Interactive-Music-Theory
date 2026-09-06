@@ -76,11 +76,19 @@ $warning-color: #f39c12;
   letter-spacing: 0.02em;
 }
 
-// `cursor: pointer` over the whole staff rather than over the noteheads,
-// because the noteheads are alphaTab's glyphs and this stylesheet cannot reach
-// them: the score is drawn into a canvas or an SVG the mapper never sees. It
-// overstates the target slightly - a click on empty stave space does nothing -
-// and understating it would be worse, since the one gesture that is not
+// The pointer sits on alphaTab's own drawn surface and not on the box around
+// it, so the empty space this container reserves - `min-height` when the score
+// is short, and the gutter when it is narrow - reads as what it is.
+//
+// Inside the drawing it still overstates: rests, bar lines and empty stave
+// space all show a pointer and `detectionAt` answers null on all of them.
+// Narrowing further would mean hit-testing every `mousemove` against
+// `boundsLookup` and toggling a class, because alphaTab draws glyphs into a
+// canvas or an SVG with nothing this stylesheet can select, and it has no
+// hover event to borrow - `noteMouseMove` fires only after a press. That is a
+// per-frame cost and a second copy of the hit test to keep in step with the
+// first, against an overstatement whose worst outcome is a click that does
+// nothing. Understating it is the worse trade, since the gesture that is not
 // discoverable is the one on the ghosts.
 .review__score {
   background-color: #ffffff;
@@ -88,7 +96,10 @@ $warning-color: #f39c12;
   min-height: 12rem;
   max-height: 34rem;
   overflow: auto;
-  cursor: pointer;
+
+  > * {
+    cursor: pointer;
+  }
 }
 
 .review__click-hint {
@@ -270,6 +281,15 @@ $warning-color: #f39c12;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: $text-primary;
+
+  // The discards heading takes focus when Restore destroys the button that
+  // had it. `:focus-visible` rather than `:focus`, so the ring appears for
+  // the keyboard reader who needs it and not for the mouse click that moved
+  // focus as a side effect.
+  &:focus-visible {
+    outline: 2px solid $accent-color;
+    outline-offset: 2px;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +353,13 @@ $warning-color: #f39c12;
   }
 }
 
+// What the list cannot contain, set quieter than the counts it qualifies: it
+// is a caveat about them rather than another of them.
+.discards__caveat {
+  font-style: italic;
+  opacity: 0.9;
+}
+
 .discards__line {
   margin: 0 0 0.35rem;
   font-size: 0.75rem;
@@ -366,8 +393,10 @@ $warning-color: #f39c12;
   font-weight: 600;
 }
 
-// Bounded rather than unbounded: a group is capped at forty rows, and forty
-// rows is still taller than the score beside it.
+// Scrolled rather than unbounded. A group prints at most forty rows unless it
+// holds more than forty notes the staff could not draw, which are listed in
+// full because this list is the only record of them - and forty rows is
+// already taller than the score beside it.
 .discards__rows {
   list-style: none;
   margin: 0.35rem 0 0;

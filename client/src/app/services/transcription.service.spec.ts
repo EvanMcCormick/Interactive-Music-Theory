@@ -1237,6 +1237,36 @@ describe('TranscriptionService', () => {
       expect(service.state.session).toBeNull();
     });
 
+    /*
+     * The guard `updateSettings` has and this did not.
+     *
+     * This path is strictly the more expensive of the two: it re-runs
+     * suppression over `rawNotes` and then, where the user has not corrected
+     * the grid by hand, re-tracks the beats before `deriveScore` ever runs.
+     * `rederive`'s docblock records 0.8 ms median and 1.5 ms worst on the
+     * largest accuracy fixture with a re-track, and that measurement lived
+     * only in prose - so the claim that these stay live knobs rather than a
+     * form with an Apply button had nothing holding it up.
+     *
+     * The same deliberately loose 100 ms bound `updateSettings` uses. Not a
+     * benchmark: it catches the change that makes this asynchronous or
+     * accidentally quadratic without failing on a loaded machine.
+     */
+    it('re-tracks and re-derives synchronously, in milliseconds', async () => {
+      await service.transcribe(wavFile());
+      const trackedGrid = service.state.session?.trackedGrid;
+
+      const start = performance.now();
+      service.updateHarmonics({ partialConfidenceRatio: LOOSE_RATIO });
+      const elapsed = performance.now() - start;
+
+      // Applied by the time the call returned, the re-track included - which
+      // is the half `updateSettings` never pays for.
+      expect(service.state.session?.harmonics.partialConfidenceRatio).toBe(LOOSE_RATIO);
+      expect(service.state.session?.trackedGrid).not.toBe(trackedGrid!);
+      expect(elapsed).withContext(`${elapsed.toFixed(2)} ms`).toBeLessThan(100);
+    });
+
     it('goes through the same machinery, so it clears a standing refusal', async () => {
       await service.transcribe(wavFile());
       service.updateSettings({ capo: 30 });

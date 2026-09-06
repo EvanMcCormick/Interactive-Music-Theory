@@ -21,7 +21,8 @@ import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.ser
 import {
   DEFAULT_HARMONIC_OPTIONS,
   HarmonicOptions,
-  NO_NOTE_DECISIONS
+  NO_NOTE_DECISIONS,
+  NoteDecisions
 } from '../../../../services/transcription-harmonics';
 import { TranscriptionState } from '../../../../services/transcription.service';
 import { FoldedNote } from '../../../../services/transcription-octave';
@@ -769,6 +770,40 @@ describe('TranscriptionReviewComponent', () => {
       expect(toggleEmits).toEqual(['p1']);
     });
 
+    // Pressing Restore takes the row out of its group, so the button under the
+    // caret stops existing and the browser drops focus to `<body>` - the far
+    // end of the document from where the reader was.
+    it('leaves focus somewhere when the row it was on is destroyed', () => {
+      push(
+        readyState(makeSession(), { suppressed: [note(43, 0.25, 1, 'p1')] })
+      );
+      const button = query<HTMLButtonElement>('.discards__action');
+      button.focus();
+
+      button.click();
+
+      expect(document.activeElement).toBe(
+        control<HTMLElement>(component.id.discardsHeading)
+      );
+    });
+
+    /*
+     * What this list is not.
+     *
+     * It is headed with a count and reads as a complete account of what the
+     * score is missing, and it cannot be one: Basic Pitch finds about 72 % of
+     * what is played, and a note it never reported is in no part of this
+     * pipeline - not in `rawNotes`, not a ghost, not in `suppressed` or
+     * `dropped`, and with no id `toggleNote` could be addressed by. A quarter
+     * of the played notes are not a rounding error to leave a reader to infer.
+     */
+    it('says what it cannot contain, so the count is not read as the whole', () => {
+      push(readyState(makeSession(), { suppressed: [note(43, 0.25, 1, 'p1')] }));
+
+      expect(text('.discards__caveat')).toContain('the detector heard');
+      expect(text('.discards__caveat')).toContain('never heard cannot be here');
+    });
+
     // Found in the browser, on the real panel: pressing "Restore" on a note
     // below the confidence floor *removed* it from the score. `toggleNote`
     // moves a note across the suppression line, and a note derivation dropped
@@ -1112,6 +1147,27 @@ describe('TranscriptionReviewComponent', () => {
         )
       ).toBe(component.id.partialRatioHint);
     });
+
+    // "Unmeasured" is the most important thing said about these three and it
+    // is said once, above all of them, where a sighted reader takes it in with
+    // the group. Until each control named it, a reader arriving by control
+    // heard nothing of it - and the three read as plainly as the calibrated
+    // one above them.
+    it('tells each unmeasured control that it is unmeasured', () => {
+      for (const id of [
+        component.id.tolerance,
+        component.id.unisonConfidence,
+        component.id.unisonDuration
+      ]) {
+        const described = (
+          control<HTMLInputElement>(id).getAttribute('aria-describedby') ?? ''
+        ).split(/\s+/);
+
+        expect(described)
+          .withContext(`#${id} does not name the unmeasured note`)
+          .toContain(component.id.advancedHint);
+      }
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1427,6 +1483,24 @@ describe('TranscriptionReviewComponent', () => {
       return { ...session, rawNotes: [...session.notes, GHOST] };
     }
 
+    /**
+     * What the host's `toggleNote` produces from a click on `GHOST`.
+     *
+     * The override is the part a synthetic fixture is tempted to leave out,
+     * and `describeToggle` reads it: a note in `session.notes` with nothing in
+     * `decisions` is one the *algorithm* keeps, which is a different sentence.
+     */
+    function restoredGhost(): TranscriptionSession {
+      const session = makeSession();
+
+      return {
+        ...session,
+        notes: [...session.notes, GHOST],
+        rawNotes: [...session.notes, GHOST],
+        decisions: { keep: ['ghost-1'], drop: [] }
+      };
+    }
+
     it('asks the engraver for note bounds, without which no click is reported', () => {
       // alphaTab hit-tests the beat and only asks for the note inside it when
       // note bounds were recorded, so `noteMouseDown` never fires without this
@@ -1602,15 +1676,11 @@ describe('TranscriptionReviewComponent', () => {
       tick(SETTLE_MS);
       alphaTabStub.clickNote(clickTarget(keyFor(previewIndex(state), 'ghost-1'), 4));
 
-      // What the host's `toggleNote` produces: the ghost is in the kept set now.
-      const session = makeSession();
-      push(
-        readyState({
-          ...session,
-          notes: [...session.notes, GHOST],
-          rawNotes: [...session.notes, GHOST]
-        })
-      );
+      // What the host's `toggleNote` produces: the ghost is in the kept set
+      // now, and it is there because of the override the click recorded. Both
+      // halves matter - the sentence is "restored" rather than "override
+      // cleared" precisely because `decisions.keep` names it.
+      push(readyState(restoredGhost()));
       tick(SETTLE_MS);
 
       expect(text('.review__toggle')).toContain('Restored G2 at 0.25 s');
@@ -1625,7 +1695,10 @@ describe('TranscriptionReviewComponent', () => {
       const session = makeSession();
       const kept = session.notes.filter(candidate => candidate.id !== '40@0');
       push(
-        readyState({ ...session, notes: kept }, { suppressed: [note(40, 0, 1, '40@0')] })
+        readyState(
+          { ...session, notes: kept, decisions: { keep: [], drop: ['40@0'] } },
+          { suppressed: [note(40, 0, 1, '40@0')] }
+        )
       );
       tick(SETTLE_MS);
 
@@ -1638,14 +1711,7 @@ describe('TranscriptionReviewComponent', () => {
       tick(SETTLE_MS);
       alphaTabStub.clickNote(clickTarget(keyFor(previewIndex(state), 'ghost-1'), 4));
 
-      const session = makeSession();
-      push(
-        readyState({
-          ...session,
-          notes: [...session.notes, GHOST],
-          rawNotes: [...session.notes, GHOST]
-        })
-      );
+      push(readyState(restoredGhost()));
       tick(SETTLE_MS);
       expect(text('.review__toggle')).not.toBe('');
 
@@ -1770,8 +1836,61 @@ describe('TranscriptionReviewComponent', () => {
   });
 
   describe('describeToggle', () => {
+    const GHOST = note(43, 0.25, 1, 'ghost-1');
+
+    /** `GHOST` in the kept set, and there because the user put it there. */
+    function overridden(decisions: NoteDecisions): TranscriptionSession {
+      const session = makeSession();
+
+      return {
+        ...session,
+        notes: [...session.notes, GHOST],
+        rawNotes: [...session.notes, GHOST],
+        decisions
+      };
+    }
+
     it('has nothing to say about an id the session does not carry', () => {
       expect(describeToggle(makeSession(), 'not-a-note')).toBeNull();
+    });
+
+    it('names the direction while an override is standing', () => {
+      expect(describeToggle(overridden({ keep: ['ghost-1'], drop: [] }), 'ghost-1'))
+        .toBe(
+          "Restored G2 at 0.25 s. Click it again for the pipeline's own answer."
+        );
+    });
+
+    /*
+     * The click that changes nothing on the staff.
+     *
+     * `toggleNote` reads the override lists before the current verdict, so a
+     * note that already carries one has it cleared rather than gaining a
+     * second - which is the ordering that keeps a note from being stuck one
+     * gesture away from the algorithm either way. Reachable: restore a note,
+     * then lower `partialConfidenceRatio` past its cut, and the algorithm
+     * keeps it anyway. "Restored ..." over an unchanged score would be the
+     * wrong account of that.
+     */
+    it('says the override was cleared when clearing it changed nothing', () => {
+      expect(describeToggle(overridden({ keep: [], drop: [] }), 'ghost-1')).toBe(
+        'Cleared your override on G2 at 0.25 s. The pipeline keeps it; click it '
+        + 'again to suppress it.'
+      );
+    });
+
+    it('says which way the pipeline goes when the note stays out', () => {
+      const session = makeSession();
+
+      expect(
+        describeToggle(
+          { ...session, rawNotes: [...session.notes, GHOST] },
+          'ghost-1'
+        )
+      ).toBe(
+        'Cleared your override on G2 at 0.25 s. The pipeline suppresses it; '
+        + 'click it again to restore it.'
+      );
     });
   });
 

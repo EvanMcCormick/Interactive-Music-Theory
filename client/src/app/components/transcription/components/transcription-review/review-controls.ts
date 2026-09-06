@@ -19,6 +19,22 @@ import { FoldedNote } from '../../../../services/transcription-octave';
  * be asserted without a fixture, which is why the panel's spec checks the
  * counting and the tempo reading directly rather than through the template.
  *
+ * ## And past that ceiling itself
+ *
+ * **263 of these 677 lines are code**, counted as non-blank lines outside
+ * block comments and `//` lines. A file that exists because another one grew
+ * too long has to answer for its own length, and the answer is the same
+ * accounting the component's docblock gives: the ceiling is about how much
+ * code a reader holds in their head, the code here is a table, four small pure
+ * functions and one grouping pass, and what makes the file long is the
+ * argument beside each - why the discard reasons are split into six rather
+ * than five, why the cap yields to an undrawn row, why the pitch names are
+ * sharps only. Extracting those would move the reasoning away from the code it
+ * justifies, which is the thing the rule is trying to protect.
+ *
+ * There is no second split waiting here. The next one, if the code grows,
+ * belongs on the component's side; see its docblock.
+ *
  * The presets are reference data in `CLAUDE.md`'s sense: string pitches are
  * facts about instruments, not settings. They are handed out by copy at the
  * one place a caller could keep them (`onTuningChange`), so nothing downstream
@@ -263,16 +279,40 @@ export function noteLabel(note: DetectedNote): string {
  * It says the gesture is repeatable, because that is the part that is not
  * discoverable: a toggle undoes itself, so an override taken by mistake costs
  * one more click rather than a re-upload.
+ *
+ * ## The third outcome, which is not "restored" or "suppressed"
+ *
+ * `toggleNote` reads the two override lists before it reads the current
+ * verdict, so a note that already carries an override has it *cleared* rather
+ * than gaining a second one - that ordering is what keeps a note from being
+ * stuck one gesture away from the algorithm in either direction, and it is
+ * right. But it means a click can be a visible no-op: restore a note, then
+ * lower `partialConfidenceRatio` past its cut, and the algorithm would now keep
+ * it anyway. Clicking then removes the override and changes nothing on the
+ * staff. "Restored ..." over an unchanged score is the wrong sentence for that;
+ * saying the override was cleared, and which way the pipeline goes without it,
+ * is the right one.
+ *
+ * Told apart by the arriving session's own `decisions`. A toggle either adds an
+ * override or removes one, so an id in neither list after the round trip is one
+ * whose override was just taken away.
  */
 export function describeToggle(session: TranscriptionSession, id: string): string | null {
   const note = session.rawNotes.find(candidate => candidate.id === id);
   if (!note) return null;
 
-  const verb = session.notes.some(candidate => candidate.id === id)
-    ? 'Restored'
-    : 'Suppressed';
+  const kept = session.notes.some(candidate => candidate.id === id);
+  const overridden =
+    session.decisions.keep.includes(id) || session.decisions.drop.includes(id);
 
-  return `${verb} ${noteLabel(note)}. Click it again for the pipeline's own answer.`;
+  if (!overridden) {
+    return `Cleared your override on ${noteLabel(note)}. The pipeline `
+      + `${kept ? 'keeps' : 'suppresses'} it; click it again to `
+      + `${kept ? 'suppress' : 'restore'} it.`;
+  }
+
+  return `${kept ? 'Restored' : 'Suppressed'} ${noteLabel(note)}. `
+    + `Click it again for the pipeline's own answer.`;
 }
 
 // ---------------------------------------------------------------------------

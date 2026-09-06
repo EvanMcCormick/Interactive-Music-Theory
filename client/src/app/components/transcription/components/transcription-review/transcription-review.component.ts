@@ -107,14 +107,38 @@ import {
  *
  * ## Past CLAUDE.md's 500-line ceiling, deliberately
  *
- * 303 of these lines are code and the rest is prose, and the same argument
- * `transcription.service.ts` makes applies: the rule exists so a file stays
- * small enough to hold in the head, and the only extractions on offer here are
- * the docblocks - which are the part worth keeping next to the code. The knob
- * table, the preset lists and the discard grouping already live in
- * `review-controls.ts`. If the *code* grows past the ceiling the answer
- * changes, and splitting the preview rendering out into a child component is
- * the shape that would take.
+ * **419 of these 1001 lines are code**, counted as non-blank lines outside
+ * block comments and `//` lines. The number is stated because the escape
+ * clause below is stated against it, and a stale one lets the clause be quoted
+ * without being checked: it read 303 for two milestones and the review that
+ * closed this one measured 397, so it had been arguing a case it no longer
+ * supported for some time.
+ *
+ * The argument is `transcription.service.ts`'s. The rule exists so a file
+ * stays small enough to hold in the head, and the only extractions on offer
+ * here are the docblocks - which are the part worth keeping next to the code.
+ * The knob table, the preset lists, the discard grouping and the sentences the
+ * panel prints already live in `review-controls.ts`, which is 263 code lines
+ * of 677 by the same accounting and says so in its own docblock.
+ *
+ * ### The cut that would be made, and why it has not been
+ *
+ * If the *code* here reaches 500 the shape is a child component owning the
+ * preview pane: `previewContainer`, `renderPreview`, `observeContainerWidth`,
+ * `noteIndex` and `pendingIndex`, `onNoteClicked`, and the alphaTab lifecycle
+ * in `ngAfterViewInit`/`ngOnDestroy` - roughly ninety lines of code, taking a
+ * `ScoreDoc` down as an input and sending detection ids back up. It is a clean
+ * cut in one direction: the index and the renderer are already each other's
+ * only business, which is what `noteIndex` is about.
+ *
+ * It is not clean in the other, and that is the reason to wait rather than
+ * anticipate. `groupDiscards` reads the index the preview built - that is the
+ * whole of how the staff and the list are stopped from disagreeing, and it is
+ * the guarantee this panel is arranged around. Across a component boundary
+ * that becomes a contract about *which derivation* the index describes, held
+ * between a child that renders on a debounce and a parent that counts
+ * immediately. Buying eighty lines with that is a bad trade while the code
+ * still fits.
  *
  * Rendering follows `ComposerScoreComponent` exactly - one alphaTab instance, a
  * debounced render request, and a `ResizeObserver`, because alphaTab silently
@@ -195,6 +219,18 @@ export class TranscriptionReviewComponent
 
   @ViewChild('previewContainer') previewContainer?: ElementRef<HTMLDivElement>;
 
+  /**
+   * Where focus goes when the control it was on is about to be destroyed.
+   *
+   * Pressing Restore removes that row from its group - the note is in the
+   * score now - so the button under the caret stops existing and the browser
+   * drops focus to `<body>`, which is the far end of the document from where
+   * the reader was. The heading survives every such move: restoring always
+   * leaves something in `restored`, and undoing always leaves something in
+   * `discards`, so the section this names is on screen either way.
+   */
+  @ViewChild('discardsHeading') discardsHeading?: ElementRef<HTMLElement>;
+
   // The controls a refusal can leave disagreeing with the score. See
   // `snapRefusedControlsBack`.
   @ViewChild('divisionModel') divisionModel?: NgModel;
@@ -237,6 +273,24 @@ export class TranscriptionReviewComponent
     unisonDurationHint: `txr-unison-duration-hint-${this.seq}`,
     advancedHint: `txr-advanced-hint-${this.seq}`,
     discardsHeading: `txr-discards-heading-${this.seq}`
+  };
+
+  /**
+   * The three advanced thresholds' `aria-describedby`, each naming two hints.
+   *
+   * "These three are unmeasured" is the most important thing said about any of
+   * them and it is said once, above all three, where a sighted reader takes it
+   * in with the group. `id.advancedHint` existed for that and no control
+   * pointed at it, so the caveat reached nobody navigating by control - the
+   * three read as plainly as the calibrated one above them.
+   *
+   * Composed here rather than in the template, per the project's guidance about
+   * work in bindings, and read-only because the ids never move.
+   */
+  readonly advancedDescribedBy = {
+    tolerance: `${this.id.toleranceHint} ${this.id.advancedHint}`,
+    unisonConfidence: `${this.id.unisonConfidenceHint} ${this.id.advancedHint}`,
+    unisonDuration: `${this.id.unisonDurationHint} ${this.id.advancedHint}`
   };
 
   // What the controls show. Set optimistically when one moves, then
@@ -311,6 +365,13 @@ export class TranscriptionReviewComponent
    * What the last click on the score did, or null when the last state change
    * was not one.
    *
+   * Not `toggleNote`, which is what it was called and which named three
+   * different things at once: `TranscriptionService.toggleNote` is the method
+   * a click ends up in, `noteToggled` is the output that gets it there, and
+   * this is a sentence for a reader. A field holding prose under the name of
+   * the method it describes reads, at every use site, as though it held the
+   * gesture itself.
+   *
    * Derived from the state that came back rather than from the click that went
    * out, which is the same stance the mirror fields take: the panel emitted an
    * id and has no idea which way the service moved it, so it asks the arriving
@@ -326,7 +387,7 @@ export class TranscriptionReviewComponent
    * here directly and says which control moves the note instead. See
    * `onNoteClicked`.
    */
-  toggleNote: string | null = null;
+  lastGesture: string | null = null;
 
   /** Set when the user states a tempo outside the range the service accepts. */
   tempoNote: string | null = null;
@@ -374,7 +435,7 @@ export class TranscriptionReviewComponent
    * Written by `ngOnChanges` and read only by `renderPreview`. See `noteIndex`.
    */
   private pendingIndex: NoteIndex = EMPTY_INDEX;
-  /** The id of the click awaiting the state it produced; see `toggleNote`. */
+  /** The id of the click awaiting the state it produced; see `lastGesture`. */
   private pendingToggleId: string | null = null;
   private readonly destroy$ = new Subject<void>();
   private readonly renderRequest$ = new Subject<void>();
@@ -426,7 +487,7 @@ export class TranscriptionReviewComponent
       // `noteIndex` is left alone here and cleared by `renderPreview`, which is
       // the only place that knows what is on the page. See `noteIndex`.
       this.pendingIndex = EMPTY_INDEX;
-      this.toggleNote = null;
+      this.lastGesture = null;
       this.renderError = null;
       this.discards = [];
       this.discardTotal = 0;
@@ -520,7 +581,7 @@ export class TranscriptionReviewComponent
     this.discardTotal = this.discards.reduce((total, group) => total + group.count, 0);
     this.omittedCount = this.discards.reduce((total, group) => total + group.omitted, 0);
     this.foldNote = describeFolds(derived.folded);
-    this.toggleNote = toggled === null ? null : describeToggle(session, toggled);
+    this.lastGesture = toggled === null ? null : describeToggle(session, toggled);
 
     this.renderRequest$.next();
   }
@@ -598,7 +659,7 @@ export class TranscriptionReviewComponent
    * suppressed: that depends on the kept set and on the two override lists,
    * which the service owns. `toggleNote` decides, and the sentence the user
    * reads is written from the state that comes back. See
-   * `TranscriptionReviewComponent.toggleNote`.
+   * `TranscriptionReviewComponent.lastGesture`.
    *
    * Typed as `RenderedNote` rather than `alphaTab.model.Note`, matching
    * `detectionAt`: a real `Note` satisfies it exactly, and a spec can drive
@@ -613,7 +674,7 @@ export class TranscriptionReviewComponent
       // No emit, so no state comes back and `ngOnChanges` never runs: OnPush
       // has to be told this field moved, or the sentence is written and never
       // drawn.
-      this.toggleNote = remedy;
+      this.lastGesture = remedy;
       this.cdr.markForCheck();
       return;
     }
@@ -774,8 +835,17 @@ export class TranscriptionReviewComponent
     this.harmonicsChanged.emit({ [field]: value });
   }
 
-  /** The list's own restore control, which is `onNoteClicked` by another route. */
+  /**
+   * The list's own restore control, which is `onNoteClicked` by another route.
+   *
+   * Focus is moved first, because the emit is what destroys the button it is
+   * on: the host is synchronous, the row leaves its group in the state that
+   * comes straight back, and a keyboard reader would find themselves at
+   * `<body>`. Moving it afterwards would be a race against change detection;
+   * moving it to a heading that outlives the row is neither.
+   */
   onRestoreClicked(id: string): void {
+    this.discardsHeading?.nativeElement.focus();
     this.pendingToggleId = id;
     this.noteToggled.emit(id);
   }

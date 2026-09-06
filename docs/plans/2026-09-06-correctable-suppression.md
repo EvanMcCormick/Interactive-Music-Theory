@@ -275,3 +275,90 @@ was there before.
 that has just arrived rather than the one on screen.
 
 Commit: `fix: Keep the note index in step with what is drawn`
+
+### D. Honesty and small edges
+
+**D1. What the discard list cannot contain.** The panel prints a confident,
+complete-looking account headed "Not in the score: N detections", and Basic
+Pitch returns about 72 % recall — so roughly 28 % of the played notes never
+enter the pipeline at all. They are not in `rawNotes`, not ghosts, not in
+`state.suppressed` or `derived.dropped`, not in the list, and carry no id
+`toggleNote` could be addressed by. A reader would reasonably conclude the list
+is the whole of what is missing. One sentence now says it is an account of the
+pipeline's decisions rather than of everything the score lacks.
+
+**D2. A toggle that is a visible no-op.** `toggleNote` reads the two override
+lists before the current verdict, so a note that already carries an override
+has it cleared rather than gaining a second — the ordering that stops a note
+being stuck one gesture from the algorithm either way, and it is right.
+Reachable consequence: restore a note, then lower `partialConfidenceRatio` past
+its cut, and clicking it clears an override that was no longer doing anything.
+"Restored …" over an unchanged staff was the wrong sentence. `describeToggle`
+now tells the three outcomes apart by reading the arriving session's own
+`decisions`, and says which way the pipeline goes without the override. Two
+spec fixtures that carried a restored note without the decision that restored
+it were corrected.
+
+**D3. The slider bound and the argument for it.** `onHarmonicChange`'s docblock
+justified having no range check by arguing "a ratio of 5 … is a legitimate
+thing to ask for", which the measured ratio's slider — capped at 2 — makes
+unaskable. The argument moved: the guard is about "is a number" and nothing
+else, and where a range is stated it is the control's, not the method's. Landed
+with commit B, which rewrote that docblock.
+
+**D4. The 500-line argument, settled with real numbers.** The component's
+docblock claimed "303 of these lines are code" while the real count was 397,
+and `review-controls.ts` — which exists *because* the component crossed the
+ceiling — was 531 lines with no acknowledgement of its own.
+
+The branch was not taken, and the docblocks now say so with the numbers that
+support it. The component is **419 code lines of 1001**; `review-controls.ts`
+is **263 of 677**, counted as non-blank lines outside block comments and `//`
+lines. Both are under the ceiling in code and over it in prose, which is the
+argument `transcription.service.ts` already makes.
+
+The escape clause is now specific rather than gestural: the cut is a child
+component owning the preview pane — `previewContainer`, `renderPreview`,
+`observeContainerWidth`, `noteIndex`/`pendingIndex`, `onNoteClicked` and the
+alphaTab lifecycle, about ninety lines. It has a stated cost, which is why it
+waits: `groupDiscards` reads the index the preview built, and that is the whole
+of how the staff and the list are kept from disagreeing. Across a component
+boundary it becomes a contract about which derivation the index describes, held
+between a child that renders on a debounce and a parent that counts
+immediately.
+
+**D5. Smaller.**
+
+- `id.advancedHint` was assigned and named by nothing. The three advanced
+  thresholds now name it alongside their own hints, so "unmeasured" — the most
+  important thing said about them — reaches a reader arriving by control.
+- Restoring a row destroyed the focused button and dropped focus to `<body>`.
+  Focus moves to the discards heading (`tabindex="-1"`) *before* the emit,
+  because the host is synchronous and the emit is what destroys the button.
+- The component field `toggleNote` held a sentence and collided with both
+  `TranscriptionService.toggleNote` and the `noteToggled` output. It is
+  `lastGesture`.
+- `cursor: pointer` covered the whole scroll box. It is now on alphaTab's drawn
+  surface only, so the empty space the container reserves reads as empty.
+  Inside the drawing it still overstates — rests and stave space show a pointer
+  and `detectionAt` answers null — and the comment now says so, and says what
+  narrowing further would cost: alphaTab has no hover event to borrow
+  (`noteMouseMove` fires only after a press), so it would mean hit-testing
+  every `mousemove` against `boundsLookup` and keeping a second copy of the hit
+  test in step with the first.
+
+**D6. A timing guard on the expensive path.** `updateSettings` had one and
+`updateHarmonics`, which re-runs suppression and may re-track the beat grid
+before `deriveScore` is reached, had none — its measured 0.8 ms median and
+1.5 ms worst lived only in prose. It now asserts the same deliberately loose
+100 ms bound, and that the re-track actually happened.
+
+Commit: `refactor: Tighten the correction panel's edges and claims`
+
+## Where it ended
+
+**693 tests, 0 failures**, from 674. `tsc -p tsconfig.spec.json --noEmit`
+clean, `npm run build` succeeds with TF.js and alphaTab still out of `main`
+(initial total 780 kB; the three multi-megabyte chunks are lazy). The accuracy
+harness is unmoved: 101 detections suppressed, 98 costing nothing and 3 costing
+a real note, exactly as before.

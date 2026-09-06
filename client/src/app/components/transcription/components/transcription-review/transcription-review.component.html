@@ -298,7 +298,7 @@
               max="1"
               step="0.005"
               [id]="id.tolerance"
-              [attr.aria-describedby]="id.toleranceHint"
+              [attr.aria-describedby]="advancedDescribedBy.tolerance"
               [ngModel]="harmonics.toleranceSec"
               (ngModelChange)="onHarmonicChange('toleranceSec', $event)"
             />
@@ -324,7 +324,7 @@
             max="2"
             step="0.05"
             [id]="id.unisonConfidence"
-            [attr.aria-describedby]="id.unisonConfidenceHint"
+            [attr.aria-describedby]="advancedDescribedBy.unisonConfidence"
             [ngModel]="harmonics.unisonConfidenceRatio"
             (ngModelChange)="onHarmonicChange('unisonConfidenceRatio', $event)"
           />
@@ -348,7 +348,7 @@
             max="2"
             step="0.05"
             [id]="id.unisonDuration"
-            [attr.aria-describedby]="id.unisonDurationHint"
+            [attr.aria-describedby]="advancedDescribedBy.unisonDuration"
             [ngModel]="harmonics.unisonDurationRatio"
             (ngModelChange)="onHarmonicChange('unisonDurationRatio', $event)"
           />
@@ -379,13 +379,41 @@
         *ngIf="discardTotal > 0 || restored.length > 0"
         [attr.aria-labelledby]="id.discardsHeading"
       >
-        <h3 class="control__subheading" [id]="id.discardsHeading">
+        <!--
+          `tabindex="-1"` so it can take focus without entering the tab order:
+          pressing Restore destroys the button that was focused, and focus has
+          to land somewhere that says where the reader now is.
+        -->
+        <h3
+          class="control__subheading"
+          #discardsHeading
+          tabindex="-1"
+          [id]="id.discardsHeading"
+        >
           Not in the score
         </h3>
 
         <p class="discards__line" *ngIf="discardTotal > 0">
           {{ discardTotal }} detection{{ discardTotal === 1 ? '' : 's' }}, drawn as
           ghosts. Open a group to find one by name.
+        </p>
+        <!--
+          What stops this being read as the whole of what is missing.
+
+          Everything below is a detection the model reported and the pipeline
+          then turned away. A note the model never reported is in none of it -
+          not in `rawNotes`, not a ghost, not in `state.suppressed` or
+          `derived.dropped`, with no id for `toggleNote` to be addressed by -
+          and Basic Pitch finds about 72 % of what is played, so the notes it
+          never heard are a quarter of them rather than a rounding error. A
+          confident, complete-looking list headed with a count invites exactly
+          the wrong conclusion, and one sentence prevents it.
+        -->
+        <p class="discards__line discards__caveat" *ngIf="discardTotal > 0">
+          These are notes the detector heard and the pipeline then rejected.
+          Ones it never heard cannot be here - it finds roughly seven in ten of
+          what is played - so this is an account of the pipeline's decisions,
+          not of everything the score is missing.
         </p>
         <p class="discards__line" *ngIf="omittedCount > 0">
           {{ omittedCount }} of them could not be drawn at all - no fret reaches
@@ -495,7 +523,7 @@
         score redrawing is the sighted feedback; this is the other half of it,
         and it is also the only place that says a toggle is reversible.
       -->
-      <p class="review__toggle" aria-live="polite">{{ toggleNote }}</p>
+      <p class="review__toggle" aria-live="polite">{{ lastGesture }}</p>
       <p class="review__no-bars" *ngIf="hasScore && !hasBars">
         This derivation has no bars to draw.
       </p>
