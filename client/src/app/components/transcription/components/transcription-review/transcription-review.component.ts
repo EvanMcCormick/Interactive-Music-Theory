@@ -20,15 +20,18 @@ import * as alphaTab from '@coderline/alphatab';
 import { ScoreDoc, TimeSignature } from '../../../../models/composer.model';
 import {
   DerivationSettings,
-  FinestDivision
+  FinestDivision,
+  TranscriptionSession
 } from '../../../../models/transcription.model';
 import { AlphaTabService } from '../../../../services/alpha-tab.service';
 import {
   MAX_TEMPO_BPM,
   MIN_TEMPO_BPM,
+  canApplyMetricalLevel,
   canNudgeDownbeat
 } from '../../../../services/beat-grid-edit';
 import { messageOf } from '../../../../services/error-message';
+import { inferMetricalLevel } from '../../../../services/metrical-level-inference';
 import {
   NoteIndex,
   RenderedNote,
@@ -47,17 +50,24 @@ import {
   FINEST_DIVISIONS,
   HARMONIC_REFUSALS,
   HarmonicMirror,
+  METRICAL_LEVELS,
+  MetricalLevelReport,
   TIME_SIGNATURE_PRESETS,
   TUNING_PRESETS,
   TimeSignaturePreset,
   TuningPreset,
+  beatsCorrectedByHand,
   derivationRemedies,
   describeFolds,
+  describeLevelDiscard,
+  describeLevelTempo,
+  describeMetricalLevel,
   describeToggle,
   drawnIds,
   gridTempoBpm,
   groupDiscards,
   meterId,
+  metricalLevelId,
   restoredRows,
   sameTuning,
   withCurrentMeter,
@@ -67,7 +77,7 @@ import {
 /**
  * The screen where a transcription becomes trustworthy.
  *
- * Nine knobs on one side, the score they produce on the other, and - the part
+ * Ten knobs on one side, the score they produce on the other, and - the part
  * that makes the discards judgeable rather than invisible - every detection the
  * pipeline turned away drawn as a ghost in the bar it was struck in.
  *
@@ -107,19 +117,26 @@ import {
  *
  * ## Past CLAUDE.md's 500-line ceiling, deliberately
  *
- * **419 of these 1001 lines are code**, counted as non-blank lines outside
+ * **499 of these 1200 lines are code**, counted as non-blank lines outside
  * block comments and `//` lines. The number is stated because the escape
  * clause below is stated against it, and a stale one lets the clause be quoted
  * without being checked: it read 303 for two milestones and the review that
  * closed this one measured 397, so it had been arguing a case it no longer
  * supported for some time.
  *
+ * **It is now one line under the number the clause names.** The metrical level
+ * control brought about eighty, and the escape clause has therefore run out
+ * rather than been re-argued: the next change that adds code here takes the cut
+ * below first. It was not taken with this one because the cut is not free - see
+ * what it costs, two paragraphs down - and because the change it would have
+ * been bundled into is the one whose worth had to be measured on a real file.
+ *
  * The argument is `transcription.service.ts`'s. The rule exists so a file
  * stays small enough to hold in the head, and the only extractions on offer
  * here are the docblocks - which are the part worth keeping next to the code.
  * The knob table, the preset lists, the discard grouping and the sentences the
- * panel prints already live in `review-controls.ts`, which is 263 code lines
- * of 677 by the same accounting and says so in its own docblock.
+ * panel prints already live in `review-controls.ts`, which is 399 code lines
+ * of 944 by the same accounting and says so in its own docblock.
  *
  * ### The cut that would be made, and why it has not been
  *
@@ -197,6 +214,14 @@ export class TranscriptionReviewComponent
   /** Whole beats, signed. `-1` starts bar 1 a beat earlier. */
   @Output() readonly downbeatNudged = new EventEmitter<number>();
   /**
+   * Grid beats per tracked pulse: which note value the tracker actually found.
+   *
+   * Emitted by the select, and once by the panel itself when the inference has
+   * a proposal and the session is still at the tracker's own level. See
+   * `seedMetricalLevel`.
+   */
+  @Output() readonly metricalLevelChanged = new EventEmitter<number>();
+  /**
    * A `DetectedNote.id` whose suppression verdict the user wants reversed.
    *
    * An id and not a verdict, because the panel is not entitled to one: which
@@ -240,6 +265,7 @@ export class TranscriptionReviewComponent
   @ViewChild('positionModel') positionModel?: NgModel;
 
   readonly finestDivisions = FINEST_DIVISIONS;
+  readonly metricalLevels = METRICAL_LEVELS;
   readonly minTempoBpm = MIN_TEMPO_BPM;
   readonly maxTempoBpm = MAX_TEMPO_BPM;
 
@@ -260,6 +286,9 @@ export class TranscriptionReviewComponent
     meter: `txr-meter-${this.seq}`,
     tempo: `txr-tempo-${this.seq}`,
     tempoHint: `txr-tempo-hint-${this.seq}`,
+    level: `txr-level-${this.seq}`,
+    levelHint: `txr-level-hint-${this.seq}`,
+    levelEvidence: `txr-level-evidence-${this.seq}`,
     downbeatHint: `txr-downbeat-hint-${this.seq}`,
     controlsHeading: `txr-controls-heading-${this.seq}`,
     previewHeading: `txr-preview-heading-${this.seq}`,
@@ -287,6 +316,17 @@ export class TranscriptionReviewComponent
    * Composed here rather than in the template, per the project's guidance about
    * work in bindings, and read-only because the ids never move.
    */
+  /**
+   * The level select's `aria-describedby`: its hint, then the evidence block.
+   *
+   * The evidence is not decoration around this control, it is the argument for
+   * the value in it - the proposal is marginal on the file the feature exists
+   * for, and a reader who reaches the select without it is being handed a
+   * confident answer the panel is deliberately not making. Composed here for
+   * the reason `advancedDescribedBy` is.
+   */
+  readonly levelDescribedBy = `${this.id.levelHint} ${this.id.levelEvidence}`;
+
   readonly advancedDescribedBy = {
     tolerance: `${this.id.toleranceHint} ${this.id.advancedHint}`,
     unisonConfidence: `${this.id.unisonConfidenceHint} ${this.id.advancedHint}`,
@@ -303,6 +343,8 @@ export class TranscriptionReviewComponent
   maxFret = 24;
   timeSignatureId = '';
   tempoBpm: number | null = null;
+  /** Which `METRICAL_LEVELS` entry the select shows. */
+  metricalLevelId = '';
   /**
    * What the four threshold controls show.
    *
@@ -392,6 +434,25 @@ export class TranscriptionReviewComponent
   /** Set when the user states a tempo outside the range the service accepts. */
   tempoNote: string | null = null;
   /**
+   * What the inference found about the tracked pulse, and the numbers for it.
+   *
+   * Recomputed from the arriving session on every state, because
+   * `inferMetricalLevel` is a pure function of the notes, the tracked grid and
+   * the meter in force - all three of which a re-track or a meter correction
+   * moves. It never sets the level: `metricalLevelId` comes from the session,
+   * and the only time a proposal reaches the session is the one seeding emit.
+   */
+  levelReport: MetricalLevelReport | null = null;
+  /** What the level did to the tempo, when the level is not 1. */
+  levelTempoNote: string | null = null;
+  /**
+   * What a level change will discard, or what the last one did. Never both; see
+   * `describeLevelDiscard`.
+   */
+  levelDiscardNote: string | null = null;
+  /** Set when a level the service would turn away was picked. */
+  levelNote: string | null = null;
+  /**
    * Why a threshold was not applied, by field; each is rendered beside its own
    * control. Empty when all four are numbers. See `HARMONIC_REFUSALS`.
    */
@@ -437,6 +498,23 @@ export class TranscriptionReviewComponent
   private pendingIndex: NoteIndex = EMPTY_INDEX;
   /** The id of the click awaiting the state it produced; see `lastGesture`. */
   private pendingToggleId: string | null = null;
+  /**
+   * The session the level has already been seeded for; see `seedMetricalLevel`.
+   *
+   * By session id and not by a boolean, so a second file dropped into a
+   * still-mounted panel is seeded on its own evidence.
+   */
+  private seededSessionId: string | null = null;
+  /** The seeding emit, until it fires; see `seedMetricalLevel`. */
+  private seedTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Whether a beat correction was standing when the level change went out.
+   *
+   * Read once by the state that comes back, exactly as `pendingToggleId` is: by
+   * then the correction has been discarded and the session no longer says it
+   * ever existed, so the note has to be written from what was true at the emit.
+   */
+  private pendingLevelDiscard = false;
   private readonly destroy$ = new Subject<void>();
   private readonly renderRequest$ = new Subject<void>();
   private resizeObserver: ResizeObserver | null = null;
@@ -477,6 +555,11 @@ export class TranscriptionReviewComponent
     // it rather than leaving it standing over a different score.
     const toggled = this.pendingToggleId;
     this.pendingToggleId = null;
+    // Same reading-and-clearing, and cleared even on a refusal: a change the
+    // service turned away discarded nothing, so the flag must not survive to
+    // be read by the next state that arrives.
+    const discardedLevel = this.pendingLevelDiscard && state?.refusal == null;
+    this.pendingLevelDiscard = false;
 
     this.failure = state?.phase === 'failed' ? state.error : null;
     this.hasScore = session !== null && derived !== null;
@@ -499,6 +582,15 @@ export class TranscriptionReviewComponent
       this.foldNote = null;
       this.canNudgeBack = false;
       this.canNudgeForward = false;
+      this.levelReport = null;
+      this.levelTempoNote = null;
+      this.levelDiscardNote = null;
+      this.levelNote = null;
+      this.metricalLevelId = metricalLevelId(1);
+      // A cleared panel is between transcriptions, so the seed owed to the next
+      // session must not be cancelled by the id of the one that has gone.
+      this.cancelSeed();
+      this.seededSessionId = null;
       this.renderRequest$.next();
       return;
     }
@@ -532,6 +624,27 @@ export class TranscriptionReviewComponent
 
     this.canNudgeBack = canNudgeDownbeat(session.grid, -1);
     this.canNudgeForward = canNudgeDownbeat(session.grid, 1);
+
+    // The meter *in force* rather than the tracked grid's, per
+    // `inferMetricalLevel`: a listener who corrected the meter to 12/8 must get
+    // the compound answer rather than the one the tracker ran under.
+    const proposal = inferMetricalLevel(
+      session.notes,
+      session.trackedGrid,
+      session.grid.timeSignature
+    );
+    this.levelReport = describeMetricalLevel(proposal, session.grid.timeSignature);
+    this.metricalLevelId = metricalLevelId(session.beatsPerPulse);
+    // Same argument as `tempoNote` above: a state arriving means a change was
+    // applied, so a refusal left standing would explain a level that is not on
+    // screen any more.
+    this.levelNote = null;
+    this.levelTempoNote = describeLevelTempo(session);
+    this.levelDiscardNote = describeLevelDiscard(
+      beatsCorrectedByHand(session),
+      discardedLevel
+    );
+    this.seedMetricalLevel(session, proposal.beatsPerPulse);
 
     if (state?.refusal) this.snapRefusedControlsBack();
 
@@ -620,6 +733,10 @@ export class TranscriptionReviewComponent
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
+    // A seeding emit outlives the panel otherwise: it is a task rather than a
+    // subscription, so `destroy$` does not reach it, and it would fire an
+    // output at a host that has already torn this component down.
+    this.cancelSeed();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.alphaTabService.dispose();
@@ -684,7 +801,7 @@ export class TranscriptionReviewComponent
   }
 
   // -------------------------------------------------------------------------
-  // The nine knobs
+  // The ten knobs
   // -------------------------------------------------------------------------
 
   /**
@@ -856,6 +973,96 @@ export class TranscriptionReviewComponent
   }
 
   /**
+   * States which note value the tracker found, and rebuilds the grid at it.
+   *
+   * The guard is `onTempoChange`'s, for `onTempoChange`'s reason:
+   * `updateMetricalLevel` refuses a level `canApplyMetricalLevel` turns down by
+   * handing the session straight back, and the state that arrives is
+   * indistinguishable from one where nothing was asked for. Every entry in
+   * `METRICAL_LEVELS` is inside the service's range, so the only refusal
+   * reachable from this control is a tracked grid with fewer than two beats -
+   * which is rare and is not impossible, and is worth a sentence rather than a
+   * select that silently disagrees with the score.
+   *
+   * `pendingLevelDiscard` is read *here* and not from the state that comes
+   * back, because by then the correction it describes has been discarded and
+   * the session no longer records that there was one.
+   */
+  onMetricalLevelChange(presetId: string): void {
+    this.metricalLevelId = presetId;
+
+    const preset = this.metricalLevels.find(level => level.id === presetId);
+    const tracked = this.state?.session?.trackedGrid;
+    if (!preset || !tracked) return;
+
+    if (!canApplyMetricalLevel(tracked, preset.beatsPerPulse)) {
+      this.levelNote =
+        'The tracker did not return enough beats to resample at another note value.';
+      return;
+    }
+
+    this.levelNote = null;
+    this.pendingLevelDiscard = beatsCorrectedByHand(this.state!.session!);
+    this.metricalLevelChanged.emit(preset.beatsPerPulse);
+  }
+
+  /**
+   * Applies the inference's proposal, once per session and never again.
+   *
+   * A proposal is not a level. `inferMetricalLevel` is pure and is recomputed on
+   * every state that arrives, so a re-track - which a suppression threshold
+   * causes, and which returns a new tracked grid and a new note list - produces
+   * a *new* proposal for a session the listener may have already answered. Left
+   * to seed every time, it would move their choice out from under them, and the
+   * one it moved to would be an inference drawn from a grid they had overruled.
+   * So the session's id is recorded the first time it is seen, whether or not
+   * anything was proposed, and that is the whole of the "once".
+   *
+   * Seeding *applies* rather than merely selecting, because this panel's
+   * controls are controlled: a select showing "Dotted quarter" beside a score
+   * derived at the tracker's own level would be the exact disagreement the
+   * mirror fields and `snapRefusedControlsBack` exist to prevent. The first
+   * state for a session is also the only safe moment to do it - nothing has
+   * been corrected by hand yet, so the discard `updateMetricalLevel` performs
+   * costs the listener nothing.
+   *
+   * ## Why it is deferred rather than emitted here
+   *
+   * `ngOnChanges` runs while Angular is applying the host's bindings. The host
+   * handles this output synchronously - `TranscriptionService` derives and
+   * pushes inside the emit - so emitting from here would replace the very
+   * `state` the binding above it was just checked against, and development mode
+   * would report it as an expression changed after it was checked. A task
+   * lets the pass finish first, and the state then arrives through the ordinary
+   * path with the level on it.
+   *
+   * Scheduled only when there is something to apply, so a panel that has
+   * nothing to propose leaves no timer behind for a test to have to drain.
+   */
+  private seedMetricalLevel(
+    session: TranscriptionSession,
+    proposed: number | null
+  ): void {
+    if (this.seededSessionId === session.id) return;
+    this.seededSessionId = session.id;
+
+    if (proposed === null || proposed === session.beatsPerPulse) return;
+    if (!canApplyMetricalLevel(session.trackedGrid, proposed)) return;
+
+    this.seedTimer = setTimeout(() => {
+      this.seedTimer = null;
+      this.metricalLevelChanged.emit(proposed);
+    });
+  }
+
+  private cancelSeed(): void {
+    if (this.seedTimer === null) return;
+
+    clearTimeout(this.seedTimer);
+    this.seedTimer = null;
+  }
+
+  /**
    * Rewrites the two refusable selects from the state, when a change was
    * refused.
    *
@@ -904,9 +1111,13 @@ export class TranscriptionReviewComponent
    * `rederive` refuses on `barGridFault` - `finestDivision` and the meter - or
    * on `fretboardFault` - capo, max fret and position hint. A session sitting
    * in `ready` already derived cleanly once, so whichever of those five moved
-   * last is the one that caused the refusal; tempo and downbeat touch neither
-   * check and the tuning select cannot fail either. Tempo has a note of its own
-   * because the service refuses a tempo *silently*.
+   * last is the one that caused the refusal; tempo, the metrical level and the
+   * downbeat touch neither check and the tuning select cannot fail either.
+   * Tempo and the level have notes of their own, because the service refuses
+   * both *silently* - and being outside this set is also why neither needs
+   * `snapRefusedControlsBack`: a silent refusal pushes no state at all, so the
+   * mirror keeps the refused value and the next state to arrive differs from it
+   * and is written back through the accessor.
    */
   refusalFor(control: RefusableControl): string | null {
     if (this.refusalControl !== control) return null;

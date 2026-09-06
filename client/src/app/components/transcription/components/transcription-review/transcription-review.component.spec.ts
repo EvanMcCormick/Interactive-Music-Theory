@@ -24,16 +24,25 @@ import {
   NO_NOTE_DECISIONS,
   NoteDecisions
 } from '../../../../services/transcription-harmonics';
+import { atMetricalLevel } from '../../../../services/beat-grid-edit';
+import {
+  MetricalLevelProposal,
+  MetricalLevelVerdict,
+  SubdivisionFit
+} from '../../../../services/metrical-level-inference';
 import { TranscriptionState } from '../../../../services/transcription.service';
 import { FoldedNote } from '../../../../services/transcription-octave';
 import {
   MAX_LISTED_ROWS,
+  beatsCorrectedByHand,
   derivationRemedies,
   describeFolds,
   describeToggle,
+  describeMetricalLevel,
   drawnIds,
   gridTempoBpm,
   groupDiscards,
+  metricalLevelId,
   pitchName,
   restoredRows
 } from './review-controls';
@@ -198,6 +207,66 @@ function makeSession(
   };
 }
 
+/**
+ * The shape the whole feature exists for, in miniature.
+ *
+ * A tracker that locked onto the three-eighth grouping of a 3+3+2 line returns
+ * dotted quarters: 101 of them at 100.96 BPM here, with the onsets on *thirds*
+ * of each - which is what the eighths of the music are, seen from a pulse three
+ * of them long. `k = 3` therefore fits and `k = 2` and `k = 4` do not, which is
+ * the measurement `inferMetricalLevel` makes and the proposal of 1.5 that
+ * follows from it.
+ *
+ * 300 onsets, comfortably past `MIN_INFERENCE_ONSETS`, and the wobble is
+ * deterministic and alternating so the fit is a measurement rather than an
+ * identity - a fixture sitting exactly on the grid would report a perfect fit
+ * and prove nothing about a marginal one.
+ */
+function tresilloSession(): TranscriptionSession {
+  const pulseSec = 60 / 100.96;
+  const beatsSec = Array.from({ length: 101 }, (_, i) => i * pulseSec);
+  const grid: BeatGrid = { beatsSec, timeSignature: FOUR_FOUR };
+  const notes: DetectedNote[] = Array.from({ length: 300 }, (_, j) => {
+    const onsetSec = ((j / 3) + (j % 2 === 0 ? 0.01 : -0.01)) * pulseSec;
+    return {
+      id: `t${j}`,
+      pitch: 40 + (j % 5),
+      onsetSec,
+      offsetSec: onsetSec + 0.15,
+      confidence: 1,
+      bendCents: []
+    };
+  });
+
+  // Its own id, because `makeSession` names every session `s1` and the seeding
+  // is once per session: a fixture sharing that id would arrive already seeded
+  // by the straight one `beforeEach` pushes.
+  return { ...makeSession({}, grid, notes), id: 'tresillo' };
+}
+
+/** The session as `updateMetricalLevel` leaves it: resampled from the tracker. */
+function leveled(
+  session: TranscriptionSession,
+  beatsPerPulse: number
+): TranscriptionSession {
+  return {
+    ...session,
+    beatsPerPulse,
+    grid: {
+      ...atMetricalLevel(session.trackedGrid, beatsPerPulse),
+      timeSignature: session.grid.timeSignature
+    }
+  };
+}
+
+/** The session as `withTempo` leaves it: an even pulse, and the measurements gone. */
+function handCorrected(session: TranscriptionSession): TranscriptionSession {
+  return {
+    ...session,
+    grid: { ...session.grid, beatsSec: session.grid.beatsSec.map((_, i) => i * 0.5) }
+  };
+}
+
 function readyState(
   session: TranscriptionSession,
   extra: Partial<TranscriptionState> = {}
@@ -223,6 +292,7 @@ describe('TranscriptionReviewComponent', () => {
   let meterEmits: TimeSignature[];
   let tempoEmits: number[];
   let nudgeEmits: number[];
+  let levelEmits: number[];
   let toggleEmits: string[];
   let harmonicsEmits: Partial<HarmonicOptions>[];
 
@@ -301,12 +371,14 @@ describe('TranscriptionReviewComponent', () => {
     meterEmits = [];
     tempoEmits = [];
     nudgeEmits = [];
+    levelEmits = [];
     toggleEmits = [];
     harmonicsEmits = [];
     component.settingsChanged.subscribe(v => settingsEmits.push(v));
     component.timeSignatureChanged.subscribe(v => meterEmits.push(v));
     component.tempoChanged.subscribe(v => tempoEmits.push(v));
     component.downbeatNudged.subscribe(v => nudgeEmits.push(v));
+    component.metricalLevelChanged.subscribe(v => levelEmits.push(v));
     component.noteToggled.subscribe(v => toggleEmits.push(v));
     component.harmonicsChanged.subscribe(v => harmonicsEmits.push(v));
 
@@ -318,7 +390,7 @@ describe('TranscriptionReviewComponent', () => {
   // (a) Every control round-trips: it emits, and it shows what comes back.
   // ---------------------------------------------------------------------------
 
-  describe('the nine knobs, emitting', () => {
+  describe('the ten knobs, emitting', () => {
     it('sends the tuning as MIDI pitches, highest string first', () => {
       choose(component.id.tuning, 'Guitar, standard (E B G D A E)');
 
@@ -405,7 +477,7 @@ describe('TranscriptionReviewComponent', () => {
     });
   });
 
-  describe('the nine knobs, reflecting the state that comes back', () => {
+  describe('the ten knobs, reflecting the state that comes back', () => {
     it('shows the tuning the session is actually on', fakeAsync(() => {
       choose(component.id.tuning, 'Guitar, standard (E B G D A E)');
       push(readyState(makeSession({ tuning: [64, 59, 55, 50, 45, 40] })));
@@ -1312,10 +1384,11 @@ describe('TranscriptionReviewComponent', () => {
         fixture.nativeElement.querySelectorAll('.review__controls input, .review__controls select')
       );
 
-      // Nine knobs less the two downbeat buttons, plus the four suppression
-      // thresholds. A control added without a label fails the loop below; this
-      // number is what catches one added without being counted at all.
-      expect(controls.length).toBe(12);
+      // Ten knobs less the two downbeat buttons, plus the four suppression
+      // thresholds. A control added without a label fails
+      // the loop below; this number is what catches one added without being
+      // counted at all.
+      expect(controls.length).toBe(13);
       for (const element of controls) {
         const label = fixture.nativeElement.querySelector(`label[for="${element.id}"]`);
         expect(element.id)
@@ -1927,6 +2000,348 @@ describe('TranscriptionReviewComponent', () => {
     it('has nothing to say about a grid that spans no time', () => {
       expect(gridTempoBpm([1.0, 1.0])).toBeNull();
       expect(gridTempoBpm([0, Number.POSITIVE_INFINITY])).toBeNull();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // (g) The metrical level: which note value the tracker found.
+  // ---------------------------------------------------------------------------
+
+  /** Everything the level control prints, label and messages alike. */
+  function levelText(): string {
+    const block = control<HTMLSelectElement>(component.id.level).closest('.control');
+    return ((block?.textContent ?? '') as string).replace(/\s+/g, ' ').trim();
+  }
+
+  describe('the metrical level', () => {
+    it('sends the level the option names, as a number', fakeAsync(() => {
+      push(readyState(tresilloSession()));
+      tick(SETTLE_MS);
+      levelEmits.length = 0;
+
+      choose(component.id.level, 'Dotted quarter note');
+
+      expect(levelEmits).toEqual([1.5]);
+    }));
+
+    it('shows the level the session is at, not the one that was picked', fakeAsync(() => {
+      const session = tresilloSession();
+      push(readyState(session));
+      tick(SETTLE_MS);
+
+      choose(component.id.level, 'Half note');
+      // What the service actually applied, which is not what was asked for.
+      push(readyState(leveled(session, 1.5)));
+      tick(SETTLE_MS);
+
+      expect(shownOption(component.id.level)).toBe('Dotted quarter note');
+    }));
+
+    it('offers the five levels a beat tracker is wrong at', () => {
+      const select = control<HTMLSelectElement>(component.id.level);
+
+      expect(Array.from(select.options).map(option => (option.textContent ?? '').trim()))
+        .toEqual([
+          'Eighth note',
+          'Quarter note - the beat',
+          'Dotted quarter note',
+          'Half note',
+          'Dotted half note'
+        ]);
+    });
+
+    it('prints the evidence for the proposal, not only the proposal', fakeAsync(() => {
+      push(readyState(tresilloSession()));
+      tick(SETTLE_MS);
+
+      const evidence = text(`#${component.id.levelEvidence}`);
+
+      // The headline says what was found and why it is a correction; the rows
+      // carry every candidate's numbers, so a marginal call reads as marginal.
+      expect(evidence).toContain('divides in three');
+      expect(evidence).toContain('Divided in 3');
+      expect(evidence).toContain('Divided in 2');
+      expect(evidence).toContain('Divided in 4');
+      expect(evidence).toContain('% is what it takes');
+    }));
+
+    it('says so when there is not enough to measure, rather than showing nothing', () => {
+      // The six-note fixture from `beforeEach`: far under the onset floor.
+      expect(text(`#${component.id.levelEvidence}`)).toContain('Not enough to tell');
+    });
+
+    it('describes the level select with its hint and its evidence', () => {
+      const select = control<HTMLSelectElement>(component.id.level);
+
+      expect(select.getAttribute('aria-describedby'))
+        .toBe(`${component.id.levelHint} ${component.id.levelEvidence}`);
+    });
+
+    it('says what the corrected tempo is once the level is not 1', fakeAsync(() => {
+      const session = tresilloSession();
+      push(readyState(session));
+      tick(SETTLE_MS);
+      expect(levelText()).not.toContain('BPM');
+
+      push(readyState(leveled(session, 1.5)));
+      tick(SETTLE_MS);
+
+      // 100 tracked pulses over 59.4 s is 101 BPM; at a dotted quarter that is
+      // 151 in beats. Both halves, because neither is the whole correction.
+      expect(levelText()).toContain('151 BPM');
+      expect(levelText()).toContain('101 BPM');
+    }));
+
+    it('warns that a beat correction will go before the level is changed', fakeAsync(() => {
+      push(readyState(handCorrected(tresilloSession())));
+      tick(SETTLE_MS);
+
+      expect(levelText()).toContain('discards the tempo and downbeat');
+    }));
+
+    it('does not warn about a correction nobody made', fakeAsync(() => {
+      // A level is not a hand correction, and reading it as one would put a
+      // warning about lost work in front of a listener who has lost none.
+      push(readyState(leveled(tresilloSession(), 1.5)));
+      tick(SETTLE_MS);
+
+      expect(levelText()).not.toContain('discards the tempo');
+    }));
+
+    it('says afterwards that the correction was discarded', fakeAsync(() => {
+      const session = tresilloSession();
+      push(readyState(handCorrected(session)));
+      tick(SETTLE_MS);
+
+      choose(component.id.level, 'Dotted quarter note');
+      // What `updateMetricalLevel` does: the grid comes back off `trackedGrid`,
+      // so the typed tempo is gone and the session no longer records it.
+      push(readyState(leveled(session, 1.5)));
+      tick(SETTLE_MS);
+
+      expect(levelText()).toContain('rebuilt from the beats the tracker measured');
+      expect(levelText()).toContain('time signature was kept');
+    }));
+
+    it('does not claim a discard when the change was refused', fakeAsync(() => {
+      const corrected = handCorrected(tresilloSession());
+      push(readyState(corrected));
+      tick(SETTLE_MS);
+
+      choose(component.id.level, 'Dotted quarter note');
+      push(readyState(corrected, { refusal: 'Could not apply that change: nope.' }));
+      tick(SETTLE_MS);
+
+      // Still the warning, because nothing was discarded: the correction is
+      // standing and the state says so.
+      expect(levelText()).toContain('discards the tempo and downbeat');
+      expect(levelText()).not.toContain('are gone');
+    }));
+
+    it('says why a level the tracked grid cannot carry is not applied', fakeAsync(() => {
+      const session = tresilloSession();
+      // One tracked beat: `canApplyMetricalLevel` refuses every level, and
+      // `updateMetricalLevel` would refuse it without a word.
+      push(readyState({
+        ...session,
+        trackedGrid: { ...session.trackedGrid, beatsSec: [0] }
+      }));
+      tick(SETTLE_MS);
+      levelEmits.length = 0;
+
+      choose(component.id.level, 'Half note');
+
+      expect(levelEmits).toEqual([]);
+      expect(levelText()).toContain('not return enough beats');
+    }));
+  });
+
+  describe('seeding the level from the inference', () => {
+    it('applies the proposal once, after the pass that made it', fakeAsync(() => {
+      push(readyState(tresilloSession()));
+
+      // Nothing during the pass itself: emitting there would replace the very
+      // state the host's binding had just been checked against.
+      expect(levelEmits).toEqual([]);
+
+      tick(SETTLE_MS);
+
+      expect(levelEmits).toEqual([1.5]);
+    }));
+
+    it('proposes nothing when the evidence does not support a level', fakeAsync(() => {
+      // The straight six-note fixture pushed by `beforeEach`.
+      tick(SETTLE_MS);
+
+      expect(levelEmits).toEqual([]);
+    }));
+
+    it('leaves the choice alone once the session has been seeded', fakeAsync(() => {
+      const session = tresilloSession();
+      push(readyState(session));
+      tick(SETTLE_MS);
+      expect(levelEmits).toEqual([1.5]);
+
+      // A re-track: a suppression threshold rebuilt the note list and the
+      // tracked grid, so the inference runs again and proposes again. There is
+      // an answer on the control by now, and it must not be moved.
+      push(readyState(leveled(session, 1.5)));
+      tick(SETTLE_MS);
+
+      expect(levelEmits).toEqual([1.5]);
+    }));
+
+    it('does not re-seed a level the listener put back', fakeAsync(() => {
+      const session = tresilloSession();
+      push(readyState(session));
+      tick(SETTLE_MS);
+
+      // They overruled the proposal and went back to the tracker's own level.
+      // The proposal is still 1.5 and it must stay a proposal.
+      push(readyState(session));
+      tick(SETTLE_MS);
+
+      expect(levelEmits).toEqual([1.5]);
+    }));
+
+    it('seeds the next file on its own evidence', fakeAsync(() => {
+      push(readyState(tresilloSession()));
+      tick(SETTLE_MS);
+
+      push(null);
+      tick(SETTLE_MS);
+      push(readyState({ ...tresilloSession(), id: 's2' }));
+      tick(SETTLE_MS);
+
+      expect(levelEmits).toEqual([1.5, 1.5]);
+    }));
+
+    it('does not emit at a host that has torn the panel down', fakeAsync(() => {
+      push(readyState(tresilloSession()));
+
+      fixture.destroy();
+      tick(SETTLE_MS);
+
+      expect(levelEmits).toEqual([]);
+    }));
+  });
+
+  describe('metricalLevelId', () => {
+    it('names the option for a level', () => {
+      expect(metricalLevelId(1.5)).toBe('dotted-quarter');
+    });
+
+    it('names none for a level no option states', () => {
+      // Inside the service's 0.25..4 range and outside this control's five
+      // answers. Better an empty select than a neighbouring option that would
+      // read as a level the grid is not at.
+      expect(metricalLevelId(2.5)).toBe('');
+    });
+  });
+
+  describe('beatsCorrectedByHand', () => {
+    it('says no when the grid is what the level makes of the tracked one', () => {
+      const session = tresilloSession();
+
+      expect(beatsCorrectedByHand(session)).toBeFalse();
+      expect(beatsCorrectedByHand(leveled(session, 1.5))).toBeFalse();
+    });
+
+    it('says yes when the beats have been replaced', () => {
+      expect(beatsCorrectedByHand(handCorrected(tresilloSession()))).toBeTrue();
+    });
+
+    it('says yes when beats have been dropped off the front', () => {
+      const session = tresilloSession();
+      const nudged = {
+        ...session,
+        grid: { ...session.grid, beatsSec: session.grid.beatsSec.slice(1) }
+      };
+
+      expect(beatsCorrectedByHand(nudged)).toBeTrue();
+    });
+  });
+
+  describe('describeMetricalLevel', () => {
+    const fit = (subdivision: number, ratio: number): SubdivisionFit => ({
+      subdivision,
+      meanDeviation: ratio / (4 * subdivision),
+      chance: 1 / (4 * subdivision),
+      ratio
+    });
+
+    const proposal = (
+      beatsPerPulse: number | null,
+      verdict: MetricalLevelVerdict,
+      fits: SubdivisionFit[],
+      onsetCount = 400
+    ): MetricalLevelProposal => ({
+      beatsPerPulse,
+      verdict,
+      fits: [...fits].sort((a, b) => a.ratio - b.ratio),
+      onsetCount
+    });
+
+    it('quotes the margin against the losing hypothesis, not the runner-up', () => {
+      // The binary reading wins on `k = 4` at 0.30, with the other binary
+      // reading second at 0.40 and the ternary one last at 0.90. The decision
+      // was 0.30 against 0.90, and quoting 0.30 against 0.40 would report a
+      // separation nothing was decided on.
+      const report = describeMetricalLevel(
+        proposal(1, 'proposed', [fit(3, 0.9), fit(2, 0.4), fit(4, 0.3)]),
+        FOUR_FOUR
+      );
+
+      expect(report.margin).toContain('67 %');
+      expect(report.headline).toContain('divides in two');
+    });
+
+    it('reads a ternary pulse as the beat in a compound meter', () => {
+      const fits = [fit(3, 0.3), fit(2, 0.9), fit(4, 0.85)];
+
+      expect(describeMetricalLevel(proposal(1.5, 'proposed', fits), FOUR_FOUR).headline)
+        .toContain('dotted value rather than the beat');
+      // Scope decision 3: in 12/8 the tracker found the beat and there is
+      // nothing to correct.
+      expect(
+        describeMetricalLevel(
+          proposal(1, 'proposed', fits),
+          { numerator: 12, denominator: 8, isCommon: false }
+        ).headline
+      ).toContain('is what the beat does');
+    });
+
+    it('declines to quote a margin from a sample it refused to decide on', () => {
+      const report = describeMetricalLevel(
+        proposal(null, 'tooFewOnsets', [fit(3, 0.3), fit(2, 0.9), fit(4, 0.85)], 90),
+        FOUR_FOUR
+      );
+
+      expect(report.margin).toBeNull();
+      expect(report.headline).toContain('90 onsets measured');
+      // The numbers are still shown. They are what a reader would use to decide
+      // by hand that the sample is worth acting on anyway.
+      expect(report.rows.length).toBe(3);
+    });
+
+    it('says when nothing beat chance, rather than calling the better loser', () => {
+      const report = describeMetricalLevel(
+        proposal(null, 'tooClose', [fit(3, 1.02), fit(2, 1.2), fit(4, 1.4)]),
+        FOUR_FOUR
+      );
+
+      expect(report.headline).toContain('random placement');
+      expect(report.margin).toBeNull();
+    });
+
+    it('says when the two readings were too close to call', () => {
+      const report = describeMetricalLevel(
+        proposal(null, 'tooClose', [fit(3, 0.86), fit(2, 0.92), fit(4, 0.95)]),
+        FOUR_FOUR
+      );
+
+      expect(report.headline).toContain('too nearly alike');
+      expect(report.margin).toContain('7 %');
     });
   });
 });

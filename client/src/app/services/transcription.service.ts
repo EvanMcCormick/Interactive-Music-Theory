@@ -603,7 +603,7 @@ export class TranscriptionService {
    * `session.trackedGrid` is for. Typing the original BPM back produces an even
    * pulse at that tempo, not the measured one the tracker returned, because the
    * measurements are what this replaces. `nudgeDownbeat` is the same shape: it
-   * drops beats off the front for good. Seven of the nine knobs are reversible
+   * drops beats off the front for good. Eight of the ten knobs are reversible
    * and these two are not; the tracked grid is kept so a "restore tracked
    * tempo" control can exist, and that control is follow-up work.
    */

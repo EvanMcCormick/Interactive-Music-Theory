@@ -4,8 +4,16 @@ import {
   FinestDivision,
   TranscriptionSession
 } from '../../../../models/transcription.model';
+import { atMetricalLevel } from '../../../../services/beat-grid-edit';
+import {
+  LEVEL_MARGIN,
+  MIN_INFERENCE_ONSETS,
+  MetricalLevelProposal,
+  SubdivisionFit
+} from '../../../../services/metrical-level-inference';
 import { NoteIndex } from '../../../../services/preview-score';
 import { DropReason, DroppedNote } from '../../../../services/score-derivation';
+import { isCompoundMeter } from '../../../../services/transcription-quantize';
 import { HarmonicOptions, NoteDecisions } from '../../../../services/transcription-harmonics';
 import { FoldedNote } from '../../../../services/transcription-octave';
 
@@ -21,19 +29,24 @@ import { FoldedNote } from '../../../../services/transcription-octave';
  *
  * ## And past that ceiling itself
  *
- * **263 of these 677 lines are code**, counted as non-blank lines outside
+ * **399 of these 944 lines are code**, counted as non-blank lines outside
  * block comments and `//` lines. A file that exists because another one grew
  * too long has to answer for its own length, and the answer is the same
  * accounting the component's docblock gives: the ceiling is about how much
- * code a reader holds in their head, the code here is a table, four small pure
- * functions and one grouping pass, and what makes the file long is the
+ * code a reader holds in their head, the code here is two tables, seven small
+ * pure functions and one grouping pass, and what makes the file long is the
  * argument beside each - why the discard reasons are split into six rather
- * than five, why the cap yields to an undrawn row, why the pitch names are
- * sharps only. Extracting those would move the reasoning away from the code it
- * justifies, which is the thing the rule is trying to protect.
+ * than five, why the cap yields to an undrawn row, why the margin is quoted
+ * against the losing hypothesis rather than the runner-up. Extracting those
+ * would move the reasoning away from the code it justifies, which is the thing
+ * the rule is trying to protect.
  *
- * There is no second split waiting here. The next one, if the code grows,
- * belongs on the component's side; see its docblock.
+ * If a split is wanted here, the metrical level is the piece that comes away:
+ * the four functions under "The metrical level" are the panel's only ones that
+ * read a service module rather than a model, and they answer to one control.
+ * That is about a hundred lines and there is no second caller for them, so it
+ * would be a file per control rather than a seam - which is why it has not
+ * been done.
  *
  * The presets are reference data in `CLAUDE.md`'s sense: string pitches are
  * facts about instruments, not settings. They are handed out by copy at the
@@ -674,3 +687,263 @@ export const HARMONIC_REFUSALS: Readonly<Record<keyof HarmonicOptions, string>> 
   unisonConfidenceRatio: 'Needs a number. Leaving it blank would suppress nothing.',
   unisonDurationRatio: 'Needs a number. Leaving it blank would suppress nothing.'
 };
+
+// ---------------------------------------------------------------------------
+// The metrical level
+// ---------------------------------------------------------------------------
+
+/** A note value the tracked pulse could be, as the select holds it. */
+export interface MetricalLevelPreset {
+  id: string;
+  label: string;
+  /** Grid beats per tracked pulse, which is what the session stores. */
+  beatsPerPulse: number;
+}
+
+/**
+ * The pulses a listener can say the tracker found.
+ *
+ * Read as note values against the grid's own beat: at 1 the tracked pulse *is*
+ * the beat, at 1.5 it is a beat and a half - a dotted quarter where the music
+ * is in quarters - and at 0.5 it is half of one. The names are written in
+ * quarters because that is the beat every meter this panel offers counts in,
+ * and because "dotted quarter" is what a reader looking at a 3+3+2 line would
+ * call the thing the tracker locked onto.
+ *
+ * Five rather than the whole of `MIN_BEATS_PER_PULSE`..`MAX_BEATS_PER_PULSE`,
+ * which is 0.25 to 4. Those bounds are the *service's* refusal contract and
+ * exist so a caller cannot ask for a grid that will not render; this list is
+ * the far smaller set of answers a beat tracker is actually wrong in. A level
+ * outside it is reachable only by a caller other than this panel, and
+ * `metricalLevelId` returns the empty id for one rather than quietly showing a
+ * neighbouring option.
+ */
+export const METRICAL_LEVELS: readonly MetricalLevelPreset[] = [
+  { id: 'eighth', label: 'Eighth note', beatsPerPulse: 0.5 },
+  { id: 'quarter', label: 'Quarter note - the beat', beatsPerPulse: 1 },
+  { id: 'dotted-quarter', label: 'Dotted quarter note', beatsPerPulse: 1.5 },
+  { id: 'half', label: 'Half note', beatsPerPulse: 2 },
+  { id: 'dotted-half', label: 'Dotted half note', beatsPerPulse: 3 }
+];
+
+/** The option id for a level, or `''` when no option states it. */
+export function metricalLevelId(beatsPerPulse: number): string {
+  return METRICAL_LEVELS.find(level => level.beatsPerPulse === beatsPerPulse)?.id ?? '';
+}
+
+/**
+ * Whether the beats have been moved by hand since the level was applied.
+ *
+ * The same question `resuppressed` asks, and asked the same way: against the
+ * grid the current level makes of the tracked one, which at level 1 is the
+ * tracked array itself. `withTempo` and `nudgedDownbeat` are the two knobs that
+ * can make this true, and a level change discards both - so the panel has to
+ * be able to say so before the change rather than after it.
+ *
+ * By value and not by identity, because the grid a level implies is recomputed
+ * rather than kept: `atMetricalLevel` is pure and deterministic, so equal
+ * inputs give bit-identical outputs and this is exact rather than approximate.
+ */
+export function beatsCorrectedByHand(session: TranscriptionSession): boolean {
+  const leveled = atMetricalLevel(session.trackedGrid, session.beatsPerPulse).beatsSec;
+  const beats = session.grid.beatsSec;
+  if (beats === leveled) return false;
+
+  return beats.length !== leveled.length || beats.some((sec, i) => sec !== leveled[i]);
+}
+
+/** What the inference found, in the sentences the panel prints. */
+export interface MetricalLevelReport {
+  /** What the measurement concluded, in one sentence. */
+  headline: string;
+  /** One line per candidate subdivision, best fit first. */
+  rows: string[];
+  /**
+   * How far the winning reading is ahead of the losing one, against what it
+   * takes - or null when the comparison was never reached.
+   */
+  margin: string | null;
+}
+
+/**
+ * The proposal and its evidence, as prose.
+ *
+ * The evidence and not only the answer, because the answer is marginal on the
+ * file this exists for: the separation between "a dotted quarter" and "the
+ * beat" runs around 0.83 against a threshold of 0.88, which is real and is not
+ * overwhelming. A reader shown "dotted quarter" alone cannot tell that from a
+ * measurement that was never in doubt, and scope decision 4 is that a confident
+ * wrong answer is worse than a visible one.
+ *
+ * So `rows` prints every candidate's deviation, its chance baseline and the
+ * ratio between them, and `margin` prints how much better the winner fit than
+ * the runner-up against the 12 % it had to beat. A call that squeaked through
+ * reads as one.
+ *
+ * The losing hypothesis and not the second-best *candidate*:
+ * `inferMetricalLevel` scores 2 and 4 as two readings of one hypothesis - does
+ * the pulse divide in two - and decides ternary against the better of them. A
+ * margin quoted against whichever candidate happened to come second would
+ * sometimes compare the two binary readings with each other and report a
+ * separation no decision was made on.
+ */
+export function describeMetricalLevel(
+  proposal: MetricalLevelProposal,
+  timeSignature: TimeSignature
+): MetricalLevelReport {
+  const rows = proposal.fits.map(fitRow);
+
+  if (proposal.fits.length === 0) {
+    return {
+      headline:
+        'Nothing to measure: no detected onset falls inside the beats the tracker returned.',
+      rows,
+      margin: null
+    };
+  }
+
+  const ternary = proposal.fits.find(fit => fit.subdivision === 3)?.ratio ?? NaN;
+  const binary = Math.min(
+    ...proposal.fits.filter(fit => fit.subdivision !== 3).map(fit => fit.ratio)
+  );
+
+  if (proposal.onsetCount < MIN_INFERENCE_ONSETS) {
+    return {
+      headline:
+        `Not enough to tell: ${proposal.onsetCount} onsets measured, and `
+        + `${MIN_INFERENCE_ONSETS} are what it takes before a fit means anything.`,
+      rows,
+      // Deliberately absent. The comparison was never made, and printing the
+      // number it would have produced invites reading a decision out of a
+      // sample the inference declined to decide on.
+      margin: null
+    };
+  }
+
+  if (!(Math.min(ternary, binary) < 1)) {
+    return {
+      headline:
+        'Cannot tell: neither reading of the pulse fits better than a random placement, '
+        + 'so there is no evidence here either way.',
+      rows,
+      margin: null
+    };
+  }
+
+  const ternaryWon = ternary <= binary * LEVEL_MARGIN;
+  // The better fit against the worse, and not the *winner* against the loser:
+  // where nothing won, there is still a separation to report and it is the one
+  // that fell short. Taking the winner would report a negative one.
+  const margin = marginLine(Math.min(ternary, binary), Math.max(ternary, binary));
+
+  if (proposal.verdict !== 'proposed') {
+    return {
+      headline:
+        'Cannot tell: the two readings of the pulse fit too nearly alike to call, '
+        + 'so the level is left where the tracker put it.',
+      rows,
+      margin
+    };
+  }
+
+  if (!ternaryWon) {
+    return {
+      headline:
+        'The tracked pulse divides in two, which is what a beat does. '
+        + 'Nothing here says the tracker found the wrong note value.',
+      rows,
+      margin
+    };
+  }
+
+  const meter = `${timeSignature.numerator}/${timeSignature.denominator}`;
+
+  return {
+    headline: isCompoundMeter(timeSignature)
+      ? `The tracked pulse divides in three, which in ${meter} is what the beat does. `
+        + 'Nothing here says the tracker found the wrong note value.'
+      : `The tracked pulse divides in three, and a beat in ${meter} does not - `
+        + 'so what the tracker found is a dotted value rather than the beat.',
+    rows,
+    margin
+  };
+}
+
+/** One candidate's numbers: how close it sits, against how close by chance. */
+function fitRow(fit: SubdivisionFit): string {
+  return (
+    `Divided in ${fit.subdivision}: onsets sit ${fit.meanDeviation.toFixed(3)} of a beat `
+    + `from the nearest, against ${fit.chance.toFixed(3)} by chance - ${fit.ratio.toFixed(2)}`
+  );
+}
+
+/**
+ * How far ahead the winner finished, in the terms the threshold is set in.
+ *
+ * Percentages rather than the raw ratio of ratios, because "fits 17 % closer"
+ * is something a reader can weigh against "12 % is what it takes" and 0.83
+ * against 0.88 is not. Rounded to whole percent: the third digit of a mean over
+ * a few hundred onsets is not evidence of anything.
+ */
+function marginLine(winner: number, loser: number): string {
+  const closer = Math.round((1 - winner / loser) * 100);
+  const needed = Math.round((1 - LEVEL_MARGIN) * 100);
+
+  return (
+    `The better reading fits ${closer} % closer than the other; `
+    + `${needed} % is what it takes.`
+  );
+}
+
+/**
+ * What the level is doing to the tempo, when it is doing anything.
+ *
+ * Null at level 1, where the grid is the tracked one and the tempo box above
+ * already says what that is. At any other level the number in the tempo box is
+ * a *consequence* of this control rather than something anyone typed, and both
+ * halves of the correction are worth stating together: the tracker measured
+ * 101 BPM and the music is at 151.
+ */
+export function describeLevelTempo(session: TranscriptionSession): string | null {
+  if (session.beatsPerPulse === 1) return null;
+
+  const grid = gridTempoBpm(session.grid.beatsSec);
+  const tracked = gridTempoBpm(session.trackedGrid.beatsSec);
+  if (grid === null || tracked === null) return null;
+
+  return `The grid is now ${grid} BPM in beats; the tracker's own pulse was ${tracked} BPM.`;
+}
+
+/**
+ * What a level change costs, said before it happens - or after, if it has.
+ *
+ * The two are one field because they cannot both apply: a level change rebuilds
+ * the grid from `trackedGrid`, so the correction the warning is about is
+ * exactly the thing that is gone by the time the note is due.
+ *
+ * Both corrections go, and for different reasons. The tempo is scope decision
+ * 2 - a typed tempo and a level are two ways of setting the same thing and the
+ * level is the better one. The downbeat is the only available answer: a phase
+ * correction is whole beats *at the level it was made at*, and one beat of a
+ * dotted quarter is two thirds of a quarter, which `nudgedDownbeat` moves the
+ * grid in integers of and cannot express. The meter survives, because it is not
+ * a beat correction - `updateMetricalLevel` restamps the resampled grid with
+ * the session's own.
+ */
+export function describeLevelDiscard(corrected: boolean, discarded: boolean): string | null {
+  if (discarded) {
+    return (
+      'The grid was rebuilt from the beats the tracker measured, so the tempo and '
+      + 'downbeat you had corrected are gone. The time signature was kept.'
+    );
+  }
+
+  if (corrected) {
+    return (
+      'Changing this rebuilds the grid from the beats the tracker measured, which '
+      + 'discards the tempo and downbeat you corrected. The time signature is kept.'
+    );
+  }
+
+  return null;
+}

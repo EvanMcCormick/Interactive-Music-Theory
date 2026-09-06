@@ -468,3 +468,26 @@ $warning-color: #f39c12;
     transition: none;
   }
 }
+
+// The inference's evidence, under the level select.
+//
+// A quieter block than a refusal and a louder one than a hint: what it holds is
+// a measurement rather than a warning or a caption, and the whole point of
+// showing it is that a reader can see a marginal call is marginal. The rule
+// down the left says the lines belong to the control above them without
+// claiming anything went wrong.
+.control__evidence {
+  margin: 0.35rem 0 0;
+  padding: 0.35rem 0 0.35rem 0.5rem;
+  border-left: 2px solid $border-color;
+  max-width: 42ch;
+}
+
+.evidence__fits {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: $text-secondary;
+  font-variant-numeric: tabular-nums;
+}

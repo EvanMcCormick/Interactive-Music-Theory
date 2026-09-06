@@ -204,6 +204,44 @@
       </div>
 
       <!--
+        The one control that says the tracker was wrong about *what* it found
+        rather than about where. It sits under the tempo because the two set the
+        same number by different routes and this is the better one - and because
+        the sentence about the tempo it produces reads against the box above it.
+      -->
+      <div class="control">
+        <label class="control__label" [attr.for]="id.level">Pulse the tracker found</label>
+        <select
+          class="control__input"
+          [id]="id.level"
+          [attr.aria-describedby]="levelDescribedBy"
+          [ngModel]="metricalLevelId"
+          (ngModelChange)="onMetricalLevelChange($event)"
+        >
+          <option
+            *ngFor="let level of metricalLevels; trackBy: trackByPreset"
+            [value]="level.id"
+          >
+            {{ level.label }}
+          </option>
+        </select>
+        <p class="control__hint" [id]="id.levelHint">
+          Resamples the beats the tracker measured at another note value, keeping
+          the timing it found. Unlike the tempo box, this follows the performance
+          rather than replacing it with an even pulse.
+        </p>
+        <div class="control__evidence" [id]="id.levelEvidence" *ngIf="levelReport as report">
+          <p class="control__hint">{{ report.headline }}</p>
+          <ul class="evidence__fits">
+            <li *ngFor="let row of report.rows">{{ row }}</li>
+          </ul>
+          <p class="control__hint" *ngIf="report.margin">{{ report.margin }}</p>
+        </div>
+        <p class="control__hint" *ngIf="levelTempoNote">{{ levelTempoNote }}</p>
+        <p class="control__refusal" *ngIf="levelDiscardNote">{{ levelDiscardNote }}</p>
+        <p class="control__refusal" *ngIf="levelNote">{{ levelNote }}</p>
+      </div>
+      <!--
         Two buttons under one name, so a fieldset and a legend rather than a
         label: `for` points at one control, and neither button is the control
         being named.

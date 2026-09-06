@@ -243,6 +243,17 @@ export class TranscriptionComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * States which note value the tracked pulse is, and rebuilds the grid at it.
+   *
+   * Resamples `session.trackedGrid`, so it discards the tempo and downbeat
+   * corrections rather than composing with them; the panel says so beside the
+   * control. Costs a re-derivation and no detection.
+   */
+  onMetricalLevelChanged(beatsPerPulse: number): void {
+    this.transcription.updateMetricalLevel(beatsPerPulse);
+  }
+
+  /**
    * Reverses the suppression verdict on one detection.
    *
    * The review panel resolves a click on a notehead to a `DetectedNote.id` and

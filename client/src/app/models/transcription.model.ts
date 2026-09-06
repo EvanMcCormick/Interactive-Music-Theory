@@ -221,7 +221,8 @@ export interface TranscriptionSession {
    * measures every beat separately - a real grid runs [0.49, 0.49, 0.51, 0.5,
    * ...] - so typing the original BPM back gives an even grid rather than the
    * one that followed the performance, and the measurements are gone. Seven of
-   * the nine knobs are reversible and these two were not.
+   * the ten knobs are reversible and these two were not - and a metrical level,
+   * which is the tenth, is reversible only because this is here.
    *
    * Kept so that they can be, and now read as well as kept:
    * `updateMetricalLevel` resamples *this* rather than the current grid, which
