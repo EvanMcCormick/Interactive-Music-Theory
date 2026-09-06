@@ -16,7 +16,7 @@ import {
   RenderedNote,
   buildPreviewDoc
 } from '../../../../services/preview-score';
-import { deriveScore } from '../../../../services/score-derivation';
+import { DropReason, deriveScore } from '../../../../services/score-derivation';
 import {
   DEFAULT_HARMONIC_OPTIONS,
   HarmonicOptions,
@@ -26,6 +26,7 @@ import { TranscriptionState } from '../../../../services/transcription.service';
 import { FoldedNote } from '../../../../services/transcription-octave';
 import {
   MAX_LISTED_ROWS,
+  derivationRemedies,
   describeFolds,
   describeToggle,
   drawnIds,
@@ -1514,6 +1515,110 @@ describe('TranscriptionReviewComponent', () => {
     it('states the gesture, so a grey notehead is not the only clue', () => {
       expect(text('.review__click-hint')).toContain('Click a note');
       expect(text('.review__click-hint')).toContain('ghost');
+      // ...and does not promise the gesture on the ghosts it does not work on.
+      expect(text('.review__click-hint')).toContain('not suppression');
+    });
+
+    /*
+     * The staff's half of `DiscardGroup.restorable`.
+     *
+     * Two kinds of ghost are drawn and a notehead does not distinguish them.
+     * A `belowConfidence` note is still in `session.notes`, so `toggleNote`
+     * reads it as kept and *suppresses* it: nothing visible happens, the kept
+     * set moves enough to re-track the beat grid, and the note gains a `drop`
+     * override that outranks the very floor the panel is telling the user to
+     * lower. The list refuses that gesture by withholding a button; the staff
+     * has no button to withhold, so it has to refuse the click itself.
+     */
+    describe('a ghost suppression did not remove', () => {
+      /** Loud enough to keep, quiet enough to ghost, and a suppressed partial. */
+      function mixed(): TranscriptionState {
+        const session = makeSession({ confidenceFloor: 0.9 }, GRID, [
+          note(40, 0, 1, 'loud'),
+          note(45, 0.5, 0.2, 'quiet')
+        ]);
+
+        return readyState(
+          { ...session, rawNotes: [...session.notes, GHOST] },
+          { suppressed: [GHOST] }
+        );
+      }
+
+      it('is not toggled, and says which control moves it instead', fakeAsync(() => {
+        const state = mixed();
+        push(state);
+        tick(SETTLE_MS);
+
+        alphaTabStub.clickNote(clickTarget(keyFor(previewIndex(state), 'quiet'), 4));
+        fixture.detectChanges();
+
+        // No emit at all, so the host never reaches `toggleNote` and no
+        // decision is recorded against the note.
+        expect(toggleEmits).toEqual([]);
+        expect(text('.review__toggle')).toContain('Lower the confidence floor');
+      }));
+
+      // The other half: the refusal is about provenance, not about ghosts.
+      it('leaves a ghost suppression did remove toggling as before', fakeAsync(() => {
+        const state = mixed();
+        push(state);
+        tick(SETTLE_MS);
+
+        alphaTabStub.clickNote(clickTarget(keyFor(previewIndex(state), 'ghost-1'), 4));
+        fixture.detectChanges();
+
+        expect(toggleEmits).toEqual(['ghost-1']);
+        expect(text('.review__toggle')).not.toContain('Lower the confidence floor');
+      }));
+
+      it('goes on refusing after the state has moved on', fakeAsync(() => {
+        push(mixed());
+        tick(SETTLE_MS);
+
+        const next = mixed();
+        push(next);
+        tick(SETTLE_MS);
+
+        alphaTabStub.clickNote(clickTarget(keyFor(previewIndex(next), 'quiet'), 4));
+
+        expect(toggleEmits).toEqual([]);
+      }));
+    });
+  });
+
+  describe('derivationRemedies', () => {
+    const dropped = (reason: DropReason, id: string) => ({
+      note: note(40, 0, 1, id),
+      reason
+    });
+
+    it('names the knob for every reason derivation drops a note for', () => {
+      const remedies = derivationRemedies([
+        dropped('belowConfidence', 'a'),
+        dropped('unplayable', 'b'),
+        dropped('beforeGrid', 'c'),
+        dropped('stringTaken', 'd')
+      ]);
+
+      expect([...remedies.keys()].sort()).toEqual(['a', 'b', 'c', 'd']);
+      expect(remedies.get('a')).toContain('confidence floor');
+      // The same table the list prints under the group, so the two agree.
+      expect(remedies.get('c')).toContain('Nudge the downbeat');
+    });
+
+    // A click lands on any ghost the staff drew, and the staff does not stop
+    // at `MAX_LISTED_ROWS`. A map built from the printed rows would let every
+    // click past the cap through to the toggle it must not make.
+    it('covers a group past the row cap the list stops at', () => {
+      const many = Array.from({ length: MAX_LISTED_ROWS + 5 }, (_, index) =>
+        dropped('belowConfidence', `d${index}`)
+      );
+
+      expect(derivationRemedies(many).size).toBe(MAX_LISTED_ROWS + 5);
+    });
+
+    it('has nothing to decline for a derivation that dropped nothing', () => {
+      expect(derivationRemedies([]).size).toBe(0);
     });
   });
 

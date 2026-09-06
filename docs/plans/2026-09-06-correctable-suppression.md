@@ -163,3 +163,46 @@ Commit: `feat: List the discards and expose the suppression threshold`
 - **Re-running the detector** with different thresholds. `outputToNotesPoly` has its own `onsetThresh` / `frameThresh` and they are hardcoded; making those live means re-running inference, which is a different feature.
 - **Real recordings** for the accuracy harness. Still the biggest threat to the numbers, and still worth more than any further synthetic fixture.
 - **Frame-level evidence.** The ceiling on accuracy, and it touches the detector, the worker boundary and the model.
+
+---
+
+## After the final review
+
+Five tasks landed at 674 tests. The review that closed the milestone found two
+blockers, two documented guarantees that were not true, and a set of smaller
+claims that had drifted from the code. What follows is what was done about
+each, in the order it was committed.
+
+### A. A click on a derivation ghost suppressed it
+
+**The bug.** `buildPreviewDoc` draws `derived.dropped` as ghosts alongside the
+suppressed ones, and `indexVoice` indexes every ghost it draws — it has no
+notion of provenance and should not. So a `belowConfidence` or `beforeGrid`
+note resolved from a click like any other, and `toggleNote` found it in
+`session.notes`, read it as kept, and sent it to `drop`. The panel meanwhile
+promised "a ghost becomes a real note".
+
+Three consequences, escalating: nothing visible happened, because it was a
+ghost and stayed one; the kept set moved, so `rederive` re-tracked the beat
+grid and an accidental click could re-bar the score; and the note acquired a
+`drop` override that outranks the thresholds, so the remedy the panel itself
+prints for that group — "Lower the confidence floor to write these as notes" —
+silently stopped working for it, with nothing on screen to say why.
+
+**The fix.** `DiscardGroup.restorable` already draws this line and the list
+already acts on it by withholding a "Restore" button. The staff has no button
+to withhold, so it needs the same fact in a form a click handler can read:
+`derivationRemedies(derived.dropped)` is a map from detection id to the
+sentence that group prints, built from the same `DISCARD_REMEDIES` table.
+`onNoteClicked` consults it, declines, and puts the remedy in the live region
+instead of emitting.
+
+Built over the whole of `derived.dropped` rather than over the rows the list
+printed: `MAX_LISTED_ROWS` bounds reading, and a click lands on any ghost the
+staff drew. A `DropReason` added without a remedy still declines the click,
+with a general sentence, rather than falling through to the toggle.
+
+The panel's hint said the wrong thing about those ghosts and now says the
+right one.
+
+Commit: `fix: Refuse to toggle a ghost that suppression did not remove`

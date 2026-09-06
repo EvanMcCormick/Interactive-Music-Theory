@@ -369,6 +369,54 @@ const DISCARD_REMEDIES: Readonly<Record<DiscardReason, string | null>> = {
 /** The reasons a per-note toggle can undo: the ones suppression itself made. */
 const RESTORABLE: readonly DiscardReason[] = ['suppressed', 'youSuppressed'];
 
+/**
+ * What to say about a derivation drop that `DISCARD_REMEDIES` has no answer for.
+ *
+ * Unreachable today - every member of `DropReason` names a knob - and kept
+ * because the alternative is worse than a vague sentence: `derivationRemedies`
+ * uses the presence of an entry to decide whether a click is declined, so a
+ * reason added to `DropReason` without a remedy would otherwise fall through
+ * and let the click *suppress* the note. See `DiscardGroup.restorable`.
+ */
+const NO_REMEDY =
+  'The score could not be written with this note. No suppression setting brings it back.';
+
+/**
+ * What to say instead of toggling, for every note derivation turned away.
+ *
+ * The other half of `DiscardGroup.restorable`, for the surface that has no
+ * button to withhold. The list can simply not draw a "Restore" control on a row
+ * a toggle would move the wrong way; the staff cannot, because a ghost there is
+ * a notehead and every notehead is clickable. So the staff needs the same fact
+ * in a form a click handler can read: the ids a toggle must decline, and the
+ * sentence to say instead.
+ *
+ * `derived.dropped` is exactly the notes that reached `deriveScore` and were
+ * turned away by it. Every one of them is still in `session.notes` - it passed
+ * suppression and was rejected a stage later - so `toggleNote` would read it as
+ * kept and *suppress* it: nothing visible would happen, the kept set would
+ * change enough to re-track the beat grid, and the note would gain a `drop`
+ * override that outranks the very threshold the remedy names.
+ *
+ * Keyed by id over the whole array rather than over the rows the list printed:
+ * `MAX_LISTED_ROWS` is a bound on reading, and a click can land on any ghost
+ * the staff drew.
+ *
+ * Reads the same `DISCARD_REMEDIES` table the list prints from, so the sentence
+ * a declined click produces is the one the group in the list already gives.
+ */
+export function derivationRemedies(
+  dropped: readonly DroppedNote[]
+): ReadonlyMap<string, string> {
+  const remedies = new Map<string, string>();
+
+  for (const entry of dropped) {
+    remedies.set(entry.note.id, DISCARD_REMEDIES[entry.reason] ?? NO_REMEDY);
+  }
+
+  return remedies;
+}
+
 /** The order the groups are read in; the largest one on real material is last. */
 const DISCARD_ORDER: readonly DiscardReason[] = [
   'youSuppressed',

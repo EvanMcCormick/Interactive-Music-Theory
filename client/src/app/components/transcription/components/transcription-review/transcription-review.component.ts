@@ -50,6 +50,7 @@ import {
   TUNING_PRESETS,
   TimeSignaturePreset,
   TuningPreset,
+  derivationRemedies,
   describeFolds,
   describeToggle,
   drawnIds,
@@ -276,6 +277,16 @@ export class TranscriptionReviewComponent
   /** In the score only because the user put them back; undoable from here. */
   restored: DiscardRow[] = [];
   /**
+   * Which ghosts a click must decline, and what to say instead.
+   *
+   * The staff draws two kinds of ghost and a notehead does not distinguish
+   * them: suppression's, which a toggle reverses, and derivation's, which it
+   * would *suppress*. `DiscardGroup.restorable` states the difference and the
+   * list acts on it by withholding a button; `onNoteClicked` acts on it by
+   * reading this. See `derivationRemedies`.
+   */
+  private remedies: ReadonlyMap<string, string> = new Map<string, string>();
+  /**
    * What octave correction moved, or null when it moved nothing.
    *
    * Beside the discard counts and deliberately not among them: a folded note is
@@ -300,6 +311,11 @@ export class TranscriptionReviewComponent
    *
    * Cleared by the next state that is not a toggle, so a sentence about one
    * note cannot outlive the derivation it described.
+   *
+   * Also where a *declined* click reports itself. That gesture produces no
+   * state at all - it is refused before the emit - so the sentence is written
+   * here directly and says which control moves the note instead. See
+   * `onNoteClicked`.
    */
   toggleNote: string | null = null;
 
@@ -386,6 +402,7 @@ export class TranscriptionReviewComponent
       this.discardTotal = 0;
       this.omittedCount = 0;
       this.restored = [];
+      this.remedies = new Map<string, string>();
       this.harmonics = { ...DEFAULT_HARMONIC_OPTIONS };
       this.harmonicNotes = {};
       this.foldNote = null;
@@ -460,6 +477,10 @@ export class TranscriptionReviewComponent
       drawn
     );
     this.restored = restoredRows(session, drawn);
+    // From `derived.dropped` and not from `this.discards`, because the rows in
+    // there stop at `MAX_LISTED_ROWS` and a click lands on any ghost the staff
+    // drew. Same table either way; see `derivationRemedies`.
+    this.remedies = derivationRemedies(derived.dropped);
     this.discardTotal = this.discards.reduce((total, group) => total + group.count, 0);
     this.omittedCount = this.discards.reduce((total, group) => total + group.omitted, 0);
     this.foldNote = describeFolds(derived.folded);
@@ -524,11 +545,24 @@ export class TranscriptionReviewComponent
    * from a mouse event, where a thrown error escapes into alphaTab's own
    * dispatch.
    *
-   * The id goes out and nothing is assumed about what it means. The panel does
-   * not know whether this note is about to be restored or suppressed: that
-   * depends on the kept set and on the two override lists, which the service
-   * owns. `toggleNote` decides, and the sentence the user reads is written
-   * from the state that comes back. See `TranscriptionReviewComponent.toggleNote`.
+   * **Declines a ghost suppression did not remove**, which is the one case
+   * where there is something to say and the gesture must not be made. The staff
+   * draws derivation's discards as ghosts too, and a notehead does not say
+   * which kind it is - so a click on a note below the confidence floor found it
+   * in `session.notes`, read it as kept, and sent it to `drop`: nothing visible
+   * happened, the changed kept set re-tracked the beat grid, and the note
+   * quietly acquired an override outranking the very floor the panel was
+   * telling the user to lower. `DiscardGroup.restorable` already draws this
+   * line for the list's button; `remedies` is the same line, drawn for a
+   * surface that cannot withhold a control. The group's own remedy goes into
+   * the live region instead, so the click is answered rather than swallowed.
+   *
+   * Otherwise the id goes out and nothing is assumed about what it means. The
+   * panel does not know whether this note is about to be restored or
+   * suppressed: that depends on the kept set and on the two override lists,
+   * which the service owns. `toggleNote` decides, and the sentence the user
+   * reads is written from the state that comes back. See
+   * `TranscriptionReviewComponent.toggleNote`.
    *
    * Typed as `RenderedNote` rather than `alphaTab.model.Note`, matching
    * `detectionAt`: a real `Note` satisfies it exactly, and a spec can drive
@@ -537,6 +571,16 @@ export class TranscriptionReviewComponent
   private onNoteClicked(note: RenderedNote): void {
     const id = detectionAt(this.noteIndex, note);
     if (id === null) return;
+
+    const remedy = this.remedies.get(id);
+    if (remedy !== undefined) {
+      // No emit, so no state comes back and `ngOnChanges` never runs: OnPush
+      // has to be told this field moved, or the sentence is written and never
+      // drawn.
+      this.toggleNote = remedy;
+      this.cdr.markForCheck();
+      return;
+    }
 
     this.pendingToggleId = id;
     this.noteToggled.emit(id);
