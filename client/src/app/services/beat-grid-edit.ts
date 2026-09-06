@@ -183,3 +183,142 @@ export function canNudgeDownbeat(grid: BeatGrid, beats: number): boolean {
   // Backwards always has somewhere to go: it builds the beats it needs.
   return beats < 0 || source.length - 2 >= 1;
 }
+
+/**
+ * Slowest level a listener can state, as grid beats per tracked pulse.
+ *
+ * A quarter of a beat per pulse: the tracker locked onto something four times
+ * longer than the beat - a whole note read as a quarter. Two binary steps, and
+ * past the coarsest level the control offers.
+ */
+export const MIN_BEATS_PER_PULSE = 0.25;
+
+/**
+ * Fastest level a listener can state.
+ *
+ * Four beats per tracked pulse, the mirror of the floor: the tracker locked
+ * onto something four times shorter than the beat. Bounded here for the reason
+ * the module docblock gives - beat count scales linearly with this, so the far
+ * side is a render that does not return rather than a wrong answer. Five
+ * minutes at the top of the tracker's 210 BPM band is 1,050 pulses; at 4 that
+ * is 4,200 beats and 1,050 bars of 4/4 - the same order as `MAX_TEMPO_BPM`
+ * already allows, and well short of the 12,500 that hangs.
+ */
+export const MAX_BEATS_PER_PULSE = 4;
+
+/**
+ * Resamples a tracked grid at a different metrical level.
+ *
+ * `beatsPerPulse` is grid beats per tracked pulse. 1.5 says the tracker found a
+ * dotted quarter where the music is in quarters; 2 says it found a half note,
+ * 0.5 says it found eighths. 1 is the identity and comes straight back.
+ *
+ * ## Why this is not `withTempo` at a multiple of the tempo
+ *
+ * Because it keeps the measurements. A beat tracker can be right about *where*
+ * the beats are and wrong about *which* note value they are: a 3+3+2 tresillo
+ * bassline at 153 BPM tracks at 100.96, because the strongest onset
+ * periodicity in it is the three-eighth grouping, and the tracked positions are
+ * still good to 23 ms against the true eighth grid. Right pulse, wrong level.
+ *
+ * `withTempo(grid, 151)` fixes the number and throws the measurements away: it
+ * lays a **uniform** pulse from the first beat, and a human take is not
+ * uniform. Measured on the file this function exists for, local tempo wanders
+ * 150.5 to 153.8 across the take, so the uniform grid is right for about
+ * fifteen bars and at chance by 30 to 60 seconds in.
+ *
+ * This samples `tracked` instead - treating `beatsSec` as a piecewise-linear
+ * map from beat index to time, and reading it at `i / beatsPerPulse` - so every
+ * wobble the tracker measured is inherited by the grid that replaces it. On a
+ * grid drifting 150.5 to 153.8, the resampled beats sit within 0.02 ms of the
+ * true ones where the best possible uniform pulse is out by 193 ms mid-take,
+ * half a beat at that tempo. That contrast is the function.
+ *
+ * ## Always resample the *tracked* grid, never the current one
+ *
+ * Nothing here can enforce it - a `BeatGrid` is a `BeatGrid` - but it is what
+ * makes levels commutative and lossless. Sampling a grid that was itself
+ * sampled compounds the interpolation error, and a round trip would no longer
+ * land where it started; `TranscriptionService.updateMetricalLevel` therefore
+ * always reads `session.trackedGrid`.
+ *
+ * Level 1 returns the grid it was given, **by identity**. That is not only an
+ * optimisation: `resuppressed` asks whether `grid.beatsSec` is still the
+ * tracked array to decide whether the user has corrected the beats by hand, and
+ * a level of 1 that handed back an equal-but-new array would answer yes for a
+ * correction nobody made. The arithmetic agrees with the shortcut anyway -
+ * sampling at integer indices is exact, so the value path returns the same
+ * times to the last bit.
+ *
+ * ## Count, and the tail
+ *
+ * As many beats as fit inside the tracked span, `floor((n - 1) *
+ * beatsPerPulse) + 1`, so the last resampled beat is at most one beat short of
+ * the last tracked one. That tail is `secondsToBeats`' extrapolation to cover,
+ * exactly as it already covers the audio past the end of a tracked grid.
+ *
+ * The floor of two beats is the same floor `withTempo` keeps, and for the same
+ * reason: `secondsToBeats` reads a grid of under two beats as position 0 for
+ * every note in the piece. It only binds on a grid of two or three beats
+ * resampled coarser, and there the second beat is extrapolated past the end
+ * using the final tracked interval - the local one, not `secondsToBeats`'
+ * median-clamped one, since a grid that short has no median worth the name.
+ *
+ * A `beatsPerPulse` outside `MIN_BEATS_PER_PULSE`..`MAX_BEATS_PER_PULSE`, or
+ * not a number at all, leaves the grid alone - refused rather than clamped,
+ * like every other correction in this module, so a caller can compare by
+ * identity and say the level was not applied.
+ */
+export function atMetricalLevel(tracked: BeatGrid, beatsPerPulse: number): BeatGrid {
+  // A range test rather than `> 0` plus a ceiling, so NaN - false against
+  // everything - is refused by the same expression. `withTempo` does the same.
+  if (!(beatsPerPulse >= MIN_BEATS_PER_PULSE && beatsPerPulse <= MAX_BEATS_PER_PULSE)) {
+    return tracked;
+  }
+
+  const beats = tracked.beatsSec;
+  if (beats.length < 2) return tracked;
+
+  const last = beats.length - 1;
+
+  // No length hazard here - the count comes off the index span, not off the
+  // times - but a non-finite end would make every interpolated time non-finite,
+  // and `withTempo` already refuses this grid. Handing back a grid of NaNs
+  // would be worse than handing back the one that was given.
+  if (!Number.isFinite(beats[0]) || !Number.isFinite(beats[last])) return tracked;
+
+  if (beatsPerPulse === 1) return tracked;
+
+  const count = Math.max(2, Math.floor(last * beatsPerPulse) + 1);
+  const beatsSec: number[] = [];
+  for (let i = 0; i < count; i++) beatsSec.push(timeAtBeat(beats, i / beatsPerPulse));
+
+  return { ...tracked, beatsSec };
+}
+
+/**
+ * Time of a fractional beat index on a measured grid.
+ *
+ * The inverse of `secondsToBeats`, and linear between neighbours for the same
+ * reason it is: a grid is a list of measured beats rather than one tempo, so a
+ * position between two of them is a walk along the interval they bound rather
+ * than a division.
+ *
+ * An integer index returns its beat exactly - `beats[low] + 0 * span` - which
+ * is what makes a round trip through level 1 return the original times bit for
+ * bit rather than approximately.
+ *
+ * Past either end it extrapolates by the edge interval, which is how the tail
+ * of a resampled grid gets written when the two-beat floor asks for a beat the
+ * tracked grid does not reach.
+ */
+function timeAtBeat(beats: number[], index: number): number {
+  const last = beats.length - 1;
+
+  if (index <= 0) return beats[0] + index * (beats[1] - beats[0]);
+  if (index >= last) return beats[last] + (index - last) * (beats[last] - beats[last - 1]);
+
+  const low = Math.floor(index);
+
+  return beats[low] + (index - low) * (beats[low + 1] - beats[low]);
+}

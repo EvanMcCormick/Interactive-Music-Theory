@@ -8,10 +8,14 @@ import {
 import { deriveScore } from './score-derivation';
 import { DEFAULT_HARMONIC_OPTIONS, NO_NOTE_DECISIONS } from './transcription-harmonics';
 import { beatSlots } from './transcription-quantize';
+import { gridTempo } from './transcription-timing';
 import {
+  MAX_BEATS_PER_PULSE,
   MAX_DOWNBEAT_NUDGE_BEATS,
   MAX_TEMPO_BPM,
+  MIN_BEATS_PER_PULSE,
   MIN_TEMPO_BPM,
+  atMetricalLevel,
   canNudgeDownbeat,
   nudgedDownbeat,
   withTempo
@@ -417,5 +421,257 @@ describe('nudging the grid a score is derived from', () => {
 
     expect(firstAttackSlot(deriveScore(session(UNEVEN, notes)).doc, 0)).toBe(0);
     expect(firstAttackSlot(deriveScore(session(round, notes)).doc, 0)).toBe(1);
+  });
+});
+
+/**
+ * The level the tracker found, corrected.
+ *
+ * The case is a real one, and the numbers below are its numbers. A user's bass
+ * stem - Ab minor, 153 BPM, 4:22 - transcribed at **100.96**: a clean 3:2
+ * error, because the line is a 3+3+2 eighth figure and the strongest onset
+ * periodicity in it is the three-eighth grouping. The tracker's *positions*
+ * were good to 23 ms against the true eighth grid. Right pulse, wrong level.
+ *
+ * ## The drift test is the one that matters
+ *
+ * A test that only checked the resulting tempo would pass for `withTempo` too,
+ * and would therefore say nothing: typing 153 into the tempo box gets the
+ * number right and the timing wrong, because it lays a uniform pulse and
+ * discards every per-beat measurement the tracker made. The take is human -
+ * measured local tempo wanders 150.5 to 153.8 - so a uniform grid is right for
+ * about fifteen bars and at chance half a minute in.
+ *
+ * So the fixture drifts, and the assertions are against a *ground truth* grid
+ * rather than against a tempo: `DRIFTING_EIGHTHS` is an eighth-note grid whose
+ * quarter tempo ramps 150.5 to 153.8, `TRACKED_DOTTED` is every third eighth of
+ * it - what the tracker found - and `TRUE_QUARTERS` is every second, which is
+ * where the beats actually are. Resampling the first at 1.5 has to land on the
+ * second.
+ */
+describe('atMetricalLevel', () => {
+  /** Evenly spaced beats at `bpm`, from the top of the audio. */
+  const flatGrid = (bpm: number, count: number): BeatGrid => ({
+    beatsSec: Array.from({ length: count }, (_, i) => (i * 60) / bpm),
+    timeSignature: FOUR_FOUR
+  });
+
+  /** The take this exists for, as tracked: dotted quarters at 100.96 BPM. */
+  const TRACKED_FLAT = flatGrid(100.96, 40);
+
+  it('turns a tracked dotted quarter into a quarter at the corrected tempo', () => {
+    const quarters = atMetricalLevel(TRACKED_FLAT, 1.5);
+    const interval = quarters.beatsSec[1] - quarters.beatsSec[0];
+
+    // 100.96 x 1.5. The score reads its tempo off the grid with `gridTempo`,
+    // so this is also what the user is told the piece is at.
+    expect(60 / interval).toBeCloseTo(151.44, 2);
+    expect(gridTempo(quarters)).toBe(151);
+  });
+
+  it('puts the resampled beats where the plan says', () => {
+    // The worked example: 0.000 0.594 1.188 1.782 tracked becomes
+    // 0.000 0.396 0.792 1.189 - and the fourth of those is the tracked third
+    // beat itself rather than an approximation of it.
+    const quarters = atMetricalLevel(TRACKED_FLAT, 1.5);
+
+    expect(quarters.beatsSec.slice(0, 4).map(sec => Number(sec.toFixed(3))))
+      .toEqual([0, 0.396, 0.792, 1.189]);
+    expect(quarters.beatsSec[3]).toBe(TRACKED_FLAT.beatsSec[2]);
+  });
+
+  /**
+   * An eighth-note grid whose quarter tempo ramps 150.5 to 153.8 over ~71 s.
+   *
+   * The wander is the one measured on the real file across 20-second windows.
+   * Built at the eighth level because both the tracked pulse (three eighths)
+   * and the true beat (two) are whole multiples of it, so the two grids below
+   * are exact subsets of one ground truth rather than two roundings of it.
+   */
+  const DRIFTING_EIGHTHS: number[] = (() => {
+    const count = 361;
+    const times = [0];
+    for (let i = 0; i < count - 1; i++) {
+      const bpm = 150.5 + (153.8 - 150.5) * (i / (count - 2));
+      times.push(times[times.length - 1] + 30 / bpm);
+    }
+
+    return times;
+  })();
+
+  /** What the tracker found: the three-eighth grouping of the tresillo. */
+  const TRACKED_DOTTED: BeatGrid = {
+    beatsSec: DRIFTING_EIGHTHS.filter((_, i) => i % 3 === 0),
+    timeSignature: FOUR_FOUR
+  };
+
+  /** Where the beats actually are. */
+  const TRUE_QUARTERS: number[] = DRIFTING_EIGHTHS.filter((_, i) => i % 2 === 0);
+
+  /**
+   * The best uniform pulse there is for this take, in BPM.
+   *
+   * Deliberately not 153, and not the median either: this is the tempo that
+   * makes `withTempo` end in exactly the right place, so the comparison below
+   * is against the *best* an even pulse can do rather than against a badly
+   * chosen one.
+   */
+  const BEST_UNIFORM_BPM =
+    (60 * (TRUE_QUARTERS.length - 1)) /
+    (TRUE_QUARTERS[TRUE_QUARTERS.length - 1] - TRUE_QUARTERS[0]);
+
+  /** Furthest any beat of `grid` sits from where the beat actually is. */
+  const maxError = (grid: BeatGrid, truth: number[]): number =>
+    Math.max(...truth.map((sec, i) => Math.abs((grid.beatsSec[i] ?? Infinity) - sec)));
+
+  const localBpm = (beats: number[], i: number): number => 60 / (beats[i + 1] - beats[i]);
+
+  it('has something to say: the take drifts', () => {
+    // Without this every assertion below would pass on a uniform fixture, and
+    // `withTempo` would be as good an answer as this function is.
+    expect(localBpm(TRUE_QUARTERS, 0)).toBeCloseTo(150.5, 1);
+    expect(localBpm(TRUE_QUARTERS, TRUE_QUARTERS.length - 2)).toBeCloseTo(153.8, 1);
+  });
+
+  it('lands on the true beats of a take that drifts', () => {
+    const quarters = atMetricalLevel(TRACKED_DOTTED, 1.5);
+
+    expect(quarters.beatsSec.length).toBe(TRUE_QUARTERS.length);
+    // Interpolation error only, and it is second-order: the tempo moves by
+    // about 0.02 BPM between one tracked pulse and the next.
+    expect(maxError(quarters, TRUE_QUARTERS)).toBeLessThan(0.001);
+  });
+
+  it('follows the drift where withTempo cannot', () => {
+    // The contrast the whole function is for. `withTempo` is handed the best
+    // uniform tempo this material has and still walks off the beat, because an
+    // even pulse has no way to say that the take sped up.
+    const uniform = withTempo(TRACKED_DOTTED, BEST_UNIFORM_BPM);
+    const quarters = atMetricalLevel(TRACKED_DOTTED, 1.5);
+
+    // 193 ms against 0.012 ms, worst at beat 90 of 181: half a beat out in the
+    // middle of the take, which is where an even pulse anchored on beat 1 and
+    // ending in the right place is at its worst.
+    expect(maxError(uniform, TRUE_QUARTERS)).toBeGreaterThan(0.15);
+    expect(maxError(quarters, TRUE_QUARTERS)).toBeLessThan(0.001);
+    expect(maxError(uniform, TRUE_QUARTERS))
+      .toBeGreaterThan(maxError(quarters, TRUE_QUARTERS) * 1000);
+  });
+
+  it('inherits the local tempo the tracker measured instead of averaging it', () => {
+    const quarters = atMetricalLevel(TRACKED_DOTTED, 1.5).beatsSec;
+    const uniform = withTempo(TRACKED_DOTTED, BEST_UNIFORM_BPM).beatsSec;
+
+    // The measured wander, arriving intact at the corrected level.
+    expect(localBpm(quarters, 0)).toBeCloseTo(150.5, 1);
+    expect(localBpm(quarters, quarters.length - 2)).toBeCloseTo(153.8, 1);
+
+    // The same two windows of the same audio after `withTempo`: one number,
+    // twice. The measurements are gone.
+    expect(localBpm(uniform, 0)).toBeCloseTo(BEST_UNIFORM_BPM, 6);
+    expect(localBpm(uniform, uniform.length - 2)).toBeCloseTo(BEST_UNIFORM_BPM, 6);
+  });
+
+  it('is the same grid, by identity, at level 1', () => {
+    // Not only an optimisation: `resuppressed` reads `beatsSec` identity as
+    // "the user has corrected the beats", so an equal-but-new array here would
+    // stop a suppression change re-tracking for the rest of the session.
+    expect(atMetricalLevel(TRACKED_DOTTED, 1)).toBe(TRACKED_DOTTED);
+  });
+
+  it('samples integer indices exactly, so a level is reversible through the tracked grid', () => {
+    // Levels are applied to the tracked grid rather than chained, so this is
+    // the arithmetic that "1 -> 1.5 -> 1 returns the original" rests on -
+    // checked rather than taken on trust from the shortcut above, because
+    // `i / 1.5` is not exact for every `i`. Every resampled beat whose index
+    // lands on a tracked one is that tracked beat, bit for bit.
+    for (const beatsPerPulse of [0.5, 1.5, 2, 3, 4]) {
+      const resampled = atMetricalLevel(TRACKED_DOTTED, beatsPerPulse).beatsSec;
+      let exact = 0;
+
+      resampled.forEach((sec, i) => {
+        const index = i / beatsPerPulse;
+        if (!Number.isInteger(index) || index >= TRACKED_DOTTED.beatsSec.length) return;
+
+        exact++;
+        expect(sec).toBe(TRACKED_DOTTED.beatsSec[index]);
+      });
+
+      expect(exact).toBeGreaterThan(1);
+    }
+  });
+
+  it('halves the beat count when the tracker found the subdivision', () => {
+    // The other direction: 0.5 says the tracked pulse is an eighth and the beat
+    // is the quarter, so every second tracked beat survives.
+    const coarser = atMetricalLevel(flatGrid(240, 9), 0.5);
+
+    expect(coarser.beatsSec).toEqual([0, 0.5, 1, 1.5, 2]);
+    expect(gridTempo(coarser)).toBe(120);
+  });
+
+  it('keeps the time signature', () => {
+    expect(atMetricalLevel(TRACKED_DOTTED, 1.5).timeSignature).toEqual(FOUR_FOUR);
+  });
+
+  it('refuses a level that is not a positive number', () => {
+    for (const bad of [0, -1.5, NaN, Infinity, -Infinity]) {
+      expect(atMetricalLevel(GRID, bad)).toBe(GRID);
+    }
+  });
+
+  it('refuses a level outside the range', () => {
+    for (const bad of [MIN_BEATS_PER_PULSE / 2, MAX_BEATS_PER_PULSE + 1, 1e6]) {
+      expect(atMetricalLevel(GRID, bad)).toBe(GRID);
+    }
+  });
+
+  it('accepts both ends of the range', () => {
+    expect(atMetricalLevel(GRID, MIN_BEATS_PER_PULSE)).not.toBe(GRID);
+    expect(atMetricalLevel(GRID, MAX_BEATS_PER_PULSE)).not.toBe(GRID);
+  });
+
+  it('cannot be asked for more beats than a score can hold', () => {
+    // The hazard the ceiling exists for, the same one `withTempo` has: beats
+    // are bars, and bars are MasterBarDocs, quantizeBar calls and full bars of
+    // rests. Five minutes at the top of the tracker's band, as tracked.
+    const fiveMinutes = flatGrid(210, 1051);
+
+    expect(atMetricalLevel(fiveMinutes, MAX_BEATS_PER_PULSE).beatsSec.length)
+      .toBeLessThan(4300);
+    expect(atMetricalLevel(fiveMinutes, 1e4).beatsSec).toBe(fiveMinutes.beatsSec);
+  });
+
+  it('never returns a grid of under two beats', () => {
+    // `secondsToBeats` reads a shorter grid as position 0 for every note in the
+    // piece, so the floor is the one `withTempo` keeps. The second beat is
+    // extrapolated past the end using the final tracked interval.
+    const short: BeatGrid = { beatsSec: [1.0, 1.5, 2.0], timeSignature: FOUR_FOUR };
+    const coarse = atMetricalLevel(short, MIN_BEATS_PER_PULSE);
+
+    expect(coarse.beatsSec.length).toBe(2);
+    expect(coarse.beatsSec[0]).toBe(1.0);
+    expect(coarse.beatsSec[1]).toBeCloseTo(3.0, 9);
+  });
+
+  it('leaves a grid it cannot resample alone', () => {
+    const single: BeatGrid = { beatsSec: [1.0], timeSignature: FOUR_FOUR };
+    const empty: BeatGrid = { beatsSec: [], timeSignature: FOUR_FOUR };
+
+    expect(atMetricalLevel(single, 1.5)).toBe(single);
+    expect(atMetricalLevel(empty, 1.5)).toBe(empty);
+  });
+
+  it('refuses a grid whose ends are not times', () => {
+    // Nothing here would throw - the count comes off the index span - but
+    // every interpolated time would be NaN, and a grid of NaNs is worse than
+    // the grid that was handed in. `withTempo` refuses the same two.
+    for (const bad of [NaN, Infinity]) {
+      const broken: BeatGrid = { beatsSec: [bad, 0.5, 1.0], timeSignature: FOUR_FOUR };
+      const brokenEnd: BeatGrid = { beatsSec: [0, 0.5, bad], timeSignature: FOUR_FOUR };
+
+      expect(atMetricalLevel(broken, 1.5)).toBe(broken);
+      expect(atMetricalLevel(brokenEnd, 1.5)).toBe(brokenEnd);
+    }
   });
 });
