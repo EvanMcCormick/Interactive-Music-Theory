@@ -571,6 +571,24 @@ export function drawnIds(index: NoteIndex): Set<string> {
  * handing `updateHarmonics` a NaN; nothing in the app does, and closing it
  * belongs with the service rather than here.
  */
+/**
+ * What the four threshold controls show, which is not always a number.
+ *
+ * `HarmonicOptions` would be the obvious type and is the wrong one, by exactly
+ * the amount that matters. A mirror exists so a control shows what the state
+ * says *and what the user just typed into it*, and the second of those can be
+ * blank: an empty number input is one keystroke away at all times, and three of
+ * the four are number inputs. A mirror that could not hold that would have to
+ * keep the last good number instead, which is the same value the session
+ * carries - and `NgModel` writes to the view only when the bound value differs
+ * from the one it last saw, so an emptied box would never be refilled. It would
+ * sit empty behind a message that the next state change silently clears.
+ *
+ * So the refused value goes in, `onHarmonicChange` says so, and the arriving
+ * session then differs from it and is written back through the accessor.
+ */
+export type HarmonicMirror = Readonly<Record<keyof HarmonicOptions, number | null>>;
+
 export const HARMONIC_REFUSALS: Readonly<Record<keyof HarmonicOptions, string>> = {
   partialConfidenceRatio: 'Needs a number. Leaving it blank would suppress nothing.',
   toleranceSec: 'Needs a number of seconds. Leaving it blank would suppress nothing.',

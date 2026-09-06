@@ -206,3 +206,34 @@ The panel's hint said the wrong thing about those ghosts and now says the
 right one.
 
 Commit: `fix: Refuse to toggle a ghost that suppression did not remove`
+
+### B. A refused threshold left the control blank and silent
+
+**The bug.** `onHarmonicChange`'s docblock said "the mirror is still moved on a
+refusal, because the box is showing the bad value and a mirror that disagreed
+with it would be a second lie". The code returned before doing it, and the
+omission was load-bearing rather than cosmetic:
+
+1. Blank the *Overlap tolerance* box. `harmonicNotes.toleranceSec` is set, the
+   message shows, nothing is emitted — correct so far.
+2. Move any other control. A new state arrives and `ngOnChanges` runs
+   `this.harmonicNotes = {}`, clearing the message.
+3. The bound expression was `0.03` before the refusal and `0.03` after it, so
+   Angular's input check sees no change, `NgModel.ngOnChanges` never fires,
+   `writeValue` is never called — and the box stays empty.
+
+An empty control, no message, and a score derived at a value nothing on screen
+states: the same failure `snapRefusedControlsBack` exists to prevent, in the
+one control that had not been given the same treatment.
+
+**The fix.** Write the refused value into the mirror, as the docblock always
+said. The bound value then differs from the arriving session value, so `NgModel`
+writes it back through the accessor. The mirror's type widens from
+`HarmonicOptions` to `HarmonicMirror` — `Record<keyof HarmonicOptions, number |
+null>` — because that is what it actually holds and the narrower type is what
+made the omission look correct.
+
+The existing spec could not catch this: it never pushed an intervening state.
+The new one does, and fails against the old code.
+
+Commit: `fix: Snap a refused threshold back like every other control`

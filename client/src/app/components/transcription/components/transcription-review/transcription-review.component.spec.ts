@@ -1007,6 +1007,36 @@ describe('TranscriptionReviewComponent', () => {
       expect(text('.advanced .control__refusal')).toContain('Needs a number');
     });
 
+    /*
+     * The half the spec below cannot see, because it never pushes a state
+     * between the refusal and the check.
+     *
+     * `ngOnChanges` rewrites `harmonics` from the arriving session and clears
+     * the messages. If the mirror had gone on holding the last good number
+     * through the refusal, the bound expression would read 0.03 at both ends
+     * of that - so `NgModel` would find nothing changed, never call
+     * `writeValue`, and leave an empty box with no message beside it and a
+     * score derived at a threshold nothing on screen states. Which is the
+     * failure `snapRefusedControlsBack` exists to prevent, reached by another
+     * route.
+     */
+    it('refills a refused box from the next state that arrives', fakeAsync(() => {
+      type(component.id.tolerance, '');
+      tick(SETTLE_MS);
+      expect(control<HTMLInputElement>(component.id.tolerance).value).toBe('');
+      expect(text('.advanced .control__refusal')).toContain('Needs a number');
+
+      // Any other control moving. The session that comes back carries the
+      // threshold still in force, which the box has to be shown again.
+      push(readyState(makeSession({ capo: 2 })));
+      tick(SETTLE_MS);
+
+      expect(control<HTMLInputElement>(component.id.tolerance).value).toBe(
+        `${DEFAULT_HARMONIC_OPTIONS.toleranceSec}`
+      );
+      expect(text('.advanced .control__refusal')).toBe('');
+    }));
+
     it('goes on refusing until the box holds a number again', () => {
       type(component.id.unisonConfidence, '');
       expect(harmonicsEmits).toEqual([]);

@@ -46,6 +46,7 @@ import {
   DiscardRow,
   FINEST_DIVISIONS,
   HARMONIC_REFUSALS,
+  HarmonicMirror,
   TIME_SIGNATURE_PRESETS,
   TUNING_PRESETS,
   TimeSignaturePreset,
@@ -254,8 +255,13 @@ export class TranscriptionReviewComponent
    * session, so a change the service turns away visibly snaps back. Sharing
    * the session's own object between those two moments is safe because nothing
    * here writes into it.
+   *
+   * `HarmonicMirror` and not `HarmonicOptions`, because a threshold the panel
+   * *refused* is written here too - the box is showing a non-number and this
+   * has to be able to say so. That is what makes the snap-back work at all;
+   * see `onHarmonicChange` and `HarmonicMirror`.
    */
-  harmonics: HarmonicOptions = { ...DEFAULT_HARMONIC_OPTIONS };
+  harmonics: HarmonicMirror = { ...DEFAULT_HARMONIC_OPTIONS };
 
   /** Presets plus, when the state matches none of them, the setting it is on. */
   tuningOptions: TuningPreset[] = [...TUNING_PRESETS];
@@ -699,25 +705,41 @@ export class TranscriptionReviewComponent
    * are number inputs. So the bound is checked before the emit and the reason
    * written next to the control, on the same argument `onTempoChange` makes.
    *
-   * The mirror is still moved on a refusal, because the box is showing the bad
-   * value and a mirror that disagreed with it would be a second lie. What is
-   * not moved is the score: nothing is emitted, so the derivation stands at the
-   * last threshold that was a number.
+   * **The mirror moves either way**, which is the whole of why the refusal is
+   * survivable. The obvious reading is that a mirror should hold only values
+   * the score was derived with, and it costs the control its snap-back: the
+   * mirror would still read 0.03 while the box read blank, the next state to
+   * arrive would set it to 0.03 again, `NgModel` would compare 0.03 against
+   * 0.03, conclude nothing changed and never call `writeValue` - leaving an
+   * empty control, a message that `ngOnChanges` has just cleared, and a score
+   * derived at a threshold nothing on screen states. That is exactly the
+   * failure `snapRefusedControlsBack` exists to prevent, arrived at by another
+   * route. Writing the refused value in is what makes the bound value differ
+   * from the arriving one, so the accessor writes it back. What is *not* moved
+   * is the score: nothing is emitted, so the derivation stands at the last
+   * threshold that was a number.
    *
    * No range check beyond "is a number". A ratio of 0 suppresses nothing and a
-   * ratio of 5 suppresses nearly everything, and both are legitimate things to
-   * ask for while judging where the cut belongs - the score comes back and
-   * says what they did. The distributions this cuts between overlap from 0.49
-   * to 1.33, so the interesting band is not narrow enough to fence.
+   * high one suppresses nearly everything, and both are legitimate things to
+   * ask for while judging where the cut belongs - the score comes back and says
+   * what they did. Where a range is stated it is the *control's* and not this
+   * method's: the measured ratio is a slider stopping at 2, chosen because the
+   * two distributions it cuts between overlap from 0.49 to 1.33 and the answer
+   * has stopped changing well before twice that; the other three are number
+   * inputs whose `min`/`max` is decoration a typed or pasted value walks past,
+   * exactly as on the fret controls. This method pre-empts neither.
    */
   onHarmonicChange(field: keyof HarmonicOptions, value: number | null): void {
+    // Before the guard, not after it. See the docblock: a mirror that held only
+    // good values would leave a refused control blank and unrecoverable.
+    this.harmonics = { ...this.harmonics, [field]: value };
+
     if (value === null || !Number.isFinite(value)) {
       this.harmonicNotes = { ...this.harmonicNotes, [field]: HARMONIC_REFUSALS[field] };
 
       return;
     }
 
-    this.harmonics = { ...this.harmonics, [field]: value };
     this.harmonicNotes = { ...this.harmonicNotes, [field]: undefined };
     this.harmonicsChanged.emit({ [field]: value });
   }
