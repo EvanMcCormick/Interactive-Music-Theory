@@ -26,6 +26,12 @@
     <!-- Frozen answers from the TypeScript decoder. Regenerate with
          `cd client && node tools/basic-pitch-vectors.cjs`. -->
     <None Update="Vectors\basic-pitch-vectors.json" CopyToOutputDirectory="PreserveNewest" />
+
+    <!-- What the TF.js graph returned for one window, frozen so this suite
+         needs no Node, no browser and no GPU. Regenerate with
+         `cd client && node tools/basic-pitch-reference.cjs
+         ../server/MusicTheory.API.Tests/Vectors/basic-pitch-reference`. -->
+    <None Update="Vectors\basic-pitch-reference\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

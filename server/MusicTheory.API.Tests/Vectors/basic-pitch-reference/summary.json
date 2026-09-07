@@ -1,0 +1,57 @@
+{
+  "generatedBy": "client/tools/basic-pitch-reference.cjs",
+  "tfjs": "3.21.0",
+  "basicPitch": "1.0.1",
+  "sampleRate": 22050,
+  "audioNSamples": 43844,
+  "inputHash": 2118630624,
+  "outputs": {
+    "contours": {
+      "tfjs": "Identity",
+      "onnx": "StatefulPartitionedCall:0"
+    },
+    "frames": {
+      "tfjs": "Identity_1",
+      "onnx": "StatefulPartitionedCall:1"
+    },
+    "onsets": {
+      "tfjs": "Identity_2",
+      "onnx": "StatefulPartitionedCall:2"
+    }
+  },
+  "summary": {
+    "contours": {
+      "shape": [
+        1,
+        172,
+        264
+      ],
+      "count": 45408,
+      "min": 0.03411567211151123,
+      "max": 0.9496380090713501,
+      "mean": 0.10739896033565337
+    },
+    "frames": {
+      "shape": [
+        1,
+        172,
+        88
+      ],
+      "count": 15136,
+      "min": 0.07938230037689209,
+      "max": 0.8879101276397705,
+      "mean": 0.1164600272450289
+    },
+    "onsets": {
+      "shape": [
+        1,
+        172,
+        88
+      ],
+      "count": 15136,
+      "min": 0.03690120205283165,
+      "max": 0.9223595261573792,
+      "mean": 0.10547368713245033
+    }
+  }
+}

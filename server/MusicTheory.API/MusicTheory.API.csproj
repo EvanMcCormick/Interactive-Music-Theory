@@ -34,6 +34,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Basic Pitch's weights: Spotify's own tf2onnx export of the ICASSP 2022
+         model, Apache-2.0. 225 kB, so it is vendored rather than fetched at
+         deploy time - a build that can produce a server which cannot transcribe
+         is not worth the saved quarter of a megabyte. -->
+    <None Include="MlModels\basic-pitch\nmp.onnx" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The decoder port keeps its numpy/librosa helpers internal, as the
          library it came from keeps them module-private, and pins them from the
          test project against the library's own vectors. -->
