@@ -22,9 +22,20 @@
  * The loop also releases the tensors it allocates, which `evaluateModel` does
  * not. On a long stem that is tens of megabytes of GPU textures.
  *
- * The one piece it does *not* call is `prepareData`, whose framing crashes the
- * shader compiler on a sixteenth of song-length inputs. `detection-framing.ts`
- * replaces it and explains itself at length.
+ * ## Two library functions are stood in for, and neither is a fork either
+ *
+ * `prepareData` is not called at all: its framing crashes the shader compiler
+ * on a sixteenth of song-length inputs. `detection-framing.ts` replaces it and
+ * explains itself at length.
+ *
+ * `outputToNotesPoly` comes from `detection-melodia.ts` rather than from the
+ * package, and that one is a wrapper rather than a replacement — it calls the
+ * library's own function for everything except the melodia loop, which is
+ * **98.6 %** of the decoder's running time and which it reruns without the
+ * per-iteration rescan of the whole matrix. Measured at 17.4 s to 234 ms on a
+ * stem-sized input, for the same 1,094 notes. The signature and the defaults
+ * are the library's, so this file cannot tell the difference and neither can
+ * the fixtures.
  *
  * ## What comes out
  *
@@ -42,13 +53,13 @@
 import {
   BasicPitch,
   addPitchBendsToNoteEvents,
-  noteFramesToTime,
-  outputToNotesPoly
+  noteFramesToTime
 } from '@spotify/basic-pitch';
 import type { NoteEventTime } from '@spotify/basic-pitch';
 
 import { DetectedNote } from '../models/transcription.model';
 import { FFT_HOP, frameForModel } from './detection-framing';
+import { outputToNotesPoly } from './detection-melodia';
 import { DETECTION_SAMPLE_RATE, DetectionResult, NoteDetector } from './note-detector';
 
 /** Where `angular.json` copies the weights bundled with the npm package. */

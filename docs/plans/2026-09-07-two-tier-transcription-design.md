@@ -27,7 +27,7 @@ The tier boundary falls on the fact/interpretation line M1 established, which ma
 ```
 decode                    client (Web Audio)
 detection                 SERVER for a seat, Web Worker for anonymous
-outputToNotesPoly         SERVER — the 10 s; ~300 lines to port to C#
+outputToNotesPoly         SERVER — ported; see the note below the block
 separation                SERVER only, when licensed
 ──────────────────────────────────────────────────────────
 harmonic suppression      client — milliseconds
@@ -36,6 +36,8 @@ deriveScore + review UI   CLIENT ALWAYS — 0.10 ms per knob turn
 ```
 
 Everything below the line stays put in both tiers. That block is the entire review screen: every control re-derives synchronously, and round-tripping it would destroy the property the design is built on.
+
+**`outputToNotesPoly` stays above the line, but not for the reason given.** It was placed there as "the 10 s". It is now 234 ms in the browser and 147 ms on the server, so that argument is gone — and the placement is unchanged anyway, because the decoder has to run wherever the posteriorgram is. A four-minute stem's three output matrices are 22,616 frames by 88, 88 and 264 columns; sending them to the client to decode would be the largest thing that ever crossed the wire, several times the audio that produced them. What this does change is what a seat is buying: **inference, and separation once licensed.** Note-building is no longer part of the pitch.
 
 **The free tier is not a degraded product. It is the same product with a different `NoteDetector`.**
 
@@ -138,7 +140,7 @@ Untestable cheaply, and honestly so: SignalR under load, Blob lifecycle, real co
 - **Metering and quotas.** Compute is $0.49 per thousand tracks for separation and less for detection. At the platform's projected scale there is nothing worth metering yet.
 - **A premium tier above a seat.** One line, deliberately. Splitting it later is easy; unsplitting it is not.
 - **Desktop or Electron.** Nothing measured requires leaving the browser, and the anonymous tier's zero-install trial is the strongest funnel the product has.
-- ~~**`outputToNotesPoly`'s quadratic loop.** Porting it to C# makes it fast enough that the algorithmic fix stops mattering server-side — but the anonymous path still pays 10 s, so the fix is still worth doing on its own.~~ **Measured, and wrong.** The port alone lands at 1.8 s, which is not fast enough for a request path; the algorithmic fix takes it to 147 ms. Native code bought 9.8x and the fix bought another 12x on top, so nine tenths of the win is the algorithm and the browser is paying all of it. See `docs/plans/2026-09-07-csharp-decoder-port.md`, which recommends porting the fix back into `toMidi.ts`.
+- ~~**`outputToNotesPoly`'s quadratic loop.** Porting it to C# makes it fast enough that the algorithmic fix stops mattering server-side — but the anonymous path still pays 10 s, so the fix is still worth doing on its own.~~ **Measured, wrong, and now done in both tiers.** The port alone lands at 1.8 s, which is not fast enough for a request path; the algorithmic fix takes it to 147 ms. Native code bought 9.8x and the fix bought another 12x on top, so nine tenths of the win was the algorithm rather than the language — and 98.6 % of the cost is one loop, which is what made it liftable in the browser too without forking the decoder. The anonymous path now pays **234 ms rather than 10 s**. See `docs/plans/2026-09-07-csharp-decoder-port.md`.
 
 ## Open questions this design does not settle
 

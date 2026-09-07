@@ -47,9 +47,21 @@ that is two million cells scanned twice, eleven hundred times over.
 `RowMaxIndex` keeps a column of per-row maxima and refreshes only the rows the
 erase touched.
 
-**Recommended:** port `RowMaxIndex` back into `toMidi.ts`. The anonymous tier is
-the one with no fallback, it is the tier a first-time visitor meets, and this is
-a known-good change with a test suite already pointed at it.
+**Done, same day.** `client/src/app/services/detection-melodia.ts` carries the
+fix into the browser: **17,422 ms to 234 ms, 74x**, for the same 1,094 notes —
+same order, same frames, same amplitudes to the last bit.
+
+It turned out not to need a fork, which the 98.6 % figure is what made visible.
+`remainingEnergy` is private to `outputToNotesPoly`, but it is exactly
+reconstructible from the notes the onset pass returns: it starts as a copy of
+`frames`, and the only writes before the melodia loop are the band each
+*accepted* note clears across its own span — a note rejected for being too short
+clears nothing, and every note that clears something is returned. So the module
+calls the library with `melodiaTrick: false` for the 239 ms that is not the
+problem, rebuilds the matrix from what came back, and reruns only the loop.
+`detection-melodia.spec.ts` holds it against the library's own
+`outputToNotesPoly` note for note across six generated cases, because that
+reconstruction argument is a reading of a file this repository does not own.
 
 ## What the port is held to
 
