@@ -230,7 +230,30 @@ A comprehensive web application for exploring scales, modes, chords, and music t
    dotnet restore
    ```
 
-3. Run the application:
+3. Provide the two settings that are not in source control.
+
+   The database connection string and the JWT signing key are deliberately
+   absent from `appsettings.json`, so that neither can be committed and no
+   placeholder key can quietly reach production. The app fails at startup with
+   a message naming the missing key rather than starting in a broken state.
+
+   Locally, use [user secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets),
+   which store them outside the repository:
+
+   ```bash
+   cd MusicTheory.API
+   dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=YOUR_SERVER,1433;Database=MusicTheoryDb;User Id=YOUR_LOGIN;Password=YOUR_PASSWORD;TrustServerCertificate=True"
+   dotnet user-secrets set "Jwt:Key" "A_RANDOM_STRING_OF_AT_LEAST_32_CHARACTERS"
+   ```
+
+   In a deployment, set the same two as environment variables instead —
+   `ConnectionStrings__DefaultConnection` and `Jwt__Key`.
+
+   Use a least-privilege SQL login rather than `sa`: the application needs
+   `db_datareader`, `db_datawriter` and rights to run migrations on one
+   database, and nothing else.
+
+4. Run the application:
    ```bash
    dotnet run
    ```

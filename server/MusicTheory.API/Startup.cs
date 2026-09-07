@@ -19,11 +19,31 @@ public class Startup
         Configuration = configuration;
     }
 
+    /// <summary>
+    /// Reads a setting that has no safe default, and says what to do about it
+    /// when it is missing.
+    /// </summary>
+    /// <remarks>
+    /// The connection string and the JWT signing key are the two settings kept
+    /// out of source control — user secrets locally, the environment in a
+    /// deployment — so a fresh clone reaches this rather than a working
+    /// default. That is the point: a placeholder key that happens to work is a
+    /// placeholder key that reaches production. Failing here costs one search
+    /// of the README; a null-forgiving <c>!</c> would surface the same mistake
+    /// as an <c>ArgumentNullException</c> from inside a token validator.
+    /// </remarks>
+    private string Required(string key) =>
+        Configuration[key]
+        ?? throw new InvalidOperationException(
+            $"Configuration '{key}' is not set. It is deliberately absent from "
+            + "appsettings.json; see Server Setup in README.md for the "
+            + "'dotnet user-secrets set' commands, or set it in the environment.");
+
     public void ConfigureServices(IServiceCollection services)
     {
         // Database
         services.AddDbContext<MusicTheoryDbContext>(options =>
-            options.UseSqlServer(Configuration.GetConnectionString("DefaultConnection")));
+            options.UseSqlServer(Required("ConnectionStrings:DefaultConnection")));
 
         // Identity
         services.AddIdentity<User, IdentityRole<Guid>>(options =>
@@ -42,7 +62,7 @@ public class Startup
         var jwtSettings = Configuration.GetSection("Jwt");
         services.Configure<JwtSettings>(jwtSettings);
 
-        var key = Encoding.UTF8.GetBytes(jwtSettings["Key"]!);
+        var key = Encoding.UTF8.GetBytes(Required("Jwt:Key"));
         services.AddAuthentication(options =>
         {
             options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
