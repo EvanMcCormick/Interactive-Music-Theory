@@ -1,4 +1,5 @@
 using System.Text.Json;
+using NAudio.Wave;
 using MusicTheory.API.Services.Transcription;
 using Xunit.Abstractions;
 
@@ -158,6 +159,52 @@ public class RealCaptureTests(ITestOutputHelper output)
         }
 
         Assert.NotEmpty(envelope);
+    }
+
+
+    /// <summary>
+    /// Splits the decode chain: how many samples NLayer produces before the
+    /// downmix and the resampler touch anything.
+    /// </summary>
+    /// <remarks>
+    /// The file declares 10,053 MPEG frames of 1,152 samples = 11,581,056 at
+    /// 44.1 kHz, and its bitstream parses clean end to end. So this one number
+    /// says whether the missing frame is NLayer's or this project's: equal
+    /// means the decoder is complete and the loss is downstream, short by 1,152
+    /// means the decoder is.
+    /// </remarks>
+    [SkippableFact]
+    public void The_decoder_is_isolated_from_the_resampler()
+    {
+        var path = FindAudio();
+        Skip.If(path is null, "No stem to decode.");
+
+        using var file = File.OpenRead(path!);
+        using var reader = new Mp3FileReaderBase(
+            file,
+            wave => new NLayer.NAudioSupport.Mp3FrameDecompressor(wave));
+
+        var source = reader.ToSampleProvider();
+        var channels = source.WaveFormat.Channels;
+        output.WriteLine($"NLayer reports {source.WaveFormat.SampleRate} Hz x{channels}");
+
+        var buffer = new float[channels * 4096];
+        long total = 0;
+        int read;
+        while ((read = source.Read(buffer)) > 0)
+        {
+            total += read;
+        }
+
+        var frames = total / channels;
+        const long declared = 10053L * 1152;
+
+        output.WriteLine($"NLayer produced   {frames:N0} frames at source rate");
+        output.WriteLine($"file declares     {declared:N0} ({declared / 1152} MPEG frames)");
+        output.WriteLine($"difference        {declared - frames:N0} samples = "
+            + $"{(declared - frames) / 1152.0:F2} MPEG frames");
+
+        Assert.True(frames > 0);
     }
 
     private static string? FindAudio()

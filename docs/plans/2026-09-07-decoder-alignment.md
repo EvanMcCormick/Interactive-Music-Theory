@@ -1,7 +1,7 @@
 # The Tiers Disagree Because the Decoders Are Misaligned
 
 **Date:** 2026-09-07
-**Status:** Root cause found. **Not yet fixed.** Hysteresis was the wrong fix and is not being built.
+**Status:** Root cause found and localised to the decoder. **No fix shipped**, because no constant correction can fix a misalignment that is not constant. Hysteresis was the wrong fix and is not being built.
 
 The brief was to add hysteresis to harmonic suppression, on the reasoning from
 `2026-09-07-two-tier-equivalence.md` that it amplified 5 differing detections
@@ -70,26 +70,27 @@ and then, at one point, catches up.
 
 ## Where 512 samples went
 
-The file is LAME 3.100 with an `Info` header, so it declares gapless metadata:
-10,053 MPEG frames, 11,581,056 samples at 44.1 kHz. What each decoder returns,
-at 22.05 kHz:
+The file declares 10,053 audio frames of 1,152 samples: 11,581,056 at 44.1 kHz.
+What each decoder returns, doubled to that rate for comparison:
 
 | | samples | x2 (44.1 kHz) | short of the declared length |
 |---|---|---|---|
 | browser | 5,789,696 | 11,579,392 | 1,664 |
-| server | 5,789,952 | 11,579,904 | **1,152 — exactly one MPEG frame** |
+| server | 5,789,952 | 11,579,904 | **1,152 - exactly one MPEG frame** |
 
-One MPEG frame is 1,152 samples at 44.1 kHz, which is 576 at 22.05 kHz, which is
-2.25 model frames — the size of the offset that was measured. Both ends of the
-finding agree.
+They differ by 512 samples at 44.1 kHz in total length, and by 1,024 - two model
+frames at 22.05 kHz - in *where the content sits* for the first 140 seconds.
+One MPEG frame is 1,152 samples at 44.1 kHz, which is 2.25 model frames at
+22.05 kHz, so both numbers are the same object measured two ways: the frame
+resolution of the envelope cannot tell 2.25 from 2.
 
-So the two defects are:
+So the two differences are:
 
-1. **The encoder delay is not being stripped.** Chrome honours the LAME header
-   and discards the priming samples; NLayer does not, so everything it returns
-   starts about one MPEG frame late.
-2. **One MPEG frame goes missing at around 140 seconds**, which is what removes
-   the offset for the rest of the file. A decoder that silently drops a frame
+1. **Chrome discards more at the head than NLayer does** - about one MPEG
+   frame's worth - which is why the server's content sits later for as long as
+   that is the only difference.
+2. **One MPEG frame goes missing at around 140 seconds**, which removes the
+   offset for the rest of the file. A decoder that silently drops a frame
    mid-stream is the more serious of the two, because nothing else would ever
    notice.
 
@@ -109,27 +110,71 @@ It also means the ONNX port, the framing, the trims and the decoder's resampler
 are not implicated. The model agrees to 4.5e-7 and the decoder port is bit-exact
 given the same posteriorgrams. What is wrong is 512 samples of alignment.
 
-## What to do
+## Three things the file itself rules out
 
-**Fix the alignment; do not touch suppression.** In order:
+Before blaming a decoder, the input was checked.
 
-1. **Strip the encoder delay in `AudioDecoder`.** Read the `Xing`/`Info` and
-   `LAME` headers, discard the declared priming samples and trim the declared
-   padding. This is the fix Chrome already applies and it is what makes the two
-   tiers start at the same sample.
-2. **Find the dropped frame at ~140 s.** Whether it is NLayer, the
-   `Mp3FileReaderBase` wrapper, or the short-read handling in
-   `BandLimitedResampler.Read`, a decoder that loses a frame without erroring is
-   a defect on its own terms, independent of the two-tier comparison.
-3. **Re-run the equivalence measurement.** The 27.5 % bar agreement is a number
-   taken with a known misalignment in it, and it should not be quoted as the
-   cost of running two tiers until that is out.
+**The bitstream is clean.** Every frame header from byte 45 to the last byte
+parses: 10,054 frames, no lost sync, no bitrate or sample-rate change, every
+byte consumed. There is nothing wrong at 140 seconds or anywhere else.
+
+**There is no LAME gapless field to honour.** The `Info` header is present and
+declares 10,053 audio frames, but the encoder tag reads `Lavc59.37` — FFmpeg,
+not LAME — so the delay/padding bytes a LAME tag would carry are not there.
+Neither decoder can be honouring metadata that the file does not contain, which
+means Chrome's extra trimming is a *convention*, not obedience.
+
+**The missing frame is NLayer's, not this project's.** Decoding with NLayer
+alone, before the downmix or the resampler touch anything:
+
+| | samples at 44.1 kHz |
+|---|---|
+| file declares | 11,581,056 (10,053 frames) |
+| NLayer returns | 11,579,904 |
+| difference | **1,152 — exactly one MPEG frame** |
+
+So the loss happens inside the decoder. `BandLimitedResampler` and the downmix
+are exonerated.
+
+## Why no constant correction is shipped
+
+The obvious fix is to strip a lead-in so the two decoders start together. It
+cannot work, and the reason is arithmetic rather than effort.
+
+The misalignment is **not constant**. It is +2 model frames for the first
+140 seconds and 0 for the remaining 120. A constant trim shifts the whole file
+by one amount, so trimming 2 frames aligns the first 53 % and misaligns the
+last 47 % by the same 2 frames it just removed. The total quantity of
+misalignment is unchanged; only its location moves.
+
+There is no trim that fixes both halves, because the halves do not disagree by
+the same amount.
+
+## What would settle it
+
+The step needs a third decoder to arbitrate. Two decoders that disagree are two
+opinions; a third breaks the tie and says which one loses a frame at 140
+seconds. `ffmpeg -i johnny-bass.mp3 -ar 22050 -ac 1 -f f32le out.raw` and the
+same envelope cross-correlation would answer it in one run, and ffmpeg is not
+installed on this machine.
+
+Until then:
+
+1. **Get a third decode and find out who is wrong at 140 s.** Everything else
+   waits on this. If it is NLayer, the fix is in `AudioDecoder`; if it is
+   Chrome, there is nothing to fix server-side and the browser tier is the one
+   carrying a defect.
+2. **Then strip the lead-in to match**, which becomes worth doing once it is the
+   only remaining difference rather than half of one.
+3. **Then re-run the equivalence measurement.** The 27.5 % bar agreement has a
+   known misalignment inside it and should not be quoted as the cost of running
+   two tiers.
 
 **Do not add hysteresis.** It was a reasonable idea from the symptom and it
-addresses a mechanism that turns out not to be the dominant one. If suppression
-still amplifies once the decoders line up, the numbers at the top of this
-document are what to re-measure against — and the p90 of 0.0155 says a deadband
-is the wrong tool even then.
+addresses a mechanism that is not the dominant one. If suppression still
+amplifies once the decoders line up, the numbers at the top of this document are
+what to re-measure against — and the p90 of 0.0155 says a deadband is the wrong
+tool even then.
 
 ## Apparatus
 
@@ -138,3 +183,6 @@ is the wrong tool even then.
 - `client/src/app/services/harmonic-eval/decode-envelope.spec.ts` and
   `RealCaptureTests.The_decode_envelope_is_written_for_comparison` — the two
   halves of the envelope comparison. Both need the user's file.
+- `RealCaptureTests.The_decoder_is_isolated_from_the_resampler` — the one number
+  that put the missing frame inside NLayer rather than in this project's
+  downmix or resampler.
