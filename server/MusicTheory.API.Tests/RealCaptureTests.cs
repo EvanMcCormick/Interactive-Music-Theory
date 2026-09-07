@@ -110,6 +110,56 @@ public class RealCaptureTests(ITestOutputHelper output)
         Dump(result, decoded.DurationSec);
     }
 
+
+    /// <summary>
+    /// The same RMS envelope <c>decode-envelope.spec.ts</c> prints in the
+    /// browser, so the two decoders can be aligned directly.
+    /// </summary>
+    [SkippableFact]
+    public void The_decode_envelope_is_written_for_comparison()
+    {
+        var path = FindAudio();
+        Skip.If(path is null, "No stem to decode.");
+
+        using var file = File.OpenRead(path!);
+        var decoded = AudioDecoder.DecodeToMono(file);
+
+        // One model frame per bucket over the first 40 seconds, matching
+        // decode-envelope.spec.ts. A 23 ms shift is two buckets here and
+        // invisible at any coarser resolution.
+        const int bucket = 256;
+        var from = 0;
+        var limit = decoded.Audio.Length;
+        var envelope = new List<double>();
+
+        for (var at = from; at + bucket <= limit; at += bucket)
+        {
+            var sum = 0.0;
+            for (var i = at; i < at + bucket; i++)
+            {
+                sum += (double)decoded.Audio[i] * decoded.Audio[i];
+            }
+
+            envelope.Add(Math.Round(Math.Sqrt(sum / bucket) * 1e6) / 1e6);
+        }
+
+        output.WriteLine($"ENVMETA samples {decoded.Audio.Length} buckets {envelope.Count}");
+
+        var target = Environment.GetEnvironmentVariable("ENVELOPE_DUMP");
+        if (!string.IsNullOrWhiteSpace(target))
+        {
+            File.WriteAllText(target, JsonSerializer.Serialize(new
+            {
+                samples = decoded.Audio.Length,
+                bucketSamples = bucket,
+                envelope
+            }));
+            output.WriteLine($"wrote {target}");
+        }
+
+        Assert.NotEmpty(envelope);
+    }
+
     private static string? FindAudio()
     {
         if (!Directory.Exists(AudioDirectory))

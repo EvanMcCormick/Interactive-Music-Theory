@@ -14,7 +14,9 @@
             "outputPath": "dist/MusicTheory",
             "index": "src/index.html",
             "main": "src/main.ts",
-            "polyfills": ["zone.js"],
+            "polyfills": [
+              "zone.js"
+            ],
             "tsConfig": "tsconfig.app.json",
             "webWorkerTsConfig": "src/tsconfig.worker.json",
             "assets": [
@@ -97,7 +99,9 @@
           "builder": "@angular-devkit/build-angular:karma",
           "options": {
             "main": "src/test.ts",
-            "polyfills": ["zone.js"],
+            "polyfills": [
+              "zone.js"
+            ],
             "tsConfig": "tsconfig.spec.json",
             "webWorkerTsConfig": "src/tsconfig.worker.json",
             "karmaConfig": "karma.conf.js",
@@ -118,27 +122,43 @@
               "**/harmonic-capture.spec.ts",
               "**/real-capture.spec.ts",
               "**/long-file-detection.spec.ts",
-              "**/separation-spike.spec.ts"
+              "**/separation-spike.spec.ts",
+              "**/decode-envelope.spec.ts"
             ]
           },
           "configurations": {
             "capture": {
-              "include": ["**/harmonic-capture.spec.ts"],
+              "include": [
+                "**/harmonic-capture.spec.ts"
+              ],
               "exclude": [],
               "karmaConfig": "karma.capture.conf.js"
             },
             "real": {
-              "include": ["**/real-capture.spec.ts"],
+              "include": [
+                "**/real-capture.spec.ts"
+              ],
               "exclude": [],
               "karmaConfig": "karma.capture.conf.js"
             },
             "longform": {
-              "include": ["**/long-file-detection.spec.ts"],
+              "include": [
+                "**/long-file-detection.spec.ts"
+              ],
               "exclude": [],
               "karmaConfig": "karma.capture.conf.js"
             },
             "separation": {
-              "include": ["**/separation-spike.spec.ts"],
+              "include": [
+                "**/separation-spike.spec.ts"
+              ],
+              "exclude": [],
+              "karmaConfig": "karma.capture.conf.js"
+            },
+            "envelope": {
+              "include": [
+                "**/decode-envelope.spec.ts"
+              ],
               "exclude": [],
               "karmaConfig": "karma.capture.conf.js"
             }
