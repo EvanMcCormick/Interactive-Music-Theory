@@ -108,6 +108,10 @@ Self-hosted compute is effectively free; this is a CPU workload and needs no GPU
 Worth doing, gated on one email.
 
 1. **Get Deezer to confirm in writing that the pretrained weights are MIT.** Two people have asked and been ignored; a commercial enquiry through a business channel may fare better. Costs nothing, decides everything.
+
+   **Update, 2026-09-07 — the business channel exists, and so does a reason for the silence.** Deezer now sells **Spleeter Pro**, "available as an API", through Deezer Tech Services, and the repo's README links to it. That is a plausible explanation for two years of unanswered licensing issues rather than an accident: confirming MIT on the weights undercuts the paid product. It also means there is a team paid to answer, at <https://www.deezer-techservices.com/contact/> — no public email address anywhere.
+
+   Ask for **two** things, not one, because they are very different permissions and the second is all the two-tier design needs: (a) MIT on the checkpoints, and failing that (b) leave to run the checkpoints on our own servers without redistributing them. Someone who cannot grant (a) without legal review can often grant (b) in a sentence. Add a third question about Spleeter Pro so that a "no" is still an answer — the licensed-API fallback in item 5 may simply *be* Spleeter Pro, which would make a refusal actionable rather than a dead end.
 2. **Do not ship Demucs, Open-Unmix or UVR weights in a paid product.**
 3. **If the licence clears, build browser-side on `onnxruntime-web` with the WASM execution provider** — not WebGPU, not WebGL. 9.3 s per four-minute track, 157 MB cached once, no GPU, no TF.js conflict, and the local-only property survives.
 4. **Budget real work for post-separation false-positive suppression, and measure it first.** That is where the 18.3 pp lives, and recall has headroom. Raising the confidence floor on separated input is the obvious first lever and is already wired into the review UI; `separation-spike.spec.ts` is the harness for testing it.

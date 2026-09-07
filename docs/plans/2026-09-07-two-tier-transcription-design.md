@@ -138,7 +138,7 @@ Untestable cheaply, and honestly so: SignalR under load, Blob lifecycle, real co
 - **Metering and quotas.** Compute is $0.49 per thousand tracks for separation and less for detection. At the platform's projected scale there is nothing worth metering yet.
 - **A premium tier above a seat.** One line, deliberately. Splitting it later is easy; unsplitting it is not.
 - **Desktop or Electron.** Nothing measured requires leaving the browser, and the anonymous tier's zero-install trial is the strongest funnel the product has.
-- **`outputToNotesPoly`'s quadratic loop.** Porting it to C# makes it fast enough that the algorithmic fix stops mattering server-side — but the anonymous path still pays 10 s, so the fix is still worth doing on its own.
+- ~~**`outputToNotesPoly`'s quadratic loop.** Porting it to C# makes it fast enough that the algorithmic fix stops mattering server-side — but the anonymous path still pays 10 s, so the fix is still worth doing on its own.~~ **Measured, and wrong.** The port alone lands at 1.8 s, which is not fast enough for a request path; the algorithmic fix takes it to 147 ms. Native code bought 9.8x and the fix bought another 12x on top, so nine tenths of the win is the algorithm and the browser is paying all of it. See `docs/plans/2026-09-07-csharp-decoder-port.md`, which recommends porting the fix back into `toMidi.ts`.
 
 ## Open questions this design does not settle
 
