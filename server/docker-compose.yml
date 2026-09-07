@@ -1,0 +1,51 @@
+# Local SQL Server for development.
+#
+# The rest of the estate runs Postgres - DailyBread and F1Fan both do - and this
+# does not, because MusicTheory.API is built on
+# Microsoft.EntityFrameworkCore.SqlServer and has a migration against it.
+# Switching providers is a real change with a migration rewrite behind it, and
+# it is not one to make in passing while wiring up a dev database. Worth doing
+# deliberately if the estate is meant to be one thing; noted here so the
+# inconsistency is a decision rather than an accident.
+#
+#     cd server
+#     cp .env.example .env      # then put a password in it
+#     docker compose up -d
+#
+# The password lives in .env, which is gitignored. Nothing here is a production
+# configuration: sa is the login, the port is published to the host, and the
+# volume is local.
+
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: musictheory-db
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      MSSQL_PID: Developer
+    ports:
+      # Published so `dotnet run` on the host can reach it. The container talks
+      # to itself on 1433 either way.
+      - "${MSSQL_HOST_PORT:-1433}:1433"
+    volumes:
+      - db-data:/var/opt/mssql
+    healthcheck:
+      # sqlcmd ships inside the image. -C trusts the self-signed certificate,
+      # which is what the connection string's TrustServerCertificate does too.
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      # SQL Server takes a while to come up the first time, and a healthcheck
+      # that starts counting immediately will exhaust its retries before the
+      # server is listening.
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  db-data:
