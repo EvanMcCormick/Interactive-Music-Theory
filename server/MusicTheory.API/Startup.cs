@@ -5,8 +5,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using MusicTheory.API.Data;
+using MusicTheory.API.Hubs;
 using MusicTheory.API.Models.Entities;
 using MusicTheory.API.Services;
+using MusicTheory.API.Services.Transcription;
 
 namespace MusicTheory.API;
 
@@ -87,6 +89,18 @@ public class Startup
         services.AddScoped<IJwtService, JwtService>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();
+
+        // Transcription. The model is a singleton because loading the graph
+        // costs a file read and a set of kernel initialisations, and one ONNX
+        // session is documented thread-safe for concurrent Run. The detector is
+        // stateless around it.
+        services.AddSingleton<BasicPitchModel>(_ => new BasicPitchModel());
+        services.AddSingleton(sp => new BasicPitchDetector(sp.GetRequiredService<BasicPitchModel>()));
+        services.AddSingleton<ITranscriptionQueue, TranscriptionQueue>();
+        services.AddScoped<IDetectionStore, DetectionStore>();
+        services.AddHostedService<TranscriptionJobRunner>();
+
+        services.AddSignalR();
 
         // CORS
         var corsOrigins = Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
@@ -170,6 +184,7 @@ public class Startup
         app.UseEndpoints(endpoints =>
         {
             endpoints.MapControllers();
+            endpoints.MapHub<TranscriptionHub>(TranscriptionHub.Route);
         });
     }
 }

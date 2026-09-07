@@ -18,9 +18,33 @@ public class MusicTheoryDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
     public DbSet<Invitation> Invitations => Set<Invitation>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
+    /// <summary>
+    /// What a detector observed, keyed by the audio's own bytes and shared
+    /// between every user who uploads them.
+    /// </summary>
+    public DbSet<TranscriptionDetections> TranscriptionDetections =>
+        Set<TranscriptionDetections>();
+
+    /// <summary>One user's request to transcribe a file.</summary>
+    public DbSet<TranscriptionJob> TranscriptionJobs => Set<TranscriptionJob>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        builder.Entity<TranscriptionJob>(entity =>
+        {
+            // Every read of a job is "this user's jobs" or "this job, if it is
+            // this user's", and the queue drains by status.
+            entity.HasIndex(j => new { j.UserId, j.CreatedUtc });
+            entity.HasIndex(j => j.ContentHash);
+
+            // No foreign key to TranscriptionDetections on purpose: a job
+            // exists from the moment it is queued, before there are any
+            // detections to point at, and it outlives a failure that produces
+            // none. The hash is the join and it is allowed to find nothing.
+            entity.Property(j => j.ContentHash).IsRequired();
+        });
 
         // User configuration
         builder.Entity<User>(entity =>

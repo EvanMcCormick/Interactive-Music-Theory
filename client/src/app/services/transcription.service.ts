@@ -390,7 +390,10 @@ export class TranscriptionService {
       const detection = await this.detector.detect(
         decoded.audio,
         DETECTION_SAMPLE_RATE,
-        fraction => this.reportDetectionProgress(fraction)
+        fraction => this.reportDetectionProgress(fraction),
+        // Passed through for a detector that uploads rather than computes. The
+        // local ones ignore it; `note-detector.ts` says why it is optional.
+        file
       );
 
       this.push({ ...IDLE_STATE, phase: 'deriving' });

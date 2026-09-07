@@ -13,6 +13,21 @@
  * The signature is deliberately not "give me a file". Decoding is a separate,
  * detector-independent step (`audio-decode.ts`), and a detector that took a
  * `File` could not be handed synthesised audio in a test.
+ *
+ * ## Why there is a file on it anyway
+ *
+ * `detect` takes an *optional* `file`, and the optionality is the point.
+ * `RemoteDetector` uploads the original bytes rather than the decoded samples,
+ * because the decoded form is larger — a 4:22 stem is 10 MB as MP3 and 23 MB as
+ * mono Float32 — and because content-addressing the upload only dedups across
+ * users if the hash is of something every user has identically, which a
+ * browser's decode output is not.
+ *
+ * So the server-side detector needs a file and the local ones do not. Making it
+ * required would have cost exactly the property the paragraph above defends:
+ * every test that hands a detector synthesised audio would need a `File` it has
+ * no use for. Making it optional costs a detector that cannot work without one
+ * having to say so, which `RemoteDetector` does, loudly, on the first line.
  */
 
 import { DetectedNote } from '../models/transcription.model';
@@ -65,6 +80,7 @@ export interface NoteDetector {
   detect(
     audio: Float32Array,
     sampleRate: number,
-    onProgress: (fraction: number) => void
+    onProgress: (fraction: number) => void,
+    file?: File
   ): Promise<DetectionResult>;
 }

@@ -188,12 +188,51 @@ stored rather than streamed is what answers a user navigating away. But
 detection alone would not have required one, and a decision resting on a
 measurement that has moved should say so.
 
+## Wired
+
+`POST /api/transcriptions` → `{ jobId }`, progress on `/hubs/transcription`,
+`GET /api/transcriptions/{id}` for the result. The contract the design
+specified, built as specified.
+
+Four things worth recording because they are decisions rather than
+transcription:
+
+- **The job survived its own argument.** Detection is 1.81 s, not the 15 s the
+  design assumed when it chose a job over a blocking request. Built as designed
+  anyway: separation is 9.3 s when licensed, a job survives a dropped
+  connection, and a stored result answers a user who navigates away. The
+  weakened premise did not carry the conclusion by itself.
+- **The database is the record and SignalR is a courtesy.** Every state change
+  is written before it is broadcast, and `RemoteDetector` polls whether or not
+  the hub connected. A blocked WebSocket costs a progress bar, not a
+  transcription — and that is the path the client's tests exercise, because it
+  is the one a user behind a proxy actually gets.
+- **`NoteDetector.detect` gained an optional `file`.** The interface was
+  deliberately not "give me a file" and still is not: the parameter is optional,
+  so every test that hands a detector synthesised audio is unchanged. It exists
+  because uploading decoded samples costs 2.3x the bytes, and because
+  content-addressing only dedups across users if the hash is of something every
+  user has identically — which a browser's decode output is not.
+- **The SignalR client is loaded dynamically.** Importing it from `main.ts` put
+  58 kB into the eager bundle for a route that is not the landing page:
+  840.53 kB against 782.27. Reaching `RemoteDetector` through an `import()` puts
+  it back to **784.74 kB**, which is the 2.5 kB the tiering itself costs.
+
 ## Not done
 
-- **Wiring.** No controller, no job, no SignalR, no `RemoteDetector`.
-  Deliberate: worth knowing the arithmetic is right before there is a wire
-  protocol arguing about it.
-- **An audio decoder.** Still the open question the design named. NAudio covers
-  MP3 and WAV; anything wider is FFmpeg and its licensing. This is now the only
-  thing between here and the acceptance criterion: with a decoder, the real
-  stem goes through both tiers and the derived `ScoreDoc`s can be compared.
+- **The real stem.** Everything is verified against synthesised audio or
+  against the other tier. `client/src/assets/real-capture/johnny-bass.mp3` is
+  gitignored and absent, so the acceptance criterion — the same derived
+  `ScoreDoc` from both tiers on a real file — is still unrun, and NLayer's MP3
+  decoding is still unexercised.
+- **Sessions and audio storage.** The design's schema has three stores and this
+  is one: detections, shared and content-addressed. Sessions are per-user
+  interpretation and the client does not persist them yet; audio is opt-in,
+  expiring, and needs a Blob lifecycle rule. Neither is needed by the detector
+  contract.
+- **The queue is in memory.** A restart loses whatever was queued, and those
+  jobs stay `Queued` forever. Survivable at one process and under two seconds a
+  job; the first thing to replace when there is a second server, and behind an
+  interface so that replacement touches one registration.
+- **Nothing has run against a real database.** The migration is generated and
+  the tests use the in-memory provider. Docker was not running on this machine.
