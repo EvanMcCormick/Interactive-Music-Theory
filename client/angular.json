@@ -117,7 +117,8 @@
             "exclude": [
               "**/harmonic-capture.spec.ts",
               "**/real-capture.spec.ts",
-              "**/long-file-detection.spec.ts"
+              "**/long-file-detection.spec.ts",
+              "**/separation-spike.spec.ts"
             ]
           },
           "configurations": {
@@ -133,6 +134,11 @@
             },
             "longform": {
               "include": ["**/long-file-detection.spec.ts"],
+              "exclude": [],
+              "karmaConfig": "karma.capture.conf.js"
+            },
+            "separation": {
+              "include": ["**/separation-spike.spec.ts"],
               "exclude": [],
               "karmaConfig": "karma.capture.conf.js"
             }
