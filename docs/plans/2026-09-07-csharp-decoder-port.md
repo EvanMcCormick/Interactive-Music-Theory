@@ -143,25 +143,57 @@ sides regenerate identical samples without the repository carrying them, and
 harmonically rich enough that the outputs are strongly activated rather than a
 field of near-zeros where any two implementations agree trivially.
 
+## The pipeline is closed
+
+Framing and the batch loop now sit between the model and the decoder, so the
+server takes audio and returns `DetectedNote[]` — the same contract the client's
+`NoteDetector` has.
+
+The two trims are the whole difficulty and both are inherited exactly. Per
+window, the 172 frames of output are cut to the middle 142, which is
+`unwrapOutput`, and which is what the lead-in silence exists to make symmetric
+at the first window. At the tail, the concatenated output overshoots the file
+and has to be cut to `floor(len × 86/22050)` — **86**, the floored frame rate,
+not the true 86.13, because that is what the library counts with and
+disagreeing shifts everything in time. And `framesSoFar` advances by the
+window's *untrimmed* 142 even when fewer rows were kept, which reads like a bug
+and is what stops the loop chasing a quota it can never fill.
+
+**Held against the library's own end-to-end path**, not against the client's.
+`BasicPitch.evaluateModel` frames with `prepareData` — the function the client
+replaces — so the reference checks the C# framing against the definition it was
+ported from rather than against the port's sibling. Six seconds of synthesised
+sawtooths at E2 A2 C3 E3 G3 B3: both find the same seven notes, at the same
+pitches, within a frame. Six are the played fundamentals and the seventh is a
+G2 sounding under the G3 at the same instant, which is the octave error
+`suppressHarmonics` exists for.
+
+Asserted musically rather than exactly, and deliberately: the two runtimes
+agree on the model to 4.5e-7, but a detection sitting on the 0.3 threshold can
+still fall either side of it, which is the thing the design already knew from
+watching 86 same-attack pairs come back as 89.
+
+## The design's job argument no longer rests on detection
+
+**1.81 s** for a 4:22 stem, end to end on CPU — 145x realtime.
+
+The design chose a job with a SignalR progress channel over a blocking request
+on the basis that "detection plus note-building is around 15 s today and 25 s
+with separation". Note-building is 147 ms and detection is the rest, so the 15 s
+figure was the browser's, and the server is an order of magnitude under it.
+
+The job is still the right shape, for reasons that survive: separation is 9.3 s
+when it is licensed, a job survives a dropped connection, and the result being
+stored rather than streamed is what answers a user navigating away. But
+detection alone would not have required one, and a decision resting on a
+measurement that has moved should say so.
+
 ## Not done
 
-The two ends exist and the middle does not. `BasicPitchModel.Run` takes one
-43,844-sample window; `OutputToNotesPoly` takes whole-file posteriorgrams.
-Between them sit four things the client already has and the server does not:
-
-- **Framing.** `detection-framing.ts`, which exists because the library's own
-  `prepareData` crashes the WebGL shader compiler on a sixteenth of song-length
-  inputs. None of that applies server-side, but the windows have to come out
-  identical or the tiers disagree about where every note is.
-- **The batch loop, the overlap trim (`unwrapOutput`), and the trim to the
-  frame count the audio implies.** `basic-pitch-detector.ts` carries all three
-  and warns that the last is the subtle one.
 - **Wiring.** No controller, no job, no SignalR, no `RemoteDetector`.
   Deliberate: worth knowing the arithmetic is right before there is a wire
   protocol arguing about it.
 - **An audio decoder.** Still the open question the design named. NAudio covers
-  MP3 and WAV; anything wider is FFmpeg and its licensing.
-
-Only the first two are needed for the acceptance criterion. With them, a real
-file can go through both tiers and the derived `ScoreDoc`s compared — which is
-the test the design says is the only one a user can perceive.
+  MP3 and WAV; anything wider is FFmpeg and its licensing. This is now the only
+  thing between here and the acceptance criterion: with a decoder, the real
+  stem goes through both tiers and the derived `ScoreDoc`s can be compared.

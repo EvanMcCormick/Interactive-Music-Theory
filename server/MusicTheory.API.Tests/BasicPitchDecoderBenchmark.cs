@@ -76,4 +76,55 @@ public class BasicPitchDecoderBenchmark(ITestOutputHelper output)
             + "against 0.16s measured; at 1.8s the melodia loop is rescanning the "
             + "matrix and at 17s it is the TypeScript");
     }
+
+    /// <summary>
+    /// The whole pipeline on a stem's worth of audio, which is the number the
+    /// two-tier design's shape depends on.
+    /// </summary>
+    /// <remarks>
+    /// The design assumed "detection plus note-building is around 15 s today
+    /// and 25 s with separation", and chose a job with a SignalR progress
+    /// channel over a blocking request on that basis. This is what the server
+    /// actually costs; if it is far under, the job is still right for
+    /// separation and for surviving a dropped connection, but it stops being
+    /// required by detection alone.
+    ///
+    /// <para>
+    /// Reported rather than asserted. Inference time is the machine's, not the
+    /// code's, and a threshold here would fail on a busy CI box while telling
+    /// nobody anything.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Detection_timing_on_a_stem_is_reported_for_the_record()
+    {
+        const int sampleRate = DetectionFraming.DetectionSampleRate;
+        const int sampleCount = 5789696; // the real capture: a 4:22 stem
+
+        var audio = new float[sampleCount];
+        var level = 0.6;
+        for (var i = 0; i < sampleCount; i++)
+        {
+            // A sawtooth walking down and back up, so the model has real
+            // content to chew rather than silence it can dismiss.
+            var frequency = 90.0 + 40.0 * ((i / 44100) % 4);
+            var phase = i * frequency / sampleRate;
+            audio[i] = (float)(level * (2 * (phase - Math.Floor(phase)) - 1));
+            level = level * 0.9999995 + 0.00000015;
+        }
+
+        using var detector = new BasicPitchDetector();
+
+        var stopwatch = Stopwatch.StartNew();
+        var result = detector.Detect(audio, sampleRate);
+        stopwatch.Stop();
+
+        var audioSeconds = (double)sampleCount / sampleRate;
+        output.WriteLine(
+            $"{audioSeconds:F1}s of audio ({DetectionFraming.WindowCountFor(sampleCount)} windows)"
+            + $" -> {result.Notes.Count} notes in {stopwatch.Elapsed.TotalSeconds:F2}s"
+            + $"  ({audioSeconds / stopwatch.Elapsed.TotalSeconds:F1}x realtime)");
+
+        Assert.NotEmpty(result.Notes);
+    }
 }

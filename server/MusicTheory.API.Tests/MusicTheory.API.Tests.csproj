@@ -32,6 +32,11 @@
          `cd client && node tools/basic-pitch-reference.cjs
          ../server/MusicTheory.API.Tests/Vectors/basic-pitch-reference`. -->
     <None Update="Vectors\basic-pitch-reference\**" CopyToOutputDirectory="PreserveNewest" />
+
+    <!-- The library's own end-to-end result for six seconds of synthesised
+         audio. Regenerate with `cd client && node tools/basic-pitch-pipeline.cjs
+         ../server/MusicTheory.API.Tests/Vectors/basic-pitch-pipeline`. -->
+    <None Update="Vectors\basic-pitch-pipeline\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -65,6 +65,8 @@ The response is `DetectionResult` plus the duration and nothing else. Suppressio
 
 **A job rather than a blocking request.** Detection plus note-building is around 15 s today and 25 s with separation. A job survives a dropped connection, and the platform's cost model already assumes SignalR for lesson synchronisation, so the progress channel is infrastructure already paid for.
 
+> **Measured, 2026-09-07: the server does it in 1.81 s.** A 4:22 stem, end to end on CPU, 145x realtime — the 15 s was the browser's figure, and note-building is now 147 ms of it. The conclusion holds and one of its three reasons does not: separation is still 9.3 s when licensed, a job still survives a dropped connection, and a stored result still answers a user who navigates away, but **detection alone would not have needed a job.** See `docs/plans/2026-09-07-csharp-decoder-port.md`.
+
 **Content-address the uploads.** Hash the file; if those bytes have been transcribed before, return the existing detections. A teacher assigns one riff to thirty students and that is **one** inference run, not thirty. Assignment-driven usage is naturally repetitive, which is the best possible shape for a cache — and the same hash dedups a student re-uploading last week's track.
 
 ---
