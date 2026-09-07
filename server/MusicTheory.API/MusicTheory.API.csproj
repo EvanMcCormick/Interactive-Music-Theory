@@ -12,18 +12,31 @@
   <ItemGroup>
     <!-- ASP.NET Core -->
     <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="10.0.0" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.29.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
 
     <!-- Entity Framework Core -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.0" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0" />
+    <!-- Design-time only, and marked so. Without PrivateAssets these flow
+         through a ProjectReference into anything that references this project,
+         which drags MSBuild and Roslyn - and seven live advisories against
+         System.Security.Cryptography.Xml, for which no fixed version exists -
+         into a test assembly that runs no migrations. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0" PrivateAssets="all" />
 
     <!-- Identity -->
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.Google" Version="10.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.MicrosoftAccount" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The decoder port keeps its numpy/librosa helpers internal, as the
+         library it came from keeps them module-private, and pins them from the
+         test project against the library's own vectors. -->
+    <InternalsVisibleTo Include="MusicTheory.API.Tests" />
   </ItemGroup>
 
 </Project>
