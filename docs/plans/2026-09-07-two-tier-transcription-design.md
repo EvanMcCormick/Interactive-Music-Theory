@@ -131,6 +131,8 @@ It will not reproduce them exactly, and the design says so rather than discoveri
 
 The third is the acceptance criterion — the only level a user can perceive. If two runtimes disagree about a detection at confidence 0.301 and the score is unchanged, nothing happened.
 
+> **Measured on the real stem, 2026-09-07: levels 1 and 2 pass, level 3 fails.** The detections agree to 0.41 % and the pulse to half a BPM; the derived scores write the same bar **27.5 %** of the time, or 63.3 % with the grid held constant. Half the cause is `trackBeats` turning two extra beats in 438 into a displaced grid, and half is harmonic suppression amplifying 5 differing detections into 18 differing decisions — both in code the two tiers *share*, neither in the port. The likely implication is that the browser does not agree with itself between runs either, which would mean this criterion was asking for something no single tier delivers. See `docs/plans/2026-09-07-two-tier-equivalence.md`.
+
 **The accuracy harness transfers for free.** It runs on frozen detections and is already implementation-agnostic: capture from .NET and the same floors must hold — P 61.5 / R 70.3 / F1 65.6, 3 destroyed. A C# port that quietly changed note-building would fail there rather than in production.
 
 Untestable cheaply, and honestly so: SignalR under load, Blob lifecycle, real concurrency. Integration and staging.
