@@ -1,7 +1,7 @@
 # Two-Tier Equivalence: The Measurement
 
 **Date:** 2026-09-07
-**Status:** Measured on the real stem. **The design's acceptance criterion is not met.**
+**Status:** Measured on the real stem. **The design's acceptance criterion is not met**, and the cause is not the one that was suspected.
 
 The two-tier design named three levels of agreement between the browser and the
 server, and called the third the acceptance criterion:
@@ -62,29 +62,67 @@ Neither cause is a defect in the C# port. The ONNX weights agree with TF.js to
 4.5e-7; the decoder port produces the same notes as the library given the same
 posteriorgrams, bit for bit. What the measurement exposes is that a pipeline
 with threshold decisions in it does not have a stable output under a
-perturbation of its input, however small.
+perturbation of its input, however small - and, as the next section measures,
+that the perturbation comes from the backend rather than from any instability.
 
-## The uncomfortable implication
+## The browser agrees with itself exactly
 
-**The browser tier probably does not agree with itself either.**
+The obvious suspicion was that the pipeline is simply unstable - that the
+design's own note about TF.js not being bit-reproducible meant re-running
+detection would move the score too, and tier equivalence was never the real
+question.
 
-The design already recorded that TF.js is not bit-reproducible between runs near
-the 0.3 frame threshold — a fixture's 86 same-attack pairs came back as 89 from
-a live session. That is a perturbation of the same order as the one between
-tiers. If 5 detections of difference produce 18 suppression decisions and a
-displaced beat grid, then re-running detection on the same file in the same
-browser can be expected to do something similar.
+**Measured, and it is not that.** Two consecutive captures of
+`real-capture.spec.ts` on the same file, same machine, back to back:
 
-That reframes the finding. It is not "the server disagrees with the browser".
-It is **"this pipeline's output is not stable under small input perturbations,
-and the two-tier comparison is the first thing that made it visible."**
+| | samples | duration | detections | rows identical |
+|---|---|---|---|---|
+| run 1 | 5,789,696 | 262.5712 s | 1,224 | - |
+| run 2 | 5,789,696 | 262.5712 s | 1,224 | **1,224 / 1,224 (100 %)** |
 
-**This is the measurement to run next**, and it is cheap: capture
-`real-detections.fixture.ts` twice from the same browser on the same file and
-derive both. If the browser-against-browser divergence is comparable to the
-browser-against-server divergence, tier equivalence was never the problem and
-the acceptance criterion was asking for something no single tier delivers
-either.
+Every onset, pitch, duration and confidence identical to four decimal places.
+71.4 s and 71.0 s of inference. The browser path is deterministic.
+
+**With one condition, and it is the interesting one.** `karma.conf.js` runs
+Chrome with `--use-angle=swiftshader`: the capture happens on a *software*
+rasteriser, which is deterministic by construction. This says nothing about a
+real GPU.
+
+And that is very likely what the design's own observation was. It reads:
+
+> TF.js is not bit-reproducible between runs near the 0.3 frame threshold -
+> already measured, when a fixture's 86 same-attack pairs came back as 89 from a
+> **live session**.
+
+A live session is the app in a real browser on a real GPU, compared against a
+fixture captured under SwiftShader. That is not run-to-run nondeterminism. It is
+a **backend** difference - the same kind of difference as the one between tiers,
+on the same pipeline, and already present *inside the anonymous tier*.
+
+## Which reframes the result rather than excusing it
+
+Three comparisons, all consistent with one explanation:
+
+| | difference |
+|---|---|
+| SwiftShader against SwiftShader | none at all |
+| SwiftShader against a live GPU session | 86 same-attack pairs became 89 |
+| SwiftShader against ONNX on CPU | 1,224 detections became 1,219 |
+
+The pipeline is deterministic for a given backend and gives slightly different
+answers on different ones. So the divergence this milestone found is **not a
+property of the server tier**. It is a property the anonymous tier already has:
+two users on different GPUs get different scores from the same file today, and
+nothing in the product notices.
+
+That makes the suppression amplification more serious rather than less. It is
+not noise that averages out over runs - it is a deterministic sensitivity, and
+each user sits on whichever side of it their hardware puts them, permanently.
+
+**The measurement still missing** is a capture on a real GPU, twice, to confirm
+that backend is deterministic too and to size the GPU-against-SwiftShader gap
+properly. The 86-against-89 figure is the only evidence for it and it was a side
+observation rather than a measurement.
 
 ## What to do about the criterion
 

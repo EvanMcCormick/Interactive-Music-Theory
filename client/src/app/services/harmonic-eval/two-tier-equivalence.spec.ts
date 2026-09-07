@@ -28,12 +28,17 @@ import { SERVER_DURATION_SEC, serverDetections } from './server-detections.fixtu
  * > discovering it… Bit-equality is the wrong assertion. Musical equivalence is
  * > the right one.
  *
- * Four independent things differ before a single note is decided. Different MP3
+ * Three independent things differ before a single note is decided. Different MP3
  * decoders, so the samples differ. Different resamplers, so they differ again.
- * Different inference runtimes — TF.js on WebGL against ONNX Runtime on CPU,
- * measured 4.5e-7 apart on the model itself. And TF.js is not bit-reproducible
- * between its own runs near the 0.3 frame threshold, which is how a fixture's
- * 86 same-attack pairs came back as 89 from a live session.
+ * Different inference runtimes — TF.js on SwiftShader against ONNX Runtime on
+ * CPU, measured 4.5e-7 apart on the model itself.
+ *
+ * A fourth was suspected and measured away. TF.js was thought not to be
+ * bit-reproducible between runs, but capturing this fixture twice on the same
+ * machine produced 1,224 of 1,224 identical rows. The design's 86-against-89
+ * observation was SwiftShader against a live GPU session — a backend
+ * difference, not noise. Each backend is deterministic; different backends
+ * disagree slightly, which is exactly what the server is.
  *
  * Measured when these fixtures were captured:
  *
