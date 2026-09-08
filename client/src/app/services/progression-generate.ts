@@ -1,4 +1,5 @@
 import {
+  ChordDegree,
   ChordSlot,
   DEFAULT_VELOCITY,
   ProgressionKey,
@@ -89,6 +90,38 @@ import { voiceChord } from './progression-voicing';
  * button. Repeating the check here would give the same rule two homes and let
  * them drift.
  */
+/**
+ * The pitch class a chord is rooted on: the same key applied to the same
+ * degree, one note wide instead of a whole stack.
+ *
+ * Every part of the app that *names* a chord needs this and none of them may
+ * derive it independently, because the name and the sound have to come from one
+ * arithmetic. It lives here because this is the module that owns applying a key
+ * to a degree at all - `progression-harmony.ts` is deliberately tonic-relative
+ * - and `generateSlotNotes` below computes the same sum for the whole chord,
+ * two lines down from this one, where the two can be read together.
+ *
+ * `alter` and then the tonic, in the order the generator applies them. Both are
+ * additions, so the order between them is unobservable; what matters is that
+ * neither is left out, and that `alter` can push the sum below zero, where
+ * JavaScript's `%` returns a negative and `MusicTheoryService.spellNote` would
+ * index off the front of the chromatic table. Nothing in M1 moves `alter`, but
+ * `replaceDocument` can bring in a document that already has.
+ *
+ * The caller decides whether the key can name a chord at all before asking:
+ * this is arithmetic, and it will happily root a chord in a scale that cannot
+ * stack thirds. `ProgressionState.canBuildChords` is that check, already
+ * applied.
+ */
+export function chordRootPitchClass(
+  key: ProgressionKey,
+  scaleIntervals: readonly number[],
+  degree: ChordDegree
+): number {
+  const raw = key.tonic + scaleIntervals[degree.degree] + degree.alter;
+  return ((raw % 12) + 12) % 12;
+}
+
 export function generateSlotNotes(
   slot: ChordSlot,
   key: ProgressionKey,

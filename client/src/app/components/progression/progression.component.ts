@@ -16,6 +16,7 @@ import { ProgressionTransportComponent } from './components/progression-transpor
 import { ProgressionState } from '../../models/progression.model';
 import { MusicTheoryService } from '../../services/music-theory.service';
 import { PROGRESSION_AUDIO, createToneApi } from '../../services/progression-audio';
+import { chordRootPitchClass } from '../../services/progression-generate';
 import { ProgressionPlayerService } from '../../services/progression-player.service';
 import { ProgressionService } from '../../services/progression.service';
 
@@ -39,11 +40,24 @@ interface AppSelection {
  *     there is no key picker here because the app already has one, and the
  *     drawer in the shell is it. See `adopt` for the direction that runs and
  *     the two selections it refuses.
- *  2. **Ctrl+Z and Ctrl+Y.** The transport has the buttons and said why the
+ *  2. **The sounding chord goes to the fretboard.** The other direction, and
+ *     the only thing on this page that writes to `MusicTheoryService`. See
+ *     `light`, and `restore` for the state it has to give back.
+ *  3. **Ctrl+Z and Ctrl+Y.** The transport has the buttons and said why the
  *     keys are not there: a shortcut has to work with the focus anywhere on the
  *     page, which means a document-level listener, which belongs to whatever
  *     owns the page. See `onKeydown`.
- *  3. **Leaving stops playback.** See `ngOnDestroy`.
+ *  4. **Leaving stops playback.** See `ngOnDestroy`.
+ *
+ * ## The two directions do not form a loop
+ *
+ * `adopt` reads the app's selection and `light` writes it, which is a cycle on
+ * paper. It is broken at `adopt`, which acts only on a selection naming a
+ * *scale*, and every chord `light` publishes names a chord category instead.
+ * `restore` does publish a scale, and reaches `adopt` - which finds the
+ * progression already in that key and commits nothing, because that is the key
+ * the progression adopted from it in the first place. Both halves are pinned by
+ * spec, from either end.
  *
  * ## Why the audio providers are here rather than in `main.ts`
  *
@@ -115,11 +129,36 @@ export class ProgressionComponent implements OnInit, OnDestroy {
   private readonly changes = inject(ChangeDetectorRef);
   private readonly destroy$ = new Subject<void>();
 
+  /**
+   * The last state the progression published, for the cue handler to read.
+   *
+   * A cue names a slot id and nothing else, so turning one into a chord needs
+   * the document and the key it is in. `ProgressionService` publishes its state
+   * rather than exposing one synchronously - `doc` is the only getter, and the
+   * chord also needs `keyScale` and `canBuildChords` - so the subscription this
+   * page already had keeps the latest here. It is set before the cue
+   * subscription is opened below, and `getState` is a `BehaviorSubject`, so it
+   * is never null by the time a cue can arrive.
+   */
+  private latest: ProgressionState | null = null;
+
+  /**
+   * The user's own selection, held while the fretboard is showing a chord of
+   * ours, and null when it is showing theirs.
+   *
+   * Doubles as the flag for which of those is true, so there is one fact rather
+   * than two that can disagree. All three fields are kept: a restore that put
+   * back only the key would leave the fretboard drawing a chord shape - the
+   * category and the item are what decide *what* is drawn.
+   */
+  private restoreTo: AppSelection | null = null;
+
   ngOnInit(): void {
     this.progression
       .getState()
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
+        this.latest = state;
         this.render(state);
         this.changes.markForCheck();
       });
@@ -146,6 +185,14 @@ export class ProgressionComponent implements OnInit, OnDestroy {
         takeUntil(this.destroy$)
       )
       .subscribe(selection => this.adopt(selection));
+
+    // Opened last, so that `latest` is filled before the first cue. The
+    // player's subject starts empty and replays that emptiness on subscribe,
+    // which lands in `light` as "nothing is sounding" and writes nothing -
+    // opening the page must not move the fretboard.
+    this.player.currentSlot$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(slotId => this.light(slotId));
   }
 
   /**
@@ -155,8 +202,8 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    * control being torn down is not a stop. This is the owner - it provides the
    * player - and the case for silence is that nothing survives the navigation
    * to ask for it. There is no transport on the fretboard page, so a
-   * progression still looping there is audio with no off switch; and Task 11
-   * publishes the sounding chord from *this* component, so a progression that
+   * progression still looping there is audio with no off switch; and the
+   * sounding chord is published from *this* component, so a progression that
    * outlived the page would go on sounding with nothing left to light the
    * fretboard under it and nothing left to restore the user's own key when it
    * stopped.
@@ -166,6 +213,11 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    * the transport as a side effect - but that is a resource-cleanup mechanism
    * answering a question about behaviour, and the decision belongs where it can
    * be read and tested.
+   *
+   * The two lines are in this order for a reason that is easy to lose: stopping
+   * empties the player's cursor, that emission is what `restore` acts on, and
+   * unsubscribing first would leave the user's key overwritten by whatever
+   * chord was sounding when they navigated away.
    */
   ngOnDestroy(): void {
     this.player.stop();
@@ -210,25 +262,23 @@ export class ProgressionComponent implements OnInit, OnDestroy {
   /**
    * Takes the app's key as the progression's, when the app is naming one.
    *
-   * One direction, and only this one. The circle sets `selectedKey` on
+   * The inbound direction. The circle sets `selectedKey` on
    * `MusicTheoryService` and knows nothing about this page, so something has to
-   * carry that across, and it is this - which is also what stops the page
-   * writing back: the fretboard's own selection survives a visit here
-   * untouched, because M1 never sets it. Task 11 adds the other direction, for
-   * the sounding chord, and is the task that has to restore what it overwrites.
+   * carry that across, and it is this. `light` is the outbound one.
    *
    * Two selections are refused:
    *
    *  - **One that names no scale.** `getCurrentScaleObject` answers only for a
    *    scale category, so a chord selection or a fretboard-notes selection
    *    resolves to nothing and is left alone rather than written in as a scale
-   *    id the progression cannot resolve. That is not hypothetical: Task 11
-   *    publishes the sounding chord as `selectKeyAndMode(root, 'chords', id)`,
-   *    and a page that adopted it would answer its own broadcast by throwing
-   *    the key away.
+   *    id the progression cannot resolve. That is not hypothetical, it is this
+   *    page's own voice coming back: `light` publishes the sounding chord as
+   *    `selectKeyAndMode(root, 'triads', 'minor')`, and a page that adopted it
+   *    would answer its own broadcast by throwing the key away.
    *  - **The key it is already in.** A key change is a commit and a commit is an
    *    undo step, so adopting a key the progression already has would cost the
-   *    user one for opening the page.
+   *    user one for opening the page. It is also what keeps `restore` from
+   *    costing one, since it republishes exactly the key this page adopted.
    *
    * Adopting on arrival, and not only on a later change, is the deliberate half
    * of this. The drawer is app-wide and shows `selectedKey`: a progression
@@ -243,6 +293,16 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     const scale = this.musicTheory.getCurrentScaleObject();
     if (!scale) return;
 
+    // A selection naming a scale, arriving while a chord of ours is on screen,
+    // is the user turning the circle mid-playback - the drawer is app-wide and
+    // this page has no key picker of its own, so it is a normal thing to do.
+    // What `restore` puts back has to be where they ended up: restoring the
+    // selection captured when play began would undo their key change the moment
+    // the music stopped, and the next emission would drag the progression back
+    // with it. Cleared before `restore` publishes, so its own broadcast lands
+    // here with nothing to refresh.
+    if (this.restoreTo) this.restoreTo = selection;
+
     const tonic = this.musicTheory.getNoteIndex(selection.key);
     // -1 for a name from neither chromatic table. There is no such key today;
     // there is also no sensible pitch class to write down for one.
@@ -252,6 +312,134 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     if (current.tonic === tonic && current.scaleId === scale.id) return;
 
     this.progression.setKey(tonic, scale.id);
+  }
+
+  /**
+   * Lights the fretboard with whatever is sounding now.
+   *
+   * The backing-track job: the progression plays behind the fretboard, and the
+   * fretboard shows the chord under the user's fingers as it goes past.
+   *
+   * One rule covers every case, including the three where there is no chord to
+   * show - the progression stopped, the slot is `literal`, the chord has no
+   * name this app knows. **The fretboard shows the sounding chord while there
+   * is one, and the user's own selection at every other moment.** The
+   * alternative for the three refusals is to leave the previous chord lit,
+   * which is a shape that is not sounding presented as one that is; going back
+   * to the key is not merely honest but informative, because the chord that
+   * could not be named is still built out of the key's own notes, so the scale
+   * on screen contains every note being played.
+   *
+   * The highlight leads the sound by Tone's lookahead, about a tenth of a
+   * second, because `currentSlot$` publishes from the transport callback. That
+   * is the player's documented behaviour and `Tone.Draw` is the fix; it belongs
+   * with the M2 playhead, where a tenth of a second is visible against a moving
+   * cursor rather than on a chord shape that holds for a bar.
+   */
+  private light(slotId: string | null): void {
+    const chord = slotId === null ? null : this.chordFor(slotId);
+    if (!chord) {
+      this.restore();
+      return;
+    }
+
+    this.capture();
+    this.musicTheory.selectKeyAndMode(chord.key, chord.categoryId, chord.itemId);
+  }
+
+  /**
+   * The selection that shows a slot's chord, or null when there is none to
+   * show.
+   *
+   * Four ways there is none, and the middle two are the same refusal the strip
+   * makes when it prints no numeral on a card - one screen, one answer about
+   * what this key can name:
+   *
+   *  - the id names no slot, which a cue from a schedule built before an edit
+   *    can do;
+   *  - the slot is `literal`, so it has notes and no degree. Unreachable in M1
+   *    until M3's recogniser, and `replaceDocument` is the door it comes
+   *    through;
+   *  - the key can build no chords, so the stored quality is a leftover from
+   *    whichever scale was selected when the slot was made;
+   *  - the quality is `'other'`: a stack of thirds that is no named chord.
+   *    Reachable today - the second degree of Hungarian minor is a major third
+   *    under a diminished fifth - and there is simply no chord in
+   *    `MusicTheoryService` to point at.
+   *
+   * `ChordQuality`'s twelve named values are chord ids in `MusicTheoryService`,
+   * which is what lets the quality be handed straight to `findChordCategory`
+   * and used as the item id, with no translation table in between. That
+   * correspondence is written down at both ends - `progression-harmony.ts` says
+   * so where the type is declared - and `findChordCategory` is also what
+   * happens if it ever stops being true: an id no category holds lights
+   * nothing, rather than selecting a category that does not contain it.
+   *
+   * The quality is read from the slot rather than recomputed, so the fretboard
+   * lights what the card beside it is called. That has one visible consequence:
+   * `degreeQuality` names a ninth after its seventh, so a chord raised to a
+   * ninth lights the seventh - a subset of what is sounding, and the same chord
+   * the card prints.
+   */
+  private chordFor(slotId: string): AppSelection | null {
+    const state = this.latest;
+    if (!state) return null;
+
+    const slot = state.doc.slots.find(candidate => candidate.id === slotId);
+    if (!slot || slot.harmony.kind !== 'degree') return null;
+    if (!state.canBuildChords || !state.keyScale) return null;
+
+    const degree = slot.harmony.degree;
+    if (degree.quality === 'other') return null;
+
+    const category = this.musicTheory.findChordCategory(degree.quality);
+    if (!category) return null;
+
+    const key = state.doc.key;
+    return {
+      // Spelled from the progression's own preference, as the palette and the
+      // strip spell it, so the fretboard names the chord the way the card that
+      // put it there does.
+      key: this.musicTheory.spellNote(
+        chordRootPitchClass(key, state.keyScale.intervals, degree),
+        key.preferSharps
+      ),
+      categoryId: category.id,
+      itemId: degree.quality
+    };
+  }
+
+  /** Remembers the user's selection, once, before the first chord covers it. */
+  private capture(): void {
+    if (this.restoreTo) return;
+
+    const state = this.musicTheory.getCurrentState();
+    this.restoreTo = {
+      key: state.selectedKey,
+      categoryId: state.selectedCategory,
+      itemId: state.selectedItem
+    };
+  }
+
+  /**
+   * Gives the user's selection back, in one emission.
+   *
+   * A no-op when there is nothing held, which is the common case: the player's
+   * subject replays its empty value to every new subscriber, a stop while
+   * stopped publishes again, and neither is a moment at which anything was
+   * overwritten.
+   *
+   * Cleared before it publishes rather than after. The broadcast comes straight
+   * back through `adopt`, which refreshes what is held whenever something is -
+   * and a field cleared afterwards would have been refreshed to the value just
+   * restored, leaving the page holding a selection it no longer covers.
+   */
+  private restore(): void {
+    const selection = this.restoreTo;
+    if (!selection) return;
+
+    this.restoreTo = null;
+    this.musicTheory.selectKeyAndMode(selection.key, selection.categoryId, selection.itemId);
   }
 
   /** Rebuilds what is on screen from one published state. */

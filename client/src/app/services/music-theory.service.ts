@@ -637,6 +637,29 @@ export class MusicTheoryService {
     return this.unifiedCategories.find(cat => cat.id === state.selectedCategory);
   }
 
+  /**
+   * The category holding a chord, so a caller with a chord id can select it.
+   *
+   * `selectKeyAndMode` takes a category and an item, and a caller that knows
+   * only which chord it wants has no way to name the category: the chords are
+   * split across `triads`, `seventh` and `extended`, and which one holds a
+   * given id is this service's data rather than a fact a component may assume.
+   * The progression composer is that caller - it lights the fretboard with the
+   * sounding chord, whose quality is a chord id here - and hardcoding `triads`
+   * would light nothing for every chord above a triad.
+   *
+   * **Chord categories only, and that is not a tidiness.** Item ids are unique
+   * within a category and not across them: `diminished` and `augmented` are
+   * each both a triad and a scale in this service. Searching every category for
+   * a chord id would answer `otherScales` for two of the twelve diatonic
+   * qualities and select a scale where a chord was asked for.
+   */
+  findChordCategory(chordId: string): MusicTheoryCategory | undefined {
+    return this.unifiedCategories.find(
+      cat => cat.type === 'chord' && cat.items.some(item => item.id === chordId)
+    );
+  }
+
   getCurrentItems(): MusicTheoryItem[] {
     const category = this.getCurrentCategory();
     return category ? category.items : [];

@@ -4,6 +4,7 @@ import { BehaviorSubject, Observable } from 'rxjs';
 import { ProgressionComponent } from './progression.component';
 import { CircleOfFifthsComponent } from '../circle-of-fifths/circle-of-fifths.component';
 import { ProgressionDoc, ProgressionState } from '../../models/progression.model';
+import { MusicTheoryState } from '../../models/music-theory.model';
 import { CIRCLE_POSITIONS } from '../../services/circle-of-fifths.data';
 import { MusicTheoryService } from '../../services/music-theory.service';
 import { ProgressionPlayerService } from '../../services/progression-player.service';
@@ -49,12 +50,32 @@ class FakePlayer {
     return Promise.resolve();
   }
 
+  /**
+   * Stopping empties the cursor, as the real one's `halt` does.
+   *
+   * Not decoration: restoring the user's key when playback stops is the page's
+   * job, and the *only* signal it gets is this emission. A fake that merely
+   * counted stops would let a page that never restored anything pass.
+   */
   stop(): void {
     this.stops++;
+    this.publish(null);
   }
 
   setLoop(on: boolean): void {
     this.isLooping = on;
+  }
+
+  /**
+   * A cue reached: the sounding slot changed.
+   *
+   * De-duplicated the way `ProgressionPlayerService.publishSlot` de-duplicates,
+   * so a test cannot get an emission out of this fake that the real player
+   * would have swallowed.
+   */
+  publish(slotId: string | null): void {
+    if (this.currentSlotSubject.getValue() === slotId) return;
+    this.currentSlotSubject.next(slotId);
   }
 }
 
@@ -80,6 +101,23 @@ describe('ProgressionComponent', () => {
     progression.getState().subscribe(value => (captured = value)).unsubscribe();
     if (captured === undefined) throw new Error('getState published nothing on subscribe');
     return captured;
+  }
+
+  /** The app-wide selection, as the three fields the fretboard draws from. */
+  function selection(): { key: string; categoryId: string; itemId: string } {
+    const state: MusicTheoryState = musicTheory.getCurrentState();
+    return {
+      key: state.selectedKey,
+      categoryId: state.selectedCategory,
+      itemId: state.selectedItem
+    };
+  }
+
+  /** The id of the nth slot, which is what a cue names. */
+  function slotId(index: number): string {
+    const slot = progression.doc.slots[index];
+    if (!slot) throw new Error(`the progression has no slot ${index}`);
+    return slot.id;
   }
 
   /** A key press on the document, as a real one would arrive. */
@@ -274,6 +312,229 @@ describe('ProgressionComponent', () => {
       press({ key: 'z', ctrlKey: true });
 
       expect(progression.doc.slots.length).toBe(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The backing track: what the fretboard shows while a progression plays
+  // -------------------------------------------------------------------------
+
+  /**
+   * The other direction, and the one that has to give the key back.
+   *
+   * The page writes the sounding chord into `MusicTheoryService` so the
+   * fretboard lights it, which means it is overwriting a selection the user
+   * made. Every test here is about one of the two halves of that: what gets
+   * published, and that the user's own selection comes back.
+   */
+  describe('the chord it lights the fretboard with', () => {
+    beforeEach(() => {
+      // A minor, so the key, the category and the item all differ from what the
+      // chords below publish - a restore that put back only two of the three
+      // would still pass if any of them agreed by accident.
+      musicTheory.selectKeyAndMode('A', 'diatonicModes', 'aeolian');
+    });
+
+    it('publishes nothing until something sounds', () => {
+      expect(selection()).toEqual({
+        key: 'A',
+        categoryId: 'diatonicModes',
+        itemId: 'aeolian'
+      });
+    });
+
+    it('lights the sounding chord', () => {
+      // iv of A minor: D minor.
+      progression.appendSlot(3);
+      player.publish(slotId(0));
+
+      expect(selection()).toEqual({ key: 'D', categoryId: 'triads', itemId: 'minor' });
+    });
+
+    /**
+     * A quality is a chord id, and the id says which category holds it: the
+     * triads and the sevenths are two categories in `MusicTheoryService`, so a
+     * page that hardcoded one would light nothing for half the qualities the
+     * complexity control can reach.
+     */
+    it('finds a seventh chord in its own category', () => {
+      progression.appendSlot(0);
+      progression.setSlotExtent(slotId(0), 7);
+      player.publish(slotId(0));
+
+      expect(selection()).toEqual({ key: 'A', categoryId: 'seventh', itemId: 'minor7' });
+    });
+
+    it('follows the progression from chord to chord', () => {
+      progression.appendSlot(0);
+      progression.appendSlot(5);
+      player.publish(slotId(0));
+      player.publish(slotId(1));
+
+      // VI of A minor: F major.
+      expect(selection()).toEqual({ key: 'F', categoryId: 'triads', itemId: 'major' });
+    });
+
+    /**
+     * The restore, and all three fields of it. The key alone is not enough:
+     * leaving `selectedCategory` on `triads` would leave the fretboard drawing
+     * a chord shape in a key the user never asked to see a chord in.
+     */
+    it('gives the whole selection back when playback stops', () => {
+      progression.appendSlot(3);
+      player.publish(slotId(0));
+      player.publish(null);
+
+      expect(selection()).toEqual({
+        key: 'A',
+        categoryId: 'diatonicModes',
+        itemId: 'aeolian'
+      });
+    });
+
+    it('gives it back when the page is left mid-play', () => {
+      progression.appendSlot(3);
+      player.publish(slotId(0));
+
+      fixture.destroy();
+
+      expect(selection()).toEqual({
+        key: 'A',
+        categoryId: 'diatonicModes',
+        itemId: 'aeolian'
+      });
+    });
+
+    /**
+     * Turning the circle while a progression plays is a normal thing to do -
+     * the drawer is app-wide and this page has no key picker of its own - and
+     * the selection to give back afterwards is the one the user ended on. A
+     * page that restored the selection it captured when play began would undo
+     * their key change the moment the music stopped, and `adopt` would then
+     * pull the progression back into the old key behind it.
+     */
+    it('gives back the key the user moved to during playback', () => {
+      progression.appendSlot(3);
+      player.publish(slotId(0));
+
+      musicTheory.selectKeyAndMode('Eb', 'diatonicModes', 'ionian');
+      player.publish(null);
+
+      expect(selection()).toEqual({
+        key: 'Eb',
+        categoryId: 'diatonicModes',
+        itemId: 'ionian'
+      });
+    });
+
+    /**
+     * The loop this page is one half of. The broadcast above comes straight
+     * back through the `getState()` subscription that adopts the app's key, and
+     * is refused there because a chord category names no scale - see 'ignores a
+     * selection that names no scale'. This is the same guard from the other
+     * end: driven by a real cue rather than by a hand-written category id, so
+     * it fails if the two ever stop describing the same thing.
+     */
+    it('does not re-key the progression from its own broadcast', () => {
+      progression.appendSlot(3);
+      const before = currentState();
+
+      player.publish(slotId(0));
+
+      expect(key()).toEqual({ tonic: 9, scaleId: 'aeolian' });
+      expect(currentState().canUndo).toBe(before.canUndo);
+    });
+
+    /**
+     * Hungarian minor's second degree is a major third under a diminished
+     * fifth, which is no named triad at all - `degreeQuality` calls it
+     * `'other'`, and there is no chord in `MusicTheoryService` to light for it.
+     *
+     * The fretboard goes back to the user's own selection rather than holding
+     * the previous chord. The scale is the honest thing to show: a diatonic
+     * chord this app cannot name is still built from the scale's notes, so the
+     * scale contains every note that is sounding, where the chord before it
+     * contains notes that are not.
+     */
+    it('shows the key again for a chord it has no name for', () => {
+      progression.setKey(0, 'hungarianMinor');
+      progression.appendSlot(0);
+      progression.appendSlot(1);
+      player.publish(slotId(0));
+
+      player.publish(slotId(1));
+
+      expect(selection()).toEqual({
+        key: 'A',
+        categoryId: 'diatonicModes',
+        itemId: 'aeolian'
+      });
+    });
+
+    /**
+     * A literal slot has no degree, so there is no chord to publish - the same
+     * refusal the strip makes when it prints no numeral on such a card. It is
+     * unreachable in M1; `replaceDocument` is the one door it can come through,
+     * which is what makes this testable before M3 builds the recogniser.
+     */
+    it('shows the key again for a slot with no chord in it', () => {
+      progression.appendSlot(3);
+      const built = progression.doc;
+      progression.replaceDocument({
+        ...built,
+        slots: [
+          ...built.slots,
+          {
+            id: 'detached',
+            harmony: { kind: 'literal', reason: 'unrecognised' },
+            startBeat: 4,
+            lengthBeats: 4,
+            notes: [],
+            isHandEdited: false
+          }
+        ]
+      });
+      player.publish(slotId(0));
+
+      player.publish('detached');
+
+      expect(selection()).toEqual({
+        key: 'A',
+        categoryId: 'diatonicModes',
+        itemId: 'aeolian'
+      });
+    });
+
+    /**
+     * A key that can build no chords cannot name the one it is holding either:
+     * the stored quality came from the scale that was selected when the slot
+     * was made. The strip refuses to print a numeral in exactly this case, and
+     * the fretboard refuses to light one.
+     */
+    it('shows the key again when the key can name no chords', () => {
+      progression.appendSlot(3);
+      progression.setKey(9, 'minorPentatonic');
+
+      player.publish(slotId(0));
+
+      expect(selection()).toEqual({
+        key: 'A',
+        categoryId: 'diatonicModes',
+        itemId: 'aeolian'
+      });
+    });
+
+    it('stops publishing once the page is gone', () => {
+      progression.appendSlot(3);
+      fixture.destroy();
+
+      player.publish(slotId(0));
+
+      expect(selection()).toEqual({
+        key: 'A',
+        categoryId: 'diatonicModes',
+        itemId: 'aeolian'
+      });
     });
   });
 

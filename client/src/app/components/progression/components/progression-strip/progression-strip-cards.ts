@@ -1,10 +1,10 @@
 import {
-  ChordDegree,
   ChordSlot,
   ProgressionKey,
   ProgressionState,
   SlotHarmony
 } from '../../../../models/progression.model';
+import { chordRootPitchClass } from '../../../../services/progression-generate';
 import { chordName, romanNumeral, spokenChordName } from '../../../../services/progression-harmony';
 
 /**
@@ -191,7 +191,7 @@ function describeSlot(
   if (!intervals) return unlabelled('this key cannot name it');
 
   const degree = harmony.degree;
-  const root = spell(rootPitchClass(key, intervals, degree), key.preferSharps);
+  const root = spell(chordRootPitchClass(key, intervals, degree), key.preferSharps);
 
   return {
     isUnlabelled: false,
@@ -234,26 +234,6 @@ function unlabelled(detail: string): CardDescription {
     subject: UNLABELLED_SUBJECT,
     detail
   };
-}
-
-/**
- * The pitch class a card names its chord from.
- *
- * `alter` then the tonic, which is the order `generateSlotNotes` applies them
- * in - so the name and the sound come from one arithmetic. Both are additions
- * and the order between them is unobservable; what matters is that neither is
- * left out, and `alter` can push the sum below zero, where JavaScript's `%`
- * returns a negative and `spellNote` would index off the front of the chromatic
- * table. Nothing in M1 moves `alter`, but `replaceDocument` can bring in a
- * document that already has.
- */
-function rootPitchClass(
-  key: ProgressionKey,
-  intervals: readonly number[],
-  degree: ChordDegree
-): number {
-  const raw = key.tonic + intervals[degree.degree] + degree.alter;
-  return ((raw % 12) + 12) % 12;
 }
 
 /** `1 beat`, `4 beats`, `1.5 beats`. */
