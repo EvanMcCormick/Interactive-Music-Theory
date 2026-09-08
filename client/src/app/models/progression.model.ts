@@ -1,4 +1,6 @@
-import { ChordExtent, ChordQuality, noteCount } from '../services/progression-harmony';
+// Split so the one runtime edge is visible; see the layering note below.
+import type { ChordExtent, ChordQuality } from '../services/progression-harmony';
+import { noteCount } from '../services/progression-harmony';
 import { TimeSignature } from './composer.model';
 
 /**
@@ -31,30 +33,44 @@ import { TimeSignature } from './composer.model';
  * `ChordQuality` and `ChordExtent` are imported from `progression-harmony.ts`
  * rather than redeclared, because a second copy of either would be a second
  * definition of the same concept - the thing the project rules forbid outright.
- * That does leave a model importing from `services/`, which no other model does.
- * The alternative was to move the two types down here, and that is worse: they
- * are *produced* by the harmony module, whose rules decide which qualities can
- * exist at all, and splitting a type from the code that establishes its domain
- * is how the two drift apart. The import is type-only in substance - `noteCount`
- * is the single value crossing - and carries no Angular or audio dependency, so
- * nothing about the layering is actually inverted.
+ * That does leave a model importing from `services/`, which is not a first:
+ * `transcription.model.ts` already reaches into `transcription-harmonics.ts`
+ * for `HarmonicOptions`, and for the same reason - a type produced by a module
+ * belongs beside the code whose rules decide what values it can take, and
+ * splitting the two is how they drift apart. The import is split the way that
+ * file splits its own, and for the reason recorded there: a type-only import is
+ * erased, so the dependency it would otherwise create never exists at runtime.
+ * That leaves `noteCount` as the one genuine runtime edge, visible rather than
+ * hidden among the types, and it carries no Angular or audio dependency.
  *
  * ## The normalisation rule
  *
- * Every numeric field that can reach the audio layer is checked in one place,
- * `normalizeChordSlot`, under a single rule:
+ * Every numeric field that can reach the audio layer is checked in one place -
+ * `normalizeChordSlot` for a slot, `normalizeProgressionDoc` for the document
+ * around it - under a single rule with four clauses:
  *
  *  - **A value of the wrong kind is a bug, and throws.** `NaN` or `undefined` in
  *    a chord's pitch data runs through `voiceChord` untouched into
- *    `RollNote.midi` and on to `Tone.PolySynth`, which is precisely the failure
- *    `degreePitchClasses` already guards its own `degree` against. Throwing puts
- *    the error where it was introduced rather than three layers downstream.
- *  - **A value of the right kind that is out of range is a control at its limit,
- *    and is clamped or wrapped.** Pressing "octave up" at the top of the range
- *    should do nothing, not crash.
+ *    `RollNote.midi` and on to `Tone.PolySynth` - precisely the failure
+ *    `degreePitchClasses` guards its own `degree` against. Throwing puts the
+ *    error where it was introduced rather than three layers downstream.
+ *  - **A continuous control past its limit is clamped** - `octave`, `alter`,
+ *    `lengthBeats`, `tempo`. Each has natural ends, and a control resting on one
+ *    is not an error: `setSlotLength` is a drag handler, and a throw the moment
+ *    the dragged edge crosses zero would abort the gesture rather than stop it.
+ *  - **A cyclic control past its limit wraps** - `inversion`, and the key's
+ *    `tonic`. The inversion above the last is root position again; the pitch
+ *    class above B is C. Storing them wrapped keeps them nameable.
+ *  - **A value outside an enumerated set throws** - `extent`. `ChordExtent` is a
+ *    union rather than a range, so a value that is not in it is a type violation
+ *    rather than a control at its limit, and there is no end to clamp to: the
+ *    set is a ladder, not an interval. Keeping the +/- complexity buttons inside
+ *    `CHORD_EXTENTS` is therefore the *stepper's* job - stepping off either end
+ *    should fail loudly here rather than be rounded back onto the last rung.
  *
- * Every path that produces a `ChordSlot` should end here, which is why the
- * factory below does too.
+ * `normalizeProgressionDoc` is what makes the rule a mechanism rather than a
+ * convention: Task 5's `commit()` calls it on every mutation, so the funnel has
+ * one call site instead of eleven setters each remembering to opt in.
  */
 
 /** The key a progression is in. `tonic` is 0-11, C through B. */
@@ -155,6 +171,18 @@ export interface RollNote {
 /** One bar in 4/4. The length a chord gets unless the user changes it. */
 export const BEATS_PER_SLOT_DEFAULT = 4;
 
+/**
+ * The shortest a slot may be, in beats.
+ *
+ * One beat rather than a fraction of one. `startBeat` and `lengthBeats` are
+ * floats so the timeline can hold whatever M2 puts on it, but M1 measures slots
+ * in beats and sounds each as a single block, so a slot shorter than a beat is
+ * not something M1 can ask for or play. It is a floor on a drag rather than a
+ * grid, so it costs nothing to lower when free timing arrives in M2 - and this
+ * is the constant to revisit then.
+ */
+export const MIN_SLOT_BEATS = 1;
+
 /** Middle C. Where voicings are stacked from before `octave` shifts them. */
 export const VOICING_BASE_MIDI = 60;
 
@@ -162,17 +190,27 @@ export const VOICING_BASE_MIDI = 60;
  * How far the octave control may shift the voicing base, in octaves.
  *
  * The top is arithmetic rather than taste. `voiceChord` has no MIDI clamp, so
- * this is the last line before a note reaches `Tone.PolySynth`. Across all 33
- * heptatonic scales the app offers, every degree, every extent and every
- * inversion, the highest note a chord can reach is 32 semitones above the base
- * - a 9th on the enigmatic scale, third inversion. `OCTAVE_MAX` of 2 puts the
- * base at C6 and that ceiling at 116; 3 would put it at 128 and off the end of
- * MIDI. The spec proves both halves, so a new scale that widened the stack
- * would fail rather than clip.
+ * this is the last line before a note reaches `Tone.PolySynth`. Measured over
+ * the pipeline `generateSlotNotes` actually runs - all 33 heptatonic scales the
+ * app offers, every degree, extent, inversion, `alter` and tonic - the highest
+ * note a chord can reach is **33** semitones above the base: a 9th on the double
+ * harmonic scale, fourth inversion, altered down a tone.
  *
- * The bottom is symmetric rather than pushed to the MIDI floor. C2 is already
- * below the low E of a bass in standard tuning, and chords voiced under it are
- * mud rather than music.
+ * `alter` and `tonic` belong in that measurement rather than being factored out
+ * of it, because the reach is not transposition-invariant: `voiceChord` places
+ * its first note anywhere from the base to eleven semitones above it, so
+ * transposing a chord can widen it. A sweep of untransposed chords measures 32,
+ * and is measuring a pipeline this bound does not guard.
+ *
+ * `OCTAVE_MAX` of 2 puts the base at C6 and that ceiling at 117, ten short of
+ * 127; 3 would put it at 129, off the end of MIDI. The spec proves both halves,
+ * so a new scale that widened the stack would fail rather than clip.
+ *
+ * The bottom is taste, and the spec pins it as taste rather than deriving it:
+ * `voiceChord` never voices below its base, so the MIDI floor would permit
+ * anything down to -5 and says nothing about where to stop. C2 is where the
+ * musical argument stops - below the low E of a guitar in standard tuning, and
+ * chords voiced under it are mud rather than music.
  */
 export const OCTAVE_MIN = -2;
 export const OCTAVE_MAX = 2;
@@ -183,6 +221,19 @@ export const OCTAVE_MAX = 2;
  */
 export const ALTER_MIN = -2;
 export const ALTER_MAX = 2;
+
+/**
+ * The playable tempo range, in BPM.
+ *
+ * `Tone.Transport.bpm` takes any number at all: 0 stops the transport dead
+ * while a progression appears to play, and a negative one is not meaningful
+ * time. The ends here are the musical ones rather than those arithmetic edges -
+ * 20 is slower than any grave, 300 faster than any prestissimo - because a
+ * tempo box that stops somewhere usable is more use than one that stops just
+ * short of breaking playback.
+ */
+export const TEMPO_MIN = 20;
+export const TEMPO_MAX = 300;
 
 /**
  * The runtime twin of the `ChordExtent` union, ascending, so the +/- complexity
@@ -208,6 +259,11 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
+/** Wraps a value into 0..modulus-1, for the cyclic controls. */
+function wrap(value: number, modulus: number): number {
+  return ((value % modulus) + modulus) % modulus;
+}
+
 function requireStartBeat(startBeat: number): number {
   // A `NaN` here is the same failure as a `NaN` midi, one axis over: it reaches
   // Tone as a schedule time, and nothing between here and there looks at it.
@@ -219,15 +275,19 @@ function requireStartBeat(startBeat: number): number {
   return startBeat;
 }
 
-function requireLengthBeats(lengthBeats: number): number {
-  // Strictly positive: a zero-length slot sounds nothing, occupies no time and
-  // makes the contiguity re-flow a no-op, so it can only ever be a mistake.
-  if (!Number.isFinite(lengthBeats) || lengthBeats <= 0) {
+function normalizeLengthBeats(lengthBeats: number): number {
+  // The wrong-kind half of the rule, and here it is the whole of it: a `NaN` or
+  // `Infinity` length reaches Tone as a note duration, unlooked-at in between.
+  if (!Number.isFinite(lengthBeats)) {
     throw new Error(
-      `ChordSlot lengthBeats must be a finite duration above 0; got ${lengthBeats}`
+      `ChordSlot lengthBeats must be a finite duration; got ${lengthBeats}`
     );
   }
-  return lengthBeats;
+  // Too short clamps rather than throwing, because `setSlotLength` is a
+  // drag-the-edge handler and dragging past the far edge produces exactly 0 and
+  // then negatives. There is no maximum to clamp against - a slot may be as
+  // long as the user drags it.
+  return Math.max(MIN_SLOT_BEATS, lengthBeats);
 }
 
 function requireDegreeIndex(degree: number): number {
@@ -239,10 +299,17 @@ function requireDegreeIndex(degree: number): number {
   return degree;
 }
 
+/**
+ * The enumerated-set clause of the rule above, and the one guard that throws on
+ * an out-of-range value rather than bounding it.
+ *
+ * Not belt-and-braces over the union: `noteCount` reads an unlisted extent as a
+ * fractional note count, and `degreePitchClasses` then loops past it and
+ * returns a chord with a note too many. A wrong chord, not a crash. And not a
+ * clamp, because keeping the +/- complexity buttons on the ladder is the
+ * *stepper's* job - Task 5's `setSlotExtent` owns that, not this guard.
+ */
 function requireExtent(extent: ChordExtent): ChordExtent {
-  // Not belt-and-braces over the union: `noteCount` reads an unlisted extent as
-  // a fractional note count, and `degreePitchClasses` then loops past it and
-  // returns a chord with a note too many. A wrong chord, not a crash.
   if (!CHORD_EXTENTS.includes(extent)) {
     throw new Error(
       `ChordSlot extent must be one of ${CHORD_EXTENTS.join(', ')}; got ${extent}`
@@ -263,8 +330,33 @@ function requireExtent(extent: ChordExtent): ChordExtent {
  * broken and nothing says why.
  */
 function normalizeInversion(inversion: number, extent: ChordExtent): number {
-  const count = noteCount(extent);
-  return ((inversion % count) + count) % count;
+  return wrap(inversion, noteCount(extent));
+}
+
+/**
+ * The tonic is a pitch class, so it wraps for the reason inversion does: the
+ * note above B is C, and a control stepped past the end of the circle has
+ * arrived somewhere real rather than failed. It is checked at all because
+ * `generateSlotNotes` adds it to every pitch class on the way into
+ * `voiceChord`, making `setKey` a second road to the same `RollNote.midi`.
+ */
+function normalizeTonic(tonic: number): number {
+  if (!Number.isInteger(tonic)) {
+    throw new Error(`ProgressionKey tonic must be a whole pitch class; got ${tonic}`);
+  }
+  return wrap(tonic, 12);
+}
+
+/**
+ * Tempo reaches `Tone.Transport.bpm` - the audio layer by another road than
+ * `RollNote.midi`, and just as unguarded along the way. Continuous, so it
+ * clamps; unquantised, so a metronome may sit between two whole numbers.
+ */
+function normalizeTempo(tempo: number): number {
+  if (!Number.isFinite(tempo)) {
+    throw new Error(`ProgressionDoc tempo must be a finite BPM; got ${tempo}`);
+  }
+  return clamp(tempo, TEMPO_MIN, TEMPO_MAX);
 }
 
 function normalizeChordDegree(degree: ChordDegree): ChordDegree {
@@ -282,20 +374,26 @@ function normalizeChordDegree(degree: ChordDegree): ChordDegree {
 /**
  * Checks and bounds every number on a slot that can reach the audio layer.
  *
- * Returns a copy rather than editing in place, so it composes with the
- * `structuredClone` undo stack instead of quietly amending a document that is
- * already on it.
+ * Builds a new slot rather than editing in place, so a document already on the
+ * `structuredClone` undo stack is not quietly amended behind it.
  *
- * `notes` is not checked. In M1 they are generated from the fields above, which
- * are checked, so there is nothing a check here could catch. The moment the
- * piano roll lets a user move them by hand - M2 - that stops being true, and
- * this is where the check belongs.
+ * The copy is shallow, and the promise should be read as exactly that: `notes`
+ * is the same array by reference, holding the same `RollNote` objects, and a
+ * literal slot's `harmony` is the same object too, where the degree branch does
+ * build a fresh one. Enough for the undo stack, which deep-clones on the way
+ * in; not enough for a caller assuming it may now edit `notes` in place.
+ *
+ * `notes` is also not checked, for the reason it is safe not to copy: in M1 it
+ * is regenerated wholesale from the fields above, which are checked, and never
+ * mutated, so there is nothing a check could catch and nothing a shared
+ * reference can spoil. M2's piano roll ends both at once, which is why the deep
+ * copy and the `notes` check belong in one change.
  */
 export function normalizeChordSlot(slot: ChordSlot): ChordSlot {
   const timed: ChordSlot = {
     ...slot,
     startBeat: requireStartBeat(slot.startBeat),
-    lengthBeats: requireLengthBeats(slot.lengthBeats)
+    lengthBeats: normalizeLengthBeats(slot.lengthBeats)
   };
 
   // A literal slot has no degree to check. Its timing still matters.
@@ -304,6 +402,31 @@ export function normalizeChordSlot(slot: ChordSlot): ChordSlot {
   return {
     ...timed,
     harmony: { kind: 'degree', degree: normalizeChordDegree(timed.harmony.degree) }
+  };
+}
+
+/**
+ * Checks and bounds a whole document: every slot, plus the two numbers that
+ * reach the audio layer without belonging to one.
+ *
+ * This is the funnel's intended call site: Task 5's `ProgressionService` routes
+ * every mutation through a single `commit()`, and `commit()` calls this. That
+ * turns "every path that produces a slot should end at `normalizeChordSlot`"
+ * from a convention eleven setters each have to remember into a mechanism with
+ * one place to check. `setKey` and `setTempo` are the two with no slot to
+ * normalise and so no reason to think of it at all - which is exactly how
+ * `tonic` and `tempo` came to be the holes in the first place.
+ *
+ * `timeSignature` is not checked. In M1 it is laid out and displayed but never
+ * handed to Tone, so it is not on the road this rule guards; it joins when
+ * `quantizeBar` in M2 starts computing bar lengths from it.
+ */
+export function normalizeProgressionDoc(doc: ProgressionDoc): ProgressionDoc {
+  return {
+    ...doc,
+    key: { ...doc.key, tonic: normalizeTonic(doc.key.tonic) },
+    tempo: normalizeTempo(doc.tempo),
+    slots: doc.slots.map(slot => normalizeChordSlot(slot))
   };
 }
 
