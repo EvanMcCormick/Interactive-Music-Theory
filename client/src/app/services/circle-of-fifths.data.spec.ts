@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 
-import { MusicTheoryService } from '../../services/music-theory.service';
+import { MusicTheoryService } from './music-theory.service';
 import { CIRCLE_POSITIONS, circleOrder } from './circle-of-fifths.data';
 
 /**

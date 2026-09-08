@@ -21,6 +21,14 @@
  * it into sharps. The two halves of the circle select the right spelling as well
  * as the right pitch, and nothing in the component arranges that.
  *
+ * ## It is also the key-signature table, and `MusicTheoryService` reads it
+ *
+ * The circle of fifths and the list of key signatures are the same object: a
+ * position's distance round the circle *is* its number of accidentals. So this
+ * lives beside the service rather than inside the component that draws it, and
+ * `shouldUseSharps` consults it to decide how the whole app spells notes — which
+ * is what stopped E minor coming back with a G flat in it.
+ *
  * ## The one ambiguous position
  *
  * Six o'clock is F♯ major (6♯) and G♭ major (6♭) — the same pitch, two keys, and
@@ -108,3 +116,27 @@ export function circleOrder(direction: CircleDirection): readonly CirclePosition
 
   return [CIRCLE_POSITIONS[0], ...CIRCLE_POSITIONS.slice(1).reverse()];
 }
+
+
+/**
+ * Semitones from a parent major's tonic up to each diatonic mode's tonic.
+ *
+ * This is what lets a key signature be worked out for a mode rather than only
+ * for a major key: A aeolian is the ninth degree above C, so it carries C
+ * major's signature, and E aeolian carries G major's — one sharp, which is the
+ * F sharp that E minor is supposed to have.
+ *
+ * Only the seven diatonic modes are here, and deliberately. A pentatonic or a
+ * blues scale has no parent major to inherit a signature from, so a caller that
+ * finds nothing here should fall back to whatever preference the scale itself
+ * declares rather than inventing one.
+ */
+export const MODE_OFFSETS: Readonly<Record<string, number>> = Object.freeze({
+  ionian: 0,
+  dorian: 2,
+  phrygian: 4,
+  lydian: 5,
+  mixolydian: 7,
+  aeolian: 9,
+  locrian: 11
+});

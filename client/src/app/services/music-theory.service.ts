@@ -1,3 +1,4 @@
+import { CIRCLE_POSITIONS, MODE_OFFSETS } from './circle-of-fifths.data';
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import {
@@ -696,8 +697,53 @@ export class MusicTheoryService {
       return state.selectedKey.includes('#');
     }
 
+    // The key's own signature, for a mode that has one. A signature is a
+    // property of the key rather than of the scale shape: E minor has one sharp
+    // because its relative major is G, and D minor has one flat because its
+    // relative major is F. Reading a per-scale `preferSharps` instead gave every
+    // natural-rooted minor the same answer, which is how E minor ended up
+    // spelled with a G flat in it.
+    const signature = this.keySignatureKind();
+    if (signature === 'sharp') {
+      return true;
+    }
+    if (signature === 'flat') {
+      return false;
+    }
+
     // Otherwise use the item's preference (scales have preferSharps, chords default to true)
     return currentItem.preferSharps !== undefined ? currentItem.preferSharps : true;
+  }
+
+  /**
+   * Whether the current key and mode carry sharps, flats, or neither.
+   *
+   * Works back from the mode to its parent major - A aeolian is the ninth
+   * degree of C, so it inherits C major's signature - and reads that major's
+   * accidentals off the circle of fifths, which is the same table.
+   *
+   * Returns null for anything with no parent major to inherit from: a
+   * pentatonic, a blues scale, a chord. Those keep whatever preference they
+   * declare for themselves, because inventing a signature for a scale that does
+   * not have one would be worse than having no opinion.
+   */
+  private keySignatureKind(): 'sharp' | 'flat' | 'none' | null {
+    const state = this.state.getValue();
+
+    const offset = MODE_OFFSETS[state.selectedItem];
+    if (offset === undefined) {
+      return null;
+    }
+
+    const tonic = this.getNoteIndex(state.selectedKey);
+    if (tonic < 0) {
+      return null;
+    }
+
+    const parent = (tonic - offset + 12) % 12;
+    const position = CIRCLE_POSITIONS.find(p => this.getNoteIndex(p.major) === parent);
+
+    return position ? position.accidentalKind : null;
   }
 
   getChromatic(): string[] {

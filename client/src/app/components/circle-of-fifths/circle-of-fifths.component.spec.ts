@@ -2,7 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { MusicTheoryService } from '../../services/music-theory.service';
 import { CircleOfFifthsComponent } from './circle-of-fifths.component';
-import { CIRCLE_POSITIONS } from './circle-of-fifths.data';
+import { CIRCLE_POSITIONS } from '../../services/circle-of-fifths.data';
 
 /**
  * What the circle does when you click it, and what it shows when the key

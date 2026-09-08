@@ -15,7 +15,7 @@ import {
   CircleDirection,
   CirclePosition,
   circleOrder
-} from './circle-of-fifths.data';
+} from '../../services/circle-of-fifths.data';
 
 /**
  * The circle of fifths, as a key selector for the whole app.
