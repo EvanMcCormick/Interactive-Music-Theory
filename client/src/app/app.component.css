@@ -70,3 +70,95 @@ main {
     font-size: 1em;
   }
 }
+/* Circle of fifths drawer.
+   Overlay rather than push, so no page reflows or needs to know it exists. */
+.circle-toggle {
+  margin-left: auto;
+  padding: 0.4rem 0.85rem;
+  border: 1px solid #22303d;
+  border-radius: 4px;
+  background: #34495e;
+  color: #ecf0f1;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.circle-toggle:hover {
+  background: #46617c;
+}
+
+.circle-toggle.active {
+  background: #e74c3c;
+  border-color: #e74c3c;
+}
+
+.circle-toggle:focus-visible {
+  outline: 2px solid #ecf0f1;
+  outline-offset: 2px;
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 900;
+}
+
+.circle-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(380px, 90vw);
+  z-index: 901;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: #2c3e50;
+  color: #ecf0f1;
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.35);
+
+  /* Off-canvas until opened. Transformed rather than hidden so the slide is
+     cheap and the drawer keeps its size while animating. */
+  transform: translateX(100%);
+  transition: transform 0.2s ease-out;
+}
+
+.circle-drawer.open {
+  transform: translateX(0);
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #22303d;
+}
+
+.drawer-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.drawer-close {
+  padding: 0 0.35rem;
+  border: none;
+  background: none;
+  color: #a8b6c1;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.drawer-close:hover {
+  color: #ecf0f1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .circle-drawer {
+    transition: none;
+  }
+}

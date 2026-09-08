@@ -547,6 +547,29 @@ export class MusicTheoryService {
     });
   }
 
+  /**
+   * Sets the key and the mode together, in one emission.
+   *
+   * `updateCategory` deliberately resets `selectedItem` to the first item of the
+   * category it moves to, so a caller that wants a particular key *and* a
+   * particular mode cannot get there with the setters above without either
+   * fighting that reset or emitting three times - and three emissions is three
+   * re-renders of the fretboard for one user action.
+   *
+   * Added for the circle of fifths, where every click means exactly this:
+   * clicking C sets C ionian, clicking its inner ring sets A aeolian. Nothing
+   * else needs it yet, and it stays here rather than in the component because
+   * this is where state transitions live.
+   */
+  selectKeyAndMode(key: string, categoryId: string, itemId: string): void {
+    this.state.next({
+      ...this.state.getValue(),
+      selectedKey: key,
+      selectedCategory: categoryId,
+      selectedItem: itemId
+    });
+  }
+
   updateInstrument(instrumentId: string): void {
     const instrument = this.instruments.find(inst => inst.id === instrumentId);
     if (!instrument) return;

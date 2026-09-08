@@ -66,11 +66,14 @@
         
         <div class="control-group">
           <label for="key-select">Key:</label>
+          <!-- Matched against selectedKeyOption(), not state.selectedKey: the
+               options are pitch classes carrying both spellings, and the key
+               may be a single one. See the method. -->
           <select id="key-select" [disabled]="isKeyDisabled()"
                   (change)="onKeyChange($event)">
             <option *ngFor="let note of chromaticScale"
                     [value]="note"
-                    [selected]="note === state.selectedKey">
+                    [selected]="note === selectedKeyOption()">
               {{ note }}
             </option>
           </select>

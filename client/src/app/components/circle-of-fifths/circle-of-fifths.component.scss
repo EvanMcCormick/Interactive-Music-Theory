@@ -1,0 +1,128 @@
+// Colours follow the app's existing scheme: dark navigation surfaces, red for
+// the root, blue for in-mode notes. The circle reuses the root red for the
+// selected key so that "selected" means the same thing here as on the fretboard.
+:host {
+  --circle-surface: #2c3e50;
+  --circle-surface-raised: #34495e;
+  --circle-wedge: #3d566e;
+  --circle-wedge-hover: #46617c;
+  --circle-selected: #e74c3c;
+  --circle-signature: #2b3d4f;
+  --circle-line: #22303d;
+  --circle-text: #ecf0f1;
+  --circle-text-dim: #a8b6c1;
+
+  display: block;
+}
+
+.circle-of-fifths {
+  padding: 1rem;
+  background: var(--circle-surface);
+  color: var(--circle-text);
+}
+
+.direction-toggle {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+
+  button {
+    flex: 1;
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--circle-line);
+    border-radius: 4px;
+    background: var(--circle-surface-raised);
+    color: var(--circle-text-dim);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+
+    &:hover {
+      background: var(--circle-wedge-hover);
+      color: var(--circle-text);
+    }
+
+    &.active {
+      background: var(--circle-selected);
+      border-color: var(--circle-selected);
+      color: #fff;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--circle-text);
+      outline-offset: 2px;
+    }
+  }
+}
+
+.circle {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.wedge {
+  fill: var(--circle-wedge);
+  stroke: var(--circle-line);
+  stroke-width: 1.5;
+  cursor: pointer;
+  transition: fill 0.12s;
+
+  &.signature {
+    fill: var(--circle-signature);
+  }
+
+  &:hover {
+    fill: var(--circle-wedge-hover);
+  }
+
+  &.selected {
+    fill: var(--circle-selected);
+  }
+
+  // SVG paths take focus but show nothing by default, and this is the only
+  // affordance a keyboard user gets.
+  &:focus-visible {
+    outline: none;
+    stroke: var(--circle-text);
+    stroke-width: 3;
+  }
+}
+
+.label {
+  // The labels are decoration over their own wedge, which already carries the
+  // click handler and the accessible name. Letting them swallow pointer events
+  // would create a dead spot in the middle of every segment.
+  pointer-events: none;
+  text-anchor: middle;
+  dominant-baseline: central;
+  fill: var(--circle-text);
+  font-family: inherit;
+  user-select: none;
+}
+
+.major-label {
+  font-size: 19px;
+  font-weight: 600;
+
+  &.enharmonic {
+    font-size: 14px;
+  }
+}
+
+.minor-label {
+  font-size: 14px;
+  fill: var(--circle-text-dim);
+}
+
+.signature-label {
+  font-size: 12px;
+  fill: var(--circle-text-dim);
+}
+
+.hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--circle-text-dim);
+}

@@ -1,0 +1,122 @@
+<div class="circle-of-fifths">
+  <div class="direction-toggle" role="radiogroup" aria-label="Direction round the circle">
+    <button
+      type="button"
+      role="radio"
+      [attr.aria-checked]="direction === 'fifths'"
+      [class.active]="direction === 'fifths'"
+      (click)="setDirection('fifths')">
+      Fifths
+    </button>
+    <button
+      type="button"
+      role="radio"
+      [attr.aria-checked]="direction === 'fourths'"
+      [class.active]="direction === 'fourths'"
+      (click)="setDirection('fourths')">
+      Fourths
+    </button>
+  </div>
+
+  <svg
+    class="circle"
+    viewBox="0 0 400 400"
+    role="group"
+    [attr.aria-label]="'Circle of ' + direction">
+
+    <g *ngFor="let position of positions; let i = index" class="position">
+
+      <!-- Key signature, outermost. Not clickable on its own: it belongs to the
+           major beside it, so it shares that wedge's handler. -->
+      <path
+        class="wedge signature"
+        [class.selected]="isMajorSelected(position)"
+        [attr.d]="wedge(i, rings.signature)"
+        (click)="selectMajor(position)" />
+      <text
+        class="label signature-label"
+        [attr.x]="labelPoint(i, rings.signature).x"
+        [attr.y]="labelPoint(i, rings.signature).y">
+        {{ signatureLabel(position) }}
+      </text>
+
+      <!-- Majors. The enharmonic position is cut in half so F sharp and G flat
+           are two targets rather than one ambiguous one. -->
+      <ng-container *ngIf="position.majorEnharmonic === null">
+        <path
+          class="wedge major"
+          role="button"
+          tabindex="0"
+          [class.selected]="isMajorSelected(position)"
+          [attr.aria-label]="majorLabel(position)"
+          [attr.d]="wedge(i, rings.major)"
+          (click)="selectMajor(position)"
+          (keydown.enter)="selectMajor(position)"
+          (keydown.space)="selectMajor(position)" />
+        <text
+          class="label major-label"
+          [attr.x]="labelPoint(i, rings.major).x"
+          [attr.y]="labelPoint(i, rings.major).y">
+          {{ position.major }}
+        </text>
+      </ng-container>
+
+      <ng-container *ngIf="position.majorEnharmonic !== null">
+        <path
+          class="wedge major"
+          role="button"
+          tabindex="0"
+          [class.selected]="isMajorSelected(position)"
+          [attr.aria-label]="majorLabel(position)"
+          [attr.d]="wedge(i, rings.major, 'top')"
+          (click)="selectMajor(position)"
+          (keydown.enter)="selectMajor(position)" />
+        <text
+          class="label major-label enharmonic"
+          [attr.x]="labelPoint(i, rings.major, 12).x"
+          [attr.y]="labelPoint(i, rings.major, 12).y">
+          {{ position.major }}
+        </text>
+
+        <path
+          class="wedge major"
+          role="button"
+          tabindex="0"
+          [class.selected]="isMajorSelected(position)"
+          [attr.aria-label]="majorLabel(position, true)"
+          [attr.d]="wedge(i, rings.major, 'bottom')"
+          (click)="selectMajor(position, true)"
+          (keydown.enter)="selectMajor(position, true)" />
+        <text
+          class="label major-label enharmonic"
+          [attr.x]="labelPoint(i, rings.major, -12).x"
+          [attr.y]="labelPoint(i, rings.major, -12).y">
+          {{ position.majorEnharmonic }}
+        </text>
+      </ng-container>
+
+      <!-- Relative minors, innermost. -->
+      <path
+        class="wedge minor"
+        role="button"
+        tabindex="0"
+        [class.selected]="isMinorSelected(position)"
+        [attr.aria-label]="minorLabel(position)"
+        [attr.d]="wedge(i, rings.minor)"
+        (click)="selectMinor(position)"
+        (keydown.enter)="selectMinor(position)"
+        (keydown.space)="selectMinor(position)" />
+      <text
+        class="label minor-label"
+        [attr.x]="labelPoint(i, rings.minor).x"
+        [attr.y]="labelPoint(i, rings.minor).y">
+        {{ position.minor }}m
+      </text>
+    </g>
+  </svg>
+
+  <p class="hint">
+    Outer ring is the key signature, then majors, then their relative minors.
+    Neighbours differ by one accidental.
+  </p>
+</div>

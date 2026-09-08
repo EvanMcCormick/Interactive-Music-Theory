@@ -9,10 +9,48 @@
         <a routerLink="/gp-viewer" routerLinkActive="active">GP Viewer</a>
         <a routerLink="/gp-library" routerLinkActive="active">GP Library</a>
       </nav>
+
+      <button
+        *ngIf="circleAvailable"
+        type="button"
+        class="circle-toggle"
+        [class.active]="circleOpen"
+        [attr.aria-expanded]="circleOpen"
+        aria-controls="circle-drawer"
+        (click)="toggleCircle()">
+        Circle of Fifths
+      </button>
     </div>
   </header>
 
   <main>
     <router-outlet></router-outlet>
   </main>
+
+  <!-- Overlay rather than push: no page has to reflow, and none of them needs
+       to know the drawer exists. -->
+  <div
+    *ngIf="circleOpen"
+    class="drawer-backdrop"
+    (click)="closeCircle()"
+    aria-hidden="true"></div>
+
+  <aside
+    id="circle-drawer"
+    class="circle-drawer"
+    [class.open]="circleOpen"
+    [attr.aria-hidden]="!circleOpen"
+    role="dialog"
+    aria-label="Circle of fifths">
+    <header class="drawer-header">
+      <h2>Circle of Fifths</h2>
+      <button type="button" class="drawer-close" aria-label="Close" (click)="closeCircle()">
+        &times;
+      </button>
+    </header>
+
+    <!-- Built only while open, so an unopened drawer costs nothing and a
+         reopened one starts from current state rather than stale state. -->
+    <app-circle-of-fifths *ngIf="circleOpen"></app-circle-of-fifths>
+  </aside>
 </div>

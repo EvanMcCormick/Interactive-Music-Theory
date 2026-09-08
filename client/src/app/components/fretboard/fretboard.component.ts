@@ -100,6 +100,7 @@ export class FretboardComponent implements OnInit, OnDestroy {
     this.musicTheoryService.getState().subscribe((state: MusicTheoryState) => {
       this.state = state;
       this.currentItems = this.musicTheoryService.getCurrentItems();
+
       this.refreshFretboard();
       // Clear selected notes when state changes
       this.selectedNoteIndices = [];
@@ -146,6 +147,23 @@ export class FretboardComponent implements OnInit, OnDestroy {
   onKeyChange(event: Event): void {
     const select = event.target as HTMLSelectElement;
     this.musicTheoryService.updateKey(select.value);
+  }
+
+  /**
+   * The option in this dropdown that stands for the selected key.
+   *
+   * The list is pitch classes with both spellings on them - `G#/Ab` - while
+   * `selectedKey` may be a single spelling, because the circle of fifths sets
+   * real key names and `Ab major` is a different key from `G# major` even though
+   * they are the same pitch. Matching on the string alone leaves the dropdown
+   * blank for every accidental key the circle can produce.
+   *
+   * So the pitch is what is matched, through the service's own index. State
+   * keeps the spelling; only the display is widened.
+   */
+  selectedKeyOption(): string {
+    const at = this.musicTheoryService.getNoteIndex(this.state.selectedKey);
+    return at >= 0 ? this.chromaticScale[at] : this.state.selectedKey;
   }
 
   onCategoryChange(event: Event): void {
