@@ -1,5 +1,5 @@
-import { degreePitchClasses, noteCount } from '../services/progression-harmony';
-import { voiceChord } from '../services/progression-voicing';
+import { noteCount } from '../services/progression-harmony';
+import { generateSlotNotes } from '../services/progression-generate';
 import { MusicTheoryService } from '../services/music-theory.service';
 import {
   ALTER_MAX,
@@ -8,10 +8,12 @@ import {
   CHORD_EXTENTS,
   ChordDegree,
   ChordSlot,
+  DEFAULT_VELOCITY,
   MIN_SLOT_BEATS,
   OCTAVE_MAX,
   OCTAVE_MIN,
   ProgressionDoc,
+  ProgressionKey,
   TEMPO_MAX,
   TEMPO_MIN,
   VOICING_BASE_MIDI,
@@ -362,41 +364,66 @@ describe('the octave bound', () => {
   const sweeps = new Map<number, { lowest: number; highest: number }>();
 
   /**
+   * One sweep slot, spread from the factory's defaults rather than normalised.
+   *
+   * Normalising would clamp `octave` back inside the bound, and the spec below
+   * that proves `OCTAVE_MAX + 1` overflows MIDI deliberately asks for an octave
+   * outside it - normalising here would turn that spec into a tautology.
+   */
+  const SWEEP_TEMPLATE = createDegreeSlot(0, 0);
+  function sweepSlot(overrides: Partial<ChordDegree>): ChordSlot {
+    return {
+      ...SWEEP_TEMPLATE,
+      harmony: {
+        kind: 'degree',
+        degree: { ...degreeOf(SWEEP_TEMPLATE), ...overrides }
+      }
+    };
+  }
+
+  /**
    * The extremes of every chord the app can build, voiced at `octave`.
    *
-   * This walks the pipeline `generateSlotNotes` actually runs: `alter` and the
-   * key's `tonic` are added to the pitch classes *before* voicing. That is not
-   * decoration. `voiceChord`'s reach is not transposition-invariant - its first
-   * note lands anywhere from the base to eleven semitones above it, depending
-   * on the pitch class it starts from - so a sweep that voiced untransposed
-   * chords would measure a pipeline this bound does not guard, and would come
-   * up a semitone short of the real maximum.
+   * It calls `generateSlotNotes` rather than re-running its three steps by
+   * hand. The hand-rolled version was arithmetically right, and being right was
+   * the problem: two copies of a pipeline with nothing asserting that they
+   * agree is exactly how a bound comes to guard something the app has stopped
+   * doing. The bound is only worth anything if it is measured over the code
+   * that produces the notes.
+   *
+   * The part that has to be walked rather than simplified is that `alter` and
+   * the key's `tonic` reach the pitch classes *before* voicing. `voiceChord`'s
+   * reach is not transposition-invariant - its first note lands anywhere from
+   * the base to eleven semitones above it, depending on the pitch class it
+   * starts from - so a sweep that voiced untransposed chords would measure a
+   * pipeline this bound does not guard, and would come up a semitone short of
+   * the real maximum.
    *
    * `alter` and `tonic` compose into a single uniform offset, and the tonic
    * loop alone already covers all twelve residues, so the `alter` loop adds no
-   * case the sweep would otherwise miss. It is here because a guard should walk
-   * the code path it guards rather than a simplification of it.
+   * case the sweep would otherwise miss. It stays for the same reason the whole
+   * function now goes through the generator: a guard should walk the path it
+   * guards rather than a simplification of it.
    */
   function extremesAt(octave: number): { lowest: number; highest: number } {
     const cached = sweeps.get(octave);
     if (cached) return cached;
 
-    const base = VOICING_BASE_MIDI + octave * 12;
     let lowest = Infinity;
     let highest = -Infinity;
 
     for (const intervals of HEPTATONIC_SCALES) {
       for (let degree = 0; degree <= 6; degree++) {
         for (const extent of CHORD_EXTENTS) {
-          const relative = degreePitchClasses(intervals, degree, extent);
           const inversions = noteCount(extent);
           for (let alter = ALTER_MIN; alter <= ALTER_MAX; alter++) {
             for (let tonic = 0; tonic < 12; tonic++) {
-              const absolute = relative.map(pitchClass => pitchClass + alter + tonic);
+              const key: ProgressionKey = { tonic, scaleId: 'ionian', preferSharps: true };
               for (let inversion = 0; inversion < inversions; inversion++) {
-                for (const midi of voiceChord(absolute, inversion, base)) {
-                  if (midi < lowest) lowest = midi;
-                  if (midi > highest) highest = midi;
+                const slot = sweepSlot({ degree, alter, extent, inversion, octave });
+                for (const note of generateSlotNotes(slot, key, intervals)) {
+                  if (note.midi < lowest) lowest = note.midi;
+                  if (note.midi > highest) highest = note.midi;
                 }
               }
             }
@@ -459,5 +486,20 @@ describe('the octave bound', () => {
     expect(OCTAVE_MIN).toBe(-2);
     expect(VOICING_BASE_MIDI + OCTAVE_MIN * 12).toBe(36);
     expect(OCTAVE_MAX).toBe(2);
+  });
+});
+
+describe('the note default', () => {
+  // Pinned here as a number, because the only other spec that touches it -
+  // `generateSlotNotes` giving every note the default velocity - compares the
+  // generated notes against the imported constant, which holds for whatever the
+  // constant happens to be. Without this line the fifteen lines of derivation
+  // above `DEFAULT_VELOCITY` guard nothing at all.
+  //
+  // 80 is `mf` on the dynamics map MIDI writers share, and 80/127 is 0.63 -
+  // inside the 0.5-1.0 the app's own keyboard strikes at, and at the bottom of
+  // it, so a progression sits under a plucked note rather than over it.
+  it('sounds every generated note at mf', () => {
+    expect(DEFAULT_VELOCITY).toBe(80);
   });
 });

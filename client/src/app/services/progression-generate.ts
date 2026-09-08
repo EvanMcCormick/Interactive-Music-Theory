@@ -47,12 +47,39 @@ import { voiceChord } from './progression-voicing';
  * not transposition-invariant. Reordering these three lines would move chords
  * *and* invalidate the bound that keeps them inside MIDI.
  *
+ * ## Why the return is `readonly`
+ *
+ * The two branches hand back different kinds of array. The degree branch builds
+ * a fresh one holding fresh notes; the literal branch returns the slot's *own*
+ * array holding the slot's *own* notes. Nothing in the signature separates
+ * them, so a caller that sorted or spliced the result in place - a scheduler
+ * ordering notes before handing them to Tone, say - would quietly rewrite a
+ * literal slot's playback truth while leaving every degree slot untouched. That
+ * is a bug reproducing only on the slots M3 creates. `readonly` costs nothing
+ * while no caller mutates the result, and costs a great deal less now than
+ * after something has been written against a promise this function cannot keep.
+ *
  * ## What is not generated
  *
- * `ChordDegree.quality` is never read. The pitches come from the scale, so the
- * quality is a label the palette computes for display; a slot whose quality
- * disagreed with its scale would still sound the scale's chord, which is the
- * behaviour the model documents.
+ * `ChordDegree.quality` is stored and never read - not here, and nowhere else
+ * in M1. The pitches come from the scale alone, so a slot whose quality
+ * disagreed with its scale sounds the scale's chord regardless.
+ *
+ * That is not a display convention with a tidy justification: it is the
+ * design's borrowed-chord mechanism with no implementation behind it. The
+ * design spells a borrowed chord with `alter`, and `alter` cannot spell one -
+ * it shifts the whole stack, which is a transposition, and transposition
+ * preserves quality. So bVII in a major key comes out diminished, bVI, bIII and
+ * the Neapolitan bII come out minor, and #iv-dim comes out major. Every
+ * conventional altered numeral is wrong. A borrowed chord needs the quality to
+ * *override* the scale's - `quality: ChordQuality | null`, and a branch here
+ * that reads it - and that is M2/M3 work, recorded on their docket rather than
+ * bolted on here.
+ *
+ * The gap is latent rather than live, which is why M1 ships with it:
+ * `createDegreeSlot` hardcodes `alter: 0`, no M1 setter moves it, and Task 6's
+ * palette emits only diatonic degrees. Nothing in M1 can ask for a chord this
+ * cannot generate.
  *
  * A non-heptatonic scale is not caught here either. `degreePitchClasses` throws
  * on one and that throw is allowed through, rather than being turned into an
@@ -66,12 +93,20 @@ export function generateSlotNotes(
   slot: ChordSlot,
   key: ProgressionKey,
   scaleIntervals: readonly number[]
-): RollNote[] {
+): readonly RollNote[] {
   // A literal slot has no degree to generate from; its notes ARE the truth.
   // Returned by identity rather than rebuilt, so a caller comparing references
   // - change detection, an undo diff - sees no edit where none happened. This
   // is the branch that lets M3 degrade a slot to literal rather than mislabel
   // it: losing the Roman numeral must cost the user nothing they played.
+  //
+  // Hazard for Task 5: it follows that `setSlotLength` on a literal slot is a
+  // silent no-op as far as its notes go. Regeneration returns them unchanged,
+  // so shrinking the slot leaves notes hanging past its end and lengthening it
+  // leaves silence at the end. That is arguably correct under "notes are the
+  // truth" - stretching them to fit a drag would be the app rewriting what the
+  // user played - but it should be a documented consequence rather than
+  // something M3 discovers the first time a literal slot is resized.
   if (slot.harmony.kind === 'literal') return slot.notes;
 
   const degree = slot.harmony.degree;

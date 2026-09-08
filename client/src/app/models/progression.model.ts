@@ -134,7 +134,26 @@ export interface ChordDegree {
    * stale, and the plan's own tests build a I chord from degree 0.
    */
   degree: number;
-  /** Chromatic shift of the whole chord, in semitones. bVII is degree 6, alter -1. */
+  /**
+   * Chromatic shift of the **whole chord**, in semitones.
+   *
+   * Every note moves together, so this is a transposition, and transposition
+   * preserves quality. That is the whole of what the field does, and it is less
+   * than a Roman numeral's accidental needs: an accidental displaces the *root*
+   * and leaves the case to carry the quality, which no uniform shift can do.
+   * So this field cannot express a borrowed chord. Degree 6 of a major scale is
+   * a diminished triad, and altered down a semitone it is a diminished triad on
+   * Bb rather than the Bb major chord bVII names; bVI, bIII and the Neapolitan
+   * bII all come out minor, and #iv-dim comes out major. Overriding `quality`
+   * is what a borrowed chord actually needs, and M1 has no mechanism for it -
+   * see the note in `progression-generate.ts`.
+   *
+   * What is left is real but small. `alter` and `key.tonic` are both added to
+   * every pitch class in `generateSlotNotes` and compose into one offset, so
+   * this field reaches no harmony the key does not already reach - the same
+   * diatonic chord, spelled as though the key were a tone away. Its value is
+   * that it moves one slot rather than all of them, not that it adds a chord.
+   */
   alter: number;
   /** How far the thirds are stacked. The +/- complexity buttons move this. */
   extent: ChordExtent;
@@ -160,7 +179,15 @@ export interface RollNote {
   /** Relative to the slot's start, in beats. Float. */
   startBeat: number;
   lengthBeats: number;
-  /** MIDI velocity, 1-127. */
+  /**
+   * MIDI velocity, 1-127.
+   *
+   * Hazard for Task 8's scheduler: `Tone.PolySynth.triggerAttackRelease` takes
+   * velocity as a 0-1 gain, not as a MIDI byte. Handing it 80 asks for eighty
+   * times full scale and clips hard. The conversion is `/ 127`, and it belongs
+   * at the Tone boundary rather than here, so that `RollNote` stays MIDI end to
+   * end - the same choice `midi` makes.
+   */
   velocity: number;
 }
 
