@@ -97,7 +97,7 @@ export type SlotHarmony =
   | { kind: 'literal'; reason: 'unrecognised' | 'user-detached' };
 
 export interface ChordDegree {
-  degree: number;                    // 1-7
+  degree: number;                    // 0-6, matching degreePitchClasses
   alter: number;                     // bVII = degree 7, alter -1
   extent: 3 | 7 | 9 | 11 | 13;       // the +/- complexity buttons
   quality: ChordQuality;             // defaults from key; overridable = borrowed chords

@@ -149,7 +149,7 @@ export type ChordExtent = 3 | 7 | 9 | 11 | 13;
 
 /** Notes in a chord of the given extent. 3 -> 3 notes, 7 -> 4, 9 -> 5. */
 export function noteCount(extent: ChordExtent): number {
-  return extent === 3 ? 3 : (extent - 1) / 2;
+  return extent === 3 ? 3 : (extent + 1) / 2;
 }
 
 /**
@@ -439,8 +439,8 @@ block: one attack at the slot start, held for the whole slot.
 import { generateSlotNotes } from './progression-generate';
 import { createDegreeSlot } from '../models/progression.model';
 
-const C_MAJOR_KEY = { tonic: 0, scaleId: 'major', preferSharps: true };
-const A_MINOR_KEY = { tonic: 9, scaleId: 'natural-minor', preferSharps: false };
+const C_MAJOR_KEY = { tonic: 0, scaleId: 'ionian', preferSharps: true };
+const A_MINOR_KEY = { tonic: 9, scaleId: 'aeolian', preferSharps: false };
 const MAJOR = [0, 2, 4, 5, 7, 9, 11];
 const NATURAL_MINOR = [0, 2, 3, 5, 7, 8, 10];
 
