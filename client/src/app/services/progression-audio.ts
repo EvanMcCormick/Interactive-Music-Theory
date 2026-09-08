@@ -1,0 +1,216 @@
+import { InjectionToken } from '@angular/core';
+import * as Tone from 'tone';
+import type { InputNode } from 'tone';
+
+/**
+ * The whole of Tone as `ProgressionPlayerService` is allowed to see it.
+ *
+ * It exists so that the service can be tested at all. Karma runs headless with
+ * no audio device, and importing Tone is not a neutral act - `import * as Tone`
+ * builds the global `Context` on the way in, and every node the service would
+ * construct hangs off it. A spec that drove the real library would be testing
+ * Web Audio rather than the schedule, which is exactly what `CLAUDE.md` says
+ * not to do: mock Tone, and test what was initialised.
+ *
+ * The line is drawn so that the *decisions* stay in the service and only the
+ * *constructors* live behind it. The service still builds its own chain, orders
+ * it, disposes it, decides what goes in a part and when the transport starts -
+ * all of which a fake can watch. What is on this side is `new Tone.Reverb(...)`
+ * and four one-line assignments onto the transport, which have nothing in them
+ * for a test to catch.
+ *
+ * Two smaller consequences, both deliberate:
+ *
+ *  - **Times and gains are plain numbers.** Tone would take a `Time` string, a
+ *    note name or a `Frequency`; the seam takes seconds, hertz and 0-1. That
+ *    keeps the conversions in `buildSchedule`, where they are arithmetic and
+ *    can be checked against numbers worked out by hand.
+ *  - **`transport()` speaks in our terms, not Tone's.** `setTempo` and
+ *    `setLoop` rather than the `bpm`, `loop`, `loopStart` and `loopEnd`
+ *    properties behind them, so a fake transport is four fields rather than a
+ *    reimplementation of `TransportClass`.
+ */
+export interface ToneApi {
+  /**
+   * Makes the audio context ready to sound, and resolves once it is.
+   *
+   * `Tone.start()` is the project guardrail - a browser will not start an audio
+   * context without a user gesture, and the play button is that gesture. It
+   * rejects when there has been none, which is the suspended-context case the
+   * service has to survive rather than schedule into.
+   */
+  resume(): Promise<void>;
+  transport(): ToneTransport;
+  createPolySynth(): TonePolySynth;
+  createReverb(): ToneNode;
+  createVolume(): ToneOutputNode;
+  /**
+   * A `Tone.Part`: `events` replayed through `callback` against the transport's
+   * clock. Each event carries its own time, in seconds from the start of the
+   * progression.
+   */
+  createPart<Event extends TimedEvent>(
+    callback: (time: number, event: Event) => void,
+    events: readonly Event[]
+  ): TonePart;
+}
+
+/** Anything a part can schedule: an object that knows when it happens. */
+export interface TimedEvent {
+  /** Seconds from the start of the progression. */
+  time: number;
+}
+
+/**
+ * A node in the audio chain.
+ *
+ * `connect` takes ours or Tone's own `InputNode`, because it is handed both: the
+ * service passes one `ToneNode` to another, while at runtime those are real
+ * Tone nodes being handed to a real `connect`. Naming both is what lets the
+ * real classes satisfy this interface without a cast on either side.
+ */
+export interface ToneNode {
+  connect(destination: ToneNode | InputNode): unknown;
+  dispose(): unknown;
+}
+
+/** The last node in the chain - the one that reaches the speakers. */
+export interface ToneOutputNode extends ToneNode {
+  toDestination(): unknown;
+}
+
+export interface TonePolySynth extends ToneNode {
+  /**
+   * `frequency` in hertz, `duration` and `time` in seconds, and `velocity` as a
+   * **0-1 gain** - not as a MIDI byte. See `RollNote.velocity`.
+   */
+  triggerAttackRelease(
+    frequency: number,
+    duration: number,
+    time: number,
+    velocity: number
+  ): unknown;
+  /** Releases every sounding voice. What a stop button means. */
+  releaseAll(): unknown;
+}
+
+export interface TonePart {
+  start(time: number): unknown;
+  dispose(): unknown;
+}
+
+/**
+ * The transport, which is global: there is one per audio context and Tone hands
+ * out the same one to everybody. Nothing else in the app schedules on it today,
+ * which is what makes `cancel()` - it clears the whole timeline, not just ours
+ * - safe to call here.
+ */
+export interface ToneTransport {
+  /** BPM. */
+  setTempo(bpm: number): void;
+  /** Loops from the start of the progression to `endSeconds` while `on`. */
+  setLoop(on: boolean, endSeconds: number): void;
+  start(): void;
+  /** Stops, and rewinds to the top: Tone's `stop` resets the position. */
+  stop(): void;
+  /** Drops everything scheduled on the transport's timeline. */
+  cancel(): void;
+}
+
+/**
+ * The piano voice, matching `KeyboardComponent` note for note.
+ *
+ * The progression is a backing track under the instrument the user is looking
+ * at, so it should sound like the app's piano rather than introduce a fourth
+ * timbre. `DEFAULT_VELOCITY` was chosen against these same two - see its
+ * docstring - so the balance between them is not accidental.
+ */
+const PIANO_VOICE = {
+  oscillator: { type: 'sine' as const },
+  envelope: { attack: 0.005, decay: 0.3, sustain: 0.2, release: 1.5 }
+};
+
+const PIANO_REVERB = { decay: 2.5, wet: 0.15 };
+
+/**
+ * Quieter than the keyboard's -6 dB, because a progression plays *under*
+ * whatever the user is picking out on the fretboard rather than alongside it,
+ * and it plays several notes at once where the fretboard plays one.
+ */
+const PROGRESSION_VOLUME_DB = -10;
+
+/** The real thing: Tone, and nothing but the constructors. */
+export function createToneApi(): ToneApi {
+  return {
+    async resume(): Promise<void> {
+      // Asking a running context to start again is harmless, but asking is
+      // cheap and says out loud that the gesture is only needed once.
+      if (Tone.getContext().state === 'running') return;
+      await Tone.start();
+    },
+    transport(): ToneTransport {
+      const transport = Tone.getTransport();
+      return {
+        setTempo: (bpm: number): void => {
+          transport.bpm.value = bpm;
+        },
+        setLoop: (on: boolean, endSeconds: number): void => {
+          transport.loopStart = 0;
+          transport.loopEnd = endSeconds;
+          transport.loop = on;
+        },
+        start: (): void => {
+          transport.start();
+        },
+        stop: (): void => {
+          transport.stop();
+        },
+        cancel: (): void => {
+          transport.cancel();
+        }
+      };
+    },
+    createPolySynth: (): TonePolySynth => new Tone.PolySynth(Tone.Synth, PIANO_VOICE),
+    createReverb: (): ToneNode => new Tone.Reverb(PIANO_REVERB),
+    createVolume: (): ToneOutputNode => new Tone.Volume(PROGRESSION_VOLUME_DB),
+    createPart: <Event extends TimedEvent>(
+      callback: (time: number, event: Event) => void,
+      events: readonly Event[]
+    ): TonePart =>
+      // Built as a part of the base event, then narrowed on the way back out.
+      // `Tone.Part`'s own value type is a conditional over `{ time: Time }`,
+      // which cannot be resolved against a type variable, so the alternative to
+      // this cast is to stop the seam being generic at all - and then it is the
+      // caller doing the narrowing instead, once per part. A part replays only
+      // the events it was given, so the narrowing is sound wherever it sits.
+      //
+      // The array is copied, not handed over: `Tone.Part` keeps what it is
+      // given, and a schedule is meant to be read rather than adopted.
+      new Tone.Part<TimedEvent>(
+        (time: number, event: TimedEvent) => callback(time, event as Event),
+        [...events]
+      )
+  };
+}
+
+/**
+ * How `ProgressionPlayerService` reaches Tone.
+ *
+ * Defaulted on the token rather than bound in `main.ts`, which is the opposite
+ * of what `NOTE_DETECTOR` does, and for a reason that does not apply here:
+ * resolving this token constructs nothing. It hands back an object of
+ * constructors, so a spec that forgets to override it still builds no audio
+ * node until it injects the *service* - and there is no model to download and
+ * no worker to start behind it either way. Defaulting keeps the player usable
+ * the way a `providedIn: 'root'` service is usable, with nothing for a new
+ * route to remember to wire up.
+ *
+ * A spec that injects `ProgressionPlayerService` should override it all the
+ * same. The service builds its chain in its constructor, so leaving the real
+ * one in place puts a synth, a reverb and a convolution on the global audio
+ * context of a headless browser - which works, and tests nothing.
+ */
+export const PROGRESSION_AUDIO = new InjectionToken<ToneApi>('ProgressionAudio', {
+  providedIn: 'root',
+  factory: createToneApi
+});
