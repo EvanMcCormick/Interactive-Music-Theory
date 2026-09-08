@@ -1,4 +1,4 @@
-import { Injectable, OnDestroy, inject } from '@angular/core';
+import { Injectable, NgZone, OnDestroy, inject } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import { ProgressionDoc } from '../models/progression.model';
 import {
@@ -77,9 +77,23 @@ function frequencyOf(midi: number): number {
  * leaves `notes` alone, because in M1 they are generated rather than typed -
  * so this is the only thing between M2's velocity editing and a gain above
  * full scale.
+ *
+ * The finite test is part of the same guard rather than an extra one, because
+ * clamping cannot do it: `Math.min(1, Math.max(0, NaN))` is `NaN`, so an
+ * unchecked velocity of the one shape arithmetic cannot fix passes straight
+ * through the check meant to catch unchecked velocities and reaches
+ * `triggerAttackRelease` as a `NaN` gain. Silence is the answer rather than
+ * some default, because a note nobody can put a level on should not turn out to
+ * be the loudest thing in the mix.
  */
 function gainOf(velocity: number): number {
+  if (!Number.isFinite(velocity)) return 0;
   return Math.min(1, Math.max(0, velocity / MAX_VELOCITY));
+}
+
+/** Earliest first, and stable, so events at one instant keep their order. */
+function byTime<Event extends TimedEvent>(events: Event[]): Event[] {
+  return events.sort((left, right) => left.time - right.time);
 }
 
 /**
@@ -120,9 +134,23 @@ function gainOf(velocity: number): number {
  *
  * One cue per slot start, plus a final cue naming no slot at `lengthSeconds`.
  * That last one is how `currentSlot$` empties when a one-shot play runs out,
- * and it is the same event that stops the transport. While looping it never
- * fires: Tone jumps from `loopEnd` back to `loopStart` before the events at
- * `loopEnd` are reached, which is exactly the behaviour a loop wants.
+ * and it is the same event that stops the transport. Whether Tone reaches it
+ * while looping is not something to rely on - see `onCue`, which is written so
+ * that it does not matter either way.
+ *
+ * There is no trailing cue when the progression has no length: a document whose
+ * slots are all zero beats long would otherwise get a cue saying it had ended
+ * at the same instant as the cue saying its first slot had begun. `play`
+ * refuses such a document anyway, for want of any time to play it in.
+ *
+ * ## Order
+ *
+ * Both lists come back earliest first. `Tone.Part` sorts what it is handed, so
+ * this buys playback nothing; it is for every other reader - a schedule read in
+ * a debugger, asserted against in a spec, or walked by M2's playhead - none of
+ * which should have to know that a `PlaybackSchedule` was in document order all
+ * along. Slots are laid end to end by `reflow`, so the sort is usually a no-op;
+ * `play` takes a document from anywhere, so usually is not always.
  */
 export function buildSchedule(doc: ProgressionDoc): PlaybackSchedule {
   const secondsPerBeat = 60 / doc.tempo;
@@ -148,9 +176,9 @@ export function buildSchedule(doc: ProgressionDoc): PlaybackSchedule {
   }
 
   const lengthSeconds = endBeat * secondsPerBeat;
-  if (doc.slots.length > 0) cues.push({ time: lengthSeconds, slotId: null });
+  if (lengthSeconds > 0) cues.push({ time: lengthSeconds, slotId: null });
 
-  return { notes, cues, lengthSeconds };
+  return { notes: byTime(notes), cues: byTime(cues), lengthSeconds };
 }
 
 /**
@@ -189,10 +217,54 @@ export function buildSchedule(doc: ProgressionDoc): PlaybackSchedule {
  * and it belongs with the M2 work that draws a playhead against a piano roll,
  * where a tenth of a second is visible; a chord card lighting up fractionally
  * early is not.
+ *
+ * ## And it runs in whichever zone Tone happens to be in
+ *
+ * Tone drives that clock from a Web Worker - `Ticker` posts itself a message
+ * every update interval - and binds its `onmessage` when the audio context is
+ * first constructed. Which zone that is depends on who touched Tone first: a
+ * component constructor puts it in Angular's, a module-level side effect or an
+ * async callback puts it in the root zone. It is not this service's decision to
+ * make and not a template's business to know.
+ *
+ * Today it does not matter, and it is worth writing down why rather than
+ * leaving the next reader to work it out. Angular 21's `bootstrapApplication`
+ * prepends `provideZonelessChangeDetectionInternal()` to an app's own
+ * providers, and `main.ts` does not override it, so this application is
+ * zoneless: `NgZone` resolves to `NoopNgZone`, whose `run` is a bare
+ * `fn.apply`, and `AsyncPipe`'s `markForCheck` reaches the change-detection
+ * scheduler from any zone at all. `zone.js` is still in the polyfills, but
+ * nothing about rendering depends on it. So a `currentSlot$ | async` highlight
+ * repaints wherever the cue came from, and Task 9 has nothing to fear here.
+ *
+ * `publishSlot` runs through `NgZone` anyway, and knowingly. The bet is cheap -
+ * a pass-through call and a closure, once per slot rather than once per tick,
+ * behind the de-duplicating guard - and the alternative is that this service
+ * becomes the thing that quietly breaks the day someone puts
+ * `provideZoneChangeDetection()` back into `main.ts`. The rest of the app -
+ * `GpLibraryService`, `ComposerLibraryService`, `AlphaTabService` - re-enters
+ * the zone from its own callbacks the same way, from back when that was load
+ * bearing, and a player that did not would be the odd one out for a saving of
+ * nothing.
+ *
+ * ## Past CLAUDE.md's 500-line ceiling, deliberately
+ *
+ * 155 of these lines are code and 317 are prose, and most of that prose is the
+ * three places where the obvious reading is wrong: a trailing cue that Tone is
+ * meant to skip and sometimes does not, an `await` that leaves the service
+ * looking idle while a play is under way, and a clamp that a `NaN` walks
+ * straight through. The rule exists to keep a file holdable in the head, and
+ * the only split available here would move those explanations away from the two
+ * lines they are about. `buildSchedule` is already extracted, exported and
+ * tested on its own, which is the split that was worth making.
+ *
+ * If the *code* grows past the ceiling the answer is different - the piano roll
+ * playhead M2 wants would be the change to watch.
  */
 @Injectable({ providedIn: 'root' })
 export class ProgressionPlayerService implements OnDestroy {
   private readonly audio = inject(PROGRESSION_AUDIO);
+  private readonly zone = inject(NgZone);
 
   private readonly synth: TonePolySynth;
   private readonly reverb: ToneNode;
@@ -213,6 +285,27 @@ export class ProgressionPlayerService implements OnDestroy {
 
   /** The length of the schedule now loaded, for a loop toggled mid-play. */
   private lengthSeconds = 0;
+
+  /**
+   * Which play is the current one.
+   *
+   * `play` has to wait for the audio context, and everything it does before
+   * that wait - `stop`, and building the schedule - touches no state at all,
+   * while everything that marks the service as busy happens after it. So there
+   * is a window in which a play is genuinely under way and the service still
+   * looks idle to anyone who asks, `stop` included. It is not a narrow window
+   * either: `Tone.start()` waits on the browser the first time, which is long
+   * enough for a second click.
+   *
+   * Guarding on `running` or `scheduled` cannot close it, because those are the
+   * fields that have not been written yet. A counter can: `play` takes a number
+   * on the way in and checks it is still the current one on the way out, and
+   * anything that supersedes it - another `play`, or a `stop` - bumps the
+   * counter and thereby retires the continuation. Retiring it is enough; there
+   * is nothing to unwind, because a play that has not reached its continuation
+   * has not built anything.
+   */
+  private generation = 0;
 
   constructor() {
     this.synth = this.audio.createPolySynth();
@@ -243,10 +336,13 @@ export class ProgressionPlayerService implements OnDestroy {
    * worked.
    *
    * Whatever was playing stops first, so a second press restarts rather than
-   * layering. That is also what disposes the previous schedule.
+   * layering. That is also what disposes the previous schedule - and a play
+   * that has not finished starting counts as something playing, which is what
+   * `generation` is for.
    */
   async play(doc: ProgressionDoc): Promise<void> {
     this.stop();
+    const generation = ++this.generation;
 
     const schedule = buildSchedule(doc);
     // Three cases in one condition: a progression with no slots, and the two
@@ -264,7 +360,16 @@ export class ProgressionPlayerService implements OnDestroy {
       return;
     }
 
+    // Somebody else owns the transport now. Carrying on from here would build a
+    // second pair of parts, overwrite `scheduled` with them, and leave the
+    // other pair sounding with nothing left holding a reference to dispose it.
+    if (generation !== this.generation) return;
+
     const transport = this.audio.transport();
+    // Tempo first, and not for tidiness: Tone resolves an event's time and the
+    // loop end into ticks against the BPM in force at that moment, so a
+    // `setTempo` after either would place the whole progression by the ratio of
+    // the two tempi.
     transport.setTempo(doc.tempo);
     transport.setLoop(this.looping, schedule.lengthSeconds);
     this.lengthSeconds = schedule.lengthSeconds;
@@ -291,8 +396,16 @@ export class ProgressionPlayerService implements OnDestroy {
    * normal thing to ask for - a stop button is pressable whether or not
    * anything is playing, and `play` calls this before every schedule it builds
    * - so the guard is on the state rather than on the caller.
+   *
+   * A play still waiting on the audio context is stopped too, even though the
+   * guard below cannot see one. That is the whole reason the bump comes first:
+   * the state the guard reads is exactly the state such a play has not written
+   * yet, so a stop that returned early here would be followed moments later by
+   * a transport starting up on its own.
    */
   stop(): void {
+    this.generation++;
+
     if (!this.running && this.scheduled.length === 0) return;
 
     this.halt();
@@ -318,18 +431,63 @@ export class ProgressionPlayerService implements OnDestroy {
 
   ngOnDestroy(): void {
     this.stop();
+    // Disposed without disconnecting first, where `KeyboardComponent` does
+    // both. Not an oversight and not a disagreement: `ToneAudioNode.dispose`
+    // disconnects the node's own input and output on the way out, so the extra
+    // call there is belt and braces rather than a step this one is missing. The
+    // seam is the reason to leave it out - `disconnect` would have to join
+    // `ToneNode` and every fake, to buy nothing.
     this.synth.dispose();
     this.reverb.dispose();
     this.volume.dispose();
     this.currentSlotSubject.complete();
   }
 
-  /** A cue reached: a slot began, or the progression ran out. */
+  /**
+   * A cue reached: a slot began, or the progression ran out.
+   *
+   * "Ran out" means playback is over only when we are not looping. While a loop
+   * is on, the same instant is the loop turning over, and halting there stops
+   * the whole thing dead after a single pass.
+   *
+   * That reads like a guard against something that cannot happen, because Tone
+   * is meant to rewind before an event at `loopEnd` is ever reached. It does -
+   * but only when `loopEnd` lands on a whole tick, and the arithmetic is not
+   * symmetric:
+   *
+   *  - `TransportEvent`'s constructor does `Math.floor(options.time)`, so our
+   *    cue is filed at the tick *below* a fractional position;
+   *  - `set loopEnd` does `this._loopEnd = this.toTicks(endPosition)`, with no
+   *    floor, so the loop end keeps its fraction;
+   *  - `_processTick` rewinds only `if (ticks >= this._loopEnd)`, against an
+   *    integer `ticks`.
+   *
+   * So whenever `lengthSeconds` converts to a fractional tick count, the cue
+   * sits one tick below the loop end, the rewind test fails at that tick, and
+   * the cue fires. Twelve beats at 75 BPM is 9.600000000000001 seconds, which
+   * at 192 PPQ is 2304.0000000000005 ticks: the cue is filed at 2304, and
+   * `2304 >= 2304.0000000000005` is false. Sweeping 60-180 BPM against 1, 2, 3,
+   * 4, 6 and 8 bars of 4/4, 62 of the 726 pairs land there - roughly one tempo
+   * in twelve, silently ending a loop after one pass.
+   *
+   * Rather than bet the feature on floating point landing well, the loop is
+   * read here. Nothing then depends on which side of the boundary Tone comes
+   * down on: if it rewinds, this never runs; if it does not, this declines to
+   * act. Note what that means for the spec - the Tone-side half of this is not
+   * covered by any test and cannot be, because a fake transport has no ticks to
+   * quantise. Only the service's half, that a trailing cue while looping does
+   * not stop the transport, is pinned.
+   *
+   * Nothing is published on the way past, either. The first slot's cue is an
+   * instant away and will paint over it; emptying the highlight in between
+   * would be a flicker once per repeat.
+   */
   private onCue(slotId: string | null): void {
     if (slotId !== null) {
       this.publishSlot(slotId);
       return;
     }
+    if (this.looping) return;
     this.halt();
   }
 
@@ -358,6 +516,12 @@ export class ProgressionPlayerService implements OnDestroy {
 
   private publishSlot(slotId: string | null): void {
     if (this.currentSlotSubject.getValue() === slotId) return;
-    this.currentSlotSubject.next(slotId);
+    // A cue can arrive from Tone's clock worker in whichever zone the audio
+    // context happened to be built in. Under this app's zoneless default that
+    // costs a subscriber nothing and this call is a pass-through; under
+    // `provideZoneChangeDetection` it is the difference between a highlight
+    // that moves and one that does not. See the class docstring. Behind the
+    // guard above, so it runs once per slot rather than once per clock tick.
+    this.zone.run(() => this.currentSlotSubject.next(slotId));
   }
 }

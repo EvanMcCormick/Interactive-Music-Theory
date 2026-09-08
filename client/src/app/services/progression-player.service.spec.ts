@@ -1,3 +1,4 @@
+import { NgZone, provideZoneChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ChordSlot, ProgressionDoc, RollNote } from '../models/progression.model';
 import {
@@ -94,7 +95,18 @@ class FakePart implements TonePart {
 
   constructor(
     private readonly callback: (time: number, event: TimedEvent) => void,
-    readonly events: readonly TimedEvent[]
+    readonly events: readonly TimedEvent[],
+    /**
+     * The transport's tempo at the moment this part was built, or null if it
+     * had none yet.
+     *
+     * `Tone.Part` resolves each event's time into ticks against the transport's
+     * BPM, so a part built before `setTempo` places every event by the ratio of
+     * the old tempo to the new one. The real transport shows that only as a
+     * progression that plays at the wrong speed - which is a sound, not an
+     * assertion - so the fake records the ordering instead.
+     */
+    readonly tempoWhenBuilt: number | null
   ) {}
 
   start(time: number): void {
@@ -116,6 +128,13 @@ class FakeTransport implements ToneTransport {
   tempo: number | null = null;
   looping = false;
   loopEnd: number | null = null;
+  /**
+   * The tempo in force when the loop was last set, or null if there was none.
+   *
+   * Same reason as `FakePart.tempoWhenBuilt`: Tone converts `loopEnd` to ticks
+   * at the BPM current when it is assigned, so `setTempo` has to come first.
+   */
+  tempoAtLoop: number | null = null;
   starts = 0;
   stops = 0;
   cancels = 0;
@@ -127,6 +146,7 @@ class FakeTransport implements ToneTransport {
   setLoop(on: boolean, endSeconds: number): void {
     this.looping = on;
     this.loopEnd = endSeconds;
+    this.tempoAtLoop = this.tempo;
   }
 
   start(): void {
@@ -162,10 +182,29 @@ class FakeToneApi implements ToneApi {
   /** Whether the transport had been started by the time `resume` was called. */
   startsBeforeResume = 0;
 
+  /**
+   * While true, `resume` does not settle until `openResumeGate` is called.
+   *
+   * The gap between `play` awaiting the audio context and its continuation
+   * touching any state is where the service's two races live, and it is a real
+   * gap rather than a theoretical one: on a first play `Tone.start()` waits on
+   * the browser, which is long enough for a second click or a stop to land
+   * inside it. A `resume` that resolves immediately closes the window and hides
+   * both, so a spec that means to test the window has to hold it open.
+   */
+  gateResume = false;
+  private readonly held: (() => void)[] = [];
+
   async resume(): Promise<void> {
     this.resumeCalls++;
     this.startsBeforeResume = this.transportStub.starts;
+    if (this.gateResume) await new Promise<void>(release => this.held.push(release));
     if (this.resumeFails) throw new Error('no user gesture yet');
+  }
+
+  /** Lets every `resume` held at the gate settle, in the order they arrived. */
+  openResumeGate(): void {
+    for (const release of this.held.splice(0)) release();
   }
 
   transport(): ToneTransport {
@@ -198,7 +237,11 @@ class FakeToneApi implements ToneApi {
     // can walk them, and the events replayed through `fire` are the ones this
     // call was given - so the narrower callback can only ever be handed the
     // events it was written for.
-    const part = new FakePart(callback as (time: number, event: TimedEvent) => void, events);
+    const part = new FakePart(
+      callback as (time: number, event: TimedEvent) => void,
+      events,
+      this.transportStub.tempo
+    );
     this.parts.push(part);
     return part;
   }
@@ -327,6 +370,28 @@ describe('buildSchedule', () => {
     for (const gain of gains) expect(gain).toBeLessThanOrEqual(1);
   });
 
+  it('clamps a velocity from outside MIDI\'s range back into it', () => {
+    // 127 divides to exactly 1, so the top of the range does not exercise the
+    // clamp at all - only a velocity that never went through
+    // `normalizeChordSlot` does, which is the case the clamp is there for.
+    const doc = progression([
+      degreeSlot('a', 0, 4, [note(60, 0, 4, 200), note(64, 0, 4, -5)])
+    ]);
+
+    expect(buildSchedule(doc).notes.map(scheduled => scheduled.gain)).toEqual([1, 0]);
+  });
+
+  it('silences a velocity that is not a number at all', () => {
+    // The clamp alone cannot catch this: `Math.min(1, Math.max(0, NaN))` is
+    // NaN, so a `NaN` velocity would reach `triggerAttackRelease` as a NaN gain
+    // through the very guard that exists to stop bad velocities. Silence is the
+    // conservative answer - a note nobody can assign a level to should not be
+    // the loudest thing in the mix.
+    const doc = progression([degreeSlot('a', 0, 4, [note(60, 0, 4, NaN)])]);
+
+    expect(buildSchedule(doc).notes[0].gain).toBe(0);
+  });
+
   it('converts MIDI numbers to hertz', () => {
     const doc = progression([degreeSlot('a', 0, 4, [note(69, 0, 4), note(60, 0, 4)])]);
 
@@ -401,6 +466,48 @@ describe('buildSchedule', () => {
     const doc = progression([literalSlot('lit', 0, 2, [note(60, 0, 8)])]);
 
     expect(buildSchedule(doc).lengthSeconds).toBe(1);
+  });
+
+  it('measures to the furthest slot end rather than adding the lengths up', () => {
+    // Two slots that overlap, which `settle` would never produce but `play`
+    // accepts because it takes a document rather than the service's state. The
+    // end is where the longer of the two finishes - eight beats, four seconds -
+    // and not the ten beats their lengths come to.
+    const doc = progression([
+      degreeSlot('long', 0, 8, [note(60, 0, 8)]),
+      degreeSlot('short', 2, 2, [note(64, 0, 2)])
+    ]);
+
+    expect(buildSchedule(doc).lengthSeconds).toBe(4);
+  });
+
+  it('returns the cues in the order they sound, not in document order', () => {
+    // Tone's own `Timeline` sorts what it is given, so this costs nothing at
+    // playback. It is for every other reader: a schedule inspected in a
+    // debugger, asserted against in a spec, or drawn by M2's playhead should be
+    // in the order it happens, and nothing should have to know to sort it.
+    const doc = progression([
+      degreeSlot('late', 4, 4, [note(60, 0, 4)]),
+      degreeSlot('early', 0, 4, [note(62, 0, 4)])
+    ]);
+
+    const schedule = buildSchedule(doc);
+
+    expect(schedule.cues.map(cue => cue.slotId)).toEqual(['early', 'late', null]);
+    expect(schedule.notes.map(scheduled => scheduled.midi)).toEqual([62, 60]);
+  });
+
+  it('gives a progression with no length in it no trailing cue', () => {
+    // Every slot zero beats long: there are slots, so the old guard would have
+    // pushed a `null` cue at time 0 alongside the slot's own cue at time 0 -
+    // two contradictory cues at the same instant. There is no moment at which
+    // this progression is over, because there is no moment at which it is on.
+    const doc = progression([degreeSlot('flat', 0, 0, [note(60, 0, 1)])]);
+
+    const schedule = buildSchedule(doc);
+
+    expect(schedule.lengthSeconds).toBe(0);
+    expect(schedule.cues).toEqual([{ time: 0, slotId: 'flat' }] as SlotCue[]);
   });
 });
 
@@ -534,6 +641,22 @@ describe('ProgressionPlayerService', () => {
       expect(audio.transportStub.tempo).toBe(90);
     });
 
+    it('sets the tempo before anything is measured against it', async () => {
+      // Ordering, not just presence. Tone turns an event's time and the loop
+      // end into ticks against whatever BPM the transport holds at that moment,
+      // so a `setTempo` that arrived after either would misplace every event by
+      // the ratio of the two tempi - and at 90 against a default 120 that is a
+      // progression a third too fast, which no assertion in this file would
+      // otherwise notice.
+      player.setLoop(true);
+
+      await player.play(progression([degreeSlot('a', 0, 4, [note(60, 0, 4)])], 90));
+
+      expect(audio.transportStub.tempoAtLoop).toBe(90);
+      expect(audio.parts.length).toBe(2);
+      for (const part of audio.parts) expect(part.tempoWhenBuilt).toBe(90);
+    });
+
     it('starts no transport for an empty progression', async () => {
       await player.play(progression([]));
 
@@ -547,6 +670,26 @@ describe('ProgressionPlayerService', () => {
       // publishes, but `play` takes a `ProgressionDoc` from anywhere. A tempo of
       // zero puts every event at infinity and Tone throws on the way in.
       await player.play(progression([degreeSlot('a', 0, 4, [note(60, 0, 4)])], 0));
+
+      expect(audio.parts.length).toBe(0);
+      expect(audio.transportStub.starts).toBe(0);
+    });
+
+    it('starts no transport for a tempo that is not a number', async () => {
+      // The other half of the same guard, and the one a bare `> 0` test would
+      // miss: `NaN` fails every comparison, so it survives a minimum check that
+      // zero does not. Every time in the schedule would be `NaN` and Tone
+      // throws on the way in.
+      await player.play(progression([degreeSlot('a', 0, 4, [note(60, 0, 4)])], NaN));
+
+      expect(audio.parts.length).toBe(0);
+      expect(audio.transportStub.starts).toBe(0);
+    });
+
+    it('starts no transport for a progression with no length in it', async () => {
+      // Slots, but no time: there is nothing to play and nowhere for a loop to
+      // turn over. Refused for the same reason a tempo of zero is.
+      await player.play(progression([degreeSlot('flat', 0, 0, [note(60, 0, 1)])]));
 
       expect(audio.parts.length).toBe(0);
       expect(audio.transportStub.starts).toBe(0);
@@ -569,6 +712,48 @@ describe('ProgressionPlayerService', () => {
 
       expect(audio.parts.length).toBe(0);
       expect(audio.transportStub.starts).toBe(0);
+    });
+
+    it('lets the later of two overlapping plays win, and leaks nothing', async () => {
+      // A double-click on the play button. `stop` runs at the top of `play`,
+      // but the state it reads - and the state it clears - is only written
+      // *after* the context resumes, so a second press inside that window finds
+      // the service looking idle and disposes nothing. Both continuations then
+      // schedule, both sets of parts sound, and only the last is remembered:
+      // the first is a permanent leak that no later `stop` can reach.
+      audio.gateResume = true;
+
+      const first = player.play(twoChords());
+      const second = player.play(twoChords());
+      audio.openResumeGate();
+      await first;
+      await second;
+
+      expect(audio.parts.length).toBe(2);
+      expect(audio.livingParts.length).toBe(2);
+      expect(audio.transportStub.starts).toBe(1);
+
+      player.stop();
+
+      expect(audio.livingParts.length).toBe(0);
+    });
+
+    it('abandons a play a stop overtook while the context was resuming', async () => {
+      // The same window, from the other side, and a real one on a first play:
+      // `Tone.start()` is genuinely slow the first time, so a stop pressed
+      // straight after a play lands inside it. The stop finds nothing running
+      // and returns, and the play's continuation then starts a transport the
+      // user has already asked to be rid of.
+      audio.gateResume = true;
+
+      const playing = player.play(twoChords());
+      player.stop();
+      audio.openResumeGate();
+      await playing;
+
+      expect(audio.transportStub.starts).toBe(0);
+      expect(audio.parts.length).toBe(0);
+      expect(currentSlot()).toBeNull();
     });
   });
 
@@ -595,6 +780,75 @@ describe('ProgressionPlayerService', () => {
 
       expect(currentSlot()).toBeNull();
       expect(audio.transportStub.stops).toBe(1);
+    });
+
+    it('publishes a cue for the same slot only once', async () => {
+      // Which is what makes it safe to hand `currentSlot$` straight to an
+      // `async` pipe: a cue that repeats the slot already showing must not
+      // repaint, and M2's playhead will fire far more cues than there are
+      // slots.
+      await player.play(twoChords());
+      const seen: (string | null)[] = [];
+      const subscription = player.currentSlot$.subscribe(value => seen.push(value));
+
+      cuePart().fire(0);
+      cuePart().fire(0);
+
+      subscription.unsubscribe();
+      expect(seen).toEqual([null, 'a']);
+    });
+
+  });
+
+  /**
+   * The zone a cue is published in.
+   *
+   * Under this app's own configuration the question does not arise: Angular 21
+   * bootstraps zoneless unless told otherwise and `main.ts` does not tell it
+   * otherwise, so `NgZone` is a `NoopNgZone` and `AsyncPipe` repaints from any
+   * zone. `TestBed` defaults the same way, which is why this block has to ask
+   * for a real zone before it can test anything - under the default `NgZone`,
+   * `runOutsideAngular` never leaves and `run` never re-enters, and a spec
+   * written against it would assert nothing while looking like it did.
+   *
+   * What is pinned here is the other configuration: that if this app ever goes
+   * back to `provideZoneChangeDetection`, a cue arriving on Tone's clock worker
+   * in the root zone still publishes somewhere Angular is watching. Which zone
+   * Tone's worker actually binds in is not decided here or anywhere else in
+   * this file - it depends on who first touched the audio context - so
+   * `runOutsideAngular` stands in for the case that would otherwise go unseen.
+   */
+  describe('publishing across zones', () => {
+    beforeEach(() => {
+      TestBed.resetTestingModule();
+      audio = new FakeToneApi();
+      TestBed.configureTestingModule({
+        providers: [
+          provideZoneChangeDetection(),
+          { provide: PROGRESSION_AUDIO, useValue: audio }
+        ]
+      });
+      player = TestBed.inject(ProgressionPlayerService);
+    });
+
+    it('publishes from inside Angular\'s zone wherever the cue was fired', async () => {
+      await player.play(twoChords());
+      const zone = TestBed.inject(NgZone);
+      expect(zone.constructor.name).toBe('NgZone');
+
+      let publishedInAngular: boolean | null = null;
+      const subscription = player.currentSlot$.subscribe(() => {
+        publishedInAngular = NgZone.isInAngularZone();
+      });
+      // Discard what `BehaviorSubject` replayed on subscribe: it arrived in the
+      // test's own zone and would answer the question for the wrong emission.
+      publishedInAngular = null;
+
+      zone.runOutsideAngular(() => cuePart().fire(0));
+
+      subscription.unsubscribe();
+      expect(publishedInAngular).toBeTrue();
+      expect(currentSlot()).toBe('a');
     });
   });
 
@@ -661,6 +915,77 @@ describe('ProgressionPlayerService', () => {
       expect(() => player.setLoop(true)).not.toThrow();
 
       expect(audio.transportStub.starts).toBe(0);
+    });
+
+    it('does not stop the transport when the trailing cue lands while looping', async () => {
+      // The service's half of the loop contract, and the half that is testable:
+      // a cue naming no slot means "the progression ran out", which while
+      // looping is the loop turning over rather than playback finishing. Acting
+      // on it stops the transport dead after one pass.
+      //
+      // The other half - whether Tone reaches this cue at all - is *not*
+      // covered by any test in this file and cannot be. It depends on where
+      // `loopEnd` lands in ticks, and a fake transport has no ticks to land in.
+      // See `onCue` for what the real transport does and why this guard does
+      // not depend on it.
+      player.setLoop(true);
+      await player.play(twoChords());
+      cuePart().fire(0);
+
+      cuePart().fire(2);
+
+      expect(audio.transportStub.stops).toBe(0);
+      expect(audio.transportStub.cancels).toBe(0);
+      expect(currentSlot()).toBe('a');
+    });
+
+    it('stops at the trailing cue once the loop has been turned off', async () => {
+      // The guard reads the loop as it stands when the cue lands, not as it
+      // stood when the schedule was built, so a loop switched off mid-play ends
+      // at the end of the pass it is in.
+      player.setLoop(true);
+      await player.play(twoChords());
+      player.setLoop(false);
+
+      cuePart().fire(2);
+
+      expect(audio.transportStub.stops).toBe(1);
+      expect(currentSlot()).toBeNull();
+    });
+  });
+
+  describe('the end of a one-shot play', () => {
+    it('leaves the schedule alive, and disposable', async () => {
+      // `halt` runs from inside a cue part's own callback, and deliberately
+      // does not dispose the parts there - a part disposing its sibling from
+      // within a running callback is not worth the cleverness for a resource
+      // the next `play` or `stop` frees anyway. What makes that safe is that
+      // `stop` guards on the schedule as well as on the transport: after a halt
+      // nothing is running, but two parts are still outstanding, and a guard
+      // that only asked whether the transport was running would return early
+      // and leak both.
+      await player.play(twoChords());
+      const parts = audio.livingParts;
+      expect(parts.length).toBe(2);
+
+      cuePart().fire(2);
+
+      expect(audio.livingParts.length).toBe(2);
+
+      TestBed.resetTestingModule();
+
+      for (const part of parts) expect(part.disposals).toBe(1);
+    });
+
+    it('frees the schedule on an explicit stop after it', async () => {
+      await player.play(twoChords());
+      const parts = audio.livingParts;
+
+      cuePart().fire(2);
+      player.stop();
+
+      for (const part of parts) expect(part.disposals).toBe(1);
+      expect(audio.livingParts.length).toBe(0);
     });
   });
 });

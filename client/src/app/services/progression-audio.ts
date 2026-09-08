@@ -196,21 +196,17 @@ export function createToneApi(): ToneApi {
 /**
  * How `ProgressionPlayerService` reaches Tone.
  *
- * Defaulted on the token rather than bound in `main.ts`, which is the opposite
- * of what `NOTE_DETECTOR` does, and for a reason that does not apply here:
- * resolving this token constructs nothing. It hands back an object of
- * constructors, so a spec that forgets to override it still builds no audio
- * node until it injects the *service* - and there is no model to download and
- * no worker to start behind it either way. Defaulting keeps the player usable
- * the way a `providedIn: 'root'` service is usable, with nothing for a new
- * route to remember to wire up.
+ * Bound to `createToneApi` in `main.ts`, deliberately with no default factory
+ * here - the same choice `NOTE_DETECTOR` makes, for the same reason. It is true
+ * that resolving this token on its own constructs nothing, but that is not the
+ * failure a default would let through. The trap is a component spec that injects
+ * something which injects the *player*, forgets the override because nothing
+ * made it think about audio, and quietly builds a real `PolySynth`, `Reverb` and
+ * convolution on the headless browser's global audio context - once per
+ * `TestBed`, working perfectly and testing nothing.
  *
- * A spec that injects `ProgressionPlayerService` should override it all the
- * same. The service builds its chain in its constructor, so leaving the real
- * one in place puts a synth, a reverb and a convolution on the global audio
- * context of a headless browser - which works, and tests nothing.
+ * Without a default that spec fails at the injector, naming the token, before it
+ * has a chance to be slow and misleading instead. The cost is one line in
+ * `main.ts`, paid once.
  */
-export const PROGRESSION_AUDIO = new InjectionToken<ToneApi>('ProgressionAudio', {
-  providedIn: 'root',
-  factory: createToneApi
-});
+export const PROGRESSION_AUDIO = new InjectionToken<ToneApi>('ProgressionAudio');
