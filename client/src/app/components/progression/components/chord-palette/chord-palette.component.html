@@ -1,0 +1,62 @@
+<div class="chord-palette">
+  <h3 class="title">Chords in this key</h3>
+
+  <!-- The guard. A pentatonic or blues scale has no thirds to stack, so the
+       page says why rather than printing chords it invented. -->
+  <p class="unavailable" *ngIf="unavailable">{{ unavailable }}</p>
+
+  <div class="chords" *ngIf="unavailable === null" role="group" aria-label="Diatonic chords">
+    <button
+      type="button"
+      class="chord"
+      *ngFor="let chord of chords; trackBy: trackByDegree"
+      [class.tonic]="chord.isTonic"
+      [attr.aria-label]="'Add ' + chord.name + ', ' + chord.numeral"
+      (click)="addChord(chord)">
+      <span class="numeral">{{ chord.numeral }}</span>
+      <span class="name">{{ chord.name }}</span>
+    </button>
+  </div>
+
+  <div class="controls">
+    <div class="control" role="group" aria-label="Chord complexity">
+      <span class="control-label">Complexity</span>
+      <button
+        type="button"
+        class="step"
+        aria-label="Simpler chord"
+        [disabled]="!canAdjust"
+        (click)="stepComplexity(-1)">&minus;</button>
+      <span class="control-value">{{ extentLabel }}</span>
+      <button
+        type="button"
+        class="step"
+        aria-label="Richer chord"
+        [disabled]="!canAdjust"
+        (click)="stepComplexity(1)">+</button>
+    </div>
+
+    <div class="control" role="group" aria-label="Chord octave">
+      <span class="control-label">Octave</span>
+      <button
+        type="button"
+        class="step"
+        aria-label="Octave down"
+        [disabled]="!canAdjust"
+        (click)="stepOctave(-1)">&minus;</button>
+      <span class="control-value">{{ octaveLabel }}</span>
+      <button
+        type="button"
+        class="step"
+        aria-label="Octave up"
+        [disabled]="!canAdjust"
+        (click)="stepOctave(1)">+</button>
+    </div>
+  </div>
+
+  <!-- Why the controls are grey. They act on the selected chord, and appending
+       one selects it, so this shows only after the selection is cleared. -->
+  <p class="hint" *ngIf="!canAdjust && unavailable === null">
+    Pick a chord in the strip to change its complexity or octave.
+  </p>
+</div>

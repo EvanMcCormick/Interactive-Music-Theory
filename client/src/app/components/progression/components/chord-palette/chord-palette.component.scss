@@ -1,0 +1,156 @@
+// The app's scheme, named locally so this component theming is one block to
+// read: dark navigation surfaces, blue for what is in the mode, red for the
+// root. The tonic button takes the root red for the same reason the circle of
+// fifths does - "root" has to mean one colour across the whole app.
+:host {
+  --palette-surface: #2c3e50;
+  --palette-surface-raised: #34495e;
+  --palette-chord: #3498db;
+  --palette-chord-hover: #4aa8e6;
+  --palette-tonic: #e74c3c;
+  --palette-tonic-hover: #ef6455;
+  --palette-line: #22303d;
+  --palette-text: #ecf0f1;
+  --palette-text-dim: #a8b6c1;
+
+  display: block;
+}
+
+.chord-palette {
+  padding: 1rem;
+  background: var(--palette-surface);
+  color: var(--palette-text);
+}
+
+.title {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--palette-text-dim);
+}
+
+.chords {
+  display: grid;
+  // Seven buttons that stay legible in a narrow rail: they wrap onto a second
+  // row rather than shrinking past the point where the chord name is readable.
+  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+  gap: 0.4rem;
+}
+
+.chord {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.5rem 0.35rem;
+  border: 1px solid var(--palette-line);
+  border-radius: 4px;
+  background: var(--palette-chord);
+  color: var(--palette-text);
+  cursor: pointer;
+  transition: background 0.12s, transform 0.06s;
+
+  &:hover {
+    background: var(--palette-chord-hover);
+  }
+
+  &:active {
+    transform: translateY(1px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--palette-text);
+    outline-offset: 2px;
+  }
+
+  &.tonic {
+    background: var(--palette-tonic);
+
+    &:hover {
+      background: var(--palette-tonic-hover);
+    }
+  }
+}
+
+.numeral {
+  font-size: 1.05rem;
+  font-weight: 700;
+  // The numeral is the teaching content, so it is the part that reads first.
+  line-height: 1.1;
+}
+
+.name {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--palette-line);
+  border-radius: 4px;
+  background: var(--palette-surface-raised);
+}
+
+.control-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--palette-text-dim);
+}
+
+.control-value {
+  min-width: 2.75rem;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.step {
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 1px solid var(--palette-line);
+  border-radius: 3px;
+  background: var(--palette-surface);
+  color: var(--palette-text);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: var(--palette-chord);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--palette-text);
+    outline-offset: 1px;
+  }
+
+  &:disabled {
+    color: var(--palette-text-dim);
+    cursor: default;
+    opacity: 0.5;
+  }
+}
+
+.unavailable,
+.hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--palette-text-dim);
+}
+
+.unavailable {
+  margin-top: 0;
+}

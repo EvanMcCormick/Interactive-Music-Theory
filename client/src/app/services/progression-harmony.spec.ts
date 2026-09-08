@@ -1,9 +1,12 @@
 import {
+  ChordExtent,
   ChordQuality,
+  chordName,
   degreeQuality,
   degreePitchClasses,
   isHeptatonic,
-  noteCount
+  noteCount,
+  romanNumeral
 } from './progression-harmony';
 
 const MAJOR = [0, 2, 4, 5, 7, 9, 11];
@@ -149,5 +152,114 @@ describe('isHeptatonic', () => {
     expect(isHeptatonic([0, 2, 4, 7, 9])).toBe(false);
     expect(isHeptatonic([0, 2, 3, 5, 6, 8, 9, 11])).toBe(false);
     expect(isHeptatonic([])).toBe(false);
+  });
+});
+
+describe('romanNumeral', () => {
+  /** The numeral for each degree of `scale`, as the palette would print them. */
+  function figures(scale: readonly number[], extent: ChordExtent = 3): string[] {
+    return [0, 1, 2, 3, 4, 5, 6].map(d => romanNumeral(d, degreeQuality(scale, d, extent)));
+  }
+
+  // The first of the two tables this module is checked against, and the one
+  // every theory text prints on its first page of harmony.
+  it('gives the major scale I ii iii IV V vi vii-dim', () => {
+    expect(figures(MAJOR)).toEqual(['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°']);
+  });
+
+  // The second table: the Captain Chords figures for A minor, which is the
+  // check that the case rule is carrying the quality rather than the mode.
+  it('gives the natural minor scale i ii-dim III iv v VI VII', () => {
+    expect(figures(NATURAL_MINOR)).toEqual(['i', 'ii°', 'III', 'iv', 'v', 'VI', 'VII']);
+  });
+
+  // Case is a claim about the third, so the augmented triad is upper case with
+  // a plus rather than lower case: III+ in harmonic minor is a major third
+  // with a sharpened fifth, not a minor chord.
+  it('marks the augmented triad with a plus and keeps it upper case', () => {
+    expect(romanNumeral(2, 'augmented')).toBe('III+');
+  });
+
+  // The seventh figures, each against the shape it is conventionally written
+  // as: Imaj7, V7, ii7, viiø7, vii°7.
+  it('writes the seventh chords with their usual figures', () => {
+    expect(romanNumeral(0, 'major7')).toBe('Imaj7');
+    expect(romanNumeral(4, 'dominant7')).toBe('V7');
+    expect(romanNumeral(1, 'minor7')).toBe('ii7');
+    expect(romanNumeral(0, 'minorMajor7')).toBe('imaj7');
+    expect(romanNumeral(6, 'halfDiminished7')).toBe('viiø7');
+    expect(romanNumeral(6, 'diminished7')).toBe('vii°7');
+    expect(romanNumeral(2, 'augmented7')).toBe('III+7');
+    expect(romanNumeral(2, 'augmentedMajor7')).toBe('III+maj7');
+  });
+
+  /**
+   * The documented consequence of taking a quality rather than an extent.
+   *
+   * `degreeQuality` names a ninth after its seventh, so a V9 arrives here as
+   * `dominant7` and is printed `V7`. The figure is therefore the *quality's*
+   * figure, not the stack's height: raising a slot with the + complexity
+   * button changes what it sounds without changing what it is called. That is
+   * the same convention the model already keeps - `ChordDegree.quality` holds
+   * `dominant7` for a ninth too - rather than a second, contradictory one.
+   */
+  it('prints an extended chord with its seventh figure', () => {
+    for (const extent of [9, 11, 13] as ChordExtent[]) {
+      expect(romanNumeral(4, degreeQuality(MAJOR, 4, extent))).toBe('V7');
+    }
+  });
+
+  /**
+   * A stack of thirds with no name gets its degree and withdraws the claim.
+   *
+   * Reachable from scales the app already offers: degree 6 of the double
+   * harmonic scale stacks a second and a diminished fifth, which is no chord
+   * anyone has a name for. Upper case would assert a major third it does not
+   * have and lower case a minor one, so the `?` says the case means nothing
+   * here rather than letting it lie.
+   */
+  it('marks a stack that is not a named chord', () => {
+    expect(romanNumeral(6, 'other')).toBe('VII?');
+  });
+
+  // The same domain `degreePitchClasses` enforces, and for the same reason: a
+  // degree off the end of the table would otherwise read `undefined` and print
+  // the string "undefined" into a button.
+  it('refuses a degree that is not one of the seven', () => {
+    expect(() => romanNumeral(-1, 'major')).toThrowError(/degree/i);
+    expect(() => romanNumeral(7, 'major')).toThrowError(/degree/i);
+    expect(() => romanNumeral(1.5, 'major')).toThrowError(/degree/i);
+    expect(() => romanNumeral(NaN, 'major')).toThrowError(/degree/i);
+  });
+});
+
+describe('chordName', () => {
+  // The concrete names beside the numerals, in the reference UI's spelling.
+  it('names the triads', () => {
+    expect(chordName('C', 'major')).toBe('C Maj');
+    expect(chordName('A', 'minor')).toBe('A min');
+    expect(chordName('B', 'diminished')).toBe('B°');
+    expect(chordName('C', 'augmented')).toBe('C+');
+  });
+
+  /**
+   * The separator is a rule rather than a second column: a suffix that starts
+   * with a letter is a word and takes a space, and one that starts with a
+   * symbol or a digit is a figure and does not. That gives `C Maj7` and `G7`,
+   * which is how both are written.
+   */
+  it('spaces a worded suffix and closes up a figured one', () => {
+    expect(chordName('C', 'major7')).toBe('C Maj7');
+    expect(chordName('A', 'minor7')).toBe('A min7');
+    expect(chordName('A', 'minorMajor7')).toBe('A minMaj7');
+    expect(chordName('G', 'dominant7')).toBe('G7');
+    expect(chordName('B', 'halfDiminished7')).toBe('Bø7');
+    expect(chordName('B', 'diminished7')).toBe('B°7');
+    expect(chordName('C', 'augmented7')).toBe('C+7');
+    expect(chordName('C', 'augmentedMajor7')).toBe('C+Maj7');
+  });
+
+  it('marks a stack that is not a named chord', () => {
+    expect(chordName('B', 'other')).toBe('B?');
   });
 });
