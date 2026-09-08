@@ -7,7 +7,6 @@ import { environment } from './environments/environment';
 import { FretboardComponent } from './app/components/fretboard/fretboard.component';
 import { authInterceptor } from './app/interceptors/auth.interceptor';
 import { AuthService } from './app/services/auth.service';
-import { PROGRESSION_AUDIO, createToneApi } from './app/services/progression-audio';
 import { TieredDetector } from './app/services/tiered-detector';
 import { NOTE_DETECTOR } from './app/services/transcription.service';
 import { WorkerDetector } from './app/services/worker-detector';
@@ -45,6 +44,30 @@ const routes = [
     path: 'transcribe',
     loadComponent: () => import('./app/components/transcription/transcription.component')
       .then(m => m.TranscriptionComponent)
+  },
+  // Lazy for the same reason, and with the audio bindings inside the chunk
+  // rather than beside this route: `PROGRESSION_AUDIO` was bound in the
+  // providers below until Task 10, and `ProgressionComponent` binds it now.
+  //
+  // `Route.providers` was the obvious middle ground and does not work, which is
+  // worth writing down before someone tries it: the array is static, so a
+  // factory named in it is a value import from this file and Tone comes with
+  // it. Only a provider written inside a lazily loaded file is lazy.
+  //
+  // Measured, and smaller than Task 8's comment predicted: binding it here
+  // rather than on the page costs 772,018 bytes against 771,296, so 722 - the
+  // size of `progression-audio.ts` itself. The 7.6 kB that comment named
+  // (762,168 with no progression route at all, against 769,756 with the eager
+  // binding) is Tone's `Part` and transport, and *that* does not move. The
+  // fretboard is the one eager route and does `import * as Tone`, so webpack
+  // keeps the `tone` modules in `main` and the lazy page's use of two more of
+  // its exports enlarges main's copy wherever the provider is declared. Getting
+  // those 7.6 kB back means making the fretboard lazy or importing Tone
+  // dynamically inside `progression-audio.ts`; neither is this task's.
+  {
+    path: 'progression',
+    loadComponent: () => import('./app/components/progression/progression.component')
+      .then(m => m.ProgressionComponent)
   }
 ];
 
@@ -52,20 +75,6 @@ bootstrapApplication(AppComponent, {
   providers: [
     provideRouter(routes),
     provideHttpClient(withInterceptors([authInterceptor])),
-    // The real Tone, bound here for the same reason the detector below is: a
-    // spec that reaches `ProgressionPlayerService` without overriding the token
-    // should fail at the injector rather than quietly put a synth, a reverb and
-    // a convolution on a headless browser's audio context.
-    //
-    // It is not free, and the price is worth naming next to the criterion it
-    // spends against. Binding here makes `progression-audio.ts` reachable from
-    // the entry graph, and its `import * as Tone` reaches `Part` and the
-    // transport, which the composer's own lazy chunk would otherwise have kept
-    // to itself: measured at 762.05 kB against 769.76 kB, so 7.7 kB raw and
-    // 1.2 kB over the wire on a landing page that cannot play a progression.
-    // Bought deliberately - the player is what Tasks 9 and 10 build on, and a
-    // component spec that resolves it by accident should say so.
-    { provide: PROGRESSION_AUDIO, useFactory: createToneApi },
     // The real note detector, bound here rather than defaulted on the token so
     // that a spec forgetting to provide a stub fails loudly instead of quietly
     // downloading a model and compiling shaders. Neither detector is an

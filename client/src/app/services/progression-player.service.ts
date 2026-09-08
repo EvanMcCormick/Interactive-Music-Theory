@@ -261,7 +261,27 @@ export function buildSchedule(doc: ProgressionDoc): PlaybackSchedule {
  * If the *code* grows past the ceiling the answer is different - the piano roll
  * playhead M2 wants would be the change to watch.
  */
-@Injectable({ providedIn: 'root' })
+/**
+ * Provided by `ProgressionComponent`, not at the root.
+ *
+ * Task 8 wrote `providedIn: 'root'` here and bound `PROGRESSION_AUDIO` in
+ * `main.ts` to match, which put `progression-audio.ts` into the eager bundle.
+ * Task 10 moved the token onto the lazily loaded page - see `main.ts` for what
+ * that is and is not worth - and this had to move with it: a
+ * `providedIn: 'root'` service is constructed *in* the root injector however it
+ * is reached, so it would have looked for the token in an injector the page's
+ * providers are invisible to.
+ *
+ * What that changes, said plainly, because two docstrings below used to lean on
+ * the opposite: the chain is built when the page opens and disposed when the
+ * page closes, rather than once for the life of the tab. The loop setting goes
+ * with it. Reading the flag from here rather than remembering it in the toggle
+ * is still right - this is where `setLoop` lands, whoever calls it - it is just
+ * no longer a claim about surviving navigation.
+ *
+ * A spec that wants a player provides it, as `main.ts` no longer can.
+ */
+@Injectable()
 export class ProgressionPlayerService implements OnDestroy {
   private readonly audio = inject(PROGRESSION_AUDIO);
   private readonly zone = inject(NgZone);
@@ -420,10 +440,9 @@ export class ProgressionPlayerService implements OnDestroy {
    * Whether the next play - or the one under way - repeats.
    *
    * Exposed so that the transport can render its toggle from the transport's
-   * own answer rather than keeping a second copy of it. The distinction is not
-   * academic: this service is a root singleton and the page is not, so a
-   * component that remembered the setting itself would show "off" against a
-   * player that is still looping, the moment the user navigates away and back.
+   * own answer rather than keeping a second copy of it. `setLoop` lands here
+   * whoever calls it, so this is the only value that cannot be stale - and a
+   * toggle holding a copy would be one more thing to keep in step for nothing.
    */
   get isLooping(): boolean {
     return this.looping;

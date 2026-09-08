@@ -264,10 +264,10 @@ describe('ProgressionTransportComponent', () => {
     /**
      * The toggle renders the player's flag rather than remembering its own.
      *
-     * The player is a root singleton and this component is not: leaving the
-     * button to remember would put a freshly built transport's "off" against a
-     * player that is still looping, the moment the user navigates away from the
-     * page and back to it.
+     * `setLoop` lands on the player whoever calls it, so the player's flag is
+     * the one that cannot be stale. Leaving the button to remember would put a
+     * freshly built transport's "off" against a player that is still looping,
+     * the first time anything but this button sets it.
      */
     it('opens showing the loop the player is already set to', () => {
       player.isLooping = true;

@@ -1,0 +1,283 @@
+import { CommonModule } from '@angular/common';
+import {
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  HostListener,
+  OnDestroy,
+  OnInit,
+  inject
+} from '@angular/core';
+import { Subject, distinctUntilChanged, map, takeUntil } from 'rxjs';
+
+import { ChordPaletteComponent } from './components/chord-palette/chord-palette.component';
+import { ProgressionStripComponent } from './components/progression-strip/progression-strip.component';
+import { ProgressionTransportComponent } from './components/progression-transport/progression-transport.component';
+import { ProgressionState } from '../../models/progression.model';
+import { MusicTheoryService } from '../../services/music-theory.service';
+import { PROGRESSION_AUDIO, createToneApi } from '../../services/progression-audio';
+import { ProgressionPlayerService } from '../../services/progression-player.service';
+import { ProgressionService } from '../../services/progression.service';
+
+/** What the app's own selection says, reduced to the part this page reads. */
+interface AppSelection {
+  key: string;
+  categoryId: string;
+  itemId: string;
+}
+
+/**
+ * The progression composer: palette, strip and transport over one key.
+ *
+ * ## It composes, and owns three things nothing else can
+ *
+ * The three components below wire themselves to `ProgressionService`, so this
+ * shell passes them nothing - no inputs, no outputs, no state. What is left is
+ * the work that only the thing owning the whole page can do:
+ *
+ *  1. **The key comes from the circle of fifths.** The design doc's decision:
+ *     there is no key picker here because the app already has one, and the
+ *     drawer in the shell is it. See `adopt` for the direction that runs and
+ *     the two selections it refuses.
+ *  2. **Ctrl+Z and Ctrl+Y.** The transport has the buttons and said why the
+ *     keys are not there: a shortcut has to work with the focus anywhere on the
+ *     page, which means a document-level listener, which belongs to whatever
+ *     owns the page. See `onKeydown`.
+ *  3. **Leaving stops playback.** See `ngOnDestroy`.
+ *
+ * ## Why the audio providers are here rather than in `main.ts`
+ *
+ * `PROGRESSION_AUDIO` was bound in `main.ts` when Task 8 built the player,
+ * following `NOTE_DETECTOR`'s precedent, and binding a token whose factory does
+ * `import * as Tone` from the entry graph is not free. Route-level `providers`
+ * are the obvious fix and are not one: `Route.providers` is a static array, so
+ * a factory named there is a value import from `main.ts` and Tone comes with
+ * it. Only a provider written *inside* a lazily loaded file is lazy, and this
+ * is that file.
+ *
+ * What it is worth, measured rather than assumed, because Task 8's comment
+ * overstated it: 722 bytes off `main`, which is `progression-audio.ts` itself
+ * (772,018 with the binding in `main.ts`, 771,296 with it here). The 7.6 kB
+ * that comment named is Tone's `Part` and transport, and those stay: the
+ * fretboard is the one eager route and does `import * as Tone`, so the `tone`
+ * modules live in `main` and using two more of its exports from anywhere
+ * enlarges main's copy. So this is mostly a scoping decision that happens to
+ * pay for itself - the page owns its audio - and the 7.6 kB is a separate
+ * question about the fretboard being eager.
+ *
+ * The token keeps its no-default discipline either way: a spec that reaches the
+ * player without overriding one of these two fails at the injector rather than
+ * quietly building a synth on a headless audio context.
+ *
+ * `ProgressionPlayerService` had to come with the token. A `providedIn: 'root'`
+ * service is constructed *in* the root injector however it is reached, so a
+ * root player would have resolved `PROGRESSION_AUDIO` against an injector this
+ * page's providers are invisible to. That is not a workaround: the player owns
+ * an audio chain, the page is the only thing that plays it, and the chain now
+ * lives and dies with the page rather than outliving it in the root injector.
+ *
+ * `ProgressionService` stays at the root, deliberately. It holds the document,
+ * and a document that was thrown away every time the user looked at the
+ * fretboard would be a page that cannot be left.
+ */
+@Component({
+  selector: 'app-progression',
+  standalone: true,
+  imports: [
+    CommonModule,
+    ChordPaletteComponent,
+    ProgressionStripComponent,
+    ProgressionTransportComponent
+  ],
+  templateUrl: './progression.component.html',
+  styleUrls: ['./progression.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [
+    { provide: PROGRESSION_AUDIO, useFactory: createToneApi },
+    ProgressionPlayerService
+  ]
+})
+export class ProgressionComponent implements OnInit, OnDestroy {
+  /**
+   * The progression's key, spelled the way the progression spells it.
+   *
+   * Built here rather than in the template, per the project rule against
+   * computation in a binding, and from `ProgressionState` rather than from
+   * `MusicTheoryService`: this page is allowed to be in a different key from
+   * the fretboard behind it, and `key.preferSharps` is the key's own answer.
+   * The palette makes the same call for the same reason.
+   */
+  keyName = '';
+
+  private readonly progression = inject(ProgressionService);
+  private readonly musicTheory = inject(MusicTheoryService);
+  private readonly player = inject(ProgressionPlayerService);
+  private readonly changes = inject(ChangeDetectorRef);
+  private readonly destroy$ = new Subject<void>();
+
+  ngOnInit(): void {
+    this.progression
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(state => {
+        this.render(state);
+        this.changes.markForCheck();
+      });
+
+    this.musicTheory
+      .getState()
+      .pipe(
+        map(
+          (state): AppSelection => ({
+            key: state.selectedKey,
+            categoryId: state.selectedCategory,
+            itemId: state.selectedItem
+          })
+        ),
+        // The instrument, the tuning and the string count all publish on the
+        // same subject, and none of them is a key change. Without this the page
+        // would re-key the progression every time the user changed guitar.
+        distinctUntilChanged(
+          (before, after) =>
+            before.key === after.key &&
+            before.categoryId === after.categoryId &&
+            before.itemId === after.itemId
+        ),
+        takeUntil(this.destroy$)
+      )
+      .subscribe(selection => this.adopt(selection));
+  }
+
+  /**
+   * Leaving the page stops the progression.
+   *
+   * The transport declined this and was right to: it is a control, and a
+   * control being torn down is not a stop. This is the owner - it provides the
+   * player - and the case for silence is that nothing survives the navigation
+   * to ask for it. There is no transport on the fretboard page, so a
+   * progression still looping there is audio with no off switch; and Task 11
+   * publishes the sounding chord from *this* component, so a progression that
+   * outlived the page would go on sounding with nothing left to light the
+   * fretboard under it and nothing left to restore the user's own key when it
+   * stopped.
+   *
+   * Said out loud rather than left to the injector. The player is destroyed
+   * with this component's providers and disposes its chain then, which stops
+   * the transport as a side effect - but that is a resource-cleanup mechanism
+   * answering a question about behaviour, and the decision belongs where it can
+   * be read and tested.
+   */
+  ngOnDestroy(): void {
+    this.player.stop();
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  /**
+   * Undo and redo from the keyboard.
+   *
+   * On the document rather than on the host, because the focus is wherever the
+   * user last clicked - a chord card, the tempo box, nothing at all - and a
+   * shortcut that worked only while the page element held focus would work by
+   * accident.
+   *
+   * `Ctrl+Y` as well as `Ctrl+Shift+Z`, because Windows offers both and this
+   * app runs there; `metaKey` alongside `ctrlKey` for the same reason in the
+   * other direction. The key is lowered before it is compared: `Shift+Z`
+   * reports `'Z'`.
+   */
+  @HostListener('document:keydown', ['$event'])
+  onKeydown(event: KeyboardEvent): void {
+    if (!event.ctrlKey && !event.metaKey) return;
+    if (isEditable(event.target)) return;
+
+    const key = event.key.toLowerCase();
+    if (key !== 'z' && key !== 'y') return;
+
+    // Claimed before it is acted on, so that the browser's own undo does not
+    // also run. Only for the two combinations that are actually handled - a
+    // page that swallowed every Ctrl press would take Ctrl+A and Ctrl+C with
+    // it.
+    event.preventDefault();
+
+    if (key === 'z' && !event.shiftKey) {
+      this.progression.undo();
+      return;
+    }
+    this.progression.redo();
+  }
+
+  /**
+   * Takes the app's key as the progression's, when the app is naming one.
+   *
+   * One direction, and only this one. The circle sets `selectedKey` on
+   * `MusicTheoryService` and knows nothing about this page, so something has to
+   * carry that across, and it is this - which is also what stops the page
+   * writing back: the fretboard's own selection survives a visit here
+   * untouched, because M1 never sets it. Task 11 adds the other direction, for
+   * the sounding chord, and is the task that has to restore what it overwrites.
+   *
+   * Two selections are refused:
+   *
+   *  - **One that names no scale.** `getCurrentScaleObject` answers only for a
+   *    scale category, so a chord selection or a fretboard-notes selection
+   *    resolves to nothing and is left alone rather than written in as a scale
+   *    id the progression cannot resolve. That is not hypothetical: Task 11
+   *    publishes the sounding chord as `selectKeyAndMode(root, 'chords', id)`,
+   *    and a page that adopted it would answer its own broadcast by throwing
+   *    the key away.
+   *  - **The key it is already in.** A key change is a commit and a commit is an
+   *    undo step, so adopting a key the progression already has would cost the
+   *    user one for opening the page.
+   *
+   * Adopting on arrival, and not only on a later change, is the deliberate half
+   * of this. The drawer is app-wide and shows `selectedKey`: a progression
+   * quietly in a different key from the circle floating over it would print
+   * numerals for a key the diagram says the user is not in.
+   */
+  private adopt(selection: AppSelection): void {
+    // Asked of the service rather than matched against `categoryId` here, so
+    // "is this a scale" has one answer in the app. It reads the state that was
+    // just published - `MusicTheoryService` holds a `BehaviorSubject`, so the
+    // emission being handled is the current value.
+    const scale = this.musicTheory.getCurrentScaleObject();
+    if (!scale) return;
+
+    const tonic = this.musicTheory.getNoteIndex(selection.key);
+    // -1 for a name from neither chromatic table. There is no such key today;
+    // there is also no sensible pitch class to write down for one.
+    if (tonic < 0) return;
+
+    const current = this.progression.doc.key;
+    if (current.tonic === tonic && current.scaleId === scale.id) return;
+
+    this.progression.setKey(tonic, scale.id);
+  }
+
+  /** Rebuilds what is on screen from one published state. */
+  private render(state: ProgressionState): void {
+    const key = state.doc.key;
+    const tonic = this.musicTheory.spellNote(key.tonic, key.preferSharps);
+
+    // The scale is null only for an id the app cannot resolve, which leaves the
+    // note on its own rather than printing `C undefined`.
+    this.keyName = state.keyScale ? `${tonic} ${state.keyScale.name}` : tonic;
+  }
+}
+
+/**
+ * Whether a key press belongs to something the user is typing into.
+ *
+ * The tempo box is on this page, and `Ctrl+Z` inside a text box means undo the
+ * typing - the browser's own, which `preventDefault` would otherwise take away.
+ * `<select>` is in the list because it is a form control that reads its own key
+ * presses, and `isContentEditable` because a rich-text field is neither tag.
+ */
+function isEditable(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+
+  return target.tagName === 'INPUT'
+    || target.tagName === 'TEXTAREA'
+    || target.tagName === 'SELECT';
+}

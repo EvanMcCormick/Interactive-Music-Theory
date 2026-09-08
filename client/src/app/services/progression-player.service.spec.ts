@@ -522,7 +522,10 @@ describe('ProgressionPlayerService', () => {
   beforeEach(() => {
     audio = new FakeToneApi();
     TestBed.configureTestingModule({
-      providers: [{ provide: PROGRESSION_AUDIO, useValue: audio }]
+      providers: [
+        ProgressionPlayerService,
+        { provide: PROGRESSION_AUDIO, useValue: audio }
+      ]
     });
     player = TestBed.inject(ProgressionPlayerService);
   });
@@ -825,6 +828,7 @@ describe('ProgressionPlayerService', () => {
       TestBed.configureTestingModule({
         providers: [
           provideZoneChangeDetection(),
+          ProgressionPlayerService,
           { provide: PROGRESSION_AUDIO, useValue: audio }
         ]
       });

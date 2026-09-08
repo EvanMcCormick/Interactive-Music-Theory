@@ -1,0 +1,135 @@
+// The same scheme the three children declare - dark navigation surfaces, one
+// blue for "this one" - named here so the page's own chrome is one block to
+// read. The dim grey is the palette's #adbcc8 rather than the app's #a8b6c1,
+// which measures 4.8:1 on the raised surface where the rail's prose sits.
+:host {
+  --page-rail: #2c3e50;
+  --page-rail-raised: #34495e;
+  --page-line: #1a242f;
+  --page-text: #ecf0f1;
+  --page-text-dim: #adbcc8;
+
+  display: block;
+}
+
+// The design doc's layout, with M1's pieces in it: rail down the left, palette
+// across the top of the working area, and the main area below it. The roll goes
+// in that main area in M2; until it exists the strip has the room, which is
+// why the rows are `auto auto 1fr` rather than a fixed strip at the bottom - a
+// three-chord progression should not float in the middle of a tall column.
+.progression-page {
+  display: grid;
+  grid-template-columns: minmax(14rem, 17rem) minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    'rail palette'
+    'rail transport'
+    'rail strip';
+  // Fills the window under the shell's header, so the page reads as a
+  // workspace rather than as three panels that happen to be stacked: the rail
+  // and the strip's surface run to the bottom instead of stopping under the
+  // last thing in them.
+  //
+  // Measured against the viewport and not `100%`, which does not work here and
+  // is the first thing anyone will try: `main` is `flex: 1` inside a container
+  // with `min-height` rather than `height`, so its own computed height is
+  // `auto` and a percentage on this element has nothing to resolve against -
+  // it collapses to the content height. 3.6rem is that header, which is 57px
+  // at the default root size; `main` hides its overflow, so erring a fraction
+  // over costs a fraction of a pixel of empty strip rather than a scrollbar.
+  min-height: calc(100vh - 3.6rem);
+  gap: 1px;
+  background: var(--page-line);
+  color: var(--page-text);
+}
+
+.rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--page-line);
+}
+
+.palette {
+  grid-area: palette;
+}
+
+.transport {
+  grid-area: transport;
+}
+
+.strip {
+  grid-area: strip;
+  // The strip paints its own surface only as far as its content reaches, so the
+  // cell carries the colour behind it down the rest of the column.
+  background: var(--page-rail);
+}
+
+// ---------------------------------------------------------------------------
+// The rail
+// ---------------------------------------------------------------------------
+
+.rail-block {
+  padding: 1rem;
+  background: var(--page-rail);
+
+  // Fills the rail's own column, so the last block runs to the bottom rather
+  // than leaving the page's line colour showing as a stripe under it.
+  &:last-child {
+    flex: 1;
+  }
+}
+
+.rail-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--page-text-dim);
+}
+
+.rail-value {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  background: var(--page-rail-raised);
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.rail-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--page-text-dim);
+}
+
+// One column under the width where a 14rem rail leaves the palette's seven
+// buttons less than their own minimum. The rail goes first, because the key it
+// names is what the palette below it is a list of.
+@media (max-width: 46rem) {
+  .progression-page {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-areas:
+      'rail'
+      'palette'
+      'transport'
+      'strip';
+  }
+
+  .rail {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  // Two across where there is room and one where there is not. The `min-width`
+  // is what makes that true: a flex basis alone still shrinks, and the two
+  // blocks sat side by side on a phone with the second one a word wide.
+  .rail-block {
+    flex: 1 1 16rem;
+    min-width: min(100%, 16rem);
+  }
+}

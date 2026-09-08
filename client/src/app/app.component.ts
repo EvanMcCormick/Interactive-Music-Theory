@@ -33,8 +33,15 @@ import { CircleOfFifthsComponent } from './components/circle-of-fifths/circle-of
 export class AppComponent implements OnInit, OnDestroy {
   title = 'MusicTheory';
 
-  /** Routes whose view reads `selectedKey`. */
-  private static readonly CIRCLE_ROUTES = ['/fretboard', '/composer'];
+  /**
+   * Routes whose view reads `selectedKey`.
+   *
+   * `/progression` is the strongest entry rather than another one like the
+   * others: that page has no key picker of its own by design, so the drawer is
+   * not merely meaningful there, it is the only key control the page has. See
+   * `ProgressionComponent`, which mirrors this selection into its own document.
+   */
+  private static readonly CIRCLE_ROUTES = ['/fretboard', '/composer', '/progression'];
 
   /** Whether this route reads the key, and so whether the toggle is shown. */
   circleAvailable = true;

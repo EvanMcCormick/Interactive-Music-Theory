@@ -33,6 +33,16 @@ describe('AppComponent', () => {
       expect(AppComponent.showsCircle('/composer')).toBeTrue();
     });
 
+    /**
+     * The progression page has no key picker of its own: the drawer *is* its
+     * key control, which is the design doc's decision and the reason the page
+     * mirrors `selectedKey` into `ProgressionService`. Withholding the toggle
+     * there would leave the page with no way to change key at all.
+     */
+    it('offers it on the progression page, whose only key control it is', () => {
+      expect(AppComponent.showsCircle('/progression')).toBeTrue();
+    });
+
     it('withholds it where it would do nothing', () => {
       expect(AppComponent.showsCircle('/gp-viewer')).toBeFalse();
       expect(AppComponent.showsCircle('/gp-library')).toBeFalse();

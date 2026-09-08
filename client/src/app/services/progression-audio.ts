@@ -196,8 +196,11 @@ export function createToneApi(): ToneApi {
 /**
  * How `ProgressionPlayerService` reaches Tone.
  *
- * Bound to `createToneApi` in `main.ts`, deliberately with no default factory
- * here - the same choice `NOTE_DETECTOR` makes, for the same reason. It is true
+ * Bound to `createToneApi` by `ProgressionComponent`, deliberately with no
+ * default factory here - the same choice `NOTE_DETECTOR` makes, for the same
+ * reason. Bound *there* rather than in `main.ts` because this module's
+ * `import * as Tone` follows whichever file names the factory, and only a page
+ * that is loaded lazily keeps it out of the eager bundle. It is true
  * that resolving this token on its own constructs nothing, but that is not the
  * failure a default would let through. The trap is a component spec that injects
  * something which injects the *player*, forgets the override because nothing
@@ -206,7 +209,7 @@ export function createToneApi(): ToneApi {
  * `TestBed`, working perfectly and testing nothing.
  *
  * Without a default that spec fails at the injector, naming the token, before it
- * has a chance to be slow and misleading instead. The cost is one line in
- * `main.ts`, paid once.
+ * has a chance to be slow and misleading instead. The cost is one line on the
+ * page component, paid once.
  */
 export const PROGRESSION_AUDIO = new InjectionToken<ToneApi>('ProgressionAudio');

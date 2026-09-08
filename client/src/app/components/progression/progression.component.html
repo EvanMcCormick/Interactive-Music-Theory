@@ -1,0 +1,33 @@
+<div class="progression-page">
+  <!-- The rail the design doc asks for, holding what M1 actually has. There is
+       no key picker in it and there is not meant to be: the circle-of-fifths
+       drawer in the shell is this page's key control, so the rail names the key
+       and says where to change it. -->
+  <aside class="rail" aria-label="Progression settings">
+    <section class="rail-block">
+      <h2 class="rail-title">Key</h2>
+      <p class="rail-value">{{ keyName }}</p>
+      <p class="rail-note">
+        Set it on the <strong>Circle of Fifths</strong>, top right. The Roman
+        numerals hold; the chord names move under them.
+      </p>
+    </section>
+
+    <section class="rail-block">
+      <h2 class="rail-title">Sound</h2>
+      <p class="rail-value">Piano</p>
+      <p class="rail-note">
+        The same voice the keyboard plays, a little quieter — a progression
+        sounds under what you are picking out, not over it.
+      </p>
+    </section>
+  </aside>
+
+  <!-- Across the top of the working area: the chords you can reach from here. -->
+  <app-chord-palette class="palette"></app-chord-palette>
+
+  <!-- The main area. M1 has no piano roll, so the strip has the room the roll
+       will take in M2, with the transport above it where it acts. -->
+  <app-progression-transport class="transport"></app-progression-transport>
+  <app-progression-strip class="strip"></app-progression-strip>
+</div>

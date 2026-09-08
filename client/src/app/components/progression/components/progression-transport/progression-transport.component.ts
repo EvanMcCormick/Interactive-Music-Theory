@@ -38,10 +38,11 @@ const PLAYING = 'Playing';
  * That includes the two that look most like local flags:
  *
  *  - **`loopEnabled`** is the *player's* `isLooping`, read at init and after
- *    each toggle. The player is a root singleton and this page is not, so a
- *    component that remembered the setting itself would open showing "off"
- *    against a player still looping, the moment the user navigates away and
- *    back.
+ *    each toggle. `setLoop` lands on the player whoever calls it, so the
+ *    player's own flag is the one value that cannot be stale; a toggle that
+ *    remembered the setting itself would be a second copy to keep in step, and
+ *    would show "off" against a player still looping the first time anything
+ *    but this button set it.
  *  - **`isPlaying`** is `currentSlot$ !== null`, and derived rather than set on
  *    the way into `play()` on purpose. `play` is asynchronous and can fail -
  *    a browser that will not resume the audio context, or anything thrown
@@ -88,7 +89,8 @@ const PLAYING = 'Playing';
  * The player owns the transport and disposes its own chain; this is a control,
  * and a control being torn down is not a stop. A route change that should
  * silence the progression is the page shell's call - it is already the thing
- * that has to restore the fretboard's own key when playback ends.
+ * that has to restore the fretboard's own key when playback ends. Task 10 took
+ * that call: `ProgressionComponent.ngOnDestroy` stops, and says why there.
  */
 @Component({
   selector: 'app-progression-transport',
