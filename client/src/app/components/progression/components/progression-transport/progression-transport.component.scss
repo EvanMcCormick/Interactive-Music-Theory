@@ -1,0 +1,150 @@
+// The app's scheme, named locally so this component's theming is one block to
+// read - the same set the palette and the strip declare, because all three sit
+// against each other on the page and the blue that means "this one" should be
+// one blue.
+//
+// The blue is darker than the app's #3498db and the dim grey lighter than its
+// #a8b6c1, for the contrast reason the palette sets out at length: #ecf0f1 on
+// #3498db is 2.75:1, well under the 4.5:1 AA asks of normal text. Every pair
+// below is at or above 4.5:1 against the surface it is used on.
+:host {
+  --transport-surface: #2c3e50;
+  --transport-control: #34495e;
+  --transport-control-hover: #3d5a73;
+  // 4.8:1 under --transport-text, and the same blue the strip marks a selected
+  // card with: on means engaged, in both places.
+  --transport-accent: #1b6ea3;
+  --transport-accent-hover: #155a85;
+  --transport-line: #22303d;
+  --transport-text: #ecf0f1;
+  // 4.8:1 on --transport-control, 5.7:1 on --transport-surface.
+  --transport-text-dim: #adbcc8;
+
+  display: block;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  // Wraps rather than scrolls: in a narrow window the tempo box and the edit
+  // buttons drop to a second row, where a horizontal scroll would hide the
+  // transport controls behind a gesture nobody looks for on a toolbar.
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--transport-surface);
+  color: var(--transport-text);
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--transport-line);
+  border-radius: 4px;
+  background: var(--transport-control);
+  color: var(--transport-text);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.12s, transform 0.06s;
+
+  &:hover:not(:disabled) {
+    background: var(--transport-control-hover);
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--transport-text);
+    outline-offset: 2px;
+  }
+
+  &:disabled {
+    color: var(--transport-text-dim);
+    cursor: default;
+    opacity: 0.5;
+  }
+}
+
+.primary {
+  background: var(--transport-accent);
+
+  &:hover:not(:disabled) {
+    background: var(--transport-accent-hover);
+  }
+}
+
+// The loop toggle when it is on. `aria-pressed` carries the same fact for a
+// screen reader; this is the sighted half of it.
+.toggle.on {
+  background: var(--transport-accent);
+
+  &:hover {
+    background: var(--transport-accent-hover);
+  }
+}
+
+.glyph {
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.tempo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--transport-line);
+  border-radius: 4px;
+  background: var(--transport-control);
+}
+
+.tempo-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--transport-text-dim);
+}
+
+.tempo-input {
+  // Three digits and the spinner. Wide enough for 300 without the arrows
+  // clipping the last character.
+  width: 4.5rem;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid var(--transport-line);
+  border-radius: 3px;
+  background: var(--transport-surface);
+  color: var(--transport-text);
+  font-size: 0.8rem;
+
+  &:focus-visible {
+    outline: 2px solid var(--transport-text);
+    outline-offset: 1px;
+  }
+}
+
+.status {
+  margin: 0;
+  // Pushed to the far end of the bar, so the controls stay grouped together
+  // when the row is wide and the readout is the thing that wraps when it is not.
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--transport-text-dim);
+}
+
+// Reading the position rather than reporting a stop. Brighter, not a different
+// hue: the readout is one line of text and a colour change alone would be the
+// only thing carrying it.
+.status.playing {
+  color: var(--transport-text);
+}

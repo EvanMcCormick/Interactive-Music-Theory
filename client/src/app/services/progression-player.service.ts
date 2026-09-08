@@ -417,6 +417,19 @@ export class ProgressionPlayerService implements OnDestroy {
   }
 
   /**
+   * Whether the next play - or the one under way - repeats.
+   *
+   * Exposed so that the transport can render its toggle from the transport's
+   * own answer rather than keeping a second copy of it. The distinction is not
+   * academic: this service is a root singleton and the page is not, so a
+   * component that remembered the setting itself would show "off" against a
+   * player that is still looping, the moment the user navigates away and back.
+   */
+  get isLooping(): boolean {
+    return this.looping;
+  }
+
+  /**
    * Loops the progression, from its start to its end.
    *
    * Remembered rather than applied when nothing is playing, because the loop

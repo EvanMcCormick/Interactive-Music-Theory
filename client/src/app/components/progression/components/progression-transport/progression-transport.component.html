@@ -1,0 +1,70 @@
+<div class="transport">
+  <div class="group" role="group" aria-label="Playback">
+    <!-- Greyed rather than pressable over an empty strip: `play` refuses a
+         progression with no length in it, so the button would otherwise do
+         nothing and say nothing about why. The strip below already prints the
+         sentence that explains it. -->
+    <button
+      type="button"
+      class="control primary"
+      [disabled]="!canPlay"
+      (click)="play()">
+      <span class="glyph" aria-hidden="true">&#9654;</span>Play
+    </button>
+
+    <!-- Never disabled. A stop button is pressable whether or not anything is
+         playing, and the player says so in as many words: stopping while
+         stopped is a no-op rather than an error. -->
+    <button type="button" class="control" (click)="stop()">
+      <span class="glyph" aria-hidden="true">&#9632;</span>Stop
+    </button>
+
+    <!-- A pressed button rather than a checkbox: it is a setting that is on or
+         off, `aria-pressed` says which, and it sits in a row of buttons. -->
+    <button
+      type="button"
+      class="control toggle"
+      [class.on]="loopEnabled"
+      [attr.aria-pressed]="loopEnabled"
+      (click)="toggleLoop()">
+      <span class="glyph" aria-hidden="true">&#8635;</span>Loop
+    </button>
+  </div>
+
+  <!-- The label wraps the box, so "BPM" is its accessible name without a second
+       string to keep in step. Committed on change - blur or Enter - which is
+       what `commitTempo` is about; the element is handed over rather than the
+       value because it is also what has to be corrected. -->
+  <label class="tempo">
+    <span class="tempo-label">BPM</span>
+    <input
+      #tempoBox
+      class="tempo-input"
+      type="number"
+      step="1"
+      [min]="tempoMin"
+      [max]="tempoMax"
+      [value]="tempoText"
+      (change)="commitTempo(tempoBox)">
+  </label>
+
+  <div class="group" role="group" aria-label="Edit">
+    <button
+      type="button"
+      class="control"
+      [disabled]="!canUndo"
+      (click)="undo()">Undo</button>
+    <button
+      type="button"
+      class="control"
+      [disabled]="!canRedo"
+      (click)="redo()">Redo</button>
+  </div>
+
+  <!-- Not a live region, deliberately. It changes once per chord, so announcing
+       it would talk over everything else on the page every couple of seconds at
+       any normal tempo - and what it carries is position rather than news. The
+       state that is worth announcing, whether the loop is on, is on the toggle
+       itself as `aria-pressed`. -->
+  <p class="status" [class.playing]="isPlaying">{{ positionText }}</p>
+</div>
