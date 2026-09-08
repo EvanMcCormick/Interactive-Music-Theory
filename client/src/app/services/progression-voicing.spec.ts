@@ -18,7 +18,13 @@ describe('voiceChord', () => {
     expect(voiceChord([0, 4, 7], 2, 60)).toEqual([67, 72, 76]);
   });
 
-  it('wraps back to root position when the inversion exceeds the note count', () => {
+  // Inversion 4, not 3. At 3 - exactly the note count - a chord with the wrap
+  // removed altogether would still pass, because `slice(3)` on a three-note
+  // chord is empty and leaves the rotation in root position either way. Only
+  // past the count do the two diverge, so 4 is the case that tests the wrap and
+  // 3 the boundary it turns at.
+  it('wraps past the top of the chord when the inversion exceeds the note count', () => {
+    expect(voiceChord([0, 4, 7], 4, 60)).toEqual([64, 67, 72]);
     expect(voiceChord([0, 4, 7], 3, 60)).toEqual([60, 64, 67]);
   });
 
@@ -54,8 +60,15 @@ describe('voiceChord', () => {
     expect(voiceChord([11, 14, 17], 0, 60)).toEqual([71, 74, 77]);
   });
 
+  // Asserted exactly rather than as `>= 48`: an implementation that ignored the
+  // base and always started from middle C would satisfy the inequality, and
+  // this is the one parameter an octave control moves, so it has to be pinned
+  // to the note rather than to a range.
+  it('voices from the base it is given, not from middle C', () => {
+    expect(voiceChord([0, 4, 7], 0, 48)).toEqual([48, 52, 55]);
+  });
+
   it('starts no note below the base', () => {
-    expect(Math.min(...voiceChord([0, 4, 7], 0, 48))).toBeGreaterThanOrEqual(48);
     // Base 60 is a C, so the twelve pitch classes should land on the twelve
     // semitones running up from 60 - pitch class 11 on 71, never on 59.
     for (let pitchClass = 0; pitchClass < 12; pitchClass++) {

@@ -13,6 +13,21 @@
  * The rule is that every note ascends from the one below it. That is what makes
  * an inversion a rotation: move the root to the top of the list and it is
  * re-stacked an octave up, which is what a first inversion is.
+ *
+ * That independence leaves the caller holding a precondition: a rotation is an
+ * *inversion* only if the input is root position and ascending. [7, 4, 0] is
+ * accepted and voices to a perfectly legal ascending chord, but at inversion 0
+ * it comes out G-E-C, with the fifth in the bass - root position was asked for
+ * and something else arrived. `degreePitchClasses` guarantees the ordering, and
+ * anything hand-built has to guarantee it for itself.
+ *
+ * The base is a floor rather than a centre, and that is audible. In C from
+ * middle C, I voices to C4-E4-G4 while vii-dim voices to B4-D5-F5, because B is
+ * the last pitch class that fits above the floor. So I - vii-dim - I leaps up
+ * nearly an octave and back. That is correct under the rule as written and no
+ * voice-leading is promised before M2, but it is the first thing that will
+ * sound wrong once a progression plays, so it belongs here as a known
+ * consequence rather than waiting to be found as a bug.
  */
 
 /**
@@ -23,6 +38,20 @@
  *
  * `inversion` wraps in both directions, so stepping past either end of the
  * chord lands back inside it rather than off the array.
+ *
+ * It is deliberately unguarded, where `degreePitchClasses` guards its `degree`.
+ * The asymmetry is not that this failure is milder: it is that a bad inversion
+ * cannot produce a bad note. `NaN % count` is `NaN` and `slice(NaN)` coerces to
+ * 0, so nonsense silently voices root position, and the output is a valid
+ * ascending chord whatever arrives. A bad degree instead produced `NaN`, which
+ * would have run through here untouched into `RollNote.midi` and on to
+ * `Tone.PolySynth`. That guard keeps `NaN` out of the audio layer; a guard here
+ * would prevent nothing worse than a control appearing not to work.
+ *
+ * A non-integer inversion truncates asymmetrically, because the wrap is
+ * computed before `slice` truncates: 1.5 gives the first inversion, while -0.5
+ * wraps to 2.5 and gives the *second*. No caller passes fractions, but the
+ * behaviour should be read as arithmetic rather than as a bug.
  */
 export function voiceChord(
   pitchClasses: readonly number[],
@@ -32,8 +61,11 @@ export function voiceChord(
   const count = pitchClasses.length;
   if (count === 0) return [];
 
-  // Modulo twice: JavaScript's `%` keeps the sign of the left operand, so a
-  // negative inversion needs the extra `+ count` to land inside the chord.
+  // Normalised into 0..count-1 so `shift` is a real array index. It is not
+  // needed for correctness - `slice` reads a negative index as `length + index`
+  // and so rotates identically on a bare `inversion % count` - but relying on
+  // that would make the rotation legible only to a reader who knows `slice`'s
+  // sign rules.
   const shift = ((inversion % count) + count) % count;
   const rotated = [...pitchClasses.slice(shift), ...pitchClasses.slice(0, shift)];
 
