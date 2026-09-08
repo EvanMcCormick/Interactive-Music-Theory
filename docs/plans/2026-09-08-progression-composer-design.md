@@ -267,3 +267,59 @@ already exists; without it, this decision should be revisited.
 **Degrees primary, notes authoritative.** Storing literal notes alone would have
 been simpler and would have killed two of the four jobs — no key transposition, no
 complexity buttons, no chord identity for fretboard highlighting.
+
+---
+
+## Correction: `alter` cannot express a borrowed chord
+
+Found during M1 Task 4, verified independently three times. Recorded here rather
+than fixed, because M1 cannot reach it.
+
+`alter` shifts the **whole** chord stack. That is transposition, and
+transposition preserves quality — so the accidental in a Roman numeral, which
+displaces only the root and lets the case carry the shape, is not expressible.
+Every conventional altered numeral in a major key comes out wrong:
+
+| numeral | model gives | should be |
+|---|---|---|
+| bVII | Bb diminished | Bb major |
+| bVI | Ab minor | Ab major |
+| bIII | Eb minor | Eb major |
+| bII (Neapolitan) | Db minor | Db major |
+| #iv-dim | F# major | F# diminished |
+
+The root is always right; the shape never is.
+
+Secondary dominants are unreachable for the same reason. Since `alter` is
+transposition, the reachable set is {diatonic chord on any degree} + alter, and a
+major scale holds exactly one dominant seventh, on degree 4. So every reachable
+dominant seventh is G7 shifted, needing `(targetRoot - 7) mod 12` — that is -5
+for D7 and -7 for C7, both outside `ALTER_MIN/MAX` of +/-2.
+
+**The fix, for M2.** `quality: ChordQuality | null`, where `null` means "as the
+key gives it" and non-null overrides the chord tones, with `alter` displacing the
+root alone. Then bVII is *degree 6, alter -1, quality 'major'* — root pitch class
+10, intervals [0,4,7], giving Bb-D-F. The field already exists and is already
+stored; nothing reads it.
+
+Three consequences worth knowing before that lands:
+
+1. **`alter !== 0` with `quality === null`** has no diatonic chord to inherit a
+   shape from. Reject the combination or document a default; do not let it fall
+   through to today's silent transposition.
+2. **`ChordQuality` names only triads and sevenths**, so an override at extent
+   9, 11 or 13 has no name to build from. Either the override adjusts the third,
+   fifth and seventh against the diatonic stack and leaves the extensions
+   diatonic, or overrides are refused above extent 7.
+3. **It invalidates a tested constant.** `OCTAVE_MAX = 2` was measured by
+   sweeping the real pipeline *including* `alter`, and the 33-semitone maximum
+   reach depends on `alter` meaning what it means today. Changing its semantics
+   requires re-deriving that bound.
+
+**Why M1 does not care.** `createDegreeSlot` hardcodes `alter: 0`, no M1 setter
+changes it, the palette emits only diatonic degrees, `romanNumeral(degree,
+quality)` takes no `alter`, and nothing persists a document — so there is no
+migration cost either. It goes live at **M3**, where the recogniser's
+neighbourhood search varies root alteration as one of its axes: under today's
+semantics that axis generates wrong-quality candidates, and the recogniser would
+be matching pitch sets against chords nobody would write.
