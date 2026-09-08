@@ -1,0 +1,56 @@
+<div class="progression-strip">
+  <h3 class="title">Progression</h3>
+
+  <!-- A list rather than a listbox: each card holds three controls, and a
+       listbox option that contains buttons is not something a screen reader can
+       navigate. The selected state is on the card's own button instead. -->
+  <div class="cards" role="list" aria-label="Chord progression">
+    <div
+      class="card"
+      role="listitem"
+      #cardElement
+      *ngFor="let card of cards; trackBy: trackById"
+      [style.flexGrow]="card.lengthBeats"
+      [class.selected]="card.isSelected"
+      [class.unlabelled]="card.isUnlabelled"
+      [class.dragging]="card.id === draggingId">
+      <!-- The card body is the select control and the drag handle at once, which
+           is what makes a press-and-move a reorder and a press-and-release a
+           selection. The threshold in `onPointerMove` is what tells them apart. -->
+      <button
+        type="button"
+        class="body"
+        [attr.aria-label]="card.label"
+        [attr.aria-pressed]="card.isSelected"
+        (click)="select(card)"
+        (pointerdown)="startReorder(card, $event)">
+        <span class="numeral">{{ card.numeral }}</span>
+        <span class="name">{{ card.name }}</span>
+      </button>
+
+      <button
+        type="button"
+        class="remove"
+        [attr.aria-label]="card.removeLabel"
+        (click)="remove(card)">&times;</button>
+
+      <!-- The right edge. Dragged with a pointer, stepped with the arrow keys,
+           so the length is reachable without a mouse. -->
+      <button
+        type="button"
+        class="resize"
+        [attr.aria-label]="card.resizeLabel"
+        (pointerdown)="startResize(card, $event)"
+        (keydown.arrowright)="nudgeLength(card, 1, $event)"
+        (keydown.arrowleft)="nudgeLength(card, -1, $event)"></button>
+    </div>
+  </div>
+
+  <p class="empty" *ngIf="cards.length === 0">
+    Pick a chord from the palette to start a progression.
+  </p>
+
+  <!-- Why some cards have no numeral. One sentence under the strip rather than
+       thirteen words on a card that may be one beat wide. -->
+  <p class="hint" *ngIf="unlabelledHint">{{ unlabelledHint }}</p>
+</div>

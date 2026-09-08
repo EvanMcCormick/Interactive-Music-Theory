@@ -1,0 +1,177 @@
+// The app's scheme, named locally so this component's theming is one block to
+// read - the same set the chord palette declares, because the two sit against
+// each other on the page and a card and a button for the same chord should not
+// be two different blues.
+:host {
+  --strip-surface: #2c3e50;
+  --strip-card: #34495e;
+  --strip-selected: #3498db;
+  --strip-line: #22303d;
+  --strip-text: #ecf0f1;
+  --strip-text-dim: #a8b6c1;
+  --strip-unlabelled: #7f8c9a;
+
+  display: block;
+}
+
+.progression-strip {
+  padding: 1rem;
+  background: var(--strip-surface);
+  color: var(--strip-text);
+}
+
+.title {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--strip-text-dim);
+}
+
+.cards {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  min-height: 4rem;
+}
+
+// Width is the whole of what the strip says about time, so it is exactly
+// proportional: `flex-grow` carries the slot's length and `flex-basis` is zero,
+// which makes every card's share of the row its share of the beats. There is
+// deliberately no `min-width` - a floor would make a one-beat card among
+// four-beat ones wider than one beat, which is a false statement about the
+// music. A card too narrow for its text truncates instead, and its full name is
+// on the `aria-label` either way.
+.card {
+  position: relative;
+  display: flex;
+  flex: 0 1 0;
+  min-width: 0;
+  border: 1px solid var(--strip-line);
+  border-radius: 4px;
+  background: var(--strip-card);
+  overflow: hidden;
+
+  &.selected {
+    background: var(--strip-selected);
+    border-color: var(--strip-text);
+  }
+
+  &.dragging {
+    opacity: 0.6;
+  }
+
+  &.unlabelled {
+    // Dashed rather than greyed out: the chord is real and playing, and only
+    // its name is missing.
+    border-style: dashed;
+    border-color: var(--strip-unlabelled);
+  }
+
+  &:hover .remove {
+    opacity: 1;
+  }
+}
+
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.5rem 0.35rem;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: grab;
+  // The card is a drag handle, so the browser's own text selection and touch
+  // scrolling would both fight the gesture.
+  user-select: none;
+  touch-action: none;
+
+  &:active {
+    cursor: grabbing;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--strip-text);
+    outline-offset: -3px;
+  }
+}
+
+.numeral {
+  // The teaching content, so it reads first.
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.name {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.85);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unlabelled .numeral,
+.unlabelled .name {
+  color: var(--strip-unlabelled);
+}
+
+.remove {
+  position: absolute;
+  top: 0.15rem;
+  right: 0.15rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: none;
+  color: var(--strip-text-dim);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  // Revealed on hover, and always present for a keyboard: `opacity` rather than
+  // `display`, so tabbing to it still finds it.
+  opacity: 0;
+
+  &:hover {
+    color: var(--strip-text);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--strip-text);
+    opacity: 1;
+  }
+}
+
+.resize {
+  flex: 0 0 auto;
+  width: 0.5rem;
+  padding: 0;
+  border: none;
+  background: var(--strip-line);
+  cursor: ew-resize;
+  touch-action: none;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--strip-selected);
+    outline: none;
+  }
+}
+
+.empty,
+.hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--strip-text-dim);
+}
