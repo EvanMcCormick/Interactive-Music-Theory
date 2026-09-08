@@ -174,6 +174,43 @@ export interface ChordDegree {
   octave: number;
 }
 
+/**
+ * What the progression page renders: the document, plus the three things about
+ * it that are true of the page rather than of the file.
+ *
+ * `ComposerState` is the precedent and the shape is deliberately its shape -
+ * `doc` beside a caret and the history flags. Two differences, both of which
+ * the composer's own layout argues for:
+ *
+ *  - **`selectedSlotId` sits beside `doc`, not inside it**, exactly as
+ *    `EditCursor` does. It is where the user is rather than what they wrote, so
+ *    it does not belong on the undo stack: undoing a chord change should put
+ *    the chord back, not move the selection somewhere the user has since left.
+ *    It is on the state rather than in the strip component because the strip is
+ *    not its only reader - the +/- controls act on the selected slot, and M2's
+ *    piano roll opens on it - and the project rules put state shared between
+ *    components in the service.
+ *  - **`canBuildChords` is derived, and stored anyway.** Whether the key's
+ *    scale is heptatonic decides both whether the palette can offer a chord and
+ *    whether the service will accept one, and computing it in one place is what
+ *    stops those two answers drifting. It is not a second definition of the
+ *    rule: it is `isHeptatonic` called once, on the scale the key names.
+ *
+ * `isDirty` earns its place the way `ProgressionDoc.id` and `.name` do - a
+ * document with a name and an id is a document something means to save, and the
+ * composer's library is the shape that saving will take.
+ */
+export interface ProgressionState {
+  doc: ProgressionDoc;
+  /** The slot the strip has selected, or null. Never an id the doc has lost. */
+  selectedSlotId: string | null;
+  /** Whether the key's scale can produce diatonic chords at all. */
+  canBuildChords: boolean;
+  isDirty: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
 export interface RollNote {
   midi: number;
   /** Relative to the slot's start, in beats. Float. */
