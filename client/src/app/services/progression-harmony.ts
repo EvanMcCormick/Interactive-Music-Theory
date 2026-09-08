@@ -141,20 +141,22 @@ export function degreeQuality(
 // ---------------------------------------------------------------------------
 
 /**
- * How a quality is written, in the two places a chord is written at all.
+ * How a quality is written, in the three places a chord is written at all.
  *
- * Both tables live beside `ChordQuality` rather than in the palette that prints
- * them, and beside each other rather than one per module, for one reason: they
- * are keyed exhaustively on the union declared above, so adding a quality
- * cannot compile until every way of writing it has been decided. A table in a
- * component would be as correct today and would not have that property - the
- * next quality would reach the screen as `undefined`.
+ * All three tables live beside `ChordQuality` rather than in the palette that
+ * prints them, and beside each other rather than one per module, for one
+ * reason: they are keyed exhaustively on the union declared above, so adding a
+ * quality cannot compile until every way of writing it has been decided. A
+ * table in a component would be as correct today and would not have that
+ * property - the next quality would reach the screen as `undefined`.
  *
- * They are two tables rather than one because they answer to different
- * conventions. A Roman numeral spells its sevenths in lower case (`Imaj7`)
+ * They are three tables rather than one because they answer to three different
+ * conventions. A Roman numeral spells its sevenths in lower case (`imaj7`)
  * because the numeral's own case is already carrying the third; a chord symbol
- * spells them as they are printed on a chart (`C Maj7`). Folding them together
- * would mean picking one convention and being wrong on the other page.
+ * spells them as they are printed on a chart (`C Maj7`); and neither is a
+ * sequence of letters a screen reader can say, which is what the third is for
+ * (`C major seventh`). Folding any two together would mean picking one
+ * convention and being wrong everywhere the other is used.
  */
 interface NumeralFigure {
   /** Whether the numeral is lower case: a claim about the third, not the mode. */
@@ -170,7 +172,13 @@ const NUMERAL_FIGURES: Record<ChordQuality, NumeralFigure> = {
   major7: { lowerCase: false, suffix: 'maj7' },
   dominant7: { lowerCase: false, suffix: '7' },
   minor7: { lowerCase: true, suffix: '7' },
-  minorMajor7: { lowerCase: true, suffix: 'maj7' },
+  // Parenthesised, and that is the convention rather than a house style. The
+  // minor-major seventh differs from the major seventh by the *case* of one
+  // leading letter - `imaj7` against `Imaj7` - and both are reachable here:
+  // major7 from ionian's tonic, minorMajor7 from harmonic and melodic minor's.
+  // Two figures a reader tells apart only by letter case, in a font they did
+  // not choose, is not a distinction to rest a teaching page on.
+  minorMajor7: { lowerCase: true, suffix: '(maj7)' },
   halfDiminished7: { lowerCase: true, suffix: 'ø7' },
   diminished7: { lowerCase: true, suffix: '°7' },
   augmented7: { lowerCase: false, suffix: '+7' },
@@ -194,6 +202,33 @@ const CHORD_SUFFIXES: Record<ChordQuality, string> = {
   augmented7: '+7',
   augmentedMajor7: '+Maj7',
   other: '?'
+};
+
+/**
+ * The same qualities as words, for a label that is heard rather than read.
+ *
+ * `°`, `ø7` and `+` are typography. A screen reader announces them as "degree
+ * sign", "latin small letter o with stroke" or nothing at all, so a button
+ * labelled `B°` is announced as something that is not a chord. Spelled out, the
+ * same button says "B diminished".
+ */
+const SPOKEN_QUALITIES: Record<ChordQuality, string> = {
+  major: 'major',
+  minor: 'minor',
+  diminished: 'diminished',
+  augmented: 'augmented',
+  major7: 'major seventh',
+  dominant7: 'dominant seventh',
+  minor7: 'minor seventh',
+  minorMajor7: 'minor major seventh',
+  halfDiminished7: 'half diminished seventh',
+  diminished7: 'diminished seventh',
+  augmented7: 'augmented seventh',
+  augmentedMajor7: 'augmented major seventh',
+  // `chordName` prints `?` here, which is honest on screen and says nothing at
+  // all aloud. The chord is real and only its name is missing, so the spoken
+  // form says exactly that rather than dropping the button's identity.
+  other: 'unnamed chord'
 };
 
 /** The seven numerals, in the case the tables above then choose. */
@@ -232,6 +267,15 @@ const ROMAN_NUMERALS: readonly string[] = ['I', 'II', 'III', 'IV', 'V', 'VI', 'V
  * to show the height, and it is a change to make here rather than by pasting a
  * number onto the result somewhere downstream.
  *
+ * **Note for Task 7.** The chord palette's complexity readout prints the extent
+ * in words, so a user who presses `+` twice reads "Complexity: 9th" in that
+ * panel while the strip card beside it reads `V7`. The two are consistent -
+ * each says what it is for - but they are on screen together, and the extent is
+ * available in both components. So this is a deferral rather than an
+ * impossibility, and Task 7 should decide it on purpose: either the strip
+ * carries the height too, which is the widened signature above, or the two
+ * readouts are labelled clearly enough that a user is not left comparing them.
+ *
  * ## And the one thing it refuses
  *
  * A degree outside 0-6 throws, on exactly the argument `degreePitchClasses`
@@ -265,4 +309,27 @@ export function romanNumeral(degree: number, quality: ChordQuality): string {
 export function chordName(root: string, quality: ChordQuality): string {
   const suffix = CHORD_SUFFIXES[quality];
   return /^[A-Za-z]/.test(suffix) ? `${root} ${suffix}` : `${root}${suffix}`;
+}
+
+/**
+ * The same chord as a phrase to be read aloud: `E flat major`, `B diminished`.
+ *
+ * For `aria-label`, where `chordName`'s output is not a name but a rendering of
+ * one. Two things go wrong when a chord symbol is announced instead of read:
+ * the suffix is punctuation - `B°` is "B degree sign" - and the accidental is a
+ * letter, so `Eb` is "E b" and `A#` is "A hash" or "A number sign" depending on
+ * the reader. Both are fixed here rather than at the call site, so that a
+ * component that wants a spoken label cannot get half of one.
+ *
+ * The root arrives spelled, as `chordName`'s does and for the same reason: how
+ * a pitch class is spelled is a decision this module is never party to.
+ */
+export function spokenChordName(root: string, quality: ChordQuality): string {
+  return `${spokenRoot(root)} ${SPOKEN_QUALITIES[quality]}`;
+}
+
+/** `Eb` -> `E flat`, `A#` -> `A sharp`, `C` -> `C`. */
+function spokenRoot(root: string): string {
+  if (root.length < 2) return root;
+  return root[0] + (root[1] === '#' ? ' sharp' : ' flat');
 }

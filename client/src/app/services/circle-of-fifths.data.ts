@@ -44,6 +44,19 @@ export interface CirclePosition {
   /** Major key, spelled as `MusicTheoryService` spells it. */
   major: string;
 
+  /**
+   * Pitch class of the major tonic, 0-11.
+   *
+   * Stated rather than parsed out of `major`, so that `keySignatureKind` below
+   * can be a pure function of numbers with no note-name table of its own. The
+   * app already has exactly two chromatic tables and a third one here - even a
+   * private one - would be a third place for a spelling to be wrong.
+   * `circle-of-fifths.data.spec.ts` pins every one of these against
+   * `MusicTheoryService.getNoteIndex`, so a number that disagreed with the name
+   * beside it fails rather than quietly moving a key signature.
+   */
+  pitchClass: number;
+
   /** The other spelling of the same pitch, at six o'clock only. */
   majorEnharmonic: string | null;
 
@@ -81,18 +94,18 @@ export interface CirclePosition {
  * fifths at runtime, and a `readonly` type alone would not stop a stray `sort`.
  */
 export const CIRCLE_POSITIONS: readonly CirclePosition[] = Object.freeze([
-  { major: 'C', majorEnharmonic: null, minor: 'A', minorEnharmonic: null, accidentals: 0, accidentalKind: 'none', enharmonicAccidentalKind: null },
-  { major: 'G', majorEnharmonic: null, minor: 'E', minorEnharmonic: null, accidentals: 1, accidentalKind: 'sharp', enharmonicAccidentalKind: null },
-  { major: 'D', majorEnharmonic: null, minor: 'B', minorEnharmonic: null, accidentals: 2, accidentalKind: 'sharp', enharmonicAccidentalKind: null },
-  { major: 'A', majorEnharmonic: null, minor: 'F#', minorEnharmonic: null, accidentals: 3, accidentalKind: 'sharp', enharmonicAccidentalKind: null },
-  { major: 'E', majorEnharmonic: null, minor: 'C#', minorEnharmonic: null, accidentals: 4, accidentalKind: 'sharp', enharmonicAccidentalKind: null },
-  { major: 'B', majorEnharmonic: null, minor: 'G#', minorEnharmonic: null, accidentals: 5, accidentalKind: 'sharp', enharmonicAccidentalKind: null },
-  { major: 'F#', majorEnharmonic: 'Gb', minor: 'D#', minorEnharmonic: 'Eb', accidentals: 6, accidentalKind: 'sharp', enharmonicAccidentalKind: 'flat' },
-  { major: 'Db', majorEnharmonic: null, minor: 'Bb', minorEnharmonic: null, accidentals: 5, accidentalKind: 'flat', enharmonicAccidentalKind: null },
-  { major: 'Ab', majorEnharmonic: null, minor: 'F', minorEnharmonic: null, accidentals: 4, accidentalKind: 'flat', enharmonicAccidentalKind: null },
-  { major: 'Eb', majorEnharmonic: null, minor: 'C', minorEnharmonic: null, accidentals: 3, accidentalKind: 'flat', enharmonicAccidentalKind: null },
-  { major: 'Bb', majorEnharmonic: null, minor: 'G', minorEnharmonic: null, accidentals: 2, accidentalKind: 'flat', enharmonicAccidentalKind: null },
-  { major: 'F', majorEnharmonic: null, minor: 'D', minorEnharmonic: null, accidentals: 1, accidentalKind: 'flat', enharmonicAccidentalKind: null }
+  { major: 'C', pitchClass: 0, majorEnharmonic: null, minor: 'A', minorEnharmonic: null, accidentals: 0, accidentalKind: 'none', enharmonicAccidentalKind: null },
+  { major: 'G', pitchClass: 7, majorEnharmonic: null, minor: 'E', minorEnharmonic: null, accidentals: 1, accidentalKind: 'sharp', enharmonicAccidentalKind: null },
+  { major: 'D', pitchClass: 2, majorEnharmonic: null, minor: 'B', minorEnharmonic: null, accidentals: 2, accidentalKind: 'sharp', enharmonicAccidentalKind: null },
+  { major: 'A', pitchClass: 9, majorEnharmonic: null, minor: 'F#', minorEnharmonic: null, accidentals: 3, accidentalKind: 'sharp', enharmonicAccidentalKind: null },
+  { major: 'E', pitchClass: 4, majorEnharmonic: null, minor: 'C#', minorEnharmonic: null, accidentals: 4, accidentalKind: 'sharp', enharmonicAccidentalKind: null },
+  { major: 'B', pitchClass: 11, majorEnharmonic: null, minor: 'G#', minorEnharmonic: null, accidentals: 5, accidentalKind: 'sharp', enharmonicAccidentalKind: null },
+  { major: 'F#', pitchClass: 6, majorEnharmonic: 'Gb', minor: 'D#', minorEnharmonic: 'Eb', accidentals: 6, accidentalKind: 'sharp', enharmonicAccidentalKind: 'flat' },
+  { major: 'Db', pitchClass: 1, majorEnharmonic: null, minor: 'Bb', minorEnharmonic: null, accidentals: 5, accidentalKind: 'flat', enharmonicAccidentalKind: null },
+  { major: 'Ab', pitchClass: 8, majorEnharmonic: null, minor: 'F', minorEnharmonic: null, accidentals: 4, accidentalKind: 'flat', enharmonicAccidentalKind: null },
+  { major: 'Eb', pitchClass: 3, majorEnharmonic: null, minor: 'C', minorEnharmonic: null, accidentals: 3, accidentalKind: 'flat', enharmonicAccidentalKind: null },
+  { major: 'Bb', pitchClass: 10, majorEnharmonic: null, minor: 'G', minorEnharmonic: null, accidentals: 2, accidentalKind: 'flat', enharmonicAccidentalKind: null },
+  { major: 'F', pitchClass: 5, majorEnharmonic: null, minor: 'D', minorEnharmonic: null, accidentals: 1, accidentalKind: 'flat', enharmonicAccidentalKind: null }
 ].map(position => Object.freeze(position))) as readonly CirclePosition[];
 
 /**
@@ -140,3 +153,49 @@ export const MODE_OFFSETS: Readonly<Record<string, number>> = Object.freeze({
   aeolian: 9,
   locrian: 11
 });
+
+/** What a key signature is made of, or `null` when the key has none at all. */
+export type KeySignatureKind = 'sharp' | 'flat' | 'none';
+
+/**
+ * Whether a key carries sharps, flats, or neither.
+ *
+ * **A key signature is a property of the key, not of the scale shape**, and this
+ * is the single statement of that rule. It works back from the mode to its
+ * parent major - A aeolian is the ninth degree of C, so it inherits C major's
+ * signature, and E aeolian inherits G major's one sharp - and reads that major's
+ * accidentals off the circle above, which is the same table.
+ *
+ * It lives here, exported and pure, rather than as a private method on
+ * `MusicTheoryService`, because two services need the answer. The fretboard asks
+ * through `shouldUseSharps` and the progression page asks through
+ * `ProgressionService.setKey`, and the second of those was a *copy* of the rule
+ * before it was this call: `ProgressionKey.preferSharps` was being filled from
+ * the scale's own default, which is precisely the mistake `b514027` fixed for
+ * the fretboard and which put `D♯ Maj` on a palette in E flat major.
+ *
+ * `mode` is a scale id from `MusicTheoryService` and `tonic` a pitch class,
+ * 0-11. Returns `null` for anything with no parent major to inherit from - a
+ * pentatonic, a blues scale, a chord, an id the app does not know, a tonic that
+ * is not a pitch class. Those keep whatever preference they declare for
+ * themselves, because inventing a signature for a scale that does not have one
+ * would be worse than having no opinion. So would inventing one for a note this
+ * function cannot place.
+ */
+export function keySignatureKind(mode: string, tonic: number): KeySignatureKind | null {
+  const offset = MODE_OFFSETS[mode];
+  if (offset === undefined) {
+    return null;
+  }
+
+  // A `NaN` or a -1 from a name the caller could not resolve would otherwise
+  // reach the modulo below and come back as a plausible-looking parent.
+  if (!Number.isInteger(tonic) || tonic < 0 || tonic > 11) {
+    return null;
+  }
+
+  const parent = (tonic - offset + 12) % 12;
+  const position = CIRCLE_POSITIONS.find(candidate => candidate.pitchClass === parent);
+
+  return position ? position.accidentalKind : null;
+}

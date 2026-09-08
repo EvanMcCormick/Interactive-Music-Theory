@@ -1,6 +1,7 @@
 // Split so the one runtime edge is visible; see the layering note below.
 import type { ChordExtent, ChordQuality } from '../services/progression-harmony';
 import { noteCount } from '../services/progression-harmony';
+import type { Scale } from './music-theory.model';
 import { TimeSignature } from './composer.model';
 
 /**
@@ -78,10 +79,26 @@ export interface ProgressionKey {
   tonic: number;
   /**
    * A scale id from `MusicTheoryService` - `'ionian'`, `'aeolian'` - not a
-   * display name. The palette looks the intervals up by this id, so an id that
-   * does not resolve there leaves the page with no chords to offer.
+   * display name. `ProgressionService` resolves it once and publishes the scale
+   * on `ProgressionState.keyScale`, so an id that does not resolve leaves the
+   * page with no chords to offer rather than throwing somewhere downstream.
    */
   scaleId: string;
+  /**
+   * How this progression spells its own notes, and the *key's* answer rather
+   * than the app's.
+   *
+   * A key signature is a property of the key and not of the scale shape, so
+   * this is derived by `keySignatureKind` from the tonic and the mode together
+   * - E flat ionian carries three flats however `preferSharps` is set on the
+   * ionian scale, which is `true`. Filling it from the scale's own default
+   * instead is what printed `D♯ Maj` as the tonic chord of E flat major.
+   *
+   * It is stored on the key rather than asked of `MusicTheoryService` at each
+   * render because the two selections are allowed to differ: the fretboard has
+   * a key of its own, and a progression must be spelled correctly on its own
+   * terms rather than only while the two happen to agree.
+   */
   preferSharps: boolean;
 }
 
@@ -208,6 +225,12 @@ export interface ChordDegree {
  *    whether the service will accept one, and computing it in one place is what
  *    stops those two answers drifting. It is not a second definition of the
  *    rule: it is `isHeptatonic` called once, on the scale the key names.
+ *  - **`keyScale` is the scale that `canBuildChords` was decided on**, published
+ *    for the same reason and beside it. `ProgressionKey.scaleId` is a string
+ *    and resolving it is a loop over every scale category; every consumer that
+ *    wants the intervals, the name or the note count would otherwise write that
+ *    loop out again, and the palette already had the service's copy of it
+ *    verbatim before this field existed.
  *
  * `isDirty` earns its place the way `ProgressionDoc.id` and `.name` do - a
  * document with a name and an id is a document something means to save, and the
@@ -219,6 +242,19 @@ export interface ProgressionState {
   selectedSlotId: string | null;
   /** Whether the key's scale can produce diatonic chords at all. */
   canBuildChords: boolean;
+  /**
+   * The scale `key.scaleId` names, or null when the id names nothing the app
+   * knows.
+   *
+   * Resolved, not filtered: a pentatonic arrives here whole, with
+   * `canBuildChords` false beside it. That is what lets the palette say *which*
+   * scale it is refusing and how many notes it has, instead of "not seven".
+   *
+   * Reference data owned by `MusicTheoryService`, handed on by reference. It is
+   * to be read and not written, on the same terms as the arrays
+   * `getScaleCategories` returns.
+   */
+  keyScale: Scale | null;
   isDirty: boolean;
   canUndo: boolean;
   canRedo: boolean;
@@ -566,6 +602,11 @@ function createId(): string {
  *
  * C ionian is what `MusicTheoryService` itself starts on, so the page opens
  * agreeing with the fretboard behind it rather than moving it on first render.
+ *
+ * `preferSharps: true` is what `ProgressionService.setKey` would derive for
+ * this key, and written out rather than derived because a model factory has no
+ * scale table to consult: C major's signature is empty, so the ionian scale's
+ * own default decides, and that is `true`.
  */
 export function createDefaultProgression(): ProgressionDoc {
   return {

@@ -95,6 +95,42 @@ describe('ProgressionService', () => {
     it('can build chords in a heptatonic key', () => {
       expect(currentState().canBuildChords).toBeTrue();
     });
+
+    // The constructor builds its first state through the same `derive` every
+    // publish uses, so a field filled in only one of the two cannot exist.
+    it('publishes the scale the key names before anything is touched', () => {
+      expect(currentState().keyScale?.id).toBe('ionian');
+    });
+  });
+
+  /**
+   * Resolving `scaleId` is a loop over every scale category, and every consumer
+   * that wants the intervals, the name or the note count would otherwise write
+   * that loop out again - the chord palette had it character for character.
+   */
+  describe('the scale the key names', () => {
+    it('follows the key', () => {
+      service.setKey(9, 'aeolian');
+      expect(currentState().keyScale?.id).toBe('aeolian');
+      expect(currentState().keyScale?.intervals).toEqual([0, 2, 3, 5, 7, 8, 10]);
+    });
+
+    // Resolved, not filtered. A page that has to explain the refusal needs to
+    // name the scale it is refusing and count its notes.
+    it('resolves a scale that can build no chords, rather than dropping it', () => {
+      service.setKey(0, 'majorPentatonic');
+      const state = currentState();
+
+      expect(state.canBuildChords).toBeFalse();
+      expect(state.keyScale?.name).toBe('Major Pentatonic');
+      expect(state.keyScale?.intervals.length).toBe(5);
+    });
+
+    it('is null for an id the app does not know', () => {
+      service.setKey(0, 'no-such-scale');
+      expect(currentState().keyScale).toBeNull();
+      expect(currentState().canBuildChords).toBeFalse();
+    });
   });
 
   describe('appendSlot', () => {
@@ -444,21 +480,82 @@ describe('ProgressionService', () => {
     });
 
     /**
-     * **Provisional.** This pins the rule as it stands - the spelling comes
-     * from the scale's own `preferSharps` - and that rule is the one `b514027`
-     * moved away from on the fretboard, where a minor key is now spelled from
-     * its own signature rather than from the scale's default. A minor scale
-     * declares flats, so this says A minor spells flats, and F# minor will say
-     * so too.
+     * The spelling comes from the key's own signature, which is `b514027`'s
+     * rule reaching this page.
      *
-     * The key-signature rule in `MusicTheoryService` is the intended source
-     * once the progression page can reach it. Changing this expectation is
-     * therefore a correction to make on purpose, not a regression - but it
-     * should be made against a named expectation rather than against nothing.
+     * It was the scale's own `preferSharps` until the chord palette printed
+     * `D♯ Maj` as the tonic chord of E flat major. A signature belongs to the
+     * key: E flat major carries three flats whatever the ionian scale declares,
+     * and the ionian scale declares sharps.
      */
-    it('takes the spelling preference the scale declares', () => {
-      service.setKey(9, 'aeolian');
-      expect(currentState().doc.key.preferSharps).toBeFalse();
+    describe('the spelling it stores', () => {
+      /** The key's own preference after a move, which is what the page reads. */
+      function preferSharps(): boolean {
+        return currentState().doc.key.preferSharps;
+      }
+
+      it('spells a flat major key with flats', () => {
+        service.setKey(3, 'ionian');
+        expect(preferSharps()).toBeFalse();
+      });
+
+      it('spells a sharp major key with sharps', () => {
+        service.setKey(11, 'ionian');
+        expect(preferSharps()).toBeTrue();
+      });
+
+      // The b514027 case, one page over: a minor key inherits its relative
+      // major's signature rather than the aeolian scale's flat default.
+      it('spells a sharp minor key with sharps', () => {
+        service.setKey(4, 'aeolian');
+        expect(preferSharps()).toBeTrue();
+
+        service.setKey(6, 'aeolian');
+        expect(preferSharps()).toBeTrue();
+      });
+
+      it('spells a flat minor key with flats', () => {
+        service.setKey(2, 'aeolian');
+        expect(preferSharps()).toBeFalse();
+      });
+
+      /**
+       * A signature of nothing carries no preference, so the scale's own
+       * default is still what decides - which is the honest answer rather than
+       * a fallback from failure.
+       */
+      it('leaves a key with no accidentals to the scale it is in', () => {
+        service.setKey(9, 'aeolian');
+        expect(preferSharps()).toBeFalse();
+
+        service.setKey(0, 'ionian');
+        expect(preferSharps()).toBeTrue();
+      });
+
+      // A pentatonic has no parent major to inherit from at all.
+      it('leaves a scale with no signature to its own preference', () => {
+        service.setKey(3, 'majorPentatonic');
+        expect(preferSharps()).toBeTrue();
+      });
+
+      /** No scale to ask, so the preference already in force is kept. */
+      it('keeps the preference in force for an id it cannot resolve', () => {
+        service.setKey(3, 'ionian');
+        service.setKey(11, 'no-such-scale');
+        expect(preferSharps()).toBeFalse();
+      });
+
+      /**
+       * The tonic is bounded before the signature is looked up. 15 is E flat's
+       * pitch class an octave up, and a signature looked up from 15 is no
+       * signature at all - which would silently hand the key back to the
+       * ionian scale's sharp default.
+       */
+      it('reads the signature of the tonic it stores', () => {
+        service.setKey(15, 'ionian');
+        expect(currentState().doc.key.tonic).toBe(3);
+        expect(preferSharps()).toBeFalse();
+      });
     });
 
     it('wraps a tonic past the end of the chromatic scale', () => {

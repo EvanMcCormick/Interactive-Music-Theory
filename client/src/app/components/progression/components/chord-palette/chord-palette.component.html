@@ -2,8 +2,15 @@
   <h3 class="title">Chords in this key</h3>
 
   <!-- The guard. A pentatonic or blues scale has no thirds to stack, so the
-       page says why rather than printing chords it invented. -->
-  <p class="unavailable" *ngIf="unavailable">{{ unavailable }}</p>
+       page says why rather than printing chords it invented.
+
+       The live region is the wrapper and not the paragraph: switching to a
+       pentatonic scale *creates* the paragraph, and a region announces changes
+       to itself rather than its own arrival, so an aria-live on an element that
+       did not exist a moment ago says nothing. The wrapper is always here. -->
+  <div class="unavailable-region" aria-live="polite">
+    <p class="unavailable" *ngIf="unavailable">{{ unavailable }}</p>
+  </div>
 
   <div class="chords" *ngIf="unavailable === null" role="group" aria-label="Diatonic chords">
     <button
@@ -11,14 +18,18 @@
       class="chord"
       *ngFor="let chord of chords; trackBy: trackByDegree"
       [class.tonic]="chord.isTonic"
-      [attr.aria-label]="'Add ' + chord.name + ', ' + chord.numeral"
+      [attr.aria-label]="chord.label"
       (click)="addChord(chord)">
       <span class="numeral">{{ chord.numeral }}</span>
       <span class="name">{{ chord.name }}</span>
     </button>
   </div>
 
-  <div class="controls">
+  <!-- Hidden rather than greyed in a key that can build no chords. They act on
+       a selected chord, and there is none to select: the panel would otherwise
+       be half grey with the hint that explains grey steppers suppressed, in
+       exactly the state this component works hardest to explain. -->
+  <div class="controls" *ngIf="unavailable === null">
     <div class="control" role="group" aria-label="Chord complexity">
       <span class="control-label">Complexity</span>
       <button

@@ -6,7 +6,8 @@ import {
   degreePitchClasses,
   isHeptatonic,
   noteCount,
-  romanNumeral
+  romanNumeral,
+  spokenChordName
 } from './progression-harmony';
 
 const MAJOR = [0, 2, 4, 5, 7, 9, 11];
@@ -186,11 +187,29 @@ describe('romanNumeral', () => {
     expect(romanNumeral(0, 'major7')).toBe('Imaj7');
     expect(romanNumeral(4, 'dominant7')).toBe('V7');
     expect(romanNumeral(1, 'minor7')).toBe('ii7');
-    expect(romanNumeral(0, 'minorMajor7')).toBe('imaj7');
+    expect(romanNumeral(0, 'minorMajor7')).toBe('i(maj7)');
     expect(romanNumeral(6, 'halfDiminished7')).toBe('viiø7');
     expect(romanNumeral(6, 'diminished7')).toBe('vii°7');
     expect(romanNumeral(2, 'augmented7')).toBe('III+7');
     expect(romanNumeral(2, 'augmentedMajor7')).toBe('III+maj7');
+  });
+
+  /**
+   * Why the minor-major seventh is parenthesised, pinned as the property
+   * rather than as a string.
+   *
+   * `Imaj7` and `imaj7` differ by the case of one leading letter, and both are
+   * reachable: the first is ionian's tonic seventh, the second harmonic and
+   * melodic minor's. A reader who has to compare letter case in a font they did
+   * not choose has been given a distinction they cannot rely on, which is why
+   * the convention brackets the minor-major.
+   */
+  it('does not distinguish two seventh figures by letter case alone', () => {
+    const major = romanNumeral(0, 'major7');
+    const minorMajor = romanNumeral(0, 'minorMajor7');
+
+    expect(minorMajor).not.toBe(major);
+    expect(minorMajor.toLowerCase()).not.toBe(major.toLowerCase());
   });
 
   /**
@@ -261,5 +280,54 @@ describe('chordName', () => {
 
   it('marks a stack that is not a named chord', () => {
     expect(chordName('B', 'other')).toBe('B?');
+  });
+});
+
+/**
+ * The third table: the same chords as something a screen reader can say.
+ *
+ * `chordName` prints symbols, and symbols are not read - `B°` is announced as
+ * "B degree sign" and `Eb` as "E b". A button whose only label is that is a
+ * button a listener cannot identify, so the spoken form is written rather than
+ * assembled from the printed one.
+ */
+describe('spokenChordName', () => {
+  it('says the suffix instead of printing it', () => {
+    expect(spokenChordName('B', 'diminished')).toBe('B diminished');
+    expect(spokenChordName('C', 'augmented')).toBe('C augmented');
+    expect(spokenChordName('B', 'halfDiminished7')).toBe('B half diminished seventh');
+    expect(spokenChordName('G', 'dominant7')).toBe('G dominant seventh');
+  });
+
+  it('says the accidental instead of spelling it', () => {
+    expect(spokenChordName('Eb', 'major')).toBe('E flat major');
+    expect(spokenChordName('A#', 'minor')).toBe('A sharp minor');
+    expect(spokenChordName('C', 'major')).toBe('C major');
+  });
+
+  /** The chord is real; only its name is missing, and the label says so. */
+  it('still identifies a stack that is not a named chord', () => {
+    expect(spokenChordName('B', 'other')).toBe('B unnamed chord');
+  });
+
+  /**
+   * Nothing here may come back as punctuation or as `undefined`. The table is
+   * keyed exhaustively on `ChordQuality`, so this is a check that every entry
+   * is a phrase rather than a copy of the printed figure.
+   */
+  it('gives every quality words rather than symbols', () => {
+    const qualities: ChordQuality[] = [
+      'major', 'minor', 'diminished', 'augmented',
+      'major7', 'minor7', 'dominant7', 'minorMajor7',
+      'halfDiminished7', 'diminished7', 'augmented7', 'augmentedMajor7',
+      'other'
+    ];
+
+    for (const quality of qualities) {
+      const spoken = spokenChordName('C', quality);
+      expect(spoken)
+        .withContext(`${quality} is not spoken as words`)
+        .toMatch(/^C [a-z ]+$/);
+    }
   });
 });

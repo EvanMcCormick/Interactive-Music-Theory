@@ -7,7 +7,7 @@ import {
   OnInit,
   inject
 } from '@angular/core';
-import { Subject, combineLatest, takeUntil } from 'rxjs';
+import { Subject, takeUntil } from 'rxjs';
 
 import { Scale } from '../../../../models/music-theory.model';
 import {
@@ -21,7 +21,8 @@ import {
   ChordExtent,
   chordName,
   degreeQuality,
-  romanNumeral
+  romanNumeral,
+  spokenChordName
 } from '../../../../services/progression-harmony';
 
 /** One button: where the chord sits in the key, and what it is called there. */
@@ -30,6 +31,16 @@ export interface PaletteChord {
   degree: number;
   numeral: string;
   name: string;
+  /**
+   * What the button says aloud, built here rather than in the template.
+   *
+   * Two reasons, and the second is the one that matters. A concatenation in an
+   * `[attr.aria-label]` binding is re-evaluated on every change-detection pass,
+   * which the project rules single out; and the visible pair - `vii°` over `B°`
+   * - announces as "vii degree sign, B degree sign", so it needs writing rather
+   * than assembling. See `spokenChordName`.
+   */
+  label: string;
   /** The I chord, which takes the root colour the fretboard gives the root. */
   isTonic: boolean;
 }
@@ -66,23 +77,31 @@ const NOTHING_SELECTED = '—';
  * state and not a second copy of it: nothing here is written except by
  * `render`, and every button dispatches straight back to the service.
  *
- * ## Why it listens to two services
+ * ## One source, and why that is the fix rather than the simplification
  *
- * The numerals come from the progression's key and the *spelling* of the names
- * comes from `MusicTheoryService.getNoteName`, which follows the app-wide
- * sharps-or-flats rule so this page spells a chord the way the fretboard behind
- * it spells the same note. Two inputs, so two sources - and `combineLatest`
- * says so, rather than leaving the names to refresh only when something else
- * happens to change.
+ * Everything on this page - the numerals, the names and their *spelling* - is a
+ * property of the progression's key, so `ProgressionService` is the only thing
+ * it subscribes to. It used to combine `MusicTheoryService.getState()` as well,
+ * so that a name was spelled the way the fretboard behind it spells the same
+ * note; that was wrong, not merely redundant. The fretboard has a key of its
+ * own, the two are allowed to differ, and asking the app-wide rule printed
+ * `D♯ Maj` as the tonic chord of E flat major. `key.preferSharps` is the key's
+ * own answer and is derived from its signature - see `ProgressionService`'s
+ * `spellingFor` - so this page is right on its own terms rather than only while
+ * two services happen to agree. `MusicTheoryService` is still injected, for
+ * `spellNote`, but it is asked to spell a note with a given preference rather
+ * than asked what the preference is.
  *
- * ## The guard
+ * ## The guard, and the scale behind it
  *
- * `state.canBuildChords` decides whether there are chords to offer, and it is
- * read rather than recomputed. It is `isHeptatonic` already applied to the
- * key's scale, so reading it is what makes "the palette will offer this" and
- * "the service will accept it" one answer instead of two that can drift. The
- * scale is still looked up here for its intervals and its name - but the *rule*
- * is not restated, only the lookup.
+ * `state.canBuildChords` decides whether there are chords to offer and
+ * `state.keyScale` is the scale it was decided on. Both are read rather than
+ * recomputed: `canBuildChords` is `isHeptatonic` already applied, so reading it
+ * makes "the palette will offer this" and "the service will accept it" one
+ * answer instead of two that can drift, and `keyScale` is the same resolution
+ * of `scaleId` the service already performs to regenerate a slot. The loop that
+ * resolved it lived here too, character for character, until the state carried
+ * it.
  */
 @Component({
   selector: 'app-chord-palette',
@@ -113,9 +132,10 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   private readonly destroy$ = new Subject<void>();
 
   ngOnInit(): void {
-    combineLatest([this.progression.getState(), this.musicTheory.getState()])
+    this.progression
+      .getState()
       .pipe(takeUntil(this.destroy$))
-      .subscribe(([state]) => {
+      .subscribe(state => {
         this.render(state);
         this.changes.markForCheck();
       });
@@ -160,7 +180,7 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
 
   /** Rebuilds everything on screen from one published state. */
   private render(state: ProgressionState): void {
-    const scale = this.findScale(state.doc.key.scaleId);
+    const scale = state.keyScale;
 
     if (state.canBuildChords && scale) {
       this.chords = this.buildChords(state.doc.key, scale.intervals);
@@ -187,12 +207,23 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
       // `degreePitchClasses` works relative to the tonic, so the tonic is added
       // here - the same one addition `generateSlotNotes` makes on the way to
       // the notes, so the label and the sound come from one arithmetic.
-      const root = this.musicTheory.getNoteName((key.tonic + intervals[degree]) % 12);
+      //
+      // Spelled from `key.preferSharps` and not from `getNoteName`, which
+      // answers for the *fretboard's* key. See the note at the top of the file.
+      const root = this.musicTheory.spellNote(
+        (key.tonic + intervals[degree]) % 12,
+        key.preferSharps
+      );
 
       return {
         degree,
         numeral: romanNumeral(degree, quality),
         name: chordName(root, quality),
+        // The numeral is dropped from the spoken label rather than translated:
+        // read aloud it is a string of letters ("vee eye eye") and the one fact
+        // it carries beyond the position - the quality - is already in the
+        // spoken name. The position is given as the degree instead.
+        label: `Add ${spokenChordName(root, quality)}, degree ${degree + 1}`,
         isTonic: degree === 0
       };
     });
@@ -226,15 +257,6 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     // than dispatching edits the service silently drops.
     if (!slot || slot.harmony.kind !== 'degree') return null;
     return slot.harmony.degree;
-  }
-
-  /** The scale a key names, or null when the id names nothing the app knows. */
-  private findScale(scaleId: string): Scale | null {
-    for (const category of this.musicTheory.getScaleCategories()) {
-      const scale = category.scales.find(candidate => candidate.id === scaleId);
-      if (scale) return scale;
-    }
-    return null;
   }
 }
 

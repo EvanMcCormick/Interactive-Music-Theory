@@ -22,6 +22,7 @@ import {
 } from './progression-edit';
 import { ChordExtent, isHeptatonic } from './progression-harmony';
 import { Scale } from '../models/music-theory.model';
+import { keySignatureKind } from './circle-of-fifths.data';
 import { MusicTheoryService } from './music-theory.service';
 
 /**
@@ -85,15 +86,9 @@ export class ProgressionService {
   private redoStack: ProgressionDoc[] = [];
 
   constructor() {
-    const doc = createDefaultProgression();
-    this.stateSubject = new BehaviorSubject<ProgressionState>({
-      doc,
-      selectedSlotId: null,
-      canBuildChords: this.canBuildChords(doc.key),
-      isDirty: false,
-      canUndo: false,
-      canRedo: false
-    });
+    this.stateSubject = new BehaviorSubject<ProgressionState>(
+      this.derive(createDefaultProgression(), null, false)
+    );
   }
 
   getState(): Observable<ProgressionState> {
@@ -327,13 +322,20 @@ export class ProgressionService {
       // inside it. Generating from the raw tonic while storing the wrapped one
       // agrees today only because `voiceChord` reduces mod 12, which is a fact
       // about a module two layers down rather than a promise to this one.
-      draft.key = normalizeProgressionKey({
+      //
+      // Bounded before the spelling is decided, too: a tonic of 13 is E flat's
+      // pitch class dressed as an octave above, and a signature looked up from
+      // 13 is no signature at all.
+      const bounded = normalizeProgressionKey({
         tonic,
         scaleId,
-        // An unknown id is left with whatever preference was already in force:
-        // there is no scale to ask, and guessing would be worse than keeping.
-        preferSharps: scale ? scale.preferSharps : draft.key.preferSharps
+        preferSharps: draft.key.preferSharps
       });
+
+      draft.key = {
+        ...bounded,
+        preferSharps: this.spellingFor(bounded.tonic, scaleId, scale, draft.key.preferSharps)
+      };
 
       // No `isHeptatonic` check of its own: `regenerate` asks already, and
       // hands a slot back unchanged when the answer is no - which is what
@@ -437,24 +439,42 @@ export class ProgressionService {
     }
   }
 
-  /**
-   * Publishes a document, deriving the state around it in one place.
-   *
-   * `canBuildChords` is a function of the key and the selection a function of
-   * the slots, so both are computed here rather than at each call site - the
-   * same argument that put the normalisation inside `commit()`. The selection
-   * is validated rather than trusted, which is how removing the selected slot
-   * clears the selection without `removeSlot` having to remember to.
-   */
+  /** Publishes a document and everything the page derives from it. */
   private publish(doc: ProgressionDoc, selectedSlotId: string | null, isDirty: boolean): void {
-    this.stateSubject.next({
+    this.stateSubject.next(this.derive(doc, selectedSlotId, isDirty));
+  }
+
+  /**
+   * Builds the whole published state around a document, in one place.
+   *
+   * `keyScale` and `canBuildChords` are functions of the key and the selection
+   * a function of the slots, so all three are computed here rather than at each
+   * call site - the same argument that put the normalisation inside `commit()`.
+   * The selection is validated rather than trusted, which is how removing the
+   * selected slot clears the selection without `removeSlot` having to remember
+   * to.
+   *
+   * The constructor builds its first state through here too, rather than
+   * writing the six fields out a second time. A field added to
+   * `ProgressionState` and filled in only one of two places would be right
+   * until the first render and wrong before the first click.
+   */
+  private derive(
+    doc: ProgressionDoc,
+    selectedSlotId: string | null,
+    isDirty: boolean
+  ): ProgressionState {
+    const keyScale = this.findScale(doc.key.scaleId);
+
+    return {
       doc,
       selectedSlotId: doc.slots.some(slot => slot.id === selectedSlotId) ? selectedSlotId : null,
-      canBuildChords: this.canBuildChords(doc.key),
+      canBuildChords: this.chordScale(keyScale) !== null,
+      keyScale,
       isDirty,
       canUndo: this.undoStack.length > 0,
       canRedo: this.redoStack.length > 0
-    });
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -463,7 +483,35 @@ export class ProgressionService {
 
   /** Re-derives a slot's quality label and its notes, in the key it is in. */
   private regenerate(slot: ChordSlot, key: ProgressionKey): ChordSlot {
-    return regenerateSlot(slot, key, this.chordScale(key));
+    return regenerateSlot(slot, key, this.chordScale(this.findScale(key.scaleId)));
+  }
+
+  /**
+   * How the new key spells its notes: its own signature, then the scale's
+   * default, then whatever was already in force.
+   *
+   * The first clause is the one that matters and it is `b514027`'s rule, called
+   * rather than restated - E flat ionian carries three flats however the ionian
+   * scale's `preferSharps` is set, and it is set to `true`. Reading that flag
+   * first was how the palette came to print `D♯ Maj` in E flat major.
+   *
+   * The second clause is not a fallback from failure but the honest answer for
+   * a scale with no parent major: a pentatonic has no signature to inherit, so
+   * the only opinion available is the one it declares for itself. The third is
+   * for an id the app cannot resolve at all - there is no scale to ask, and
+   * guessing would be worse than keeping.
+   */
+  private spellingFor(
+    tonic: number,
+    scaleId: string,
+    scale: Scale | null,
+    inForce: boolean
+  ): boolean {
+    const signature = keySignatureKind(scaleId, tonic);
+    if (signature === 'sharp') return true;
+    if (signature === 'flat') return false;
+
+    return scale ? scale.preferSharps : inForce;
   }
 
   /**
@@ -482,19 +530,22 @@ export class ProgressionService {
   }
 
   /**
-   * The intervals a key can stack thirds through, or null when it cannot.
+   * The intervals a scale can stack thirds through, or null when it cannot.
    *
    * Two questions with one answer: whether the palette may offer a chord, and
    * what `regenerateSlot` builds one from. An unknown id and a scale that is
    * not heptatonic answer both, asked once so the two cannot drift.
+   *
+   * It takes the resolved scale rather than the key so that `derive` can ask it
+   * about the scale it has already looked up. The heptatonic rule is stated
+   * here and nowhere else, which is the property worth keeping.
    */
-  private chordScale(key: ProgressionKey): readonly number[] | null {
-    const scale = this.findScale(key.scaleId);
+  private chordScale(scale: Scale | null): readonly number[] | null {
     return scale && isHeptatonic(scale.intervals) ? scale.intervals : null;
   }
 
   /** Whether thirds can be stacked through the key's scale at all. */
   private canBuildChords(key: ProgressionKey): boolean {
-    return this.chordScale(key) !== null;
+    return this.chordScale(this.findScale(key.scaleId)) !== null;
   }
 }

@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 
 import { MusicTheoryService } from './music-theory.service';
-import { CIRCLE_POSITIONS, circleOrder } from './circle-of-fifths.data';
+import { CIRCLE_POSITIONS, circleOrder, keySignatureKind } from './circle-of-fifths.data';
 
 /**
  * The reference data, checked against interval arithmetic rather than against a
@@ -60,6 +60,21 @@ describe('circle of fifths data', () => {
   it('names every key once, with no pitch repeated', () => {
     const pitches = CIRCLE_POSITIONS.map(p => index(p.major));
     expect(new Set(pitches).size).toBe(12);
+  });
+
+  /**
+   * The number beside each name, pinned against the name.
+   *
+   * `keySignatureKind` looks a position up by `pitchClass` rather than by
+   * parsing `major`, so a number that disagreed with the name next to it would
+   * move a key signature onto the wrong key and nothing else would notice.
+   */
+  it('gives every position the pitch class of the name beside it', () => {
+    for (const position of CIRCLE_POSITIONS) {
+      expect(position.pitchClass)
+        .withContext(`${position.major} is not pitch class ${position.pitchClass}`)
+        .toBe(index(position.major));
+    }
   });
 
   it('puts each relative minor nine semitones above its major', () => {
@@ -132,6 +147,53 @@ describe('circle of fifths data', () => {
   it('keeps the tonic at the top in both directions', () => {
     expect(circleOrder('fifths')[0].major).toBe('C');
     expect(circleOrder('fourths')[0].major).toBe('C');
+  });
+
+  /**
+   * The rule two services now share.
+   *
+   * It was a private method on `MusicTheoryService` reading that service's own
+   * selected key, which meant the progression page could not ask it and filled
+   * `ProgressionKey.preferSharps` from the scale shape's default instead - the
+   * exact mistake `b514027` had already fixed once. Tested here, on the table it
+   * reads, rather than only through whichever service happens to call it.
+   */
+  describe('keySignatureKind', () => {
+    it('reads a major key straight off the circle', () => {
+      expect(keySignatureKind('ionian', index('C'))).toBe('none');
+      expect(keySignatureKind('ionian', index('G'))).toBe('sharp');
+      expect(keySignatureKind('ionian', index('F'))).toBe('flat');
+      expect(keySignatureKind('ionian', index('Eb'))).toBe('flat');
+      expect(keySignatureKind('ionian', index('B'))).toBe('sharp');
+    });
+
+    // The whole point of the mode offsets: a minor key has a signature of its
+    // own and it is its relative major's, not its scale shape's default.
+    it('works a mode back to its parent major', () => {
+      expect(keySignatureKind('aeolian', index('E'))).toBe('sharp');
+      expect(keySignatureKind('aeolian', index('D'))).toBe('flat');
+      expect(keySignatureKind('aeolian', index('A'))).toBe('none');
+      expect(keySignatureKind('dorian', index('E'))).toBe('sharp');
+      expect(keySignatureKind('mixolydian', index('A'))).toBe('sharp');
+    });
+
+    it('has no opinion about a scale with no parent major', () => {
+      expect(keySignatureKind('majorPentatonic', 0)).toBeNull();
+      expect(keySignatureKind('minorBlues', 0)).toBeNull();
+      expect(keySignatureKind('', 0)).toBeNull();
+    });
+
+    /**
+     * A caller that could not resolve a note name hands this -1, and `NaN`
+     * reaches it the same way. Both survive the modulo as a plausible-looking
+     * parent, so they are refused rather than answered.
+     */
+    it('has no opinion about a tonic that is not a pitch class', () => {
+      expect(keySignatureKind('ionian', -1)).toBeNull();
+      expect(keySignatureKind('ionian', 12)).toBeNull();
+      expect(keySignatureKind('ionian', NaN)).toBeNull();
+      expect(keySignatureKind('ionian', 1.5)).toBeNull();
+    });
   });
 
   it('is the same twelve positions in either direction', () => {

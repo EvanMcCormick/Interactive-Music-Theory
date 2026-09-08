@@ -1,4 +1,4 @@
-import { CIRCLE_POSITIONS, MODE_OFFSETS } from './circle-of-fifths.data';
+import { keySignatureKind } from './circle-of-fifths.data';
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import {
@@ -703,7 +703,11 @@ export class MusicTheoryService {
     // relative major is F. Reading a per-scale `preferSharps` instead gave every
     // natural-rooted minor the same answer, which is how E minor ended up
     // spelled with a G flat in it.
-    const signature = this.keySignatureKind();
+    //
+    // The rule itself lives in `circle-of-fifths.data.ts`, beside the signature
+    // table it reads, because `ProgressionService` needs the same answer for a
+    // key this service has never been told about.
+    const signature = keySignatureKind(state.selectedItem, this.getNoteIndex(state.selectedKey));
     if (signature === 'sharp') {
       return true;
     }
@@ -713,37 +717,6 @@ export class MusicTheoryService {
 
     // Otherwise use the item's preference (scales have preferSharps, chords default to true)
     return currentItem.preferSharps !== undefined ? currentItem.preferSharps : true;
-  }
-
-  /**
-   * Whether the current key and mode carry sharps, flats, or neither.
-   *
-   * Works back from the mode to its parent major - A aeolian is the ninth
-   * degree of C, so it inherits C major's signature - and reads that major's
-   * accidentals off the circle of fifths, which is the same table.
-   *
-   * Returns null for anything with no parent major to inherit from: a
-   * pentatonic, a blues scale, a chord. Those keep whatever preference they
-   * declare for themselves, because inventing a signature for a scale that does
-   * not have one would be worse than having no opinion.
-   */
-  private keySignatureKind(): 'sharp' | 'flat' | 'none' | null {
-    const state = this.state.getValue();
-
-    const offset = MODE_OFFSETS[state.selectedItem];
-    if (offset === undefined) {
-      return null;
-    }
-
-    const tonic = this.getNoteIndex(state.selectedKey);
-    if (tonic < 0) {
-      return null;
-    }
-
-    const parent = (tonic - offset + 12) % 12;
-    const position = CIRCLE_POSITIONS.find(p => this.getNoteIndex(p.major) === parent);
-
-    return position ? position.accidentalKind : null;
   }
 
   getChromatic(): string[] {
@@ -765,7 +738,25 @@ export class MusicTheoryService {
   }
 
   getNoteName(noteIndex: number): string {
-    return this.getChromatic()[noteIndex % 12];
+    return this.spellNote(noteIndex, this.shouldUseSharps());
+  }
+
+  /**
+   * Spells a pitch class with the accidentals the caller asks for.
+   *
+   * `getNoteName` is this with the app-wide answer already filled in, and that
+   * is the right default for the fretboard and the keyboard, which draw the
+   * key this service has selected. It is the wrong one for a page in a key of
+   * its own: the progression composer carries its own key and its own
+   * `preferSharps`, and asking the app-wide rule spelled E flat major from
+   * whatever the fretboard behind it happened to be in.
+   *
+   * The two chromatic tables stay here rather than being exported, so there is
+   * still one place a note name is written down.
+   */
+  spellNote(noteIndex: number, preferSharps: boolean): string {
+    const chromatic = preferSharps ? this.chromaticScaleWithSharps : this.chromaticScaleWithFlats;
+    return chromatic[noteIndex % 12];
   }
 
   getNashvilleNumber(noteIndex: number, keyIndex: number): string {

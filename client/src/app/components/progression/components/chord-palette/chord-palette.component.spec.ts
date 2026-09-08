@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { ChordPaletteComponent } from './chord-palette.component';
+import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
 import {
   ChordDegree,
@@ -94,6 +95,95 @@ describe('ChordPaletteComponent', () => {
         .toEqual(['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°']);
       expect(component.chords[0].name).toBe('G Maj');
     });
+
+    /**
+     * The first key here with a black note in it, and the reason every key
+     * above has only naturals is why this was wrong for so long.
+     *
+     * E flat major is E♭ F G A♭ B♭ C D. Spelling it from anything but its own
+     * signature gives D♯ F G G♯ A♯ C D - five wrong accidentals, printed as
+     * fact on a page whose whole job is to teach which chords are in a key.
+     */
+    it('spells a flat key with flats', () => {
+      progression.setKey(3, 'ionian');
+      settle();
+
+      expect(component.chords.map(chord => chord.numeral))
+        .toEqual(['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°']);
+      expect(component.chords.map(chord => chord.name))
+        .toEqual(['Eb Maj', 'F min', 'G min', 'Ab Maj', 'Bb Maj', 'C min', 'D°']);
+    });
+
+    /** And a sharp one with sharps: B major is B C♯ D♯ E F♯ G♯ A♯. */
+    it('spells a sharp key with sharps', () => {
+      progression.setKey(11, 'ionian');
+      settle();
+
+      expect(component.chords.map(chord => chord.name))
+        .toEqual(['B Maj', 'C# min', 'D# min', 'E Maj', 'F# Maj', 'G# min', 'A#°']);
+    });
+
+    /**
+     * `isTonic` is what the template colours the I chord with, and it is a
+     * field rather than a style - one button in seven, and it moves with the
+     * key rather than with the button's position, because the tonic is degree
+     * 0 of whatever mode is selected.
+     */
+    it('marks the tonic and only the tonic', () => {
+      expect(component.chords.map(chord => chord.isTonic))
+        .toEqual([true, false, false, false, false, false, false]);
+
+      progression.setKey(9, 'aeolian');
+      settle();
+
+      expect(component.chords.map(chord => chord.isTonic))
+        .toEqual([true, false, false, false, false, false, false]);
+    });
+
+    /**
+     * What the buttons say aloud.
+     *
+     * The visible pair is `vii°` over `B°`, which a screen reader announces as
+     * "vii degree sign, B degree sign" - a label naming something that is not a
+     * chord. It is precomputed rather than concatenated in the template, both
+     * because the project rules keep computation out of templates and because
+     * a phrase like this needs writing rather than assembling.
+     */
+    it('labels each button with something that can be read aloud', () => {
+      progression.setKey(3, 'ionian');
+      settle();
+
+      expect(component.chords[0].label).toBe('Add E flat major, degree 1');
+      expect(component.chords[6].label).toBe('Add D diminished, degree 7');
+    });
+
+    it('puts that label on the button rather than the printed name', () => {
+      const buttons: HTMLElement[] =
+        Array.from(fixture.nativeElement.querySelectorAll('button.chord'));
+
+      expect(buttons.length).toBe(7);
+      expect(buttons.map(button => button.getAttribute('aria-label')))
+        .toEqual(component.chords.map(chord => chord.label));
+    });
+
+    /**
+     * The spelling belongs to the progression's key, not to the app's.
+     *
+     * These are two selections and they are allowed to differ - Task 10 wires
+     * the circle to both, and until then only one of them moves. A palette that
+     * asked `MusicTheoryService` how to spell would print E flat major with
+     * sharps whenever the fretboard behind it happened to be in one, which is
+     * how this page came to show D♯ Maj as the tonic of E♭ major.
+     */
+    it('ignores the key the fretboard is in', () => {
+      const musicTheory = TestBed.inject(MusicTheoryService);
+      progression.setKey(3, 'ionian');
+      musicTheory.selectKeyAndMode('F#', 'diatonicModes', 'ionian');
+      settle();
+
+      expect(component.chords.map(chord => chord.name))
+        .toEqual(['Eb Maj', 'F min', 'G min', 'Ab Maj', 'Bb Maj', 'C min', 'D°']);
+    });
   });
 
   describe('the non-heptatonic guard', () => {
@@ -114,6 +204,59 @@ describe('ChordPaletteComponent', () => {
       // The one DOM assertion: an explanation the component computed but never
       // rendered would pass every expectation above and show the user nothing.
       expect(fixture.nativeElement.textContent).toContain(explanation);
+    });
+
+    /**
+     * The sentence is measured, not fixed prose.
+     *
+     * "seven" appears in the sentence whatever the count says, so asserting
+     * only that leaves the two numbers it actually reads - the scale it is in
+     * and how many notes that scale has - free to be anything at all. A
+     * pentatonic scale reported as having six notes is a wrong statement about
+     * music on a page whose job is to make true ones.
+     */
+    it('names the scale it is refusing and counts its notes', () => {
+      progression.setKey(0, 'majorPentatonic');
+      settle();
+
+      expect(component.unavailable).toContain('Major Pentatonic');
+      expect(component.unavailable).toContain('5 notes');
+    });
+
+    it('counts a six-note scale as six', () => {
+      progression.setKey(0, 'minorBlues');
+      settle();
+
+      expect(component.unavailable).toContain('Minor Blues');
+      expect(component.unavailable).toContain('6 notes');
+    });
+
+    /**
+     * Fix 4's other half. The steppers act on a selected chord and there is
+     * none to select, so a panel that kept them would be half grey with the
+     * hint that explains grey steppers suppressed - in exactly the state this
+     * component works hardest to explain.
+     */
+    it('shows no controls to explain away', () => {
+      progression.setKey(0, 'majorPentatonic');
+      settle();
+
+      expect(fixture.nativeElement.querySelectorAll('button.step').length).toBe(0);
+    });
+
+    /**
+     * Switching to a pentatonic scale replaces the palette with a sentence, and
+     * a screen reader is told nothing at all unless the region announcing it
+     * was already on the page.
+     */
+    it('announces the refusal in a region that was already there', () => {
+      const region = fixture.nativeElement.querySelector('[aria-live]');
+      expect(region).not.toBeNull();
+
+      progression.setKey(0, 'majorPentatonic');
+      settle();
+
+      expect(region.textContent).toContain(component.unavailable ?? '');
     });
 
     it('offers nothing for a blues scale', () => {
@@ -216,6 +359,27 @@ describe('ChordPaletteComponent', () => {
 
       expect(selectedDegree().extent).toBe(3);
     });
+
+    /**
+     * The readout, rung by rung.
+     *
+     * These five words are the whole of what the control tells a user about
+     * what it just did, and they are the component's own table - nothing in
+     * `progression-harmony.spec.ts` covers them. Swapped or shifted by one they
+     * would report a seventh as a ninth, which is a false statement about the
+     * chord that is playing.
+     */
+    it('names each rung of the ladder as it climbs', () => {
+      const climbed = [component.extentLabel];
+
+      for (let press = 0; press < 4; press++) {
+        component.stepComplexity(1);
+        settle();
+        climbed.push(component.extentLabel);
+      }
+
+      expect(climbed).toEqual(['Triad', '7th', '9th', '11th', '13th']);
+    });
   });
 
   describe('the octave control', () => {
@@ -242,6 +406,24 @@ describe('ChordPaletteComponent', () => {
 
       expect(selectedDegree().octave).toBe(OCTAVE_MAX);
     });
+
+    /**
+     * The sign is the readout. `1` and `-1` are two octaves apart and differ on
+     * screen by one character, so an unsigned positive reads as an absolute
+     * position rather than as a shift from where the chord sits by default.
+     */
+    it('signs the octave it reports', () => {
+      expect(component.octaveLabel).toBe('0');
+
+      component.stepOctave(1);
+      settle();
+      expect(component.octaveLabel).toBe('+1');
+
+      component.stepOctave(-1);
+      component.stepOctave(-1);
+      settle();
+      expect(component.octaveLabel).toBe('-1');
+    });
   });
 
   /**
@@ -264,6 +446,16 @@ describe('ChordPaletteComponent', () => {
 
     it('disables the controls', () => {
       expect(component.canAdjust).toBeFalse();
+    });
+
+    /**
+     * And says so in the readouts, rather than leaving the last chord's
+     * complexity and octave standing beside two dead buttons - which reads as
+     * a description of something still selected.
+     */
+    it('describes nothing in the readouts', () => {
+      expect(component.extentLabel).toBe('—');
+      expect(component.octaveLabel).toBe('—');
     });
 
     it('dispatches nothing', () => {
