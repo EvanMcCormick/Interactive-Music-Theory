@@ -236,6 +236,29 @@ export const TEMPO_MIN = 20;
 export const TEMPO_MAX = 300;
 
 /**
+ * The velocity every generated note is given, out of MIDI's 1-127.
+ *
+ * It lives here rather than in `progression-generate.ts` because it is a
+ * `RollNote` default rather than a fact about chord generation. M2's piano roll
+ * draws notes by hand and needs the same starting value, and it has no business
+ * importing a constant out of the block-chord generator to get it - the same
+ * argument that put `VOICING_BASE_MIDI` here rather than beside `voiceChord`.
+ *
+ * 80 is `mf` on the dynamics map MIDI writers share - 49 p, 64 mp, 80 mf, 96 f
+ * - which is the value to reach for when the score is unmarked, and every M1
+ * chord is unmarked. Sitting at neither end is the point: M1 sounds every note
+ * at exactly this velocity, so the constant's real job is to leave M2's
+ * velocity editing somewhere to move in both directions from.
+ *
+ * It corroborates against the instruments already in the app, which reach Tone
+ * as an 0-1 gain rather than as a MIDI byte: the fretboard plucks at 0.6-1.0
+ * and the keyboard strikes at 0.5-1.0. 80/127 is 0.63, inside both ranges and
+ * at the bottom of them, so a progression sits under a plucked note rather than
+ * over it - which is what a backing track is for.
+ */
+export const DEFAULT_VELOCITY = 80;
+
+/**
  * The runtime twin of the `ChordExtent` union, ascending, so the +/- complexity
  * control has an order to step along and the guard below has a list to check
  * against. The union alone cannot do either job at runtime.
