@@ -10,10 +10,17 @@ import {
   createDefaultProgression,
   createDegreeSlot,
   normalizeChordSlot,
-  normalizeProgressionDoc
+  normalizeProgressionKey
 } from '../models/progression.model';
-import { generateSlotNotes } from './progression-generate';
-import { ChordExtent, degreeQuality, isHeptatonic } from './progression-harmony';
+import {
+  nearestExtent,
+  regenerateSlot,
+  requireUniqueSlotIds,
+  retimeNotes,
+  sameDegree,
+  settle
+} from './progression-edit';
+import { ChordExtent, isHeptatonic } from './progression-harmony';
 import { Scale } from '../models/music-theory.model';
 import { MusicTheoryService } from './music-theory.service';
 
@@ -44,22 +51,28 @@ import { MusicTheoryService } from './music-theory.service';
  *
  * ## What the service refuses
  *
- * Diatonic chords need a seven-note scale. `degreePitchClasses` throws on
- * anything else, and that throw is allowed to propagate through
- * `generateSlotNotes` - so the service asks `isHeptatonic` first rather than
- * calling and catching, which is what it is exported for.
+ * Diatonic chords need a seven-note scale, and `degreePitchClasses` throws on
+ * anything else - so the service asks `isHeptatonic` first rather than calling
+ * and catching, which is what it is exported for.
  *
  * The line is drawn between harmony and timeline. Adding a chord or changing
- * one - `appendSlot`, `setSlotExtent`, `setSlotInversion`, `setSlotOctave` - is
- * refused outright while the key cannot build chords, because the alternative
- * is a slot whose label and notes disagree. Moving, resizing, removing, the
- * tempo and the key itself always work: they are the timeline and the
- * transport, they invent no harmony, and refusing the key change in particular
- * would leave this page silently disagreeing with the fretboard behind it.
+ * one - `appendSlot`, `setSlotExtent`, `stepSlotExtent`, `setSlotInversion`,
+ * `setSlotOctave` - is refused outright while the key cannot build chords,
+ * because the alternative is a slot whose label and notes disagree. Moving,
+ * resizing, removing, the tempo and the key itself always work: they are the
+ * timeline and the transport, they invent no harmony, and refusing the key
+ * change in particular would leave this page silently disagreeing with the
+ * fretboard behind it. Resizing is on that side because a block chord's length
+ * is a number written onto notes that already exist; see `retimeNotes`.
  *
  * A refusal is a no-op with no undo entry - the user pressed a button that did
  * nothing, and an undo step for nothing is worse than none. `canBuildChords` on
  * the state is how the page explains why.
+ *
+ * A value the normalisation refuses - a non-finite tempo, a fractional tonic -
+ * throws out of the commit and publishes nothing, and that promise covers the
+ * *history* as well as the document. See `commit()`, where the order of three
+ * lines is the whole of it.
  */
 @Injectable({ providedIn: 'root' })
 export class ProgressionService {
@@ -106,11 +119,14 @@ export class ProgressionService {
    * the palette that calls this emits one button per scale degree.
    */
   appendSlot(degree: number): void {
-    const doc = this.stateSubject.getValue().doc;
+    const doc = this.doc;
     if (!this.canBuildChords(doc.key)) return;
 
-    const startBeat = doc.slots.reduce((sum, slot) => sum + slot.lengthBeats, 0);
-    const slot = this.regenerate(createDegreeSlot(degree, startBeat), doc.key);
+    // Beat 0, and not the sum of what is already there: `settle()` lays every
+    // slot end to end on the way out, so summing here would be a second
+    // statement of the contiguity rule in the one place the docstring above
+    // argues no mutation gets to choose. Two statements of a rule can disagree.
+    const slot = this.regenerate(createDegreeSlot(degree, 0), doc.key);
 
     this.commit(draft => {
       draft.slots.push(slot);
@@ -129,6 +145,11 @@ export class ProgressionService {
    * Moves a slot to `toIndex`, clamped into the progression. A drag can be
    * released past either end of the strip, and the nearest position is what it
    * meant.
+   *
+   * The lower end of the clamp is easy to mistake for decoration: `splice`
+   * reads a negative start as `length + start` and so lands on 0 for anything
+   * far enough out, which hides a missing `Math.max(0, ...)` everywhere except
+   * -1 - where it inserts one place in from the left instead of at it.
    */
   moveSlot(id: string, toIndex: number): void {
     const slots = this.doc.slots;
@@ -145,41 +166,71 @@ export class ProgressionService {
   }
 
   /**
-   * Resizes a slot, and re-generates its notes so they fill it.
+   * Resizes a slot, and gives its notes the same new length.
    *
-   * The length is bounded before the notes are made rather than after, so a
-   * drag past zero gives the notes the clamped length rather than the dragged
-   * one.
+   * The length is bounded before it reaches the notes rather than after, so a
+   * drag past zero gives them the clamped length rather than the dragged one.
    *
-   * **On a literal slot this changes the slot and not its notes.**
-   * `generateSlotNotes` hands a literal slot its own notes straight back - they
-   * are the playback truth, and stretching them to fit a drag would be the app
-   * rewriting what the user played - so shrinking such a slot leaves notes
-   * hanging past its end and lengthening it leaves silence at the end. Nothing
-   * in M1 creates a literal slot; M3 does, and this is the consequence it
-   * inherits rather than discovers.
+   * It re-times rather than re-generates, which is what lets it work in a key
+   * that cannot build chords: a block chord needs no scale to be made longer,
+   * only the number. Regenerating needed one, and a slot resized in a
+   * pentatonic key came away two beats long holding four-beat notes.
+   * `retimeNotes` says what a literal slot gets instead.
    */
   setSlotLength(id: string, beats: number): void {
-    const slot = this.doc.slots.find(candidate => candidate.id === id);
+    const slot = this.slotOf(id);
     if (!slot) return;
 
     const resized = normalizeChordSlot({ ...slot, lengthBeats: beats });
     if (resized.lengthBeats === slot.lengthBeats) return;
 
-    this.replaceSlot(id, draftKey => this.regenerate(resized, draftKey));
+    this.replaceSlot(id, () => retimeNotes(resized));
   }
 
   /**
-   * The +/- complexity buttons: how far the thirds are stacked.
+   * Sets how far the thirds are stacked, to an absolute rung.
    *
    * `normalizeChordSlot` throws on an extent that is not on the ladder, so
-   * keeping the stepper on it is this method's job rather than that guard's.
-   * See `nearestExtent` for what "keeping it on" means at each end.
+   * keeping a computed one on it is this method's job rather than that guard's;
+   * see `nearestExtent` for what that means at each end. **The +/- complexity
+   * buttons want `stepSlotExtent`**, which clamps rather than refusing because
+   * it steps the index and not the value.
    */
   setSlotExtent(id: string, extent: ChordExtent): void {
     const rung = nearestExtent(extent);
     if (rung === null) return;
     this.editDegree(id, degree => ({ ...degree, extent: rung }));
+  }
+
+  /**
+   * The +/- complexity buttons: `delta` rungs further up or down the ladder,
+   * clamped at both ends.
+   *
+   * A stepper that walked the *value* could not clamp: off the top computes
+   * `CHORD_EXTENTS[5]` and off the bottom `CHORD_EXTENTS[-1]`, both `undefined`
+   * at runtime and indistinguishable from each other, so there is no end to
+   * clamp toward. Stepping the *index* has the ends the value lacks - 0 and
+   * `CHORD_EXTENTS.length - 1` are different numbers - so + on a thirteenth
+   * rests on the thirteenth and - on a triad rests on the triad.
+   *
+   * It also puts "which rung is this slot on" in the service rather than in
+   * each of the components that will ask, which is where the project rules put
+   * state that more than one component reads.
+   */
+  stepSlotExtent(id: string, delta: number): void {
+    // A `NaN` from an emptied input is not a direction, and names no rung.
+    if (!Number.isFinite(delta)) return;
+
+    const slot = this.slotOf(id);
+    if (!slot || slot.harmony.kind !== 'degree') return;
+
+    // Always a real index: every slot in the document has been through
+    // `normalizeChordSlot`, which throws on an extent that is not a rung.
+    const index = CHORD_EXTENTS.indexOf(slot.harmony.degree.extent);
+    const stepped = index + Math.trunc(delta);
+    const rung = Math.max(0, Math.min(CHORD_EXTENTS.length - 1, stepped));
+
+    this.setSlotExtent(id, CHORD_EXTENTS[rung]);
   }
 
   /** Rotates the voicing. Wraps, so any number names a real inversion. */
@@ -207,7 +258,7 @@ export class ProgressionService {
     // control that does nothing, so the whole edit is refused.
     if (!this.canBuildChords(doc.key)) return;
 
-    const slot = doc.slots.find(candidate => candidate.id === id);
+    const slot = this.slotOf(id);
     // A literal slot has no degree to change - its notes are the truth, and
     // there is no label for a stepper to move.
     if (!slot || slot.harmony.kind !== 'degree') return;
@@ -221,6 +272,11 @@ export class ProgressionService {
     if (sameDegree(edited.harmony.degree, current)) return;
 
     this.replaceSlot(id, draftKey => this.regenerate(edited, draftKey));
+  }
+
+  /** The slot with this id, or null when the document does not hold one. */
+  private slotOf(id: string): ChordSlot | null {
+    return this.doc.slots.find(candidate => candidate.id === id) ?? null;
   }
 
   /** Swaps one slot for what `build` makes of it, by id. */
@@ -266,15 +322,22 @@ export class ProgressionService {
     const scale = this.findScale(scaleId);
 
     this.commit(draft => {
-      draft.key = {
+      // Bounded here rather than left to `settle()`, which does not run until
+      // this callback is over - and the slots are generated from this key
+      // inside it. Generating from the raw tonic while storing the wrapped one
+      // agrees today only because `voiceChord` reduces mod 12, which is a fact
+      // about a module two layers down rather than a promise to this one.
+      draft.key = normalizeProgressionKey({
         tonic,
         scaleId,
         // An unknown id is left with whatever preference was already in force:
         // there is no scale to ask, and guessing would be worse than keeping.
         preferSharps: scale ? scale.preferSharps : draft.key.preferSharps
-      };
+      });
 
-      if (!scale || !isHeptatonic(scale.intervals)) return;
+      // No `isHeptatonic` check of its own: `regenerate` asks already, and
+      // hands a slot back unchanged when the answer is no - which is what
+      // returning early here did, in a second copy of the rule.
       draft.slots = draft.slots.map(slot => this.regenerate(slot, draft.key));
     });
   }
@@ -293,9 +356,15 @@ export class ProgressionService {
   /**
    * Applies a mutation to a cloned document and pushes the old one onto undo.
    *
-   * The clone is what makes a mutation atomic: `mutate` writes to a copy, and a
-   * throw out of it - or out of the normalisation that follows - leaves the
-   * published state untouched rather than half-edited.
+   * The clone is what makes a mutation atomic: `mutate` writes to a copy, so a
+   * throw out of it leaves the published document untouched rather than
+   * half-edited.
+   *
+   * The order of the last three lines is the rest of that promise. Settling can
+   * throw as readily as the mutation can - `setTempo(NaN)` never reaches
+   * `mutate` at all, it fails in the normalisation afterwards - and the history
+   * is state too. Settled first, then pushed, then published: a throw at any
+   * point leaves both stacks and all three flags exactly as they were.
    */
   private commit(mutate: (draft: ProgressionDoc) => void, select?: string): void {
     const state = this.stateSubject.getValue();
@@ -303,9 +372,10 @@ export class ProgressionService {
     const draft = structuredClone(state.doc);
 
     mutate(draft);
+    const settled = settle(draft);
 
     this.pushHistory(previous);
-    this.publish(this.settle(draft), select ?? state.selectedSlotId, true);
+    this.publish(settled, select ?? state.selectedSlotId, true);
   }
 
   undo(): void {
@@ -322,12 +392,17 @@ export class ProgressionService {
     const next = this.redoStack.pop();
     if (!next) return;
 
-    this.undoStack.push(structuredClone(state.doc));
+    this.pushUndo(structuredClone(state.doc));
     this.publish(next, state.selectedSlotId, true);
   }
 
   /**
    * Replaces the whole document, e.g. on loading a saved progression.
+   *
+   * The only door a document the service did not build comes through, so it is
+   * where the ids are checked - and, like `commit()`, it settles before it
+   * touches the history, so a document that cannot be settled costs the user
+   * neither stack.
    *
    * It is also the only door in M1 through which a `literal` slot can arrive,
    * which is how the characterisation of resizing one is testable at all
@@ -335,28 +410,31 @@ export class ProgressionService {
    */
   replaceDocument(doc: ProgressionDoc, markClean = false): void {
     const state = this.stateSubject.getValue();
+    const settled = settle(requireUniqueSlotIds(doc));
+
     this.pushHistory(structuredClone(state.doc));
-    this.publish(this.settle(doc), state.selectedSlotId, !markClean);
+    this.publish(settled, state.selectedSlotId, !markClean);
   }
 
+  /** Records a step, and drops the redo branch it just made unreachable. */
   private pushHistory(previous: ProgressionDoc): void {
-    this.undoStack.push(previous);
-    if (this.undoStack.length > ProgressionService.MAX_HISTORY) {
-      this.undoStack.shift();
-    }
+    this.pushUndo(previous);
     this.redoStack = [];
   }
 
   /**
-   * Bounds a document and lays its slots end to end.
+   * Pushes onto the undo stack, capped.
    *
-   * Normalise, then re-flow, and the order is not interchangeable: a length
-   * clamped after the positions had been summed from it would leave every
-   * later slot starting in the wrong place.
+   * The cap lives with the push rather than at one of its two call sites. Redo
+   * cannot reach it today - it pops one redo entry for every one it pushes
+   * here, so the pair conserves the total - but a cap only some pushes respect
+   * stops working the moment a third caller arrives, silently.
    */
-  private settle(doc: ProgressionDoc): ProgressionDoc {
-    const bounded = normalizeProgressionDoc(doc);
-    return { ...bounded, slots: reflow(bounded.slots) };
+  private pushUndo(doc: ProgressionDoc): void {
+    this.undoStack.push(doc);
+    if (this.undoStack.length > ProgressionService.MAX_HISTORY) {
+      this.undoStack.shift();
+    }
   }
 
   /**
@@ -383,44 +461,9 @@ export class ProgressionService {
   // Harmony
   // -------------------------------------------------------------------------
 
-  /**
-   * Re-derives everything a slot's harmony decides: its quality label and its
-   * notes.
-   *
-   * Bounds first, generate second. The order is load-bearing for the same
-   * reason it is in `commit()`: `generateSlotNotes` copies `lengthBeats` onto
-   * every note it makes, so generating from an unbounded slot would give the
-   * notes a length the slot itself is then clamped away from.
-   */
+  /** Re-derives a slot's quality label and its notes, in the key it is in. */
   private regenerate(slot: ChordSlot, key: ProgressionKey): ChordSlot {
-    const bounded = normalizeChordSlot(slot);
-
-    const scale = this.findScale(key.scaleId);
-    if (!scale || !isHeptatonic(scale.intervals)) return bounded;
-    const intervals = scale.intervals;
-
-    const labelled: ChordSlot =
-      bounded.harmony.kind === 'degree'
-        ? {
-            ...bounded,
-            harmony: {
-              kind: 'degree',
-              degree: {
-                ...bounded.harmony.degree,
-                quality: degreeQuality(
-                  intervals,
-                  bounded.harmony.degree.degree,
-                  bounded.harmony.degree.extent
-                )
-              }
-            }
-          }
-        : bounded;
-
-    const notes = generateSlotNotes(labelled, key, intervals);
-    // A literal slot gets its own array back by identity, and copying it would
-    // report a change where none happened. Copy only what was built fresh.
-    return notes === labelled.notes ? labelled : { ...labelled, notes: notes.slice() };
+    return regenerateSlot(slot, key, this.chordScale(key));
   }
 
   /**
@@ -438,71 +481,20 @@ export class ProgressionService {
     return null;
   }
 
+  /**
+   * The intervals a key can stack thirds through, or null when it cannot.
+   *
+   * Two questions with one answer: whether the palette may offer a chord, and
+   * what `regenerateSlot` builds one from. An unknown id and a scale that is
+   * not heptatonic answer both, asked once so the two cannot drift.
+   */
+  private chordScale(key: ProgressionKey): readonly number[] | null {
+    const scale = this.findScale(key.scaleId);
+    return scale && isHeptatonic(scale.intervals) ? scale.intervals : null;
+  }
+
   /** Whether thirds can be stacked through the key's scale at all. */
   private canBuildChords(key: ProgressionKey): boolean {
-    const scale = this.findScale(key.scaleId);
-    return scale !== null && isHeptatonic(scale.intervals);
+    return this.chordScale(key) !== null;
   }
-}
-
-/**
- * The rung of the `CHORD_EXTENTS` ladder that `extent` means, or null when it
- * means nothing.
- *
- * The union type says the argument is always on the ladder. A +/- stepper says
- * otherwise: walking off the top computes `CHORD_EXTENTS[5]` and off the bottom
- * `CHORD_EXTENTS[-1]`, and both are `undefined` at runtime whatever their
- * static type. They are indistinguishable from each other, so there is no end
- * to clamp *toward* - and refusing leaves the control resting on the rung it
- * was already on, which is exactly what clamping at that end would have shown
- * the user.
- *
- * A finite value that is simply not a rung - from a caller that computed an
- * extent rather than indexing one - snaps to the nearest, which clamps at both
- * ends: 14 and 100 both give 13, 2 and -50 both give 3.
- */
-function nearestExtent(extent: ChordExtent): ChordExtent | null {
-  if (CHORD_EXTENTS.includes(extent)) return extent;
-  if (!Number.isFinite(extent)) return null;
-  return CHORD_EXTENTS.reduce((best, rung) =>
-    Math.abs(rung - extent) < Math.abs(best - extent) ? rung : best
-  );
-}
-
-/**
- * Whether two degrees would build the same chord.
- *
- * The comparisons are collected into a `Record<keyof ChordDegree, boolean>`
- * rather than chained with `&&`, so that a field added to `ChordDegree` and
- * forgotten here is a compile error rather than a comparison that silently
- * stops noticing an edit - and an edit this fails to notice is one that is
- * never committed.
- */
-function sameDegree(a: ChordDegree, b: ChordDegree): boolean {
-  const matches: Record<keyof ChordDegree, boolean> = {
-    degree: a.degree === b.degree,
-    alter: a.alter === b.alter,
-    extent: a.extent === b.extent,
-    quality: a.quality === b.quality,
-    inversion: a.inversion === b.inversion,
-    suspension: a.suspension === b.suspension,
-    octave: a.octave === b.octave
-  };
-  return Object.values(matches).every(match => match);
-}
-
-/**
- * Lays slots end to end, so the timeline has no hole and no overlap.
- *
- * Returns a slot unchanged when it is already in the right place, so a mutation
- * that moved nothing - a tempo change, an inversion - hands back the same
- * objects it was given and change detection sees no edit.
- */
-function reflow(slots: readonly ChordSlot[]): ChordSlot[] {
-  let beat = 0;
-  return slots.map(slot => {
-    const placed = slot.startBeat === beat ? slot : { ...slot, startBeat: beat };
-    beat += slot.lengthBeats;
-    return placed;
-  });
 }

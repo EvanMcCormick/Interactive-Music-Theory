@@ -158,13 +158,26 @@ export interface ChordDegree {
   /** How far the thirds are stacked. The +/- complexity buttons move this. */
   extent: ChordExtent;
   /**
-   * The chord's name. Defaults from the key; overriding it is what makes a
-   * borrowed chord.
+   * The chord's name, as the key gives it.
    *
-   * In M1 this is a label only. `generateSlotNotes` derives the pitches from
-   * the scale, so it reads the degree and the extent and never this field - a
-   * slot created before its key is known therefore carries a placeholder until
-   * the palette fills it in from `degreeQuality`.
+   * In M1 this is a label only, and a *derived* one. `generateSlotNotes` reads
+   * the degree and the extent and never this field, and
+   * `ProgressionService.regenerate` recomputes it from `degreeQuality` on every
+   * change that could move it - the key, the extent, the inversion, the octave.
+   * So the placeholder `createDegreeSlot` writes survives only until the slot
+   * reaches the service, and there is nowhere a value written here can persist.
+   *
+   * **Which is why this field cannot yet override anything.** The design says
+   * overriding the quality is what makes a borrowed chord, and that is right -
+   * `alter` transposes the whole stack and so preserves quality, which no
+   * accidental in a Roman numeral does; see "Correction: `alter` cannot express
+   * a borrowed chord" in the design doc. But an override written here is
+   * clobbered by the next regeneration, so the mechanism is not merely unread:
+   * it is actively overwritten. The fix both halves need is the same one -
+   * `quality: ChordQuality | null`, where `null` means "as the key gives it"
+   * and a non-null value survives regeneration and reaches the generator - and
+   * it is M2 work. Latent in M1, where no setter moves `alter` and the palette
+   * emits only diatonic degrees.
    */
   quality: ChordQuality;
   /** Root position is 0. Stored wrapped into the chord, so it is always nameable. */
@@ -511,10 +524,24 @@ export function normalizeChordSlot(slot: ChordSlot): ChordSlot {
 export function normalizeProgressionDoc(doc: ProgressionDoc): ProgressionDoc {
   return {
     ...doc,
-    key: { ...doc.key, tonic: normalizeTonic(doc.key.tonic) },
+    key: normalizeProgressionKey(doc.key),
     tempo: normalizeTempo(doc.tempo),
     slots: doc.slots.map(slot => normalizeChordSlot(slot))
   };
+}
+
+/**
+ * Bounds a key on its own, for a caller that has one before it has a document.
+ *
+ * Exported for `ProgressionService.setKey`, which generates every slot's notes
+ * from the new key *inside* the commit that stores it - so it needs the key as
+ * it will be stored rather than as it arrived, and the document normalisation
+ * above does not run until the mutation is over. Two roads to the same rule
+ * would be one road too many, so this is the one and the doc normaliser calls
+ * it too.
+ */
+export function normalizeProgressionKey(key: ProgressionKey): ProgressionKey {
+  return { ...key, tonic: normalizeTonic(key.tonic) };
 }
 
 // ---------------------------------------------------------------------------

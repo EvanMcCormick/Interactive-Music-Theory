@@ -46,17 +46,28 @@ describe('ProgressionService', () => {
   }
 
   /**
-   * Asserts that `act` published no new document at all.
+   * Asserts that `act` changed nothing about the document or the history.
    *
-   * Identity rather than a count of undo entries, because that is the property
-   * that matters: a refused or clamped-to-nothing mutation must not push a step
-   * onto a stack that only holds a hundred, or holding the + button down at the
-   * top of the ladder would quietly throw the user's history away.
+   * Document identity is the headline property: a refused or clamped-to-nothing
+   * mutation must not push a step onto a stack that only holds a hundred, or
+   * holding the + button down at the top of the ladder would quietly throw the
+   * user's history away.
+   *
+   * It is not sufficient on its own, though, which is the lesson of the bug
+   * this helper failed to catch: history can be pushed while the document
+   * stands still, and identity alone cannot see it. The three flags are the
+   * stacks' only public face, so they are checked too - and the specs that need
+   * to see further than a flag walk the history explicitly rather than
+   * asserting on it from here.
    */
   function expectNoCommit(act: () => void): void {
-    const before = currentState().doc;
+    const before = currentState();
     act();
-    expect(currentState().doc).toBe(before);
+    const after = currentState();
+    expect(after.doc).toBe(before.doc);
+    expect(after.canUndo).toBe(before.canUndo);
+    expect(after.canRedo).toBe(before.canRedo);
+    expect(after.isDirty).toBe(before.isDirty);
   }
 
   /**
@@ -113,6 +124,14 @@ describe('ProgressionService', () => {
       service.appendSlot(0);
       service.appendSlot(4);
       expect(currentState().selectedSlotId).toBe(slots()[1].id);
+    });
+
+    // Every commit publishes a dirty document, and this is the only spec that
+    // says so: `isDirty` is otherwise only ever asserted false, which a service
+    // that published false from every commit would satisfy just as well.
+    it('leaves the document dirty', () => {
+      service.appendSlot(0);
+      expect(currentState().isDirty).toBeTrue();
     });
   });
 
@@ -183,6 +202,18 @@ describe('ProgressionService', () => {
       expect(slots()[2].id).toBe(first);
     });
 
+    // The other end of the same clamp, and -1 rather than -99 on purpose:
+    // `splice` reads a negative start as `length + start` and so lands on 0 for
+    // anything far enough out, which would hide a missing `Math.max(0, ...)`
+    // entirely. -1 is where the two answers differ, and it is also what a drag
+    // released just left of the strip actually computes.
+    it('clamps a target index before the start onto the first position', () => {
+      const last = slots()[2].id;
+      service.moveSlot(last, -1);
+      expect(slots()[0].id).toBe(last);
+      expectContiguous();
+    });
+
     it('records nothing when the slot is already where it is going', () => {
       expectNoCommit(() => service.moveSlot(slots()[1].id, 1));
     });
@@ -243,10 +274,14 @@ describe('ProgressionService', () => {
       expect(extentOf()).toBe(13);
     });
 
+    // From the second rung rather than the first, because on the first rung
+    // "refused" and "snapped back down to 3" are the same state and the spec
+    // cannot tell which one it saw.
     it('stops at the bottom rather than walking off the ladder', () => {
+      service.setSlotExtent(slots()[0].id, 7);
       const past = CHORD_EXTENTS[-1];
       expectNoCommit(() => service.setSlotExtent(slots()[0].id, past));
-      expect(extentOf()).toBe(3);
+      expect(extentOf()).toBe(7);
     });
 
     // A caller that computed an extent instead of indexing one. Cast because
@@ -257,6 +292,86 @@ describe('ProgressionService', () => {
       expect(extentOf()).toBe(13);
       service.setSlotExtent(slots()[0].id, -50 as ChordExtent);
       expect(extentOf()).toBe(3);
+    });
+
+    // 5 is exactly two from 3 and two from 7. The tie resolves low, because the
+    // search keeps the rung it has unless a later one is strictly closer -
+    // deterministic rather than arbitrary, and pinned here so a `<` quietly
+    // becoming a `<=` is a failure rather than a silent change of answer.
+    it('resolves a value equidistant from two rungs onto the lower', () => {
+      service.setSlotExtent(slots()[0].id, 13);
+      service.setSlotExtent(slots()[0].id, 5 as ChordExtent);
+      expect(extentOf()).toBe(3);
+    });
+  });
+
+  /**
+   * The same +/- buttons, driven the way a button actually drives them: by a
+   * direction rather than by a value it had to compute for itself.
+   *
+   * It clamps where `setSlotExtent` can only refuse, and the difference is that
+   * it steps the *index*. Off the top and off the bottom are both `undefined`
+   * as values and carry no direction; as indices they are 5 and -1, which are
+   * different numbers with different clamps.
+   */
+  describe('stepSlotExtent', () => {
+    beforeEach(() => service.appendSlot(0));
+
+    function extentOf(): number {
+      const harmony = slots()[0].harmony;
+      return harmony.kind === 'degree' ? harmony.degree.extent : -1;
+    }
+
+    it('stacks another third on the way up', () => {
+      service.stepSlotExtent(slots()[0].id, 1);
+      expect(extentOf()).toBe(7);
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([60, 64, 67, 71]);
+    });
+
+    it('takes one off on the way down', () => {
+      service.setSlotExtent(slots()[0].id, 9);
+      service.stepSlotExtent(slots()[0].id, -1);
+      expect(extentOf()).toBe(7);
+    });
+
+    // The press that `setSlotExtent` could only refuse. Resting on the rung it
+    // is already on is what clamping looks like from the user's side, so the
+    // assertion is that nothing was recorded and nothing moved.
+    it('rests on the top rung when it is stepped up from there', () => {
+      service.setSlotExtent(slots()[0].id, 13);
+      expectNoCommit(() => service.stepSlotExtent(slots()[0].id, 1));
+      expect(extentOf()).toBe(13);
+    });
+
+    it('rests on the bottom rung when it is stepped down from there', () => {
+      expectNoCommit(() => service.stepSlotExtent(slots()[0].id, -1));
+      expect(extentOf()).toBe(3);
+    });
+
+    // A delta big enough to leave the ladder entirely, which is where clamping
+    // and refusing part company: an index of 99 or -97 is off the array either
+    // way, so a stepper that did not clamp would sit still instead of arriving
+    // at the end. Both ends, because a clamp is two numbers.
+    it('clamps a stride past the top onto the last rung', () => {
+      service.stepSlotExtent(slots()[0].id, 99);
+      expect(extentOf()).toBe(13);
+    });
+
+    it('clamps a stride past the bottom onto the first rung', () => {
+      service.setSlotExtent(slots()[0].id, 9);
+      service.stepSlotExtent(slots()[0].id, -99);
+      expect(extentOf()).toBe(3);
+    });
+
+    // Task 9's hazard one control over: an emptied number input reads as `NaN`,
+    // and `NaN` rungs in either direction is not a direction at all.
+    it('refuses a step that is not a number', () => {
+      expectNoCommit(() => service.stepSlotExtent(slots()[0].id, Number.NaN));
+      expect(extentOf()).toBe(3);
+    });
+
+    it('ignores an id the document does not have', () => {
+      expectNoCommit(() => service.stepSlotExtent('not-a-slot', 1));
     });
   });
 
@@ -270,7 +385,17 @@ describe('ProgressionService', () => {
 
     // Cyclic, so it wraps where octave clamps: the inversion above the last is
     // root position again, and it is stored wrapped so it stays nameable.
+    //
+    // It leaves root position first, and asserts that it did. Asking an
+    // untouched slot for inversion 3 normalises to 0, changes nothing and
+    // commits nothing - so the spec would be asserting the state `appendSlot`
+    // had already left, and would pass against a method with an empty body. The
+    // middle assertion is what makes the last two mean something: the chord
+    // demonstrably moved, and then came back.
     it('wraps an inversion past the last one back to root position', () => {
+      service.setSlotInversion(slots()[0].id, 1);
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([64, 67, 72]);
+
       service.setSlotInversion(slots()[0].id, 3);
       const harmony = slots()[0].harmony;
       expect(harmony.kind === 'degree' && harmony.degree.inversion).toBe(0);
@@ -318,6 +443,19 @@ describe('ProgressionService', () => {
       expect(harmony.kind === 'degree' && harmony.degree.quality).toBe('minor');
     });
 
+    /**
+     * **Provisional.** This pins the rule as it stands - the spelling comes
+     * from the scale's own `preferSharps` - and that rule is the one `b514027`
+     * moved away from on the fretboard, where a minor key is now spelled from
+     * its own signature rather than from the scale's default. A minor scale
+     * declares flats, so this says A minor spells flats, and F# minor will say
+     * so too.
+     *
+     * The key-signature rule in `MusicTheoryService` is the intended source
+     * once the progression page can reach it. Changing this expectation is
+     * therefore a correction to make on purpose, not a regression - but it
+     * should be made against a named expectation rather than against nothing.
+     */
     it('takes the spelling preference the scale declares', () => {
       service.setKey(9, 'aeolian');
       expect(currentState().doc.key.preferSharps).toBeFalse();
@@ -326,6 +464,24 @@ describe('ProgressionService', () => {
     it('wraps a tonic past the end of the chromatic scale', () => {
       service.setKey(13, 'ionian');
       expect(currentState().doc.key.tonic).toBe(1);
+    });
+
+    /**
+     * The stored tonic is wrapped on the way out of the commit, and the notes
+     * are generated inside it - so the two would disagree if the generator were
+     * handed the raw value.
+     *
+     * Today they agree either way, because `voiceChord` reduces every pitch
+     * class mod 12 and 13 sounds as 1. That is an accident of a module two
+     * layers down rather than a promise this one makes, so the agreement is
+     * pinned here: a voicing that stopped reducing would otherwise move these
+     * notes an octave without failing a single spec.
+     */
+    it('generates from the tonic it stores, not the one it was handed', () => {
+      service.appendSlot(0);
+      service.setKey(13, 'ionian');
+      expect(currentState().doc.key.tonic).toBe(1);
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([61, 65, 68]);
     });
   });
 
@@ -413,6 +569,79 @@ describe('ProgressionService', () => {
     });
   });
 
+  /**
+   * A value that cannot be normalised throws, and the class docstring promises
+   * that a throw leaves the published state untouched rather than half-edited.
+   *
+   * The document was always safe - the mutation runs on a clone - but the
+   * history was not, and the history is state too. An undo entry pushed before
+   * the normalisation ran survives the throw, the redo stack it cleared does
+   * not come back, and `canRedo` is left reading true from the publish that
+   * never happened: an enabled redo button that does nothing, and a redo
+   * history lost to a mistyped tempo.
+   *
+   * Task 9's tempo box is the live road here. An emptied `<input
+   * type="number">` reads as `null` through `ngModel` and as `NaN` through
+   * `valueAsNumber`, and `Number.isFinite` refuses both.
+   */
+  describe('a value that cannot be normalised', () => {
+    /** Undo one step, so both stacks hold something there is to lose. */
+    function historyWithBothStacks(): void {
+      service.appendSlot(0);
+      service.appendSlot(4);
+      service.undo();
+      expect(currentState().canUndo).toBeTrue();
+      expect(currentState().canRedo).toBeTrue();
+    }
+
+    function expectThrowsAndPublishesNothing(act: () => void): void {
+      const before = currentState();
+      expect(act).toThrow();
+      const after = currentState();
+      expect(after.doc).toBe(before.doc);
+      expect(after.canUndo).toBe(before.canUndo);
+      expect(after.canRedo).toBe(before.canRedo);
+      expect(after.isDirty).toBe(before.isDirty);
+    }
+
+    /**
+     * What the flags cannot show. `canRedo` reads true whether the redo stack
+     * holds the undone chord or was emptied by a phantom push, so the stacks
+     * are read the only way they can be: by walking them. Redo puts the second
+     * chord back, and two undos reach the empty document with nothing over.
+     */
+    function expectHistoryStillWalks(): void {
+      service.redo();
+      expect(slots().length).toBe(2);
+
+      service.undo();
+      service.undo();
+      expect(slots()).toEqual([]);
+      expect(currentState().canUndo).toBeFalse();
+    }
+
+    it('leaves both stacks alone when the tempo is not a number', () => {
+      historyWithBothStacks();
+      expectThrowsAndPublishesNothing(() => service.setTempo(Number.NaN));
+      expectHistoryStillWalks();
+    });
+
+    it('leaves both stacks alone when a replacement document is unusable', () => {
+      historyWithBothStacks();
+      const doc = currentState().doc;
+      expectThrowsAndPublishesNothing(() =>
+        service.replaceDocument({ ...doc, tempo: Number.NaN })
+      );
+      expectHistoryStillWalks();
+    });
+
+    it('leaves both stacks alone when the tonic is not a pitch class', () => {
+      historyWithBothStacks();
+      expectThrowsAndPublishesNothing(() => service.setKey(0.5, 'ionian'));
+      expectHistoryStillWalks();
+    });
+  });
+
   describe('replaceDocument', () => {
     /**
      * The one place the order inside `settle()` is observable: a length that
@@ -439,12 +668,36 @@ describe('ProgressionService', () => {
       service.appendSlot(0);
       const doc = currentState().doc;
 
+      service.replaceDocument({ ...doc, name: 'Edited' });
+      expect(currentState().isDirty).toBeTrue();
+
       service.replaceDocument({ ...doc, name: 'Loaded' }, true);
       expect(currentState().doc.name).toBe('Loaded');
       expect(currentState().isDirty).toBeFalse();
 
       service.undo();
+      expect(currentState().doc.name).toBe('Edited');
+      service.undo();
       expect(currentState().doc.name).toBe('Untitled');
+    });
+
+    /**
+     * Ids are how every other method finds a slot, and a document that repeats
+     * one is not a document this service can edit: `removeSlot` filters by id
+     * and would drop both twins, and `replaceSlot` would only ever find the
+     * first. It arrives here from a file rather than from a user, so it is a
+     * corrupt document rather than a control at its limit - the wrong-kind
+     * clause of the normalisation rule, which throws.
+     */
+    it('refuses a document whose slots share an id', () => {
+      service.appendSlot(0);
+      service.appendSlot(4);
+      const doc = currentState().doc;
+      const twin = { ...doc.slots[1], id: doc.slots[0].id };
+
+      expect(() => service.replaceDocument({ ...doc, slots: [doc.slots[0], twin] })).toThrow();
+      expect(slots().length).toBe(2);
+      expect(currentState().doc).toBe(doc);
     });
   });
 
@@ -486,6 +739,7 @@ describe('ProgressionService', () => {
       service.appendSlot(0);
       service.setKey(0, 'majorPentatonic');
       expectNoCommit(() => service.setSlotExtent(slots()[0].id, 7));
+      expectNoCommit(() => service.stepSlotExtent(slots()[0].id, 1));
     });
 
     // The key change itself is not refused: this page would otherwise sit
@@ -506,6 +760,25 @@ describe('ProgressionService', () => {
       service.removeSlot(slots()[0].id);
       expect(slots().length).toBe(1);
       expectContiguous();
+    });
+
+    /**
+     * Resizing is timing rather than harmony, and a block chord's notes are one
+     * attack filling the slot - so a length change is the same length written
+     * onto notes that are already there, and needs no scale to make it.
+     *
+     * The slot and its notes must not be allowed to disagree about how long
+     * they are, whatever key the document is in. Regenerating from the degree
+     * cannot run here, so this is the spec that says re-timing is not
+     * regeneration.
+     */
+    it('still lets a slot be resized, notes and all', () => {
+      service.appendSlot(0);
+      service.setKey(0, 'majorPentatonic');
+      service.setSlotLength(slots()[0].id, 2);
+
+      expect(slots()[0].lengthBeats).toBe(2);
+      expect(slots()[0].notes.every(note => note.lengthBeats === 2)).toBeTrue();
     });
   });
 
@@ -542,6 +815,7 @@ describe('ProgressionService', () => {
     it('has no degree for the complexity control to move', () => {
       const id = appendLiteral();
       expectNoCommit(() => service.setSlotExtent(id, 7));
+      expectNoCommit(() => service.stepSlotExtent(id, 1));
     });
   });
 });
