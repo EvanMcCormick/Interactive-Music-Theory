@@ -718,7 +718,9 @@ shows. Verify by hand that turning the circle re-labels the palette.
 - Modify: `client/src/app/components/progression/progression.component.ts`
 
 This is the backing-track job. Subscribe to `currentSlot$`, and on each change
-call `MusicTheoryService.selectKeyAndMode(root, 'chords', chordId)` so the
+resolve the chord's category (chords live in `triads`, `seventh` and `extended` -
+there is no `chords` category, and item ids are not unique across categories) and
+call `selectKeyAndMode(root, categoryId, chordId)` so the
 fretboard highlights the sounding chord.
 
 **Check before writing code** whether `selectKeyAndMode` already does what is
