@@ -2,14 +2,27 @@
 // read - the same set the chord palette declares, because the two sit against
 // each other on the page and a card and a button for the same chord should not
 // be two different blues.
+//
+// The blue and the dim grey are both darker than the app's usual #3498db and
+// #a8b6c1, and that is a contrast fix rather than a preference: #ecf0f1 on
+// #3498db is 2.75:1 and the old --strip-unlabelled was 2.71:1 on a card, both
+// well under the 4.5:1 that AA asks of normal text and under even the 3:1 for
+// large text, which a 1.05rem numeral does not qualify as anyway. Every pair
+// below is at or above 4.5:1 against the surface it is used on.
 :host {
   --strip-surface: #2c3e50;
   --strip-card: #34495e;
-  --strip-selected: #3498db;
+  // 4.8:1 under --strip-text.
+  --strip-selected: #1b6ea3;
   --strip-line: #22303d;
   --strip-text: #ecf0f1;
-  --strip-text-dim: #a8b6c1;
-  --strip-unlabelled: #7f8c9a;
+  // 4.8:1 on --strip-card, 5.7:1 on --strip-surface.
+  --strip-text-dim: #adbcc8;
+  --strip-unlabelled: #adbcc8;
+
+  // One beat of the progression, in pixels. The whole of what the strip says
+  // about time, and the scale a resize drag is measured in - see `beginResize`.
+  --strip-px-per-beat: 3.5rem;
 
   display: block;
 }
@@ -29,25 +42,45 @@
   color: var(--strip-text-dim);
 }
 
+// A timeline rather than a bar chart: the row is as long as the progression is
+// and scrolls when that is longer than the panel, instead of dividing a fixed
+// width between the cards.
 .cards {
   display: flex;
   align-items: stretch;
   gap: 0.25rem;
   min-height: 4rem;
+  overflow-x: auto;
 }
 
-// Width is the whole of what the strip says about time, so it is exactly
-// proportional: `flex-grow` carries the slot's length and `flex-basis` is zero,
-// which makes every card's share of the row its share of the beats. There is
-// deliberately no `min-width` - a floor would make a one-beat card among
-// four-beat ones wider than one beat, which is a false statement about the
-// music. A card too narrow for its text truncates instead, and its full name is
-// on the `aria-label` either way.
+// Width is the whole of what the strip says about time, so a beat is the same
+// number of pixels wherever it falls: `--card-beats` carries the slot's length
+// and the card is that many beat-widths across.
+//
+// That is a change from the proportional layout this replaced - `flex-grow`
+// carrying the length inside a row of fixed width - and the reason is the
+// resize handle. Growing one card there shrank every other, so the length a
+// drag reached went as `w = W*n/(n+B)`; no constant scale can track a curve,
+// and the pointer ran 49px ahead of the edge it was holding on the first beat
+// and 525px by the twelfth. Absolute widths make one beat one distance, which
+// is also the mapping Task 9's playhead needs to put itself anywhere sensible.
+//
+// There is still deliberately no `min-width`. Under the old layout a floor
+// would have made a one-beat card among four-beat ones wider than one beat -
+// a false statement about the music. Here it would break something stricter:
+// the row only *is* a timeline while a card's left edge is its start beat, and
+// a floor puts every card after a short one in the wrong place. A card too
+// narrow for its text truncates instead, with the full name on `title` and on
+// the `aria-label`.
+//
+// `border-box`, so the 1px border comes out of the beat-width rather than
+// adding to it. Without it a four-beat card measured 3.957 beats wide.
 .card {
   position: relative;
   display: flex;
-  flex: 0 1 0;
-  min-width: 0;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: calc(var(--strip-px-per-beat) * var(--card-beats));
   border: 1px solid var(--strip-line);
   border-radius: 4px;
   background: var(--strip-card);
@@ -110,31 +143,41 @@
   white-space: nowrap;
 }
 
+// The name is the quieter line by size and weight rather than by colour. It
+// used to be a translucent white, which lands differently on the three
+// backgrounds a card can have - and on the selected blue it composited to
+// 4.47:1, just under AA, for the sake of a distinction the type already makes.
 .name {
   max-width: 100%;
   overflow: hidden;
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.85);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.unlabelled .numeral,
-.unlabelled .name {
-  color: var(--strip-unlabelled);
+// Only while the card is not selected: on the selected fill the dim grey is
+// 2.8:1, and the dashed border says the same thing there anyway.
+.card:not(.selected).unlabelled {
+  .numeral,
+  .name {
+    color: var(--strip-unlabelled);
+  }
 }
 
+// 1.5rem square, which is the 24x24px WCAG 2.2 target minimum at the default
+// root size. Held clear of the resize handle rather than stacked on top of it,
+// so the two targets do not overlap.
 .remove {
   position: absolute;
   top: 0.15rem;
-  right: 0.15rem;
-  width: 1.1rem;
-  height: 1.1rem;
+  right: calc(1.5rem + 0.15rem);
+  width: 1.5rem;
+  height: 1.5rem;
   padding: 0;
   border: none;
   border-radius: 2px;
   background: none;
-  color: var(--strip-text-dim);
+  color: var(--strip-text);
   font-size: 0.85rem;
   line-height: 1;
   cursor: pointer;
@@ -142,29 +185,54 @@
   // `display`, so tabbing to it still finds it.
   opacity: 0;
 
-  &:hover {
-    color: var(--strip-text);
-  }
-
   &:focus-visible {
     outline: 2px solid var(--strip-text);
     opacity: 1;
   }
 }
 
+// A touch screen has no hover to reveal it with, so on one it is simply there.
+@media (hover: none) {
+  .remove {
+    opacity: 1;
+  }
+}
+
+// 1.5rem wide for the same 24px minimum. It costs a one-beat card most of its
+// text, which is the trade: the handle is the only pointer path to a length,
+// and an 8px target is one a shaking hand or a stylus misses.
 .resize {
   flex: 0 0 auto;
-  width: 0.5rem;
+  width: 1.5rem;
   padding: 0;
   border: none;
-  background: var(--strip-line);
+  // Slim on screen, wide to hit: the line is drawn by the gradient rather than
+  // by the element, so the target is 24px and the strip still reads as cards
+  // with a seam between them.
+  background: linear-gradient(
+    to right,
+    transparent 0 0.5rem,
+    var(--strip-line) 0.5rem 1rem,
+    transparent 1rem
+  );
   cursor: ew-resize;
   touch-action: none;
 
-  &:hover,
+  &:hover {
+    background: linear-gradient(
+      to right,
+      transparent 0 0.5rem,
+      var(--strip-text) 0.5rem 1rem,
+      transparent 1rem
+    );
+  }
+
+  // Inset, because the card clips its overflow and an outline on the last
+  // element in the row would lose its right-hand side. A recoloured 8px line
+  // was all the focus this used to get, which is not an indicator.
   &:focus-visible {
-    background: var(--strip-selected);
-    outline: none;
+    outline: 2px solid var(--strip-text);
+    outline-offset: -2px;
   }
 }
 

@@ -11,21 +11,14 @@ import { MIN_SLOT_BEATS } from '../../../../models/progression.model';
  *
  * This is the half of a drag that can be pinned down without a browser, and it
  * is where the drags are really tested: a pointer position and some geometry go
- * in, an index or a length comes out. The component's own spec then checks that
- * it wires those answers to `moveSlot` and `setSlotLength`, with a geometry the
- * test supplies rather than one the layout produced.
- *
- * The alternative - dispatching `PointerEvent`s at a rendered strip - would be
- * asserting card widths, gaps and handle positions, which `CLAUDE.md` rules out
- * as too brittle, to check arithmetic that has nothing to do with any of them.
+ * in, an index or a length comes out. `progression-strip-pointer.spec.ts` has
+ * the other two halves - which service call the component makes with these
+ * answers, and what a real `PointerEvent` on a rendered strip does before it
+ * gets here.
  */
 
 /** Three cards a hundred pixels wide, laid end to end. */
-const THREE_SPANS: CardSpan[] = [
-  { left: 0, right: 100 },
-  { left: 100, right: 200 },
-  { left: 200, right: 300 }
-];
+const THREE_SPANS: CardSpan[] = [{ right: 100 }, { right: 200 }, { right: 300 }];
 
 /**
  * The pure half of the resize gesture: a pointer delta, a scale, and the
@@ -56,6 +49,32 @@ describe('draggedBeats', () => {
   });
 
   /**
+   * The dead zone. Exactly on the half-beat the length does not move, and a
+   * pointer sitting there and shaking by a pixel commits nothing - which used
+   * to be a commit per crossing, and a hundred of them empties the undo stack.
+   */
+  it('holds the length while the pointer sits on the boundary', () => {
+    expect(draggedBeats(4, 20, 40)).toBe(4);
+    expect(draggedBeats(4, 21, 40)).toBe(4);
+    expect(draggedBeats(4, 19, 40)).toBe(4);
+  });
+
+  /**
+   * And the zone travels with the length the drag has reached, which is what
+   * makes it hysteresis rather than a wider snap: the same pointer position
+   * gives 4 to a drag that has reached 4 and 5 to one that has reached 5.
+   */
+  it('keeps whichever length the drag already reached', () => {
+    expect(draggedBeats(4, 20, 40, 4)).toBe(4);
+    expect(draggedBeats(4, 20, 40, 5)).toBe(5);
+  });
+
+  it('takes a new beat once the pointer is clear of the boundary', () => {
+    expect(draggedBeats(4, 27, 40, 4)).toBe(5);
+    expect(draggedBeats(4, 13, 40, 5)).toBe(4);
+  });
+
+  /**
    * The guard that matters. A card with no width on screen gives a scale of
    * zero, and dividing by it produces `Infinity` - which
    * `normalizeLengthBeats` throws on, aborting the gesture with an exception
@@ -72,7 +91,6 @@ describe('draggedBeats', () => {
   });
 });
 
-
 /**
  * The pure half of the reorder gesture: where the pointer is, and which card
  * it is over.
@@ -84,6 +102,12 @@ describe('dropIndexAt', () => {
     expect(dropIndexAt(250, THREE_SPANS)).toBe(2);
   });
 
+  /** A pointer on a card's last pixel is still over that card. */
+  it('reads the right edge of a card as that card, not the next one', () => {
+    expect(dropIndexAt(100, THREE_SPANS)).toBe(0);
+    expect(dropIndexAt(200, THREE_SPANS)).toBe(1);
+  });
+
   /** A drag can be released past either end, and the nearest card is what it meant. */
   it('clamps to the ends of the strip', () => {
     expect(dropIndexAt(-500, THREE_SPANS)).toBe(0);
@@ -92,10 +116,7 @@ describe('dropIndexAt', () => {
 
   /** Cards are drawn with a gap between them; it belongs to the card after it. */
   it('reads a gap between two cards as the one on its right', () => {
-    const gapped: CardSpan[] = [
-      { left: 0, right: 90 },
-      { left: 100, right: 190 }
-    ];
+    const gapped: CardSpan[] = [{ right: 90 }, { right: 190 }];
     expect(dropIndexAt(95, gapped)).toBe(1);
   });
 
@@ -118,5 +139,13 @@ describe('beyondDragThreshold', () => {
   it('reads a press that has travelled as a drag, in either direction', () => {
     expect(beyondDragThreshold(50, 60)).toBeTrue();
     expect(beyondDragThreshold(50, 40)).toBeTrue();
+  });
+
+  /** Four pixels either way, and four is far enough. */
+  it('turns over at four pixels', () => {
+    expect(beyondDragThreshold(50, 53)).toBeFalse();
+    expect(beyondDragThreshold(50, 54)).toBeTrue();
+    expect(beyondDragThreshold(50, 47)).toBeFalse();
+    expect(beyondDragThreshold(50, 46)).toBeTrue();
   });
 });

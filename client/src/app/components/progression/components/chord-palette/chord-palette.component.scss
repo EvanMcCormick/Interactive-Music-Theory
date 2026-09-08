@@ -2,16 +2,30 @@
 // read: dark navigation surfaces, blue for what is in the mode, red for the
 // root. The tonic button takes the root red for the same reason the circle of
 // fifths does - "root" has to mean one colour across the whole app.
+//
+// The blue and the red are darker here than the app's #3498db and #e74c3c, and
+// the dim grey lighter than its #a8b6c1. That is contrast rather than taste:
+// these are the app's only *filled* chord buttons, and #ecf0f1 measures 2.75:1
+// on #3498db and 3.33:1 on #e74c3c, both well under the 4.5:1 AA asks of normal
+// text - and the old hovers were lighter still, so hovering made it worse.
+// Every pair below is at or above 4.5:1 against the surface it is used on. The
+// progression strip declares the same set, because a card and a button for the
+// same chord sit against each other and should not be two different blues.
 :host {
   --palette-surface: #2c3e50;
   --palette-surface-raised: #34495e;
-  --palette-chord: #3498db;
-  --palette-chord-hover: #4aa8e6;
-  --palette-tonic: #e74c3c;
-  --palette-tonic-hover: #ef6455;
+  // 4.8:1 under --palette-text; the hover darkens rather than lightens, which
+  // is the only direction that keeps a white label legible.
+  --palette-chord: #1b6ea3;
+  --palette-chord-hover: #155a85;
+  // 4.7:1 under --palette-text.
+  --palette-tonic: #c0392b;
+  --palette-tonic-hover: #a02b1f;
   --palette-line: #22303d;
   --palette-text: #ecf0f1;
-  --palette-text-dim: #a8b6c1;
+  // 4.8:1 on --palette-surface-raised, where the control labels sit; #a8b6c1
+  // was 4.48:1 there.
+  --palette-text-dim: #adbcc8;
 
   display: block;
 }
@@ -81,9 +95,10 @@
   line-height: 1.1;
 }
 
+// Quieter by size than by colour. A translucent white composited to 4.47:1 on
+// the chord fill - just under AA - for a distinction the type already makes.
 .name {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.85);
 }
 
 .controls {

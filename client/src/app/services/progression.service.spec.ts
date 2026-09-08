@@ -277,6 +277,144 @@ describe('ProgressionService', () => {
       service.setSlotLength(slots()[0].id, 1);
       expectNoCommit(() => service.setSlotLength(slots()[0].id, 0));
     });
+
+    /**
+     * A resize drag commits on every whole beat it crosses, because the card
+     * has to be the length it is being dragged to. Without coalescing that is
+     * one undo entry per beat, and a pointer shaking on a beat boundary used to
+     * push a hundred of them and evict everything the user had done before.
+     */
+    describe('coalescing a run of them', () => {
+      /** How many steps back the history holds, counted by walking it. */
+      function undoDepth(): number {
+        let depth = 0;
+        while (currentState().canUndo) {
+          service.undo();
+          depth++;
+        }
+        return depth;
+      }
+
+      it('folds a run into one undo step, landing before the run began', () => {
+        service.appendSlot(0);
+        const id = slots()[0].id;
+
+        service.setSlotLength(id, 5, { coalesce: false });
+        service.setSlotLength(id, 6, { coalesce: true });
+        service.setSlotLength(id, 7, { coalesce: true });
+        expect(slots()[0].lengthBeats).toBe(7);
+
+        service.undo();
+        expect(slots()[0].lengthBeats).toBe(4);
+      });
+
+      it('leaves one step for the run and one for the chord that preceded it', () => {
+        service.appendSlot(0);
+        const id = slots()[0].id;
+
+        service.setSlotLength(id, 5, { coalesce: false });
+        service.setSlotLength(id, 6, { coalesce: true });
+
+        expect(undoDepth()).toBe(2);
+      });
+
+      it('keeps two runs on the same slot two steps apart', () => {
+        service.appendSlot(0);
+        const id = slots()[0].id;
+
+        service.setSlotLength(id, 5, { coalesce: false });
+        service.setSlotLength(id, 6, { coalesce: true });
+        service.setSlotLength(id, 7, { coalesce: false });
+        service.setSlotLength(id, 8, { coalesce: true });
+
+        service.undo();
+        expect(slots()[0].lengthBeats).toBe(6);
+      });
+
+      /** Two slots are two runs, whatever order the calls arrive in. */
+      it('does not fold the length of one slot into the run of another', () => {
+        service.appendSlot(0);
+        service.appendSlot(4);
+        const [first, second] = slots().map(slot => slot.id);
+
+        service.setSlotLength(first, 5, { coalesce: false });
+        service.setSlotLength(second, 6, { coalesce: true });
+
+        service.undo();
+        expect(slots()[1].lengthBeats).toBe(4);
+        expect(slots()[0].lengthBeats).toBe(5);
+      });
+
+      /**
+       * A continuation with nothing to continue opens its own step. There is no
+       * transaction to leave open, so a drag abandoned anywhere - a cancelled
+       * pointer, a destroyed component, a throw - costs the next commit nothing.
+       */
+      it('opens a step for a continuation of a run that is not under way', () => {
+        service.appendSlot(0);
+        const id = slots()[0].id;
+
+        service.setSlotLength(id, 5, { coalesce: true });
+        service.setSlotLength(id, 6, { coalesce: true });
+
+        expect(undoDepth()).toBe(2);
+      });
+
+      /** Undo moves the stack out from under a run, so the next commit pushes. */
+      it('ends a run when the history is walked back into it', () => {
+        service.appendSlot(0);
+        const id = slots()[0].id;
+
+        service.setSlotLength(id, 5, { coalesce: false });
+        service.undo();
+        service.setSlotLength(id, 6, { coalesce: true });
+
+        service.undo();
+        expect(slots()[0].lengthBeats).toBe(4);
+      });
+
+      /**
+       * Redo has no line of its own ending the run, and does not need one: it
+       * can only follow an undo, which has already ended it. Asserted rather
+       * than left to that argument, because the argument is about two other
+       * methods and either could move.
+       */
+      it('ends a run when the history is walked forward into it', () => {
+        service.appendSlot(0);
+        const id = slots()[0].id;
+
+        service.setSlotLength(id, 5, { coalesce: false });
+        service.undo();
+        service.redo();
+        service.setSlotLength(id, 6, { coalesce: true });
+
+        service.undo();
+        expect(slots()[0].lengthBeats).toBe(5);
+      });
+
+      /**
+       * And a whole document arriving ends it too: nothing carries across.
+       *
+       * The document that arrives has to *differ* for this to say anything -
+       * replacing a document with a copy of itself leaves the same length on
+       * both sides of the entry, so an assertion on it would hold whether the
+       * run was ended or not.
+       */
+      it('ends a run when a document is loaded over it', () => {
+        service.appendSlot(0);
+        const id = slots()[0].id;
+
+        service.setSlotLength(id, 5, { coalesce: false });
+        const loaded = structuredClone(service.doc);
+        loaded.slots[0].lengthBeats = 7;
+        service.replaceDocument(loaded);
+
+        service.setSlotLength(id, 6, { coalesce: true });
+
+        service.undo();
+        expect(slots()[0].lengthBeats).toBe(7);
+      });
+    });
   });
 
   /**

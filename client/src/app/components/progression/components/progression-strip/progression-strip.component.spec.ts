@@ -1,31 +1,28 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { ProgressionStripComponent } from './progression-strip.component';
-import { CardSpan } from './progression-strip-gestures';
 import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
 import {
+  ChordSlot,
   ProgressionDoc,
   ProgressionState,
   createDefaultProgression
 } from '../../../../models/progression.model';
 
 /**
- * What the strip renders, and what it dispatches.
+ * What the strip renders.
  *
- * The two gestures are the risky part, and they are tested in two halves.
- * `progression-strip-gestures.spec.ts` has the arithmetic; this file has the
- * wiring, driven by calling the component's own `begin*` handlers with a
- * geometry the test supplies. Nothing here dispatches a real `PointerEvent`: a
- * simulated drag would assert that Chrome delivers pointer events in the order
- * Chrome delivers them, and would pin card widths, gaps and where the handle
- * sits - layout detail `CLAUDE.md` rules out, and the first thing a style
- * change would break.
+ * The gestures are next door in `progression-strip-pointer.spec.ts`, which
+ * drives them with real `PointerEvent`s, and the arithmetic underneath them is
+ * in `progression-strip-gestures.spec.ts`. This file is the view model: what a
+ * card is called, what it says aloud, and what it refuses to say.
  *
  * Two DOM assertions only, for the reason the palette's one is there: a value
  * the component computed but never rendered would pass every expectation about
- * the view model and show the user nothing. Proportional sizing *is* the
- * feature here, so the binding that carries it is checked once.
+ * the view model and show the user nothing. Sizing by length *is* the feature
+ * here, so the binding that carries it is checked once, and once through the
+ * geometry it produces.
  *
  * The label tables are not re-tested - `progression-harmony.spec.ts` checks
  * `romanNumeral` and `chordName` directly. What is tested here is that a card
@@ -66,37 +63,52 @@ describe('ProgressionStripComponent', () => {
     return currentState().doc.slots.map(slot => slot.id);
   }
 
-  /** The one field of a pointer event either gesture reads. */
-  function pointerAt(clientX: number): PointerEvent {
-    return { clientX, button: 0 } as PointerEvent;
+  function cardElements(): HTMLElement[] {
+    return Array.from(fixture.nativeElement.querySelectorAll('.card'));
   }
 
-  /** Three cards a hundred pixels wide, laid end to end. */
-  const THREE_SPANS: CardSpan[] = [
-    { left: 0, right: 100 },
-    { left: 100, right: 200 },
-    { left: 200, right: 300 }
-  ];
+  /** A whole document, for the states no M1 setter can reach by hand. */
+  function docOf(...slots: ChordSlot[]): ProgressionDoc {
+    return { ...createDefaultProgression(), slots };
+  }
 
   /**
-   * A document holding one `literal` slot. `replaceDocument` is the only door
-   * in M1 through which one can arrive - its own docstring says so, the
-   * recogniser that makes them being M3's - which is what makes this branch
-   * testable now rather than after it is first reachable by hand.
+   * A `literal` slot. `replaceDocument` is the only door in M1 through which
+   * one can arrive - its own docstring says so, the recogniser that makes them
+   * being M3's - which is what makes this branch testable now rather than after
+   * it is first reachable by hand.
    */
-  function literalDoc(reason: 'unrecognised' | 'user-detached'): ProgressionDoc {
+  function literalSlot(reason: 'unrecognised' | 'user-detached'): ChordSlot {
     return {
-      ...createDefaultProgression(),
-      slots: [
-        {
-          id: 'literal-slot',
-          harmony: { kind: 'literal', reason },
-          startBeat: 0,
-          lengthBeats: 4,
-          notes: [{ midi: 60, startBeat: 0, lengthBeats: 4, velocity: 80 }],
-          isHandEdited: true
+      id: 'literal-slot',
+      harmony: { kind: 'literal', reason },
+      startBeat: 0,
+      lengthBeats: 4,
+      notes: [{ midi: 60, startBeat: 0, lengthBeats: 4, velocity: 80 }],
+      isHandEdited: true
+    };
+  }
+
+  /** A degree slot built by hand, for the fields no M1 control moves. */
+  function degreeSlot(id: string, alter: number, lengthBeats: number): ChordSlot {
+    return {
+      id,
+      harmony: {
+        kind: 'degree',
+        degree: {
+          degree: 0,
+          alter,
+          extent: 3,
+          quality: 'major',
+          inversion: 0,
+          suspension: 'none',
+          octave: 0
         }
-      ]
+      },
+      startBeat: 0,
+      lengthBeats,
+      notes: [],
+      isHandEdited: false
     };
   }
 
@@ -156,6 +168,19 @@ describe('ProgressionStripComponent', () => {
       expect(component.cards[0].name).toBe('G7');
     });
 
+    /**
+     * `alter` can push a root below the bottom of the chromatic table, where
+     * JavaScript's `%` keeps the sign and the spelling would be read off the
+     * front of it. Nothing in M1 moves `alter`; `replaceDocument` can bring in
+     * a document that already has.
+     */
+    it('names a chord whose alteration takes its root below the tonic', () => {
+      progression.replaceDocument(docOf(degreeSlot('altered', -2, 4)));
+      settle();
+
+      expect(component.cards[0].name).toBe('A# Maj');
+    });
+
     it('marks the selected card and only that one', () => {
       const ids = build(0, 4);
       progression.selectSlot(ids[1]);
@@ -173,17 +198,26 @@ describe('ProgressionStripComponent', () => {
     });
 
     /**
-     * The one sizing assertion. A length computed and never bound would satisfy
-     * every expectation above and size nothing on screen, and proportional
-     * width is the whole of what this strip shows about time.
+     * The sizing assertions. A length computed and never bound would satisfy
+     * every expectation above and size nothing on screen, and width is the
+     * whole of what this strip says about time.
+     *
+     * The widths are read as a ratio rather than in pixels: what is being
+     * asserted is that a beat is a fixed distance, which is what makes the row
+     * a timeline and what lets a resize drag be scaled by a constant. The
+     * number of pixels a beat is belongs to the stylesheet.
      */
-    it('sizes each card in proportion to its length', () => {
+    it('sizes each card by its length, at one distance per beat', () => {
       const ids = build(0, 4);
       progression.setSlotLength(ids[0], 2);
       settle();
 
-      const cards: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.card'));
-      expect(cards.map(card => card.style.flexGrow)).toEqual(['2', '4']);
+      const cards = cardElements();
+      expect(cards.map(card => card.style.getPropertyValue('--card-beats'))).toEqual(['2', '4']);
+
+      const widths = cards.map(card => card.getBoundingClientRect().width);
+      expect(widths[0]).toBeGreaterThan(0);
+      expect(widths[1] / widths[0]).toBeCloseTo(2, 5);
     });
 
     /**
@@ -196,7 +230,27 @@ describe('ProgressionStripComponent', () => {
 
       expect(component.cards[0].label).toBe('G major, degree 5, 4 beats');
       expect(component.cards[0].removeLabel).toBe('Remove G major');
-      expect(component.cards[0].resizeLabel).toBe('Length of G major, 4 beats');
+    });
+
+    /**
+     * The handle is a slider, so its length is its *value* rather than part of
+     * its name: `aria-valuetext` is re-read after an arrow key changes it,
+     * where a name would have changed silently under a focus that never moved.
+     */
+    it('gives the resize handle a name and a value, separately', () => {
+      build(4);
+
+      expect(component.cards[0].resizeLabel).toBe('Length of G major');
+      expect(component.cards[0].beatsText).toBe('4 beats');
+      expect(component.cards[0].maxBeats).toBeGreaterThanOrEqual(component.cards[0].lengthBeats);
+    });
+
+    /** A slider has to declare a ceiling; a slot longer than it widens it. */
+    it('widens the announced range to hold a slot longer than it', () => {
+      progression.replaceDocument(docOf(degreeSlot('long', 0, 200)));
+      settle();
+
+      expect(component.cards[0].maxBeats).toBe(200);
     });
 
     it('counts a single beat in the singular', () => {
@@ -205,6 +259,14 @@ describe('ProgressionStripComponent', () => {
       settle();
 
       expect(component.cards[0].label).toBe('C major, degree 1, 1 beat');
+    });
+
+    /** M2's free timing will put fractions here, and a rounded one is a lie. */
+    it('keeps a fraction of a beat in what it says', () => {
+      progression.replaceDocument(docOf(degreeSlot('fractional', 0, 1.5)));
+      settle();
+
+      expect(component.cards[0].beatsText).toBe('1.5 beats');
     });
   });
 
@@ -216,7 +278,7 @@ describe('ProgressionStripComponent', () => {
    */
   describe('a chord the key cannot name', () => {
     it('gives a literal slot no Roman numeral', () => {
-      progression.replaceDocument(literalDoc('unrecognised'));
+      progression.replaceDocument(docOf(literalSlot('unrecognised')));
       settle();
 
       expect(component.cards.length).toBe(1);
@@ -226,7 +288,7 @@ describe('ProgressionStripComponent', () => {
     });
 
     it('says why an unrecognised slot has no numeral', () => {
-      progression.replaceDocument(literalDoc('unrecognised'));
+      progression.replaceDocument(docOf(literalSlot('unrecognised')));
       settle();
 
       expect(component.cards[0].label).toBe(
@@ -236,7 +298,7 @@ describe('ProgressionStripComponent', () => {
 
     /** The other branch of the union, and a different story about the same card. */
     it('says why a detached slot has no numeral', () => {
-      progression.replaceDocument(literalDoc('user-detached'));
+      progression.replaceDocument(docOf(literalSlot('user-detached')));
       settle();
 
       expect(component.cards[0].label).toBe(
@@ -271,7 +333,7 @@ describe('ProgressionStripComponent', () => {
 
     /** Explained once below the strip; a card has no room for a sentence. */
     it('explains the missing numerals once, on screen', () => {
-      progression.replaceDocument(literalDoc('unrecognised'));
+      progression.replaceDocument(docOf(literalSlot('unrecognised')));
       settle();
 
       expect(component.unlabelledHint).not.toBeNull();
@@ -283,13 +345,25 @@ describe('ProgressionStripComponent', () => {
       expect(component.unlabelledHint).toBeNull();
     });
 
+    /**
+     * One unlabelled card among labelled ones is exactly when the sentence is
+     * needed, and a strip of one card cannot tell "any" from "all".
+     */
+    it('explains them when only some of the cards have no numeral', () => {
+      progression.replaceDocument(docOf(degreeSlot('named', 0, 4), literalSlot('unrecognised')));
+      settle();
+
+      expect(component.cards.map(card => card.isUnlabelled)).toEqual([false, true]);
+      expect(component.unlabelledHint).not.toBeNull();
+    });
+
     /** Still removable and still resizable: it is a chord, only an unnamed one. */
     it('leaves an unlabelled card its controls', () => {
-      progression.replaceDocument(literalDoc('unrecognised'));
+      progression.replaceDocument(docOf(literalSlot('unrecognised')));
       settle();
 
       expect(component.cards[0].removeLabel).toBe('Remove unlabelled chord');
-      expect(component.cards[0].resizeLabel).toBe('Length of unlabelled chord, 4 beats');
+      expect(component.cards[0].resizeLabel).toBe('Length of unlabelled chord');
     });
   });
 
@@ -331,155 +405,6 @@ describe('ProgressionStripComponent', () => {
 
       expect(component.cards.map(card => card.numeral)).toEqual(['I', 'vi']);
       expect(currentState().doc.slots.map(slot => slot.startBeat)).toEqual([0, 4]);
-    });
-  });
-
-  describe('dragging the right edge', () => {
-    it('sets the slot length the drag reaches', () => {
-      const [id] = build(0);
-      spyOn(progression, 'setSlotLength');
-
-      // A four-beat card forty pixels to the beat, dragged two beats wider.
-      component.beginResize(id, 100, 4, 40);
-      component.onPointerMove(pointerAt(180));
-
-      expect(progression.setSlotLength).toHaveBeenCalledWith(id, 6);
-    });
-
-    it('resizes the slot for real, and re-flows what follows it', () => {
-      const ids = build(0, 4);
-      component.beginResize(ids[0], 100, 4, 40);
-      component.onPointerMove(pointerAt(180));
-      component.onPointerUp(pointerAt(180));
-      settle();
-
-      expect(component.cards.map(card => card.lengthBeats)).toEqual([6, 4]);
-      expect(currentState().doc.slots.map(slot => slot.startBeat)).toEqual([0, 6]);
-    });
-
-    /** Absolute, not incremental: every move is measured from where it started. */
-    it('measures each move from where the drag began', () => {
-      const [id] = build(0);
-      component.beginResize(id, 100, 4, 40);
-      component.onPointerMove(pointerAt(180));
-      component.onPointerMove(pointerAt(140));
-      component.onPointerUp(pointerAt(140));
-      settle();
-
-      expect(component.cards[0].lengthBeats).toBe(5);
-    });
-
-    it('stops resizing once the pointer is released', () => {
-      const [id] = build(0);
-      component.beginResize(id, 100, 4, 40);
-      component.onPointerUp(pointerAt(100));
-
-      spyOn(progression, 'setSlotLength');
-      component.onPointerMove(pointerAt(300));
-
-      expect(progression.setSlotLength).not.toHaveBeenCalled();
-    });
-
-    /** The arrow keys are the same edit for someone who is not holding a mouse. */
-    it('nudges the length by one beat from the keyboard', () => {
-      const [id] = build(0);
-      spyOn(progression, 'setSlotLength');
-
-      component.nudgeLength(component.cards[0], 1);
-      expect(progression.setSlotLength).toHaveBeenCalledWith(id, 5);
-
-      component.nudgeLength(component.cards[0], -1);
-      expect(progression.setSlotLength).toHaveBeenCalledWith(id, 3);
-    });
-  });
-
-  describe('dragging a card to reorder it', () => {
-    it('moves the slot to the card it was dropped on', () => {
-      const ids = build(0, 4, 5);
-      spyOn(progression, 'moveSlot');
-
-      component.beginReorder(ids[0], 50, THREE_SPANS);
-      component.onPointerMove(pointerAt(250));
-      component.onPointerUp(pointerAt(250));
-
-      expect(progression.moveSlot).toHaveBeenCalledWith(ids[0], 2);
-    });
-
-    it('reorders the progression for real', () => {
-      const ids = build(0, 4, 5);
-
-      component.beginReorder(ids[0], 50, THREE_SPANS);
-      component.onPointerMove(pointerAt(250));
-      component.onPointerUp(pointerAt(250));
-      settle();
-
-      expect(component.cards.map(card => card.numeral)).toEqual(['V', 'vi', 'I']);
-    });
-
-    /**
-     * A click is a press and a release too. Below the threshold the gesture was
-     * never a drag, so it must reorder nothing - the click handler selects, and
-     * that is all that should happen.
-     */
-    it('moves nothing when the pointer barely moved', () => {
-      const ids = build(0, 4, 5);
-      spyOn(progression, 'moveSlot');
-
-      component.beginReorder(ids[0], 50, THREE_SPANS);
-      component.onPointerMove(pointerAt(52));
-      component.onPointerUp(pointerAt(52));
-
-      expect(progression.moveSlot).not.toHaveBeenCalled();
-    });
-
-    it('leaves the order alone when a drag comes back to where it started', () => {
-      const ids = build(0, 4, 5);
-
-      component.beginReorder(ids[0], 50, THREE_SPANS);
-      component.onPointerMove(pointerAt(250));
-      component.onPointerUp(pointerAt(50));
-      settle();
-
-      expect(component.cards.map(card => card.id)).toEqual(ids);
-    });
-
-    /** The card being dragged is marked so the user can see what they have hold of. */
-    it('marks the dragged card while the drag is under way, and not after', () => {
-      const ids = build(0, 4, 5);
-
-      component.beginReorder(ids[0], 50, THREE_SPANS);
-      expect(component.draggingId).toBeNull();
-
-      component.onPointerMove(pointerAt(250));
-      expect(component.draggingId).toBe(ids[0]);
-
-      component.onPointerUp(pointerAt(250));
-      expect(component.draggingId).toBeNull();
-    });
-
-    it('dispatches nothing for pointer movement with no gesture under way', () => {
-      build(0, 4);
-      spyOn(progression, 'moveSlot');
-      spyOn(progression, 'setSlotLength');
-
-      component.onPointerMove(pointerAt(250));
-      component.onPointerUp(pointerAt(250));
-
-      expect(progression.moveSlot).not.toHaveBeenCalled();
-      expect(progression.setSlotLength).not.toHaveBeenCalled();
-    });
-
-    /** One gesture at a time: starting a resize abandons a reorder in progress. */
-    it('abandons a reorder when a resize starts', () => {
-      const ids = build(0, 4, 5);
-      component.beginReorder(ids[0], 50, THREE_SPANS);
-      component.beginResize(ids[0], 100, 4, 40);
-
-      spyOn(progression, 'moveSlot');
-      component.onPointerMove(pointerAt(180));
-      component.onPointerUp(pointerAt(180));
-
-      expect(progression.moveSlot).not.toHaveBeenCalled();
     });
   });
 

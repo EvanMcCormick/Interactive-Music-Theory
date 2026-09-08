@@ -261,20 +261,21 @@ const ROMAN_NUMERALS: readonly string[] = ['I', 'II', 'III', 'IV', 'V', 'VI', 'V
  *
  * That is deliberate and it is the model's existing convention rather than a
  * new one - `ChordDegree.quality` stores `dominant7` for a ninth too - so the
- * numeral agrees with the field it was computed from. Printing `V9` needs the
- * extent, which means widening this signature, and the design doc pins it at
- * two arguments for M1. It is the M2 change to make if the strip's cards want
- * to show the height, and it is a change to make here rather than by pasting a
- * number onto the result somewhere downstream.
+ * numeral agrees with the field it was computed from.
  *
- * **Note for Task 7.** The chord palette's complexity readout prints the extent
- * in words, so a user who presses `+` twice reads "Complexity: 9th" in that
- * panel while the strip card beside it reads `V7`. The two are consistent -
- * each says what it is for - but they are on screen together, and the extent is
- * available in both components. So this is a deferral rather than an
- * impossibility, and Task 7 should decide it on purpose: either the strip
- * carries the height too, which is the widened signature above, or the two
- * readouts are labelled clearly enough that a user is not left comparing them.
+ * **Note for Task 7, settled.** The chord palette's complexity readout prints
+ * the extent in words, so a user who presses `+` twice reads "Complexity: 9th"
+ * in that panel while the strip card beside it reads `V7`. The strip decided
+ * not to print the height: its two lines are the numeral and the chord name,
+ * and the panel that says "9th" is labelled "Complexity", a different question.
+ *
+ * **And the M2 fix is bigger than this signature.** Widening it to take the
+ * extent, on its own, prints `V9` over a card whose name still reads `G7` -
+ * `chordName` reads the same `quality` field and is blind to the height in the
+ * same way, so the disagreement moves onto the card rather than off it. It
+ * starts below both of them: `ChordQuality` has no ninth, eleventh or
+ * thirteenth member for either function to name, and the three tables here are
+ * keyed by it. M2 has to widen the type, or widen both functions together.
  *
  * ## And the one thing it refuses
  *

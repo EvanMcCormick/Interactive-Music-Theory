@@ -605,17 +605,28 @@ app-wide sharps/flats rule.
 
 **Files:**
 - Create: `client/src/app/components/progression/components/progression-strip/progression-strip.component.{ts,html,scss}`
-- Test: `.../progression-strip.component.spec.ts`
+- Create: `.../progression-strip-gestures.ts` — the pointer arithmetic, and
+  `.../progression-strip-cards.ts` — what a card says about a slot. Both split
+  out as `progression-edit.ts` was: neither is about a component, and between
+  them they keep the component under the 500-line cap.
+- Test: `.../progression-strip.component.spec.ts` — the view model.
+- Test: `.../progression-strip-gestures.spec.ts` — the arithmetic, in a table.
+- Test: `.../progression-strip-pointer.spec.ts` — the gesture wiring, and the
+  adapter above it driven with real `PointerEvent`s.
 
-A horizontal row of chord cards, each showing its numeral and name, sized in
-proportion to `lengthBeats`. Uses `trackBy: slot.id`.
+A horizontal row of chord cards, each showing its numeral and name, sized by
+`lengthBeats` at a fixed number of pixels per beat, with the row scrolling. Uses
+`trackBy: slot.id`.
 
 M1 interactions: click to select, drag to reorder, drag the right edge to resize,
 a delete control. Emit through the service; hold no state locally.
 
 Test the outputs, not the DOM geometry — per `CLAUDE.md`, DOM structure detail is
 too brittle to assert. Assert that a reorder calls `moveSlot` with the right
-arguments.
+arguments. That is a rule about *asserting* geometry, not about reading it: the
+pointer spec dispatches real events and takes every coordinate from a live
+`getBoundingClientRect()`, which is how the adapter — the button check, the
+measurement, the listener teardown — gets covered at all.
 
 **Commit:** `feat: Add the progression strip`
 

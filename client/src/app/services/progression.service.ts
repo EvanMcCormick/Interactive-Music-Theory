@@ -25,6 +25,29 @@ import { Scale } from '../models/music-theory.model';
 import { keySignatureKind } from './circle-of-fifths.data';
 import { MusicTheoryService } from './music-theory.service';
 
+/** How a length change should be recorded. See `setSlotLength`. */
+export interface SetLengthOptions {
+  /**
+   * Whether this is a continuation of the length change before it rather than a
+   * new one. A continuation folds into that entry instead of adding its own, so
+   * one drag is one undo step however many beats it crosses.
+   */
+  coalesce?: boolean;
+}
+
+/**
+ * A stretch of commits that undo as one step.
+ *
+ * `key` names the run - `length:<slotId>` - and `continues` says whether this
+ * commit joins the run of that name or starts it. Only the caller knows which,
+ * because the service cannot see where one drag ends and the next begins. See
+ * `ProgressionService.commit`.
+ */
+interface CommitRun {
+  key: string;
+  continues: boolean;
+}
+
 /**
  * Owns the progression document, the strip's selection, and undo/redo.
  *
@@ -84,6 +107,12 @@ export class ProgressionService {
   private readonly stateSubject: BehaviorSubject<ProgressionState>;
   private undoStack: ProgressionDoc[] = [];
   private redoStack: ProgressionDoc[] = [];
+
+  /**
+   * The run of commits the last one belonged to, or null when it belonged to
+   * none. See `commit()`, and `CommitRun` for what a run is.
+   */
+  private currentRun: string | null = null;
 
   constructor() {
     this.stateSubject = new BehaviorSubject<ProgressionState>(
@@ -171,15 +200,26 @@ export class ProgressionService {
    * only the number. Regenerating needed one, and a slot resized in a
    * pentatonic key came away two beats long holding four-beat notes.
    * `retimeNotes` says what a literal slot gets instead.
+   *
+   * `coalesce` folds this call into the undo entry the previous one opened, so
+   * that a drag across three beats is one step back rather than three. The
+   * caller passes it false for the first length it commits and true for every
+   * one after, which is what keeps two separate drags on the same slot two
+   * separate steps - there is nothing else between them for the service to tell
+   * them apart by. A caller that never passes it gets the old behaviour, one
+   * entry per call, which is right for the arrow keys.
    */
-  setSlotLength(id: string, beats: number): void {
+  setSlotLength(id: string, beats: number, options: SetLengthOptions = {}): void {
     const slot = this.slotOf(id);
     if (!slot) return;
 
     const resized = normalizeChordSlot({ ...slot, lengthBeats: beats });
     if (resized.lengthBeats === slot.lengthBeats) return;
 
-    this.replaceSlot(id, () => retimeNotes(resized));
+    this.replaceSlot(id, () => retimeNotes(resized), {
+      key: `length:${id}`,
+      continues: options.coalesce === true
+    });
   }
 
   /**
@@ -275,12 +315,20 @@ export class ProgressionService {
   }
 
   /** Swaps one slot for what `build` makes of it, by id. */
-  private replaceSlot(id: string, build: (key: ProgressionKey) => ChordSlot): void {
-    this.commit(draft => {
-      const index = draft.slots.findIndex(slot => slot.id === id);
-      if (index < 0) return;
-      draft.slots[index] = build(draft.key);
-    });
+  private replaceSlot(
+    id: string,
+    build: (key: ProgressionKey) => ChordSlot,
+    run?: CommitRun
+  ): void {
+    this.commit(
+      draft => {
+        const index = draft.slots.findIndex(slot => slot.id === id);
+        if (index < 0) return;
+        draft.slots[index] = build(draft.key);
+      },
+      undefined,
+      run
+    );
   }
 
   /** Which slot the strip has selected. Not a document change, so not undoable. */
@@ -367,8 +415,26 @@ export class ProgressionService {
    * `mutate` at all, it fails in the normalisation afterwards - and the history
    * is state too. Settled first, then pushed, then published: a throw at any
    * point leaves both stacks and all three flags exactly as they were.
+   *
+   * ## One drag, one step
+   *
+   * A `run` is a stretch of commits that undo together. A commit that continues
+   * the run already under way pushes nothing, so the entry the run's first
+   * commit left on the stack - the document from before the run began - stays
+   * where one undo will land. That is what a resize drag needs: it commits on
+   * every whole beat it crosses, because the card has to be the length it is
+   * being dragged to, and without this a drag across three beats cost three
+   * undo steps and a pointer jittering on a beat boundary cost as many as it
+   * liked. `MAX_HISTORY` is 100, so a few seconds of that used to evict every
+   * step the user had taken before the drag.
+   *
+   * It is deliberately not a transaction. There is nothing to open and nothing
+   * to close, so a gesture abandoned mid-drag - the pointer cancelled, the
+   * component destroyed, an exception - leaves no state behind to be closed:
+   * the next commit that does not continue the run simply pushes, as every
+   * commit did before.
    */
-  private commit(mutate: (draft: ProgressionDoc) => void, select?: string): void {
+  private commit(mutate: (draft: ProgressionDoc) => void, select?: string, run?: CommitRun): void {
     const state = this.stateSubject.getValue();
     const previous = structuredClone(state.doc);
     const draft = structuredClone(state.doc);
@@ -376,15 +442,34 @@ export class ProgressionService {
     mutate(draft);
     const settled = settle(draft);
 
-    this.pushHistory(previous);
+    // A continuation is only honoured while the run it names is the one under
+    // way, so a caller that passes `continues` with nothing to continue - or
+    // after an undo has moved the stack under it - opens an entry rather than
+    // folding into whatever happens to be on top.
+    const extendsRun = run !== undefined && run.continues && run.key === this.currentRun;
+    if (!extendsRun) this.pushHistory(previous);
+    this.currentRun = run?.key ?? null;
+
     this.publish(settled, select ?? state.selectedSlotId, true);
   }
 
+  /**
+   * Walking the history ends whatever run was under way: the entry a run was
+   * folding into is no longer on top of the stack, so the next commit has to
+   * open one of its own rather than fold into whatever is.
+   *
+   * `redo` needs no such line, and does not have one. It can only run when
+   * `redoStack` is non-empty, which happens only after an `undo` - and no
+   * commit can refill it in between, because the *first* commit of a run always
+   * pushes and so always clears the redo branch. So by the time `redo` runs,
+   * this has already been nulled.
+   */
   undo(): void {
     const state = this.stateSubject.getValue();
     const previous = this.undoStack.pop();
     if (!previous) return;
 
+    this.currentRun = null;
     this.redoStack.push(structuredClone(state.doc));
     this.publish(previous, state.selectedSlotId, true);
   }
@@ -414,6 +499,7 @@ export class ProgressionService {
     const state = this.stateSubject.getValue();
     const settled = settle(requireUniqueSlotIds(doc));
 
+    this.currentRun = null;
     this.pushHistory(structuredClone(state.doc));
     this.publish(settled, state.selectedSlotId, !markClean);
   }

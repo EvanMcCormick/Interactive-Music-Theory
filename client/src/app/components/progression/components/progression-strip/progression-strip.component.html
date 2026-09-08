@@ -10,7 +10,7 @@
       role="listitem"
       #cardElement
       *ngFor="let card of cards; trackBy: trackById"
-      [style.flexGrow]="card.lengthBeats"
+      [style.--card-beats]="card.lengthBeats"
       [class.selected]="card.isSelected"
       [class.unlabelled]="card.isUnlabelled"
       [class.dragging]="card.id === draggingId">
@@ -25,7 +25,10 @@
         (click)="select(card)"
         (pointerdown)="startReorder(card, $event)">
         <span class="numeral">{{ card.numeral }}</span>
-        <span class="name">{{ card.name }}</span>
+        <!-- A card narrow enough to truncate its name leaves a sighted user
+             reading `C M…` with nowhere to go; the label already covers a
+             screen reader. -->
+        <span class="name" [title]="card.name">{{ card.name }}</span>
       </button>
 
       <button
@@ -35,12 +38,21 @@
         (click)="remove(card)">&times;</button>
 
       <!-- The right edge. Dragged with a pointer, stepped with the arrow keys,
-           so the length is reachable without a mouse. -->
+           so the length is reachable without a mouse - and a slider rather than
+           a button, because the arrow keys are the whole of that path and a
+           button announces nothing about them. The length is the *value*: after
+           a nudge `aria-valuetext` is re-read, where a name carrying the beats
+           changed under a focus that never moved and so was never announced. -->
       <button
         type="button"
         class="resize"
+        role="slider"
         [attr.aria-label]="card.resizeLabel"
-        (pointerdown)="startResize(card, $event)"
+        [attr.aria-valuemin]="minBeats"
+        [attr.aria-valuemax]="card.maxBeats"
+        [attr.aria-valuenow]="card.lengthBeats"
+        [attr.aria-valuetext]="card.beatsText"
+        (pointerdown)="startResize(card, $event, cardElement)"
         (keydown.arrowright)="nudgeLength(card, 1, $event)"
         (keydown.arrowleft)="nudgeLength(card, -1, $event)"></button>
     </div>
