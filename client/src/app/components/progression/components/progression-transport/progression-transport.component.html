@@ -34,14 +34,21 @@
   <!-- The label wraps the box, so "BPM" is its accessible name without a second
        string to keep in step. Committed on change - blur or Enter - which is
        what `commitTempo` is about; the element is handed over rather than the
-       value because it is also what has to be corrected. -->
+       value because it is also what has to be corrected.
+
+       `step="any"` because the model deliberately allows a fractional BPM:
+       `normalizeTempo` clamps and does not round, so a metronome may sit
+       between two whole numbers. `step="1"` did not stop 250.7 being typed,
+       committed and displayed - it only made the box report itself `:invalid`
+       while showing a tempo the document had genuinely accepted. The spinner
+       arrows still move by one, which is the browser's default for "any". -->
   <label class="tempo">
     <span class="tempo-label">BPM</span>
     <input
       #tempoBox
       class="tempo-input"
       type="number"
-      step="1"
+      step="any"
       [min]="tempoMin"
       [max]="tempoMax"
       [value]="tempoText"

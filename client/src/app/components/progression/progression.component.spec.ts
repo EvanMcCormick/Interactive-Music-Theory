@@ -196,6 +196,57 @@ describe('ProgressionComponent', () => {
       expect(key()).toEqual({ tonic: 9, scaleId: 'aeolian' });
     });
 
+    /**
+     * Six o'clock is two keys, and which one was clicked is the whole reason
+     * that wedge is split in half.
+     *
+     * F sharp major and G flat major are the same pitch class, so a page that
+     * carries only the pitch class across cannot tell them apart - and
+     * `keySignatureKind` asked about pitch class 6 finds the F sharp position,
+     * because that is the one the circle stores. The app itself has already
+     * decided: `shouldUseSharps` reads the key *name*, so selecting G flat puts
+     * the fretboard into flats. These two pin that the progression ends up
+     * where the fretboard and the drawer already are.
+     *
+     * This is `b514027` one layer up. That commit taught `spellingFor` to read
+     * a minor key's own signature rather than its scale's default; the input it
+     * reads had already lost the distinction by the time it arrived.
+     */
+    it('keeps the flat spelling of an enharmonic major key', () => {
+      const circle = TestBed.createComponent(CircleOfFifthsComponent);
+      circle.detectChanges();
+
+      // The outer ring of the six o'clock position, enharmonic half: G flat.
+      circle.componentInstance.selectMajor(CIRCLE_POSITIONS[6], true);
+
+      expect(key()).toEqual({ tonic: 6, scaleId: 'ionian' });
+      expect(progression.doc.key.preferSharps).toBeFalse();
+      expect(component.keyName).toBe('Gb Ionian (Major)');
+    });
+
+    it('keeps the sharp spelling of the other half of the same wedge', () => {
+      const circle = TestBed.createComponent(CircleOfFifthsComponent);
+      circle.detectChanges();
+
+      circle.componentInstance.selectMajor(CIRCLE_POSITIONS[6]);
+
+      expect(key()).toEqual({ tonic: 6, scaleId: 'ionian' });
+      expect(progression.doc.key.preferSharps).toBeTrue();
+      expect(component.keyName).toBe('F# Ionian (Major)');
+    });
+
+    /** The inner ring of the same wedge: E flat minor against D sharp minor. */
+    it('keeps the flat spelling of an enharmonic minor key', () => {
+      const circle = TestBed.createComponent(CircleOfFifthsComponent);
+      circle.detectChanges();
+
+      circle.componentInstance.selectMinor(CIRCLE_POSITIONS[6], true);
+
+      expect(key()).toEqual({ tonic: 3, scaleId: 'aeolian' });
+      expect(progression.doc.key.preferSharps).toBeFalse();
+      expect(component.keyName).toBe('Eb Aeolian (Natural Minor)');
+    });
+
     it('adopts the key the app is already in when the page opens', () => {
       musicTheory.selectKeyAndMode('Eb', 'diatonicModes', 'ionian');
 
@@ -218,22 +269,60 @@ describe('ProgressionComponent', () => {
     });
 
     /**
-     * The guard that keeps Task 11 from eating the key. That task publishes the
-     * *sounding chord* through `selectKeyAndMode(root, 'chords', chordId)`, and
-     * a page that adopted every selection would read `'maj7'` back as a scale
-     * id, find nothing, and leave the palette with no chords to offer.
+     * The guard that keeps `light` from eating the key. It publishes the
+     * *sounding chord* through `selectKeyAndMode(root, 'triads', chordId)`, and
+     * a page that adopted every selection would drag the progression onto the
+     * root of whatever chord happened to be sounding.
+     *
+     * A real category, because a real chord selection is the thing that has to
+     * be refused. This test named `'chords'` before, which is no category in
+     * `MusicTheoryService` at all - so it asserted that an *unresolvable*
+     * selection is refused, which is true and a different sentence. The user
+     * can reach `triads` from the fretboard's own category dropdown, and
+     * `light` publishes it several times a bar.
      */
-    it('ignores a selection that names no scale', () => {
+    it('ignores a selection that names a chord rather than a key', () => {
       musicTheory.selectKeyAndMode('A', 'diatonicModes', 'aeolian');
-      musicTheory.selectKeyAndMode('D', 'chords', 'major');
+      musicTheory.selectKeyAndMode('D', 'triads', 'major');
+
+      expect(key()).toEqual({ tonic: 9, scaleId: 'aeolian' });
+    });
+
+    /**
+     * The same question in the other direction, and the one "does this resolve
+     * to a scale?" got wrong. `fretboardNotes` is a scale category, so its five
+     * display modes resolve to a `Scale` and were adopted as keys: "All Notes
+     * (Sharps)" replaced the palette with a twelve-note refusal message, and
+     * "Natural Notes" left it working under a key called `Natural Notes (No
+     * Sharps/Flats)`.
+     *
+     * The app already knows these name no key - `isKeyDisabled` is what greys
+     * out its own key selector for exactly them - and `isKeySelection` is that
+     * fact asked once rather than restated here.
+     */
+    it('ignores a fretboard-notes display mode, which names no key', () => {
+      musicTheory.selectKeyAndMode('A', 'diatonicModes', 'aeolian');
+      musicTheory.selectKeyAndMode('D', 'fretboardNotes', 'allNotesSharp');
+
+      expect(key()).toEqual({ tonic: 9, scaleId: 'aeolian' });
+    });
+
+    /**
+     * `naturalNotes` is the sharp one: it is seven notes, so it builds chords
+     * happily and the palette shows no sign of anything being wrong. Only the
+     * name gives it away.
+     */
+    it('ignores the natural-notes mode, which builds chords and is no key', () => {
+      musicTheory.selectKeyAndMode('A', 'diatonicModes', 'aeolian');
+      musicTheory.selectKeyAndMode('D', 'fretboardNotes', 'naturalNotes');
 
       expect(key()).toEqual({ tonic: 9, scaleId: 'aeolian' });
     });
 
     /**
      * One direction only, which is what keeps the fretboard's own selection
-     * intact across a visit to this page. Task 11 adds the other direction and
-     * has to restore what it overwrites; M1 writes nothing at all.
+     * intact across a visit to this page. `light` adds the other direction and
+     * has to restore what it overwrites; nothing else here writes at all.
      */
     it('leaves the app-wide selection alone', () => {
       musicTheory.selectKeyAndMode('E', 'diatonicModes', 'aeolian');
@@ -292,6 +381,17 @@ describe('ProgressionComponent', () => {
 
     it('leaves Z alone without the modifier', () => {
       press({ key: 'z' });
+
+      expect(progression.doc.slots.length).toBe(1);
+    });
+
+    /**
+     * Windows reports AltGr as Ctrl+Alt, and `AltGr+Z` types a character on
+     * several European layouts. Undoing instead - and swallowing the keystroke
+     * with `preventDefault` on the way - is a bug the user cannot describe.
+     */
+    it('leaves an AltGr combination to the keyboard layout', () => {
+      press({ key: 'z', ctrlKey: true, altKey: true });
 
       expect(progression.doc.slots.length).toBe(1);
     });
@@ -443,6 +543,34 @@ describe('ProgressionComponent', () => {
 
       expect(key()).toEqual({ tonic: 9, scaleId: 'aeolian' });
       expect(currentState().canUndo).toBe(before.canUndo);
+    });
+
+    /**
+     * **A known limitation, characterised rather than fixed.** The fretboard
+     * follows the *document*, and the document can move while the transport
+     * is running: `adopt` calls turning the circle mid-playback a normal thing
+     * to do, and `chordFor` reads current state rather than the schedule the
+     * player is running. So the chord lit here is the new key's, while the
+     * chord being heard is still the old key's.
+     *
+     * Lighting the old key instead is not the fix and would be worse - it
+     * would disagree with the strip card beside it as well as with the rail.
+     * The fix is a re-schedule, and `ProgressionPlayerService.play` holds the
+     * argument for leaving it to M2, where the piano roll makes mid-play
+     * editing the normal case.
+     */
+    it('lights the key the document is in, not the key that is sounding', () => {
+      progression.appendSlot(3);
+      progression.appendSlot(4);
+      player.publish(slotId(0));
+
+      // The circle turned mid-playback. The schedule was built in A minor.
+      musicTheory.selectKeyAndMode('C', 'diatonicModes', 'ionian');
+      player.publish(slotId(1));
+
+      // v of A minor is E minor and is what the transport is sounding; V of C
+      // major is G major and is what the fretboard shows.
+      expect(selection()).toEqual({ key: 'G', categoryId: 'triads', itemId: 'major' });
     });
 
     /**

@@ -235,6 +235,27 @@ describe('ProgressionTransportComponent', () => {
       expect(component.positionText).toBe('Playing');
     });
 
+    /**
+     * **A known limitation, characterised rather than fixed.** The total comes
+     * from the document and the position from a schedule built when play
+     * began, so a chord appended mid-play is counted by a transport that will
+     * never reach it. `describePosition` argues for leaving it - counting the
+     * schedule instead would disagree with the strip, which draws six cards -
+     * and `ProgressionPlayerService.play` holds the underlying reason.
+     */
+    it('counts chords the running schedule will never reach', () => {
+      const ids = build(0, 3, 4, 5);
+      player.cue(ids[1]);
+      settle();
+      expect(component.positionText).toBe('Chord 2 of 4');
+
+      // Two more chords while the transport runs. The schedule still ends
+      // after the fourth.
+      build(1, 2);
+
+      expect(component.positionText).toBe('Chord 2 of 6');
+    });
+
     it('stops listening to the player once it is destroyed', () => {
       const ids = build(0);
       fixture.destroy();
@@ -295,13 +316,15 @@ describe('ProgressionTransportComponent', () => {
     });
 
     /**
-     * The hazard Task 5 anticipated, at the boundary where it is actually met.
+     * The hazard `ProgressionService.commit` anticipated, at the boundary where
+     * it is actually met.
      *
      * An emptied `<input type="number">` reads as `''`, and `Number('')` is 0 -
      * which is finite, so a guard that only asked `Number.isFinite` would sail
      * through and clamp the tempo to 20 while the user was still typing.
      * `valueAsNumber` gives `NaN` instead, and `setTempo(NaN)` throws out of the
-     * normalisation. Task 5 reordered `commit()` so that throw no longer
+     * normalisation. `ProgressionService` orders `commit()` so that throw no
+     * longer
      * corrupts the history, but a throw out of a `change` handler is still an
      * error in the console on a box the user merely cleared.
      *
@@ -359,6 +382,20 @@ describe('ProgressionTransportComponent', () => {
       // entry that restores 300 over 300 is a press of Undo that does nothing.
       progression.undo();
       expect(currentState().doc.tempo).toBe(120);
+    });
+
+    /**
+     * The model clamps the tempo and does not round it, so a fractional BPM is
+     * a value the document genuinely keeps. The box has to agree: `step="1"`
+     * refused nothing, it only marked the input `:invalid` while displaying a
+     * tempo that had been accepted and was sounding.
+     */
+    it('accepts a fractional tempo, as the document does', () => {
+      commitTempo('250.7');
+
+      expect(currentState().doc.tempo).toBe(250.7);
+      expect(tempoBox().value).toBe('250.7');
+      expect(tempoBox().checkValidity()).toBeTrue();
     });
 
     /** And the same for a tempo written differently rather than changed. */

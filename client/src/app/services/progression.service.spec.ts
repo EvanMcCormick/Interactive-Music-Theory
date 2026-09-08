@@ -537,7 +537,8 @@ describe('ProgressionService', () => {
       expect(extentOf()).toBe(3);
     });
 
-    // Task 9's hazard one control over: an emptied number input reads as `NaN`,
+    // The tempo box's hazard one control over: an emptied number input reads
+    // as `NaN`,
     // and `NaN` rungs in either direction is not a direction at all.
     it('refuses a step that is not a number', () => {
       expectNoCommit(() => service.stepSlotExtent(slots()[0].id, Number.NaN));
@@ -815,7 +816,7 @@ describe('ProgressionService', () => {
    * never happened: an enabled redo button that does nothing, and a redo
    * history lost to a mistyped tempo.
    *
-   * Task 9's tempo box is the live road here. An emptied `<input
+   * The transport's tempo box is the live road here. An emptied `<input
    * type="number">` reads as `null` through `ngModel` and as `NaN` through
    * `valueAsNumber`, and `Number.isFinite` refuses both.
    */

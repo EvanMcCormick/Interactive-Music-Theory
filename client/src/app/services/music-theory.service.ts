@@ -798,6 +798,32 @@ export class MusicTheoryService {
             state.selectedItem === 'flats');
   }
 
+  /**
+   * Whether the current selection names a key at all.
+   *
+   * Three kinds of thing can be selected here and only one of them is a key.
+   * A chord is a shape rather than a tonality, and `triads`, `seventh`,
+   * `extended` and `alterations` are all reachable from the fretboard's own
+   * category dropdown. The five `fretboardNotes` entries are display modes:
+   * "All Notes (Sharps)" is not a key with a sharp in it, it is every note on
+   * the neck - which is precisely what `isKeyDisabled` above says, since it is
+   * what greys out this service's own key selector for them.
+   *
+   * Written as one method because the progression composer needs the answer and
+   * had been asking a different question for it. `getCurrentScaleObject()`
+   * being truthy is "does the selected item resolve to a scale", and that
+   * answers *no* to a chord the user chose deliberately and *yes* to a
+   * fretboard display mode - wrong in both directions, and the second one put
+   * a progression into a key called "Natural Notes (No Sharps/Flats)".
+   *
+   * A category this service cannot resolve answers false, which is the honest
+   * reading rather than a defensive one: there is no category to ask what kind
+   * of thing it holds.
+   */
+  isKeySelection(): boolean {
+    return this.getCurrentCategory()?.type === 'scale' && !this.isKeyDisabled();
+  }
+
   // Generate mode notes based on selected key and item (scale or chord)
   generateModeNotes(): number[] {
     const state = this.state.getValue();

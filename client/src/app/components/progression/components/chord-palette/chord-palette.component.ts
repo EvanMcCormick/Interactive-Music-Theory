@@ -16,9 +16,11 @@ import {
   ProgressionState
 } from '../../../../models/progression.model';
 import { MusicTheoryService } from '../../../../services/music-theory.service';
+import { chordRootPitchClass } from '../../../../services/progression-generate';
 import { ProgressionService } from '../../../../services/progression.service';
 import {
   ChordExtent,
+  ChordQuality,
   chordName,
   degreeQuality,
   romanNumeral,
@@ -204,14 +206,17 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   private buildChords(key: ProgressionKey, intervals: readonly number[]): PaletteChord[] {
     return [0, 1, 2, 3, 4, 5, 6].map(degree => {
       const quality = degreeQuality(intervals, degree, PALETTE_EXTENT);
-      // `degreePitchClasses` works relative to the tonic, so the tonic is added
-      // here - the same one addition `generateSlotNotes` makes on the way to
-      // the notes, so the label and the sound come from one arithmetic.
+      // The shared arithmetic rather than a local `(tonic + interval) % 12`,
+      // which is what this was and which agrees with it only while `alter` is
+      // pinned at zero. The strip card and the fretboard highlight both call
+      // this function; a palette doing its own sum is the one label that would
+      // not follow when M2 lets a degree be altered - and it would also not
+      // fold a negative sum back into range.
       //
       // Spelled from `key.preferSharps` and not from `getNoteName`, which
       // answers for the *fretboard's* key. See the note at the top of the file.
       const root = this.musicTheory.spellNote(
-        (key.tonic + intervals[degree]) % 12,
+        chordRootPitchClass(key, intervals, paletteDegree(degree, quality)),
         key.preferSharps
       );
 
@@ -258,6 +263,28 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     if (!slot || slot.harmony.kind !== 'degree') return null;
     return slot.harmony.degree;
   }
+}
+
+/**
+ * The degree a palette button stands for, as `chordRootPitchClass` wants it.
+ *
+ * It is `createDegreeSlot`'s degree at the palette's own extent - the slot the
+ * button appends - so building it here rather than passing the index alone is
+ * what makes the label and the appended chord one description. `alter: 0` is
+ * copied from that factory rather than assumed: it is the field M2's borrowed
+ * chords move, and the day it moves the palette follows through the shared
+ * function instead of standing still.
+ */
+function paletteDegree(degree: number, quality: ChordQuality): ChordDegree {
+  return {
+    degree,
+    alter: 0,
+    extent: PALETTE_EXTENT,
+    quality,
+    inversion: 0,
+    suspension: 'none',
+    octave: 0
+  };
 }
 
 /** `+1`, `0`, `-2` - signed, so the readout says which way it has been moved. */

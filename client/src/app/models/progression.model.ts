@@ -70,7 +70,8 @@ import { TimeSignature } from './composer.model';
  *    should fail loudly here rather than be rounded back onto the last rung.
  *
  * `normalizeProgressionDoc` is what makes the rule a mechanism rather than a
- * convention: Task 5's `commit()` calls it on every mutation, so the funnel has
+ * convention: `ProgressionService.commit` calls it on every mutation, so the
+ * funnel has
  * one call site instead of eleven setters each remembering to opt in.
  */
 
@@ -268,7 +269,7 @@ export interface RollNote {
   /**
    * MIDI velocity, 1-127.
    *
-   * Hazard for Task 8's scheduler: `Tone.PolySynth.triggerAttackRelease` takes
+   * Hazard for the scheduler: `Tone.PolySynth.triggerAttackRelease` takes
    * velocity as a 0-1 gain, not as a MIDI byte. Handing it 80 asks for eighty
    * times full scale and clips hard. The conversion is `/ 127`, and it belongs
    * at the Tone boundary rather than here, so that `RollNote` stays MIDI end to
@@ -443,7 +444,8 @@ function requireDegreeIndex(degree: number): number {
  * fractional note count, and `degreePitchClasses` then loops past it and
  * returns a chord with a note too many. A wrong chord, not a crash. And not a
  * clamp, because keeping the +/- complexity buttons on the ladder is the
- * *stepper's* job - Task 5's `setSlotExtent` owns that, not this guard.
+ * *stepper's* job - `ProgressionService.setSlotExtent` owns that, not this
+ * guard.
  */
 function requireExtent(extent: ChordExtent): ChordExtent {
   if (!CHORD_EXTENTS.includes(extent)) {
@@ -545,7 +547,7 @@ export function normalizeChordSlot(slot: ChordSlot): ChordSlot {
  * Checks and bounds a whole document: every slot, plus the two numbers that
  * reach the audio layer without belonging to one.
  *
- * This is the funnel's intended call site: Task 5's `ProgressionService` routes
+ * This is the funnel's intended call site: `ProgressionService` routes
  * every mutation through a single `commit()`, and `commit()` calls this. That
  * turns "every path that produces a slot should end at `normalizeChordSlot`"
  * from a convention eleven setters each have to remember into a mechanism with

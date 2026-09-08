@@ -263,7 +263,7 @@ const ROMAN_NUMERALS: readonly string[] = ['I', 'II', 'III', 'IV', 'V', 'VI', 'V
  * new one - `ChordDegree.quality` stores `dominant7` for a ninth too - so the
  * numeral agrees with the field it was computed from.
  *
- * **Note for Task 7, settled.** The chord palette's complexity readout prints
+ * **Note for the chord palette, settled.** Its complexity readout prints
  * the extent in words, so a user who presses `+` twice reads "Complexity: 9th"
  * in that panel while the strip card beside it reads `V7`. The strip decided
  * not to print the height: its two lines are the numeral and the chord name,

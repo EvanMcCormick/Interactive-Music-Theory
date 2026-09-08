@@ -132,9 +132,10 @@ describe('ProgressionStripComponent', () => {
     });
 
     /**
-     * The spelling belongs to the progression's key, not the app's - the Task 6
-     * bug, one component over. A strip that asked `getNoteName` would print
-     * D♯ Maj whenever the fretboard behind it happened to be in a sharp key.
+     * The spelling belongs to the progression's key, not the app's - the
+     * chord palette's bug, one component over. A strip that asked `getNoteName`
+     * would print D♯ Maj whenever the fretboard behind it happened to be in a
+     * sharp key.
      */
     it('spells a card from the progression key rather than the fretboard', () => {
       const musicTheory = TestBed.inject(MusicTheoryService);

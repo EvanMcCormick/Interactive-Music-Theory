@@ -78,7 +78,7 @@ import { voiceChord } from './progression-voicing';
  * bolted on here.
  *
  * The gap is latent rather than live, which is why M1 ships with it:
- * `createDegreeSlot` hardcodes `alter: 0`, no M1 setter moves it, and Task 6's
+ * `createDegreeSlot` hardcodes `alter: 0`, no M1 setter moves it, and the
  * palette emits only diatonic degrees. Nothing in M1 can ask for a chord this
  * cannot generate.
  *
@@ -86,7 +86,8 @@ import { voiceChord } from './progression-voicing';
  * on one and that throw is allowed through, rather than being turned into an
  * empty chord that would surface as silence three layers downstream. A caller
  * that would rather explain than fail asks `isHeptatonic` first - that is what
- * it is exported for, and what Task 6's palette does before it renders a single
+ * it is exported for, and what the chord palette does before it renders a
+ * single
  * button. Repeating the check here would give the same rule two homes and let
  * them drift.
  */
@@ -133,7 +134,8 @@ export function generateSlotNotes(
   // is the branch that lets M3 degrade a slot to literal rather than mislabel
   // it: losing the Roman numeral must cost the user nothing they played.
   //
-  // Hazard for Task 5: it follows that `setSlotLength` on a literal slot is a
+  // Hazard for `ProgressionService.setSlotLength`: it follows that setting a
+  // literal slot's length is a
   // silent no-op as far as its notes go. Regeneration returns them unchanged,
   // so shrinking the slot leaves notes hanging past its end and lengthening it
   // leaves silence at the end. That is arguably correct under "notes are the

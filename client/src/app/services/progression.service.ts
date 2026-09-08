@@ -360,8 +360,25 @@ export class ProgressionService {
    * would leave this page in a different key from the fretboard behind it,
    * which is a worse lie than a progression whose slots keep the notes they
    * already had.
+   *
+   * ## `preferSharps` is an argument because a pitch class cannot carry it
+   *
+   * `spellingFor` below works the spelling out from the tonic and the mode,
+   * and that is the right answer for every caller that has only those two
+   * numbers. It is not always the *available* answer: F sharp major and G flat
+   * major are one pitch class and two keys, and a caller who knows which of
+   * them the user picked knows something this service cannot re-derive. The
+   * circle of fifths is that caller, through `ProgressionComponent.adopt`,
+   * which hands over `MusicTheoryService.shouldUseSharps()` - the app-wide
+   * answer, taken from the key *name* the user clicked.
+   *
+   * Optional rather than required, so that a caller who genuinely has only the
+   * numbers - a spec, a future importer - still gets the derived answer instead
+   * of having to invent one. `undefined` means "derive it"; `false` is a real
+   * request for flats and is not swallowed, which is why this is `??` and not
+   * `||`.
    */
-  setKey(tonic: number, scaleId: string): void {
+  setKey(tonic: number, scaleId: string, preferSharps?: boolean): void {
     const scale = this.findScale(scaleId);
 
     this.commit(draft => {
@@ -382,7 +399,9 @@ export class ProgressionService {
 
       draft.key = {
         ...bounded,
-        preferSharps: this.spellingFor(bounded.tonic, scaleId, scale, draft.key.preferSharps)
+        preferSharps:
+          preferSharps ??
+          this.spellingFor(bounded.tonic, scaleId, scale, draft.key.preferSharps)
       };
 
       // No `isHeptatonic` check of its own: `regenerate` asks already, and

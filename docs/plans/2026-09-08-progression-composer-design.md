@@ -302,7 +302,7 @@ root alone. Then bVII is *degree 6, alter -1, quality 'major'* — root pitch cl
 10, intervals [0,4,7], giving Bb-D-F. The field already exists and is already
 stored; nothing reads it.
 
-Three consequences worth knowing before that lands:
+Four consequences worth knowing before that lands:
 
 1. **`alter !== 0` with `quality === null`** has no diatonic chord to inherit a
    shape from. Reject the combination or document a default; do not let it fall
@@ -315,6 +315,16 @@ Three consequences worth knowing before that lands:
    sweeping the real pipeline *including* `alter`, and the 33-semitone maximum
    reach depends on `alter` meaning what it means today. Changing its semantics
    requires re-deriving that bound.
+4. **`regenerateSlot` overwrites `quality` unconditionally**, and it is the
+   call site the fix has to change. `progression-edit.ts:173` re-derives the
+   label from the scale on every regeneration, and `ProgressionService`
+   regenerates on every key change, every complexity step and every resize — so
+   an override written into the field survives until the next of those and no
+   longer. The field is therefore not merely unread today, it is actively
+   erased, which is why `quality: ChordQuality | null` has to land *here* and
+   not only in the generator: `null` must mean "re-derive" and a non-null value
+   must be left alone, or the borrowed chord is gone the first time the user
+   drags a card's edge.
 
 **Why M1 does not care.** `createDegreeSlot` hardcodes `alter: 0`, no M1 setter
 changes it, the palette emits only diatonic degrees, `romanNumeral(degree,

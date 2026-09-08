@@ -169,9 +169,10 @@ describe('ChordPaletteComponent', () => {
     /**
      * The spelling belongs to the progression's key, not to the app's.
      *
-     * These are two selections and they are allowed to differ - Task 10 wires
-     * the circle to both, and until then only one of them moves. A palette that
-     * asked `MusicTheoryService` how to spell would print E flat major with
+     * These are two selections and they are allowed to differ - the page
+     * shell wires the circle to both, and until then only one of them moves. A
+     * palette that asked `MusicTheoryService` how to spell would print E flat
+     * major with
      * sharps whenever the fretboard behind it happened to be in one, which is
      * how this page came to show D♯ Maj as the tonic of E♭ major.
      */

@@ -63,7 +63,7 @@
 // drag reached went as `w = W*n/(n+B)`; no constant scale can track a curve,
 // and the pointer ran 49px ahead of the edge it was holding on the first beat
 // and 525px by the twelfth. Absolute widths make one beat one distance, which
-// is also the mapping Task 9's playhead needs to put itself anywhere sensible.
+// is also the mapping M2's playhead will need to put itself anywhere sensible.
 //
 // There is still deliberately no `min-width`. Under the old layout a floor
 // would have made a one-beat card among four-beat ones wider than one beat -

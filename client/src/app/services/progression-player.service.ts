@@ -235,7 +235,8 @@ export function buildSchedule(doc: ProgressionDoc): PlaybackSchedule {
  * `fn.apply`, and `AsyncPipe`'s `markForCheck` reaches the change-detection
  * scheduler from any zone at all. `zone.js` is still in the polyfills, but
  * nothing about rendering depends on it. So a `currentSlot$ | async` highlight
- * repaints wherever the cue came from, and Task 9 has nothing to fear here.
+ * repaints wherever the cue came from, and the transport has nothing to fear
+ * here.
  *
  * `publishSlot` runs through `NgZone` anyway, and knowingly. The bet is cheap -
  * a pass-through call and a closure, once per slot rather than once per tick,
@@ -264,13 +265,13 @@ export function buildSchedule(doc: ProgressionDoc): PlaybackSchedule {
 /**
  * Provided by `ProgressionComponent`, not at the root.
  *
- * Task 8 wrote `providedIn: 'root'` here and bound `PROGRESSION_AUDIO` in
+ * This was written `providedIn: 'root'` with `PROGRESSION_AUDIO` bound in
  * `main.ts` to match, which put `progression-audio.ts` into the eager bundle.
- * Task 10 moved the token onto the lazily loaded page - see `main.ts` for what
- * that is and is not worth - and this had to move with it: a
- * `providedIn: 'root'` service is constructed *in* the root injector however it
- * is reached, so it would have looked for the token in an injector the page's
- * providers are invisible to.
+ * `ProgressionComponent` now provides the token from the lazily loaded page -
+ * see `main.ts` for what that is and is not worth - and this had to move with
+ * it: a `providedIn: 'root'` service is constructed *in* the root injector
+ * however it is reached, so it would have looked for the token in an injector
+ * the page's providers are invisible to.
  *
  * What that changes, said plainly, because two docstrings below used to lean on
  * the opposite: the chain is built when the page opens and disposed when the
@@ -359,6 +360,39 @@ export class ProgressionPlayerService implements OnDestroy {
    * layering. That is also what disposes the previous schedule - and a play
    * that has not finished starting counts as something playing, which is what
    * `generation` is for.
+   *
+   * ## The schedule is a snapshot, and nothing re-schedules mid-play
+   *
+   * **A known limitation, characterised by spec rather than fixed.**
+   * `buildSchedule` runs once, here, and the two parts it fills carry that
+   * document's notes and cues until the next `play` or `stop`. An edit made
+   * while the transport runs changes what is on screen and not what is
+   * sounding, and this page invites exactly that edit: `ProgressionComponent`
+   * takes its key from the app-wide circle of fifths and its `adopt` calls
+   * turning that circle mid-playback "a normal thing to do", because there is
+   * no key picker on the page itself.
+   *
+   * So the three views come apart. Turn the circle while a progression plays
+   * and the audio stays in the old key - it is running this schedule - while
+   * the strip cards re-label themselves from the document and the fretboard
+   * lights the new key's chord, because `ProgressionComponent.chordFor` reads
+   * current state rather than the schedule. Appending a chord is the same story
+   * counted rather than spelled: see `describePosition` in the transport, which
+   * says so from the other end.
+   *
+   * Left as it is for M1, on two grounds. Re-scheduling means either restarting
+   * the transport - which throws the user back to the top of the progression
+   * for a change they made to bar four - or diffing a new schedule against a
+   * running one and swapping the parts under it, which is real design work
+   * about what happens to a chord already sounding. And it would have to invert
+   * this service's dependency: `play` takes a `ProgressionDoc` and this class
+   * has never heard of `ProgressionService`, which is what lets `buildSchedule`
+   * be pure arithmetic tested against numbers.
+   *
+   * **M2 is where that stops being a good trade.** A piano roll invites editing
+   * during playback in a way a palette of seven buttons does not, and it also
+   * brings the playhead that makes the disagreement visible frame by frame
+   * rather than once a bar.
    */
   async play(doc: ProgressionDoc): Promise<void> {
     this.stop();

@@ -708,6 +708,31 @@ describe('ProgressionPlayerService', () => {
       expect(audio.livingParts.length).toBe(2);
     });
 
+    /**
+     * **A known limitation, characterised rather than fixed.** `buildSchedule`
+     * runs once per play and the parts carry that snapshot until the next
+     * `play` or `stop`, so an edit made under a running transport is heard by
+     * nothing. The page invites the edit - its key comes from the app-wide
+     * circle of fifths, which is reachable mid-playback - so this is here to
+     * make the behaviour a decision M2 inherits rather than a surprise it
+     * discovers. `play` says why it was left, and the transport's
+     * `describePosition` says what it looks like on screen.
+     */
+    it('plays the document it was handed, not the document as it becomes', async () => {
+      const doc = twoChords();
+      await player.play(doc);
+
+      // The two edits the page can make while this is running: a chord
+      // appended, and the key moved under it by the circle.
+      doc.slots.push(degreeSlot('c', 8, 4, [note(72, 0, 4), note(76, 0, 4)]));
+      doc.key = { tonic: 3, scaleId: 'ionian', preferSharps: false };
+
+      // Six notes and two cues plus the trailing one: the two-slot schedule,
+      // unchanged. Nothing re-reads the document.
+      expect(notePart().events.length).toBe(6);
+      expect(cuePart().events.length).toBe(3);
+    });
+
     it('schedules nothing when the context will not resume', async () => {
       audio.resumeFails = true;
 

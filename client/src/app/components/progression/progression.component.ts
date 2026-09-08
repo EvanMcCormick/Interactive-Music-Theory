@@ -53,15 +53,15 @@ interface AppSelection {
  *
  * `adopt` reads the app's selection and `light` writes it, which is a cycle on
  * paper. It is broken at `adopt`, which acts only on a selection naming a
- * *scale*, and every chord `light` publishes names a chord category instead.
- * `restore` does publish a scale, and reaches `adopt` - which finds the
+ * *key*, and every chord `light` publishes names a chord category instead.
+ * `restore` does publish a key, and reaches `adopt` - which finds the
  * progression already in that key and commits nothing, because that is the key
  * the progression adopted from it in the first place. Both halves are pinned by
  * spec, from either end.
  *
  * ## Why the audio providers are here rather than in `main.ts`
  *
- * `PROGRESSION_AUDIO` was bound in `main.ts` when Task 8 built the player,
+ * `PROGRESSION_AUDIO` was bound in `main.ts` when the player was first built,
  * following `NOTE_DETECTOR`'s precedent, and binding a token whose factory does
  * `import * as Tone` from the entry graph is not free. Route-level `providers`
  * are the obvious fix and are not one: `Route.providers` is a static array, so
@@ -69,9 +69,10 @@ interface AppSelection {
  * it. Only a provider written *inside* a lazily loaded file is lazy, and this
  * is that file.
  *
- * What it is worth, measured rather than assumed, because Task 8's comment
- * overstated it: 722 bytes off `main`, which is `progression-audio.ts` itself
- * (772,018 with the binding in `main.ts`, 771,296 with it here). The 7.6 kB
+ * What it is worth, measured rather than assumed, because the player's own
+ * comment overstated it: 722 bytes off `main`, which is
+ * `progression-audio.ts` itself (772,018 with the binding in `main.ts`,
+ * 771,296 with it here). The 7.6 kB
  * that comment named is Tone's `Part` and transport, and those stay: the
  * fretboard is the one eager route and does `import * as Tone`, so the `tone`
  * modules live in `main` and using two more of its exports from anywhere
@@ -237,10 +238,18 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    * app runs there; `metaKey` alongside `ctrlKey` for the same reason in the
    * other direction. The key is lowered before it is compared: `Shift+Z`
    * reports `'Z'`.
+   *
+   * `Alt` disqualifies the press, which is not tidiness. Windows reports AltGr
+   * as `ctrlKey && altKey`, so on a European layout every AltGr combination
+   * looks like a Ctrl chord to the test above - and `AltGr+Z` and `AltGr+Y`
+   * type real characters on several of them. Undoing instead of typing one, and
+   * swallowing the keystroke on the way, is the sort of bug a user cannot even
+   * describe.
    */
   @HostListener('document:keydown', ['$event'])
   onKeydown(event: KeyboardEvent): void {
     if (!event.ctrlKey && !event.metaKey) return;
+    if (event.altKey) return;
     if (isEditable(event.target)) return;
 
     const key = event.key.toLowerCase();
@@ -268,13 +277,13 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    *
    * Two selections are refused:
    *
-   *  - **One that names no scale.** `getCurrentScaleObject` answers only for a
-   *    scale category, so a chord selection or a fretboard-notes selection
-   *    resolves to nothing and is left alone rather than written in as a scale
-   *    id the progression cannot resolve. That is not hypothetical, it is this
-   *    page's own voice coming back: `light` publishes the sounding chord as
-   *    `selectKeyAndMode(root, 'triads', 'minor')`, and a page that adopted it
-   *    would answer its own broadcast by throwing the key away.
+   *  - **One that names no key.** A chord category and a fretboard display mode
+   *    are both selections the user can make, and neither is a tonality:
+   *    `MusicTheoryService.isKeySelection` is the single statement of that, and
+   *    the chord half is also this page's own voice coming back, since `light`
+   *    publishes the sounding chord as `selectKeyAndMode(root, 'triads',
+   *    'minor')` and a page that adopted it would answer its own broadcast by
+   *    following the chord root around.
    *  - **The key it is already in.** A key change is a commit and a commit is an
    *    undo step, so adopting a key the progression already has would cost the
    *    user one for opening the page. It is also what keeps `restore` from
@@ -284,16 +293,31 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    * of this. The drawer is app-wide and shows `selectedKey`: a progression
    * quietly in a different key from the circle floating over it would print
    * numerals for a key the diagram says the user is not in.
+   *
+   * ## Three fields cross, not two
+   *
+   * The spelling comes over as well as the pitch, and it has to: the six
+   * o'clock wedge of the circle is F sharp major *and* G flat major, one pitch
+   * class and two keys, and `getNoteIndex` throws away the only thing that
+   * separates them. `ProgressionService.setKey` would then re-derive a
+   * preference from pitch class 6 alone and find F sharp every time, because
+   * that is the spelling the circle's table stores. `shouldUseSharps()` is the
+   * app's own answer, read from the key *name* the user clicked, so handing it
+   * over is what makes the rail agree with the fretboard and the drawer.
+   *
+   * It is part of the "already in this key" comparison for the same reason. F
+   * sharp major and G flat major share a tonic and a scale id, so a comparison
+   * of those two alone would refuse the click that moves between them - which
+   * is exactly the click the split wedge exists to offer.
    */
   private adopt(selection: AppSelection): void {
     // Asked of the service rather than matched against `categoryId` here, so
-    // "is this a scale" has one answer in the app. It reads the state that was
+    // "is this a key" has one answer in the app. It reads the state that was
     // just published - `MusicTheoryService` holds a `BehaviorSubject`, so the
     // emission being handled is the current value.
-    const scale = this.musicTheory.getCurrentScaleObject();
-    if (!scale) return;
+    if (!this.musicTheory.isKeySelection()) return;
 
-    // A selection naming a scale, arriving while a chord of ours is on screen,
+    // A selection naming a key, arriving while a chord of ours is on screen,
     // is the user turning the circle mid-playback - the drawer is app-wide and
     // this page has no key picker of its own, so it is a normal thing to do.
     // What `restore` puts back has to be where they ended up: restoring the
@@ -308,10 +332,21 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     // there is also no sensible pitch class to write down for one.
     if (tonic < 0) return;
 
+    // The item id is the scale id. `isKeySelection` has already established
+    // that the category is a scale category, so there is nothing left for a
+    // second lookup to establish - and `setKey` is documented to survive an id
+    // it cannot resolve by offering no chords rather than by throwing.
+    const preferSharps = this.musicTheory.shouldUseSharps();
     const current = this.progression.doc.key;
-    if (current.tonic === tonic && current.scaleId === scale.id) return;
+    if (
+      current.tonic === tonic &&
+      current.scaleId === selection.itemId &&
+      current.preferSharps === preferSharps
+    ) {
+      return;
+    }
 
-    this.progression.setKey(tonic, scale.id);
+    this.progression.setKey(tonic, selection.itemId, preferSharps);
   }
 
   /**

@@ -65,19 +65,20 @@ const PLAYING = 'Playing';
  * On change - blur or Enter - and never per keystroke. `setTempo` commits, and
  * every commit is an undo step, so typing `90` over `120` per keystroke would
  * cost three of them and clamp the two on the way (`9`, then `90`) up to
- * `TEMPO_MIN`, writing `20` into the box under the user's cursor. Task 7's
+ * `TEMPO_MIN`, writing `20` into the box under the user's cursor. The strip's
  * run-coalescing is the other answer to that problem and is not available here:
  * it is keyed on a run the caller names, and `setTempo` takes no run - which is
  * right, because a text box has no gesture end for a run to close on the way a
  * resize drag does. See `commitTempo` for the validation, which is the live
- * half of the guard Task 5 put behind it.
+ * half of the guard `ProgressionService.commit` put behind it.
  *
  * ## Undo and redo live here
  *
  * Not because they are transport controls - they are not - but because this is
  * the page's only toolbar, and `canUndo` / `canRedo` ride on the state exactly
  * so that a control can grey itself out. The alternative was to ship M1 with
- * the undo stack that Tasks 5 and 7 both worked on unreachable by hand.
+ * the undo stack that the service and the strip both lean on unreachable by
+ * hand.
  *
  * The *keyboard* half of undo is deliberately not here. `Ctrl+Z` has to work
  * with the focus anywhere on the page, which means a document-level listener,
@@ -89,8 +90,8 @@ const PLAYING = 'Playing';
  * The player owns the transport and disposes its own chain; this is a control,
  * and a control being torn down is not a stop. A route change that should
  * silence the progression is the page shell's call - it is already the thing
- * that has to restore the fretboard's own key when playback ends. Task 10 took
- * that call: `ProgressionComponent.ngOnDestroy` stops, and says why there.
+ * that has to restore the fretboard's own key when playback ends.
+ * `ProgressionComponent.ngOnDestroy` took that call, and says why there.
  */
 @Component({
   selector: 'app-progression-transport',
@@ -205,9 +206,10 @@ export class ProgressionTransportComponent implements OnInit, OnDestroy {
    * finite, and so accepted by the obvious guard, and then clamped by the
    * normalisation to `TEMPO_MIN`. The user cleared a box and the progression
    * dropped to 20 BPM. `valueAsNumber` reads the same box as `NaN` instead,
-   * which `setTempo` rejects by *throwing* out of the normalisation - Task 5
-   * put the history beyond reach of that throw, but an error in the console
-   * every time someone selects-all and retypes is still not a working box.
+   * which `setTempo` rejects by *throwing* out of the normalisation -
+   * `ProgressionService.commit` puts the history beyond reach of that throw,
+   * but an error in the console every time someone selects-all and retypes is
+   * still not a working box.
    *
    * So the empty string is turned back into `NaN` before the finite test, and
    * neither shape reaches the service. A browser hands the same `''` back for
@@ -275,6 +277,22 @@ export class ProgressionTransportComponent implements OnInit, OnDestroy {
  * A cue can name a slot the document no longer has - remove the sounding chord
  * mid-play and the schedule, built from the document as it was, carries on
  * naming it - so there is a third answer between "stopped" and a position.
+ *
+ * ## The total is the document's and the position is the schedule's
+ *
+ * **A known limitation, characterised by spec rather than fixed.** Both numbers
+ * are read from `state.doc`, which is the document as it is now, while the cue
+ * they describe comes from a schedule built when play began. The removal above
+ * is the half that was handled; a slot *added* mid-play is the half that was
+ * not. Append two chords to a four-chord progression while it runs and this
+ * reads "Chord 2 of 6" over a transport that will stop after the fourth.
+ *
+ * Counting the schedule instead would only move the lie: the strip beside this
+ * readout draws six cards, so "of 4" would disagree with what the user can see.
+ * The disagreement is not here. It is that `ProgressionPlayerService.play`
+ * snapshots the document and nothing re-schedules under a running transport,
+ * which is written up there along with the argument for leaving it until M2's
+ * piano roll makes mid-play editing the normal case.
  */
 function describePosition(state: ProgressionState, slotId: string | null): string {
   if (slotId === null) return STOPPED;

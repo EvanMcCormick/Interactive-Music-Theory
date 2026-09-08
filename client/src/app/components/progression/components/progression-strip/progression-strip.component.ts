@@ -51,7 +51,7 @@ import {
  * `w = W*n/(n+B)` while the handle was scaled by a constant, and the pointer
  * ran away from the edge it was holding by 49px on the first beat and 525px by
  * the twelfth. An absolute layout is what makes `pixelsPerBeat` a constant that
- * is actually true, and Task 9's playhead needs the same mapping.
+ * is actually true, and M2's playhead will need the same mapping.
  *
  * ## One source, and the key it belongs to
  *

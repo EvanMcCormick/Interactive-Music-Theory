@@ -60,10 +60,10 @@ describe('generateSlotNotes', () => {
 
   // Every other spec here builds its slot at beat 0, where a generator that
   // copied `slot.startBeat` onto its notes would be indistinguishable from one
-  // that writes 0. Task 5's `reflow` gives every slot after the first a
-  // non-zero `startBeat`, so that mutant would ship and break the invariant the
-  // docstring states - and it would break it on the second chord, not the
-  // first.
+  // that writes 0. `ProgressionService`'s `reflow` gives every slot after the
+  // first a non-zero `startBeat`, so that mutant would ship and break the
+  // invariant the docstring states - and it would break it on the second
+  // chord, not the first.
   it('numbers a note from its own slot, not from the timeline', () => {
     const slot = createDegreeSlot(0, 8);
     expect(slot.startBeat).toBe(8);

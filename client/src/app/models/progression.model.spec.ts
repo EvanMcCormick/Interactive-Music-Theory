@@ -293,7 +293,7 @@ describe('normalizeProgressionDoc', () => {
   });
 
   // The point of the document-level funnel: one call reaches every slot, so
-  // Task 5's `commit()` is the only place that has to remember.
+  // `ProgressionService.commit` is the only place that has to remember.
   it('normalises every slot it holds', () => {
     const doc = docWith({
       slots: [slotWithDegree({ octave: 9 }), slotWithDegree({ inversion: 4 })]
