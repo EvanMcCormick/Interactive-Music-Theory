@@ -694,6 +694,137 @@ describe('ChordPaletteComponent', () => {
       expect(component.borrowed.some(chord => chord.current)).toBeFalse();
       expect(component.secondary.some(chord => chord.current)).toBeFalse();
     });
+
+    /**
+     * The mark means two different things on the two kinds of row, and the
+     * labels are where that is said rather than left to be inferred from a
+     * ring. On the append rows the button still appends - so "another".
+     */
+    it('says the append rows would add a second one', () => {
+      component.addOption(borrowed('♭VII'));
+      settle();
+
+      expect(borrowed('♭VII').label).toBe('Add another B flat major, borrowed chord');
+      expect(borrowed('♭VI').label).toBe('Add A flat major, borrowed chord');
+    });
+
+    it('says the same of a secondary dominant the slot already holds', () => {
+      component.addOption(secondary('V/V'));
+      settle();
+
+      expect(secondary('V/V').label).toBe('Add another D dominant seventh, secondary dominant');
+      expect(secondary('V/vi').label).toBe('Add E dominant seventh, secondary dominant');
+    });
+  });
+
+  /**
+   * The half of the alternates row that changes no note and so had nothing on
+   * screen saying it happened.
+   *
+   * Clicking the marked button turns `ChordDegree.quality` from `null` - "as
+   * the key gives it" - into an override, which is the *right* reading of the
+   * row and is also the one thing about it a user could not see. The button
+   * announced itself as "Change to G major, triad", identical to the eleven
+   * beside it and a promise of a change on the one button that changes no note.
+   */
+  describe('saying that a shape pins the chord', () => {
+    beforeEach(() => {
+      component.addChord(component.chords[4]);
+      settle();
+    });
+
+    it('names the pin on the marked button and the change on the others', () => {
+      expect(alternate('major').current).toBeTrue();
+      expect(alternate('major').label).toBe('Pin as G major, triad');
+      expect(alternate('minor').label).toBe('Change to G minor, triad');
+    });
+
+    /**
+     * The height cost is still on it: the marked button shortens a ninth too,
+     * which is the whole of what `heightWarning` is about. The marked shape
+     * there is the dominant seventh rather than the triad, a stack of four or
+     * more being named after its seventh - so the pin and the cost land on one
+     * button and both have to be said.
+     */
+    it('keeps the height cost on the pin', () => {
+      component.stepComplexity(1);
+      component.stepComplexity(1);
+      settle();
+
+      expect(alternate('dominant7').current).toBeTrue();
+      expect(alternate('dominant7').label)
+        .toBe('Pin as G dominant seventh, 7th, down from the 9th');
+    });
+
+    /**
+     * The mark follows what the slot *plays*, so the pinned button is the
+     * marked one before and after the click - and the second click is a no-op
+     * on a command that is already satisfied, which is what "Pin as" says.
+     */
+    it('still names the pin once the shape is pinned', () => {
+      component.chooseAlternate(alternate('major'));
+      settle();
+
+      expect(selectedDegree().quality).toBe('major');
+      expect(alternate('major').label).toBe('Pin as G major, triad');
+    });
+
+    /** And the way back out of it is said once under the row, not on a button. */
+    it('names the way back under the row', () => {
+      expect(fixture.nativeElement.textContent).toContain('Reset to chord');
+    });
+  });
+
+  /**
+   * Which chord the alternates row acts on, which the heading did not say.
+   *
+   * The row is defined by the selection and every append re-points it, so a
+   * user who clicks a borrowed chord and then reaches for `minor` re-shapes the
+   * chord they just added rather than the one they were editing. `Other shapes`
+   * over twelve buttons that stayed put said nothing about that.
+   */
+  describe('naming the chord the alternates row acts on', () => {
+    it('names it in the heading and speaks it in the label', () => {
+      component.addChord(component.chords[4]);
+      settle();
+
+      expect(component.alternatesTitle).toBe('Other shapes on V (G Maj)');
+      expect(component.alternatesLabel).toBe('Other shapes on G major');
+    });
+
+    it('follows the shape the slot is retuned to', () => {
+      component.addChord(component.chords[4]);
+      settle();
+      component.chooseAlternate(alternate('minor7'));
+      settle();
+
+      expect(component.alternatesTitle).toBe('Other shapes on v7 (G min7)');
+    });
+
+    it('re-points at whatever was appended last', () => {
+      component.addChord(component.chords[0]);
+      settle();
+      expect(component.alternatesTitle).toBe('Other shapes on I (C Maj)');
+
+      component.addOption(borrowed('♭VII'));
+      settle();
+      expect(component.alternatesTitle).toBe('Other shapes on ♭VII (Bb Maj)');
+    });
+
+    it('puts the heading on the page', () => {
+      component.addChord(component.chords[4]);
+      settle();
+
+      const heading = fixture.nativeElement.querySelector('.group-title.named');
+      expect(heading.textContent.trim()).toBe('Other shapes on V (G Maj)');
+      expect(fixture.nativeElement.querySelector('.alternates').getAttribute('aria-label'))
+        .toBe('Other shapes on G major');
+    });
+
+    it('says which row it is when nothing selected leaves it off the page', () => {
+      expect(component.alternates).toEqual([]);
+      expect(component.alternatesTitle).toBe('Other shapes on the selected chord');
+    });
   });
 
   /**
@@ -877,9 +1008,11 @@ describe('ChordPaletteComponent', () => {
     });
 
     /**
-     * The warning is about something that really happens, including on the
-     * button that matches the shape the slot already has: `major` is marked
-     * `current` on this ninth and clicking it still takes two notes away.
+     * The warning is about something that really happens, and it reaches the
+     * marked button too: a ninth is named after its seventh, so `dominant7` is
+     * what is marked here, it stands a rung below the slot, and clicking it
+     * takes a note away. Every one of the twelve does, which is what the
+     * sentence under the row says.
      */
     it('takes the ninth away when one of them is clicked', () => {
       component.stepComplexity(1);
@@ -932,17 +1065,28 @@ describe('ChordPaletteComponent', () => {
       return found;
     }
 
-    /** The element a press at the middle of this one would actually land on. */
+    /**
+     * The element a press at the middle of this one would actually land on.
+     *
+     * The **topmost** element and not the topmost *option*, which is the whole
+     * point of asking. Task 7's Critical bug was an element drawn on top of the
+     * thing a spec reached for by selector; searching the hit list for the first
+     * entry inside a `button.option` walks straight down past exactly that -
+     * anything overlaying the row is skipped, and the probe reports the button
+     * it was hoping to find. `elementsFromPoint` is ordered front to back, so
+     * entry zero is what the pointer gets and nothing else is.
+     */
     function pressed(button: HTMLElement): HTMLElement {
       button.scrollIntoView({ block: 'center' });
       const rect = button.getBoundingClientRect();
-      const hit = document
-        .elementsFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
-        .find(candidate => candidate.closest('button.option') !== null);
-      if (!(hit instanceof HTMLElement)) {
-        throw new Error('nothing clickable at the middle of that button');
+      const [topmost] = document.elementsFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2
+      );
+      if (!(topmost instanceof HTMLElement)) {
+        throw new Error('nothing at the middle of that button');
       }
-      return hit;
+      return topmost;
     }
 
     it('draws every option as a button of its own', () => {
@@ -984,6 +1128,100 @@ describe('ChordPaletteComponent', () => {
 
       expect(buttons.map(button => button.getAttribute('aria-label')))
         .toEqual([...component.borrowed, ...component.secondary].map(chord => chord.label));
+    });
+
+    /**
+     * The alternates row's labels, on the buttons, which is where the spec
+     * above could not reach them: it runs with nothing selected, so that
+     * section is not on the page at all.
+     *
+     * They are the row that most needs the check. "down from the 9th" is the
+     * only channel through which a user who cannot see the amber chip learns
+     * that a shape will shorten the chord, and a label computed but never bound
+     * would pass every expectation in "the height an alternate sets".
+     *
+     * The order is the order the rows are drawn in - the two append rows, then
+     * the alternates below the steppers - which is the layout the spec below
+     * this one is about.
+     */
+    it('puts the alternates row`s labels on its buttons too', () => {
+      component.addChord(component.chords[4]);
+      component.stepComplexity(1);
+      component.stepComplexity(1);
+      settle();
+
+      const buttons: HTMLElement[] =
+        Array.from(fixture.nativeElement.querySelectorAll('button.option'));
+      const labels = buttons.map(button => button.getAttribute('aria-label'));
+
+      expect(labels).toEqual(
+        [...component.borrowed, ...component.secondary, ...component.alternates]
+          .map(chord => chord.label)
+      );
+      expect(labels).toContain('Change to G major, triad, down from the 9th');
+    });
+
+    /**
+     * The layout bug the alternates row was moved to fix.
+     *
+     * That row appears and disappears with the selection, and every append
+     * *selects*. Drawn above the append rows, clicking Borrowed `♭VII` on an
+     * empty progression put a heading, twelve buttons and a paragraph above the
+     * row that had just been clicked - some 200px - so the row jumped down
+     * under the pointer and a second click aimed at the same place landed on a
+     * different chord.
+     *
+     * The button is captured before the click rather than looked up again
+     * after: `trackByKey` keeps the same DOM node, and asking for `♭VII` a
+     * second time would find the alternates row's own `♭VII` - twelve shapes on
+     * that root include the major triad - which is a different button.
+     *
+     * Measured from the panel and not from the viewport. `click()` focuses the
+     * button, and a focus scrolls the element into view, so a viewport-relative
+     * top moves by however far the runner's page happened to be scrolled - a
+     * fact about the harness rather than about the layout. The distance from the
+     * top of the panel is the thing the bug was about: what got taller *above*
+     * this row.
+     */
+    it('leaves the append rows where they were when one of them is clicked', () => {
+      const panel: HTMLElement = fixture.nativeElement.querySelector('.chord-palette');
+      const fromPanelTop = (element: HTMLElement) =>
+        element.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+
+      const button = optionButton('♭VII');
+      const before = fromPanelTop(button);
+
+      button.click();
+      settle();
+
+      expect(component.alternates.length).toBe(12);
+      expect(fixture.nativeElement.contains(button)).toBeTrue();
+      expect(fromPanelTop(button)).toBe(before);
+    });
+
+    /**
+     * `aria-current="true"` says "this is the current one *of these*", which is
+     * true of a row whose buttons restate the selection and false of one whose
+     * buttons all append. With a `♭VII` selected it used to sit on two buttons
+     * at once - `Change to B flat major` and `Add B flat major` - so one ring
+     * and one ARIA state carried two verbs.
+     */
+    it('marks the current item on the row that has one, and not on the append rows', () => {
+      component.addOption(borrowed('♭VII'));
+      settle();
+
+      const marked: HTMLElement[] =
+        Array.from(fixture.nativeElement.querySelectorAll('button.option[aria-current]'));
+      const ringed: HTMLElement[] =
+        Array.from(fixture.nativeElement.querySelectorAll('button.option.current'));
+
+      expect(marked.length).toBe(1);
+      expect(marked[0].getAttribute('aria-label')).toBe('Pin as B flat major, triad');
+      // The ring is still on both: it is a statement about the selection, and
+      // the append row says the same thing in words instead of in ARIA.
+      expect(ringed.length).toBe(2);
+      expect(ringed.map(button => button.getAttribute('aria-label')))
+        .toContain('Add another B flat major, borrowed chord');
     });
 
     it('draws no option rows at all in a key that can build none', () => {

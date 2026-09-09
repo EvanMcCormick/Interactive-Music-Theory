@@ -25,52 +25,26 @@
     </button>
   </div>
 
-  <!-- The three rows the vocabulary derives. Each is hidden when it is empty
-       rather than drawn as a heading over nothing: the alternates row has no
-       root to sit on until a chord is selected, and a mode can already own
-       every chord the borrowed row would offer it.
+  <!-- The two append rows, directly under the seven they behave like. Each is
+       hidden when it is empty rather than drawn as a heading over nothing: a
+       mode can already own every chord the borrowed row would offer it.
 
        The buttons carry `option` and not `chord`, which is what keeps the seven
        above countable: they are the row the panel is titled after, and a spec
        or a stylesheet that means those seven should not have to say "the first
        seven of them".
 
-       `current` is one mark on all three rows and does not mean quite the same
-       thing on each. On the alternates it is the shape you are on, and that
-       button re-states it; on the two append rows it is a fact about the
-       selection - the chord you are on is this borrowed one - and the button
-       still adds another. Both are statements about the selected chord, which
-       is what `aria-current` says and all it says. -->
-  <section
-    class="group"
-    *ngIf="alternates.length > 0"
-    role="group"
-    aria-label="Other shapes on the selected chord">
-    <h4 class="group-title">Other shapes</h4>
-    <div class="options">
-      <button
-        type="button"
-        class="option"
-        *ngFor="let option of alternates; trackBy: trackByKey"
-        [class.current]="option.current"
-        [attr.aria-current]="option.current ? 'true' : null"
-        [attr.aria-label]="option.label"
-        (click)="chooseAlternate(option)">
-        <span class="numeral">{{ option.numeral }}</span>
-        <span class="name">{{ option.name }}</span>
-        <!-- The height this shape stands on, and an arrow when that is below
-             the one the slot is on. The arrow rather than the colour alone is
-             the part a user who cannot see the amber gets; the spoken label
-             carries the same fact in words. -->
-        <span class="height" [class.lowers]="option.lowersHeight">
-          <span class="lowers-mark" *ngIf="option.lowersHeight" aria-hidden="true">&darr;</span
-          >{{ option.heightLabel }}
-        </span>
-      </button>
-    </div>
-    <p class="hint" *ngIf="heightWarning">{{ heightWarning }}</p>
-  </section>
+       The alternates row is *not* here, and the component docstring argues it
+       at length. These two append; that one changes the selected chord, as the
+       steppers below do, and it appears and disappears with the selection - so
+       drawn above these it moved them out from under the pointer that had just
+       clicked one.
 
+       `current` on these two rows is a fact about the selection - the chord you
+       are on is this borrowed one - and the button still adds another. It keeps
+       the ring, which says that; it carries no `aria-current`, which would say
+       this button is the current *one of these* while its verb says it appends.
+       `addVerb` puts the same fact into the label instead. -->
   <section class="group" *ngIf="borrowed.length > 0" role="group" aria-label="Borrowed chords">
     <h4 class="group-title">Borrowed</h4>
     <div class="options">
@@ -79,7 +53,6 @@
         class="option"
         *ngFor="let option of borrowed; trackBy: trackByKey"
         [class.current]="option.current"
-        [attr.aria-current]="option.current ? 'true' : null"
         [attr.aria-label]="option.label"
         (click)="addOption(option)">
         <span class="numeral">{{ option.numeral }}</span>
@@ -96,7 +69,6 @@
         class="option"
         *ngFor="let option of secondary; trackBy: trackByKey"
         [class.current]="option.current"
-        [attr.aria-current]="option.current ? 'true' : null"
         [attr.aria-label]="option.label"
         (click)="addOption(option)">
         <span class="numeral">{{ option.numeral }}</span>
@@ -145,8 +117,59 @@
     </div>
   </div>
 
+  <!-- The third row, here rather than above the two append rows: it changes the
+       chord that is selected, which is what the two steppers directly above it
+       do, and it is the only row on this panel that does.
+
+       The heading names that chord. `Other shapes` alone left "which chord?" to
+       be inferred from a strip somewhere else on the page, and every append
+       silently re-points these twelve buttons at whatever was just added.
+
+       `aria-current` stays on this row, where it is true in the sense the
+       attribute has: the marked button is the current one *of these twelve*,
+       and clicking it restates the shape rather than adding a chord. -->
+  <section
+    class="group alternates"
+    *ngIf="alternates.length > 0"
+    role="group"
+    [attr.aria-label]="alternatesLabel">
+    <h4 class="group-title named">{{ alternatesTitle }}</h4>
+    <div class="options">
+      <button
+        type="button"
+        class="option"
+        *ngFor="let option of alternates; trackBy: trackByKey"
+        [class.current]="option.current"
+        [attr.aria-current]="option.current ? 'true' : null"
+        [attr.aria-label]="option.label"
+        (click)="chooseAlternate(option)">
+        <span class="numeral">{{ option.numeral }}</span>
+        <span class="name">{{ option.name }}</span>
+        <!-- The height this shape stands on, and an arrow when that is below
+             the one the slot is on. The arrow rather than the colour alone is
+             the part a user who cannot see the amber gets; the spoken label
+             carries the same fact in words. -->
+        <span class="height" [class.lowers]="option.lowersHeight">
+          <span class="lowers-mark" *ngIf="option.lowersHeight" aria-hidden="true">&darr;</span
+          >{{ option.heightLabel }}
+        </span>
+      </button>
+    </div>
+    <p class="hint" *ngIf="heightWarning">{{ heightWarning }}</p>
+    <!-- The other half of what a click here costs, and the half no button has
+         room for: the shape becomes the user's rather than the key's, so this
+         chord alone stops re-voicing when the key moves. Said once under the
+         row rather than twelve times on it, and it names the way back. -->
+    <p class="hint">
+      Picking a shape pins it, so this chord keeps it when the key changes.
+      Reset to chord, in the roll, hands it back to the key.
+    </p>
+  </section>
+
   <!-- Why the controls are grey. They act on the selected chord, and appending
-       one selects it, so this shows only after the selection is cleared. -->
+       one selects it, so this shows only after the selection is cleared. It
+       stands where the alternates row does, and the two are never both on
+       screen: one needs a selection and the other says there is none. -->
   <p class="hint" *ngIf="!canAdjust && unavailable === null">
     Pick a chord in the strip to change its complexity or octave.
   </p>

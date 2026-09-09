@@ -488,18 +488,45 @@ export class ProgressionService {
    * chord underneath everything else and leaves their note where it was - with
    * no route back but undo, and undo is gone the moment they do anything else.
    *
-   * The slot's *harmony* and its *length* are not touched: this restates what
-   * the slot sounds, not what chord it is or where it sits. So the block chord
-   * it rebuilds is the slot's own length, and a borrowed chord stays borrowed.
+   * The slot's *length* is not touched, and neither is where it sits: this
+   * restates what the slot sounds, not the timeline around it. So the block
+   * chord it rebuilds is the slot's own length.
+   *
+   * ## It drops the shape override too, which is the other claim
+   *
+   * `ChordDegree.quality` is user intent exactly as `SlotOwnership` is - Task 4
+   * made it durable, and `regenerateSlot` carries it through every regeneration
+   * untouched. So a slot with a pinned shape is a slot opted out of re-voicing
+   * in the one dimension the ownership record does not cover: the palette's
+   * alternates row pins `major` onto a `V`, the key moves to the parallel minor,
+   * and that one chord stays major while every untouched slot beside it turns
+   * minor. The plan's own hand-check - "switch to A minor on the circle, the
+   * groove survives and the chords re-voice" - is what that breaks.
+   *
+   * `createDegreeSlot` was the only producer of `quality: null` in the app, so
+   * before this the pin had no way back short of deleting the slot. The escape
+   * hatch is not optional for ownership and it is not optional here either, for
+   * the same reason and by the same argument.
+   *
+   * **A displaced root keeps its shape**, and that is not an exception being
+   * carved out. `normalizeChordDegree` refuses `alter != 0` with a null quality
+   * outright - a chromatic root has no diatonic stack to fall back on - so a
+   * borrowed chord's shape is not an override over some other answer, it is the
+   * only answer there is. `unpinned` is where that is written down. A borrowed
+   * chord therefore stays borrowed through this, as it always did.
    *
    * It refuses where there is no chord to reset to - a key that cannot stack
    * thirds, or a literal slot. Clearing the claims without regenerating would
    * be the worst of both: the hand edits would stay, now unclaimed, and the
    * next key change would quietly throw them away.
    *
-   * Nothing is recorded when the slot already owns nothing and already sounds
-   * what the generator would write, so pressing the button twice costs one
-   * undo step rather than two.
+   * Nothing is recorded when the slot owns nothing, is pinned to nothing, and
+   * already sounds what the generator would write, so pressing the button twice
+   * costs one undo step rather than two. The shape is part of that comparison
+   * because it is part of what is being taken back: pinning a `V` to `major` in
+   * a major key changes no note, so a comparison over notes and claims alone
+   * would call the reset a no-op and leave the pin in place - silently, and on
+   * the one path that exists to remove it.
    */
   resetSlotToChord(id: string): void {
     const doc = this.doc;
@@ -508,8 +535,18 @@ export class ProgressionService {
     const slot = this.slotOf(id);
     if (!slot || slot.harmony.kind !== 'degree') return;
 
-    const reset = this.regenerate({ ...slot, owned: createOwnership() }, doc.key);
-    if (sameOwnership(reset.owned, slot.owned) && sameNotes(reset.notes, slot.notes)) return;
+    const degree = unpinned(slot.harmony.degree);
+    const reset = this.regenerate(
+      { ...slot, harmony: { kind: 'degree', degree }, owned: createOwnership() },
+      doc.key
+    );
+    if (
+      sameDegree(degree, slot.harmony.degree) &&
+      sameOwnership(reset.owned, slot.owned) &&
+      sameNotes(reset.notes, slot.notes)
+    ) {
+      return;
+    }
 
     this.replaceSlot(id, () => reset);
   }
@@ -1155,6 +1192,27 @@ export class ProgressionService {
  * a display string preserved as though it were harmony, and preserved *stale*,
  * because nothing regenerates it.
  */
+/**
+ * A degree with the shape override dropped, where there is one to drop and a
+ * diatonic answer to fall back to.
+ *
+ * The two guards are one rule read from both ends. `quality: null` means "as
+ * the key gives it", and the key only gives an answer on a degree of its own
+ * scale - so `normalizeChordDegree` refuses a null quality over a displaced
+ * root, and a borrowed chord's shape is the whole of what that chord is rather
+ * than an override on top of something else. Written here rather than at the
+ * one call site so that the next caller who wants to un-pin a slot gets the
+ * refusal instead of the throw.
+ *
+ * Returns the degree itself when there is nothing to drop, so the comparison in
+ * `resetSlotToChord` reads "the shape did not move" rather than needing a
+ * second copy of these two conditions to know whether it could have.
+ */
+function unpinned(degree: ChordDegree): ChordDegree {
+  if (degree.quality === null || degree.alter !== 0) return degree;
+  return { ...degree, quality: null };
+}
+
 function chosen(degree: ChordDegree, choice: ChordChoice): ChordDegree {
   return {
     ...degree,

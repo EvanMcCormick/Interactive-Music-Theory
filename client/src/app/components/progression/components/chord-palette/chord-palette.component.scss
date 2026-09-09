@@ -8,9 +8,16 @@
 // these are the app's only *filled* chord buttons, and #ecf0f1 measures 2.75:1
 // on #3498db and 3.33:1 on #e74c3c, both well under the 4.5:1 AA asks of normal
 // text - and the old hovers were lighter still, so hovering made it worse.
-// Every pair below is at or above 4.5:1 against the surface it is used on. The
-// progression strip declares the same set, because a card and a button for the
-// same chord sit against each other and should not be two different blues.
+// Every pair below is at or above 4.5:1 against every surface it is drawn on,
+// **hover included**, and every hover darkens. Both halves are stated here
+// because both were false of the option row the moment it was added: its hover
+// lightened, and the dim grey on it measured 4.0:1 resting and 3.1:1 hovered.
+// A ratio recorded beside a token is a measurement of that pair and not a
+// target for it - the one that was wrong here, 8.9:1 for the amber, was the
+// amber against a surface it is never drawn on.
+//
+// The progression strip declares the same set, because a card and a button for
+// the same chord sit against each other and should not be two different blues.
 :host {
   --palette-surface: #2c3e50;
   --palette-surface-raised: #34495e;
@@ -25,16 +32,34 @@
   // The option rows sit on the raised surface rather than on a fill of their
   // own: they are the quieter half of the panel, and a third saturated colour
   // beside the blue and the red would read as a third kind of thing.
+  //
+  // The hover was #4a657b, which *lightened* - the one direction the note above
+  // calls wrong, and the only hover in this file that went that way. It cost
+  // every label on the button contrast at the moment the pointer was on it: the
+  // height chip fell to 3.1:1 and the amber warning to 3.8:1, and the amber is
+  // there to be read exactly then.
   --palette-option: #3d5568;
-  --palette-option-hover: #4a657b;
-  // 8.9:1 on --palette-option, where the height chip sits when it is warning
-  // that a shape is shorter than the chord. Amber rather than the app's red,
-  // which is the tonic's colour on this very panel.
+  --palette-option-hover: #314453;
+  // 4.8:1 on --palette-option and 6.3:1 on its hover, where the height chip
+  // sits when it is warning that a shape is shorter than the chord. Amber
+  // rather than the app's red, which is the tonic's colour on this very panel.
+  //
+  // This line used to record 8.9:1, which was never a measurement of anything
+  // here - it is close to the amber's ratio on the *page* background, several
+  // shades darker than this fill.
   --palette-warn: #f0c674;
   --palette-text: #ecf0f1;
   // 4.8:1 on --palette-surface-raised, where the control labels sit; #a8b6c1
-  // was 4.48:1 there.
+  // was 4.48:1 there. It is measured against the two dark surfaces, and the
+  // option fill is lighter than both - hence the pair below.
   --palette-text-dim: #adbcc8;
+  // The same quiet grey one step lighter, for dim text on an option button:
+  // 4.9:1 on --palette-option and 6.3:1 on its hover, where --palette-text-dim
+  // is 4.0:1 and 5.2:1. Two tokens rather than one lightened to clear the
+  // worst case, because lightening the shared one would wash out the panel's
+  // headings - which sit on the darkest surface here and have contrast to
+  // spare, not to spend.
+  --palette-option-dim: #c3ced8;
 
   display: block;
 }
@@ -115,6 +140,15 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--palette-text-dim);
+
+  // A heading that names a chord is not uppercased, and this is music rather
+  // than taste: case *is* the notation. `vii°` upper-cased reads as a major
+  // chord on the seventh degree, which is a different chord, and `G Maj` would
+  // come out shouting beside it.
+  &.named {
+    text-transform: none;
+    letter-spacing: 0.02em;
+  }
 }
 
 .options {
@@ -147,9 +181,11 @@
 // Which rung this shape stands on, once chosen. Only the alternates row draws
 // it, because only that row changes a slot that already exists.
 .height {
+  // 0.65rem is nowhere near the 18.66px WCAG calls large text, so this pair is
+  // held to 4.5:1 like body copy rather than to 3:1.
   font-size: 0.65rem;
   letter-spacing: 0.02em;
-  color: var(--palette-text-dim);
+  color: var(--palette-option-dim);
 
   &.lowers {
     color: var(--palette-warn);

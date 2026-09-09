@@ -1929,6 +1929,19 @@ describe('ProgressionService', () => {
       return slots()[0].owned;
     }
 
+    /** The slot's degree, for the specs that read its shape override back. */
+    function degree(): ChordDegree {
+      const harmony = slots()[0].harmony;
+      if (harmony.kind !== 'degree') throw new Error('the slot lost its degree');
+      return harmony.degree;
+    }
+
+    /** What the slot sounds, as pitch classes: the half a label cannot show. */
+    function pitchClasses(): number[] {
+      const classes = notes().map(note => ((note.midi % 12) + 12) % 12);
+      return [...new Set(classes)].sort((first, second) => first - second);
+    }
+
     /** How many steps back the history holds, counted by walking it. */
     function undoDepth(): number {
       let depth = 0;
@@ -2600,6 +2613,72 @@ describe('ProgressionService', () => {
         service.setKey(9, 'aeolian');
 
         expect(notes().map(note => note.midi)).toEqual([69, 72, 76]);
+      });
+
+      /**
+       * The fourth claim, which is not on the ownership record.
+       *
+       * `ChordDegree.quality` is durable user intent exactly as `owned` is -
+       * `regenerateSlot` carries it through every regeneration untouched - so a
+       * slot the palette's alternates row has pinned is a slot opted out of
+       * re-voicing in the one dimension the three booleans do not cover. Before
+       * this, `createDegreeSlot` was the only producer of `quality: null` in
+       * the app, which made a pin a one-way door.
+       */
+      describe('the shape override', () => {
+        /** The whole failure, in the shape the plan's own hand-check states. */
+        it('lets the slot follow the key again after a shape was pinned', () => {
+          service.setSlotChord(id, { degree: 0, alter: 0, quality: 'major', extent: 3 });
+          service.setKey(0, 'aeolian');
+          // Pinned: C major in a key whose tonic triad is C minor.
+          expect(notes().map(note => note.midi)).toEqual([60, 64, 67]);
+
+          service.setKey(0, 'ionian');
+          service.resetSlotToChord(id);
+          service.setKey(0, 'aeolian');
+
+          expect(degree().quality).toBeNull();
+          expect(notes().map(note => note.midi)).toEqual([60, 63, 67]);
+        });
+
+        /**
+         * The pin that costs no note is the one a comparison over notes alone
+         * would miss - and it is the commonest of all, being what clicking the
+         * marked button on the alternates row does.
+         */
+        it('records the reset even when the shape it drops sounds the same', () => {
+          service.setSlotChord(id, { degree: 0, alter: 0, quality: 'major', extent: 3 });
+          const before = notes().map(note => note.midi);
+
+          service.resetSlotToChord(id);
+
+          expect(degree().quality).toBeNull();
+          expect(notes().map(note => note.midi)).toEqual(before);
+          expect(currentState().canUndo).toBeTrue();
+        });
+
+        /**
+         * A displaced root has no diatonic stack to fall back on, so its shape
+         * is not an override on top of something else - it is the only answer
+         * there is, and `normalizeChordDegree` refuses the pair outright. A
+         * borrowed chord therefore stays borrowed through the reset.
+         */
+        it('leaves a borrowed chord its shape', () => {
+          service.setSlotChord(id, { degree: 6, alter: -1, quality: 'major', extent: 3 });
+          drawnOver();
+
+          service.resetSlotToChord(id);
+
+          expect([degree().degree, degree().alter]).toEqual([6, -1]);
+          expect(degree().quality).toBe('major');
+          // B flat D F, rather than the diatonic B D F of degree 6.
+          expect(pitchClasses()).toEqual([2, 5, 10]);
+        });
+
+        it('still records nothing on a slot that was never pinned', () => {
+          expect(degree().quality).toBeNull();
+          expectNoCommit(() => service.resetSlotToChord(id));
+        });
       });
     });
   });

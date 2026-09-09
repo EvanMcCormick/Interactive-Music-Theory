@@ -131,6 +131,17 @@ const EXTENT_LABELS: Record<ChordExtent, string> = {
 const NOTHING_SELECTED = '—';
 
 /**
+ * The alternates heading when no button on the row names what the slot builds.
+ *
+ * Reachable, and it is the case `ChordOption.current` describes: a stack that
+ * fits no name resolves to `'other'`, which no option carries, so nothing is
+ * marked and there is no chord for the heading to name. It says which row it is
+ * rather than naming a chord wrongly, on the strip card's rule for the same
+ * situation - unlabelled rather than mislabelled.
+ */
+const ALTERNATES_UNNAMED = 'Other shapes on the selected chord';
+
+/**
  * The diatonic chords of the current key, as seven buttons.
  *
  * ## It holds no state of its own
@@ -204,6 +215,37 @@ const NOTHING_SELECTED = '—';
  * chord you are on is the Neapolitan" - and suppressing either would be hiding
  * a true statement to protect a symmetry the page does not have.
  *
+ * The mark and the `aria-current` that carried it used to be one thing, and are
+ * now two. `aria-current="true"` means "this is the current one *of these*",
+ * which is true of the alternates row - the button restates the shape the slot
+ * has - and false of a row whose buttons all append: with a `♭VII` selected, an
+ * `Add B flat major` button announcing itself as the current item is a state
+ * and a verb contradicting each other. So the append rows keep the ring, which
+ * is a statement about the selection, and say the same thing in words instead -
+ * `Add another B flat major` - which is what the button will actually do.
+ *
+ * ## Where the rows sit, which is decided by the verb and not by the source
+ *
+ * All three come out of `chordVocabulary`, and grouping them by that is what
+ * this panel did until it bit. The two append rows are drawn under the seven
+ * they behave like; the alternates row is drawn **below the complexity and
+ * octave steppers**, with which it shares both its verb and its subject - all
+ * three change the chord that is selected, and none of them adds one.
+ *
+ * That is not only tidiness. The alternates row appears and disappears with the
+ * selection, so drawn above the append rows it moved them: clicking Borrowed
+ * `♭VII` on an empty progression appends *and selects*, twelve buttons and a
+ * heading materialise above the row that was just clicked, and the second click
+ * of a pair aimed at the same place lands on a different chord. Below the
+ * steppers it appears in the space the "pick a chord in the strip" hint gives
+ * up, and nothing above it moves.
+ *
+ * It also fixes what the heading could not say from up there. `Other shapes`
+ * over a row that acts on the selection, with the selection shown in a strip
+ * somewhere else, left "which chord?" to be inferred; the heading names it -
+ * `Other shapes on V (G Maj)` - so re-pointing the row at a newly appended
+ * chord is visible rather than silent.
+ *
  * ## Two orderings and a coincidence, all three deliberately left alone
  *
  * `secondary` arrives ordered by the degree each dominant tonicises, so `V/V`
@@ -220,6 +262,18 @@ const NOTHING_SELECTED = '—';
  * descriptions of one chord rather than a contradiction to explain. Nor are the
  * two ever on screen together - the diatonic row is triads, so it prints `I`
  * over `G Maj` while the secondary row prints `V/IV` over `G7`.
+ *
+ * **The mark reaches further than the names do**, and that argument does not
+ * cover it. Step the tonic of G mixolydian up one rung of complexity and the
+ * strip card reads `I7` while `V/IV` lights up under "Secondary dominants" -
+ * two clicks from a shipped mode's default, and the numerals are then beside
+ * each other after all. It is left as it is, because the mark is a statement
+ * about the *chord* rather than about the numeral: this slot holds the chord
+ * that button offers, which is true, and it is what tells a user that clicking
+ * would add a second one. Suppressing it on this row would trade a true
+ * statement for the appearance of consistency, and would suppress it in every
+ * key where the two numerals are genuinely different chords, which is most of
+ * them.
  */
 @Component({
   selector: 'app-chord-palette',
@@ -235,6 +289,26 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
 
   /** Every named shape on the selected chord's root. Empty with no selection. */
   alternates: readonly PaletteAlternate[] = [];
+
+  /**
+   * The alternates row's heading, which names the chord the row acts on.
+   *
+   * `Other shapes on V (G Maj)`. The row is the one part of this panel that
+   * changes a chord rather than adding one, and every append re-points it at
+   * whatever was just appended - so a heading that did not name its subject
+   * left the twelve buttons standing still while their meaning moved.
+   */
+  alternatesTitle = ALTERNATES_UNNAMED;
+
+  /**
+   * The same heading as a phrase that can be read aloud, for the section's
+   * `aria-label`.
+   *
+   * Two fields rather than one because a numeral is not a word: `V (G Maj)`
+   * announces as "vee, gee maj", so the spoken form gives the chord's name and
+   * drops the numeral, exactly as every button's label on this page does.
+   */
+  alternatesLabel = ALTERNATES_UNNAMED;
 
   /** Chords from the parallel modes this key does not have of its own. */
   borrowed: readonly PaletteOption[] = [];
@@ -315,6 +389,14 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
    * that was following the mode is pinned to the shape that was clicked. A user
    * who clicks `major` has said the chord is major, which is what this row is
    * for; the visible cost is the height, and `heightWarning` is that.
+   *
+   * The pin is the *invisible* cost, and the panel now carries both halves of
+   * it. `shapeVerb` puts it on the button that is otherwise a no-op - "Pin as G
+   * major" rather than "Change to" - and the note under the row names the way
+   * back, which is `resetSlotToChord` and which until this review did not clear
+   * `quality` at all. A row that pins with no way out is a one-way door, and
+   * that is the failure the plan's own hand-check catches: a pinned slot stops
+   * re-voicing when the key moves, alone among the chords beside it.
    */
   chooseAlternate(option: PaletteAlternate): void {
     if (this.selectedSlotId === null) return;
@@ -430,19 +512,49 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
       this.musicTheory.spellNote(pitchClass, preferSharps)
     );
 
-    this.alternates = vocabulary.alternates.map(option =>
-      this.buildAlternate(option, selected)
-    );
+    const alternates = vocabulary.alternates.map(option => this.buildAlternate(option, selected));
+
+    this.alternates = alternates;
     // The numeral is dropped from both spoken labels and what the row is
     // supplies the position instead, on `PaletteChord.label`'s argument: read
     // aloud a numeral is a string of letters, and `♭VII` adds a glyph to it.
     this.borrowed = vocabulary.borrowed.map(option =>
-      buildOption(option, `Add ${option.spoken}, borrowed chord`)
+      buildOption(option, `${addVerb(option)} ${option.spoken}, borrowed chord`)
     );
     this.secondary = vocabulary.secondary.map(option =>
-      buildOption(option, `Add ${option.spoken}, secondary dominant`)
+      buildOption(option, `${addVerb(option)} ${option.spoken}, secondary dominant`)
     );
-    this.heightWarning = this.warnAboutHeight(selected);
+    // The buttons that were just built rather than the field they were written
+    // into. See `warnAboutHeight`.
+    this.heightWarning = warnAboutHeight(alternates, selected);
+    this.nameAlternates(vocabulary.alternates);
+  }
+
+  /**
+   * The heading over the alternates row, from whichever button is marked.
+   *
+   * Read off the marked option rather than figured a second time from the
+   * selected degree. `ChordOption.current` is "the shape the selected slot
+   * already has", resolved through `effectiveQuality` and at the slot's own
+   * height - which is the same composition of `romanNumeral`, `chordName` and
+   * `spokenChordName` the strip card performs, already done. A heading that did
+   * its own sum would be a third statement of that rule, free to disagree with
+   * the card the user is reading it against, and it would disagree first in the
+   * awkward cases the two existing callers write paragraphs about.
+   *
+   * It is given the vocabulary's options and not this component's, because the
+   * three writings of a chord it needs include `spoken` - the one field
+   * `PaletteOption` deliberately drops, being neither drawn nor dispatched.
+   */
+  private nameAlternates(alternates: readonly ChordOption[]): void {
+    const marked = alternates.find(option => option.current);
+
+    this.alternatesTitle = marked
+      ? `Other shapes on ${marked.numeral} (${marked.name})`
+      : ALTERNATES_UNNAMED;
+    this.alternatesLabel = marked
+      ? `Other shapes on ${marked.spoken}`
+      : ALTERNATES_UNNAMED;
   }
 
   /** Three empty rows, for a key with no chords to offer in the first place. */
@@ -451,6 +563,8 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     this.borrowed = [];
     this.secondary = [];
     this.heightWarning = null;
+    this.alternatesTitle = ALTERNATES_UNNAMED;
+    this.alternatesLabel = ALTERNATES_UNNAMED;
   }
 
   /**
@@ -471,29 +585,13 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     const cost = lowersHeight && standing !== null ? `, down from the ${standing}` : '';
 
     return {
-      ...buildOption(option, `Change to ${option.spoken}, ${heightLabel.toLowerCase()}${cost}`),
+      ...buildOption(
+        option,
+        `${shapeVerb(option)} ${option.spoken}, ${heightLabel.toLowerCase()}${cost}`
+      ),
       heightLabel,
       lowersHeight
     };
-  }
-
-  /**
-   * The sentence under the alternates row, or null when there is nothing to
-   * warn about.
-   *
-   * Asked of the buttons rather than of the extent, so the sentence cannot
-   * appear over a row where nothing is marked or fail to appear over one where
-   * something is. It names the height at stake because "these will shorten it"
-   * without saying from what reads as a caution about nothing in particular.
-   */
-  private warnAboutHeight(selected: ChordDegree | null): string | null {
-    if (selected === null) return null;
-    if (!this.alternates.some(option => option.lowersHeight)) return null;
-
-    return (
-      `Every shape has a height of its own, marked on each button. Choosing one ` +
-      `sets that height, so this ${EXTENT_LABELS[selected.extent]} will not stay one.`
-    );
   }
 
   /**
@@ -553,6 +651,73 @@ function paletteDegree(degree: number): ChordDegree {
     suspension: 'none',
     octave: 0
   };
+}
+
+/**
+ * The sentence under the alternates row, or null when there is nothing to warn
+ * about.
+ *
+ * Asked of the buttons rather than of the extent, so the sentence cannot appear
+ * over a row where nothing is marked or fail to appear over one where something
+ * is. It names the height at stake because "these will shorten it" without
+ * saying from what reads as a caution about nothing in particular.
+ *
+ * **The buttons are an argument and not a field**, and that is the whole of why
+ * this is a free function. It read `this.alternates` and was correct because
+ * `buildOptions` happened to assign that field first; the claim being made is
+ * that the warning cannot disagree with the row it sits under, and a claim that
+ * rests on the order of two lines in one method is a coincidence rather than an
+ * invariant. Outside the class there is no field to reach for.
+ */
+function warnAboutHeight(
+  alternates: readonly PaletteAlternate[],
+  selected: ChordDegree | null
+): string | null {
+  if (selected === null) return null;
+  if (!alternates.some(option => option.lowersHeight)) return null;
+
+  return (
+    `Every shape has a height of its own, marked on each button. Choosing one ` +
+    `sets that height, so this ${EXTENT_LABELS[selected.extent]} will not stay one.`
+  );
+}
+
+/**
+ * What clicking an alternate does, said in the two cases where it differs.
+ *
+ * Every button on this row stores a shape, and on eleven of the twelve that is
+ * plainly a change - the chord was one thing and is now another. On the marked
+ * one it is not: the chord is already that shape, so the click writes no new
+ * notes and the whole of its effect is the *pin* - `ChordDegree.quality` stops
+ * being `null` and becomes an override the next key change will honour.
+ *
+ * That is the half of this row a user could not otherwise find out. The height
+ * is on the button and `warnAboutHeight` says what it costs; the pin was
+ * invisible, and the marked button announced itself as "Change to G major,
+ * triad" - a promise of a change, on the one button that changes no note. The
+ * verb is what carries it, in the only channel a button has room for.
+ *
+ * It stays "Pin as" on a second click, which does nothing at all because the
+ * shape is already stored. That is the right reading of a no-op rather than an
+ * apology for one: the button says what state it puts the chord in, `aria-current`
+ * says the chord is in it, and a command already satisfied is a command that
+ * does nothing. `resetSlotToChord` is the way back out, and the row says so.
+ */
+function shapeVerb(option: ChordOption): string {
+  return option.current ? 'Pin as' : 'Change to';
+}
+
+/**
+ * `Add another` on an append-row button whose chord the selection already is.
+ *
+ * The mark on these two rows is a fact about the selection - the chord you are
+ * on is this borrowed one - and the button still appends, so the label is where
+ * the two are told apart. It is also what lets the `aria-current` come off
+ * these rows without the mark going silent for a user who cannot see the ring:
+ * "add another" says both halves in words, and says the half that matters.
+ */
+function addVerb(option: ChordOption): string {
+  return option.current ? 'Add another' : 'Add';
 }
 
 /**
