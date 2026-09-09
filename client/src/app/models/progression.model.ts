@@ -201,28 +201,34 @@ export interface ChordDegree {
   /** How far the thirds are stacked. The +/- complexity buttons move this. */
   extent: ChordExtent;
   /**
-   * The chord's name, as the key gives it.
+   * The chord's shape, or `null` for "as the key gives it".
    *
-   * In M1 this is a label only, and a *derived* one. `generateSlotNotes` reads
-   * the degree and the extent and never this field, and
-   * `ProgressionService.regenerate` recomputes it from `degreeQuality` on every
-   * change that could move it - the key, the extent, the inversion, the octave.
-   * So the placeholder `createDegreeSlot` writes survives only until the slot
-   * reaches the service, and there is nowhere a value written here can persist.
+   * `null` is the default and the common case rather than a missing value: it
+   * says the key decides. `chordPitchClasses` reads it that way for the notes
+   * and `effectiveQuality` for the name, so a slot left alone re-derives its
+   * chord from whichever scale is selected, and a key change re-voices it.
    *
-   * **Which is why this field cannot yet override anything.** The design says
-   * overriding the quality is what makes a borrowed chord, and that is right -
-   * `alter` transposes the whole stack and so preserves quality, which no
-   * accidental in a Roman numeral does; see "Correction: `alter` cannot express
-   * a borrowed chord" in the design doc. But an override written here is
-   * clobbered by the next regeneration, so the mechanism is not merely unread:
-   * it is actively overwritten. The fix both halves need is the same one -
-   * `quality: ChordQuality | null`, where `null` means "as the key gives it"
-   * and a non-null value survives regeneration and reaches the generator - and
-   * it is M2 work. Latent in M1, where no setter moves `alter` and the palette
-   * emits only diatonic degrees.
+   * A non-null value **overrides** the shape, which is what a borrowed chord
+   * needs and what `alter` could not give it. `alter` moves the root alone; the
+   * quality carries what the case of a Roman numeral's letter carries; and the
+   * two together spell bVII as *degree 6, alter -1, quality 'major'* - Bb-D-F,
+   * where the key gives B-D-F. See "Correction: `alter` cannot express a
+   * borrowed chord" in the design doc, and `chordPitchClasses` for the rules
+   * that fall out of it.
+   *
+   * Two consequences worth knowing here:
+   *
+   *  - **`alter !== 0` under a null quality is refused.** A chromatic root with
+   *    no shape to build from is the combination that produced every wrong
+   *    numeral in that table, so `chordPitchClasses` throws on it rather than
+   *    falling back to the whole-stack shift that got them wrong.
+   *  - **`regenerateSlot` still overwrites this field**, as M1 wrote it, so an
+   *    override survives only until the next key change, complexity step or
+   *    resize. Turning that into a merge - `null` re-derives, a non-null value
+   *    is left alone - is M2 Task 4, and until it lands there is nowhere to
+   *    write an override that keeps.
    */
-  quality: ChordQuality;
+  quality: ChordQuality | null;
   /** Root position is 0. Stored wrapped into the chord, so it is always nameable. */
   inversion: number;
   suspension: SuspensionKind;
@@ -351,9 +357,10 @@ export function createDefaultProgression(): ProgressionDoc {
  * `notes` starts empty. Generating them needs the key and the scale, which this
  * factory has no business knowing - `generateSlotNotes` fills them in.
  *
- * `quality` starts as `'major'` for the same reason: the real quality comes from
- * the scale, and the caller that knows the scale overwrites it. Nothing in M1
- * reads the field before then.
+ * `quality` starts as `null`, which is the answer rather than a placeholder:
+ * the shape is the key's to give until a user overrides it. The `'major'` this
+ * factory used to write was a guess that happened to be overwritten before
+ * anything read it.
  */
 export function createDegreeSlot(degree: number, startBeat: number): ChordSlot {
   return normalizeChordSlot({
@@ -364,7 +371,7 @@ export function createDegreeSlot(degree: number, startBeat: number): ChordSlot {
         degree,
         alter: 0,
         extent: 3,
-        quality: 'major',
+        quality: null,
         inversion: 0,
         suspension: 'none',
         octave: 0

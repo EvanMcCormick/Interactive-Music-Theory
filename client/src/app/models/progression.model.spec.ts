@@ -44,7 +44,9 @@ describe('createDegreeSlot', () => {
     const slot = createDegreeSlot(0, 0);
     expect(slot.harmony).toEqual({
       kind: 'degree',
-      degree: { degree: 0, alter: 0, extent: 3, quality: 'major',
+      // `quality` starts null - "as the key gives it" - rather than guessing a
+      // shape the scale has not been consulted about.
+      degree: { degree: 0, alter: 0, extent: 3, quality: null,
                 inversion: 0, suspension: 'none', octave: 0 }
     });
     expect(slot.owned).toEqual(createOwnership());

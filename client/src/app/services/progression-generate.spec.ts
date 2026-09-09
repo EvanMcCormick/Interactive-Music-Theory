@@ -144,9 +144,17 @@ describe('generateSlotNotes', () => {
    * 60-64-67 down to 59-63-66, which starts below the base the caller asked
    * for. The model's `OCTAVE_MAX` reach was measured over the first ordering,
    * so reversing it would invalidate that bound as well as move the chord.
+   *
+   * The quality is explicit because `alter` now displaces the root alone and
+   * needs a shape to build on it - a chromatic root under a null quality is
+   * refused. `'major'` is what the key gives degree 0 anyway, so the notes are
+   * the same ones this spec has always asserted: this is the ordering it tests,
+   * not the correction.
    */
   it('alters the pitch classes before they are voiced, not the notes after', () => {
-    const notes = generateSlotNotes(slotWithDegree(0, { alter: -1 }), C_MAJOR_KEY, MAJOR);
+    const notes = generateSlotNotes(
+      slotWithDegree(0, { alter: -1, quality: 'major' }), C_MAJOR_KEY, MAJOR
+    );
     expect(notes.map(n => n.midi)).toEqual([71, 75, 78]);
   });
 

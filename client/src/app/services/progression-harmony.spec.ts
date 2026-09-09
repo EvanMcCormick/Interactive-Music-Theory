@@ -1,11 +1,14 @@
 import {
   ChordExtent,
   ChordQuality,
+  QUALITY_INTERVALS,
   chordName,
+  chordPitchClasses,
   degreeQuality,
   degreePitchClasses,
   isHeptatonic,
   noteCount,
+  qualityOfIntervals,
   romanNumeral,
   spokenChordName
 } from './progression-harmony';
@@ -329,5 +332,247 @@ describe('spokenChordName', () => {
         .withContext(`${quality} is not spoken as words`)
         .toMatch(/^C [a-z ]+$/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Chromatic roots and overridden shapes
+// ---------------------------------------------------------------------------
+
+/**
+ * The correction the design doc records under "`alter` cannot express a
+ * borrowed chord", checked against the table it tabulates.
+ *
+ * `alter` used to shift the whole stack, which is transposition, and
+ * transposition preserves quality - so every conventional altered numeral in a
+ * major key came out with the wrong shape on the right root. These specs are
+ * that table read the other way round: what each numeral has to produce.
+ */
+describe('QUALITY_INTERVALS', () => {
+  /**
+   * The inverse of `degreeQuality`, and the pair has to agree in both
+   * directions or a chord built from a quality would not be recognised as that
+   * quality - which is exactly what M3's recogniser will do.
+   */
+  it('round-trips through the recogniser for every named quality', () => {
+    for (const [quality, intervals] of Object.entries(QUALITY_INTERVALS)) {
+      expect(qualityOfIntervals(intervals))
+        .withContext(`${quality} is not recognised from its own intervals`)
+        .toBe(quality as ChordQuality);
+    }
+  });
+
+  /** Every name `degreeQuality` can return, except the one that names nothing. */
+  it('holds every named quality and no unnamed one', () => {
+    const named: ChordQuality[] = [
+      'major', 'minor', 'diminished', 'augmented',
+      'major7', 'minor7', 'dominant7', 'minorMajor7',
+      'halfDiminished7', 'diminished7', 'augmented7', 'augmentedMajor7'
+    ];
+
+    expect(Object.keys(QUALITY_INTERVALS).sort()).toEqual([...named].sort());
+  });
+
+  /** Each seventh chord opens with the triad of the same name. */
+  it('opens every seventh with its own triad', () => {
+    expect(QUALITY_INTERVALS.dominant7.slice(0, 3)).toEqual(QUALITY_INTERVALS.major);
+    expect(QUALITY_INTERVALS.major7.slice(0, 3)).toEqual(QUALITY_INTERVALS.major);
+    expect(QUALITY_INTERVALS.minor7.slice(0, 3)).toEqual(QUALITY_INTERVALS.minor);
+    expect(QUALITY_INTERVALS.minorMajor7.slice(0, 3)).toEqual(QUALITY_INTERVALS.minor);
+    expect(QUALITY_INTERVALS.halfDiminished7.slice(0, 3)).toEqual(QUALITY_INTERVALS.diminished);
+    expect(QUALITY_INTERVALS.diminished7.slice(0, 3)).toEqual(QUALITY_INTERVALS.diminished);
+    expect(QUALITY_INTERVALS.augmented7.slice(0, 3)).toEqual(QUALITY_INTERVALS.augmented);
+    expect(QUALITY_INTERVALS.augmentedMajor7.slice(0, 3)).toEqual(QUALITY_INTERVALS.augmented);
+  });
+});
+
+describe('qualityOfIntervals', () => {
+  /**
+   * `degreeQuality` is this function applied to a diatonic stack, so the two
+   * cannot disagree by construction. Pinned anyway: the whole point of one
+   * table is that the second reading of it is not a second table.
+   */
+  it('agrees with degreeQuality on every degree of every scale checked here', () => {
+    const scales = [MAJOR, NATURAL_MINOR, HARMONIC_MINOR, MELODIC_MINOR, NEAPOLITAN_MINOR];
+
+    for (const scale of scales) {
+      for (const degree of [0, 1, 2, 3, 4, 5, 6]) {
+        for (const extent of [3, 7, 9, 11, 13] as ChordExtent[]) {
+          expect(qualityOfIntervals(degreePitchClasses(scale, degree, extent)))
+            .withContext(`degree ${degree} extent ${extent}`)
+            .toBe(degreeQuality(scale, degree, extent));
+        }
+      }
+    }
+  });
+
+  /** It reads intervals above the root, wherever the root happens to sit. */
+  it('reads a stack that does not start at zero', () => {
+    expect(qualityOfIntervals([10, 14, 17])).toBe('major');
+    expect(qualityOfIntervals([11, 14, 17])).toBe('diminished');
+  });
+
+  it('names a stack that is no chord "other"', () => {
+    expect(qualityOfIntervals([0, 1, 6])).toBe('other');
+  });
+});
+
+describe('chordPitchClasses', () => {
+  /** Every case below is in C major, where the correction's table is written. */
+  function chord(
+    degree: number,
+    extent: ChordExtent,
+    alter: number,
+    quality: ChordQuality | null
+  ): number[] {
+    return chordPitchClasses(MAJOR, degree, extent, alter, quality);
+  }
+
+  it('gives the diatonic stack when no quality overrides it', () => {
+    expect(chord(0, 3, 0, null)).toEqual([0, 4, 7]);
+    expect(chord(6, 3, 0, null)).toEqual([11, 14, 17]);
+    expect(chord(4, 7, 0, null)).toEqual([7, 11, 14, 17]);
+  });
+
+  /**
+   * The five borrowed numerals the correction tabulates, each with the shape
+   * its case carries rather than the shape a transposed stack would have had.
+   * Pitch classes are relative to the tonic and keep climbing past the octave,
+   * as `degreePitchClasses` returns them, so 14 is the D above 2.
+   */
+  it('builds the borrowed chords of a major key', () => {
+    // bVII: B-D-F becomes Bb-D-F. Diminished under the old semantics.
+    expect(chord(6, 3, -1, 'major')).toEqual([10, 14, 17]);
+    // bVI: A-C-E becomes Ab-C-Eb. Minor under the old semantics.
+    expect(chord(5, 3, -1, 'major')).toEqual([8, 12, 15]);
+    // bIII: E-G-B becomes Eb-G-Bb. Minor under the old semantics.
+    expect(chord(2, 3, -1, 'major')).toEqual([3, 7, 10]);
+    // bII, the Neapolitan: D-F-A becomes Db-F-Ab. Minor under the old semantics.
+    expect(chord(1, 3, -1, 'major')).toEqual([1, 5, 8]);
+    // #iv-dim: F-A-C becomes F#-A-C. Major under the old semantics.
+    expect(chord(3, 3, 1, 'diminished')).toEqual([6, 9, 12]);
+  });
+
+  /**
+   * A secondary dominant is a dominant seventh on a diatonic root, so it needs
+   * no alteration at all - only a quality the key does not give that degree.
+   * V/V in C is D7: D-F#-A-C, where the key gives D-F-A-C.
+   */
+  it('builds a secondary dominant on an unaltered root', () => {
+    expect(chord(1, 7, 0, 'dominant7')).toEqual([2, 6, 9, 12]);
+  });
+
+  /**
+   * Design decision 2. `ChordQuality` names only triads and sevenths, so an
+   * override at extent 9 and above has nothing to say about the extensions:
+   * they keep the scale's own notes. bVII9 is Bb-D-F over a diatonic ninth.
+   */
+  it('leaves the extensions diatonic above an overridden triad', () => {
+    expect(chord(6, 9, -1, 'major')).toEqual([10, 14, 17, 21, 24]);
+    expect(chord(6, 13, -1, 'major').slice(0, 3)).toEqual([10, 14, 17]);
+    expect(chord(6, 13, -1, 'major').slice(3))
+      .toEqual(degreePitchClasses(MAJOR, 6, 13).slice(3));
+  });
+
+  /**
+   * The other end of the same rule, which the plan's sketch left open: a
+   * seventh quality asked for at a triad's height has one interval too many.
+   * The extent decides how many notes a chord has - `noteCount` is what
+   * `normalizeInversion` wraps against and what the complexity readout prints -
+   * so the shape is taken while it lasts and no further. Every seventh opens
+   * with its own triad, so what is dropped is the seventh and what is left is
+   * still that quality's chord.
+   */
+  it('takes only as many notes as the extent asks for', () => {
+    expect(chord(4, 3, 0, 'dominant7')).toEqual([7, 11, 14]);
+    expect(chord(1, 3, 0, 'halfDiminished7')).toEqual([2, 5, 8]);
+  });
+
+  it('gives the extent its own note count for every quality', () => {
+    for (const extent of [3, 7, 9, 11, 13] as ChordExtent[]) {
+      for (const quality of Object.keys(QUALITY_INTERVALS) as ChordQuality[]) {
+        expect(chord(0, extent, 0, quality).length)
+          .withContext(`${quality} at extent ${extent}`)
+          .toBe(noteCount(extent));
+      }
+    }
+  });
+
+  /** The stack still ascends, which is `voiceChord`'s stated precondition. */
+  it('keeps the stack ascending', () => {
+    for (const degree of [0, 1, 2, 3, 4, 5, 6]) {
+      for (const quality of Object.keys(QUALITY_INTERVALS) as ChordQuality[]) {
+        const notes = chord(degree, 9, 0, quality);
+        for (let i = 1; i < notes.length; i++) {
+          expect(notes[i])
+            .withContext(`${quality} on degree ${degree}, note ${i}`)
+            .toBeGreaterThan(notes[i - 1]);
+        }
+      }
+    }
+  });
+
+  /**
+   * Design decision 1. A chromatic root with no shape to build is a value of
+   * the wrong kind rather than a control at its limit, so it throws under the
+   * first clause of the rule in `progression-normalize.ts` rather than falling
+   * through to the transposition that produced the wrong table above.
+   */
+  it('refuses a chromatic root with no shape to build', () => {
+    expect(() => chord(6, 3, -1, null)).toThrowError(/quality/i);
+    expect(() => chord(6, 3, 1, null)).toThrowError(/quality/i);
+  });
+
+  /** `other` names no interval set, so there is nothing to build from. */
+  it('refuses an override that names no interval set', () => {
+    expect(() => chord(0, 3, 0, 'other')).toThrowError(/other/i);
+    expect(() => chord(0, 3, -1, 'other')).toThrowError(/other/i);
+  });
+
+  /** The guards under it still apply: the scale and the degree are checked. */
+  it('refuses a scale that cannot stack thirds, and a degree off the scale', () => {
+    expect(() => chordPitchClasses([0, 2, 4, 7, 9], 0, 3, 0, 'major'))
+      .toThrowError(/heptatonic/i);
+    expect(() => chordPitchClasses(MAJOR, 7, 3, 0, 'major')).toThrowError(/degree/i);
+  });
+
+  /**
+   * The round trip the one table exists to keep: a chord built from a quality
+   * is recognised as that quality, on a chromatic root as much as a diatonic
+   * one. bVII built as major reads back as major, where the old semantics read
+   * back as diminished.
+   *
+   * Asked at the height the quality itself names, which is the width of the
+   * claim: a triad override at extent 7 keeps the scale's seventh above it by
+   * design, so the chord that comes back is that triad under a diatonic seventh
+   * and is rightly named as one. The round trip is a promise about the notes
+   * the override supplies, not about the ones it deliberately leaves alone.
+   */
+  it('builds a chord the recogniser reads back as the quality asked for', () => {
+    for (const [quality, intervals] of Object.entries(QUALITY_INTERVALS)) {
+      const extent: ChordExtent = intervals.length === 3 ? 3 : 7;
+
+      for (const alter of [-1, 0, 1]) {
+        for (const degree of [0, 1, 2, 3, 4, 5, 6]) {
+          expect(qualityOfIntervals(chord(degree, extent, alter, quality as ChordQuality)))
+            .withContext(`${quality} on degree ${degree} altered by ${alter}`)
+            .toBe(quality as ChordQuality);
+        }
+      }
+    }
+  });
+
+  /**
+   * The other half of that promise, stated so it is a decision rather than a
+   * surprise: a triad override under an extent that reaches a seventh takes the
+   * seventh from the key. bVII at extent 7 in C major is Bb-D-F over the A the
+   * scale already had - a Bb major seventh, and named as one. A user who wants
+   * a dominant Bb7 asks for `dominant7`, which names the seventh it wants.
+   */
+  it('names a triad override under a diatonic seventh after what it became', () => {
+    expect(chord(6, 7, -1, 'major')).toEqual([10, 14, 17, 21]);
+    expect(qualityOfIntervals(chord(6, 7, -1, 'major'))).toBe('major7');
+    expect(chord(6, 7, -1, 'dominant7')).toEqual([10, 14, 17, 20]);
+    expect(qualityOfIntervals(chord(6, 7, -1, 'dominant7'))).toBe('dominant7');
   });
 });

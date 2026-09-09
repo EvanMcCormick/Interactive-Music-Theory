@@ -397,11 +397,22 @@ describe('the octave bound', () => {
    * pipeline this bound does not guard, and would come up a semitone short of
    * the real maximum.
    *
-   * `alter` and `tonic` compose into a single uniform offset, and the tonic
-   * loop alone already covers all twelve residues, so the `alter` loop adds no
-   * case the sweep would otherwise miss. It stays for the same reason the whole
-   * function now goes through the generator: a guard should walk the path it
-   * guards rather than a simplification of it.
+   * ## Why `alter` is no longer an axis here, and what owes a re-measurement
+   *
+   * It used to be one. Under the old semantics `alter` shifted the whole stack,
+   * so `alter` and `tonic` composed into a single uniform offset and the tonic
+   * loop alone already covered all twelve residues - the `alter` loop added no
+   * case, and stayed only because a guard should walk the path it guards.
+   *
+   * `alter` now displaces the *root* alone and needs a quality beside it to
+   * build a shape on, so it is no longer a transposition and no longer implied
+   * by the tonic loop: it reaches chords this sweep does not visit. Sweeping it
+   * means sweeping every named quality with it, and re-deriving the bound over
+   * that larger set is M2 Task 3's job rather than this commit's. What is
+   * measured below is therefore the diatonic pipeline - every scale, degree,
+   * extent, inversion and tonic - which is what every slot the app can build
+   * today goes through, and it is knowingly narrower than the reachable set
+   * until Task 3 widens it.
    */
   function extremesAt(octave: number): { lowest: number; highest: number } {
     const cached = sweeps.get(octave);
@@ -414,15 +425,13 @@ describe('the octave bound', () => {
       for (let degree = 0; degree <= 6; degree++) {
         for (const extent of CHORD_EXTENTS) {
           const inversions = noteCount(extent);
-          for (let alter = ALTER_MIN; alter <= ALTER_MAX; alter++) {
-            for (let tonic = 0; tonic < 12; tonic++) {
-              const key: ProgressionKey = { tonic, scaleId: 'ionian', preferSharps: true };
-              for (let inversion = 0; inversion < inversions; inversion++) {
-                const slot = sweepSlot({ degree, alter, extent, inversion, octave });
-                for (const note of generateSlotNotes(slot, key, intervals)) {
-                  if (note.midi < lowest) lowest = note.midi;
-                  if (note.midi > highest) highest = note.midi;
-                }
+          for (let tonic = 0; tonic < 12; tonic++) {
+            const key: ProgressionKey = { tonic, scaleId: 'ionian', preferSharps: true };
+            for (let inversion = 0; inversion < inversions; inversion++) {
+              const slot = sweepSlot({ degree, extent, inversion, octave });
+              for (const note of generateSlotNotes(slot, key, intervals)) {
+                if (note.midi < lowest) lowest = note.midi;
+                if (note.midi > highest) highest = note.midi;
               }
             }
           }
@@ -444,8 +453,11 @@ describe('the octave bound', () => {
 
   // The figure the whole bound rests on, asserted rather than left in prose.
   // The witness is the double harmonic scale, degree 0, extent 9, inversion 4,
-  // altered down a tone: pitch classes [-2, 2, 5, 9, 11] rotate to
-  // [11, -2, 2, 5, 9] and voice from base 60 to 71, 82, 86, 89, 93.
+  // in the key of Bb: pitch classes [0, 4, 7, 11, 13] carry the tonic to
+  // [10, 14, 17, 21, 23], which rotate to [23, 10, 14, 17, 21] and voice from
+  // base 60 to 71, 82, 86, 89, 93. It used to be quoted as the same scale in C
+  // altered down a tone, which was the same chord by another road while `alter`
+  // was a transposition - it no longer is, and the key is the road that stayed.
   it('reaches 33 semitones above the base at its widest', () => {
     const base = VOICING_BASE_MIDI;
     const { lowest, highest } = extremesAt(0);

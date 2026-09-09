@@ -17,6 +17,7 @@ import { ProgressionState } from '../../models/progression.model';
 import { MusicTheoryService } from '../../services/music-theory.service';
 import { PROGRESSION_AUDIO, createToneApi } from '../../services/progression-audio';
 import { chordRootPitchClass } from '../../services/progression-generate';
+import { effectiveQuality } from '../../services/progression-harmony';
 import { ProgressionPlayerService } from '../../services/progression-player.service';
 import { ProgressionService } from '../../services/progression.service';
 
@@ -425,9 +426,18 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     if (!state.canBuildChords || !state.keyScale) return null;
 
     const degree = slot.harmony.degree;
-    if (degree.quality === 'other') return null;
+    // `null` means "as the key gives it", and the fretboard wants the name
+    // rather than the override - the same resolution the strip's card makes,
+    // through the same function so the two cannot disagree.
+    const quality = effectiveQuality(
+      state.keyScale.intervals,
+      degree.degree,
+      degree.extent,
+      degree.quality
+    );
+    if (quality === 'other') return null;
 
-    const category = this.musicTheory.findChordCategory(degree.quality);
+    const category = this.musicTheory.findChordCategory(quality);
     if (!category) return null;
 
     const key = state.doc.key;
@@ -440,7 +450,7 @@ export class ProgressionComponent implements OnInit, OnDestroy {
         key.preferSharps
       ),
       categoryId: category.id,
-      itemId: degree.quality
+      itemId: quality
     };
   }
 

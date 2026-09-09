@@ -5,7 +5,12 @@ import {
   SlotHarmony
 } from '../../../../models/progression.model';
 import { chordRootPitchClass } from '../../../../services/progression-generate';
-import { chordName, romanNumeral, spokenChordName } from '../../../../services/progression-harmony';
+import {
+  chordName,
+  effectiveQuality,
+  romanNumeral,
+  spokenChordName
+} from '../../../../services/progression-harmony';
 
 /**
  * What the strip says about a progression: one card per slot, and the sentence
@@ -192,12 +197,17 @@ function describeSlot(
 
   const degree = harmony.degree;
   const root = spell(chordRootPitchClass(key, intervals, degree), key.preferSharps);
+  // `quality` is nullable and `null` means "as the key gives it", so the card
+  // prints the key's own answer for a slot the user has not overridden. Asked
+  // through `effectiveQuality` rather than resolved here, so that the strip and
+  // the fretboard cannot come to different answers about one chord.
+  const quality = effectiveQuality(intervals, degree.degree, degree.extent, degree.quality);
 
   return {
     isUnlabelled: false,
-    numeral: romanNumeral(degree.degree, degree.quality),
-    name: chordName(root, degree.quality),
-    subject: spokenChordName(root, degree.quality),
+    numeral: romanNumeral(degree.degree, quality),
+    name: chordName(root, quality),
+    subject: spokenChordName(root, quality),
     // The numeral is dropped from the spoken label and the position given as a
     // degree instead, exactly as the palette does it: read aloud a numeral is a
     // string of letters, and the quality it carries is already in the spoken

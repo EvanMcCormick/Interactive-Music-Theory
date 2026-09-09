@@ -10,10 +10,12 @@
  * single addition rather than a rule spread through the module.
  *
  * Quality is derived from the intervals the stack happens to produce rather
- * than looked up per mode. That is why the same short table gives the major
- * scale I ii iii IV V vi vii-dim and natural minor i ii-dim III iv v VI VII,
- * and why an unusual scale - harmonic minor, say - yields its augmented III
- * without anyone having to enumerate it.
+ * than looked up per mode. That is why one short table gives the major scale
+ * I ii iii IV V vi vii-dim and natural minor i ii-dim III iv v VI VII, and why
+ * an unusual scale - harmonic minor, say - yields its augmented III without
+ * anyone having to enumerate it. `QUALITY_INTERVALS` is that table, and it is
+ * read in both directions: `chordPitchClasses` builds a chord from a quality
+ * where `qualityOfIntervals` reads a quality off a chord.
  */
 
 /**
@@ -29,6 +31,15 @@ export type ChordQuality =
   | 'major7' | 'minor7' | 'dominant7' | 'minorMajor7'
   | 'halfDiminished7' | 'diminished7' | 'augmented7' | 'augmentedMajor7'
   | 'other';
+
+/**
+ * `ChordQuality` minus `'other'`, which is a refusal rather than a name - the
+ * answer for a stack of thirds that is no named chord - so it has no interval
+ * set and cannot be an override. Splitting it off keys `QUALITY_INTERVALS`
+ * exhaustively on the qualities that *do* name intervals, so a quality added to
+ * the union above cannot compile until its intervals are written down.
+ */
+export type NamedQuality = Exclude<ChordQuality, 'other'>;
 
 /** Stacked-third extent. 3 is a triad; 7, 9, 11, 13 add one third each. */
 export type ChordExtent = 3 | 7 | 9 | 11 | 13;
@@ -98,42 +109,196 @@ export function degreePitchClasses(
   return notes;
 }
 
-/** Quality of the diatonic chord on `degree`, from its intervals above the root. */
+/**
+ * Intervals above the root for each nameable quality: the single table both
+ * directions of the naming read.
+ *
+ * `degreeQuality` used to carry this as a chain of comparisons on the third,
+ * the fifth and the seventh: the same table written the other way round, and
+ * two writings of one table is the arrangement that drifts. M3's recogniser
+ * runs the naming in both directions - build a chord from a quality, then read
+ * a quality back off a set of notes - so a disagreement would surface as a
+ * chord not matching the name it was built from, a long way from either table.
+ * One table instead, read forwards by `qualityOfIntervals` and backwards by
+ * `chordPitchClasses`.
+ *
+ * Triads name three intervals and sevenths four, and **every seventh opens
+ * with the triad of the same name** - which is what lets `chordPitchClasses`
+ * take a seventh only as far as a triad's height without producing some other
+ * chord. The augmented pair earns its place there: harmonic minor's III+ carries
+ * a major seventh and the Neapolitans put a minor seventh over the same
+ * augmented triad, so without both the augmented triads this module already
+ * finds would lose their name on extension.
+ *
+ * No two entries share a shape, which is what makes the reverse reading a
+ * function rather than a first match.
+ */
+export const QUALITY_INTERVALS: Readonly<Record<NamedQuality, readonly number[]>> = {
+  major: [0, 4, 7],
+  minor: [0, 3, 7],
+  diminished: [0, 3, 6],
+  augmented: [0, 4, 8],
+  major7: [0, 4, 7, 11],
+  dominant7: [0, 4, 7, 10],
+  minor7: [0, 3, 7, 10],
+  minorMajor7: [0, 3, 7, 11],
+  halfDiminished7: [0, 3, 6, 10],
+  diminished7: [0, 3, 6, 9],
+  augmented7: [0, 4, 8, 10],
+  augmentedMajor7: [0, 4, 8, 11]
+};
+
+/** The table above as a list, typed once so the lookup below need not cast. */
+const NAMED_QUALITIES = Object.entries(QUALITY_INTERVALS) as [
+  NamedQuality,
+  readonly number[]
+][];
+
+/**
+ * The name for a stack of notes, from its intervals above its own root.
+ *
+ * Takes the notes as `degreePitchClasses` returns them - ascending, not reduced
+ * mod 12, rooted wherever the chord happens to sit - and reads the intervals
+ * relative to the first, so a Bb chord written [10, 14, 17] is major on exactly
+ * the terms [0, 4, 7] is. A stack four notes tall or more is named after its
+ * seventh, the convention `ChordDegree.quality` already stores a ninth under;
+ * below four, only the third and the fifth are read.
+ *
+ * `'other'` is the honest answer for a stack that is no named chord - degree 6
+ * of the double harmonic scale stacks a second under a diminished fifth - and
+ * it is a refusal rather than a name. That is why `chordPitchClasses` will not
+ * take it back the other way as an override.
+ */
+export function qualityOfIntervals(notes: readonly number[]): ChordQuality {
+  const root = notes[0];
+  // Four is where the seventh table starts, and a taller stack is named after
+  // its seventh - so everything above the fourth note is dropped rather than
+  // compared against a table that has no entry that tall.
+  const width = notes.length >= 4 ? 4 : 3;
+  const shape = notes.slice(0, width).map(note => note - root);
+
+  for (const [quality, intervals] of NAMED_QUALITIES) {
+    if (
+      intervals.length === shape.length &&
+      intervals.every((interval, i) => interval === shape[i])
+    ) {
+      return quality;
+    }
+  }
+  return 'other';
+}
+
+/** Quality of the diatonic chord on `degree`: the stack first, then the name. */
 export function degreeQuality(
   scaleIntervals: readonly number[],
   degree: number,
   extent: ChordExtent
 ): ChordQuality {
-  const notes = degreePitchClasses(scaleIntervals, degree, extent);
-  const third = notes[1] - notes[0];
-  const fifth = notes[2] - notes[0];
+  return qualityOfIntervals(degreePitchClasses(scaleIntervals, degree, extent));
+}
 
-  if (extent === 3) {
-    if (third === 4 && fifth === 7) return 'major';
-    if (third === 3 && fifth === 7) return 'minor';
-    if (third === 3 && fifth === 6) return 'diminished';
-    if (third === 4 && fifth === 8) return 'augmented';
-    return 'other';
+/**
+ * The quality a slot is *named* by: its override, or the one the key gives that
+ * degree.
+ *
+ * `null` means "as the key gives it", so every reader wanting a name rather
+ * than an override has this same line to write - and writing it twice is how
+ * two parts of one screen come to disagree about one chord. The strip's card
+ * and the fretboard selection are the two that want it today. It is the naming
+ * counterpart of `chordPitchClasses`, which resolves the same `null` into the
+ * same diatonic answer one axis over, in pitches rather than in words.
+ */
+export function effectiveQuality(
+  scaleIntervals: readonly number[],
+  degree: number,
+  extent: ChordExtent,
+  quality: ChordQuality | null
+): ChordQuality {
+  return quality ?? degreeQuality(scaleIntervals, degree, extent);
+}
+
+/**
+ * Pitch classes of the chord a slot names: the diatonic stack, with its root
+ * displaced by `alter` and its shape overridden by `quality`.
+ *
+ * This is the correction the design doc records under "`alter` cannot express a
+ * borrowed chord". `alter` moves the root alone and the quality carries the
+ * shape - what a Roman numeral's accidental does, and what shifting the whole
+ * stack could not, that being transposition and transposition preserving
+ * quality. So bVII came out diminished, bVI, bIII and the Neapolitan bII came
+ * out minor, and #iv-dim came out major: every conventional altered numeral
+ * wrong in shape on a root that was always right.
+ *
+ * `quality === null` means "as the key gives it" and hands back the diatonic
+ * stack untouched. A non-null quality replaces the chord tones from the bottom
+ * up, for as many intervals as it names.
+ *
+ * ## Two refusals
+ *
+ * **A chromatic root with no shape to build throws.** `alter !== 0` under a
+ * null quality has no diatonic chord to inherit a shape from, and letting it
+ * fall through to a whole-stack shift is exactly the failure above. It is a
+ * value of the wrong kind rather than a control at its limit - the first clause
+ * of the normalisation rule in `progression-normalize.ts` - and it is checked
+ * here rather than among those guards because neither field is wrong alone:
+ * `alter` is a bounded integer, `null` is the quality every fresh slot carries,
+ * and only the pair names nothing. Every UI path supplies both together.
+ *
+ * **`'other'` cannot be an override.** It names no interval set, so there is
+ * nothing to build from: it is `qualityOfIntervals`' refusal rather than a
+ * name, and reading a refusal back as an instruction would mean inventing a
+ * shape for a chord that has none.
+ *
+ * The scale and the degree stay `degreePitchClasses`' to refuse, and its throws
+ * are allowed through rather than repeated here.
+ *
+ * ## The extent decides the note count, in both directions
+ *
+ * A quality naming **fewer** intervals than the extent asks for leaves the rest
+ * diatonic, so a bVII9 is Bb-D-F over the ninth the key already gave that
+ * degree. That is design decision 2, taken over refusing overrides above extent
+ * 7 because refusing would make the complexity stepper fail on exactly the
+ * borrowed chords a user most wants to extend.
+ *
+ * A quality naming **more** intervals than the extent asks for - a seventh
+ * chosen while the slot is still a triad - is taken only as far as the extent
+ * goes. `noteCount(extent)` is what `normalizeInversion` wraps an inversion
+ * against and what the complexity readout prints, so a chord taller than its
+ * own extent would put both out of step with what is sounding. Nothing musical
+ * is lost, because every seventh in `QUALITY_INTERVALS` opens with the triad of
+ * the same name: the seventh is dropped and that quality's chord is left.
+ */
+export function chordPitchClasses(
+  scaleIntervals: readonly number[],
+  degree: number,
+  extent: ChordExtent,
+  alter: number,
+  quality: ChordQuality | null
+): number[] {
+  const diatonic = degreePitchClasses(scaleIntervals, degree, extent);
+
+  if (quality === null) {
+    if (alter !== 0) {
+      throw new Error(
+        `A chromatic root needs an explicit quality to build from; ` +
+          `got alter ${alter} with no quality`
+      );
+    }
+    return diatonic;
   }
 
-  // Ninths and beyond are named after their seventh chord: the extensions
-  // colour the chord but do not change what it is called here.
-  const seventh = notes[3] - notes[0];
-  if (third === 4 && fifth === 7 && seventh === 11) return 'major7';
-  if (third === 4 && fifth === 7 && seventh === 10) return 'dominant7';
-  if (third === 3 && fifth === 7 && seventh === 10) return 'minor7';
-  // The tonic seventh of both minor scales that raise the leading tone, so it
-  // is the first chord a user picking harmonic minor would meet.
-  if (third === 3 && fifth === 7 && seventh === 11) return 'minorMajor7';
-  if (third === 3 && fifth === 6 && seventh === 10) return 'halfDiminished7';
-  if (third === 3 && fifth === 6 && seventh === 9) return 'diminished7';
-  // The augmented pair. Harmonic minor's III+ carries a major seventh; the
-  // Neapolitans put a minor seventh over the same augmented triad. Without
-  // these two the seventh table has no `fifth === 8` case at all, and the
-  // augmented triads the module already finds lose their name on extension.
-  if (third === 4 && fifth === 8 && seventh === 11) return 'augmentedMajor7';
-  if (third === 4 && fifth === 8 && seventh === 10) return 'augmented7';
-  return 'other';
+  if (quality === 'other') {
+    throw new Error(
+      `'other' names no interval set and cannot override a chord's shape`
+    );
+  }
+
+  const shape = QUALITY_INTERVALS[quality];
+  const root = diatonic[0] + alter;
+  // Mapped over the diatonic stack rather than concatenated onto the shape,
+  // which is what keeps the count the extent's in both directions: the shape is
+  // read while it lasts, and every position past it keeps the scale's own note.
+  return diatonic.map((note, i) => (i < shape.length ? root + shape[i] : note));
 }
 
 // ---------------------------------------------------------------------------

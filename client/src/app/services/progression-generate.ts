@@ -5,7 +5,7 @@ import {
   ProgressionKey,
   RollNote
 } from '../models/progression.model';
-import { degreePitchClasses } from './progression-harmony';
+import { chordPitchClasses } from './progression-harmony';
 import { voiceChord } from './progression-voicing';
 
 /**
@@ -59,27 +59,25 @@ import { voiceChord } from './progression-voicing';
  * while no caller mutates the result, and costs a great deal less now than
  * after something has been written against a promise this function cannot keep.
  *
- * ## What is not generated
+ * ## Where the borrowed chords come from
  *
- * `ChordDegree.quality` is stored and never read - not here, and nowhere else
- * in M1. The pitches come from the scale alone, so a slot whose quality
- * disagreed with its scale sounds the scale's chord regardless.
+ * `ChordDegree.quality` used to be stored and never read here, and the pitches
+ * came from the scale alone - which meant the design's borrowed-chord mechanism
+ * had no implementation behind it. `alter` shifted the whole stack, which is a
+ * transposition, and transposition preserves quality, so bVII in a major key
+ * came out diminished, bVI, bIII and the Neapolitan bII came out minor, and
+ * #iv-dim came out major.
  *
- * That is not a display convention with a tidy justification: it is the
- * design's borrowed-chord mechanism with no implementation behind it. The
- * design spells a borrowed chord with `alter`, and `alter` cannot spell one -
- * it shifts the whole stack, which is a transposition, and transposition
- * preserves quality. So bVII in a major key comes out diminished, bVI, bIII and
- * the Neapolitan bII come out minor, and #iv-dim comes out major. Every
- * conventional altered numeral is wrong. A borrowed chord needs the quality to
- * *override* the scale's - `quality: ChordQuality | null`, and a branch here
- * that reads it - and that is M2/M3 work, recorded on their docket rather than
- * bolted on here.
+ * `chordPitchClasses` is that correction, and this module's only part in it is
+ * to hand the field over: `alter` now moves the root alone and a non-null
+ * quality overrides the shape. The rules that fall out - what a chromatic root
+ * with no quality does, what an override does above extent 7 - live with the
+ * arithmetic in `progression-harmony.ts` rather than here.
  *
- * The gap is latent rather than live, which is why M1 ships with it:
- * `createDegreeSlot` hardcodes `alter: 0`, no M1 setter moves it, and the
- * palette emits only diatonic degrees. Nothing in M1 can ask for a chord this
- * cannot generate.
+ * One half is still missing at this commit and is M2 Task 4: `regenerateSlot`
+ * overwrites `quality` on every key change, complexity step and resize, so an
+ * override reaches this function only until the next of those. The generator
+ * honours it; nothing yet keeps it.
  *
  * A non-heptatonic scale is not caught here either. `degreePitchClasses` throws
  * on one and that throw is allowed through, rather than being turned into an
@@ -145,13 +143,27 @@ export function generateSlotNotes(
 
   const degree = slot.harmony.degree;
 
-  // Relative to the tonic, as `degreePitchClasses` returns it, and altered
-  // while still in that frame. `suspension` would be honoured here, replacing
-  // the third with the second or the fourth - it is stored on the model but
-  // deliberately not sounded until M2, and half-implementing it would make
-  // slots that look suspended and play major.
-  const relative = degreePitchClasses(scaleIntervals, degree.degree, degree.extent)
-    .map(pitchClass => pitchClass + degree.alter);
+  // `regenerateSlot` still writes the *derived* quality into this field on every
+  // regeneration - M2 Task 4 turns that into a merge - so what arrives here is a
+  // label as often as it is an override. `'other'` is the label for a stack that
+  // is no named chord, reachable today on the second degree of Hungarian minor,
+  // and as an override it names no intervals at all: read as no override, so the
+  // key builds the chord it was building before this field was read. This line
+  // goes when Task 4 stops writing labels here.
+  const override = degree.quality === 'other' ? null : degree.quality;
+
+  // Relative to the tonic, as `degreePitchClasses` returns it, with `alter` and
+  // any override applied while still in that frame. `suspension` would be
+  // honoured here too, replacing the third with the second or the fourth - it is
+  // stored on the model but deliberately not sounded until M2, and
+  // half-implementing it would make slots that look suspended and play major.
+  const relative = chordPitchClasses(
+    scaleIntervals,
+    degree.degree,
+    degree.extent,
+    degree.alter,
+    override
+  );
 
   const absolute = relative.map(pitchClass => pitchClass + key.tonic);
   const base = VOICING_BASE_MIDI + degree.octave * 12;
