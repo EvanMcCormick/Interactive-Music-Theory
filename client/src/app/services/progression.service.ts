@@ -276,9 +276,18 @@ export class ProgressionService {
    *
    * Every note is bounded on the way in - see `boundNote`, which passes `midi`
    * through untouched and says why.
+   *
+   * Answers whether it recorded anything; `writeNotes` says what a caller does
+   * with that.
    */
-  setSlotNotes(id: string, notes: readonly RollNote[], options: EditOptions = {}): void {
-    this.writeNotes(id, { pitches: true }, () => notes.map(boundNote), `notes:${id}`, options);
+  setSlotNotes(id: string, notes: readonly RollNote[], options: EditOptions = {}): boolean {
+    return this.writeNotes(
+      id,
+      { pitches: true },
+      () => notes.map(boundNote),
+      `notes:${id}`,
+      options
+    );
   }
 
   /**
@@ -309,9 +318,12 @@ export class ProgressionService {
    * claims all three, the gesture still chooses what it claims, and a pitch
    * drag that moves nothing in time still says nothing about the rhythm - it
    * just calls the other one.
+   *
+   * Answers whether it recorded anything; `writeNotes` says what a caller does
+   * with that.
    */
-  placeNotes(id: string, notes: readonly RollNote[], options: EditOptions = {}): void {
-    this.writeNotes(
+  placeNotes(id: string, notes: readonly RollNote[], options: EditOptions = {}): boolean {
+    return this.writeNotes(
       id,
       { pitches: true, timing: true },
       () => notes.map(boundNote),
@@ -331,7 +343,9 @@ export class ProgressionService {
    * `startBeat` is clamped at 0 and `lengthBeats` at `MIN_NOTE_BEATS`, with no
    * ceiling on either: a note may sit or run past the end of the slot that
    * holds it, which is the same answer `retimeNotes` gives a shortened slot.
-   * An index the slot has no note at is a no-op rather than a throw.
+   * An index the slot has no note at is a no-op rather than a throw - and one
+   * the caller can see, because this answers whether it recorded anything.
+   * `writeNotes` says what a caller does with that.
    */
   setNoteTiming(
     id: string,
@@ -339,8 +353,8 @@ export class ProgressionService {
     startBeat: number,
     lengthBeats: number,
     options: EditOptions = {}
-  ): void {
-    this.writeNotes(
+  ): boolean {
+    return this.writeNotes(
       id,
       { timing: true },
       slot =>
@@ -361,14 +375,17 @@ export class ProgressionService {
    * both arguments. The claim lands even when the number does not move - a user
    * who drags the control and lets go on the value it started at has still said
    * the dynamics of that slot are theirs.
+   *
+   * Answers whether it recorded anything; `writeNotes` says what a caller does
+   * with that.
    */
   setNoteVelocity(
     id: string,
     noteIndex: number,
     velocity: number,
     options: EditOptions = {}
-  ): void {
-    this.writeNotes(
+  ): boolean {
+    return this.writeNotes(
       id,
       { velocity: true },
       slot =>
@@ -445,6 +462,23 @@ export class ProgressionService {
    * card - the service cannot see where one gesture ends and the next begins -
    * but it is easy to read the keying as covering it, and it does not.
    *
+   * ## Why it answers, and what the answer is for
+   *
+   * It returns whether it actually opened or extended an undo entry. That is
+   * the other half of the discipline above, and it is not decoration: the three
+   * ways out below all decline *silently*, so a caller tracking "have I
+   * committed yet in this gesture" by counting its own calls is tracking
+   * something else. A gesture whose first commit is refused and then sets that
+   * flag anyway sends `coalesce: true` on its second - and `commit` honours a
+   * continuation on the run key alone, which for `placeNotes` names only the
+   * slot. The second commit would fold into the entry the *previous* gesture
+   * left, and one undo would take both back.
+   *
+   * The guards in the roll's own gesture arithmetic happen to make that
+   * unreachable today. A guarantee that rests on two independent guards
+   * agreeing is a coincidence, not an invariant, so the flag is made able to
+   * mean what its name says instead.
+   *
    * Nothing here bounds a value the setters did not already bound; `settle()`
    * inside `commit` is still the funnel, and a value of the wrong kind throws
    * out of it having published nothing.
@@ -455,12 +489,12 @@ export class ProgressionService {
     edit: (slot: ChordSlot) => readonly RollNote[] | null,
     runKey: string,
     options: EditOptions
-  ): void {
+  ): boolean {
     const slot = this.slotOf(id);
-    if (!slot) return;
+    if (!slot) return false;
 
     const notes = edit(slot);
-    if (notes === null) return;
+    if (notes === null) return false;
 
     // The comparison is against the notes as they arrive, before `settle()` has
     // seen them, where the slot's own notes have been through it already. That
@@ -471,7 +505,7 @@ export class ProgressionService {
     // recording no-ops as edits. It is a note rather than a defence: comparing
     // settled notes here would mean settling twice per keystroke.
     const owned: SlotOwnership = { ...slot.owned, ...claims };
-    if (sameOwnership(owned, slot.owned) && sameNotes(notes, slot.notes)) return;
+    if (sameOwnership(owned, slot.owned) && sameNotes(notes, slot.notes)) return false;
 
     // The spread is what turns the callback's `readonly` promise into the
     // mutable field `ChordSlot.notes` is, and it is a type conversion rather
@@ -481,6 +515,7 @@ export class ProgressionService {
       key: runKey,
       continues: options.coalesce === true
     });
+    return true;
   }
 
   /**

@@ -42,11 +42,18 @@
            a button, because the arrow keys are the whole of that path and a
            button announces nothing about them. The length is the *value*: after
            a nudge `aria-valuetext` is re-read, where a name carrying the beats
-           changed under a focus that never moved and so was never announced. -->
-      <button
-        type="button"
+           changed under a focus that never moved and so was never announced.
+
+           A `<div tabindex="0">` and not a `<button>`, because `slider` is not
+           one of the roles ARIA in HTML permits on a `<button>` - the element
+           carries an implicit `button` role and the override is non-conforming
+           however well it is announced in practice. A generic element has no
+           implicit role to contradict. The roll's handle and its velocity bars
+           had copied this and are changed with it. -->
+      <div
         class="resize"
         role="slider"
+        tabindex="0"
         [attr.aria-label]="card.resizeLabel"
         [attr.aria-valuemin]="minBeats"
         [attr.aria-valuemax]="card.maxBeats"
@@ -54,7 +61,7 @@
         [attr.aria-valuetext]="card.beatsText"
         (pointerdown)="startResize(card, $event, cardElement)"
         (keydown.arrowright)="nudgeLength(card, 1, $event)"
-        (keydown.arrowleft)="nudgeLength(card, -1, $event)"></button>
+        (keydown.arrowleft)="nudgeLength(card, -1, $event)"></div>
     </div>
   </div>
 

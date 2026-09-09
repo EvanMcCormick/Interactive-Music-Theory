@@ -216,6 +216,9 @@
     transparent 1rem
   );
   cursor: ew-resize;
+  // A `<div>` now rather than a `<button>` - see the template - so the one thing
+  // a button gave a drag handle for nothing has to be asked for.
+  user-select: none;
   touch-action: none;
 
   &:hover {

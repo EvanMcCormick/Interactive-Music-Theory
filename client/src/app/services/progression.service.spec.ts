@@ -1790,6 +1790,64 @@ describe('ProgressionService', () => {
       return depth;
     }
 
+    /**
+     * Each of the four answers whether it recorded anything, and that answer is
+     * load-bearing rather than informational.
+     *
+     * All three of the ways out of `writeNotes` decline *silently*, so a caller
+     * that counted its own calls would count declines as commits. The roll's
+     * gestures pass `coalesce` off exactly this: a gesture whose first commit
+     * was refused and which believed it anyway would send `coalesce: true` on
+     * its second, and `commit` honours a continuation on the run key alone -
+     * which for `placeNotes` names only the slot, shared by every drag on it. It
+     * would fold into the entry the previous gesture left, and one undo would
+     * take back both.
+     */
+    describe('what a note write reports', () => {
+      it('says so when it recorded an edit', () => {
+        expect(service.setSlotNotes(id, [{ midi: 62, startBeat: 0, lengthBeats: 1, velocity: 90 }]))
+          .toBeTrue();
+        expect(service.placeNotes(id, [{ midi: 64, startBeat: 1, lengthBeats: 1, velocity: 90 }]))
+          .toBeTrue();
+        expect(service.setNoteTiming(id, 0, 2, 1)).toBeTrue();
+        expect(service.setNoteVelocity(id, 0, 40)).toBeTrue();
+      });
+
+      /** A slot that is not there is nothing to record against. */
+      it('says so when the slot does not exist', () => {
+        expect(service.setSlotNotes('nope', [])).toBeFalse();
+        expect(service.placeNotes('nope', [])).toBeFalse();
+        expect(service.setNoteTiming('nope', 0, 1, 1)).toBeFalse();
+        expect(service.setNoteVelocity('nope', 0, 40)).toBeFalse();
+      });
+
+      /** Nor is an index the slot has no note at. */
+      it('says so when the note index names nothing', () => {
+        expect(service.setNoteTiming(id, 99, 1, 1)).toBeFalse();
+        expect(service.setNoteVelocity(id, 99, 40)).toBeFalse();
+      });
+
+      /**
+       * And nor is a write that changes neither the notes nor the claim - which
+       * is the case the roll can actually reach, because a drag commits on every
+       * threshold it crosses and the second crossing may land back where the
+       * first did.
+       */
+      it('says so when neither the notes nor the claim moved', () => {
+        service.setNoteVelocity(id, 0, 40);
+        expect(service.setNoteVelocity(id, 0, 40)).toBeFalse();
+
+        const held = notes().map(note => ({ ...note }));
+        service.placeNotes(id, held);
+        expect(service.placeNotes(id, held)).toBeFalse();
+      });
+
+      /** The first touch of a control is a claim even when the number is the one there. */
+      it('records the claim even where the number does not move', () => {
+        expect(service.setNoteVelocity(id, 0, notes()[0].velocity)).toBeTrue();
+      });
+    });
+
     describe('setSlotNotes', () => {
       const DRAWN: readonly RollNote[] = [
         { midi: 62, startBeat: 0.5, lengthBeats: 1, velocity: 90 },

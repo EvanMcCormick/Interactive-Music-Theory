@@ -220,6 +220,35 @@ export function snapBeat(beat: number, division: number): number {
   return Math.round(beat * division) / division;
 }
 
+/**
+ * The grid cell a position falls in - its **start**, not the line nearest it.
+ *
+ * The beat axis's `yToMidi`, and it exists for the same reason that function
+ * floors while `heldRows` rounds. The two are not interchangeable and the
+ * difference is what the pointer is doing:
+ *
+ *  - A **drag** carries a note that is already somewhere. The pointer is
+ *    holding it, so the nearest line is the one the user is reaching for and
+ *    `snapBeat` rounds. Half a cell in either direction is what the movement
+ *    means.
+ *  - A **click** names a place. There is nothing being carried, so the only
+ *    honest answer is the cell the point is actually inside - which is a floor,
+ *    exactly as `yToMidi` floors into the row under the pointer.
+ *
+ * Rounding a click is what makes the two axes of a double-click disagree: at a
+ * 1/16 grid a cell is a quarter of `--px-per-beat`, so a click past the middle
+ * of one would create a note starting to the *right* of the pointer, on a cell
+ * the click was never in, while the pitch came from the row it was. The note
+ * has to contain the point that asked for it, on both axes.
+ *
+ * Free timing is the identity, as it is in `snapBeat`: with no grid there are
+ * no cells, and the position is simply where the pointer is.
+ */
+export function floorBeat(beat: number, division: number): number {
+  if (!Number.isFinite(division) || division <= 0) return beat;
+  return Math.floor(beat * division) / division;
+}
+
 // ---------------------------------------------------------------------------
 // The pitch window
 // ---------------------------------------------------------------------------

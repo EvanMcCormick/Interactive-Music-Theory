@@ -71,6 +71,7 @@
 }
 
 .grid-select,
+.add,
 .reset {
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--roll-line);
@@ -85,6 +86,7 @@
   }
 }
 
+.add,
 .reset {
   cursor: pointer;
 
@@ -151,10 +153,20 @@
 // hit-tests is what makes a naive roll stutter. Beat lines are listed first so
 // they paint over the subdivisions they share a pixel with.
 //
-// No border and no padding, deliberately. The notes are positioned against this
-// element's padding box, so either would offset every one of them from the beat
-// it claims to be on - and would put the measured beat width out by a pixel,
-// which is the same class of bug as the strip's `border-box` fix.
+// No border, deliberately, and `border-box` is half of the same statement.
+//
+// The notes and the gradients above are both laid out against this element's
+// **padding** box, while `gridScale` divides its **border** box by the counts
+// the layout was built from. A border is the difference between those two
+// boxes: one pixel of it offsets every note from the beat it claims to be on
+// *and* puts the measured beat width out, which is the same class of bug as the
+// strip's `border-box` fix. Padding does not, because a padding box is not
+// moved or resized by its own padding - but only while `box-sizing` is
+// `border-box`, which is what keeps the declared `width` the padding box's.
+// Under `content-box` a padding would widen it past `--px-per-beat` per beat
+// and the two would part company again. The spec pins both ends: a note that
+// fills its slot starts at the grid's left edge and finishes at its right,
+// exactly.
 .grid {
   position: relative;
   box-sizing: border-box;
@@ -192,9 +204,17 @@
   top: calc(var(--row-height) * var(--note-row));
   width: calc(var(--px-per-beat) * var(--note-beats));
   height: var(--row-height);
-  // Short notes are narrower than their own resize handle; the note still has
-  // to be visible and grabbable at 1/64 of a beat.
-  min-width: 6px;
+  // Wide enough for both of the note's controls, which is what "grabbable"
+  // means: the handle is a fixed 10px, so a floor of 6px - one `MIN_NOTE_BEATS`
+  // at this scale - gave the *whole* note to the handle and collapsed
+  // `.note-body` to nothing. The note could then be lengthened and shortened but
+  // not moved or focused, on the 1/32 and 1/64 grids where a note that short can
+  // be drawn at all. 16px is the handle plus a body that can still be hit.
+  //
+  // It is a floor and not the width: a note wider than this is drawn at exactly
+  // its own length, which is the property the pointer arithmetic is measured
+  // against and the spec asserts.
+  min-width: 16px;
   border-radius: 2px;
   background: var(--roll-note);
   overflow: hidden;
@@ -241,6 +261,10 @@
   border: none;
   background: linear-gradient(to right, transparent 0 6px, var(--roll-text) 6px);
   cursor: ew-resize;
+  // A `<div>` now rather than a `<button>` - see the template - so the one
+  // thing a button gave a drag handle for nothing has to be asked for. The
+  // focus it also gave for nothing is the template's `tabindex`.
+  user-select: none;
   touch-action: none;
   opacity: 0.5;
 
@@ -279,17 +303,25 @@
 // a note at velocity 1 is still something a pointer can find. The lane's height
 // standing for the whole MIDI range is also the scale `velocityScale` measures:
 // dragging floor to ceiling is 1 to 127.
+//
+// Horizontally it is `buildLaneColumns`' column and **not** the note's own beat
+// and length, which is what it used to be: every note of a generated chord
+// starts at 0 and lasts the slot, so the bars were laid one exactly on top of
+// another and only the last of them could be reached. That function states the
+// rule; what matters here is that no two columns share a pixel, so there is no
+// `min-width` to widen one back over its neighbour. A column can be thin - it
+// is never someone else's.
 .velocity {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: calc(var(--px-per-beat) * var(--note-beat));
-  width: calc(var(--px-per-beat) * var(--note-beats));
-  min-width: 6px;
+  left: calc(var(--px-per-beat) * var(--lane-beat));
+  width: calc(var(--px-per-beat) * var(--lane-beats));
   padding: 0;
   border: none;
   background: none;
   cursor: ns-resize;
+  user-select: none;
   touch-action: none;
 
   &::after {

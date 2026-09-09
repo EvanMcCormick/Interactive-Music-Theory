@@ -1,27 +1,26 @@
 import { CommonModule } from '@angular/common';
 import {
+  AfterViewChecked,
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
   ElementRef,
   OnDestroy,
   OnInit,
+  QueryList,
   Renderer2,
   ViewChild,
+  ViewChildren,
   inject
 } from '@angular/core';
 import { Subject, takeUntil } from 'rxjs';
 
-import {
-  DEFAULT_VELOCITY,
-  MIN_NOTE_BEATS,
-  VELOCITY_MAX,
-  VELOCITY_MIN
-} from '../../../../models/progression-normalize';
+import { DEFAULT_VELOCITY, MIN_NOTE_BEATS } from '../../../../models/progression-normalize';
 import { ProgressionState, RollNote } from '../../../../models/progression.model';
 import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
-import { MAX_BEAT_DIVISION, snapBeat, xToBeat, yToMidi } from './piano-roll-geometry';
+import { MAX_BEAT_DIVISION, floorBeat, xToBeat, yToMidi } from './piano-roll-geometry';
+import { draggedVelocity, heldRows, heldSnap } from './piano-roll-gestures';
 import {
   DivisionOption,
   RollNoteView,
@@ -41,9 +40,11 @@ import {
  * cards are - and worked out in `piano-roll-view.ts`, which takes a published
  * document and answers with a view model, so what the roll draws stays a pure
  * function of what the service published. Every gesture dispatches straight back
- * to the service and nothing here is written except by `render` - with two
+ * to the service and nothing here is written except by `render` - with three
  * exceptions, each marked as such: the three gesture records below, which exist
- * only between a pointer going down and coming up again, and `division`.
+ * only between a pointer going down and coming up again; `pendingFocus`, which
+ * exists between an edit and the change-detection pass that draws it; and
+ * `division`.
  *
  * **`division` is a property of this editor, not of the progression.** How
  * finely the roll snaps is the same kind of fact as which zoom a map is at: it
@@ -84,9 +85,10 @@ import {
  * moved: over-claiming freezes a dimension out of re-voicing that the user never
  * touched, and under-claiming throws their edit away at the next key change.
  *
- *  - **A drag, and a double-click that adds a note, use `placeNotes`.** Both put
- *    a note *somewhere* - a pitch and a beat in one movement - so both claims
- *    are the user's and both are recorded in one commit. `setSlotNotes` claims
+ *  - **A drag, and either way of adding a note, use `placeNotes`.** A
+ *    double-click on the grid and the Add note button both put a note
+ *    *somewhere* - a pitch and a beat in one movement - so both claims are the
+ *    user's and both are recorded in one commit. `setSlotNotes` claims
  *    pitches only, so a note placed through it alone is snapped back to beat 0
  *    by the next regeneration; `placeNotes` exists for exactly this and its
  *    docstring argues the case.
@@ -107,17 +109,60 @@ import {
  * on two different notes of one slot would otherwise fold into a single entry.
  * `ProgressionService.writeNotes` states the discipline; this is where it is
  * kept, in `beginMove`, `beginResize` and `beginVelocity`, each of which starts
- * its gesture uncommitted.
+ * its gesture uncommitted - and `committed` becomes true only when a setter
+ * says it recorded something, which `onPointerMove` argues at length.
+ *
+ * ## Every control has a keyboard as well as a pointer
+ *
+ * Not a courtesy: a roll a keyboard cannot reach is an editor a keyboard user
+ * cannot use, and the arrow keys are advertised on the panel itself as the
+ * alternative path. So a note can be moved, resized, re-voiced, re-velocitied
+ * and deleted from the keyboard - and **made**, which is what the Add note
+ * button in the toolbar is for. The double-click surface is a bare `<div>` that
+ * no tab reaches and no key answers, so without that button a keyboard user who
+ * emptied a slot had no way to put a note back into it. `addNoteAtStart` carries
+ * the argument, and `ngAfterViewChecked` the focus that has to follow it.
  */
-
-/** How far past a boundary the pointer must go before the value follows it. */
-const SNAP_HYSTERESIS = 0.15;
 
 /** How much one press of a velocity arrow key is worth, in MIDI units. */
 const VELOCITY_NUDGE = 5;
 
 /** The grid the roll opens on: sixteenths, the default in every DAW there is. */
 const DEFAULT_BEAT_DIVISION = 4;
+
+/**
+ * What every gesture records the moment the pointer goes down, whatever it is
+ * about to drag.
+ *
+ * ## The slot is captured, not read back
+ *
+ * `notes` on a move is snapshotted for a stated reason - a drag is measured from
+ * where it began - and **the slot it belongs to is the same kind of fact.** A
+ * handler that read `this.slotId` on every `pointermove` would be asking where
+ * the selection is *now*, and the selection is not the gesture's to follow: the
+ * strip is a sibling on the same page and a click on another card republishes
+ * the state under a drag already in progress. The notes would then be slot A's,
+ * measured against slot A's geometry, and written into slot B.
+ *
+ * Nothing on the page can do that today - a pointer held down over the roll is
+ * not clicking the strip - so this closes it by construction rather than because
+ * it was reachable. It costs one field, and the field is also the honest
+ * statement: a gesture acts on the slot it started on.
+ *
+ * ## `committed` means an entry is open, and only that
+ *
+ * It is what decides `coalesce`, so it has to be true exactly when this gesture
+ * has an undo entry of its own to fold into - which is why it is set from what
+ * the setter *answers* rather than from the fact that it was called.
+ * `ProgressionService.writeNotes` carries the argument.
+ */
+interface Gesture {
+  /** The slot this gesture started on, and the only one it will ever write to. */
+  slotId: string;
+  index: number;
+  /** Whether a commit of this gesture has actually landed. */
+  committed: boolean;
+}
 
 /**
  * A note being dragged in pitch and time.
@@ -129,8 +174,7 @@ const DEFAULT_BEAT_DIVISION = 4;
  * accumulated - the strip's rule, and what stops a drag that goes out and comes
  * back leaving the note somewhere else.
  */
-interface MoveGesture {
-  index: number;
+interface MoveGesture extends Gesture {
   originX: number;
   originY: number;
   startBeat: number;
@@ -142,28 +186,23 @@ interface MoveGesture {
   beat: number;
   /** The semitones the drag has reached, likewise. */
   semitones: number;
-  committed: boolean;
 }
 
 /** A note's right edge being dragged. Transient on the same terms. */
-interface ResizeGesture {
-  index: number;
+interface ResizeGesture extends Gesture {
   originX: number;
   startBeat: number;
   startLength: number;
   pixelsPerBeat: number;
   length: number;
-  committed: boolean;
 }
 
 /** A velocity being dragged. Transient on the same terms. */
-interface VelocityGesture {
-  index: number;
+interface VelocityGesture extends Gesture {
   originY: number;
   startVelocity: number;
   pixelsPerVelocity: number;
   velocity: number;
-  committed: boolean;
 }
 
 @Component({
@@ -174,7 +213,7 @@ interface VelocityGesture {
   styleUrls: ['./piano-roll.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class PianoRollComponent implements OnInit, OnDestroy {
+export class PianoRollComponent implements OnInit, AfterViewChecked, OnDestroy {
   /** Whether a slot is selected at all. Nothing is drawn when none is. */
   hasSlot = false;
 
@@ -226,14 +265,32 @@ export class PianoRollComponent implements OnInit, OnDestroy {
    */
   minNoteLength = 0;
 
-  /** The divisor the subdivision gradient uses; never 0, which CSS cannot divide by. */
-  gridDivision = 1;
+  /**
+   * The divisor the subdivision gradient uses. Never 0 once `applyDivision` has
+   * run, which is the point of it - CSS cannot divide by zero - and the zero
+   * here is the same definite-assignment placeholder as the two above, for the
+   * reason their docstring gives. It read `1` and so read as a default, which is
+   * a second statement of a rule `applyDivision` already makes.
+   */
+  gridDivision = 0;
 
   /** The grid control's entries. */
   readonly divisions: readonly DivisionOption[] = buildDivisions();
 
   @ViewChild('grid') private gridElement?: ElementRef<HTMLElement>;
   @ViewChild('lane') private laneElement?: ElementRef<HTMLElement>;
+  @ViewChild('addButton') private addButton?: ElementRef<HTMLElement>;
+  @ViewChildren('noteBody') private noteBodies?: QueryList<ElementRef<HTMLElement>>;
+
+  /**
+   * Where the focus has to go once the notes have been redrawn, or null.
+   *
+   * Deferred rather than done at the call, because the element to focus does not
+   * exist yet: a setter publishes, `render` rebuilds the view model, and only
+   * the change-detection pass after that puts the new note in the DOM.
+   * `ngAfterViewChecked` is the first moment it is there.
+   */
+  private pendingFocus: number | 'add' | null = null;
 
   /** The slot being edited, and its notes as the document holds them. */
   private slotId: string | null = null;
@@ -264,6 +321,28 @@ export class PianoRollComponent implements OnInit, OnDestroy {
         this.render(state);
         this.changes.markForCheck();
       });
+  }
+
+  /**
+   * Puts the focus where the last edit left it, once the DOM has caught up.
+   *
+   * Deleting a note removes the element the focus was on, and `trackByIndex`
+   * means the survivors shuffle down into the indices above it - so without
+   * this, deleting the note under the focus either drops the focus to `<body>`
+   * (there is no element at that index any more) or silently hands it to a
+   * *different* note that has moved into the index. Both are the same WCAG
+   * failure: the keyboard user's place in the editor is gone, and nothing said
+   * so.
+   */
+  ngAfterViewChecked(): void {
+    const target = this.pendingFocus;
+    if (target === null) return;
+
+    // Cleared before focusing rather than after: `focus()` is what puts the
+    // element in view, which can scroll, and a scroll is not worth a second
+    // pass through here looking at a request already served.
+    this.pendingFocus = null;
+    this.applyFocus(target);
   }
 
   ngOnDestroy(): void {
@@ -314,25 +393,40 @@ export class PianoRollComponent implements OnInit, OnDestroy {
     this.progression.resetSlotToChord(this.slotId);
   }
 
-  /** Removes a note. A pitch-set edit, which is all it is. */
+  /**
+   * Removes a note. A pitch-set edit, which is all it is - and a move of the
+   * focus, when the focus was on the note being removed.
+   *
+   * The focus goes to whichever note takes the removed one's place, or to the
+   * one before it when the last in the list went, or to the Add button when the
+   * slot is left empty. It is moved **only** when it was inside the note being
+   * deleted: a right-click deletes too, and a right-click on one note while
+   * another is focused must not move the focus off the note the user is working
+   * on.
+   */
   deleteNote(note: RollNoteView, event?: Event): void {
     // A right-click deletes, so the browser's own menu must not also open.
     event?.preventDefault();
     if (!this.slotId) return;
 
-    this.progression.setSlotNotes(
-      this.slotId,
-      this.slotNotes.filter((_note, index) => index !== note.index)
-    );
+    const held = this.holdsFocus(note.index);
+    const remaining = this.slotNotes.filter((_note, index) => index !== note.index);
+    this.progression.setSlotNotes(this.slotId, remaining);
+
+    if (!held) return;
+    this.pendingFocus = remaining.length === 0 ? 'add' : Math.min(note.index, remaining.length - 1);
   }
 
   /**
    * Writes a note where the grid was double-clicked.
    *
-   * The beat is snapped by the same `snapBeat` a drag uses, so there is one rule
-   * for where a note may sit rather than one for putting it there and another
-   * for moving it. The pitch is `yToMidi`, which is a position rather than a
-   * displacement and so floors into the row the pointer is actually over.
+   * Both axes answer the same question - **which cell was clicked** - so both
+   * floor into the cell the pointer is actually inside: `yToMidi` into its row
+   * and `floorBeat` into its column. `snapBeat` is the drag's rule and it is the
+   * wrong one here, which `floorBeat`'s docstring argues: rounding the beat while
+   * flooring the pitch made a click past the middle of a cell create a note that
+   * started to the right of the pointer and did not contain the point that asked
+   * for it, on a grid where a cell is a quarter of a beat wide.
    */
   addNote(event: MouseEvent): void {
     const grid = this.gridElement?.nativeElement;
@@ -342,14 +436,72 @@ export class PianoRollComponent implements OnInit, OnDestroy {
     const scale = this.gridScale();
     const beat = Math.max(
       0,
-      snapBeat(xToBeat(event.clientX - rect.left, scale.pixelsPerBeat), this.division)
+      floorBeat(xToBeat(event.clientX - rect.left, scale.pixelsPerBeat), this.division)
     );
-    const midi = yToMidi(event.clientY - rect.top, this.topMidi, scale.rowHeight);
 
-    this.progression.placeNotes(this.slotId, [
+    this.placeNewNote(yToMidi(event.clientY - rect.top, this.topMidi, scale.rowHeight), beat);
+  }
+
+  /**
+   * Adds a note without a pointer, and puts the focus on it.
+   *
+   * **The keyboard path to creating one, and the roll had none.** Every other
+   * edit here has had two paths from the start - a note can be moved, resized,
+   * re-voiced, re-velocitied and deleted from the keyboard - but the only way to
+   * *make* one was a double-click on a bare `<div>` that was not in the tab
+   * order and answered no key. A keyboard user who deleted the last note of a
+   * slot could not get one back except through Reset to chord, which throws
+   * every other edit in the slot away with it. That is WCAG 2.1.1, and it
+   * contradicted what this component's own help text says the arrow keys are.
+   *
+   * The note lands at beat 0 - the start of the slot, the one beat every slot
+   * has - on the first free pitch at or above the middle of the window, so it
+   * arrives somewhere visible and never underneath a note that is already there.
+   * From there it is the arrow keys' to move, which is the point.
+   */
+  addNoteAtStart(): void {
+    if (!this.slotId) return;
+
+    const index = this.slotNotes.length;
+    const midi = this.freePitchNear(this.topMidi - Math.floor(this.gridRows / 2), 0);
+    if (this.placeNewNote(midi, 0)) this.pendingFocus = index;
+  }
+
+  /**
+   * Adds one note to the slot, at a pitch and a beat the caller has decided.
+   *
+   * `placeNotes` rather than `setSlotNotes`, for the reason the class docstring
+   * gives: adding a note says both where it sounds and when, so both claims are
+   * the user's and both belong in one commit. The new note is **appended**,
+   * which is what makes its index the old length - nothing between here and the
+   * document reorders a slot's notes, and `mergeNotes` walks the two lists by
+   * index for exactly that reason.
+   */
+  private placeNewNote(midi: number, beat: number): boolean {
+    if (!this.slotId) return false;
+
+    return this.progression.placeNotes(this.slotId, [
       ...this.slotNotes,
       { midi, startBeat: beat, lengthBeats: this.gridStep, velocity: DEFAULT_VELOCITY }
     ]);
+  }
+
+  /**
+   * The first pitch at or above `midi` with nothing already on it at `beat`.
+   *
+   * A new note laid exactly on top of an old one is invisible, unreachable by a
+   * pointer, and indistinguishable from the click having done nothing - the
+   * velocity lane's bug in the grid. The search runs upward because a voicing
+   * grows upward, and it terminates: a beat holds at most as many notes as the
+   * slot does, so one of the `length + 1` pitches tried is free.
+   */
+  private freePitchNear(midi: number, beat: number): number {
+    for (let pitch = midi; pitch < midi + this.slotNotes.length; pitch++) {
+      const taken = this.slotNotes.some(note => note.midi === pitch && note.startBeat === beat);
+      if (!taken) return pitch;
+    }
+
+    return midi + this.slotNotes.length;
   }
 
   // -------------------------------------------------------------------------
@@ -480,11 +632,13 @@ export class PianoRollComponent implements OnInit, OnDestroy {
     pixelsPerBeat: number,
     rowHeight: number
   ): void {
+    const slotId = this.slotId;
     const note = this.slotNotes[index];
-    if (!note) return;
+    if (!slotId || !note) return;
 
     this.endGesture();
     this.move = {
+      slotId,
       index,
       originX,
       originY,
@@ -502,11 +656,13 @@ export class PianoRollComponent implements OnInit, OnDestroy {
 
   /** Begins a resize at a known scale - the seam above, for the second gesture. */
   beginResize(index: number, originX: number, pixelsPerBeat: number): void {
+    const slotId = this.slotId;
     const note = this.slotNotes[index];
-    if (!note) return;
+    if (!slotId || !note) return;
 
     this.endGesture();
     this.resize = {
+      slotId,
       index,
       originX,
       startBeat: note.startBeat,
@@ -520,11 +676,13 @@ export class PianoRollComponent implements OnInit, OnDestroy {
 
   /** Begins a velocity drag at a known scale - the seam, for the third. */
   beginVelocity(index: number, originY: number, pixelsPerVelocity: number): void {
+    const slotId = this.slotId;
     const note = this.slotNotes[index];
-    if (!note) return;
+    if (!slotId || !note) return;
 
     this.endGesture();
     this.velocity = {
+      slotId,
       index,
       originY,
       startVelocity: note.velocity,
@@ -545,10 +703,21 @@ export class PianoRollComponent implements OnInit, OnDestroy {
    * joins it, so a drag across six grid lines is one step back rather than six.
    * `committed` is the flag that says which, and it is the gesture's own
    * bookkeeping rather than a second copy of the note.
+   *
+   * **It is set from what the setter answered, not from the fact that it was
+   * called.** A setter declines silently - a note that did not move and a claim
+   * that was already made open no entry - and a gesture that recorded the call
+   * as a commit anyway would send `coalesce: true` on its next one, which
+   * `commit` honours on the run key alone; for `placeNotes` that key names only
+   * the slot, so the step would fold into the entry the *previous* gesture left
+   * on the stack and one undo would take back two drags. Once an entry is open
+   * it stays open for the rest of the gesture, so the flag only ever goes one
+   * way - which is why each line below is `||` rather than an assignment.
+   *
+   * Every write goes to the slot the gesture *started* on, which is the
+   * gesture's own field. `Gesture` argues why it is not `this.slotId`.
    */
   onPointerMove(event: PointerEvent): void {
-    if (!this.slotId) return;
-
     const move = this.move;
     if (move) {
       const beat = heldSnap(
@@ -562,8 +731,8 @@ export class PianoRollComponent implements OnInit, OnDestroy {
 
       move.beat = beat;
       move.semitones = semitones;
-      this.progression.placeNotes(
-        this.slotId,
+      const placed = this.progression.placeNotes(
+        move.slotId,
         move.notes.map((note, index) =>
           index === move.index
             ? { ...note, startBeat: beat, midi: move.startMidi + semitones }
@@ -571,7 +740,7 @@ export class PianoRollComponent implements OnInit, OnDestroy {
         ),
         { coalesce: move.committed }
       );
-      move.committed = true;
+      move.committed = move.committed || placed;
       return;
     }
 
@@ -586,10 +755,14 @@ export class PianoRollComponent implements OnInit, OnDestroy {
       if (length === resize.length) return;
 
       resize.length = length;
-      this.progression.setNoteTiming(this.slotId, resize.index, resize.startBeat, length, {
-        coalesce: resize.committed
-      });
-      resize.committed = true;
+      const timed = this.progression.setNoteTiming(
+        resize.slotId,
+        resize.index,
+        resize.startBeat,
+        length,
+        { coalesce: resize.committed }
+      );
+      resize.committed = resize.committed || timed;
       return;
     }
 
@@ -605,10 +778,10 @@ export class PianoRollComponent implements OnInit, OnDestroy {
     if (next === velocity.velocity) return;
 
     velocity.velocity = next;
-    this.progression.setNoteVelocity(this.slotId, velocity.index, next, {
+    const written = this.progression.setNoteVelocity(velocity.slotId, velocity.index, next, {
       coalesce: velocity.committed
     });
-    velocity.committed = true;
+    velocity.committed = velocity.committed || written;
   }
 
   /** Releasing ends the gesture. Everything it meant is already committed. */
@@ -682,6 +855,37 @@ export class PianoRollComponent implements OnInit, OnDestroy {
   }
 
   // -------------------------------------------------------------------------
+  // The focus
+  // -------------------------------------------------------------------------
+
+  /**
+   * Whether the focus is inside the note at this index.
+   *
+   * The whole `.note` element rather than its body, because the resize handle is
+   * the note's other focusable child and deleting the note out from under it is
+   * the same loss. The velocity bars are elsewhere in the DOM and are left out
+   * on purpose: no key on one deletes anything, so a bar cannot be the thing
+   * that asked.
+   */
+  private holdsFocus(index: number): boolean {
+    const note = this.noteBodies?.get(index)?.nativeElement.parentElement;
+    return note != null && note.contains(document.activeElement);
+  }
+
+  /**
+   * Puts the focus on a note, or on the Add button.
+   *
+   * The button is the fallback rather than a second branch: an index that no
+   * longer names a note is the case where there is nothing left to focus, and
+   * the button is then both the only control that can undo that and the one
+   * thing a keyboard user needs next.
+   */
+  private applyFocus(target: number | 'add'): void {
+    const body = target === 'add' ? undefined : this.noteBodies?.get(target)?.nativeElement;
+    (body ?? this.addButton?.nativeElement)?.focus();
+  }
+
+  // -------------------------------------------------------------------------
   // Rendering
   // -------------------------------------------------------------------------
 
@@ -718,88 +922,4 @@ export class PianoRollComponent implements OnInit, OnDestroy {
     // CSS cannot divide by zero, and free timing still wants the beat lines.
     this.gridDivision = this.division > 0 ? this.division : 1;
   }
-}
-
-// ---------------------------------------------------------------------------
-// The gesture arithmetic
-// ---------------------------------------------------------------------------
-
-/**
- * A dragged position, snapped to the grid, with a dead zone on the boundary.
- *
- * `piano-roll-geometry.ts` argues at length that `snapBeat` stays a two-argument
- * quantiser and that the dead zone belongs to the gesture. This is that dead
- * zone, and the thing to keep right is the order: **the margin is applied to the
- * raw beat, before the snap**. Afterwards the position is already on a grid line
- * and there is nothing left to say how close to a boundary it was.
- *
- * Without it a pointer resting exactly between two lines and shaking by a pixel
- * crosses back and forth, and every crossing is a commit and a repaint. M1's
- * strip had the same bug and `draggedBeats` holds the same margin the same way;
- * this is that function with the grid step as a parameter and a floor the caller
- * names, because the roll snaps two axes and two edges rather than one length.
- *
- * `held` is what the gesture has already reached, so a single call with `held`
- * at the start reads exactly as it would with no hysteresis at all.
- */
-function heldSnap(raw: number, division: number, held: number, floor: number): number {
-  if (!Number.isFinite(raw)) return held;
-  // No grid is free timing rather than an error, and free timing has no boundary
-  // to rest on - the position is simply where the pointer is.
-  if (!Number.isFinite(division) || division <= 0) return Math.max(floor, raw);
-
-  const dead = (0.5 + SNAP_HYSTERESIS) / division;
-  if (raw < held + dead && raw > held - dead) return held;
-
-  return Math.max(floor, snapBeat(raw, division));
-}
-
-/**
- * How many semitones up a drag has travelled, with the same dead zone.
- *
- * Rounded rather than floored, and that is the difference between a displacement
- * and a position. `yToMidi` floors because it answers "which row is this pixel
- * in", and every pixel of a row has to give the same pitch; read as a
- * displacement the same floor would move a note a whole semitone for one pixel
- * of travel in one direction and none in the other. Half a row in either
- * direction is what a drag means, which is `Math.round`.
- *
- * A row height that is not a positive number means the grid could not be
- * measured, and dividing by it manufactures `Infinity` or `NaN` out of a
- * perfectly good pointer position. Declined rather than clamped, which reads as
- * "the drag did not move" - the same answer `draggedBeats` gives.
- */
-function heldRows(deltaY: number, rowHeight: number, held: number): number {
-  if (!Number.isFinite(rowHeight) || rowHeight <= 0) return held;
-  if (!Number.isFinite(deltaY)) return held;
-
-  // Up the screen is up in pitch: the axis is inverted, which `midiToY` argues.
-  const raw = -deltaY / rowHeight;
-  const dead = 0.5 + SNAP_HYSTERESIS;
-  if (raw < held + dead && raw > held - dead) return held;
-
-  return Math.round(raw);
-}
-
-/**
- * The velocity a drag has reached: where it started, plus how far up the pointer
- * has travelled.
- *
- * Whole, because `RollNote.velocity` is a MIDI byte, and clamped into 1-127 here
- * as well as in `boundVelocity` - this is the last place the number is a value
- * the user is dragging to rather than one being stored, and a bar that flickered
- * past the top of its lane before the model refused it would be the strip's
- * `draggedBeats` floor problem again.
- */
-function draggedVelocity(
-  startVelocity: number,
-  deltaUp: number,
-  pixelsPerVelocity: number,
-  held: number
-): number {
-  if (!Number.isFinite(pixelsPerVelocity) || pixelsPerVelocity <= 0) return held;
-  if (!Number.isFinite(deltaUp)) return held;
-
-  const raw = Math.round(startVelocity + deltaUp / pixelsPerVelocity);
-  return Math.max(VELOCITY_MIN, Math.min(VELOCITY_MAX, raw));
 }

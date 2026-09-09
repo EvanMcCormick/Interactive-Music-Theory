@@ -3,6 +3,7 @@ import {
   MIN_VISIBLE_SEMITONES,
   PITCH_PADDING_SEMITONES,
   beatToX,
+  floorBeat,
   midiToY,
   rowCount,
   snapBeat,
@@ -258,6 +259,53 @@ describe('snapBeat', () => {
     expect(snapBeat(1.37, -4)).toBe(1.37);
     expect(snapBeat(1.37, Number.NaN)).toBe(1.37);
     expect(snapBeat(1.37, Number.POSITIVE_INFINITY)).toBe(1.37);
+  });
+});
+
+/**
+ * The beat axis's `yToMidi`: which cell a point is in, rather than which line is
+ * nearest it. A double-click names a place, and the note it makes has to contain
+ * the point that asked for it.
+ */
+describe('floorBeat', () => {
+  it('answers the start of the cell a position falls in', () => {
+    expect(floorBeat(1.3, 4)).toBe(1.25);
+    expect(floorBeat(1.4, 4)).toBe(1.25);
+    expect(floorBeat(1.49, 4)).toBe(1.25);
+    expect(floorBeat(0.9, 1)).toBe(0);
+  });
+
+  /**
+   * The half-cell is the whole difference from `snapBeat`, and the reason this
+   * function exists: past it, a rounded click creates a note the click is not
+   * inside.
+   */
+  it('stays in the cell where snapping would take the next line', () => {
+    expect(floorBeat(0.6, 1)).toBe(0);
+    expect(snapBeat(0.6, 1)).toBe(1);
+    expect(floorBeat(0.2, 4)).toBe(0);
+    expect(snapBeat(0.2, 4)).toBe(0.25);
+  });
+
+  /** A position already on a line is in the cell that starts there. */
+  it('leaves a position that is already on a line where it is', () => {
+    expect(floorBeat(2, 4)).toBe(2);
+    expect(floorBeat(2.25, 4)).toBe(2.25);
+    expect(floorBeat(0, 4)).toBe(0);
+  });
+
+  /** Triplets, where the cells are not representable and the rule still holds. */
+  it('floors onto a triplet grid', () => {
+    expect(floorBeat(0.5, 3)).toBeCloseTo(1 / 3, 9);
+    expect(floorBeat(0.99, 3)).toBeCloseTo(2 / 3, 9);
+  });
+
+  /** No grid is free timing, and free timing has no cells. */
+  it('leaves a position alone when there is no grid', () => {
+    expect(floorBeat(1.37, 0)).toBe(1.37);
+    expect(floorBeat(1.37, -4)).toBe(1.37);
+    expect(floorBeat(1.37, Number.NaN)).toBe(1.37);
+    expect(floorBeat(1.37, Number.POSITIVE_INFINITY)).toBe(1.37);
   });
 });
 

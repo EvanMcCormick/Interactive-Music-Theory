@@ -254,10 +254,16 @@ describe('PianoRollComponent', () => {
       expect(storedNotes().some(note => note.startBeat === 2)).toBeTrue();
     });
 
-    /** One drag is one undo step, however many grid lines it crosses. */
+    /**
+     * One drag is one undo step, however many grid lines it crosses.
+     *
+     * The spy answers `true` because that is what the setter answers when it
+     * records something, and the gesture reads that answer rather than assuming
+     * it - see `committing` below, which is the other half of this.
+     */
     it('folds every later position of the same drag into the first', () => {
       build();
-      spyOn(progression, 'placeNotes');
+      spyOn(progression, 'placeNotes').and.returnValue(true);
 
       component.beginMove(0, 100, 100, PX_PER_BEAT, ROW_HEIGHT);
       component.onPointerMove(pointerAt(140, 100));
@@ -293,7 +299,7 @@ describe('PianoRollComponent', () => {
      */
     it('keeps a drag on a second note a step of its own', () => {
       build();
-      spyOn(progression, 'placeNotes');
+      spyOn(progression, 'placeNotes').and.returnValue(true);
 
       component.beginMove(0, 100, 100, PX_PER_BEAT, ROW_HEIGHT);
       component.onPointerMove(pointerAt(180, 100));
@@ -472,7 +478,7 @@ describe('PianoRollComponent', () => {
 
     it('folds every later length of the same drag into the first', () => {
       build();
-      spyOn(progression, 'setNoteTiming');
+      spyOn(progression, 'setNoteTiming').and.returnValue(true);
 
       component.beginResize(0, 100, PX_PER_BEAT);
       component.onPointerMove(pointerAt(140, 100));
@@ -565,7 +571,7 @@ describe('PianoRollComponent', () => {
 
     it('folds every later velocity of the same drag into the first', () => {
       build();
-      spyOn(progression, 'setNoteVelocity');
+      spyOn(progression, 'setNoteVelocity').and.returnValue(true);
 
       component.beginVelocity(0, 100, PX_PER_VELOCITY);
       component.onPointerMove(pointerAt(0, 90));
@@ -644,6 +650,103 @@ describe('PianoRollComponent', () => {
 
       expect(progression.setNoteTiming).not.toHaveBeenCalled();
     });
+  });
+
+  /**
+   * `committed` decides `coalesce`, so it has to mean "this gesture has an undo
+   * entry open" and not "a setter was called". The setters answer whether they
+   * recorded anything - `ProgressionService.writeNotes` argues why - and these
+   * drive the two answers straight at the gesture.
+   */
+  describe('what a gesture counts as having committed', () => {
+    /**
+     * A refused first commit opens no entry, so the second step of the same
+     * gesture must still ask for one. Folding it instead would fold it into
+     * whatever the *previous* gesture left on the stack: `placeNotes` keys its
+     * run by the slot alone, so every drag on one slot shares a key, and one
+     * undo would take back two drags.
+     */
+    it('asks for a run of its own again when the first commit was refused', () => {
+      build();
+      const placeNotes = spyOn(progression, 'placeNotes').and.returnValue(false);
+
+      component.beginMove(0, 100, 100, PX_PER_BEAT, ROW_HEIGHT);
+      component.onPointerMove(pointerAt(140, 100));
+      component.onPointerMove(pointerAt(180, 100));
+
+      expect(placeNotes.calls.allArgs().map(args => args[2])).toEqual([
+        { coalesce: false },
+        { coalesce: false }
+      ]);
+    });
+
+    /** And once an entry really is open it stays open, refusals and all. */
+    it('keeps folding into an entry a later refusal did not close', () => {
+      build();
+      const placeNotes = spyOn(progression, 'placeNotes').and.returnValues(true, false, true);
+
+      component.beginMove(0, 100, 100, PX_PER_BEAT, ROW_HEIGHT);
+      component.onPointerMove(pointerAt(140, 100));
+      component.onPointerMove(pointerAt(180, 100));
+      component.onPointerMove(pointerAt(220, 100));
+
+      expect(placeNotes.calls.allArgs().map(args => args[2])).toEqual([
+        { coalesce: false },
+        { coalesce: true },
+        { coalesce: true }
+      ]);
+    });
+
+    it('does the same for a refused resize', () => {
+      build();
+      const setNoteTiming = spyOn(progression, 'setNoteTiming').and.returnValue(false);
+
+      component.beginResize(0, 100, PX_PER_BEAT);
+      component.onPointerMove(pointerAt(140, 100));
+      component.onPointerMove(pointerAt(180, 100));
+
+      expect(setNoteTiming.calls.allArgs().map(args => args[4])).toEqual([
+        { coalesce: false },
+        { coalesce: false }
+      ]);
+    });
+
+    it('does the same for a refused velocity', () => {
+      build();
+      const setNoteVelocity = spyOn(progression, 'setNoteVelocity').and.returnValue(false);
+
+      component.beginVelocity(0, 100, PX_PER_VELOCITY);
+      component.onPointerMove(pointerAt(0, 90));
+      component.onPointerMove(pointerAt(0, 80));
+
+      expect(setNoteVelocity.calls.allArgs().map(args => args[3])).toEqual([
+        { coalesce: false },
+        { coalesce: false }
+      ]);
+    });
+  });
+
+  /**
+   * A gesture writes to the slot it began on. The strip is a sibling on the
+   * same page and the selection is not the drag's to follow: notes snapshotted
+   * from one slot and measured against its geometry must not land in another.
+   */
+  it('writes to the slot the drag started on, not the one selected since', () => {
+    const first = build();
+    progression.appendSlot(4);
+    settle();
+    progression.selectSlot(first);
+    settle();
+
+    component.beginMove(0, 100, 100, PX_PER_BEAT, ROW_HEIGHT);
+    const second = currentState().doc.slots[1];
+    progression.selectSlot(second.id);
+    settle();
+    component.onPointerMove(pointerAt(180, 100));
+    settle();
+
+    expect(currentState().doc.slots[0].notes[0].startBeat).toBe(2);
+    expect(currentState().doc.slots[1].notes).toEqual(second.notes);
   });
 
   describe('the keyboard path', () => {
@@ -745,6 +848,67 @@ describe('PianoRollComponent', () => {
       expect(component.hasSlot).toBeTrue();
     });
 
+    /**
+     * The keyboard path to creating one, which the roll shipped without: a
+     * double-click on a bare `<div>` was the only way, so a keyboard user who
+     * emptied a slot could not put a note back in it except through Reset to
+     * chord - which throws away every other edit in the slot with it.
+     */
+    it('adds a note at the start of the slot with no pointer anywhere', () => {
+      const id = build();
+      const before = storedNotes();
+      spyOn(progression, 'placeNotes');
+
+      component.addNoteAtStart();
+
+      expect(progression.placeNotes).toHaveBeenCalledWith(id, [
+        ...before,
+        {
+          midi: jasmine.any(Number),
+          startBeat: 0,
+          lengthBeats: component.gridStep,
+          velocity: jasmine.any(Number)
+        }
+      ]);
+    });
+
+    it('gets an empty slot editable again', () => {
+      build();
+      for (let index = component.notes.length - 1; index >= 0; index--) {
+        component.deleteNote(component.notes[index]);
+        settle();
+      }
+      expect(storedNotes()).toEqual([]);
+
+      component.addNoteAtStart();
+      settle();
+
+      expect(storedNotes().length).toBe(1);
+      expect(storedNotes()[0].startBeat).toBe(0);
+    });
+
+    /**
+     * A note laid exactly on top of one already there is invisible, unreachable
+     * by a pointer and indistinguishable from the button having done nothing -
+     * the velocity lane's bug, in the grid.
+     */
+    it('never lays the new note on top of one already at that beat', () => {
+      build();
+      for (let added = 0; added < 4; added++) {
+        component.addNoteAtStart();
+        settle();
+      }
+
+      const atStart = storedNotes().filter(note => note.startBeat === 0);
+      expect(new Set(atStart.map(note => note.midi)).size).toBe(atStart.length);
+    });
+
+    it('adds nothing when no slot is selected', () => {
+      spyOn(progression, 'placeNotes');
+      component.addNoteAtStart();
+      expect(progression.placeNotes).not.toHaveBeenCalled();
+    });
+
     /** The escape hatch: every claim dropped, the block chord rebuilt. */
     it('hands the slot back to the generator', () => {
       build();
@@ -783,6 +947,24 @@ describe('PianoRollComponent', () => {
       build();
       component.setDivision(0);
       expect(component.division).toBe(0);
+    });
+
+    /**
+     * The third number `applyDivision` writes, and the one that had no test.
+     * The stylesheet divides `--px-per-beat` by it to draw the subdivision
+     * gradient, and CSS cannot divide by zero - so free timing, which *is* a
+     * division of zero, still has to hand the gradient the beat lines.
+     */
+    it('never hands the stylesheet a zero to divide by', () => {
+      build();
+      expect(component.gridDivision).toBe(component.division);
+
+      component.setDivision(8);
+      expect(component.gridDivision).toBe(8);
+
+      component.setDivision(0);
+      expect(component.division).toBe(0);
+      expect(component.gridDivision).toBe(1);
     });
 
     /**

@@ -84,6 +84,10 @@ export interface RollNoteView {
   row: number;
   /** 0 to 1, for how tall the velocity bar is drawn. */
   velocityFraction: number;
+  /** Where this note's velocity bar starts, in beats. See `buildLaneColumns`. */
+  laneBeat: number;
+  /** How wide that bar is, in beats. Never shared with another note's. */
+  laneBeats: number;
   /** `C4`, spelled the way the progression's key spells it. */
   name: string;
   label: string;
@@ -141,11 +145,14 @@ export function buildRollView(state: ProgressionState, spell: SpellNote): RollVi
   const slotNotes = slot ? slot.notes : [];
   const range = visibleMidiRange(slotNotes);
   const spellHere = (pitchClass: number) => spell(pitchClass, state.doc.key.preferSharps);
+  const columns = buildLaneColumns(slotNotes);
 
   return {
     slotId: slot ? slot.id : null,
     slotNotes,
-    notes: slotNotes.map((note, index) => buildNoteView(note, index, range, spellHere)),
+    notes: slotNotes.map((note, index) =>
+      buildNoteView(note, index, range, spellHere, columns[index])
+    ),
     rows: buildRows(range, spellHere),
     totalBeats: gridBeats(slot),
     gridRows: rowCount(range),
@@ -182,6 +189,96 @@ export function buildDivisions(): DivisionOption[] {
 
 /** How a pitch class is written, with the key's preference already applied. */
 type SpellPitchClass = (pitchClass: number) => string;
+
+/** Where one velocity bar sits along the lane. See `buildLaneColumns`. */
+interface LaneColumn {
+  beat: number;
+  beats: number;
+}
+
+/**
+ * Where each note's velocity bar goes: **one column per note, side by side, no
+ * two of them sharing a pixel.**
+ *
+ * ## The bug this exists to make impossible
+ *
+ * A bar used to be drawn at its note's own beat and length, full height. That
+ * reads as "one bar per note" and is not: `generateSlotNotes` gives every note
+ * of a generated chord `startBeat: 0` and `lengthBeats: slot.lengthBeats`, so
+ * for **every chord the generator produces** all the bars occupied exactly the
+ * same rectangle. They painted over each other in DOM order, so the lane showed
+ * the silhouette of whichever note happened to be loudest, and a press anywhere
+ * in the lane went to the last note in the list - the only one the pointer could
+ * reach. A user aiming at the root of a triad edited its fifth, silently.
+ *
+ * ## The rule, and why it is by construction rather than by care
+ *
+ * Notes are grouped by the beat they start on - exactly, because a chord's notes
+ * share one and the model stores beats it was given. Each group is allotted the
+ * span from its start to whichever comes first: the next start beat in the slot,
+ * or the end of the group's **shortest** note. That span is then split into
+ * equal columns, one per member, in the notes' own index order.
+ *
+ * Two properties fall out, and neither depends on the data:
+ *
+ *  - **Groups cannot overlap**, because a group's span is cut off at the next
+ *    group's start. **Columns within a group cannot overlap**, because they are
+ *    equal slices of one span. So every bar has a rectangle of its own, which is
+ *    what makes `elementsFromPoint` at a bar's centre answer that bar.
+ *  - **A bar never covers a beat its note is not sounding**, because the span
+ *    stops at the shortest note in the group. The shortest and not the longest:
+ *    a bar wide enough to be comfortable but sitting past the end of the note it
+ *    edits would trade this bug for a quieter one.
+ *
+ * The cost is at the other end. A group of four notes all at the model's minimum
+ * length gets columns a quarter of `MIN_NOTE_BEATS` wide - a pixel or two at the
+ * roll's scale. That is thin, but it is thin *and distinct*, and a distinct
+ * two-pixel bar is reachable where an overlapping fat one is not. It is also
+ * already the limit of what the roll can draw at that zoom: the note itself is
+ * at `.note`'s minimum width there.
+ *
+ * ## Why not the alternatives
+ *
+ * **A row per note** - the lane split into horizontal bands - separates them
+ * just as reliably and costs the drag its resolution: `velocityScale` measures
+ * the lane because floor-to-ceiling is the whole MIDI range, and a band a
+ * quarter of the height makes one pixel of pointer travel worth nine MIDI units.
+ * The correspondence a user can see is the whole reason the scale is measured
+ * off the lane.
+ *
+ * **Columns across the whole lane**, one per note regardless of time, separates
+ * them too and throws away the only thing that says which bar belongs to which
+ * note - that it sits underneath it.
+ */
+function buildLaneColumns(notes: readonly RollNote[]): LaneColumn[] {
+  const columns: LaneColumn[] = notes.map(note => ({
+    beat: note.startBeat,
+    beats: note.lengthBeats
+  }));
+
+  const starts = [...new Set(notes.map(note => note.startBeat))].sort((a, b) => a - b);
+
+  starts.forEach((start, position) => {
+    const members: number[] = [];
+    let shortest = Infinity;
+    notes.forEach((note, index) => {
+      if (note.startBeat !== start) return;
+      members.push(index);
+      if (note.lengthBeats < shortest) shortest = note.lengthBeats;
+    });
+
+    // `Infinity` for the last group, which nothing starts after: the span is
+    // then the shortest note's, which is what a lone note has always had.
+    const next = position + 1 < starts.length ? starts[position + 1] : Infinity;
+    const width = Math.min(next - start, shortest) / members.length;
+
+    members.forEach((index, rank) => {
+      columns[index] = { beat: start + rank * width, beats: width };
+    });
+  });
+
+  return columns;
+}
 
 /** The selected slot, or null - including when the selection names a lost slot. */
 function findSelected(state: ProgressionState): ChordSlot | null {
@@ -234,7 +331,8 @@ function buildNoteView(
   note: RollNote,
   index: number,
   range: MidiRange,
-  spell: SpellPitchClass
+  spell: SpellPitchClass,
+  column: LaneColumn
 ): RollNoteView {
   const name = noteName(note.midi, spell);
   const beats = formatBeats(note.lengthBeats);
@@ -251,6 +349,8 @@ function buildNoteView(
     // which is the half of it that is easy to get backwards.
     row: midiToY(note.midi, range.high, 1),
     velocityFraction: (note.velocity - VELOCITY_MIN) / VELOCITY_SPAN,
+    laneBeat: column.beat,
+    laneBeats: column.beats,
     name,
     // Built here rather than in the template, for the strip's reason: a
     // concatenation in an `[attr.aria-label]` binding is re-evaluated on every

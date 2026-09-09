@@ -19,6 +19,21 @@
       </select>
     </label>
 
+    <!-- The keyboard path to creating a note, and the only one there is: the
+         double-click surface below is a bare `<div>` that no tab reaches and no
+         key answers. Without this a keyboard user can move, resize, re-voice,
+         re-velocity and delete a note but never make one, and deleting the last
+         note of a slot leaves it uneditable but for Reset to chord - which
+         throws away every other edit in the slot. See `addNoteAtStart`. -->
+    <button
+      type="button"
+      class="add"
+      #addButton
+      [disabled]="!hasSlot"
+      (click)="addNoteAtStart()">
+      Add note
+    </button>
+
     <!-- The escape hatch. Per-aspect ownership is only safe while there is a way
          back: without this, dragging one note opts the slot out of re-voicing
          for good. See `ProgressionService.resetSlotToChord`. -->
@@ -69,6 +84,7 @@
           <button
             type="button"
             class="note-body"
+            #noteBody
             [attr.aria-label]="note.label"
             (pointerdown)="startMove(note, $event)"
             (keydown.arrowup)="nudgePitch(note, 1, $event)"
@@ -82,11 +98,22 @@
 
           <!-- The right edge. Dragged with a pointer, stepped with the arrow
                keys - a slider rather than a button, because those keys are the
-               whole of that path and the length is the value they change. -->
-          <button
-            type="button"
+               whole of that path and the length is the value they change.
+
+               A `<div tabindex="0">` rather than a `<button role="slider">`,
+               which is what this was: `slider` is not one of the roles ARIA in
+               HTML permits on a `<button>` (checkbox, combobox, link, menuitem,
+               menuitemcheckbox, menuitemradio, option, radio, switch, tab are),
+               so the pair is non-conforming however well it happens to be
+               announced. A generic element carries no implicit role to
+               contradict, which is the construction the spec expects for a
+               widget built out of nothing. The strip's handle is changed with
+               it - it had copied this, and one of the two conforming would have
+               been worse than either. -->
+          <div
             class="note-resize"
             role="slider"
+            tabindex="0"
             [attr.aria-label]="note.resizeLabel"
             [attr.aria-valuemin]="minNoteLength"
             [attr.aria-valuemax]="note.maxBeats"
@@ -94,21 +121,29 @@
             [attr.aria-valuetext]="note.beatsText"
             (pointerdown)="startResize(note, $event)"
             (keydown.arrowright)="nudgeLength(note, 1, $event)"
-            (keydown.arrowleft)="nudgeLength(note, -1, $event)"></button>
+            (keydown.arrowleft)="nudgeLength(note, -1, $event)"></div>
         </div>
       </div>
 
-      <!-- One bar per note, under the note it belongs to and scrolling with it.
-           `RollNote.velocity` is already on the model, so this is a view of the
-           document rather than anything new in it. -->
+      <!-- One bar per note, side by side under the notes they belong to and
+           scrolling with them. `RollNote.velocity` is already on the model, so
+           this is a view of the document rather than anything new in it.
+
+           The column is `buildLaneColumns`' and not the note's own beat and
+           length, which is what this used to draw: a generated chord gives every
+           note `startBeat: 0` and the slot's length, so every bar landed on the
+           same rectangle, the lane showed the silhouette of whichever was
+           loudest, and a press anywhere in it reached the last note in the list
+           and no other. That function states the rule and why no two columns can
+           overlap. `role="slider"` on a `<div>` for the reason above. -->
       <div class="lane" #lane>
-        <button
-          type="button"
+        <div
           class="velocity"
           role="slider"
+          tabindex="0"
           *ngFor="let note of notes; trackBy: trackByIndex"
-          [style.--note-beat]="note.startBeat"
-          [style.--note-beats]="note.lengthBeats"
+          [style.--lane-beat]="note.laneBeat"
+          [style.--lane-beats]="note.laneBeats"
           [style.--note-velocity]="note.velocityFraction"
           [attr.aria-label]="note.velocityLabel"
           [attr.aria-valuemin]="1"
@@ -116,15 +151,16 @@
           [attr.aria-valuenow]="note.velocity"
           (pointerdown)="startVelocity(note, $event)"
           (keydown.arrowup)="nudgeVelocity(note, 1, $event)"
-          (keydown.arrowdown)="nudgeVelocity(note, -1, $event)"></button>
+          (keydown.arrowdown)="nudgeVelocity(note, -1, $event)"></div>
       </div>
     </div>
   </div>
 
   <ng-template #noSlot>
     <p class="empty">
-      Pick a chord on the strip to draw its notes. Double-click the grid to add
-      one, drag it to move it, drag its right edge to change how long it is.
+      Pick a chord on the strip to draw its notes. Double-click the grid or press
+      Add note to add one, drag it to move it, drag its right edge to change how
+      long it is.
     </p>
   </ng-template>
 </div>
