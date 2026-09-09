@@ -336,3 +336,91 @@ migration cost either. It goes live at **M3**, where the recogniser's
 neighbourhood search varies root alteration as one of its axes: under today's
 semantics that axis generates wrong-quality candidates, and the recogniser would
 be matching pitch sets against chords nobody would write.
+
+---
+
+## M2 decisions
+
+Settled before planning M2, after M1 surfaced questions the original design did
+not answer. Where these conflict with anything above, these win.
+
+### Scope
+
+All of it: the piano roll, the edit-protection rules, the `quantizeBar`
+projection and notation preview, **and** the borrowed-chord correction. The last
+was filed as "for M2" and is separable from drawing a roll, but it touches the
+same files, so interleaving beats stacking.
+
+### Per-aspect ownership supersedes `isHandEdited`
+
+`ChordSlot.isHandEdited: boolean` is replaced by a record of **which dimensions
+the user owns** - pitches, timing, velocity - tracked independently.
+
+The boolean forces a bad trade. Under it, nudging one velocity opts a slot out of
+re-voicing forever, so a later key change keeps the old chord's pitches; and the
+alternative reading, where only pitch edits count, silently destroys a
+hand-built rhythm on the same key change. Both losses are real and neither is the
+one the user meant.
+
+With ownership per dimension, regeneration becomes a **merge** rather than a
+replace:
+
+| dimension | owned | not owned |
+|---|---|---|
+| pitches | transpose by the interval | re-voice from the degree |
+| timing | keep | regenerate as a block |
+| velocity | keep | reset to `DEFAULT_VELOCITY` |
+
+So a groove written in C survives a switch to A minor while the chords re-voice
+correctly underneath it, which is the whole point of storing degrees.
+
+This also fixes the erasure recorded in consequence 4 above: `regenerateSlot`
+merges instead of overwriting, so an override survives a resize.
+
+### The palette gains three named groups
+
+`quality: ChordQuality | null` is machinery, and M1 emits none of it. The UI that
+does:
+
+- **Alternates** - other qualities on the selected chord's root, which is the row
+  Captain Chords shows. Turns IV into iv, or V into V7.
+- **Borrowed** - bII, bIII, bVI, bVII and minor iv in a major key, each labelled
+  with its numeral.
+- **Secondary dominants** - V/V, V/vi, V/IV as named functions.
+
+Borrowed and secondary chords need **chromatic roots**, which is why an
+alternates row alone would not deliver the correction above: every case it
+tabulates has a root outside the scale. A secondary dominant costs almost nothing
+once chromatic roots exist - root a fifth above the target, quality
+`dominant7` - so it is a label rule rather than new machinery.
+
+A free root-times-quality picker was rejected. It is less code and more power,
+and it abandons the Roman numeral framing that is the teaching feature: a chord
+picked that way has no function relative to the key, so the circle-of-fifths
+coupling stops meaning anything.
+
+### Edits during playback take effect at the loop boundary
+
+The schedule is a snapshot, and M1 could live with that because a chord strip
+invites little mid-play editing. A roll inverts that - loop four bars and nudge
+until it sits right is the primary workflow.
+
+Changes are collected and the schedule rebuilt when the loop turns over. This is
+musically motivated rather than merely cheaper: swapping notes under a sounding
+chord clicks and cuts notes in half, which is why live-looping tools quantise
+changes to a boundary. The wait is at most one cycle, and one cycle is the rhythm
+the user is already listening in.
+
+### Three smaller rulings
+
+1. **`alter !== 0` with `quality === null` is rejected**, not defaulted. A
+   chromatic root with no shape to build is a value of the wrong kind under the
+   model's existing rule, and every UI path supplies both.
+2. **An override above extent 7 sets the triad and the seventh; extensions stay
+   diatonic.** The alternative - refusing overrides above extent 7 - would make
+   the complexity stepper fail on exactly the borrowed chords a user most wants
+   to extend.
+3. **`OCTAVE_MAX` must be re-derived.** Its value of 2 was measured by sweeping
+   the real pipeline including `alter`, and the 33-semitone maximum reach depends
+   on `alter` meaning what it means today. Re-run that sweep under root-only
+   alteration before trusting the constant.
