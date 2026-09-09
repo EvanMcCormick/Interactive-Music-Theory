@@ -4,7 +4,10 @@ import { ProgressionService } from './progression.service';
 import {
   CHORD_EXTENTS,
   DEFAULT_VELOCITY,
+  MIN_NOTE_BEATS,
   OCTAVE_MAX,
+  VELOCITY_MAX,
+  VELOCITY_MIN,
   createOwnership
 } from '../models/progression-normalize';
 import {
@@ -16,7 +19,7 @@ import {
   SlotOwnership,
   createDegreeSlot
 } from '../models/progression.model';
-import { regenerateSlot } from './progression-edit';
+import { keyTransposeInterval, regenerateSlot } from './progression-edit';
 import { ChordExtent, effectiveQuality } from './progression-harmony';
 
 /**
@@ -319,6 +322,107 @@ describe('ProgressionService', () => {
       service.appendSlot(0);
       service.setSlotLength(slots()[0].id, 1);
       expectNoCommit(() => service.setSlotLength(slots()[0].id, 0));
+    });
+
+    /**
+     * A slot that owns its timing keeps its rhythm through a resize.
+     *
+     * `retimeNotes` used to write the slot's new length onto every note
+     * unconditionally, and the damage that did was **partial**, which is worse
+     * than a clean reset rather than better: the onsets survived while every
+     * duration was flattened to the slot's, so a hand-written rhythm came back
+     * with its attacks intact and every note overlapping the next. A block
+     * chord is still what an unowned slot gets - the specs above - because a
+     * resize is timing and a block chord's timing is the slot's own.
+     */
+    describe('a slot that owns its timing', () => {
+      /** A rhythm the user wrote, distinct in all three dimensions. */
+      function rhythm(): RollNote[] {
+        return [
+          { midi: 60, startBeat: 0, lengthBeats: 0.5, velocity: 40 },
+          { midi: 64, startBeat: 1.5, lengthBeats: 0.25, velocity: 100 },
+          { midi: 67, startBeat: 3, lengthBeats: 1, velocity: 20 }
+        ];
+      }
+
+      /** A I in C major holding that rhythm and claiming it. Its id. */
+      function drawn(): string {
+        service.appendSlot(0);
+        const doc = currentState().doc;
+        const claimed: ChordSlot = {
+          ...doc.slots[0],
+          notes: rhythm(),
+          owned: { ...createOwnership(), timing: true }
+        };
+        service.replaceDocument({ ...doc, slots: [claimed] });
+        return claimed.id;
+      }
+
+      it('keeps the rhythm when the slot is made longer', () => {
+        const id = drawn();
+        service.setSlotLength(id, 8);
+
+        expect(slots()[0].lengthBeats).toBe(8);
+        expect(slots()[0].notes).toEqual(rhythm());
+      });
+
+      /**
+       * Shortening is the case worth deciding rather than the easy one: a note
+       * that starts past the new end, or runs past it, is real.
+       *
+       * It is kept, exactly, for the reason `retimeNotes` already keeps a
+       * literal slot's notes - and for one this rule adds. A resize drag goes
+       * both ways, and coalescing makes the whole drag a single undo step, so a
+       * rule that discarded on the way in could not be undone by the way out: a
+       * pointer that overshoots to two beats and comes back to four would
+       * destroy the groove in the middle of a gesture that ended where it
+       * started.
+       */
+      it('leaves a note hanging past an end dragged in over it', () => {
+        const id = drawn();
+        service.setSlotLength(id, 2);
+
+        expect(slots()[0].lengthBeats).toBe(2);
+        // The third note starts a full beat past the end of the slot holding
+        // it, and is still exactly where the user put it.
+        expect(slots()[0].notes).toEqual(rhythm());
+      });
+
+      it('has the rhythm intact when a drag comes back out again', () => {
+        const id = drawn();
+        service.setSlotLength(id, 2, { coalesce: false });
+        service.setSlotLength(id, 4, { coalesce: true });
+
+        expect(slots()[0].lengthBeats).toBe(4);
+        expect(slots()[0].notes).toEqual(rhythm());
+      });
+
+      /** Resizing restates no chord and no dynamic, so it claims neither. */
+      it('claims nothing of its own', () => {
+        const id = drawn();
+        service.setSlotLength(id, 2);
+
+        expect(slots()[0].owned).toEqual({ pitches: false, timing: true, velocity: false });
+      });
+
+      /**
+       * Owning the pitches or the velocities says nothing about the rhythm, so
+       * neither protects it: a resize still writes the block length onto a slot
+       * that claims those two and not timing.
+       */
+      it('is the only claim a resize reads', () => {
+        service.appendSlot(0);
+        const doc = currentState().doc;
+        const claimed: ChordSlot = {
+          ...doc.slots[0],
+          notes: rhythm(),
+          owned: { ...createOwnership(), pitches: true, velocity: true }
+        };
+        service.replaceDocument({ ...doc, slots: [claimed] });
+        service.setSlotLength(claimed.id, 2);
+
+        expect(slots()[0].notes.map(note => note.lengthBeats)).toEqual([2, 2, 2]);
+      });
     });
 
     /**
@@ -790,11 +894,13 @@ describe('ProgressionService', () => {
    * | velocity | kept | reset to `DEFAULT_VELOCITY` |
    *
    * `setKey` is the driver here because it is the one path that regenerates
-   * every slot, and `replaceDocument` is how ownership is installed: it is the
-   * only door that writes the field until the roll's setters land in Task 5.
+   * every slot, and `replaceDocument` is how ownership is installed: it writes
+   * the field without going near the setters that normally claim it, so a slot
+   * can be put into any of the eight states in one line.
    *
-   * The transposition itself is exercised further down, directly, for the
-   * reason recorded there.
+   * The interval those transpositions use is `keyTransposeInterval`, tabulated
+   * on its own further down; the parameter it feeds is exercised there too,
+   * directly, without `setKey`'s help.
    */
   describe('regenerating a slot the user owns part of', () => {
     /**
@@ -856,33 +962,97 @@ describe('ProgressionService', () => {
     });
 
     /**
-     * **A characterisation, and Task 5 is meant to break it.**
+     * The pitch row's "owned" column, which is the case the whole merge is
+     * argued from.
      *
-     * The rule being exercised is that owned pitches are not re-voiced - that
-     * much is permanent. The *numbers* are not: `setKey` does not yet compute
-     * the semitone delta between the old key and the new one, so the pitches do
-     * not merely escape re-voicing, they do not move at all. Once Task 5 passes
-     * the delta, C-Eb-G moving from C major to A minor becomes `[57, 60, 64]`
-     * and this spec should be updated to say so rather than believed.
+     * A claimed voicing is not re-voiced; it is **moved**, by the interval
+     * between the key it was written in and the key the progression is going
+     * to. `regenerateSlot` cannot work that interval out - it is handed the new
+     * key and never sees the old one - so `setKey` computes it and passes it as
+     * `transposeBy`, being the only caller that moves a key at all.
      *
-     * The name says which of the two it is, deliberately. A spec called "keeps
-     * the pitches of a slot that owns them" is a green test asserting the
-     * opposite of Task 5's job, under a name that reads like a rule.
-     *
-     * The transposition itself is exercised directly further down, where the
-     * delta can be passed without `setKey`'s help.
+     * C-E flat-G written in C major comes *down* a minor third into A minor
+     * rather than up a major sixth. The two land on the same pitch classes in
+     * different registers, and `keyTransposeInterval` is where the choice
+     * between them is argued.
      */
-    it('characterises the missing key-change delta: owned pitches do not move', () => {
+    it('transposes the pitches of a slot that owns them into the new key', () => {
       claim({ pitches: true }, handEdited());
       service.setKey(9, 'aeolian');
 
-      // Not re-voiced - the permanent half - but also not transposed, which is
-      // the half Task 5 changes to [57, 60, 64].
-      expect(notes().map(note => note.midi)).toEqual([60, 63, 67]);
+      // Moved, not re-voiced: the shape the user was holding - a minor third
+      // then a fourth - is intact, where A minor's own I would be [69, 72, 76].
+      expect(notes().map(note => note.midi)).toEqual([57, 60, 64]);
       // Neither of the other two was claimed, so the block returns.
       expect(notes().map(note => note.startBeat)).toEqual([0, 0, 0]);
       expect(notes().map(note => note.lengthBeats)).toEqual([4, 4, 4]);
       expect(notes().map(note => note.velocity)).toEqual([80, 80, 80]);
+    });
+
+    /**
+     * The direction, which a plain `(to - from + 12) % 12` gets wrong for half
+     * the circle. C to B is one semitone down; read upward it is eleven up,
+     * which carries a hand-voiced chord nearly an octave from where the user
+     * left it, and a second key change carries it out of the roll's window.
+     */
+    it('moves a claimed voicing by the nearest interval, not always upward', () => {
+      claim({ pitches: true }, handEdited());
+      service.setKey(11, 'ionian');
+
+      expect(notes().map(note => note.midi)).toEqual([59, 62, 66]);
+    });
+
+    /**
+     * And so a key change and its inverse cancel. `mergeNotes` adds the
+     * interval straight to `RollNote.midi` and nothing downstream bounds the
+     * sum, so a rule that did not cancel would walk a claimed voicing an octave
+     * per flip of the circle, with no floor and no ceiling to stop it.
+     */
+    it('puts a claimed voicing back when the key comes back', () => {
+      claim({ pitches: true }, handEdited());
+      service.setKey(9, 'aeolian');
+      service.setKey(0, 'ionian');
+
+      expect(notes().map(note => note.midi)).toEqual([60, 63, 67]);
+    });
+
+    it('moves a claimed voicing by nothing when only the mode changes', () => {
+      claim({ pitches: true }, handEdited());
+      service.setKey(0, 'aeolian');
+
+      expect(notes().map(note => note.midi)).toEqual([60, 63, 67]);
+    });
+
+    /**
+     * The tonic is wrapped on the way into the document, and the interval is
+     * measured from the value that is *stored* rather than the one that
+     * arrived. 21 is A an octave up; a delta taken from it would be +21 and
+     * carry the voicing most of two octaves.
+     */
+    it('measures the interval from the tonic it stores', () => {
+      claim({ pitches: true }, handEdited());
+      service.setKey(21, 'aeolian');
+
+      expect(currentState().doc.key.tonic).toBe(9);
+      expect(notes().map(note => note.midi)).toEqual([57, 60, 64]);
+    });
+
+    /**
+     * And the wrapping is load-bearing rather than incidental, which only the
+     * tritone can show. Every other interval survives an unwrapped tonic,
+     * because the rest of `keyTransposeInterval` is arithmetic mod 12 - but the
+     * tie-break reads the two tonics themselves, so -6 and the 6 it is stored
+     * as point the move in opposite directions. Measured raw, this key change
+     * would send the voicing *down* a tritone and the one back up would send it
+     * down again: an octave lost per round trip, from the one pair the
+     * antisymmetry was built for.
+     */
+    it('measures the tritone from the tonic it stores too', () => {
+      claim({ pitches: true }, handEdited());
+      service.setKey(-6, 'ionian');
+
+      expect(currentState().doc.key.tonic).toBe(6);
+      expect(notes().map(note => note.midi)).toEqual([66, 69, 73]);
     });
 
     it('keeps the velocities of a slot that owns them while the rest regenerates', () => {
@@ -920,7 +1090,7 @@ describe('ProgressionService', () => {
       claim({ pitches: true, timing: true }, handEdited());
       service.setKey(9, 'aeolian');
 
-      expect(notes().map(note => note.midi)).toEqual([60, 63, 67]);
+      expect(notes().map(note => note.midi)).toEqual([57, 60, 64]);
       expect(notes().map(note => note.startBeat)).toEqual([0, 1.5, 3]);
       expect(notes().map(note => note.lengthBeats)).toEqual([0.5, 0.25, 1]);
       // Velocity is the one dimension not claimed here.
@@ -931,18 +1101,25 @@ describe('ProgressionService', () => {
       claim({ pitches: true, velocity: true }, handEdited());
       service.setKey(9, 'aeolian');
 
-      expect(notes().map(note => note.midi)).toEqual([60, 63, 67]);
+      expect(notes().map(note => note.midi)).toEqual([57, 60, 64]);
       expect(notes().map(note => note.velocity)).toEqual([40, 100, 20]);
       // Timing is the one dimension not claimed here, so the block returns.
       expect(notes().map(note => note.startBeat)).toEqual([0, 0, 0]);
       expect(notes().map(note => note.lengthBeats)).toEqual([4, 4, 4]);
     });
 
-    it('leaves a slot that owns all three exactly as it found it', () => {
+    /**
+     * A slot that owns all three keeps everything it wrote and follows the key
+     * with it. The pitches move because moving them is what owning them means
+     * across a transposition; nothing else about the notes changes at all.
+     */
+    it('moves a slot that owns all three, and changes nothing else about it', () => {
       claim({ pitches: true, timing: true, velocity: true }, handEdited());
       service.setKey(9, 'aeolian');
 
-      expect(notes()).toEqual(handEdited());
+      expect(notes()).toEqual(
+        handEdited().map(note => ({ ...note, midi: note.midi - 3 }))
+      );
     });
 
     /**
@@ -963,7 +1140,7 @@ describe('ProgressionService', () => {
       ]);
       service.setKey(9, 'aeolian');
 
-      expect(notes().map(note => note.midi)).toEqual([60, 63, 67, 70, 74]);
+      expect(notes().map(note => note.midi)).toEqual([57, 60, 64, 67, 71]);
       expect(notes().map(note => note.startBeat)).toEqual([0, 0, 0, 0, 0]);
       expect(notes().map(note => note.lengthBeats)).toEqual([4, 4, 4, 4, 4]);
       expect(notes().map(note => note.velocity)).toEqual([80, 80, 80, 80, 80]);
@@ -1300,6 +1477,630 @@ describe('ProgressionService', () => {
       // caller passing one is the bug, not the slot that happens to receive it.
       expect(() => regenerateSlot(owning({}), C_MAJOR, MAJOR, Number.NaN))
         .toThrowError(/transpose/i);
+    });
+  });
+
+  /**
+   * How far a key change moves a voicing the user owns.
+   *
+   * A rule rather than a subtraction: C to A is +9 and -3, the same chord in
+   * two registers. `ProgressionService.setKey` is the only caller, and the
+   * specs above exercise it through that door; this is the arithmetic on its
+   * own, where all 144 pairs can be swept rather than sampled.
+   */
+  describe('keyTransposeInterval', () => {
+    /**
+     * The nearer of a pitch class's two readings. The upward one is what a
+     * plain `(to - from + 12) % 12` gives, and the second half of this table is
+     * where the two disagree.
+     */
+    const NEAREST: readonly { from: number; to: number; expected: number }[] = [
+      { from: 0, to: 0, expected: 0 },
+      { from: 0, to: 1, expected: 1 },
+      { from: 0, to: 5, expected: 5 },
+      { from: 0, to: 7, expected: -5 },
+      { from: 0, to: 9, expected: -3 },
+      { from: 0, to: 11, expected: -1 },
+      { from: 9, to: 0, expected: 3 },
+      { from: 11, to: 0, expected: 1 },
+      { from: 7, to: 2, expected: -5 },
+      { from: 4, to: 8, expected: 4 }
+    ];
+
+    for (const move of NEAREST) {
+      it(`moves a voicing from tonic ${move.from} to tonic ${move.to} by ${move.expected}`, () => {
+        expect(keyTransposeInterval(move.from, move.to)).toBe(move.expected);
+      });
+    }
+
+    it('never moves a voicing further than a tritone', () => {
+      for (let from = 0; from < 12; from++) {
+        for (let to = 0; to < 12; to++) {
+          expect(Math.abs(keyTransposeInterval(from, to))).toBeLessThanOrEqual(6);
+        }
+      }
+    });
+
+    /** Nearest is worth nothing if it is nearest to the wrong note. */
+    it('always lands on the pitch class of the new tonic', () => {
+      for (let from = 0; from < 12; from++) {
+        for (let to = 0; to < 12; to++) {
+          const landed = (((from + keyTransposeInterval(from, to)) % 12) + 12) % 12;
+          expect(landed).toBe(to);
+        }
+      }
+    });
+
+    /**
+     * The property the tritone tie-break exists for, swept over every pair.
+     *
+     * `mergeNotes` adds this interval straight to `RollNote.midi` and nothing
+     * downstream bounds the sum, so a rule that did not cancel would walk a
+     * claimed voicing an octave per flip of the circle - with no floor and no
+     * ceiling to stop it.
+     */
+    it('cancels itself when the key comes back', () => {
+      for (let from = 0; from < 12; from++) {
+        for (let to = 0; to < 12; to++) {
+          expect(keyTransposeInterval(from, to) + keyTransposeInterval(to, from)).toBe(0);
+        }
+      }
+    });
+
+    /**
+     * Which the tritone can only manage by consulting the tonics rather than
+     * the interval between them: six up and six down are the same distance, so
+     * a rule reading only the difference would answer both directions the same
+     * way and the pair would not cancel.
+     */
+    it('resolves the tritone by the direction the tonic moves', () => {
+      expect(keyTransposeInterval(0, 6)).toBe(6);
+      expect(keyTransposeInterval(6, 0)).toBe(-6);
+      expect(keyTransposeInterval(5, 11)).toBe(6);
+      expect(keyTransposeInterval(11, 5)).toBe(-6);
+    });
+
+    it('moves nothing when the tonic does not move', () => {
+      for (let tonic = 0; tonic < 12; tonic++) {
+        expect(keyTransposeInterval(tonic, tonic)).toBe(0);
+      }
+    });
+  });
+
+  /**
+   * The setters the piano roll needs, and the first code in the app that writes
+   * `SlotOwnership` at all.
+   *
+   * Each claims **exactly the dimension it changes**, which is the whole point
+   * of tracking three rather than one: a velocity nudge must not opt a slot out
+   * of re-voicing, and a pitch drag must not make the app believe the user
+   * wrote the rhythm. `resetSlotToChord` is the way back from all three.
+   *
+   * They all coalesce, because they are all driven by a pointer. That mechanism
+   * is `setSlotLength`'s and the argument for it is recorded there: a drag that
+   * commits per pixel-crossed threshold pushes an undo entry per threshold, and
+   * `MAX_HISTORY` is 100.
+   */
+  describe('the setters the roll writes through', () => {
+    let id: string;
+
+    beforeEach(() => {
+      service.appendSlot(0);
+      id = slots()[0].id;
+    });
+
+    function notes(): RollNote[] {
+      return slots()[0].notes;
+    }
+
+    function owned(): SlotOwnership {
+      return slots()[0].owned;
+    }
+
+    /** How many steps back the history holds, counted by walking it. */
+    function undoDepth(): number {
+      let depth = 0;
+      while (currentState().canUndo) {
+        service.undo();
+        depth++;
+      }
+      return depth;
+    }
+
+    describe('setSlotNotes', () => {
+      const DRAWN: readonly RollNote[] = [
+        { midi: 62, startBeat: 0.5, lengthBeats: 1, velocity: 90 },
+        { midi: 69, startBeat: 2, lengthBeats: 2, velocity: 50 }
+      ];
+
+      it('replaces the notes and claims the pitches', () => {
+        service.setSlotNotes(id, DRAWN);
+
+        expect(notes()).toEqual([...DRAWN]);
+        expect(owned()).toEqual({ pitches: true, timing: false, velocity: false });
+      });
+
+      /**
+       * The claim is narrow on purpose, and this is the consequence Task 7
+       * inherits rather than discovers: a note *placed* in time is a timing
+       * edit as well as a pitch one, and a caller that places one must claim
+       * timing too - `setNoteTiming` is how. Claiming all three from here would
+       * collapse per-aspect ownership back into the single boolean this
+       * milestone exists to replace, one setter at a time.
+       */
+      it('leaves the timing it stored to be regenerated, having not claimed it', () => {
+        service.setSlotNotes(id, DRAWN);
+        service.setKey(9, 'aeolian');
+
+        expect(notes().map(note => note.startBeat)).toEqual([0, 0]);
+        expect(notes().map(note => note.lengthBeats)).toEqual([4, 4]);
+        expect(notes().map(note => note.velocity)).toEqual([80, 80]);
+        // The pitches, which it did claim, moved with the key.
+        expect(notes().map(note => note.midi)).toEqual([59, 66]);
+      });
+
+      /** Deleting the last note is a pitch-set edit like any other. */
+      it('lets every note be deleted', () => {
+        service.setSlotNotes(id, []);
+
+        expect(notes()).toEqual([]);
+        expect(owned().pitches).toBeTrue();
+      });
+
+      it('does nothing for an id the document does not hold', () => {
+        expectNoCommit(() => service.setSlotNotes('no-such-slot', DRAWN));
+      });
+
+      it('records nothing when neither the notes nor the claim would change', () => {
+        service.setSlotNotes(id, DRAWN);
+        expectNoCommit(() => service.setSlotNotes(id, DRAWN));
+      });
+
+      /**
+       * The claim is a change even when the notes are not. A user who redraws a
+       * note exactly where it already was has still said the slot is theirs,
+       * and a comparison that looked only at the numbers would drop that.
+       */
+      it('records the claim even when the notes are what was already there', () => {
+        const generated = notes().map(note => ({ ...note }));
+        service.setSlotNotes(id, generated);
+
+        expect(owned().pitches).toBeTrue();
+        expect(notes()).toEqual(generated);
+      });
+
+      /**
+       * A shorter list is a change even when it agrees with the longer one all
+       * the way along it. Deleting the last note of a slot that already claims
+       * its pitches is exactly that shape, and a comparison that walked only
+       * the new list would call the two lists equal and drop the deletion.
+       */
+      it('records a note deleted off the end of a slot already claimed', () => {
+        service.setSlotNotes(id, DRAWN);
+        service.setSlotNotes(id, [DRAWN[0]]);
+
+        expect(notes()).toEqual([DRAWN[0]]);
+      });
+
+      it('shares nothing with the array it was handed', () => {
+        const handed = DRAWN.map(note => ({ ...note }));
+        service.setSlotNotes(id, handed);
+        handed[0].midi = 1;
+
+        expect(notes()[0].midi).toBe(62);
+      });
+
+      it('leaves the slot`s harmony and length alone', () => {
+        const before = slots()[0].harmony;
+        service.setSlotNotes(id, DRAWN);
+
+        expect(slots()[0].harmony).toEqual(before);
+        expect(slots()[0].lengthBeats).toBe(4);
+      });
+
+      it('folds a drag into one undo step', () => {
+        service.setSlotNotes(id, DRAWN, { coalesce: false });
+        service.setSlotNotes(id, [{ ...DRAWN[0], midi: 63 }, DRAWN[1]], { coalesce: true });
+        service.setSlotNotes(id, [{ ...DRAWN[0], midi: 64 }, DRAWN[1]], { coalesce: true });
+
+        expect(notes()[0].midi).toBe(64);
+        expect(undoDepth()).toBe(2);
+      });
+
+      it('is one step per call without one', () => {
+        service.setSlotNotes(id, DRAWN);
+        service.setSlotNotes(id, [{ ...DRAWN[0], midi: 63 }, DRAWN[1]]);
+
+        expect(undoDepth()).toBe(3);
+      });
+    });
+
+    describe('setNoteTiming', () => {
+      it('moves one note and claims the timing', () => {
+        service.setNoteTiming(id, 1, 1.5, 0.5);
+
+        expect(notes().map(note => note.startBeat)).toEqual([0, 1.5, 0]);
+        expect(notes().map(note => note.lengthBeats)).toEqual([4, 0.5, 4]);
+        expect(owned()).toEqual({ pitches: false, timing: true, velocity: false });
+      });
+
+      it('leaves the pitch and the velocity of the note it moves', () => {
+        const before = notes()[1];
+        service.setNoteTiming(id, 1, 1.5, 0.5);
+
+        expect(notes()[1].midi).toBe(before.midi);
+        expect(notes()[1].velocity).toBe(before.velocity);
+      });
+
+      /**
+       * Pitch-set edits can change a slot's identity and timing edits never do,
+       * which is the M1 rule M3's recogniser depends on. A move must not reach
+       * the harmony at all.
+       */
+      it('leaves the harmony alone', () => {
+        const before = slots()[0].harmony;
+        service.setNoteTiming(id, 0, 1, 1);
+
+        expect(slots()[0].harmony).toEqual(before);
+      });
+
+      it('does nothing for a note the slot does not hold', () => {
+        expectNoCommit(() => service.setNoteTiming(id, 3, 1, 1));
+        expectNoCommit(() => service.setNoteTiming(id, -1, 1, 1));
+        expectNoCommit(() => service.setNoteTiming(id, 0.5, 1, 1));
+        expectNoCommit(() => service.setNoteTiming('no-such-slot', 0, 1, 1));
+      });
+
+      it('records nothing when the note is already where it is going', () => {
+        service.setNoteTiming(id, 0, 1, 1);
+        expectNoCommit(() => service.setNoteTiming(id, 0, 1, 1));
+      });
+
+      /**
+       * But the first touch is a claim whether or not the note moves - the twin
+       * of the velocity spec below. Dropping a note back exactly where it was
+       * still says the rhythm of that slot is the user's, and a comparison that
+       * looked only at the numbers would throw the claim away.
+       */
+      it('claims the timing even when the note does not move', () => {
+        const before = notes()[0];
+        service.setNoteTiming(id, 0, before.startBeat, before.lengthBeats);
+
+        expect(owned().timing).toBeTrue();
+        expect(notes()[0]).toEqual(before);
+      });
+
+      it('folds a drag into one undo step', () => {
+        service.setNoteTiming(id, 0, 1, 1, { coalesce: false });
+        service.setNoteTiming(id, 0, 1.5, 1, { coalesce: true });
+        service.setNoteTiming(id, 0, 2, 1, { coalesce: true });
+
+        expect(notes()[0].startBeat).toBe(2);
+        expect(undoDepth()).toBe(2);
+      });
+
+      /**
+       * Two notes are two drags, the way two slots are two resizes. A run keyed
+       * by the slot alone would let a continuation meant for one note fold into
+       * the entry the previous note's drag opened.
+       */
+      it('does not fold a drag on one note into the drag on another', () => {
+        service.setNoteTiming(id, 0, 1, 1, { coalesce: false });
+        service.setNoteTiming(id, 1, 2, 1, { coalesce: true });
+
+        expect(undoDepth()).toBe(3);
+      });
+    });
+
+    describe('setNoteVelocity', () => {
+      it('sets one velocity and claims the velocities', () => {
+        service.setNoteVelocity(id, 2, 110);
+
+        expect(notes().map(note => note.velocity)).toEqual([80, 80, 110]);
+        expect(owned()).toEqual({ pitches: false, timing: false, velocity: true });
+      });
+
+      it('leaves the pitch and the timing of the note it changes', () => {
+        const before = notes()[2];
+        service.setNoteVelocity(id, 2, 110);
+
+        expect(notes()[2].midi).toBe(before.midi);
+        expect(notes()[2].startBeat).toBe(before.startBeat);
+        expect(notes()[2].lengthBeats).toBe(before.lengthBeats);
+      });
+
+      it('does nothing for a note the slot does not hold', () => {
+        expectNoCommit(() => service.setNoteVelocity(id, 3, 100));
+        expectNoCommit(() => service.setNoteVelocity(id, -1, 100));
+        expectNoCommit(() => service.setNoteVelocity('no-such-slot', 0, 100));
+      });
+
+      it('records nothing when the velocity is already what it is being set to', () => {
+        service.setNoteVelocity(id, 0, 100);
+        expectNoCommit(() => service.setNoteVelocity(id, 0, 100));
+      });
+
+      /**
+       * The first touch is a claim whether or not the number moves. A user who
+       * drags the velocity of a generated note and lets go on 80 has still said
+       * that note's dynamics are theirs.
+       */
+      it('claims the velocities even when the number does not move', () => {
+        service.setNoteVelocity(id, 0, DEFAULT_VELOCITY);
+
+        expect(owned().velocity).toBeTrue();
+        expect(notes()[0].velocity).toBe(DEFAULT_VELOCITY);
+      });
+
+      it('folds a drag into one undo step', () => {
+        service.setNoteVelocity(id, 0, 100, { coalesce: false });
+        service.setNoteVelocity(id, 0, 101, { coalesce: true });
+        service.setNoteVelocity(id, 0, 102, { coalesce: true });
+
+        expect(notes()[0].velocity).toBe(102);
+        expect(undoDepth()).toBe(2);
+      });
+
+      it('does not fold a drag on one note into the drag on another', () => {
+        service.setNoteVelocity(id, 0, 100, { coalesce: false });
+        service.setNoteVelocity(id, 1, 100, { coalesce: true });
+
+        expect(undoDepth()).toBe(3);
+      });
+    });
+
+    /**
+     * A run is named for the gesture that opened it, so a continuation can only
+     * fold into a run of its own kind on its own note. The strip's resize is in
+     * the list because it shares the mechanism and the slot: a note drag that
+     * folded into the resize before it would undo the two together.
+     */
+    it('keeps a run of one kind out of the run of another', () => {
+      service.setSlotLength(id, 5, { coalesce: false });
+      service.setSlotNotes(id, [{ midi: 62, startBeat: 0.5, lengthBeats: 1, velocity: 90 }], {
+        coalesce: true
+      });
+      service.setNoteTiming(id, 0, 1, 1, { coalesce: true });
+      service.setNoteVelocity(id, 0, 100, { coalesce: true });
+
+      // The append that made the slot, then one step for each of the four.
+      expect(undoDepth()).toBe(5);
+    });
+
+    /**
+     * What a drawn note is bounded to, and why each end is where it is.
+     *
+     * `normalizeRollNote` checks the *kind* of every number on a note and
+     * bounds none of them, deliberately: it says in as many words that the ends
+     * a gesture should rest on belong to "the setters that produce them", which
+     * is these. The rule they apply is the model's second clause - a continuous
+     * control past its limit clamps, because a throw the moment a drag crosses
+     * an edge aborts the gesture rather than stopping it.
+     */
+    describe('the bounds a drawn note is held to', () => {
+      it('stops a note dragged before the start of its slot at the start', () => {
+        service.setNoteTiming(id, 0, -2, 1);
+
+        expect(notes()[0].startBeat).toBe(0);
+      });
+
+      /**
+       * And there is no ceiling on the other end, which is the same decision
+       * `retimeNotes` makes: a note may sit past the end of the slot holding
+       * it. The two have to agree, or a shrink that legitimately left a note
+       * hanging would drag it back inside the moment anything else about it
+       * moved.
+       */
+      it('lets a note sit past the end of its slot', () => {
+        service.setNoteTiming(id, 0, 6, 1);
+
+        expect(slots()[0].lengthBeats).toBe(4);
+        expect(notes()[0].startBeat).toBe(6);
+      });
+
+      /**
+       * The floor on a length is the shortest note the app can **notate**: a
+       * sixty-fourth in 4/4, which is one sixteenth of a beat and the finest
+       * `quantizeBar` accepts. Below it Task 11's preview would have no symbol
+       * to draw. It has to be strictly positive whatever its value, because
+       * `buildSchedule` hands the number to Tone as a duration.
+       */
+      it('stops a note resized past nothing at the shortest notatable one', () => {
+        // Pinned as a number and not only as a symbol: every assertion below
+        // compares against the constant, so a constant that moved would carry
+        // them all with it and prove only that the setter reads the same one.
+        expect(MIN_NOTE_BEATS).toBe(1 / 16);
+        expect(MIN_NOTE_BEATS).toBeGreaterThan(0);
+
+        service.setNoteTiming(id, 0, 0, -3);
+        expect(notes()[0].lengthBeats).toBe(MIN_NOTE_BEATS);
+
+        service.setNoteTiming(id, 1, 0, 0);
+        expect(notes()[1].lengthBeats).toBe(MIN_NOTE_BEATS);
+      });
+
+      it('holds a drawn note to the same bounds', () => {
+        service.setSlotNotes(id, [
+          { midi: 60, startBeat: -1, lengthBeats: 0, velocity: 400 }
+        ]);
+
+        expect(notes()).toEqual([
+          { midi: 60, startBeat: 0, lengthBeats: MIN_NOTE_BEATS, velocity: VELOCITY_MAX }
+        ]);
+      });
+
+      /**
+       * Velocity's floor is 1 and not 0, because a MIDI note-on at velocity 0
+       * is a note *off*: it names silence rather than the quietest sound, and a
+       * drag that bottomed out there would delete the note in all but name.
+       */
+      it('clamps a velocity to the MIDI range', () => {
+        service.setNoteVelocity(id, 0, 500);
+        expect(notes()[0].velocity).toBe(VELOCITY_MAX);
+
+        service.setNoteVelocity(id, 0, -20);
+        expect(notes()[0].velocity).toBe(VELOCITY_MIN);
+
+        // Pinned as numbers for the reason above. 127 is the byte's own top and
+        // 1 is the quietest sound, 0 being a note-off rather than a level.
+        expect(VELOCITY_MIN).toBe(1);
+        expect(VELOCITY_MAX).toBe(127);
+      });
+
+      /**
+       * A velocity drag produces pixels and `RollNote.velocity` is documented
+       * as a MIDI byte, so a fraction is rounded rather than stored.
+       * `normalizeRollNote` requires `midi` to be whole and asks nothing of
+       * velocity, so this is the one field a setter has to make whole itself.
+       */
+      it('rounds a velocity dragged between two bytes', () => {
+        service.setNoteVelocity(id, 0, 90.6);
+        expect(notes()[0].velocity).toBe(91);
+
+        service.setNoteVelocity(id, 1, 90.4);
+        expect(notes()[1].velocity).toBe(90);
+      });
+
+      /**
+       * `midi` is deliberately left unbounded, and that is a recorded decision
+       * rather than an omission. `regenerateSlot` adds an unbounded
+       * `transposeBy` to it afterwards, so a bound here would be half a guard -
+       * `normalizeRollNote` makes exactly that argument for not bounding it
+       * either. `OCTAVE_MAX` is the bound that holds, and it holds by bounding
+       * the generator's input; where a pitch drag stops on screen is the roll's
+       * geometry to decide.
+       *
+       * Velocity is clamped and pitch is not, and the asymmetry has a reason:
+       * `gainOf` already clamps velocity into 0-1 on the way to Tone, so an
+       * unclamped 500 on a note would be a document claiming something the
+       * synth does not do. A pitch out of range has no such downstream clamp -
+       * what is stored is what is heard - so storing it is honest.
+       */
+      it('does not bound the pitch', () => {
+        service.setSlotNotes(id, [
+          { midi: 200, startBeat: 0, lengthBeats: 1, velocity: 80 }
+        ]);
+
+        expect(notes()[0].midi).toBe(200);
+      });
+
+      /**
+       * A value of the wrong kind is not a control at its limit, so it is not
+       * clamped into range: it goes on to the funnel and throws there, and the
+       * commit that would have stored it publishes nothing. Clamping it would
+       * be worse than useless - `Math.max(1, NaN)` is `NaN`, so a clamp written
+       * without this in mind swallows exactly the value the guard exists for.
+       */
+      it('refuses a value that is not a number rather than clamping it', () => {
+        const before = currentState();
+
+        expect(() => service.setNoteVelocity(id, 0, Number.NaN)).toThrowError(/velocity/i);
+        expect(() => service.setNoteVelocity(id, 0, Number.POSITIVE_INFINITY))
+          .toThrowError(/velocity/i);
+        expect(() => service.setNoteTiming(id, 0, Number.POSITIVE_INFINITY, 1))
+          .toThrowError(/startBeat/i);
+        expect(() => service.setNoteTiming(id, 0, Number.NEGATIVE_INFINITY, 1))
+          .toThrowError(/startBeat/i);
+        expect(() => service.setNoteTiming(id, 0, 0, Number.NaN))
+          .toThrowError(/lengthBeats/i);
+
+        expect(currentState().doc).toBe(before.doc);
+        expect(currentState().canUndo).toBe(before.canUndo);
+      });
+    });
+
+    /**
+     * The escape hatch, and it is not optional. Per-aspect ownership is only
+     * safe if there is a way back: without this, a user who drags one note has
+     * opted that slot out of re-voicing for good, with no route back but undo -
+     * and undo is gone the moment they do anything else.
+     */
+    describe('resetSlotToChord', () => {
+      /** Claims all three dimensions, through the three setters that do. */
+      function drawnOver(): void {
+        service.setSlotNotes(id, [{ midi: 55, startBeat: 2, lengthBeats: 1, velocity: 20 }]);
+        service.setNoteTiming(id, 0, 3, 0.5);
+        service.setNoteVelocity(id, 0, 120);
+      }
+
+      it('gives the slot the chord back, and every claim with it', () => {
+        drawnOver();
+        expect(owned()).toEqual({ pitches: true, timing: true, velocity: true });
+
+        service.resetSlotToChord(id);
+
+        expect(notes()).toEqual([
+          { midi: 60, startBeat: 0, lengthBeats: 4, velocity: DEFAULT_VELOCITY },
+          { midi: 64, startBeat: 0, lengthBeats: 4, velocity: DEFAULT_VELOCITY },
+          { midi: 67, startBeat: 0, lengthBeats: 4, velocity: DEFAULT_VELOCITY }
+        ]);
+        expect(owned()).toEqual(createOwnership());
+      });
+
+      /** It restates the chord, not the timeline: the slot keeps its length. */
+      it('gives the block chord the slot`s own length', () => {
+        service.setSlotLength(id, 2);
+        drawnOver();
+        service.resetSlotToChord(id);
+
+        expect(slots()[0].lengthBeats).toBe(2);
+        expect(notes().every(note => note.lengthBeats === 2)).toBeTrue();
+      });
+
+      it('is undoable, claims and all', () => {
+        drawnOver();
+        const before = notes();
+        const claims = owned();
+
+        service.resetSlotToChord(id);
+        service.undo();
+
+        expect(notes()).toEqual(before);
+        expect(owned()).toEqual(claims);
+      });
+
+      it('records nothing when there is nothing to take back', () => {
+        expectNoCommit(() => service.resetSlotToChord(id));
+      });
+
+      it('does nothing for an id the document does not hold', () => {
+        expectNoCommit(() => service.resetSlotToChord('no-such-slot'));
+      });
+
+      /**
+       * There is no chord to reset to in a key that cannot build one, and none
+       * on a literal slot either. Clearing the claims without regenerating
+       * would be the worst of both outcomes: the hand edits would stay, now
+       * unclaimed, and the next key change would quietly throw them away.
+       */
+      it('refuses in a key that cannot build chords', () => {
+        drawnOver();
+        service.setKey(0, 'majorPentatonic');
+
+        expectNoCommit(() => service.resetSlotToChord(id));
+        expect(owned().pitches).toBeTrue();
+      });
+
+      it('refuses on a literal slot', () => {
+        drawnOver();
+        const doc = currentState().doc;
+        service.replaceDocument({
+          ...doc,
+          slots: [{ ...doc.slots[0], harmony: { kind: 'literal', reason: 'user-detached' } }]
+        });
+
+        expectNoCommit(() => service.resetSlotToChord(id));
+        expect(owned().pitches).toBeTrue();
+      });
+
+      /** And the slot re-voices with the key again, which is the whole point. */
+      it('puts the slot back under the generator', () => {
+        drawnOver();
+        service.resetSlotToChord(id);
+        service.setKey(9, 'aeolian');
+
+        expect(notes().map(note => note.midi)).toEqual([69, 72, 76]);
+      });
     });
   });
 

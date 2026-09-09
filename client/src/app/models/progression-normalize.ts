@@ -208,6 +208,46 @@ export const TEMPO_MAX = 300;
 export const DEFAULT_VELOCITY = 80;
 
 /**
+ * The shortest a note the roll draws may be, in beats.
+ *
+ * `MIN_SLOT_BEATS` says in as many words that a slot's floor is not a note's,
+ * and leaves the note's to the setters that produce them. This is that floor,
+ * and it is derived rather than chosen: `FinestDivision` tops out at 64, so the
+ * finest event `quantizeBar` can express in 4/4 is a sixty-fourth note - one
+ * sixteenth of a beat. Anything shorter is a note M2 Task 11's notation preview
+ * has no symbol for, so the roll should not let a drag make one.
+ *
+ * It has to be strictly positive whatever its value, which the notation
+ * argument gives for free: `buildSchedule` hands `lengthBeats` to Tone as a
+ * duration, where 0 is a note that never sounds and a negative one is a note
+ * that ends before it starts.
+ *
+ * There is no maximum, for the same reason `normalizeLengthBeats` has none -
+ * and for one more. A note may legitimately hang past the end of the slot that
+ * holds it: `retimeNotes` leaves one there through a resize deliberately, and a
+ * ceiling here would drag it back in the moment anything else about it moved.
+ */
+export const MIN_NOTE_BEATS = 1 / 16;
+
+/**
+ * The ends of MIDI velocity, as `RollNote.velocity` documents it.
+ *
+ * The bottom is 1 rather than 0 because a MIDI note-on at velocity 0 is a note
+ * *off*: it names silence rather than the quietest sound, and a velocity drag
+ * that bottomed out there would delete the note in all but name.
+ *
+ * These are applied by `boundVelocity` in `progression-edit.ts` rather than by
+ * `normalizeRollNote` below, which bounds nothing - and velocity is clamped
+ * where `midi` is deliberately not. The asymmetry has a reason: `gainOf` in the
+ * player already clamps velocity into 0-1 on the way to Tone, so a stored 500
+ * would be a document claiming something the synth does not do. A `midi` out of
+ * range has no such downstream clamp - what is stored is what is heard - so
+ * storing it is honest where storing an out-of-range velocity is not.
+ */
+export const VELOCITY_MIN = 1;
+export const VELOCITY_MAX = 127;
+
+/**
  * The runtime twin of the `ChordExtent` union, ascending, so the +/- complexity
  * control has an order to step along and the guard below has a list to check
  * against. The union alone cannot do either job at runtime.
@@ -507,10 +547,15 @@ function requireOwnershipFlag(value: boolean, dimension: string): boolean {
  *    holds by bounding the *input* to the generator - the choice its own note
  *    argues at length.
  *  - **`lengthBeats` and `velocity` are not clamped** for the reason
- *    `MIN_SLOT_BEATS` is a slot's floor and not a note's: the roll has not been
- *    drawn yet, and the ends a drag should rest on are M2 Task 5's to choose
- *    with the setters that produce them. Inventing them here would be this file
- *    deciding what a note gesture means.
+ *    `MIN_SLOT_BEATS` is a slot's floor and not a note's: the ends a drag
+ *    should rest on belong with the setters that produce them, and inventing
+ *    them here would be this file deciding what a note gesture means. Those
+ *    setters exist now - `ProgressionService.setNoteTiming` and
+ *    `setNoteVelocity` - and the bounds they apply are `MIN_NOTE_BEATS` and
+ *    `VELOCITY_MIN`/`VELOCITY_MAX` above, through `boundNote` in
+ *    `progression-edit.ts`. This guard stays the kind check underneath them,
+ *    which is what catches the values a clamp cannot fix: `Math.max(1, NaN)` is
+ *    `NaN`, so clamping alone would swallow exactly the case it is aimed at.
  *
  * A negative `startBeat` is refused rather than left open, because it is not a
  * control at its limit: a note before the start of the slot that holds it is

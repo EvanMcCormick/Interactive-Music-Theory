@@ -1,6 +1,9 @@
 import {
   CHORD_EXTENTS,
   DEFAULT_VELOCITY,
+  MIN_NOTE_BEATS,
+  VELOCITY_MAX,
+  VELOCITY_MIN,
   normalizeChordSlot,
   normalizeProgressionDoc
 } from '../models/progression-normalize';
@@ -9,7 +12,8 @@ import {
   ChordSlot,
   ProgressionDoc,
   ProgressionKey,
-  RollNote
+  RollNote,
+  SlotOwnership
 } from '../models/progression.model';
 import { generateSlotNotes } from './progression-generate';
 import { ChordExtent } from './progression-harmony';
@@ -64,6 +68,139 @@ export function nearestExtent(extent: number): ChordExtent | null {
 }
 
 /**
+ * A continuous control's value, held between its ends - and left alone when it
+ * is not a number at all.
+ *
+ * The finite test is what makes the clamp safe rather than belt and braces.
+ * `Math.min(max, Math.max(min, NaN))` is `NaN`, so a clamp written without it
+ * passes the one value arithmetic cannot fix straight through the guard meant
+ * to catch it - while `Math.max(0, -Infinity)` would *swallow* one, turning a
+ * value of the wrong kind into a plausible 0 before `normalizeRollNote` ever
+ * sees it. Both are the first clause of the model's rule leaking through the
+ * second, so a non-finite value goes on untouched to the guard that throws.
+ */
+function clampFinite(value: number, minimum: number, maximum: number): number {
+  if (!Number.isFinite(value)) return value;
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+/**
+ * Where a note may start within its slot: at the slot's own start, or later.
+ *
+ * The floor is not taste. `normalizeRollNote` *throws* on a negative
+ * `startBeat` - a note before the start of the slot that holds it is outside
+ * the slot rather than at the end of it - and a drag that crossed the left edge
+ * would abort the whole gesture rather than stop it. Clamping here is what
+ * turns that throw into a control resting on its limit.
+ *
+ * There is no ceiling, deliberately: see `MIN_NOTE_BEATS`, and `retimeNotes`,
+ * which leaves a note hanging past a shortened slot on purpose. A ceiling here
+ * would quietly drag such a note back inside the next time anything about it
+ * moved.
+ */
+export function boundNoteStart(startBeat: number): number {
+  return clampFinite(startBeat, 0, Number.POSITIVE_INFINITY);
+}
+
+/** How long a note may be: at least `MIN_NOTE_BEATS`, and open at the top. */
+export function boundNoteLength(lengthBeats: number): number {
+  return clampFinite(lengthBeats, MIN_NOTE_BEATS, Number.POSITIVE_INFINITY);
+}
+
+/**
+ * A velocity as the MIDI byte `RollNote.velocity` is documented to be.
+ *
+ * Rounded as well as clamped, and it is the one field a setter has to make
+ * whole itself: `normalizeRollNote` requires `midi` to be an integer and asks
+ * only that velocity be finite. A velocity drag produces pixels, and storing
+ * 90.6 in a field that names a byte is a document that disagrees with its own
+ * type for no gain.
+ */
+export function boundVelocity(velocity: number): number {
+  // No finite check of its own: `Math.round` is the identity on `NaN` and on
+  // both infinities, so `clampFinite` below sees them and hands them on.
+  return clampFinite(Math.round(velocity), VELOCITY_MIN, VELOCITY_MAX);
+}
+
+/**
+ * A note the roll drew, held to all of the above.
+ *
+ * **`midi` is passed through untouched**, and that is a decision rather than an
+ * omission - the same one `normalizeRollNote` records for itself.
+ * `regenerateSlot` adds an unbounded `transposeBy` to a claimed pitch after
+ * this runs, so a bound here would guard one end of a sum whose other end is
+ * open. `OCTAVE_MAX` is the bound that actually holds, and it holds by bounding
+ * the generator's input; where a pitch drag stops on screen is the roll's
+ * geometry to decide.
+ */
+export function boundNote(note: RollNote): RollNote {
+  return {
+    midi: note.midi,
+    startBeat: boundNoteStart(note.startBeat),
+    lengthBeats: boundNoteLength(note.lengthBeats),
+    velocity: boundVelocity(note.velocity)
+  };
+}
+
+/**
+ * A copy of `notes` with the one at `index` changed, or null when the list
+ * holds no such note.
+ *
+ * Null rather than the list unchanged, so the caller can tell "nothing to do"
+ * from "done, and nothing moved" - the first must not open an undo entry and
+ * the second may still need to, because a claim is a change even when a number
+ * is not.
+ *
+ * The index is checked for being a whole number as well as in range:
+ * `notes[0.5]` is `undefined` at runtime whatever its static type, and a caller
+ * that computed an index from a pointer can produce one.
+ */
+export function replaceNote(
+  notes: readonly RollNote[],
+  index: number,
+  change: (note: RollNote) => RollNote
+): RollNote[] | null {
+  if (!Number.isInteger(index) || index < 0 || index >= notes.length) return null;
+
+  const next = [...notes];
+  next[index] = change(next[index]);
+  return next;
+}
+
+/**
+ * Whether two notes would sound the same.
+ *
+ * The comparisons are collected into a `Record<keyof RollNote, boolean>` rather
+ * than chained, for the reason `sameDegree` gives: a field added to `RollNote`
+ * and forgotten here is a compile error rather than an edit this quietly stops
+ * noticing - and an edit this fails to notice is one that is never committed.
+ */
+export function sameNote(a: RollNote, b: RollNote): boolean {
+  const matches: Record<keyof RollNote, boolean> = {
+    midi: a.midi === b.midi,
+    startBeat: a.startBeat === b.startBeat,
+    lengthBeats: a.lengthBeats === b.lengthBeats,
+    velocity: a.velocity === b.velocity
+  };
+  return Object.values(matches).every(match => match);
+}
+
+/** Whether two note lists hold the same notes in the same order. */
+export function sameNotes(a: readonly RollNote[], b: readonly RollNote[]): boolean {
+  return a.length === b.length && a.every((note, index) => sameNote(note, b[index]));
+}
+
+/** Whether two slots claim the same dimensions. Exhaustive, like `sameNote`. */
+export function sameOwnership(a: SlotOwnership, b: SlotOwnership): boolean {
+  const matches: Record<keyof SlotOwnership, boolean> = {
+    pitches: a.pitches === b.pitches,
+    timing: a.timing === b.timing,
+    velocity: a.velocity === b.velocity
+  };
+  return Object.values(matches).every(match => match);
+}
+
+/**
  * Whether two degrees would build the same chord.
  *
  * The comparisons are collected into a `Record<keyof ChordDegree, boolean>`
@@ -86,27 +223,107 @@ export function sameDegree(a: ChordDegree, b: ChordDegree): boolean {
 }
 
 /**
- * Gives a slot's notes the slot's own length.
+ * Gives a slot's notes the slot's own length - unless the slot's timing is not
+ * the app's to write.
  *
  * Resizing is timing and not harmony. A block chord is one attack filling the
  * slot, so the new length is the only thing about the notes that changes -
  * which means a resize needs no scale, and works in a key that cannot build
  * chords at all. Regenerating from the degree would need one, and would refuse.
  *
- * **A literal slot is returned untouched, notes and all.** Its notes are the
- * playback truth - the same rule `generateSlotNotes` states by handing a
- * literal slot its own array straight back - so shortening such a slot leaves
- * notes hanging past its end and lengthening it leaves silence at the end.
- * Stretching them to fit a drag would be the app rewriting what the user
- * played. Nothing in M1 creates a literal slot; M3 does, and this is the
- * consequence it inherits rather than discovers.
+ * ## Two kinds of slot are returned untouched, for one reason
+ *
+ * **A literal slot**, whose notes are the playback truth - the same rule
+ * `generateSlotNotes` states by handing a literal slot its own array straight
+ * back. Nothing in M1 creates one; M3 does.
+ *
+ * **A slot that owns its timing**, which is what the roll's `setNoteTiming`
+ * writes. This one used to be flattened along with everything else, and the
+ * damage that did was *partial*, which is worse than a clean reset rather than
+ * better: `startBeat` survived while every `lengthBeats` was overwritten with
+ * the slot's, so a hand-written rhythm came back with its onsets intact and
+ * every note running into the next. A groove turned into a smear rather than
+ * into a block, and a smear does not read as "the app rebuilt this".
+ *
+ * ## A shortened slot keeps notes that no longer fit
+ *
+ * Nothing is truncated and nothing is dropped, so a note may start past the new
+ * end or run past it. That is deliberate, and it is not only the literal slot's
+ * "do not rewrite what the user played" argument again.
+ *
+ * A resize is a **drag**, and a drag goes both ways. `ProgressionService.commit`
+ * coalesces one into a single undo entry, so a rule that discarded on the way in
+ * could not be undone by the way out: a pointer that overshoots to two beats and
+ * comes back to four would have destroyed the groove in the middle of a gesture
+ * that ended exactly where it started, and the only way back would be to undo
+ * the whole drag. Keeping the notes makes the gesture reversible by definition.
+ *
+ * The consequence is audible and is meant to be: `buildSchedule` measures the
+ * progression by its *slots*, so a note hanging off a shortened slot sounds over
+ * the chord after it, and one hanging off the last slot is cut by the loop.
+ * `ProgressionService.resetSlotToChord` is the way back to a block.
  */
 export function retimeNotes(slot: ChordSlot): ChordSlot {
   if (slot.harmony.kind === 'literal') return slot;
+  if (slot.owned.timing) return slot;
   return {
     ...slot,
     notes: slot.notes.map(note => ({ ...note, lengthBeats: slot.lengthBeats }))
   };
+}
+
+/**
+ * How far a key change moves a voicing the user owns, in semitones.
+ *
+ * `regenerateSlot` transposes owned pitches by an interval it cannot work out
+ * for itself, and `ProgressionService.setKey` is the only caller that can - it
+ * is the only one that sees both tonics. This is what it computes with, kept
+ * here rather than inline because it is a **rule** and not a subtraction: C to
+ * A is +9 and -3, the same chord in two registers, and only one of them is an
+ * answer a user would recognise as their chord.
+ *
+ * ## The nearest of the two, so a voicing stays where it was put
+ *
+ * The obvious form, `(to - from + 12) % 12`, always runs upward. That is wrong
+ * for half the circle: moving the key down a semitone would carry a hand-voiced
+ * chord *up* eleven, nearly an octave from where the user left it and quite
+ * possibly out of the roll's window. Reading the same pitch class as the nearer
+ * of its two representatives keeps every key change inside a tritone, which is
+ * the smallest move that still lands on the right note.
+ *
+ * The alternative - re-voicing the chord from the new key, which is what an
+ * *unowned* slot gets - is exactly what owning the pitches asked this code not
+ * to do.
+ *
+ * ## The tritone is a tie, and the tie-break buys a property worth having
+ *
+ * Six up and six down are the same distance, so no rule about the *interval*
+ * can choose between them. This one consults the tonics instead: it moves in
+ * the direction the tonic number moved. That is the only place these two
+ * arguments are read separately rather than subtracted, and it is what makes
+ * the function antisymmetric - `keyTransposeInterval(a, b)` is exactly
+ * `-keyTransposeInterval(b, a)` for **every** pair, tritone included.
+ *
+ * Antisymmetry is the property, not the elegance. A key change and its inverse
+ * have to cancel, because `mergeNotes` adds this interval straight to
+ * `RollNote.midi` and nothing downstream bounds the sum: `normalizeRollNote`
+ * checks the kind of a pitch and not its range, and `OCTAVE_MAX` bounds the
+ * generator's input rather than a claimed note. A user flipping between two
+ * keys on the circle of fifths would otherwise walk their voicing an octave per
+ * flip, with no floor and no ceiling to stop it - eight flips and the chord is
+ * past the top of MIDI. Every other pair cancels for free; the tritone cancels
+ * only because of the line below.
+ *
+ * Both tonics are already whole pitch classes: they come from
+ * `normalizeProgressionKey`, which throws on a fractional one and wraps the
+ * rest into 0-11. `regenerateSlot` re-checks the interval it is handed anyway,
+ * which is the guard that catches a caller who computed one some other way.
+ */
+export function keyTransposeInterval(fromTonic: number, toTonic: number): number {
+  const up = (((toTonic - fromTonic) % 12) + 12) % 12;
+  if (up < 6) return up;
+  if (up > 6) return up - 12;
+  return toTonic > fromTonic ? 6 : -6;
 }
 
 /**

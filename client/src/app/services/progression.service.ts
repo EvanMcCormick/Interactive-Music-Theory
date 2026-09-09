@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import {
   CHORD_EXTENTS,
+  createOwnership,
   normalizeChordSlot,
   normalizeProgressionKey
 } from '../models/progression-normalize';
@@ -11,16 +12,26 @@ import {
   ProgressionDoc,
   ProgressionKey,
   ProgressionState,
+  RollNote,
+  SlotOwnership,
   createDefaultProgression,
   createDegreeSlot
 } from '../models/progression.model';
 import {
+  boundNote,
+  boundNoteLength,
+  boundNoteStart,
+  boundVelocity,
+  keyTransposeInterval,
   nearestExtent,
   reclaimPitches,
   regenerateSlot,
+  replaceNote,
   requireUniqueSlotIds,
   retimeNotes,
   sameDegree,
+  sameNotes,
+  sameOwnership,
   settle
 } from './progression-edit';
 import { ChordExtent, isHeptatonic } from './progression-harmony';
@@ -28,12 +39,20 @@ import { Scale } from '../models/music-theory.model';
 import { keySignatureKind } from './circle-of-fifths.data';
 import { MusicTheoryService } from './music-theory.service';
 
-/** How a length change should be recorded. See `setSlotLength`. */
-export interface SetLengthOptions {
+/**
+ * How a pointer-driven edit should be recorded. See `setSlotLength`, which was
+ * the first of them, and `CommitRun` below for what a run is.
+ *
+ * Shared by every setter a drag drives - the strip's resize and all three of
+ * the roll's - because they all have the same problem: the card, or the note,
+ * has to be where it is being dragged to, so the setter commits on every
+ * threshold the pointer crosses.
+ */
+export interface EditOptions {
   /**
-   * Whether this is a continuation of the length change before it rather than a
-   * new one. A continuation folds into that entry instead of adding its own, so
-   * one drag is one undo step however many beats it crosses.
+   * Whether this is a continuation of the edit before it rather than a new one.
+   * A continuation folds into that entry instead of adding its own, so one drag
+   * is one undo step however many thresholds it crosses.
    */
   coalesce?: boolean;
 }
@@ -202,7 +221,12 @@ export class ProgressionService {
    * that cannot build chords: a block chord needs no scale to be made longer,
    * only the number. Regenerating needed one, and a slot resized in a
    * pentatonic key came away two beats long holding four-beat notes.
-   * `retimeNotes` says what a literal slot gets instead.
+   *
+   * **A slot that owns its timing keeps its rhythm through this**, notes past
+   * the new end included, and so does a literal slot. `retimeNotes` carries
+   * both arguments; the short version is that a resize is a drag, a drag goes
+   * both ways, and coalescing makes the whole of one a single undo step - so a
+   * rule that discarded on the way in could not be undone by the way out.
    *
    * `coalesce` folds this call into the undo entry the previous one opened, so
    * that a drag across three beats is one step back rather than three. The
@@ -212,7 +236,7 @@ export class ProgressionService {
    * them apart by. A caller that never passes it gets the old behaviour, one
    * entry per call, which is right for the arrow keys.
    */
-  setSlotLength(id: string, beats: number, options: SetLengthOptions = {}): void {
+  setSlotLength(id: string, beats: number, options: EditOptions = {}): void {
     const slot = this.slotOf(id);
     if (!slot) return;
 
@@ -221,6 +245,180 @@ export class ProgressionService {
 
     this.replaceSlot(id, () => retimeNotes(resized), {
       key: `length:${id}`,
+      continues: options.coalesce === true
+    });
+  }
+
+  /**
+   * Replaces a slot's notes, and claims its pitches.
+   *
+   * The roll's coarse edit: a pitch dragged, a note added, a note deleted. The
+   * count is part of what it writes, because a note *is* a pitch - a user who
+   * adds one owns the count, and `mergeNotes` reads the list length off
+   * whichever side owns the pitches.
+   *
+   * ## It claims the pitches and nothing else, which has a consequence
+   *
+   * The notes it stores carry timing and velocity too, and those are **not**
+   * claimed - so a note placed at beat 2 through this setter alone will be
+   * blocked back to beat 0 by the next regeneration, and its velocity reset.
+   * That is deliberate and it is the narrow reading: claiming all three from
+   * here would collapse per-aspect ownership back into the single boolean M2
+   * exists to replace, one setter at a time, and a pitch drag would silently
+   * tell the app the user wrote the rhythm.
+   *
+   * The consequence for the roll is a rule rather than a surprise: a gesture
+   * that *places* a note in time is a timing edit as well as a pitch one, and
+   * must follow with `setNoteTiming` for the note it placed. Coalescing is what
+   * keeps the pair one undo step.
+   *
+   * Every note is bounded on the way in - see `boundNote`, which passes `midi`
+   * through untouched and says why.
+   */
+  setSlotNotes(id: string, notes: readonly RollNote[], options: EditOptions = {}): void {
+    this.writeNotes(id, { pitches: true }, () => notes.map(boundNote), `notes:${id}`, options);
+  }
+
+  /**
+   * Moves or resizes one note, and claims the slot's timing.
+   *
+   * Timing only: the pitch and the velocity of the note come through unchanged,
+   * and neither of the other two claims is touched. That is the M1 rule this
+   * milestone must not break - **a timing edit never changes what chord a slot
+   * is**, which is what M3's recogniser depends on.
+   *
+   * `startBeat` is clamped at 0 and `lengthBeats` at `MIN_NOTE_BEATS`, with no
+   * ceiling on either: a note may sit or run past the end of the slot that
+   * holds it, which is the same answer `retimeNotes` gives a shortened slot.
+   * An index the slot has no note at is a no-op rather than a throw.
+   */
+  setNoteTiming(
+    id: string,
+    noteIndex: number,
+    startBeat: number,
+    lengthBeats: number,
+    options: EditOptions = {}
+  ): void {
+    this.writeNotes(
+      id,
+      { timing: true },
+      slot =>
+        replaceNote(slot.notes, noteIndex, note => ({
+          ...note,
+          startBeat: boundNoteStart(startBeat),
+          lengthBeats: boundNoteLength(lengthBeats)
+        })),
+      `timing:${id}:${noteIndex}`,
+      options
+    );
+  }
+
+  /**
+   * Sets one note's velocity, and claims the slot's velocities.
+   *
+   * Clamped into MIDI's 1-127 and rounded to a byte; `boundVelocity` carries
+   * both arguments. The claim lands even when the number does not move - a user
+   * who drags the control and lets go on the value it started at has still said
+   * the dynamics of that slot are theirs.
+   */
+  setNoteVelocity(
+    id: string,
+    noteIndex: number,
+    velocity: number,
+    options: EditOptions = {}
+  ): void {
+    this.writeNotes(
+      id,
+      { velocity: true },
+      slot =>
+        replaceNote(slot.notes, noteIndex, note => ({
+          ...note,
+          velocity: boundVelocity(velocity)
+        })),
+      `velocity:${id}:${noteIndex}`,
+      options
+    );
+  }
+
+  /**
+   * Hands the whole slot back to the generator: every claim dropped, the block
+   * chord rebuilt from the degree.
+   *
+   * **The escape hatch, and it is not optional.** Per-aspect ownership is only
+   * safe if there is a way back. Without this, a user who drags one note has
+   * opted that slot out of re-voicing for good - the next key change moves the
+   * chord underneath everything else and leaves their note where it was - with
+   * no route back but undo, and undo is gone the moment they do anything else.
+   *
+   * The slot's *harmony* and its *length* are not touched: this restates what
+   * the slot sounds, not what chord it is or where it sits. So the block chord
+   * it rebuilds is the slot's own length, and a borrowed chord stays borrowed.
+   *
+   * It refuses where there is no chord to reset to - a key that cannot stack
+   * thirds, or a literal slot. Clearing the claims without regenerating would
+   * be the worst of both: the hand edits would stay, now unclaimed, and the
+   * next key change would quietly throw them away.
+   *
+   * Nothing is recorded when the slot already owns nothing and already sounds
+   * what the generator would write, so pressing the button twice costs one
+   * undo step rather than two.
+   */
+  resetSlotToChord(id: string): void {
+    const doc = this.doc;
+    if (!this.canBuildChords(doc.key)) return;
+
+    const slot = this.slotOf(id);
+    if (!slot || slot.harmony.kind !== 'degree') return;
+
+    const reset = this.regenerate({ ...slot, owned: createOwnership() }, doc.key);
+    if (sameOwnership(reset.owned, slot.owned) && sameNotes(reset.notes, slot.notes)) return;
+
+    this.replaceSlot(id, () => reset);
+  }
+
+  /**
+   * The shape all three of the roll's setters share: work out the new notes,
+   * add the claim the gesture makes, and record the pair as one step of
+   * whatever drag is under way.
+   *
+   * `edit` returns null for a gesture with nothing to act on - an index the
+   * slot has no note at - which must not open an undo entry. That is a
+   * different answer from "the notes did not change", which still may: the
+   * comparison below is over the notes **and** the claim together, because the
+   * first touch of a control is a change even when the number it writes is the
+   * one already there. Comparing only the numbers would drop that claim
+   * silently, and a claim dropped is a hand edit the next key change erases.
+   *
+   * The run is keyed per *note* rather than per slot, so a continuation meant
+   * for one note cannot fold into the entry another note's drag opened - the
+   * same reason `setSlotLength` keys its run by slot rather than globally.
+   *
+   * Nothing here bounds a value the setters did not already bound; `settle()`
+   * inside `commit` is still the funnel, and a value of the wrong kind throws
+   * out of it having published nothing.
+   */
+  private writeNotes(
+    id: string,
+    claims: Partial<SlotOwnership>,
+    edit: (slot: ChordSlot) => readonly RollNote[] | null,
+    runKey: string,
+    options: EditOptions
+  ): void {
+    const slot = this.slotOf(id);
+    if (!slot) return;
+
+    const notes = edit(slot);
+    if (notes === null) return;
+
+    const owned: SlotOwnership = { ...slot.owned, ...claims };
+    if (sameOwnership(owned, slot.owned) && sameNotes(notes, slot.notes)) return;
+
+    // The spread is what turns the callback's `readonly` promise into the
+    // mutable field `ChordSlot.notes` is, and it is a type conversion rather
+    // than a defence: every callback above already builds a fresh array, and
+    // `normalizeChordSlot` rebuilds every note again inside `settle()`.
+    this.replaceSlot(id, () => ({ ...slot, notes: [...notes], owned }), {
+      key: runKey,
       continues: options.coalesce === true
     });
   }
@@ -374,14 +572,15 @@ export class ProgressionService {
    * the case the whole merge is argued from. The harmony commands are the ones
    * that reclaim, and `editDegree` says why.
    *
-   * **What is still missing here is the interval.** `regenerateSlot` transposes
-   * *owned* pitches by a `transposeBy` it cannot work out for itself - it sees
-   * the new key and not the old one - and this method is the only caller that
-   * can, being the only one that moves a key at all. It does not yet, so a slot
-   * whose pitches are claimed keeps them exactly where they were rather than
-   * following the key. That is M2 Task 5, together with the roll's setters that
-   * are the first thing to write ownership at all; until they land the claimed
-   * branch is unreachable from the page.
+   * **It is the one caller that supplies the interval.** `regenerateSlot`
+   * transposes *owned* pitches by a `transposeBy` it cannot work out for itself
+   * - it is handed the new key and never sees the old one - and this method is
+   * the only caller that can, being the only one that moves a key at all. It is
+   * computed from the tonic that will be **stored** rather than the one that
+   * arrived, for the same reason the slots are generated from that one: 21 is A
+   * an octave up, and an interval measured from it would carry a claimed
+   * voicing most of two octaves. `keyTransposeInterval` is the rule, and its
+   * docstring argues the direction.
    *
    * The key is applied even when its scale cannot build chords. Refusing it
    * would leave this page in a different key from the fretboard behind it,
@@ -424,6 +623,11 @@ export class ProgressionService {
         preferSharps: draft.key.preferSharps
       });
 
+      // Read before `draft.key` is overwritten, and off the document rather
+      // than off the argument: `draft.key.tonic` is the tonic the progression
+      // was actually in, already wrapped by the commit that stored it.
+      const transposeBy = keyTransposeInterval(draft.key.tonic, bounded.tonic);
+
       draft.key = {
         ...bounded,
         preferSharps:
@@ -434,7 +638,7 @@ export class ProgressionService {
       // No `isHeptatonic` check of its own: `regenerate` asks already, and
       // hands a slot back unchanged when the answer is no - which is what
       // returning early here did, in a second copy of the rule.
-      draft.slots = draft.slots.map(slot => this.regenerate(slot, draft.key));
+      draft.slots = draft.slots.map(slot => this.regenerate(slot, draft.key, transposeBy));
     });
   }
 
@@ -653,9 +857,19 @@ export class ProgressionService {
    * the card comes from `effectiveQuality`, read off the chord that was
    * actually built. Writing the derived label into the field here is what M2
    * Task 4 removed, and this line used to say so.
+   *
+   * `transposeBy` defaults to 0 and only `setKey` passes anything else. That is
+   * the honest value rather than a stand-in for a missing answer: a complexity
+   * step, an inversion, an octave shift and an append all move no key, so there
+   * is no interval to move claimed pitches by.
    */
-  private regenerate(slot: ChordSlot, key: ProgressionKey): ChordSlot {
-    return regenerateSlot(slot, key, this.chordScale(this.findScale(key.scaleId)));
+  private regenerate(slot: ChordSlot, key: ProgressionKey, transposeBy = 0): ChordSlot {
+    return regenerateSlot(
+      slot,
+      key,
+      this.chordScale(this.findScale(key.scaleId)),
+      transposeBy
+    );
   }
 
   /**
