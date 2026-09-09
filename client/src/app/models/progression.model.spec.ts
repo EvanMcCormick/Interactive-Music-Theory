@@ -134,41 +134,56 @@ describe('createDegreeSlot', () => {
 });
 
 describe('SlotOwnership', () => {
-  it('starts a slot owning nothing', () => {
-    expect(createDegreeSlot(0, 0).owned).toEqual({
+  it('starts owning nothing', () => {
+    expect(createOwnership()).toEqual({
       pitches: false, timing: false, velocity: false
     } as SlotOwnership);
   });
 
-  it('gives every slot its own ownership record', () => {
-    // structuredClone undo depends on nothing being shared between documents.
-    expect(createDegreeSlot(0, 0).owned).not.toBe(createDegreeSlot(0, 0).owned);
+  // Asserted on the factory rather than through `createDegreeSlot`, which routes
+  // via `normalizeChordSlot` and rebuilds `owned` unconditionally - so a shared
+  // constant here would be laundered into a fresh record before a slot could
+  // show it. Task 4's merge calls this outside the normaliser, where it cannot
+  // be. structuredClone undo depends on nothing being shared between documents.
+  it('builds a fresh record on every call', () => {
+    expect(createOwnership()).not.toBe(createOwnership());
   });
 
-  it('normalises a slot that arrives without one', () => {
-    // replaceDocument is the untrusted door; a document from anywhere else
-    // may predate this field.
+  it('fills in a slot that arrives without one', () => {
+    // The migration case: a document written before this field existed has no
+    // `owned` at all, and nothing about it says what the slot sounds like.
     const slot = { ...createDegreeSlot(0, 0) } as Record<string, unknown>;
     delete slot['owned'];
     expect(normalizeChordSlot(slot as never).owned).toEqual(createOwnership());
   });
 
-  // Coerced rather than thrown on, unlike every numeric field beside it. The
-  // difference is what a wrong value costs: a NaN octave reaches the synth with
-  // nothing between here and there to notice, where a non-boolean here can only
-  // make regeneration re-derive a dimension the user had claimed - the same
-  // outcome every M1 document already has, and one undo away.
-  it('coerces a member that is not a boolean to owning nothing', () => {
+  // Thrown on rather than coerced, unlike a *missing* record beside it. Absence
+  // is migration and has a safe answer; a member of the wrong kind is corruption
+  // - no release ever wrote a non-boolean here, so nothing that arrives with one
+  // came from a past version of this document.
+  it('refuses a member that is not a boolean', () => {
     const slot = createDegreeSlot(0, 0);
-    const owned = { pitches: 'yes', timing: 1, velocity: undefined };
-    expect(normalizeChordSlot({ ...slot, owned } as never).owned).toEqual(createOwnership());
+    const withOwned = (owned: unknown) => () =>
+      normalizeChordSlot({ ...slot, owned } as never);
+    expect(withOwned({ pitches: 'yes', timing: false, velocity: false }))
+      .toThrowError(/pitches/);
+    expect(withOwned({ pitches: false, timing: 1, velocity: false }))
+      .toThrowError(/timing/);
+    expect(withOwned({ pitches: false, timing: false, velocity: undefined }))
+      .toThrowError(/velocity/);
   });
 
+  // Both polarities of all three members, because one fixture cannot tell a
+  // preserved member from a hard-coded one: `{ pitches: true, ... }` alone is
+  // satisfied by `timing: false` written as a literal.
   it('keeps the members that really are booleans', () => {
     const slot = createDegreeSlot(0, 0);
-    const owned = { pitches: true, timing: false, velocity: 'no' };
-    expect(normalizeChordSlot({ ...slot, owned } as never).owned)
+    const ownedFor = (owned: SlotOwnership): SlotOwnership =>
+      normalizeChordSlot({ ...slot, owned }).owned;
+    expect(ownedFor({ pitches: true, timing: false, velocity: false }))
       .toEqual({ pitches: true, timing: false, velocity: false });
+    expect(ownedFor({ pitches: false, timing: true, velocity: true }))
+      .toEqual({ pitches: false, timing: true, velocity: true });
   });
 
   // The record is rebuilt rather than passed through, for the reason the slot

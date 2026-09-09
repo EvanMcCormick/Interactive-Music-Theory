@@ -48,7 +48,7 @@ import { TimeSignature } from './composer.model';
  *
  * Every numeric field that can reach the audio layer is checked in one place -
  * `normalizeChordSlot` for a slot, `normalizeProgressionDoc` for the document
- * around it - under a single rule with four clauses:
+ * around it - under a single rule with five clauses:
  *
  *  - **A value of the wrong kind is a bug, and throws.** `NaN` or `undefined` in
  *    a chord's pitch data runs through `voiceChord` untouched into
@@ -68,6 +68,15 @@ import { TimeSignature } from './composer.model';
  *    set is a ladder, not an interval. Keeping the +/- complexity buttons inside
  *    `CHORD_EXTENTS` is therefore the *stepper's* job - stepping off either end
  *    should fail loudly here rather than be rounded back onto the last rung.
+ *  - **A field that reaches no audio path and has a defined safe default is
+ *    filled when it is absent, rather than thrown on** - `owned`. The clauses
+ *    above are about values that arrive somewhere unlooked-at, where "I cannot
+ *    tell" has no answer but a failure. This one is about a field that arrives
+ *    nowhere at all, where it has one: the value a fresh slot already carries.
+ *    The clause is about *absence* only, and absence is a migration - a field
+ *    added to a document type is missing from every document written before it.
+ *    A member that is present and of the wrong kind is corruption rather than
+ *    migration, and falls back under the first clause and throws.
  *
  * `normalizeProgressionDoc` is what makes the rule a mechanism rather than a
  * convention: `ProgressionService.commit` calls it on every mutation, so the
@@ -137,10 +146,11 @@ export interface ChordSlot {
  * narrowly - only pitch edits count - a hand-built rhythm was destroyed by that
  * same key change. Both losses are real, and neither is the one the user meant.
  *
- * Tracking the three separately makes regeneration a **merge** rather than a
- * replace - see `regenerateSlot` - so a groove written in C survives a switch to
- * A minor while the chords re-voice underneath it, which is the whole point of
- * storing degrees rather than notes.
+ * Tracking the three separately is what will make regeneration a **merge**
+ * rather than a replace, so that a groove written in C survives a switch to A
+ * minor while the chords re-voice underneath it - the whole point of storing
+ * degrees rather than notes. Nothing reads this field yet: `regenerateSlot`
+ * still replaces a slot wholesale, and becomes that merge in M2 Task 4.
  *
  * The dimensions are the three a piano roll edit can move independently, and
  * they partition a `RollNote`: `midi` is pitch, `startBeat` and `lengthBeats`
@@ -167,6 +177,11 @@ export interface SlotOwnership {
  * `createDefaultProgression` builds its `slots` array per call:
  * `structuredClone` undo is only safe while no two documents point at the same
  * object.
+ *
+ * That is load-bearing at the call sites that do not pass through
+ * `normalizeChordSlot`, which rebuilds `owned` unconditionally and so would
+ * launder a shared constant into a fresh record before any document saw it.
+ * Task 4's merge is the first of them.
  */
 export function createOwnership(): SlotOwnership {
   return { pitches: false, timing: false, velocity: false };
@@ -537,35 +552,64 @@ function normalizeTempo(tempo: number): number {
 }
 
 /**
- * Fills in a slot's ownership record, and the one guard that neither throws nor
- * bounds but *defaults*.
+ * Fills in a slot's ownership record when it is absent, and checks it when it
+ * is not. The fifth clause of the rule above, and the only guard that has a
+ * default to fall back on at all.
  *
- * The four-clause rule above governs the numbers that reach the audio layer, and
- * a value of the wrong kind throws there because nothing between the model and
+ * The clauses before it govern the numbers that reach the audio layer, where a
+ * value of the wrong kind throws because nothing between the model and
  * `Tone.PolySynth` looks at it again: a `NaN` midi is inaudible as an error and
- * audible as silence. Ownership reaches no such road. It is read only by
- * `regenerateSlot`, to decide which dimensions to re-derive, and the safe answer
- * to "I cannot tell" is the value a fresh slot already has - own nothing,
- * regenerate everything. That is a defined default where a `NaN` octave has
- * none, and getting it wrong costs one re-voiced slot and one undo rather than a
- * chord that never sounds.
+ * audible as silence. Ownership reaches no such road. Nothing reads it yet;
+ * `regenerateSlot` still replaces a slot wholesale and becomes the merge that
+ * reads it in M2 Task 4, to decide which dimensions to re-derive. The safe
+ * answer to "I cannot tell" is the value a fresh slot already carries - own
+ * nothing, regenerate everything - which is a defined default where a `NaN`
+ * octave has none.
  *
- * It also has to be a default rather than a throw, because a *missing* record is
- * the expected case rather than the corrupt one: every document written before
- * this field existed has no `owned` at all, and `replaceDocument` is the door
- * they come through. Throwing would refuse to open a saved progression over a
- * field that describes nothing about what it sounds like.
+ * What getting it wrong will cost, once the merge does read it, is hand edits
+ * rather than a chord that never sounds. The loss is per *document* and not per
+ * slot: a key change re-derives every slot in one pass, so a progression that
+ * arrives owning nothing loses every hand edit on it at once. Still recoverable
+ * - one undo, and nothing about it is silent - but it is the whole document's
+ * work, which is why the fill is the last resort and not the first.
+ *
+ * ## Absent is filled; present and wrong is thrown on
+ *
+ * A *missing* record is a migration: a document written before this field
+ * existed has no `owned` at all, and refusing to open it over a field that says
+ * nothing about what it sounds like would be the worse answer. There are no
+ * such documents yet - a progression is not persisted anywhere, and
+ * `replaceDocument` has no production caller - so the set is empty today. It
+ * stops being empty the moment saving lands, which is what this branch is for.
+ *
+ * A member that is *present* and not a boolean is the other case, and the
+ * distinction matters more than it looks. No release ever wrote a non-boolean
+ * here, so nothing arriving with one came from an older version of this
+ * document: it is corruption rather than migration, and coercing it would
+ * quietly reset a dimension the user had claimed instead of saying so.
  *
  * Rebuilt rather than passed through, so a document already on the
  * `structuredClone` undo stack is not left sharing a record with the one that
  * replaced it - the same promise `normalizeChordSlot` makes about the slot.
  */
 function normalizeOwnership(owned: SlotOwnership | undefined): SlotOwnership {
+  if (owned === undefined) return createOwnership();
   return {
-    pitches: owned?.pitches === true,
-    timing: owned?.timing === true,
-    velocity: owned?.velocity === true
+    pitches: requireOwnershipFlag(owned.pitches, 'pitches'),
+    timing: requireOwnershipFlag(owned.timing, 'timing'),
+    velocity: requireOwnershipFlag(owned.velocity, 'velocity')
   };
+}
+
+function requireOwnershipFlag(value: boolean, dimension: string): boolean {
+  // Catches `undefined` as well as the wrong type: a record present but missing
+  // one member is a half-written record, not a document that predates the field.
+  if (typeof value !== 'boolean') {
+    throw new Error(
+      `SlotOwnership ${dimension} must be a boolean; got ${value}`
+    );
+  }
+  return value;
 }
 
 function normalizeChordDegree(degree: ChordDegree): ChordDegree {

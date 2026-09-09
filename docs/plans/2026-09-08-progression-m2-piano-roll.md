@@ -123,9 +123,17 @@ export function createOwnership(): SlotOwnership {
 }
 ```
 
-`normalizeChordSlot` must fill a missing `owned` with `createOwnership()` and
-coerce non-boolean members to `false` — it is the funnel, and `replaceDocument`
-is the one untrusted door.
+`normalizeChordSlot` must fill a missing `owned` with `createOwnership()` — it
+is the funnel, and `replaceDocument` is the one untrusted door.
+
+**Correction, from the Task 1 review:** an earlier draft of this step said to
+*coerce* non-boolean members to `false` as well. That conflates two different
+cases. A missing record is a migration — a field added to a document type is
+absent from every document written before it — and filling it is right. A member
+that is present and of the wrong kind is corruption: no release ever wrote one,
+so it came from nowhere legitimate, and coercing it silently resets a dimension
+the user had claimed. Absence fills; a present non-boolean throws, under the
+first clause of the header rule in `progression.model.ts`.
 
 **Step 4:** Run tests. **Step 5:** Commit.
 
