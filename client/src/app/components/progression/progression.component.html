@@ -26,8 +26,11 @@
   <!-- Across the top of the working area: the chords you can reach from here. -->
   <app-chord-palette class="palette"></app-chord-palette>
 
-  <!-- The main area. M1 has no piano roll, so the strip has the room the roll
-       will take in M2, with the transport above it where it acts. -->
+  <!-- The main area, in the design doc's order: the transport above the work it
+       controls, the roll in the centre with the room, and the strip along the
+       bottom. The roll edits whichever card the strip has selected, so the two
+       read down the page as "which chord" and then "what it plays". -->
   <app-progression-transport class="transport"></app-progression-transport>
+  <app-piano-roll class="roll"></app-piano-roll>
   <app-progression-strip class="strip"></app-progression-strip>
 </div>

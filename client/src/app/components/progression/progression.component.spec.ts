@@ -166,12 +166,30 @@ describe('ProgressionComponent', () => {
   // Composition
   // -------------------------------------------------------------------------
 
-  it('composes the palette, the strip and the transport', () => {
+  it('composes the palette, the roll, the strip and the transport', () => {
     const page: HTMLElement = fixture.nativeElement;
 
     expect(page.querySelector('app-chord-palette')).not.toBeNull();
+    expect(page.querySelector('app-piano-roll')).not.toBeNull();
     expect(page.querySelector('app-progression-strip')).not.toBeNull();
     expect(page.querySelector('app-progression-transport')).not.toBeNull();
+  });
+
+  /**
+   * The roll opens on whatever the strip has selected, and it learns that from
+   * the published state rather than from an input this shell relays. Asserted
+   * from the page rather than in the roll's own spec, because what is being
+   * checked is that the two components are wired to one service and not that
+   * either works: appending a chord selects it, and the roll draws its notes.
+   */
+  it('shows the selected chord in the roll without the shell passing it over', () => {
+    progression.appendSlot(0);
+    fixture.detectChanges();
+
+    const page: HTMLElement = fixture.nativeElement;
+    expect(page.querySelectorAll('app-piano-roll .note').length).toBe(
+      progression.doc.slots[0].notes.length
+    );
   });
 
   it('names the key the progression is in', () => {

@@ -1,0 +1,130 @@
+<div class="piano-roll">
+  <div class="toolbar">
+    <h3 class="title">Notes</h3>
+    <p class="position">{{ positionText }}</p>
+
+    <label class="grid-control">
+      <span class="grid-label">Grid</span>
+      <!-- The current grid is marked on the option rather than bound as the
+           select's own `value`. Angular sets a property binding on this element
+           before the `*ngFor` below has created anything to match it, and a
+           `<select>` handed a value none of its options carry falls back to the
+           first one - so the box would have opened on `Free` while the roll was
+           snapping to sixteenths. -->
+      <select #divisionSelect class="grid-select" (change)="setDivision(divisionSelect.value)">
+        <option
+          *ngFor="let option of divisions"
+          [value]="option.value"
+          [selected]="option.value === division">{{ option.label }}</option>
+      </select>
+    </label>
+
+    <!-- The escape hatch. Per-aspect ownership is only safe while there is a way
+         back: without this, dragging one note opts the slot out of re-voicing
+         for good. See `ProgressionService.resetSlotToChord`. -->
+    <button type="button" class="reset" [disabled]="!canReset" (click)="resetToChord()">
+      Reset to chord
+    </button>
+  </div>
+
+  <div class="body" *ngIf="hasSlot; else noSlot"
+    [style.--roll-beats]="totalBeats"
+    [style.--roll-rows]="gridRows"
+    [style.--roll-division]="gridDivision">
+    <!-- The keyboard. Presentational: every pitch it names is already on the
+         label of the note that sounds it, and a screen reader walking 25 rows
+         of an editor it cannot play is 25 rows of nothing. -->
+    <div class="keys" aria-hidden="true">
+      <div
+        class="key"
+        *ngFor="let row of rows; trackBy: trackByMidi"
+        [class.black]="row.isBlack"
+        [title]="row.label">
+        <span class="key-name" *ngIf="row.showName">{{ row.label }}</span>
+      </div>
+    </div>
+
+    <div class="scroller">
+      <!-- The grid lines are this element's background - three repeating
+           gradients, for rows, subdivisions and beats. Drawing them as elements
+           is what makes naive rolls stutter; the notes stay elements because
+           they are the things that have to be hit-tested. -->
+      <!-- A group rather than a list: the double-click surface below is a child
+           of this element and is not a note, and a `list` whose children are not
+           all `listitem`s is a list a screen reader has to guess about. -->
+      <div class="grid" #grid role="group" aria-label="Notes in this chord">
+        <!-- The double-click surface sits *under* the notes rather than around
+             them, so a double-click on a note reaches the note and never this:
+             a note is not a request for a second one on top of it. -->
+        <div class="surface" (dblclick)="addNote($event)"></div>
+
+        <div
+          class="note"
+          *ngFor="let note of notes; trackBy: trackByIndex"
+          [style.--note-beat]="note.startBeat"
+          [style.--note-beats]="note.lengthBeats"
+          [style.--note-row]="note.row"
+          (contextmenu)="deleteNote(note, $event)">
+          <!-- The body is the drag handle and the focus target at once. -->
+          <button
+            type="button"
+            class="note-body"
+            [attr.aria-label]="note.label"
+            (pointerdown)="startMove(note, $event)"
+            (keydown.arrowup)="nudgePitch(note, 1, $event)"
+            (keydown.arrowdown)="nudgePitch(note, -1, $event)"
+            (keydown.arrowright)="nudgeStart(note, 1, $event)"
+            (keydown.arrowleft)="nudgeStart(note, -1, $event)"
+            (keydown.delete)="deleteNote(note, $event)"
+            (keydown.backspace)="deleteNote(note, $event)">
+            <span class="note-name">{{ note.name }}</span>
+          </button>
+
+          <!-- The right edge. Dragged with a pointer, stepped with the arrow
+               keys - a slider rather than a button, because those keys are the
+               whole of that path and the length is the value they change. -->
+          <button
+            type="button"
+            class="note-resize"
+            role="slider"
+            [attr.aria-label]="note.resizeLabel"
+            [attr.aria-valuemin]="minNoteLength"
+            [attr.aria-valuemax]="note.maxBeats"
+            [attr.aria-valuenow]="note.lengthBeats"
+            [attr.aria-valuetext]="note.beatsText"
+            (pointerdown)="startResize(note, $event)"
+            (keydown.arrowright)="nudgeLength(note, 1, $event)"
+            (keydown.arrowleft)="nudgeLength(note, -1, $event)"></button>
+        </div>
+      </div>
+
+      <!-- One bar per note, under the note it belongs to and scrolling with it.
+           `RollNote.velocity` is already on the model, so this is a view of the
+           document rather than anything new in it. -->
+      <div class="lane" #lane>
+        <button
+          type="button"
+          class="velocity"
+          role="slider"
+          *ngFor="let note of notes; trackBy: trackByIndex"
+          [style.--note-beat]="note.startBeat"
+          [style.--note-beats]="note.lengthBeats"
+          [style.--note-velocity]="note.velocityFraction"
+          [attr.aria-label]="note.velocityLabel"
+          [attr.aria-valuemin]="1"
+          [attr.aria-valuemax]="127"
+          [attr.aria-valuenow]="note.velocity"
+          (pointerdown)="startVelocity(note, $event)"
+          (keydown.arrowup)="nudgeVelocity(note, 1, $event)"
+          (keydown.arrowdown)="nudgeVelocity(note, -1, $event)"></button>
+      </div>
+    </div>
+  </div>
+
+  <ng-template #noSlot>
+    <p class="empty">
+      Pick a chord on the strip to draw its notes. Double-click the grid to add
+      one, drag it to move it, drag its right edge to change how long it is.
+    </p>
+  </ng-template>
+</div>

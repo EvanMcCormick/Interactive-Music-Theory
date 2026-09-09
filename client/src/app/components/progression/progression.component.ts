@@ -11,6 +11,7 @@ import {
 import { Subject, distinctUntilChanged, map, takeUntil } from 'rxjs';
 
 import { ChordPaletteComponent } from './components/chord-palette/chord-palette.component';
+import { PianoRollComponent } from './components/piano-roll/piano-roll.component';
 import { ProgressionStripComponent } from './components/progression-strip/progression-strip.component';
 import { ProgressionTransportComponent } from './components/progression-transport/progression-transport.component';
 import { ProgressionState } from '../../models/progression.model';
@@ -33,9 +34,12 @@ interface AppSelection {
  *
  * ## It composes, and owns three things nothing else can
  *
- * The three components below wire themselves to `ProgressionService`, so this
- * shell passes them nothing - no inputs, no outputs, no state. What is left is
- * the work that only the thing owning the whole page can do:
+ * The four components below wire themselves to `ProgressionService`, so this
+ * shell passes them nothing - no inputs, no outputs, no state. The roll is the
+ * clearest case rather than an exception to it: it edits whichever slot the
+ * strip has selected, and it learns which that is from `selectedSlotId` on the
+ * published state, not from an `@Input()` this shell would have to relay. What
+ * is left is the work that only the thing owning the whole page can do:
  *
  *  1. **The key comes from the circle of fifths.** The design doc's decision:
  *     there is no key picker here because the app already has one, and the
@@ -102,6 +106,7 @@ interface AppSelection {
   imports: [
     CommonModule,
     ChordPaletteComponent,
+    PianoRollComponent,
     ProgressionStripComponent,
     ProgressionTransportComponent
   ],

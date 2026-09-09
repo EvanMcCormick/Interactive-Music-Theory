@@ -12,18 +12,20 @@
   display: block;
 }
 
-// The design doc's layout, with M1's pieces in it: rail down the left, palette
-// across the top of the working area, and the main area below it. The roll goes
-// in that main area in M2; until it exists the strip has the room, which is
-// why the rows are `auto auto 1fr` rather than a fixed strip at the bottom - a
-// three-chord progression should not float in the middle of a tall column.
+// The design doc's layout: rail down the left, palette across the top of the
+// working area, transport under it, the roll in the centre and the strip along
+// the bottom. The roll takes the flexible row that M1 lent to the strip - it is
+// the thing on this page with an unbounded amount to show, and a strip of four
+// cards floating in the middle of a tall column was the reason that row went to
+// it in the first place.
 .progression-page {
   display: grid;
   grid-template-columns: minmax(14rem, 17rem) minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   grid-template-areas:
     'rail palette'
     'rail transport'
+    'rail roll'
     'rail strip';
   // Fills the window under the shell's header, so the page reads as a
   // workspace rather than as three panels that happen to be stacked: the rail
@@ -57,6 +59,17 @@
 
 .transport {
   grid-area: transport;
+}
+
+// The roll scrolls its own grid horizontally, so the cell has to be allowed to
+// be narrower than its content: without `min-width: 0` a grid item is sized by
+// its content's minimum, and the whole page would have grown a scrollbar for a
+// sixteen-bar slot instead of the roll growing one.
+.roll {
+  grid-area: roll;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--page-rail);
 }
 
 .strip {
@@ -112,11 +125,12 @@
 @media (max-width: 46rem) {
   .progression-page {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
     grid-template-areas:
       'rail'
       'palette'
       'transport'
+      'roll'
       'strip';
   }
 

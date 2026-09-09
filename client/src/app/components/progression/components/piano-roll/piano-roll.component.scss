@@ -1,0 +1,317 @@
+// The app's scheme, named locally so this component's theming is one block to
+// read - the same set the strip and the palette declare, because the three sit
+// against each other on the page and one chord should not be two different
+// blues. Every text pair below is at or above the 4.5:1 that AA asks of normal
+// text, on the surface it is actually used on.
+:host {
+  --roll-surface: #2c3e50;
+  --roll-grid: #253544;
+  --roll-panel: #34495e;
+  --roll-line: #22303d;
+  // The beat lines read over the subdivisions; the subdivisions are barely
+  // there, which is the point of having both.
+  --roll-beat-line: #4a637a;
+  --roll-step-line: #2f4356;
+  --roll-row-line: #2f4356;
+  --roll-black-row: #1f2d3a;
+  // 4.8:1 under --roll-text.
+  --roll-note: #1b6ea3;
+  --roll-velocity: #2f7fb5;
+  --roll-text: #ecf0f1;
+  // 5.7:1 on --roll-surface.
+  --roll-text-dim: #adbcc8;
+
+  // The two numbers the whole layout is built from, and the two the pointer
+  // arithmetic is scaled by. The component does not read them: it measures the
+  // grid it drew and divides by the counts it drew it from, so there is one
+  // statement of the scale rather than two that can disagree. See `gridScale`.
+  --px-per-beat: 96px;
+  --row-height: 14px;
+  --velocity-height: 56px;
+  --key-width: 3rem;
+
+  display: block;
+}
+
+.piano-roll {
+  padding: 1rem;
+  background: var(--roll-surface);
+  color: var(--roll-text);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--roll-text-dim);
+}
+
+.position {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--roll-text-dim);
+}
+
+.grid-control {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--roll-text-dim);
+}
+
+.grid-select,
+.reset {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--roll-line);
+  border-radius: 3px;
+  background: var(--roll-panel);
+  color: var(--roll-text);
+  font-size: 0.75rem;
+
+  &:focus-visible {
+    outline: 2px solid var(--roll-text);
+    outline-offset: 1px;
+  }
+}
+
+.reset {
+  cursor: pointer;
+
+  &:disabled {
+    color: var(--roll-text-dim);
+    cursor: default;
+    opacity: 0.5;
+  }
+}
+
+.body {
+  display: flex;
+  align-items: flex-start;
+}
+
+// ---------------------------------------------------------------------------
+// The keyboard down the left
+// ---------------------------------------------------------------------------
+
+.keys {
+  flex: 0 0 auto;
+  width: var(--key-width);
+  border-right: 1px solid var(--roll-line);
+}
+
+.key {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: var(--row-height);
+  padding-right: 0.25rem;
+  background: var(--roll-panel);
+  border-bottom: 1px solid var(--roll-line);
+
+  &.black {
+    background: var(--roll-black-row);
+  }
+}
+
+.key-name {
+  font-size: 0.6rem;
+  line-height: 1;
+  color: var(--roll-text-dim);
+}
+
+// ---------------------------------------------------------------------------
+// The grid
+// ---------------------------------------------------------------------------
+
+// A timeline rather than a fixed canvas: the grid is as long as the slot is and
+// scrolls when that is longer than the panel. Width is the whole of what the
+// roll says about time, so a beat is the same number of pixels wherever it
+// falls - which is what makes `gridScale`'s single number true, and what M1's
+// proportional strip could not offer its own resize handle.
+.scroller {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+// Three repeating gradients rather than three hundred elements: a four-bar slot
+// on a 1/16 grid is 256 vertical lines, and drawing lines nothing ever
+// hit-tests is what makes a naive roll stutter. Beat lines are listed first so
+// they paint over the subdivisions they share a pixel with.
+//
+// No border and no padding, deliberately. The notes are positioned against this
+// element's padding box, so either would offset every one of them from the beat
+// it claims to be on - and would put the measured beat width out by a pixel,
+// which is the same class of bug as the strip's `border-box` fix.
+.grid {
+  position: relative;
+  box-sizing: border-box;
+  width: calc(var(--px-per-beat) * var(--roll-beats));
+  height: calc(var(--row-height) * var(--roll-rows));
+  background-color: var(--roll-grid);
+  background-image:
+    repeating-linear-gradient(
+      to right,
+      var(--roll-beat-line) 0 1px,
+      transparent 1px var(--px-per-beat)
+    ),
+    repeating-linear-gradient(
+      to right,
+      var(--roll-step-line) 0 1px,
+      transparent 1px calc(var(--px-per-beat) / var(--roll-division))
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      var(--roll-row-line) 0 1px,
+      transparent 1px var(--row-height)
+    );
+}
+
+.surface {
+  position: absolute;
+  inset: 0;
+}
+
+.note {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  left: calc(var(--px-per-beat) * var(--note-beat));
+  top: calc(var(--row-height) * var(--note-row));
+  width: calc(var(--px-per-beat) * var(--note-beats));
+  height: var(--row-height);
+  // Short notes are narrower than their own resize handle; the note still has
+  // to be visible and grabbable at 1/64 of a beat.
+  min-width: 6px;
+  border-radius: 2px;
+  background: var(--roll-note);
+  overflow: hidden;
+}
+
+.note-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 0.2rem;
+  border: none;
+  background: none;
+  color: var(--roll-text);
+  font-size: 0.6rem;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+  cursor: grab;
+  // The note is a drag handle, so the browser's own text selection and touch
+  // scrolling would both fight the gesture.
+  user-select: none;
+  touch-action: none;
+
+  &:active {
+    cursor: grabbing;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--roll-text);
+    outline-offset: -2px;
+  }
+}
+
+.note-name {
+  pointer-events: none;
+}
+
+// Slim on screen, wide to hit: the line is drawn by the gradient rather than by
+// the element, so the target stays reachable while the roll still reads as
+// blocks with a seam at the end of each.
+.note-resize {
+  flex: 0 0 auto;
+  width: 10px;
+  padding: 0;
+  border: none;
+  background: linear-gradient(to right, transparent 0 6px, var(--roll-text) 6px);
+  cursor: ew-resize;
+  touch-action: none;
+  opacity: 0.5;
+
+  &:hover,
+  &:focus-visible {
+    opacity: 1;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--roll-text);
+    outline-offset: -2px;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The velocity lane
+// ---------------------------------------------------------------------------
+
+// The separating line is an inset shadow rather than a border, and that is not
+// a style choice. `velocityScale` measures this element's rect - its *border*
+// box - while a bar inside it travels the padding box, so a 1px border would
+// make the scale 56px and the travel 55px, and a drag from the floor of the
+// lane to its ceiling would come out one MIDI unit short of the range it is
+// supposed to cover. A shadow paints without taking a pixel.
+.lane {
+  position: relative;
+  box-sizing: border-box;
+  width: calc(var(--px-per-beat) * var(--roll-beats));
+  height: var(--velocity-height);
+  margin-top: 0.35rem;
+  background: var(--roll-grid);
+  box-shadow: inset 0 1px 0 var(--roll-line);
+}
+
+// The control is the full height of the lane and the bar is drawn inside it, so
+// a note at velocity 1 is still something a pointer can find. The lane's height
+// standing for the whole MIDI range is also the scale `velocityScale` measures:
+// dragging floor to ceiling is 1 to 127.
+.velocity {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--px-per-beat) * var(--note-beat));
+  width: calc(var(--px-per-beat) * var(--note-beats));
+  min-width: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: ns-resize;
+  touch-action: none;
+
+  &::after {
+    content: '';
+    position: absolute;
+    right: 1px;
+    bottom: 0;
+    left: 0;
+    height: calc(var(--velocity-height) * var(--note-velocity));
+    min-height: 2px;
+    background: var(--roll-velocity);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--roll-text);
+    outline-offset: -2px;
+  }
+}
+
+.empty {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--roll-text-dim);
+}
