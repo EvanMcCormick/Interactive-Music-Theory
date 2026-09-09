@@ -188,7 +188,10 @@ function calculateNote(fret, stringTuning) {  // implicit any
 ### File Organization
 - One component/service per file
 - Related files in same directory
-- Max 500 lines per file (refactor if larger)
+- Max 1000 lines per file (refactor if larger). Raised from 500 on 2026-09-09:
+  this codebase runs around 60% documentation and the comments are
+  load-bearing, so a total-line cap at 500 was flagging files whose code was
+  a third of that. 1000 still catches genuine outliers.
 
 ### Naming Conventions
 - Components: `PascalCase` + `Component` suffix
