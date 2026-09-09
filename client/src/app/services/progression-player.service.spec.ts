@@ -1,6 +1,11 @@
 import { NgZone, provideZoneChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { ChordSlot, ProgressionDoc, RollNote } from '../models/progression.model';
+import {
+  ChordSlot,
+  ProgressionDoc,
+  RollNote,
+  createOwnership
+} from '../models/progression.model';
 import {
   PROGRESSION_AUDIO,
   TimedEvent,
@@ -291,7 +296,7 @@ function degreeSlot(
     startBeat,
     lengthBeats,
     notes,
-    isHandEdited: false
+    owned: createOwnership()
   };
 }
 
@@ -307,7 +312,7 @@ function literalSlot(
     startBeat,
     lengthBeats,
     notes,
-    isHandEdited: false
+    owned: createOwnership()
   };
 }
 

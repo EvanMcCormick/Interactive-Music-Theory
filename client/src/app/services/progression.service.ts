@@ -345,16 +345,18 @@ export class ProgressionService {
    * Moves the whole progression to a new key, re-deriving what every slot
    * sounds and how it is labelled.
    *
-   * **M1 regenerates every degree slot unconditionally, and that is the simple
-   * version rather than the intended one.** The design doc says a key change
-   * regenerates an untouched slot but *transposes* a hand-edited one, and
-   * leaves a `literal` slot's notes alone - which is why `ChordSlot` carries
-   * `isHandEdited` and `SlotHarmony` has a `literal` branch. Neither branch is
-   * reachable in M1: nothing here can hand-edit a slot, because the piano roll
-   * that would is M2's, and the recogniser that degrades a slot to literal is
-   * M3's. The branches land with them. Until then `regenerate` is safe to run
-   * over everything, because every slot in an M1 document was generated from
-   * its degree and nothing else.
+   * **This still regenerates every degree slot unconditionally, and that is
+   * the simple version rather than the intended one.** A key change should
+   * regenerate only the dimensions the user has not claimed - transposing owned
+   * pitches, keeping owned timing and velocity - and leave a `literal` slot's
+   * notes alone, which is why `ChordSlot` carries `SlotOwnership` and
+   * `SlotHarmony` has a `literal` branch. Neither branch is reachable yet:
+   * nothing here sets ownership, because the piano roll that would is still
+   * being built, and the recogniser that degrades a slot to literal is M3's.
+   * `regenerateSlot` becomes the merge in M2 Task 4, and `setKey` starts
+   * passing it the semitone delta in Task 5. Until then `regenerate` is safe to
+   * run over everything, because every slot so far was generated from its
+   * degree and nothing else.
    *
    * The key is applied even when its scale cannot build chords. Refusing it
    * would leave this page in a different key from the fretboard behind it,

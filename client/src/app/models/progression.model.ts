@@ -124,13 +124,52 @@ export interface ChordSlot {
   lengthBeats: number;
   /** The playback truth. Beats here are relative to the slot's own start. */
   notes: RollNote[];
-  /**
-   * Set once the user edits the notes directly. A key change regenerates an
-   * untouched degree slot but *transposes* a hand-edited one, which is the only
-   * option that neither discards the user's work nor breaks the key change.
-   * Nothing in M1 can set it - the piano roll that does arrives in M2.
-   */
-  isHandEdited: boolean;
+  /** Which dimensions of this slot the user has claimed. See `SlotOwnership`. */
+  owned: SlotOwnership;
+}
+
+/**
+ * Which dimensions of a slot the user owns.
+ *
+ * Replaces M1's single `isHandEdited` boolean, which forced a bad trade in both
+ * directions. Read literally, one velocity nudge opted a slot out of re-voicing
+ * forever, so the next key change left it sounding the old key's chord. Read
+ * narrowly - only pitch edits count - a hand-built rhythm was destroyed by that
+ * same key change. Both losses are real, and neither is the one the user meant.
+ *
+ * Tracking the three separately makes regeneration a **merge** rather than a
+ * replace - see `regenerateSlot` - so a groove written in C survives a switch to
+ * A minor while the chords re-voice underneath it, which is the whole point of
+ * storing degrees rather than notes.
+ *
+ * The dimensions are the three a piano roll edit can move independently, and
+ * they partition a `RollNote`: `midi` is pitch, `startBeat` and `lengthBeats`
+ * are timing, `velocity` is velocity. A field added to `RollNote` that fits none
+ * of them would need a fourth here rather than to be folded into one.
+ *
+ * Ownership is per slot rather than per note, because regeneration is per slot:
+ * a re-voiced chord is a different set of notes, so there is no note to carry an
+ * ownership flag across the change.
+ */
+export interface SlotOwnership {
+  /** Notes moved in pitch, added or removed. */
+  pitches: boolean;
+  /** Note starts or lengths changed within the slot. */
+  timing: boolean;
+  /** Velocities changed. */
+  velocity: boolean;
+}
+
+/**
+ * A slot that owns nothing: everything about it is the app's to re-derive.
+ *
+ * A function rather than a shared constant, for the reason
+ * `createDefaultProgression` builds its `slots` array per call:
+ * `structuredClone` undo is only safe while no two documents point at the same
+ * object.
+ */
+export function createOwnership(): SlotOwnership {
+  return { pitches: false, timing: false, velocity: false };
 }
 
 /**
@@ -497,6 +536,38 @@ function normalizeTempo(tempo: number): number {
   return clamp(tempo, TEMPO_MIN, TEMPO_MAX);
 }
 
+/**
+ * Fills in a slot's ownership record, and the one guard that neither throws nor
+ * bounds but *defaults*.
+ *
+ * The four-clause rule above governs the numbers that reach the audio layer, and
+ * a value of the wrong kind throws there because nothing between the model and
+ * `Tone.PolySynth` looks at it again: a `NaN` midi is inaudible as an error and
+ * audible as silence. Ownership reaches no such road. It is read only by
+ * `regenerateSlot`, to decide which dimensions to re-derive, and the safe answer
+ * to "I cannot tell" is the value a fresh slot already has - own nothing,
+ * regenerate everything. That is a defined default where a `NaN` octave has
+ * none, and getting it wrong costs one re-voiced slot and one undo rather than a
+ * chord that never sounds.
+ *
+ * It also has to be a default rather than a throw, because a *missing* record is
+ * the expected case rather than the corrupt one: every document written before
+ * this field existed has no `owned` at all, and `replaceDocument` is the door
+ * they come through. Throwing would refuse to open a saved progression over a
+ * field that describes nothing about what it sounds like.
+ *
+ * Rebuilt rather than passed through, so a document already on the
+ * `structuredClone` undo stack is not left sharing a record with the one that
+ * replaced it - the same promise `normalizeChordSlot` makes about the slot.
+ */
+function normalizeOwnership(owned: SlotOwnership | undefined): SlotOwnership {
+  return {
+    pitches: owned?.pitches === true,
+    timing: owned?.timing === true,
+    velocity: owned?.velocity === true
+  };
+}
+
 function normalizeChordDegree(degree: ChordDegree): ChordDegree {
   const extent = requireExtent(degree.extent);
   return {
@@ -517,9 +588,9 @@ function normalizeChordDegree(degree: ChordDegree): ChordDegree {
  *
  * The copy is shallow, and the promise should be read as exactly that: `notes`
  * is the same array by reference, holding the same `RollNote` objects, and a
- * literal slot's `harmony` is the same object too, where the degree branch does
- * build a fresh one. Enough for the undo stack, which deep-clones on the way
- * in; not enough for a caller assuming it may now edit `notes` in place.
+ * literal slot's `harmony` is the same object too, where the degree branch and
+ * `owned` both build fresh ones. Enough for the undo stack, which deep-clones on
+ * the way in; not enough for a caller assuming it may now edit `notes` in place.
  *
  * `notes` is also not checked, for the reason it is safe not to copy: in M1 it
  * is regenerated wholesale from the fields above, which are checked, and never
@@ -531,7 +602,9 @@ export function normalizeChordSlot(slot: ChordSlot): ChordSlot {
   const timed: ChordSlot = {
     ...slot,
     startBeat: requireStartBeat(slot.startBeat),
-    lengthBeats: normalizeLengthBeats(slot.lengthBeats)
+    lengthBeats: normalizeLengthBeats(slot.lengthBeats),
+    // Before the literal branch returns, so both kinds of slot get one.
+    owned: normalizeOwnership(slot.owned)
   };
 
   // A literal slot has no degree to check. Its timing still matters.
@@ -625,7 +698,7 @@ export function createDefaultProgression(): ProgressionDoc {
 
 /**
  * A slot for a diatonic degree, untouched: a triad in root position, one bar
- * long, sounding from middle C.
+ * long, sounding from middle C, owning none of its own dimensions.
  *
  * `notes` starts empty. Generating them needs the key and the scale, which this
  * factory has no business knowing - `generateSlotNotes` fills them in.
@@ -652,6 +725,6 @@ export function createDegreeSlot(degree: number, startBeat: number): ChordSlot {
     startBeat,
     lengthBeats: BEATS_PER_SLOT_DEFAULT,
     notes: [],
-    isHandEdited: false
+    owned: createOwnership()
   });
 }

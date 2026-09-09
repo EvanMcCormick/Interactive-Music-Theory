@@ -7,7 +7,8 @@ import {
   ChordSlot,
   ProgressionDoc,
   ProgressionState,
-  createDefaultProgression
+  createDefaultProgression,
+  createOwnership
 } from '../../../../models/progression.model';
 
 /**
@@ -85,7 +86,10 @@ describe('ProgressionStripComponent', () => {
       startBeat: 0,
       lengthBeats: 4,
       notes: [{ midi: 60, startBeat: 0, lengthBeats: 4, velocity: 80 }],
-      isHandEdited: true
+      // A literal slot is one whose notes are no longer the app's to derive, so
+      // the honest reading of the `isHandEdited: true` this used to carry is
+      // that the user owns its pitches. The strip does not read the field.
+      owned: { ...createOwnership(), pitches: true }
     };
   }
 
@@ -108,7 +112,7 @@ describe('ProgressionStripComponent', () => {
       startBeat: 0,
       lengthBeats,
       notes: [],
-      isHandEdited: false
+      owned: createOwnership()
     };
   }
 

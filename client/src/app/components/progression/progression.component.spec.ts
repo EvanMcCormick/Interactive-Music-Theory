@@ -3,7 +3,11 @@ import { BehaviorSubject, Observable } from 'rxjs';
 
 import { ProgressionComponent } from './progression.component';
 import { CircleOfFifthsComponent } from '../circle-of-fifths/circle-of-fifths.component';
-import { ProgressionDoc, ProgressionState } from '../../models/progression.model';
+import {
+  ProgressionDoc,
+  ProgressionState,
+  createOwnership
+} from '../../models/progression.model';
 import { MusicTheoryState } from '../../models/music-theory.model';
 import { CIRCLE_POSITIONS } from '../../services/circle-of-fifths.data';
 import { MusicTheoryService } from '../../services/music-theory.service';
@@ -618,7 +622,7 @@ describe('ProgressionComponent', () => {
             startBeat: 4,
             lengthBeats: 4,
             notes: [],
-            isHandEdited: false
+            owned: createOwnership()
           }
         ]
       });

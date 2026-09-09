@@ -14,11 +14,13 @@ import {
   OCTAVE_MIN,
   ProgressionDoc,
   ProgressionKey,
+  SlotOwnership,
   TEMPO_MAX,
   TEMPO_MIN,
   VOICING_BASE_MIDI,
   createDefaultProgression,
   createDegreeSlot,
+  createOwnership,
   normalizeChordSlot,
   normalizeProgressionDoc
 } from './progression.model';
@@ -85,7 +87,7 @@ describe('createDegreeSlot', () => {
       degree: { degree: 0, alter: 0, extent: 3, quality: 'major',
                 inversion: 0, suspension: 'none', octave: 0 }
     });
-    expect(slot.isHandEdited).toBeFalse();
+    expect(slot.owned).toEqual(createOwnership());
     expect(slot.lengthBeats).toBe(BEATS_PER_SLOT_DEFAULT);
     expect(slot.notes).toEqual([]);
   });
@@ -128,6 +130,64 @@ describe('createDegreeSlot', () => {
     expect(() => createDegreeSlot(0, NaN)).toThrowError(/startBeat/);
     expect(() => createDegreeSlot(0, Infinity)).toThrowError(/startBeat/);
     expect(() => createDegreeSlot(0, -1)).toThrowError(/startBeat/);
+  });
+});
+
+describe('SlotOwnership', () => {
+  it('starts a slot owning nothing', () => {
+    expect(createDegreeSlot(0, 0).owned).toEqual({
+      pitches: false, timing: false, velocity: false
+    } as SlotOwnership);
+  });
+
+  it('gives every slot its own ownership record', () => {
+    // structuredClone undo depends on nothing being shared between documents.
+    expect(createDegreeSlot(0, 0).owned).not.toBe(createDegreeSlot(0, 0).owned);
+  });
+
+  it('normalises a slot that arrives without one', () => {
+    // replaceDocument is the untrusted door; a document from anywhere else
+    // may predate this field.
+    const slot = { ...createDegreeSlot(0, 0) } as Record<string, unknown>;
+    delete slot['owned'];
+    expect(normalizeChordSlot(slot as never).owned).toEqual(createOwnership());
+  });
+
+  // Coerced rather than thrown on, unlike every numeric field beside it. The
+  // difference is what a wrong value costs: a NaN octave reaches the synth with
+  // nothing between here and there to notice, where a non-boolean here can only
+  // make regeneration re-derive a dimension the user had claimed - the same
+  // outcome every M1 document already has, and one undo away.
+  it('coerces a member that is not a boolean to owning nothing', () => {
+    const slot = createDegreeSlot(0, 0);
+    const owned = { pitches: 'yes', timing: 1, velocity: undefined };
+    expect(normalizeChordSlot({ ...slot, owned } as never).owned).toEqual(createOwnership());
+  });
+
+  it('keeps the members that really are booleans', () => {
+    const slot = createDegreeSlot(0, 0);
+    const owned = { pitches: true, timing: false, velocity: 'no' };
+    expect(normalizeChordSlot({ ...slot, owned } as never).owned)
+      .toEqual({ pitches: true, timing: false, velocity: false });
+  });
+
+  // The record is rebuilt rather than passed through, for the reason the slot
+  // itself is: a document already on the structuredClone undo stack must not
+  // find its ownership amended behind it.
+  it('does not hand back the record it was given', () => {
+    const slot = createDegreeSlot(0, 0);
+    expect(normalizeChordSlot(slot).owned).not.toBe(slot.owned);
+  });
+
+  // A literal slot returns early from the degree half of the normaliser, which
+  // is the easiest place for a guard to be skipped by accident.
+  it('normalises the ownership of a literal slot too', () => {
+    const literal = {
+      ...createDegreeSlot(0, 0),
+      harmony: { kind: 'literal', reason: 'unrecognised' }
+    } as Record<string, unknown>;
+    delete literal['owned'];
+    expect(normalizeChordSlot(literal as never).owned).toEqual(createOwnership());
   });
 });
 
