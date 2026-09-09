@@ -140,6 +140,9 @@ class FakeTransport implements ToneTransport {
   stops = 0;
   cancels = 0;
 
+  /** What the player asked to be told about a turnover, or null while nothing has. */
+  loopHandler: (() => void) | null = null;
+
   setTempo(bpm: number): void {
     this.tempo = bpm;
   }
@@ -148,6 +151,26 @@ class FakeTransport implements ToneTransport {
     this.looping = on;
     this.loopEnd = endSeconds;
     this.tempoAtLoop = this.tempo;
+  }
+
+  setLoopHandler(handler: (() => void) | null): void {
+    this.loopHandler = handler;
+  }
+
+  /**
+   * One loop turnover, as Tone's rewind makes it.
+   *
+   * The fake drives the *call*. What it cannot model is why that call is the
+   * right thing to drive: Tone emits `loop` from inside `_processTick`, between
+   * the rewind and the collection of that tick's timeline events, so a schedule
+   * swapped in here reaches the first tick of the new pass and no event of the
+   * finished one is left unfired. That is the property the whole mechanism
+   * rests on and there is no tick here to observe it with - the same hole
+   * `onCue` names from the other side.
+   */
+  turnOver(): void {
+    if (!this.loopHandler) throw new Error('nothing was listening for a loop turnover');
+    this.loopHandler();
   }
 
   start(): void {
@@ -329,6 +352,19 @@ function twoChords(): ProgressionDoc {
     degreeSlot('a', 0, 4, [note(60, 0, 4), note(64, 0, 4), note(67, 0, 4)]),
     degreeSlot('b', 4, 4, [note(67, 0, 4), note(71, 0, 4), note(74, 0, 4)])
   ]);
+}
+
+/**
+ * The same two bars with a third appended - what clicking the palette during
+ * playback produces.
+ *
+ * A fresh object every call, as `twoChords` is, so that the identity the
+ * boundary compares against is a real one rather than a shared fixture.
+ */
+function threeChords(): ProgressionDoc {
+  const doc = twoChords();
+  doc.slots.push(degreeSlot('c', 8, 4, [note(72, 0, 4), note(76, 0, 4), note(79, 0, 4)]));
+  return doc;
 }
 
 // ---------------------------------------------------------------------------
@@ -763,14 +799,17 @@ describe('ProgressionPlayerService', () => {
     });
 
     /**
-     * **A known limitation, characterised rather than fixed.** `buildSchedule`
-     * runs once per play and the parts carry that snapshot until the next
-     * `play` or `stop`, so an edit made under a running transport is heard by
-     * nothing. The page invites the edit - its key comes from the app-wide
-     * circle of fifths, which is reachable mid-playback - so this is here to
-     * make the behaviour a decision M2 inherits rather than a surprise it
-     * discovers. `play` says why it was left, and the transport's
-     * `describePosition` says what it looks like on screen.
+     * The snapshot is still a snapshot. `buildSchedule` runs once per play and
+     * the parts carry that result until something replaces them - and mutating
+     * the object behind the player's back is not something that replaces them.
+     * A newer document is *handed over*, through `update`, and applied at the
+     * loop boundary; see "edits at the loop boundary" below for the arrow that
+     * does reach a running transport.
+     *
+     * Worth pinning rather than assuming, because `ProgressionStore` clones on
+     * every commit and so never mutates a published document in place. Nothing
+     * in the app takes this path; a caller that started to would find the
+     * player ignoring it here rather than half-following it at run time.
      */
     it('plays the document it was handed, not the document as it becomes', async () => {
       const doc = twoChords();
@@ -1034,6 +1073,287 @@ describe('ProgressionPlayerService', () => {
 
       expect(audio.transportStub.stops).toBe(1);
       expect(currentSlot()).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Edits during playback
+  // -------------------------------------------------------------------------
+
+  /**
+   * The design doc's ruling, in numbers: an edit made while the loop runs is
+   * collected and applied when the loop turns over, so it is audible on the
+   * *next* pass rather than on this one and rather than two passes later.
+   *
+   * ## What the fake can and cannot pin
+   *
+   * It pins everything about the service's half: what is collected, when it is
+   * applied, what is disposed on the way, and every way a pending document can
+   * be superseded. It cannot pin the half that matters most for the hazard -
+   * that the turnover callback is reached at the rewind rather than at an event
+   * scheduled near it - because a fake transport has no ticks to quantise. That
+   * is the same hole `onCue`'s docstring names, and it is why the trigger is
+   * the rewind's own `loop` emission rather than a cue filed at
+   * `lengthSeconds`: there is then no boundary for floating point to land on
+   * the wrong side of.
+   *
+   * ## Counting agrees with sounding again
+   *
+   * `ProgressionTransportComponent.describePosition` counts against the live
+   * document. M1 left that reading "Chord 2 of 6" over a schedule that stopped
+   * after four, because nothing re-scheduled. The cue assertions below are the
+   * other end of that fix: after a turnover the schedule cues exactly the
+   * document's slots, so a total taken from the document names chords that
+   * really sound.
+   */
+  describe('edits at the loop boundary', () => {
+    /** Plays `twoChords` on a loop, which is the state every test here starts in. */
+    async function playLooping(doc: ProgressionDoc = twoChords()): Promise<void> {
+      player.setLoop(true);
+      await player.play(doc);
+    }
+
+    it('listens for the loop turning over', () => {
+      expect(audio.transportStub.loopHandler).not.toBeNull();
+    });
+
+    it('stops listening when it is destroyed', () => {
+      TestBed.resetTestingModule();
+
+      expect(audio.transportStub.loopHandler).toBeNull();
+    });
+
+    it('goes on playing what it was given until the loop turns over', async () => {
+      await playLooping();
+
+      player.update(threeChords());
+
+      // Six notes and three cues: the two-chord schedule, still sounding. The
+      // third chord is collected, not applied.
+      expect(notePart().events.length).toBe(6);
+      expect(cuePart().events.length).toBe(3);
+    });
+
+    it('swaps the newer document in when the loop turns over', async () => {
+      await playLooping();
+      player.update(threeChords());
+
+      audio.transportStub.turnOver();
+
+      expect(notePart().events.length).toBe(9);
+      expect(cuePart().events.length).toBe(4);
+    });
+
+    /**
+     * The requirement with the sharpest failure mode. A note added at the top
+     * of the progression sits *behind* the playhead by the time the edit lands,
+     * and the pass it belongs to begins the instant the loop turns over - so a
+     * swap that happened a moment too late would drop it silently, and the user
+     * would hear their edit only on the pass after next.
+     */
+    it('sounds a note added just behind the playhead on the very next pass', async () => {
+      await playLooping();
+
+      const edited = twoChords();
+      edited.slots[0].notes.push(note(48, 0, 4));
+      player.update(edited);
+      audio.transportStub.turnOver();
+
+      const events = notePart().events as readonly ScheduledNote[];
+      expect(events.filter(event => event.midi === 48).length).toBe(1);
+      // Started at the top of the progression, so the transport reaches it on
+      // the pass that has just begun rather than on the one after.
+      expect(notePart().started).toBe(0);
+      expect(cuePart().started).toBe(0);
+    });
+
+    it('disposes the schedule it replaced rather than leaking it', async () => {
+      await playLooping();
+      const replaced = audio.livingParts;
+      player.update(threeChords());
+
+      audio.transportStub.turnOver();
+
+      for (const part of replaced) expect(part.disposals).toBe(1);
+      expect(audio.livingParts.length).toBe(2);
+    });
+
+    it('applies a document once, not again at every turnover after it', async () => {
+      await playLooping();
+      player.update(threeChords());
+      audio.transportStub.turnOver();
+      const applied = audio.parts.length;
+
+      audio.transportStub.turnOver();
+      audio.transportStub.turnOver();
+
+      expect(audio.parts.length).toBe(applied);
+      expect(audio.livingParts.length).toBe(2);
+    });
+
+    it('rebuilds nothing at a turnover nobody edited before', async () => {
+      await playLooping();
+
+      audio.transportStub.turnOver();
+
+      expect(audio.parts.length).toBe(2);
+      expect(audio.livingParts.length).toBe(2);
+    });
+
+    it('rebuilds nothing when handed the document it is already playing', async () => {
+      const doc = twoChords();
+      await playLooping(doc);
+
+      // What a selection change republishes: the same document object, for a
+      // state emission that changed something the player does not care about.
+      player.update(doc);
+      audio.transportStub.turnOver();
+
+      expect(audio.parts.length).toBe(2);
+      expect(audio.livingParts.length).toBe(2);
+    });
+
+    it('moves the loop end to the newer document\'s length', async () => {
+      await playLooping();
+      expect(audio.transportStub.loopEnd).toBe(4);
+
+      player.update(threeChords());
+      audio.transportStub.turnOver();
+
+      // Twelve beats at 120 BPM.
+      expect(audio.transportStub.loopEnd).toBe(6);
+      expect(audio.transportStub.looping).toBeTrue();
+    });
+
+    it('sets the tempo before it measures the new schedule against it', async () => {
+      await playLooping();
+      const faster = threeChords();
+      faster.tempo = 240;
+
+      player.update(faster);
+      audio.transportStub.turnOver();
+
+      // The same ordering `play` is held to, for the same reason: Tone resolves
+      // an event's time and the loop end into ticks against the BPM in force
+      // when they are assigned.
+      expect(audio.transportStub.tempo).toBe(240);
+      expect(audio.transportStub.tempoAtLoop).toBe(240);
+      for (const part of audio.livingParts) expect(part.tempoWhenBuilt).toBe(240);
+    });
+
+    it('follows a tempo change made while the loop runs', async () => {
+      await playLooping();
+      const faster = twoChords();
+      faster.tempo = 240;
+
+      player.update(faster);
+      audio.transportStub.turnOver();
+
+      // Eight beats, at a quarter of a second each.
+      expect(audio.transportStub.loopEnd).toBe(2);
+      const events = notePart().events as readonly ScheduledNote[];
+      expect(events[events.length - 1].time).toBe(1);
+    });
+
+    it('drops a slot the newer document removed', async () => {
+      await playLooping();
+      const shortened = progression([twoChords().slots[0]]);
+
+      player.update(shortened);
+      audio.transportStub.turnOver();
+
+      const cues = cuePart().events as readonly SlotCue[];
+      expect(cues.map(cue => cue.slotId)).toEqual(['a', null]);
+    });
+
+    it('cues every slot the newer document holds, and no other', async () => {
+      await playLooping();
+
+      player.update(threeChords());
+      audio.transportStub.turnOver();
+
+      // What the transport's readout counts, arriving as things that sound: a
+      // cue per slot, in order, plus the one that names the end.
+      const cues = cuePart().events as readonly SlotCue[];
+      expect(cues.map(cue => cue.slotId)).toEqual(['a', 'b', 'c', null]);
+    });
+
+    it('leaves the sounding chord alone as it swaps', async () => {
+      await playLooping();
+      cuePart().fire(1);
+      player.update(threeChords());
+
+      audio.transportStub.turnOver();
+
+      // The turnover is not a stop, and the previous pass's last chord is left
+      // to ring into its release rather than being cut off - which is what a
+      // click at the boundary would sound like.
+      expect(currentSlot()).toBe('b');
+      expect(audio.synth.releases).toBe(0);
+      expect(audio.transportStub.stops).toBe(0);
+    });
+
+    it('stops when the newer document has nothing left to play', async () => {
+      await playLooping();
+
+      // Every chord deleted while the loop runs. Carrying on would be a
+      // transport looping a progression the user has emptied.
+      player.update(progression([]));
+      audio.transportStub.turnOver();
+
+      expect(audio.transportStub.stops).toBe(1);
+      expect(currentSlot()).toBeNull();
+    });
+
+    it('forgets a pending document when it is stopped', async () => {
+      await playLooping();
+      player.update(threeChords());
+
+      player.stop();
+      await playLooping();
+      audio.transportStub.turnOver();
+
+      expect(cuePart().events.length).toBe(3);
+    });
+
+    it('forgets a pending document when another play supersedes it', async () => {
+      await playLooping();
+      player.update(threeChords());
+
+      await playLooping();
+      audio.transportStub.turnOver();
+
+      expect(cuePart().events.length).toBe(3);
+    });
+
+    /**
+     * The window `generation` exists for, read from the other side. `play`
+     * waits on the audio context before it marks the service as busy, and on a
+     * first play that wait is the browser's own - long enough for an edit to
+     * land inside it. A hand-over is therefore collected whatever the service
+     * looks like at the time; it is `play` and `stop` that clear one, and both
+     * have already run by the time this window opens.
+     */
+    it('keeps a document handed over while the audio context was resuming', async () => {
+      audio.gateResume = true;
+      player.setLoop(true);
+      const playing = player.play(twoChords());
+
+      player.update(threeChords());
+      audio.openResumeGate();
+      await playing;
+      audio.transportStub.turnOver();
+
+      expect(cuePart().events.length).toBe(4);
+    });
+
+    it('drops a document handed over while nothing was playing', async () => {
+      player.update(threeChords());
+
+      await playLooping();
+      audio.transportStub.turnOver();
+
+      expect(cuePart().events.length).toBe(3);
     });
   });
 

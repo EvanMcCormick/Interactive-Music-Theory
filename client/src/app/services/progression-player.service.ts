@@ -325,6 +325,30 @@ export class ProgressionPlayerService implements OnDestroy {
   private lengthSeconds = 0;
 
   /**
+   * The document the loaded schedule was built from, or null when there is none.
+   *
+   * Held only to answer one question at the boundary - "is this hand-over
+   * actually a different document?" - and answered by identity, not by
+   * comparison. `ProgressionStore` clones on every commit and publishes the
+   * clone, so a document that is not `===` this one is a document something
+   * changed; a document that is names a state emission that moved something the
+   * player does not care about, the selected slot most often. Rebuilding on
+   * those would tear the schedule down and build it again once a cycle for as
+   * long as the user kept clicking cards.
+   */
+  private playing: ProgressionDoc | null = null;
+
+  /**
+   * The newest document handed over, waiting for the loop to turn over.
+   *
+   * This is the whole of "edits during playback are collected": one slot, last
+   * writer wins, because the schedule is rebuilt from a document rather than
+   * patched by a diff and only the newest document is worth rebuilding from.
+   * Ten edits in a bar cost one rebuild.
+   */
+  private pending: ProgressionDoc | null = null;
+
+  /**
    * Which play is the current one.
    *
    * `play` has to wait for the audio context, and everything it does before
@@ -356,6 +380,13 @@ export class ProgressionPlayerService implements OnDestroy {
     this.synth.connect(this.reverb);
     this.reverb.connect(this.volume);
     this.volume.toDestination();
+
+    // Registered for the life of the service rather than per play, so that the
+    // one thing it does - swap in a document somebody handed over - is decided
+    // by `pending` alone. A registration that came and went with the transport
+    // would be a second piece of state saying the same thing, in a class that
+    // already has `generation` because two such pieces disagreed once.
+    this.audio.transport().setLoopHandler(() => this.applyPending());
   }
 
   /**
@@ -378,38 +409,29 @@ export class ProgressionPlayerService implements OnDestroy {
    * that has not finished starting counts as something playing, which is what
    * `generation` is for.
    *
-   * ## The schedule is a snapshot, and nothing re-schedules mid-play
+   * ## The schedule this builds is a snapshot; `update` is how it moves on
    *
-   * **A known limitation, characterised by spec rather than fixed.**
    * `buildSchedule` runs once, here, and the two parts it fills carry that
-   * document's notes and cues until the next `play` or `stop`. An edit made
-   * while the transport runs changes what is on screen and not what is
-   * sounding, and this page invites exactly that edit: `ProgressionComponent`
-   * takes its key from the app-wide circle of fifths and its `adopt` calls
-   * turning that circle mid-playback "a normal thing to do", because there is
-   * no key picker on the page itself.
+   * document's notes and cues until something replaces them. M1 had nothing
+   * that could, and the three views came apart as a result: turn the circle of
+   * fifths mid-playback - which `ProgressionComponent.adopt` calls "a normal
+   * thing to do", because there is no key picker on the page itself - and the
+   * audio stayed in the old key while the strip re-labelled itself and the
+   * fretboard lit the new key's chord.
    *
-   * So the three views come apart. Turn the circle while a progression plays
-   * and the audio stays in the old key - it is running this schedule - while
-   * the strip cards re-label themselves from the document and the fretboard
-   * lights the new key's chord, because `ProgressionComponent.chordFor` reads
-   * current state rather than the schedule. Appending a chord is the same story
-   * counted rather than spelled: see `describePosition` in the transport, which
-   * says so from the other end.
+   * `update` closes that, at the loop boundary rather than immediately, and
+   * without inverting this service's dependency: a document is pushed in, and
+   * this class still has never heard of `ProgressionService`. The two
+   * alternatives that were rejected are worth keeping written down, because
+   * both are the obvious thing to reach for. Restarting the transport throws the
+   * user back to the top of the progression for a change they made to bar four.
+   * Diffing a new schedule against a running one and swapping parts under it is
+   * real design work about what happens to a chord already sounding - and the
+   * answer the design doc gave is that nothing should happen to it, because
+   * swapping notes out from under a sounding chord clicks.
    *
-   * Left as it is for M1, on two grounds. Re-scheduling means either restarting
-   * the transport - which throws the user back to the top of the progression
-   * for a change they made to bar four - or diffing a new schedule against a
-   * running one and swapping the parts under it, which is real design work
-   * about what happens to a chord already sounding. And it would have to invert
-   * this service's dependency: `play` takes a `ProgressionDoc` and this class
-   * has never heard of `ProgressionService`, which is what lets `buildSchedule`
-   * be pure arithmetic tested against numbers.
-   *
-   * **M2 is where that stops being a good trade.** A piano roll invites editing
-   * during playback in a way a palette of seven buttons does not, and it also
-   * brings the playhead that makes the disagreement visible frame by frame
-   * rather than once a bar.
+   * A one-shot play is therefore still a snapshot from end to end: there is no
+   * boundary to apply anything at, and a play that ran out is over.
    */
   async play(doc: ProgressionDoc): Promise<void> {
     this.stop();
@@ -436,28 +458,48 @@ export class ProgressionPlayerService implements OnDestroy {
     // other pair sounding with nothing left holding a reference to dispose it.
     if (generation !== this.generation) return;
 
-    const transport = this.audio.transport();
-    // Tempo first, and not for tidiness: Tone resolves an event's time and the
-    // loop end into ticks against the BPM in force at that moment, so a
-    // `setTempo` after either would place the whole progression by the ratio of
-    // the two tempi.
-    transport.setTempo(doc.tempo);
-    transport.setLoop(this.looping, schedule.lengthSeconds);
-    this.lengthSeconds = schedule.lengthSeconds;
-
-    this.scheduled = [
-      this.audio.createPart<ScheduledNote>((time, note) => {
-        // `time` comes from the transport rather than from the event: Tone
-        // hands the callback the exact audio-context time the event is due,
-        // which is what makes the attack sample-accurate.
-        this.synth.triggerAttackRelease(note.frequency, note.duration, time, note.gain);
-      }, schedule.notes),
-      this.audio.createPart<SlotCue>((_time, cue) => this.onCue(cue.slotId), schedule.cues)
-    ];
-    for (const part of this.scheduled) part.start(0);
+    this.load(doc, schedule);
 
     this.running = true;
-    transport.start();
+    this.audio.transport().start();
+  }
+
+  /**
+   * Hands over a newer document, to take effect when the loop next turns over.
+   *
+   * The design doc's ruling: **edits during playback are collected and applied
+   * at the loop boundary.** A roll invites nudging a note while four bars
+   * repeat, and swapping notes out from under a sounding chord clicks and cuts
+   * notes in half - which is why live-looping tools quantise changes to a
+   * boundary. The wait is at most one cycle, and one cycle is the rhythm the
+   * user is already listening in.
+   *
+   * ## The dependency still points one way
+   *
+   * A document is *pushed* here; nothing is pulled. This class has still never
+   * heard of `ProgressionService`, which is what keeps `buildSchedule` pure
+   * arithmetic checkable against numbers rather than against a mock. See
+   * `ProgressionComponent` for who pushes and why it is the page rather than
+   * the transport.
+   *
+   * ## It collects whatever the state of play
+   *
+   * No guard on `running`, deliberately, and the missing guard is load-bearing
+   * for one window: `play` waits on the audio context before it marks the
+   * service as busy, and on a first play that wait is the browser's own - long
+   * enough for an edit to land inside it. A hand-over refused there would be an
+   * edit silently lost until the user made another. So collecting is
+   * unconditional and *clearing* is what is careful: `stop` drops a pending
+   * document, and `play` calls `stop`, so a hand-over made while nothing was
+   * playing cannot survive into the next play's schedule.
+   *
+   * A hand-over of the document already playing is not refused here either. It
+   * is a normal emission - `ProgressionStore` republishes the same document
+   * when only the selected slot moves - and the boundary is the place that
+   * knows whether anything changed. See `applyPending`.
+   */
+  update(doc: ProgressionDoc): void {
+    this.pending = doc;
   }
 
   /**
@@ -476,6 +518,16 @@ export class ProgressionPlayerService implements OnDestroy {
    */
   stop(): void {
     this.generation++;
+    // `pending` is dropped alongside the generation bump, and above the guard
+    // for the same reason the bump is: a play still waiting on the audio
+    // context has written none of the state the guard reads, and a hand-over
+    // made during that wait is exactly the thing that would otherwise be
+    // swapped in under the *next* play's schedule, one loop after the user
+    // thought they had stopped. `playing` goes with it because this is where
+    // the schedule it names is let go - `releaseSchedule` below - so leaving it
+    // set would be a field claiming a schedule that no longer exists.
+    this.playing = null;
+    this.pending = null;
 
     if (!this.running && this.scheduled.length === 0) return;
 
@@ -514,6 +566,12 @@ export class ProgressionPlayerService implements OnDestroy {
 
   ngOnDestroy(): void {
     this.stop();
+    // The transport is global and outlives this service, so a listener left on
+    // it would be a closure over a disposed chain, woken by whatever plays
+    // next. `stop` above has already emptied `pending`, so the handler would
+    // find nothing to do - but "would find nothing to do" is not a reason to
+    // leave a dead object subscribed to a live one.
+    this.audio.transport().setLoopHandler(null);
     // Disposed without disconnecting first, where `KeyboardComponent` does
     // both. Not an oversight and not a disagreement: `ToneAudioNode.dispose`
     // disconnects the node's own input and output on the way out, so the extra
@@ -572,6 +630,111 @@ export class ProgressionPlayerService implements OnDestroy {
     }
     if (this.looping) return;
     this.halt();
+  }
+
+  /**
+   * The loop has turned over: swap in whatever was handed over during the pass.
+   *
+   * ## Why this runs at the rewind rather than at an event near it
+   *
+   * M1's Critical bug was a cue filed at exactly `lengthSeconds` firing instead
+   * of the loop rewinding - `onCue` has the arithmetic, and the short version is
+   * that Tone floors an event's ticks and does not floor `loopEnd`, so for
+   * roughly one tempo in twelve the event sits one tick below the loop end and
+   * the rewind test fails at that tick. A rebuild hung off such an event would
+   * inherit that coin toss.
+   *
+   * This is not hung off an event. `ToneTransport.setLoopHandler` binds Tone's
+   * own `loop` emission, which comes from inside the rewind in `_processTick`:
+   * it happens if and only if the transport turned over, once, with no tick
+   * arithmetic between the two. There is no boundary left for floating point to
+   * land on the wrong side of. The seam's docstring has the citations.
+   *
+   * The same emission is also what makes the swap *complete* rather than merely
+   * timely, in both directions:
+   *
+   *  - **Nothing of the finished pass is cut short.** Every event of that pass
+   *    has already been invoked by the time the rewind runs, so the last chord
+   *    is left ringing into its release exactly as it is at any other turnover.
+   *    Nothing here touches the synth - a `releaseAll` would be the click the
+   *    boundary exists to avoid.
+   *  - **Nothing of the starting pass is missed.** Tone emits `loop` *before*
+   *    it collects the timeline events for the new position, and
+   *    `Timeline.forEachAtTime` iterates a copy taken at that moment - so parts
+   *    started here are reached by the pass beginning now. A note added at beat
+   *    one, behind the playhead by the time the user let go of it, sounds on the
+   *    very next pass rather than the one after. Doing this from a cue callback
+   *    instead would land after the copy was taken and lose exactly that note.
+   *
+   * ## Identity, not equality
+   *
+   * A hand-over of the document already loaded is dropped rather than rebuilt
+   * from. The store clones on every commit, so `===` is a sound test for "did
+   * anything change", and the case it catches is common: selecting a chord card
+   * republishes the state with the same document, and a rebuild a cycle for as
+   * long as the user keeps clicking would be work nobody asked for.
+   */
+  private applyPending(): void {
+    const doc = this.pending;
+    this.pending = null;
+    if (doc === null || doc === this.playing) return;
+
+    const schedule = buildSchedule(doc);
+    // The same three cases `play` refuses, arriving by the one other door.
+    // Reachable by hand: delete every chord while the loop runs, and there is
+    // nothing left to turn over into. Looping the schedule the user has just
+    // emptied is the wrong answer; so is a click, which is why the synth is
+    // left to ring out here as it is on every other turnover.
+    if (!(schedule.lengthSeconds > 0 && Number.isFinite(schedule.lengthSeconds))) {
+      // `playing` is left naming the schedule it names, because `halt` leaves
+      // that schedule alive - the parts outlive it by design, and `stop` is
+      // where both are let go together.
+      this.halt();
+      return;
+    }
+
+    this.load(doc, schedule);
+  }
+
+  /**
+   * Puts a schedule on the transport, replacing whatever was there.
+   *
+   * Shared by `play` and the boundary swap, which is the point: the two have to
+   * agree about tempo-before-everything and about starting both parts at zero,
+   * and a second copy of that ordering is a second place for it to rot. What is
+   * *not* here is `transport.start()` - a swap happens on a transport that is
+   * already running, and starting one that is running is not a thing to do
+   * twice.
+   *
+   * Disposing the outgoing parts from here is safe in both callers and worth
+   * saying why, because `halt` deliberately does not: `halt` runs from inside a
+   * part's own callback, where disposing its sibling would be pulling the rug
+   * from under a running iteration. This runs from `play`, or from the rewind -
+   * neither of which is inside a part callback.
+   */
+  private load(doc: ProgressionDoc, schedule: PlaybackSchedule): void {
+    const transport = this.audio.transport();
+    // Tempo first, and not for tidiness: Tone resolves an event's time and the
+    // loop end into ticks against the BPM in force at that moment, so a
+    // `setTempo` after either would place the whole progression by the ratio of
+    // the two tempi.
+    transport.setTempo(doc.tempo);
+    transport.setLoop(this.looping, schedule.lengthSeconds);
+    this.lengthSeconds = schedule.lengthSeconds;
+
+    this.releaseSchedule();
+    this.scheduled = [
+      this.audio.createPart<ScheduledNote>((time, note) => {
+        // `time` comes from the transport rather than from the event: Tone
+        // hands the callback the exact audio-context time the event is due,
+        // which is what makes the attack sample-accurate.
+        this.synth.triggerAttackRelease(note.frequency, note.duration, time, note.gain);
+      }, schedule.notes),
+      this.audio.createPart<SlotCue>((_time, cue) => this.onCue(cue.slotId), schedule.cues)
+    ];
+    for (const part of this.scheduled) part.start(0);
+
+    this.playing = doc;
   }
 
   /**

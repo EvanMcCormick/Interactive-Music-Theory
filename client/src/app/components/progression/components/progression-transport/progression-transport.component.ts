@@ -275,21 +275,27 @@ export class ProgressionTransportComponent implements OnInit, OnDestroy {
  * mid-play and the schedule, built from the document as it was, carries on
  * naming it - so there is a third answer between "stopped" and a position.
  *
- * ## The total is the document's and the position is the schedule's
+ * ## The total is the document's, and so is what will sound
  *
- * **A known limitation, characterised by spec rather than fixed.** Both numbers
- * are read from `state.doc`, which is the document as it is now, while the cue
- * they describe comes from a schedule built when play began. The removal above
- * is the half that was handled; a slot *added* mid-play is the half that was
- * not. Append two chords to a four-chord progression while it runs and this
- * reads "Chord 2 of 6" over a transport that will stop after the fourth.
+ * Both numbers are read from `state.doc`, which is the document as it is now,
+ * while the cue they describe comes from the schedule the player is running.
+ * M1 shipped that as a characterised bug: nothing re-scheduled under a running
+ * transport, so appending two chords to a four-chord progression read "Chord 2
+ * of 6" over a transport that would stop after the fourth.
  *
- * Counting the schedule instead would only move the lie: the strip beside this
- * readout draws six cards, so "of 4" would disagree with what the user can see.
- * The disagreement is not here. It is that `ProgressionPlayerService.play`
- * snapshots the document and nothing re-schedules under a running transport,
- * which is written up there along with the argument for leaving it until M2's
- * piano roll makes mid-play editing the normal case.
+ * Nothing here changed to fix it, and that was the right end to leave alone -
+ * counting the schedule instead would only have moved the lie, because the
+ * strip beside this readout draws six cards and "of 4" would disagree with what
+ * the user can see. What changed is underneath: `ProgressionComponent` hands
+ * every edit to the player, and `ProgressionPlayerService.update` swaps it in
+ * when the loop turns over. The total this counts is a total the transport
+ * reaches.
+ *
+ * It can still lead by one pass, and that is the design doc's decision rather
+ * than a residue of the old bug: an edit takes effect at the boundary, so for
+ * the remainder of the pass it was made in, this names a chord that is coming
+ * rather than one that has arrived. A one-shot play has no boundary, and there
+ * the readout leads until the play ends.
  */
 function describePosition(state: ProgressionState, slotId: string | null): string {
   if (slotId === null) return STOPPED;

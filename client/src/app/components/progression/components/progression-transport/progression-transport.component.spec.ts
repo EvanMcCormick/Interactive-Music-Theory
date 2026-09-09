@@ -221,9 +221,14 @@ describe('ProgressionTransportComponent', () => {
     });
 
     /**
-     * A cue for a slot the document no longer has. Reachable by removing the
-     * sounding chord mid-play: the schedule was built from the document as it
-     * was, and nothing rebuilds it under a running transport in M1.
+     * A cue for a slot the document no longer has - the removal case, which was
+     * always handled and still has to be.
+     *
+     * The schedule catches up with the document at the loop boundary now, so a
+     * chord removed mid-play does stop sounding: on the next pass. Until that
+     * turnover the cue is still coming from a schedule that has it, and a
+     * one-shot play never turns over at all - so the third answer between
+     * "stopped" and a position stays reachable and stays needed.
      */
     it('says something is playing even when it cannot count the chord', () => {
       build(0);
@@ -236,24 +241,38 @@ describe('ProgressionTransportComponent', () => {
     });
 
     /**
-     * **A known limitation, characterised rather than fixed.** The total comes
-     * from the document and the position from a schedule built when play
-     * began, so a chord appended mid-play is counted by a transport that will
-     * never reach it. `describePosition` argues for leaving it - counting the
-     * schedule instead would disagree with the strip, which draws six cards -
-     * and `ProgressionPlayerService.play` holds the underlying reason.
+     * The readout counts the document, and the document is what the player is
+     * on its way to playing.
+     *
+     * M1 shipped this as a characterised bug: the total came from the document
+     * and the position from a schedule built when play began, so two chords
+     * appended mid-play read "Chord 2 of 6" over a transport that would stop
+     * after the fourth. Nothing here changed to fix it - counting the schedule
+     * instead would only have moved the lie, since the strip beside this
+     * readout draws six cards either way. What changed is underneath:
+     * `ProgressionComponent` hands each edit to the player and
+     * `ProgressionPlayerService` swaps it in at the loop boundary, so the six
+     * this counts are six chords that sound. See "edits at the loop boundary"
+     * in the player's spec for the schedule end of it - a fake player cannot
+     * show a turnover, and pretending otherwise here would be a component spec
+     * asserting a service's behaviour.
      */
-    it('counts chords the running schedule will never reach', () => {
+    it('counts every chord in the document, appended mid-play or not', () => {
       const ids = build(0, 3, 4, 5);
       player.cue(ids[1]);
       settle();
       expect(component.positionText).toBe('Chord 2 of 4');
 
-      // Two more chords while the transport runs. The schedule still ends
-      // after the fourth.
-      build(1, 2);
+      const appended = build(1, 2);
 
       expect(component.positionText).toBe('Chord 2 of 6');
+
+      // And the appended chords are countable positions rather than only a
+      // larger total: the fifth is where the fifth card is.
+      player.cue(appended[4]);
+      settle();
+
+      expect(component.positionText).toBe('Chord 5 of 6');
     });
 
     it('stops listening to the player once it is destroyed', () => {

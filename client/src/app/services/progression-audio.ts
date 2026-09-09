@@ -110,6 +110,36 @@ export interface ToneTransport {
   setTempo(bpm: number): void;
   /** Loops from the start of the progression to `endSeconds` while `on`. */
   setLoop(on: boolean, endSeconds: number): void;
+  /**
+   * Calls `handler` each time the loop turns over. `null` stops listening.
+   *
+   * **The one thing on this side of the seam that is not a constructor, and the
+   * reason it is here rather than being replaced by a scheduled event.** Tone
+   * rewinds the transport inside `_processTick`, and it emits `loop` from
+   * inside that rewind - after the position has been reset and *before* the
+   * timeline events for the new position are collected. Two properties follow,
+   * and the whole of `ProgressionPlayerService.update` rests on them:
+   *
+   *  - **It cannot land on the wrong side of the boundary.** An event filed at
+   *    `lengthSeconds` can, and `onCue` documents at length how: Tone floors an
+   *    event's ticks and does not floor `loopEnd`, so for 62 of the 726
+   *    tempo-and-length pairs in 60-180 BPM the event sits one tick below the
+   *    loop end and fires instead of the rewind happening. This is not a
+   *    scheduled event. It *is* the rewind, so there is no rounding to be on
+   *    the wrong side of.
+   *  - **A schedule swapped in from the handler is reached by the pass that is
+   *    starting.** `Timeline.forEachAtTime` iterates a `slice` of the timeline
+   *    taken when it runs, so events added before it runs are invoked and
+   *    events added during it are not. The handler runs before it; a cue
+   *    callback runs during it. That is the difference between a note at beat
+   *    one sounding on the next pass and being silently skipped for a whole
+   *    cycle.
+   *
+   * The listener is held here rather than by the caller because `transport()`
+   * hands out a fresh wrapper each call and `Emitter.off` matches on function
+   * identity, so only this side can take off what it put on.
+   */
+  setLoopHandler(handler: (() => void) | null): void;
   start(): void;
   /** Stops, and rewinds to the top: Tone's `stop` resets the position. */
   stop(): void;
@@ -141,6 +171,17 @@ const PROGRESSION_VOLUME_DB = -10;
 
 /** The real thing: Tone, and nothing but the constructors. */
 export function createToneApi(): ToneApi {
+  /**
+   * The listener currently on the transport's `loop` event, or null.
+   *
+   * Kept in this closure rather than in the wrapper `transport()` returns,
+   * because that wrapper is built fresh on every call and `Emitter.off` removes
+   * by function identity: a wrapper that held its own reference could never
+   * take off a listener a previous wrapper had put on. One `ToneApi` is one
+   * page's worth of audio, so one listener is the right number.
+   */
+  let loopListener: (() => void) | null = null;
+
   return {
     async resume(): Promise<void> {
       // Asking a running context to start again is harmless, but asking is
@@ -158,6 +199,11 @@ export function createToneApi(): ToneApi {
           transport.loopStart = 0;
           transport.loopEnd = endSeconds;
           transport.loop = on;
+        },
+        setLoopHandler: (handler: (() => void) | null): void => {
+          if (loopListener) transport.off('loop', loopListener);
+          loopListener = handler;
+          if (handler) transport.on('loop', handler);
         },
         start: (): void => {
           transport.start();

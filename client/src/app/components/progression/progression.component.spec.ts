@@ -42,6 +42,9 @@ class FakePlayer {
 
   readonly played: ProgressionDoc[] = [];
 
+  /** The documents handed over for the loop boundary, in order. */
+  readonly updated: ProgressionDoc[] = [];
+
   stops = 0;
 
   isLooping = false;
@@ -49,6 +52,10 @@ class FakePlayer {
   play(doc: ProgressionDoc): Promise<void> {
     this.played.push(doc);
     return Promise.resolve();
+  }
+
+  update(doc: ProgressionDoc): void {
+    this.updated.push(doc);
   }
 
   /**
@@ -753,6 +760,58 @@ describe('ProgressionComponent', () => {
         categoryId: 'diatonicModes',
         itemId: 'aeolian'
       });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Keeping the player fed
+  // -------------------------------------------------------------------------
+
+  /**
+   * The page carries every edit to the player, which applies it at the loop
+   * boundary. The direction runs this way round on purpose: the player has
+   * never heard of `ProgressionService`, which is what keeps `buildSchedule`
+   * pure arithmetic testable against numbers.
+   *
+   * It is the page rather than the transport that pushes, and the reason is in
+   * the transport's own docstring - it does not stop playback when it is
+   * destroyed, because a control being torn down is not a stop. A transport
+   * that fed the player would stop feeding it at that moment and leave a loop
+   * running on a schedule nothing could ever correct. The page cannot be in
+   * that position: it stops the player as it goes.
+   */
+  describe('the documents it hands the player', () => {
+    it('hands over every edit', () => {
+      progression.appendSlot(0);
+
+      expect(player.updated[player.updated.length - 1]).toBe(progression.doc);
+    });
+
+    it('hands over a key change made from the circle mid-playback', () => {
+      progression.appendSlot(0);
+      player.publish(slotId(0));
+
+      musicTheory.selectKeyAndMode('Eb', 'diatonicModes', 'ionian');
+
+      expect(player.updated[player.updated.length - 1]).toBe(progression.doc);
+      expect(progression.doc.key.tonic).toBe(3);
+    });
+
+    it('hands over the state it opens on, before anything is edited', () => {
+      // The subscription is a `BehaviorSubject`, so the player is holding the
+      // current document before the first press of play rather than only after
+      // the first edit.
+      expect(player.updated.length).toBeGreaterThan(0);
+      expect(player.updated[player.updated.length - 1]).toBe(progression.doc);
+    });
+
+    it('stops handing over once the page is gone', () => {
+      fixture.destroy();
+      const handed = player.updated.length;
+
+      progression.appendSlot(0);
+
+      expect(player.updated.length).toBe(handed);
     });
   });
 

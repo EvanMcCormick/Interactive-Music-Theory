@@ -32,7 +32,7 @@ interface AppSelection {
 /**
  * The progression composer: palette, strip and transport over one key.
  *
- * ## It composes, and owns three things nothing else can
+ * ## It composes, and owns five things nothing else can
  *
  * The four components below wire themselves to `ProgressionService`, so this
  * shell passes them nothing - no inputs, no outputs, no state. The roll is the
@@ -53,6 +53,16 @@ interface AppSelection {
  *     page, which means a document-level listener, which belongs to whatever
  *     owns the page. See `onKeydown`.
  *  4. **Leaving stops playback.** See `ngOnDestroy`.
+ *  5. **Edits reach the player.** `ProgressionPlayerService.play` takes a
+ *     document and never looks at the service that holds it - that one-way
+ *     dependency is what keeps `buildSchedule` pure arithmetic - so something
+ *     has to carry each new document across for the player to swap in at the
+ *     loop boundary. The transport was the other candidate and is the wrong
+ *     one: it says out loud that it does not stop playback when it is
+ *     destroyed, because a control being torn down is not a stop, and a
+ *     transport that fed the player would stop feeding it at that moment and
+ *     leave a loop running on a schedule nothing could correct. This shell
+ *     cannot be in that position - it stops the player as it goes.
  *
  * ## The two directions do not form a loop
  *
@@ -166,6 +176,13 @@ export class ProgressionComponent implements OnInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
         this.latest = state;
+        // Handed over on every emission, unconditionally. The player decides
+        // what to do with it - collect it for the loop boundary, or drop it
+        // because it is the document already playing - and that is the right
+        // place for the decision: it is the only thing that knows whether a
+        // transport is running and what schedule is on it. See item 5 of the
+        // class docstring for why the push comes from here.
+        this.player.update(state.doc);
         this.render(state);
         this.changes.markForCheck();
       });
