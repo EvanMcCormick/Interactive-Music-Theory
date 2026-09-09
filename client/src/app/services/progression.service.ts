@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { BehaviorSubject, Observable } from 'rxjs';
+import { Observable } from 'rxjs';
 import {
   CHORD_EXTENTS,
   createOwnership,
@@ -27,21 +27,21 @@ import {
   reclaimPitches,
   regenerateSlot,
   replaceNote,
-  requireUniqueSlotIds,
   retimeNotes,
   sameDegree,
   sameNotes,
-  sameOwnership,
-  settle
+  sameOwnership
 } from './progression-edit';
 import { ChordExtent, NamedQuality, isHeptatonic } from './progression-harmony';
+import { CommitRun, HistoryDepth, ProgressionStore } from './progression-history';
 import { Scale } from '../models/music-theory.model';
 import { keySignatureKind } from './circle-of-fifths.data';
 import { MusicTheoryService } from './music-theory.service';
 
 /**
  * How a pointer-driven edit should be recorded. See `setSlotLength`, which was
- * the first of them, and `CommitRun` below for what a run is.
+ * the first of them, and `CommitRun` in `progression-history.ts` for what a run
+ * is.
  *
  * Shared by every setter a drag drives - the strip's resize and all three of
  * the roll's - because they all have the same problem: the card, or the note,
@@ -87,42 +87,36 @@ export interface ChordChoice {
 }
 
 /**
- * A stretch of commits that undo as one step.
+ * The harmony of a progression: what a chord means in a key, and what the app
+ * will refuse to make of one.
  *
- * `key` names the run - `length:<slotId>` - and `continues` says whether this
- * commit joins the run of that name or starts it. Only the caller knows which,
- * because the service cannot see where one drag ends and the next begins. See
- * `ProgressionService.commit`.
- */
-interface CommitRun {
-  key: string;
-  continues: boolean;
-}
-
-/**
- * Owns the progression document, the strip's selection, and undo/redo.
+ * ## It no longer holds the document; it owns something that does
  *
- * Built to the shape of `ComposerService`, for the reason that service gives:
+ * `ProgressionStore` is the document, the strip's selection and undo/redo, and
+ * this service constructs one and keeps it to itself. The public API is
+ * unchanged - `getState`, `doc`, `undo`, `redo`, `replaceDocument` and
+ * `selectSlot` are one-line delegations - because the split is between two
+ * kinds of knowledge rather than between two APIs.
+ *
+ * What went is a mechanism whose every rule is enforced by a guard beside it:
+ * settle-then-push-then-publish, run coalescing, eviction at `MAX_HISTORY`, and
+ * the redo branch dropping when a new step makes it unreachable. What stayed is
+ * everything that knows what a chord is - `canBuildChords`, `regenerate`,
+ * `editDegree`, `reclaimPitches`, and every refusal argued below.
+ *
+ * The seam is `derive`. `ProgressionState` carries `canBuildChords` and
+ * `keyScale`, which are `findScale` and `isHeptatonic` - harmony, and the one
+ * thing the store must not learn. So the store is handed this service's own
+ * `derive` at construction and calls it, contributing only the `HistoryDepth`
+ * it alone knows. An `inject()` in that file instead would compile and pass,
+ * and would put the resolution of a scale id inside the undo stack.
+ *
+ * The shape is still `ComposerService`'s, for the reason that service gives:
  * every mutation goes through one `commit()`, which snapshots the previous
  * document onto an undo stack with `structuredClone`. `ProgressionDoc` is an
  * acyclic plain object, so a snapshot is one call and a whole document is the
- * unit of undo.
- *
- * Every commit then passes through `settle()`, which does two things no setter
- * is trusted to do for itself:
- *
- *  1. **It normalises.** `normalizeProgressionDoc` checks and bounds every
- *     number that can reach the audio layer. Its own docstring names this call
- *     site: putting it here turns "each setter should bound its argument" from
- *     a convention that eleven setters have to remember into a mechanism with
- *     one place to check - and `setKey` and `setTempo`, which have no slot to
- *     normalise, are exactly the two that would have forgotten.
- *  2. **It re-flows.** INVARIANT: slots are contiguous - `slots[i].startBeat`
- *     equals the sum of every earlier `lengthBeats`. Append, remove, move and
- *     resize all disturb it, and a fifth mutation that disturbed it would be
- *     added by someone who had never read this comment. Re-flowing on the way
- *     out means no mutation can leave the timeline with a hole in it, because
- *     no mutation gets to choose.
+ * unit of undo. `ProgressionStore` is where that now lives, along with what
+ * `settle()` does on the way out of every commit.
  *
  * ## What the service refuses
  *
@@ -147,37 +141,43 @@ interface CommitRun {
  *
  * A value the normalisation refuses - a non-finite tempo, a fractional tonic -
  * throws out of the commit and publishes nothing, and that promise covers the
- * *history* as well as the document. See `commit()`, where the order of three
- * lines is the whole of it.
+ * *history* as well as the document. See `ProgressionStore.commit`, where the
+ * order of three lines is the whole of it.
  */
 @Injectable({ providedIn: 'root' })
 export class ProgressionService {
-  private static readonly MAX_HISTORY = 100;
-
   private readonly musicTheory = inject(MusicTheoryService);
 
-  private readonly stateSubject: BehaviorSubject<ProgressionState>;
-  private undoStack: ProgressionDoc[] = [];
-  private redoStack: ProgressionDoc[] = [];
+  /**
+   * The document, the selection and the history.
+   *
+   * Constructed rather than injected, and private rather than exposed: "every
+   * mutation goes through one commit" is a promise that holds only while there
+   * is one door, and this service is that door.
+   */
+  private readonly store: ProgressionStore;
 
   /**
-   * The run of commits the last one belonged to, or null when it belonged to
-   * none. See `commit()`, and `CommitRun` for what a run is.
+   * Built in the constructor body rather than as a field initializer, because
+   * the callback it hands over reads `musicTheory` - which is filled by the
+   * field initializer above, and so is in place by the time this line runs. The
+   * arrow keeps `this` this service's, which is the whole of what the store
+   * borrows from it.
    */
-  private currentRun: string | null = null;
-
   constructor() {
-    this.stateSubject = new BehaviorSubject<ProgressionState>(
-      this.derive(createDefaultProgression(), null, false)
+    this.store = new ProgressionStore(
+      createDefaultProgression(),
+      (doc, selectedSlotId, isDirty, history) =>
+        this.derive(doc, selectedSlotId, isDirty, history)
     );
   }
 
   getState(): Observable<ProgressionState> {
-    return this.stateSubject.asObservable();
+    return this.store.getState();
   }
 
   get doc(): ProgressionDoc {
-    return this.stateSubject.getValue().doc;
+    return this.store.doc;
   }
 
   // -------------------------------------------------------------------------
@@ -254,7 +254,7 @@ export class ProgressionService {
   private append(fresh: ChordSlot, key: ProgressionKey): void {
     const slot = this.regenerate(fresh, key);
 
-    this.commit(draft => {
+    this.store.commit(draft => {
       draft.slots.push(slot);
     }, slot.id);
   }
@@ -262,7 +262,7 @@ export class ProgressionService {
   /** Drops a slot. The re-flow in `commit()` closes the gap it leaves. */
   removeSlot(id: string): void {
     if (!this.doc.slots.some(slot => slot.id === id)) return;
-    this.commit(draft => {
+    this.store.commit(draft => {
       draft.slots = draft.slots.filter(slot => slot.id !== id);
     });
   }
@@ -285,7 +285,7 @@ export class ProgressionService {
     const to = Math.max(0, Math.min(slots.length - 1, Math.trunc(toIndex)));
     if (to === from) return;
 
-    this.commit(draft => {
+    this.store.commit(draft => {
       const [moved] = draft.slots.splice(from, 1);
       draft.slots.splice(to, 0, moved);
     });
@@ -772,7 +772,7 @@ export class ProgressionService {
     build: (key: ProgressionKey) => ChordSlot,
     run?: CommitRun
   ): void {
-    this.commit(
+    this.store.commit(
       draft => {
         const index = draft.slots.findIndex(slot => slot.id === id);
         if (index < 0) return;
@@ -785,8 +785,7 @@ export class ProgressionService {
 
   /** Which slot the strip has selected. Not a document change, so not undoable. */
   selectSlot(id: string | null): void {
-    const state = this.stateSubject.getValue();
-    this.publish(state.doc, id, state.isDirty);
+    this.store.selectSlot(id);
   }
 
   // -------------------------------------------------------------------------
@@ -850,7 +849,7 @@ export class ProgressionService {
   setKey(tonic: number, scaleId: string, preferSharps?: boolean): void {
     const scale = this.findScale(scaleId);
 
-    this.commit(draft => {
+    this.store.commit(draft => {
       // Bounded here rather than left to `settle()`, which does not run until
       // this callback is over - and the slots are generated from this key
       // inside it. Generating from the raw tonic while storing the wrapped one
@@ -887,7 +886,7 @@ export class ProgressionService {
 
   /** BPM. Clamped to the playable range by the normalisation in `commit()`. */
   setTempo(bpm: number): void {
-    this.commit(draft => {
+    this.store.commit(draft => {
       draft.tempo = bpm;
     });
   }
@@ -895,164 +894,32 @@ export class ProgressionService {
   // -------------------------------------------------------------------------
   // History
   // -------------------------------------------------------------------------
+  //
+  // All of it is `ProgressionStore`'s. These three are the public API kept
+  // where it always was: a component asks the service, and the service is
+  // still the only door. See that class for why the mechanism is one file and
+  // the harmony another.
 
-  /**
-   * Applies a mutation to a cloned document and pushes the old one onto undo.
-   *
-   * The clone is what makes a mutation atomic: `mutate` writes to a copy, so a
-   * throw out of it leaves the published document untouched rather than
-   * half-edited.
-   *
-   * The order of the last three lines is the rest of that promise. Settling can
-   * throw as readily as the mutation can - `setTempo(NaN)` never reaches
-   * `mutate` at all, it fails in the normalisation afterwards - and the history
-   * is state too. Settled first, then pushed, then published: a throw at any
-   * point leaves both stacks and all three flags exactly as they were.
-   *
-   * ## One drag, one step
-   *
-   * A `run` is a stretch of commits that undo together. A commit that continues
-   * the run already under way pushes nothing, so the entry the run's first
-   * commit left on the stack - the document from before the run began - stays
-   * where one undo will land. That is what a resize drag needs: it commits on
-   * every whole beat it crosses, because the card has to be the length it is
-   * being dragged to, and without this a drag across three beats cost three
-   * undo steps and a pointer jittering on a beat boundary cost as many as it
-   * liked. `MAX_HISTORY` is 100, so a few seconds of that used to evict every
-   * step the user had taken before the drag.
-   *
-   * It is deliberately not a transaction. There is nothing to open and nothing
-   * to close, so a gesture abandoned mid-drag - the pointer cancelled, the
-   * component destroyed, an exception - leaves no state behind to be closed:
-   * the next commit that does not continue the run simply pushes, as every
-   * commit did before.
-   */
-  private commit(mutate: (draft: ProgressionDoc) => void, select?: string, run?: CommitRun): void {
-    const state = this.stateSubject.getValue();
-    const previous = structuredClone(state.doc);
-    const draft = structuredClone(state.doc);
-
-    mutate(draft);
-    const settled = settle(draft);
-
-    // A continuation is only honoured while the run it names is the one under
-    // way, so a caller that passes `continues` with nothing to continue - or
-    // after an undo has moved the stack under it - opens an entry rather than
-    // folding into whatever happens to be on top.
-    const extendsRun = run !== undefined && run.continues && run.key === this.currentRun;
-    if (!extendsRun) this.pushHistory(previous);
-    this.currentRun = run?.key ?? null;
-
-    this.publish(settled, select ?? state.selectedSlotId, true);
-  }
-
-  /**
-   * Walking the history ends whatever run was under way: the entry a run was
-   * folding into is no longer on top of the stack, so the next commit has to
-   * open one of its own rather than fold into whatever is.
-   *
-   * `redo` needs no such line, and does not have one. It can only run when
-   * `redoStack` is non-empty, which happens only after an `undo` - and no
-   * commit can refill it in between, because the *first* commit of a run always
-   * pushes and so always clears the redo branch. So by the time `redo` runs,
-   * this has already been nulled.
-   */
+  /** One step back through the document history. */
   undo(): void {
-    const state = this.stateSubject.getValue();
-    const previous = this.undoStack.pop();
-    if (!previous) return;
-
-    this.currentRun = null;
-    this.redoStack.push(structuredClone(state.doc));
-    this.publish(previous, state.selectedSlotId, true);
+    this.store.undo();
   }
 
+  /** One step forward, where an undo has left somewhere to go. */
   redo(): void {
-    const state = this.stateSubject.getValue();
-    const next = this.redoStack.pop();
-    if (!next) return;
-
-    this.pushUndo(structuredClone(state.doc));
-    this.publish(next, state.selectedSlotId, true);
+    this.store.redo();
   }
 
   /**
    * Replaces the whole document, e.g. on loading a saved progression.
    *
-   * The only door a document the service did not build comes through, so it is
-   * where the ids are checked - and, like `commit()`, it settles before it
-   * touches the history, so a document that cannot be settled costs the user
-   * neither stack.
-   *
-   * It is also the only door in M1 through which a `literal` slot can arrive,
-   * which is how the characterisation of resizing one is testable at all
-   * before M3 builds the recogniser that makes them for real.
-   *
-   * ## It settles the document; it does not regenerate it
-   *
-   * `settle()` bounds and re-flows. Nothing in it rebuilds a slot's notes from
-   * its degree, so **a document is installed exactly as it was handed over,
-   * disagreements and all**, and the disagreement lives until something else
-   * triggers a regeneration - a key change, a complexity step, an inversion.
-   * A document whose `harmony.degree` says bVII while its `notes` still sound
-   * B-D-F is stored saying one thing and sounding another.
-   *
-   * That used to be self-correcting and invisible. `quality` was a transient
-   * label that every regeneration overwrote, so a stale document was repaired
-   * by whatever the user did next and no state persisted the disagreement. M2
-   * Task 4 made the field **durable user intent**: it is now the override that
-   * survives every regeneration, so a loaded document can hold a card and a
-   * synth that disagree about one chord indefinitely - the failure
-   * `effectiveQuality`'s docstring exists to prevent, arriving by the one road
-   * that does not go through it.
-   *
-   * The consequence for callers is a rule, and it is not only this method's:
-   * **a path that emits harmony must be a path that regenerates.** Task 9's
-   * palette emits `(degree, alter, quality)` for a borrowed chord, and it has
-   * to reach the slot through `editDegree` - or through a new setter that
-   * regenerates - rather than by assembling a document and handing it here. The
-   * spec that installs a bVII works around this with a no-op `setKey` and says
-   * so at the call; that is a test's licence, not an example to follow.
-   *
-   * Regenerating here was considered and is not obviously wrong. It is not done
-   * because this method has no production caller yet and regenerating would
-   * silently rewrite the notes of a document that meant them - which is the
-   * whole of what a `literal` slot is for, and the distinction a loader will
-   * need to make deliberately rather than inherit.
+   * **It settles the document; it does not regenerate it**, which puts a rule
+   * on every caller: a path that emits harmony must be a path that
+   * regenerates. `ProgressionStore.replaceDocument` argues it, and `appendChord`
+   * is what it produced.
    */
   replaceDocument(doc: ProgressionDoc, markClean = false): void {
-    const state = this.stateSubject.getValue();
-    const settled = settle(requireUniqueSlotIds(doc));
-
-    this.currentRun = null;
-    this.pushHistory(structuredClone(state.doc));
-    this.publish(settled, state.selectedSlotId, !markClean);
-  }
-
-  /** Records a step, and drops the redo branch it just made unreachable. */
-  private pushHistory(previous: ProgressionDoc): void {
-    this.pushUndo(previous);
-    this.redoStack = [];
-  }
-
-  /**
-   * Pushes onto the undo stack, capped.
-   *
-   * The cap lives with the push rather than at one of its two call sites. Redo
-   * cannot reach it today - it pops one redo entry for every one it pushes
-   * here, so the pair conserves the total - but a cap only some pushes respect
-   * stops working the moment a third caller arrives, silently.
-   */
-  private pushUndo(doc: ProgressionDoc): void {
-    this.undoStack.push(doc);
-    if (this.undoStack.length > ProgressionService.MAX_HISTORY) {
-      this.undoStack.shift();
-    }
-  }
-
-  /** Publishes a document and everything the page derives from it. */
-  private publish(doc: ProgressionDoc, selectedSlotId: string | null, isDirty: boolean): void {
-    this.stateSubject.next(this.derive(doc, selectedSlotId, isDirty));
+    this.store.replaceDocument(doc, markClean);
   }
 
   /**
@@ -1065,15 +932,26 @@ export class ProgressionService {
    * selected slot clears the selection without `removeSlot` having to remember
    * to.
    *
-   * The constructor builds its first state through here too, rather than
-   * writing the six fields out a second time. A field added to
-   * `ProgressionState` and filled in only one of two places would be right
-   * until the first render and wrong before the first click.
+   * The store's first state comes through here too, rather than having the
+   * seven fields written out a second time. A field added to `ProgressionState`
+   * and filled in only one of two places would be right until the first render
+   * and wrong before the first click.
+   *
+   * ## It is the seam, and this is which way it faces
+   *
+   * The store calls this on every publish, and the arrow it was handed at
+   * construction is the only thing it holds of this service. Two of the fields
+   * below need `findScale` - an id resolved through `MusicTheoryService` - and
+   * `isHeptatonic` over what comes back, which is harmony; the two the store
+   * knows and this method cannot see are the ones it hands over in
+   * `HistoryDepth`. So each side contributes exactly what it is allowed to
+   * know, and neither can compute the other's half.
    */
   private derive(
     doc: ProgressionDoc,
     selectedSlotId: string | null,
-    isDirty: boolean
+    isDirty: boolean,
+    history: HistoryDepth
   ): ProgressionState {
     const keyScale = this.findScale(doc.key.scaleId);
 
@@ -1083,8 +961,8 @@ export class ProgressionService {
       canBuildChords: this.chordScale(keyScale) !== null,
       keyScale,
       isDirty,
-      canUndo: this.undoStack.length > 0,
-      canRedo: this.redoStack.length > 0
+      canUndo: history.canUndo,
+      canRedo: history.canRedo
     };
   }
 
