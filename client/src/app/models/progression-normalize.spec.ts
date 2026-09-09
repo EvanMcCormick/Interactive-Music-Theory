@@ -1,5 +1,4 @@
 import {
-  ChordQuality,
   NamedQuality,
   QUALITY_INTERVALS,
   noteCount
@@ -71,8 +70,9 @@ describe('SlotOwnership', () => {
   // Asserted on the factory rather than through `createDegreeSlot`, which routes
   // via `normalizeChordSlot` and rebuilds `owned` unconditionally - so a shared
   // constant here would be laundered into a fresh record before a slot could
-  // show it. Task 4's merge calls this outside the normaliser, where it cannot
-  // be. structuredClone undo depends on nothing being shared between documents.
+  // show it. The roll's setters, which claim a dimension without rebuilding a
+  // slot, are the first call sites where it cannot be. structuredClone undo
+  // depends on nothing being shared between documents.
   it('builds a fresh record on every call', () => {
     expect(createOwnership()).not.toBe(createOwnership());
   });
@@ -262,16 +262,34 @@ describe('normalizeChordSlot', () => {
       .toThrowError(/quality/i);
   });
 
+  /**
+   * `'other'` is a `ChordQuality` and is not a storable one: the field is the
+   * user's *override*, and `'other'` names no interval set to override with.
+   * `ChordDegree.quality` is `NamedQuality | null` for that reason, and this is
+   * the runtime half of it - `replaceDocument` is a door the type does not
+   * guard.
+   *
+   * It used to be accepted, and had to be: `regenerateSlot` wrote the derived
+   * label into this same field, and Hungarian minor's second degree derives as
+   * `'other'`, so refusing it would have made that chord unopenable. The write
+   * is gone, and with it the only thing that ever produced one - so the
+   * laundering that `generateSlotNotes` did to survive it is gone too, and this
+   * refusal is what keeps that safe.
+   */
+  it('refuses the one quality that names no shape to override with', () => {
+    expect(() => normalizeChordSlot(slotWithDegree({ quality: 'other' })))
+      .toThrowError(/quality/i);
+    // At `alter` 0 as well, where a diatonic chord would have been buildable:
+    // it is refused for what it is, not for the company it keeps.
+    expect(() => normalizeChordSlot(slotWithDegree({ alter: 0, quality: 'other' })))
+      .toThrowError(/other/);
+  });
+
   it('accepts every quality a chord can be named by, and the absence of one', () => {
-    const qualities: ChordQuality[] = [
+    const qualities: NamedQuality[] = [
       'major', 'minor', 'diminished', 'augmented',
       'major7', 'minor7', 'dominant7', 'minorMajor7',
-      'halfDiminished7', 'diminished7', 'augmented7', 'augmentedMajor7',
-      // Not an override, but a label the model stores: `regenerateSlot` writes
-      // the derived quality into this field, and Hungarian minor's second
-      // degree derives as `'other'`. Refusing it here would make that chord
-      // unopenable.
-      'other'
+      'halfDiminished7', 'diminished7', 'augmented7', 'augmentedMajor7'
     ];
 
     for (const quality of qualities) {
@@ -300,29 +318,10 @@ describe('normalizeChordSlot', () => {
       .toThrowError(/quality/i);
   });
 
-  /**
-   * The same refusal for `'other'`, and it says so rather than asking for a
-   * quality that was already supplied.
-   *
-   * `'other'` is storable - it is the label for a stack that is no named chord -
-   * but it names no interval set, so it cannot carry a displaced root any more
-   * than `null` can. The distinction is only visible in the message, which is
-   * the whole point: "needs an explicit quality" is a misdirection when one was
-   * given and could not be used.
-   */
-  it('says which unusable quality a chromatic root was given', () => {
-    expect(() => normalizeChordSlot(slotWithDegree({ alter: -1, quality: 'other' })))
-      .toThrowError(/other/);
-    expect(() => normalizeChordSlot(slotWithDegree({ alter: -1, quality: null })))
-      .not.toThrowError(/other/);
-  });
-
-  /** An unaltered root needs nothing, so both stay legal at `alter` 0. */
+  /** An unaltered root needs no shape of its own, so `null` stays legal there. */
   it('leaves an unaltered degree free to have no quality at all', () => {
     expect(degreeOf(normalizeChordSlot(slotWithDegree({ alter: 0, quality: null }))).quality)
       .toBeNull();
-    expect(degreeOf(normalizeChordSlot(slotWithDegree({ alter: 0, quality: 'other' }))).quality)
-      .toBe('other');
   });
 
   /**
@@ -481,10 +480,10 @@ describe('the octave bound', () => {
    * A null quality is the diatonic chord and only survives at `alter` 0 - the
    * pair is refused above, and `chordPitchClasses` refuses it again - so the
    * two axes are swept together as legal combinations rather than as a product
-   * with an illegal corner. `'other'` is left out for the same reason: it is a
-   * label rather than a shape, and it carries no root either.
+   * with an illegal corner. `'other'` is not swept because it cannot be stored:
+   * it is a label rather than a shape, and the field holds shapes.
    */
-  const SHAPES: readonly { alter: number; quality: ChordQuality | null }[] = [
+  const SHAPES: readonly { alter: number; quality: NamedQuality | null }[] = [
     { alter: 0, quality: null },
     ...(Object.keys(QUALITY_INTERVALS) as NamedQuality[]).flatMap(quality =>
       [ALTER_MIN, -1, 0, 1, ALTER_MAX].map(alter => ({ alter, quality }))

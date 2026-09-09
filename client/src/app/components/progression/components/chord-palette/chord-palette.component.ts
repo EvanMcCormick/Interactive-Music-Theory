@@ -25,7 +25,6 @@ import {
 } from '../../../../services/progression-chord-names';
 import {
   ChordExtent,
-  ChordQuality,
   degreeQuality
 } from '../../../../services/progression-harmony';
 
@@ -218,7 +217,7 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
       // Spelled from `key.preferSharps` and not from `getNoteName`, which
       // answers for the *fretboard's* key. See the note at the top of the file.
       const root = this.musicTheory.spellNote(
-        chordRootPitchClass(key, intervals, paletteDegree(degree, quality)),
+        chordRootPitchClass(key, intervals, paletteDegree(degree)),
         key.preferSharps
       );
 
@@ -276,13 +275,19 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
  * copied from that factory rather than assumed: it is the field M2's borrowed
  * chords move, and the day it moves the palette follows through the shared
  * function instead of standing still.
+ *
+ * `quality: null` is copied from it for the same reason, and it used to be the
+ * *derived* label instead - which was the palette writing a name into a field
+ * that means "override", one call site over from the `regenerateSlot` that did
+ * the same thing everywhere else. `chordRootPitchClass` reads neither, so
+ * nothing moved; what changed is that the two descriptions now match.
  */
-function paletteDegree(degree: number, quality: ChordQuality): ChordDegree {
+function paletteDegree(degree: number): ChordDegree {
   return {
     degree,
     alter: 0,
     extent: PALETTE_EXTENT,
-    quality,
+    quality: null,
     inversion: 0,
     suspension: 'none',
     octave: 0

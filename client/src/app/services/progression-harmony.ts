@@ -38,6 +38,12 @@ export type ChordQuality =
  * set and cannot be an override. Splitting it off keys `QUALITY_INTERVALS`
  * exhaustively on the qualities that *do* name intervals, so a quality added to
  * the union above cannot compile until its intervals are written down.
+ *
+ * It is also what `ChordDegree.quality` is typed as, which makes the refusal a
+ * compile-time impossibility rather than only a runtime one: that field holds
+ * an override, and the value with no shape to override with can no longer be
+ * written into it. It could be, and had to be, while `regenerateSlot` wrote the
+ * derived *label* into the same field.
  */
 export type NamedQuality = Exclude<ChordQuality, 'other'>;
 
@@ -149,31 +155,33 @@ export const QUALITY_INTERVALS: Readonly<Record<NamedQuality, readonly number[]>
 };
 
 /** The table above as a list, typed once so the lookup below need not cast. */
-const NAMED_QUALITIES = Object.entries(QUALITY_INTERVALS) as [
+const QUALITY_TABLE = Object.entries(QUALITY_INTERVALS) as [
   NamedQuality,
   readonly number[]
 ][];
 
 /**
- * The runtime twin of `ChordQuality`, for the guard that has to check a stored
+ * The runtime twin of `NamedQuality`, for the guard that has to check a stored
  * value against the union at a point where the union no longer exists.
  *
  * Derived from `QUALITY_INTERVALS` rather than written out, so it cannot fall
  * behind the type: that table is keyed exhaustively on `NamedQuality`, so a
  * quality added to the union has to appear there before anything compiles, and
- * appearing there puts it here. `'other'` is appended because it is the one
- * member the table cannot hold - it names no intervals - and it is nonetheless
- * a value the model stores, `regenerateSlot` writing it as the label for a
- * stack that is no named chord.
+ * appearing there puts it here.
+ *
+ * It is the *named* qualities and not the whole of `ChordQuality`, because
+ * `'other'` is the one member the table cannot hold and the one member a
+ * `ChordDegree` cannot store: the field is an override, and `'other'` names no
+ * shape to override with. It was storable while `regenerateSlot` wrote the
+ * derived label into that field; nothing writes one now, so the model's type
+ * narrowed to `NamedQuality | null` and this list is what enforces it.
  *
  * `CHORD_EXTENTS` is the same device one field over, and lives beside the guard
  * that reads it rather than beside its union; this one lives beside its union
  * because deriving it needs the table.
  */
-export const CHORD_QUALITIES: readonly ChordQuality[] = [
-  ...(Object.keys(QUALITY_INTERVALS) as NamedQuality[]),
-  'other'
-];
+export const NAMED_QUALITIES: readonly NamedQuality[] =
+  Object.keys(QUALITY_INTERVALS) as NamedQuality[];
 
 /**
  * The name for a stack of notes, from its intervals above its own root.
@@ -198,7 +206,7 @@ export function qualityOfIntervals(notes: readonly number[]): ChordQuality {
   const width = notes.length >= 4 ? 4 : 3;
   const shape = notes.slice(0, width).map(note => note - root);
 
-  for (const [quality, intervals] of NAMED_QUALITIES) {
+  for (const [quality, intervals] of QUALITY_TABLE) {
     if (
       intervals.length === shape.length &&
       intervals.every((interval, i) => interval === shape[i])

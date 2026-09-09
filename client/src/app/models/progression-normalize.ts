@@ -1,8 +1,8 @@
 // Split by kind so the runtime edge is visible: the types come back from the
-// model erased, and only `noteCount` and `CHORD_QUALITIES` survive to runtime.
+// model erased, and only `noteCount` and `NAMED_QUALITIES` survive to runtime.
 // See the layering note below.
-import type { ChordExtent, ChordQuality } from '../services/progression-harmony';
-import { CHORD_QUALITIES, noteCount } from '../services/progression-harmony';
+import type { ChordExtent, NamedQuality } from '../services/progression-harmony';
+import { NAMED_QUALITIES, noteCount } from '../services/progression-harmony';
 import type {
   ChordDegree,
   ChordSlot,
@@ -44,7 +44,7 @@ import type {
  * in the model it would be the one value these guards needed from there, and so
  * the one thing that would make that cycle real.
  *
- * `noteCount` and `CHORD_QUALITIES` are the genuine runtime edges out of this
+ * `noteCount` and `NAMED_QUALITIES` are the genuine runtime edges out of this
  * file, and neither carries an Angular or audio dependency. Both are twins of a
  * type this file has to check at runtime, where the type is gone.
  *
@@ -298,20 +298,28 @@ function requireExtent(extent: ChordExtent): ChordExtent {
  * cannot exist. An arbitrary string reaches `QUALITY_INTERVALS[quality]` as
  * `undefined` and throws a raw `TypeError` off `shape.length` - from the audio
  * path, three layers downstream, naming neither the field nor the document it
- * came from. `ChordQuality` is a union rather than a range, so there is no
+ * came from. `NamedQuality` is a union rather than a range, so there is no
  * nearest legal value to clamp to and the answer is `extent`'s.
  *
  * `null` is legal and is not a missing value: it is what a fresh slot carries
- * and it means "as the key gives it". `'other'` is legal too, and for a less
- * obvious reason - it is a *label* rather than an override, and `regenerateSlot`
- * writes it into this field whenever the derived stack is no named chord.
- * Refusing it would make Hungarian minor's second degree unopenable.
+ * and it means "as the key gives it".
+ *
+ * **`'other'` is refused**, and it is the one member of `ChordQuality` that is.
+ * The field is the user's *override* and `'other'` names no interval set to
+ * override with - `chordPitchClasses` says so outright, and the whole audio
+ * path below agrees. It was accepted while `regenerateSlot` wrote the *derived*
+ * label into this same field, where Hungarian minor's second degree derives as
+ * `'other'` and refusing it would have made that chord unopenable;
+ * `generateSlotNotes` then had to read a stored `'other'` back as no override
+ * to keep the builder from throwing. All three are one arrangement, and M2 Task
+ * 4 removed the write it rested on. This is the guard that lets the laundering
+ * go with it.
  */
-function requireQuality(quality: ChordQuality | null): ChordQuality | null {
+function requireQuality(quality: NamedQuality | null): NamedQuality | null {
   if (quality === null) return null;
-  if (!CHORD_QUALITIES.includes(quality)) {
+  if (!NAMED_QUALITIES.includes(quality)) {
     throw new Error(
-      `ChordDegree quality must be null or one of ${CHORD_QUALITIES.join(', ')}; ` +
+      `ChordDegree quality must be null or one of ${NAMED_QUALITIES.join(', ')}; ` +
         `got ${quality}`
     );
   }
@@ -330,19 +338,19 @@ function requireQuality(quality: ChordQuality | null): ChordQuality | null {
  * on whatever edit next regenerated the slot - which is the failure the first
  * clause of the rule above exists to move back to where it was introduced.
  *
- * `'other'` is refused beside `null` because it names no interval set either,
- * and the message says which arrived. "Needs an explicit quality" is a
- * misdirection when one was supplied and could not be used - and it is the
- * message the caller got, because `generateSlotNotes` reads a stored `'other'`
- * as no override before `chordPitchClasses` ever sees it.
+ * `null` is the only quality it has to refuse, because it is the only one left
+ * that names no shape. `'other'` used to be refused beside it, with a message
+ * saying which had arrived; `requireQuality` above now turns that value away
+ * before this guard is reached, which is the stronger place for it - `'other'`
+ * carries no root either, so there was never a pairing that made it legal.
  */
-function requireBuildableRoot(alter: number, quality: ChordQuality | null): void {
+function requireBuildableRoot(alter: number, quality: NamedQuality | null): void {
   if (alter === 0) return;
-  if (quality !== null && quality !== 'other') return;
+  if (quality !== null) return;
 
   throw new Error(
     `A chromatic ChordDegree needs a quality that names a shape; got alter ` +
-      `${alter} with quality ${quality === null ? 'null' : `'${quality}'`}`
+      `${alter} with quality null`
   );
 }
 
@@ -398,7 +406,8 @@ function normalizeTempo(tempo: number): number {
  * That is load-bearing at the call sites that do not pass through
  * `normalizeChordSlot`, which rebuilds `owned` unconditionally and so would
  * launder a shared constant into a fresh record before any document saw it.
- * Task 4's merge is the first of them.
+ * The roll's setters, which claim a dimension without rebuilding a slot, are
+ * the first of them.
  */
 export function createOwnership(): SlotOwnership {
   return { pitches: false, timing: false, velocity: false };
@@ -412,12 +421,11 @@ export function createOwnership(): SlotOwnership {
  * The clauses before it govern the numbers that reach the audio layer, where a
  * value of the wrong kind throws because nothing between the model and
  * `Tone.PolySynth` looks at it again: a `NaN` midi is inaudible as an error and
- * audible as silence. Ownership reaches no such road. Nothing reads it yet;
- * `regenerateSlot` still replaces a slot wholesale and becomes the merge that
- * reads it in M2 Task 4, to decide which dimensions to re-derive. The safe
- * answer to "I cannot tell" is the value a fresh slot already carries - own
- * nothing, regenerate everything - which is a defined default where a `NaN`
- * octave has none.
+ * audible as silence. Ownership reaches no such road. Its one reader is
+ * `regenerateSlot`, which merges rather than replaces and asks this record
+ * which dimensions to re-derive. The safe answer to "I cannot tell" is the
+ * value a fresh slot already carries - own nothing, regenerate everything -
+ * which is a defined default where a `NaN` octave has none.
  *
  * What getting it wrong will cost, once the merge does read it, is hand edits
  * rather than a chord that never sounds. The loss is per *document* and not per

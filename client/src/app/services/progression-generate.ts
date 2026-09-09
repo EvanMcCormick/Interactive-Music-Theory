@@ -74,10 +74,10 @@ import { voiceChord } from './progression-voicing';
  * with no quality does, what an override does above extent 7 - live with the
  * arithmetic in `progression-harmony.ts` rather than here.
  *
- * One half is still missing at this commit and is M2 Task 4: `regenerateSlot`
- * overwrites `quality` on every key change, complexity step and resize, so an
- * override reaches this function only until the next of those. The generator
- * honours it; nothing yet keeps it.
+ * The other half is `regenerateSlot`, which merges rather than replacing and so
+ * leaves a non-null quality alone. The generator honours an override and the
+ * edit path keeps it, which is what makes the field somewhere a borrowed chord
+ * can be written.
  *
  * A non-heptatonic scale is not caught here either. `degreePitchClasses` throws
  * on one and that throw is allowed through, rather than being turned into an
@@ -143,37 +143,26 @@ export function generateSlotNotes(
 
   const degree = slot.harmony.degree;
 
-  // `'other'` is the label for a stack of thirds that is no named chord -
-  // reachable today on the second degree of Hungarian minor - and as an override
-  // it names no intervals at all, so `chordPitchClasses` refuses it outright.
-  // Read here as no override, which lets the key build the chord it was building
-  // before this field was read at all.
-  //
-  // It arrives because `regenerateSlot` writes the *derived* quality into this
-  // field on every regeneration, so what reaches this line is a label as often
-  // as it is an override. **M2 Task 4 does not, on its own, retire this line.**
-  // Its merge preserves a non-null quality, and `'other'` is non-null: without
-  // the mapping, the first stored `'other'` to come back through
-  // `replaceDocument` crashes here again. Task 4 owes two things rather than
-  // one - the merge, *and* stopping `regenerateSlot` writing a derived label
-  // into an override field, which it must do anyway or the first regeneration
-  // freezes every derived quality into a permanent override. Even then this line
-  // stays: nothing in the app would write `'other'` any more, but the normaliser
-  // still stores it, so a loaded document can still carry one. Retiring it means
-  // narrowing what the model accepts, which is a third change and a later one.
-  const override = degree.quality === 'other' ? null : degree.quality;
-
   // Relative to the tonic, as `degreePitchClasses` returns it, with `alter` and
   // any override applied while still in that frame. `suspension` would be
   // honoured here too, replacing the third with the second or the fourth - it is
   // stored on the model but deliberately not sounded until M2, and
   // half-implementing it would make slots that look suspended and play major.
+  //
+  // The field is handed over as it is stored. It used to be mapped on the way
+  // in - a stored `'other'` read as no override - because `regenerateSlot` wrote
+  // the *derived* label into it on every regeneration and `'other'` is the
+  // derived label for a stack that is no named chord, which `chordPitchClasses`
+  // refuses. That write is gone, `ChordDegree.quality` narrowed to
+  // `NamedQuality | null` with it, and `normalizeChordDegree` turns `'other'`
+  // away at the door - so there is nothing left to launder, and a refusal that
+  // does reach here is a real one rather than an artefact.
   const relative = chordPitchClasses(
     scaleIntervals,
     degree.degree,
     degree.extent,
     degree.alter,
-    override
+    degree.quality
   );
 
   const absolute = relative.map(pitchClass => pitchClass + key.tonic);

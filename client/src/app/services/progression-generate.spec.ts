@@ -1,4 +1,5 @@
 import { generateSlotNotes } from './progression-generate';
+import { NamedQuality } from './progression-harmony';
 import { DEFAULT_VELOCITY } from '../models/progression-normalize';
 import {
   ChordDegree,
@@ -191,52 +192,26 @@ describe('generateSlotNotes', () => {
   });
 
   /**
-   * The `'other'` mapping, covered where it lives.
+   * `'other'` names no interval set, so it can be neither an override nor a
+   * stored value: `ChordDegree.quality` is `NamedQuality | null` and
+   * `normalizeChordDegree` refuses `'other'` at the door.
    *
-   * Deleting the line - passing the stored quality straight through - used to
-   * fail exactly one spec, three layers away in `progression.component.spec.ts`,
-   * where a Hungarian minor slot could no longer be appended at all. Nothing in
-   * this file noticed, and this file is where the line is.
+   * This function used to map it to "no override" on its way in, because
+   * `regenerateSlot` wrote the *derived* label into the same field and Hungarian
+   * minor's second degree derives as `'other'` - so the field carried a label as
+   * often as an override, and passing it through crashed the builder. Both are
+   * gone together: nothing writes a label there, nothing stores one, and the
+   * refusal reaches the caller rather than being laundered into a chord that
+   * would sound plausible and mean nothing.
    *
-   * `'other'` is not an override: it names no interval set, and
-   * `chordPitchClasses` throws on it rather than inventing a shape. It reaches
-   * this function because `regenerateSlot` writes the *derived* quality into the
-   * same field, so the field carries a label as often as an override - and
-   * Hungarian minor's second degree derives as `'other'`, a major third under a
-   * diminished fifth.
+   * Pinned here because this function is public and takes a slot from anywhere.
    */
-  it('builds the key own chord for a slot labelled with no name', () => {
-    const hungarianMinor = [0, 2, 3, 6, 7, 8, 11];
-    const key: ProgressionKey = { tonic: 0, scaleId: 'hungarianMinor', preferSharps: true };
-    const unnamed = generateSlotNotes(
-      slotWithDegree(1, { quality: 'other' }), key, hungarianMinor
-    );
-
-    expect(unnamed.map(n => n.midi)).toEqual(
-      generateSlotNotes(slotWithDegree(1, { quality: null }), key, hungarianMinor)
-        .map(n => n.midi)
-    );
-    // Spelled out as well as compared, so the spec still means something if both
-    // branches break together. Degree 1 of C Hungarian minor stacks D-F#-G#.
-    expect(unnamed.map(n => n.midi)).toEqual([62, 66, 68]);
-  });
-
-  /**
-   * And the same label under a displaced root, which is the case the mapping
-   * cannot rescue: `'other'` reads as no override, and a chromatic root with no
-   * override is refused.
-   *
-   * `normalizeChordDegree` refuses the pair at the door with a message that
-   * names `'other'`, so no stored document can reach this. Pinned here because
-   * `generateSlotNotes` is public and the failure it produces - a message asking
-   * for a quality that was supplied - is the one this arrangement makes possible.
-   */
-  it('refuses a chromatic root whose only quality names no shape', () => {
+  it('refuses a stored quality that names no shape', () => {
     const hungarianMinor = [0, 2, 3, 6, 7, 8, 11];
     const key: ProgressionKey = { tonic: 0, scaleId: 'hungarianMinor', preferSharps: true };
 
     expect(() => generateSlotNotes(
-      slotWithDegree(1, { quality: 'other', alter: -1 }), key, hungarianMinor
-    )).toThrowError(/quality/i);
+      slotWithDegree(1, { quality: 'other' as NamedQuality }), key, hungarianMinor
+    )).toThrowError(/other/i);
   });
 });

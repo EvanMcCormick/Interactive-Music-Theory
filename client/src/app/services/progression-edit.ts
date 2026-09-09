@@ -1,5 +1,6 @@
 import {
   CHORD_EXTENTS,
+  DEFAULT_VELOCITY,
   normalizeChordSlot,
   normalizeProgressionDoc
 } from '../models/progression-normalize';
@@ -7,10 +8,11 @@ import {
   ChordDegree,
   ChordSlot,
   ProgressionDoc,
-  ProgressionKey
+  ProgressionKey,
+  RollNote
 } from '../models/progression.model';
 import { generateSlotNotes } from './progression-generate';
-import { ChordExtent, degreeQuality } from './progression-harmony';
+import { ChordExtent } from './progression-harmony';
 
 /**
  * The pure decisions the progression's edit path makes.
@@ -139,8 +141,37 @@ export function settle(doc: ProgressionDoc): ProgressionDoc {
 }
 
 /**
- * Re-derives everything a slot's harmony decides: its quality label and its
- * notes.
+ * Re-derives what a slot sounds, keeping the dimensions the user has claimed.
+ *
+ * This is a **merge**, not a replace, and that is the idea M2 turns on. M1
+ * rebuilt every note from the degree on every key change, complexity step,
+ * inversion and octave shift, which was safe only while nothing but the
+ * generator had ever written a note. A piano roll ends that, and the single
+ * `isHandEdited` boolean it would otherwise have needed forces a bad trade in
+ * both directions - see `SlotOwnership`. So the three dimensions are answered
+ * separately:
+ *
+ * | dimension | owned | not owned |
+ * |---|---|---|
+ * | pitches | transposed by `transposeBy` | re-voiced from the degree |
+ * | timing | kept | regenerated as a block |
+ * | velocity | kept | reset to `DEFAULT_VELOCITY` |
+ *
+ * **`quality` is left exactly as it arrived.** M1 wrote the *derived* label
+ * into it here, which is consequence 4 of the design doc's correction section:
+ * an override lived until the next regeneration and no longer, so there was
+ * nowhere to write a borrowed chord that kept. `null` now means "as the key
+ * gives it" and is re-derived on read by `effectiveQuality` - which is where
+ * the strip card and the fretboard highlight already got the name, off the
+ * chord that was actually built rather than out of this field.
+ *
+ * **The asymmetry in the pitch row is why `transposeBy` is a parameter.**
+ * Re-voicing needs only the new key, which is an argument; transposing owned
+ * pitches needs the interval between the *old* key and the new one, which this
+ * function cannot see. `ProgressionService.setKey` is the only caller that can
+ * compute one, and every other call site passes 0 - which is not a default
+ * standing in for a missing answer but the honest one: a complexity step or an
+ * inversion moves no key, so there is no interval to move claimed pitches by.
  *
  * Bounds first, generate second. The order is load-bearing for the same reason
  * it is in `commit()`: `generateSlotNotes` copies `lengthBeats` onto every note
@@ -159,33 +190,103 @@ export function settle(doc: ProgressionDoc): ProgressionDoc {
 export function regenerateSlot(
   slot: ChordSlot,
   key: ProgressionKey,
-  scaleIntervals: readonly number[] | null
+  scaleIntervals: readonly number[] | null,
+  transposeBy = 0
 ): ChordSlot {
+  // The first clause of the model's normalisation rule, one road over. This
+  // number is added straight to `RollNote.midi`, which reaches
+  // `Tone.PolySynth` with nothing in between that looks at it again - so a
+  // `NaN` interval is silence rather than an error, three layers from the
+  // caller that computed it. Checked before anything else, because the caller
+  // passing one is the bug whether or not this particular slot would have used
+  // it.
+  if (!Number.isInteger(transposeBy)) {
+    throw new Error(
+      `regenerateSlot transposeBy must be a whole number of semitones to ` +
+        `transpose owned pitches by; got ${transposeBy}`
+    );
+  }
+
   const bounded = normalizeChordSlot(slot);
   if (!scaleIntervals) return bounded;
 
-  const labelled: ChordSlot =
-    bounded.harmony.kind === 'degree'
-      ? {
-          ...bounded,
-          harmony: {
-            kind: 'degree',
-            degree: {
-              ...bounded.harmony.degree,
-              quality: degreeQuality(
-                scaleIntervals,
-                bounded.harmony.degree.degree,
-                bounded.harmony.degree.extent
-              )
-            }
-          }
-        }
-      : bounded;
+  const generated = generateSlotNotes(bounded, key, scaleIntervals);
+  // A literal slot gets its own array back by identity, and there is nothing
+  // to merge it with: its notes ARE the truth, so every dimension of them is
+  // the user's whatever `owned` says. Returning early also keeps the copy from
+  // happening, which would report a change where none happened - and keeps the
+  // velocity column of the table above off a slot that never asked the app for
+  // a note in the first place.
+  if (generated === bounded.notes) return bounded;
 
-  const notes = generateSlotNotes(labelled, key, scaleIntervals);
-  // A literal slot gets its own array back by identity, and copying it would
-  // report a change where none happened. Copy only what was built fresh.
-  return notes === labelled.notes ? labelled : { ...labelled, notes: notes.slice() };
+  return { ...bounded, notes: mergeNotes(bounded, generated, transposeBy) };
+}
+
+/**
+ * The table in `regenerateSlot`, applied note by note.
+ *
+ * **Pitches decide how many notes there are**, because a note is a pitch: a
+ * user who added or removed one owns that count, and a re-voiced chord brings
+ * its own. The other two dimensions are then read at the same index from
+ * whichever list owns them, which is the only correspondence available - the
+ * chord is a different set of notes after a re-voice, so there is no note to
+ * carry an identity across the change. That is also why `SlotOwnership` is per
+ * slot rather than per note.
+ *
+ * The two lists can therefore differ in length, in both directions, and both
+ * are reachable from one complexity step on a slot the user has claimed. The
+ * shorter list is read at its last note rather than off its end - see
+ * `noteAt`.
+ */
+function mergeNotes(
+  slot: ChordSlot,
+  generated: readonly RollNote[],
+  transposeBy: number
+): RollNote[] {
+  const held = slot.notes;
+  const owned = slot.owned;
+
+  const pitched = owned.pitches
+    ? held.map(note => ({ ...note, midi: note.midi + transposeBy }))
+    : generated;
+
+  return pitched.map((note, index) => {
+    // `note` as the last resort rather than a written-out block: when timing is
+    // not owned the source *is* the generated list, so this falls back to the
+    // note it is already standing on, and the block-chord rule stays stated in
+    // `generateSlotNotes` alone. It is only reached by a claim over an empty
+    // note list, which `replaceDocument` can bring in.
+    const timing = noteAt(owned.timing ? held : generated, index) ?? note;
+
+    return {
+      midi: note.midi,
+      startBeat: timing.startBeat,
+      lengthBeats: timing.lengthBeats,
+      velocity: owned.velocity
+        ? noteAt(held, index)?.velocity ?? DEFAULT_VELOCITY
+        : DEFAULT_VELOCITY
+    };
+  });
+}
+
+/**
+ * The note at `index`, the last note when the list is shorter than that, or
+ * null when it holds none.
+ *
+ * The clamp is the answer to a chord that grew past the notes the user owns -
+ * a complexity step under a hand-written rhythm, where the new seventh has no
+ * claimed counterpart at its index. It joins the last note the user placed,
+ * because a chord tone added under a rhythm belongs to the event that rhythm
+ * ends on; springing back to the slot's start and full length would make it the
+ * one voice ignoring the groove.
+ *
+ * `null` rather than `undefined` so the caller has to say what an empty list
+ * means for its own dimension, which is not the same answer twice: timing falls
+ * back to the regenerated note and velocity to `DEFAULT_VELOCITY`.
+ */
+function noteAt(notes: readonly RollNote[], index: number): RollNote | null {
+  if (notes.length === 0) return null;
+  return notes[Math.min(index, notes.length - 1)];
 }
 
 /**

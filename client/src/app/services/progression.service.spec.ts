@@ -1,9 +1,23 @@
 import { TestBed } from '@angular/core/testing';
 
 import { ProgressionService } from './progression.service';
-import { CHORD_EXTENTS, OCTAVE_MAX } from '../models/progression-normalize';
-import { ChordSlot, ProgressionState } from '../models/progression.model';
-import { ChordExtent } from './progression-harmony';
+import {
+  CHORD_EXTENTS,
+  DEFAULT_VELOCITY,
+  OCTAVE_MAX,
+  createOwnership
+} from '../models/progression-normalize';
+import {
+  ChordDegree,
+  ChordSlot,
+  ProgressionKey,
+  ProgressionState,
+  RollNote,
+  SlotOwnership,
+  createDegreeSlot
+} from '../models/progression.model';
+import { regenerateSlot } from './progression-edit';
+import { ChordExtent, effectiveQuality } from './progression-harmony';
 
 /**
  * The progression document's owner: every mutation, the contiguity invariant,
@@ -69,6 +83,19 @@ describe('ProgressionService', () => {
     expect(after.canUndo).toBe(before.canUndo);
     expect(after.canRedo).toBe(before.canRedo);
     expect(after.isDirty).toBe(before.isDirty);
+  }
+
+  /**
+   * The intervals of the scale the key names, for the specs that read a chord's
+   * name back off the scale rather than out of the document.
+   *
+   * The name is derived on read now rather than stored, so a spec that wants to
+   * assert one has to ask the same function the strip card asks.
+   */
+  function keyIntervals(): readonly number[] {
+    const scale = currentState().keyScale;
+    if (!scale) throw new Error('the key names no scale this app knows');
+    return scale.intervals;
   }
 
   /**
@@ -140,12 +167,27 @@ describe('ProgressionService', () => {
       expect(slots()[0].notes.map(note => note.midi)).toEqual([60, 64, 67]);
     });
 
-    it('labels the slot with the quality its scale gives the degree', () => {
+    /**
+     * The quality field is the user's override and nothing else, so a slot
+     * nobody has overridden carries `null` - which reads as "as the key gives
+     * it" and is re-derived on every read.
+     *
+     * It used to hold the *derived* label, written by `regenerateSlot` on every
+     * regeneration, and that is what erased an override on the next key change,
+     * complexity step or resize. The label itself did not move: `effectiveQuality`
+     * reads it off the chord that was actually built, which is where the strip
+     * card and the fretboard highlight already got it.
+     */
+    it('leaves the quality for the key to give, and names the chord from it', () => {
       service.appendSlot(1);
       const harmony = slots()[0].harmony;
       expect(harmony.kind).toBe('degree');
       if (harmony.kind !== 'degree') return;
-      expect(harmony.degree.quality).toBe('minor');
+      expect(harmony.degree.quality).toBeNull();
+
+      // ii in C major is D-F-A, and it is a minor triad however it is stored.
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([62, 65, 69]);
+      expect(effectiveQuality(keyIntervals(), 1, 3, 0, null)).toBe('minor');
     });
 
     it('keeps slots contiguous as they are appended', () => {
@@ -431,12 +473,15 @@ describe('ProgressionService', () => {
       return harmony.kind === 'degree' ? harmony.degree.extent : -1;
     }
 
-    it('stacks another third and relabels the chord', () => {
+    it('stacks another third, and leaves the naming to the key', () => {
       service.setSlotExtent(slots()[0].id, 7);
       expect(extentOf()).toBe(7);
       expect(slots()[0].notes.map(note => note.midi)).toEqual([60, 64, 67, 71]);
+      // The stored field is the override, untouched at `null`; the name comes
+      // off the chord that was built, which is now a major seventh.
       const harmony = slots()[0].harmony;
-      expect(harmony.kind === 'degree' && harmony.degree.quality).toBe('major7');
+      expect(harmony.kind === 'degree' && harmony.degree.quality).toBeNull();
+      expect(effectiveQuality(keyIntervals(), 0, 7, 0, null)).toBe('major7');
     });
 
     // What a stepper actually computes at the top of the ladder:
@@ -617,11 +662,17 @@ describe('ProgressionService', () => {
       ]);
     });
 
-    it('relabels each slot with its quality in the new key', () => {
+    /**
+     * A `null` quality is re-derived rather than rewritten: the key change moves
+     * the notes and the name follows them, with nothing written into the field
+     * that would have to be undone by the next key change.
+     */
+    it('re-derives a slot that overrides nothing from the new key', () => {
       service.appendSlot(0);
       service.setKey(9, 'aeolian');
       const harmony = slots()[0].harmony;
-      expect(harmony.kind === 'degree' && harmony.degree.quality).toBe('minor');
+      expect(harmony.kind === 'degree' && harmony.degree.quality).toBeNull();
+      expect(effectiveQuality(keyIntervals(), 0, 3, 0, null)).toBe('minor');
     });
 
     /**
@@ -724,6 +775,347 @@ describe('ProgressionService', () => {
       service.setKey(13, 'ionian');
       expect(currentState().doc.key.tonic).toBe(1);
       expect(slots()[0].notes.map(note => note.midi)).toEqual([61, 65, 68]);
+    });
+  });
+
+  /**
+   * Regeneration is a **merge** and not a replace, which is the idea M2 turns
+   * on. `SlotOwnership` says which of a slot's three dimensions are the user's,
+   * and each is answered separately:
+   *
+   * | dimension | owned | not owned |
+   * |---|---|---|
+   * | pitches | transposed by the interval | re-voiced from the degree |
+   * | timing | kept | regenerated as a block |
+   * | velocity | kept | reset to `DEFAULT_VELOCITY` |
+   *
+   * `setKey` is the driver here because it is the one path that regenerates
+   * every slot, and `replaceDocument` is how ownership is installed: it is the
+   * only door that writes the field until the roll's setters land in Task 5.
+   *
+   * The transposition itself is exercised further down, directly, for the
+   * reason recorded there.
+   */
+  describe('regenerating a slot the user owns part of', () => {
+    /**
+     * Three notes with distinct pitch, timing and velocity, so that a merge
+     * which dropped or confused any one dimension is visible rather than hidden
+     * behind two that happen to agree.
+     *
+     * Built per call: the specs below compare against it, and a shared array of
+     * shared objects would let one of them edit the yardstick.
+     */
+    function handEdited(): RollNote[] {
+      return [
+        { midi: 60, startBeat: 0, lengthBeats: 0.5, velocity: 40 },
+        { midi: 63, startBeat: 1.5, lengthBeats: 0.25, velocity: 100 },
+        { midi: 67, startBeat: 3, lengthBeats: 1, velocity: 20 }
+      ];
+    }
+
+    /** A I in C major holding `notes` and owning `owned`. Its id. */
+    function claim(owned: Partial<SlotOwnership>, notes: RollNote[]): string {
+      service.appendSlot(0);
+      const doc = currentState().doc;
+      const claimed: ChordSlot = {
+        ...doc.slots[0],
+        notes,
+        owned: { ...createOwnership(), ...owned }
+      };
+      service.replaceDocument({ ...doc, slots: [claimed] });
+      return claimed.id;
+    }
+
+    function notes(): RollNote[] {
+      return slots()[0].notes;
+    }
+
+    // I in C major is C-E-G; the same degree in A minor is A-C-E.
+    const RE_VOICED = [69, 72, 76];
+
+    it('replaces every dimension of a slot that owns nothing', () => {
+      claim({}, handEdited());
+      service.setKey(9, 'aeolian');
+
+      expect(notes()).toEqual([
+        { midi: 69, startBeat: 0, lengthBeats: 4, velocity: DEFAULT_VELOCITY },
+        { midi: 72, startBeat: 0, lengthBeats: 4, velocity: DEFAULT_VELOCITY },
+        { midi: 76, startBeat: 0, lengthBeats: 4, velocity: DEFAULT_VELOCITY }
+      ]);
+    });
+
+    it('keeps the timing of a slot that owns it while the pitches re-voice', () => {
+      claim({ timing: true }, handEdited());
+      service.setKey(9, 'aeolian');
+
+      expect(notes().map(note => note.midi)).toEqual(RE_VOICED);
+      expect(notes().map(note => note.startBeat)).toEqual([0, 1.5, 3]);
+      expect(notes().map(note => note.lengthBeats)).toEqual([0.5, 0.25, 1]);
+      // Velocity was not claimed, so it is not kept.
+      expect(notes().map(note => note.velocity)).toEqual([80, 80, 80]);
+    });
+
+    it('keeps the pitches of a slot that owns them rather than re-voicing them', () => {
+      claim({ pitches: true }, handEdited());
+      service.setKey(9, 'aeolian');
+
+      expect(notes().map(note => note.midi)).toEqual([60, 63, 67]);
+      // Neither of the other two was claimed, so the block returns.
+      expect(notes().map(note => note.startBeat)).toEqual([0, 0, 0]);
+      expect(notes().map(note => note.lengthBeats)).toEqual([4, 4, 4]);
+      expect(notes().map(note => note.velocity)).toEqual([80, 80, 80]);
+    });
+
+    it('keeps the velocities of a slot that owns them while the rest regenerates', () => {
+      claim({ velocity: true }, handEdited());
+      service.setKey(9, 'aeolian');
+
+      expect(notes().map(note => note.velocity)).toEqual([40, 100, 20]);
+      expect(notes().map(note => note.midi)).toEqual(RE_VOICED);
+      expect(notes().map(note => note.startBeat)).toEqual([0, 0, 0]);
+      expect(notes().map(note => note.lengthBeats)).toEqual([4, 4, 4]);
+    });
+
+    // The case the design doc argues the whole mechanism from: a groove written
+    // in C survives the switch to A minor while the chord re-voices under it.
+    it('keeps a groove while the chord under it re-voices', () => {
+      claim({ timing: true, velocity: true }, handEdited());
+      service.setKey(9, 'aeolian');
+
+      expect(notes().map(note => note.midi)).toEqual(RE_VOICED);
+      expect(notes().map(note => note.startBeat)).toEqual([0, 1.5, 3]);
+      expect(notes().map(note => note.lengthBeats)).toEqual([0.5, 0.25, 1]);
+      expect(notes().map(note => note.velocity)).toEqual([40, 100, 20]);
+    });
+
+    it('leaves a slot that owns all three exactly as it found it', () => {
+      claim({ pitches: true, timing: true, velocity: true }, handEdited());
+      service.setKey(9, 'aeolian');
+
+      expect(notes()).toEqual(handEdited());
+    });
+
+    /**
+     * Pitches decide how many notes there are, because a note is a pitch: a
+     * user who added two owns the count, and the three-note triad the key
+     * offers has nothing to say at indices 3 and 4.
+     *
+     * The two dimensions that were *not* claimed still have to be answered
+     * there, and the answer is the block the generator would have written - not
+     * `undefined`, which would reach Tone as a schedule time and a duration by
+     * the road the model's first clause exists to close.
+     */
+    it('regenerates the unowned dimensions of notes the chord cannot reach', () => {
+      claim({ pitches: true }, [
+        ...handEdited(),
+        { midi: 70, startBeat: 2, lengthBeats: 2, velocity: 55 },
+        { midi: 74, startBeat: 2.5, lengthBeats: 2, velocity: 55 }
+      ]);
+      service.setKey(9, 'aeolian');
+
+      expect(notes().map(note => note.midi)).toEqual([60, 63, 67, 70, 74]);
+      expect(notes().map(note => note.startBeat)).toEqual([0, 0, 0, 0, 0]);
+      expect(notes().map(note => note.lengthBeats)).toEqual([4, 4, 4, 4, 4]);
+      expect(notes().map(note => note.velocity)).toEqual([80, 80, 80, 80, 80]);
+    });
+
+    /**
+     * And the other way round: a chord that grows past the notes the user owns.
+     * A complexity step turns a triad into a seventh, so there is a fourth note
+     * with no claimed counterpart at its index.
+     *
+     * It joins the last note the user placed rather than being given a block of
+     * its own. A chord tone added under a hand-written rhythm belongs to the
+     * event that rhythm ends on; a note springing back to the slot's start and
+     * full length would be the one voice ignoring the groove.
+     */
+    it('gives a note the chord grew past the timing of the last one owned', () => {
+      const id = claim({ timing: true }, handEdited());
+      service.stepSlotExtent(id, 1);
+
+      expect(notes().map(note => note.midi)).toEqual([60, 64, 67, 71]);
+      expect(notes().map(note => note.startBeat)).toEqual([0, 1.5, 3, 3]);
+      expect(notes().map(note => note.lengthBeats)).toEqual([0.5, 0.25, 1, 1]);
+    });
+
+    it('gives a note the chord grew past the velocity of the last one owned', () => {
+      const id = claim({ velocity: true }, handEdited());
+      service.stepSlotExtent(id, 1);
+
+      expect(notes().map(note => note.velocity)).toEqual([40, 100, 20, 20]);
+    });
+
+    /**
+     * An empty note list under a claim is not something the app writes, and
+     * `replaceDocument` is the door that lets one in. It has to be answered
+     * with the default rather than with `undefined`, for the reason above.
+     */
+    it('falls back to the default velocity when there is nothing owned to keep', () => {
+      claim({ velocity: true }, []);
+      service.setKey(9, 'aeolian');
+
+      expect(notes().map(note => note.midi)).toEqual(RE_VOICED);
+      expect(notes().map(note => note.velocity)).toEqual([80, 80, 80]);
+    });
+
+    it('falls back to the regenerated timing when there is nothing owned to keep', () => {
+      claim({ timing: true }, []);
+      service.setKey(9, 'aeolian');
+
+      expect(notes().map(note => note.startBeat)).toEqual([0, 0, 0]);
+      expect(notes().map(note => note.lengthBeats)).toEqual([4, 4, 4]);
+    });
+  });
+
+  /**
+   * A non-null `quality` is the user's override, and every regeneration path
+   * has to leave it alone. It used to be overwritten with the *derived* label
+   * on each of them, which is consequence 4 of the design doc's correction
+   * section: an override written into the field survived until the next key
+   * change, complexity step or resize and no longer.
+   *
+   * bVII is the case that correction is argued from. In C major the key gives
+   * degree 6 as B-D-F, a diminished triad; bVII is B flat-D-F, which needs the
+   * root displaced *and* the shape overridden - neither alone reaches it.
+   */
+  describe('a quality override', () => {
+    /** A bVII in C major, installed through the one door that can write one. */
+    function borrow(): string {
+      service.appendSlot(6);
+      const doc = currentState().doc;
+      const slot = doc.slots[0];
+      if (slot.harmony.kind !== 'degree') throw new Error('appendSlot built no degree');
+
+      const borrowed: ChordSlot = {
+        ...slot,
+        harmony: {
+          kind: 'degree',
+          degree: { ...slot.harmony.degree, alter: -1, quality: 'major' }
+        }
+      };
+      service.replaceDocument({ ...doc, slots: [borrowed] });
+
+      // `replaceDocument` settles a document; it does not regenerate one, so
+      // the override reaches the notes on the first regeneration after it.
+      // Re-selecting the key already in force is the smallest one available,
+      // and until the palette can emit a borrowed chord there is no other.
+      service.setKey(0, 'ionian');
+      return slot.id;
+    }
+
+    function degree(): ChordDegree {
+      const harmony = slots()[0].harmony;
+      if (harmony.kind !== 'degree') throw new Error('the slot lost its degree');
+      return harmony.degree;
+    }
+
+    it('sounds the borrowed chord rather than the one the key gives', () => {
+      borrow();
+      // B flat-D-F, where the key's own degree 6 is B-D-F: one note apart, and
+      // the note is the one the accidental moves.
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([70, 74, 77]);
+    });
+
+    it('survives a resize', () => {
+      const id = borrow();
+      service.setSlotLength(id, 2);
+
+      expect(degree().quality).toBe('major');
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([70, 74, 77]);
+    });
+
+    it('survives a complexity step', () => {
+      const id = borrow();
+      service.stepSlotExtent(id, 1);
+
+      expect(degree().quality).toBe('major');
+      expect(degree().extent).toBe(7);
+      // The override sets the triad; the seventh stays the key's own A, which
+      // makes this a B flat major seventh.
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([70, 74, 77, 81]);
+    });
+
+    it('survives a key change', () => {
+      const id = borrow();
+      service.setKey(9, 'aeolian');
+
+      expect(degree().quality).toBe('major');
+      // Degree 6 of A minor is G; flattened and built major, that is
+      // G flat-B flat-D flat.
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([66, 70, 73]);
+      expect(slots()[0].id).toBe(id);
+    });
+
+    it('survives an inversion and an octave shift', () => {
+      const id = borrow();
+      service.setSlotInversion(id, 1);
+      expect(degree().quality).toBe('major');
+
+      service.setSlotOctave(id, 1);
+      expect(degree().quality).toBe('major');
+    });
+  });
+
+  /**
+   * The transposition half of the merge, exercised directly.
+   *
+   * "Transpose by the interval" needs the *old* key, which `regenerateSlot`
+   * cannot see, so the delta is an explicit parameter rather than something it
+   * infers. `setKey` is the only caller that can compute one and does not pass
+   * it until Task 5, so every other call site passes 0 - which means no setter
+   * reaches this branch yet, and a rule with no test is a rule someone deletes.
+   */
+  describe('the interval a regeneration transposes by', () => {
+    const C_MAJOR: ProgressionKey = { tonic: 0, scaleId: 'ionian', preferSharps: true };
+    const MAJOR: readonly number[] = [0, 2, 4, 5, 7, 9, 11];
+
+    /** Pitches that are nobody's idea of a C major triad, so a re-voice shows. */
+    function held(): RollNote[] {
+      return [
+        { midi: 61, startBeat: 0, lengthBeats: 4, velocity: DEFAULT_VELOCITY },
+        { midi: 65, startBeat: 0, lengthBeats: 4, velocity: DEFAULT_VELOCITY },
+        { midi: 68, startBeat: 0, lengthBeats: 4, velocity: DEFAULT_VELOCITY }
+      ];
+    }
+
+    function owning(owned: Partial<SlotOwnership>): ChordSlot {
+      return {
+        ...createDegreeSlot(0, 0),
+        notes: held(),
+        owned: { ...createOwnership(), ...owned }
+      };
+    }
+
+    it('moves owned pitches by it', () => {
+      const merged = regenerateSlot(owning({ pitches: true }), C_MAJOR, MAJOR, -3);
+      expect(merged.notes.map(note => note.midi)).toEqual([58, 62, 65]);
+    });
+
+    it('leaves unowned pitches to be re-voiced, whatever the interval', () => {
+      const merged = regenerateSlot(owning({}), C_MAJOR, MAJOR, -3);
+      expect(merged.notes.map(note => note.midi)).toEqual([60, 64, 67]);
+    });
+
+    it('moves nothing when it is not given', () => {
+      const merged = regenerateSlot(owning({ pitches: true }), C_MAJOR, MAJOR);
+      expect(merged.notes.map(note => note.midi)).toEqual([61, 65, 68]);
+    });
+
+    /**
+     * `RollNote.midi` reaches `Tone.PolySynth` with nothing between here and
+     * there that looks at it again, and this parameter is added straight to it.
+     * A value of the wrong kind is the first clause of the model's rule, and it
+     * throws where it was introduced rather than three layers downstream.
+     */
+    it('refuses an interval that is not a whole number of semitones', () => {
+      expect(() => regenerateSlot(owning({ pitches: true }), C_MAJOR, MAJOR, Number.NaN))
+        .toThrowError(/transpose/i);
+      expect(() => regenerateSlot(owning({ pitches: true }), C_MAJOR, MAJOR, 0.5))
+        .toThrowError(/transpose/i);
+      // Refused whether or not this particular slot would have used it: the
+      // caller passing one is the bug, not the slot that happens to receive it.
+      expect(() => regenerateSlot(owning({}), C_MAJOR, MAJOR, Number.NaN))
+        .toThrowError(/transpose/i);
     });
   });
 
@@ -1058,6 +1450,30 @@ describe('ProgressionService', () => {
       const id = appendLiteral();
       expectNoCommit(() => service.setSlotExtent(id, 7));
       expectNoCommit(() => service.stepSlotExtent(id, 1));
+    });
+
+    /**
+     * A literal slot's notes are the playback truth, so regeneration hands them
+     * straight back rather than merging anything into them - which matters more
+     * now than it did, because the merge resets an unowned velocity to the
+     * default. A slot that owns nothing and holds notes nobody generated is
+     * exactly the shape the merge would flatten.
+     */
+    it('keeps its own notes, velocities and all, through a key change', () => {
+      service.appendSlot(0);
+      const doc = currentState().doc;
+      const detached: ChordSlot = {
+        ...doc.slots[0],
+        harmony: { kind: 'literal', reason: 'user-detached' },
+        notes: [{ midi: 61, startBeat: 2, lengthBeats: 1, velocity: 33 }]
+      };
+      service.replaceDocument({ ...doc, slots: [detached] });
+
+      service.setKey(9, 'aeolian');
+
+      expect(slots()[0].notes).toEqual([
+        { midi: 61, startBeat: 2, lengthBeats: 1, velocity: 33 }
+      ]);
     });
   });
 });

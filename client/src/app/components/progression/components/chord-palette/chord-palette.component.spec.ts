@@ -5,6 +5,7 @@ import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
 import { OCTAVE_MAX } from '../../../../models/progression-normalize';
 import { ChordDegree, ProgressionState } from '../../../../models/progression.model';
+import { effectiveQuality } from '../../../../services/progression-harmony';
 
 /**
  * What the palette offers, what it refuses, and what it dispatches.
@@ -328,13 +329,23 @@ describe('ChordPaletteComponent', () => {
       expect(progression.stepSlotExtent).toHaveBeenCalledWith(selected, -1);
     });
 
-    it('raises a triad to a seventh, and re-labels it', () => {
+    /**
+     * The stored `quality` is the user's override and stays `null` through a
+     * complexity step - it used to be overwritten with the derived label on
+     * every regeneration, which is what erased a borrowed chord. The name is
+     * read back off the chord that was built, which is where the strip card
+     * gets it.
+     */
+    it('raises a triad to a seventh, and the name follows the notes', () => {
       component.stepComplexity(1);
       settle();
 
       expect(selectedDegree().extent).toBe(7);
+      expect(selectedDegree().quality).toBeNull();
+
+      const intervals = currentState().keyScale?.intervals ?? [];
       // Degree 4 of a major scale, extended: the dominant seventh.
-      expect(selectedDegree().quality).toBe('dominant7');
+      expect(effectiveQuality(intervals, 4, 7, 0, null)).toBe('dominant7');
     });
 
     /**

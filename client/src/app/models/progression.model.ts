@@ -1,6 +1,6 @@
 // Split by kind so the one runtime edge is visible: every import above
 // `progression-normalize` is a type and is erased. See the layering note below.
-import type { ChordExtent, ChordQuality } from '../services/progression-harmony';
+import type { ChordExtent, NamedQuality } from '../services/progression-harmony';
 import type { Scale } from './music-theory.model';
 import { TimeSignature } from './composer.model';
 import {
@@ -36,7 +36,7 @@ import {
  *  3. **Spelling comes from the degree, not from the pitch.** A degree slot
  *     knows that bVII in A minor spells G-B-D.
  *
- * `ChordQuality` and `ChordExtent` are imported from `progression-harmony.ts`
+ * `NamedQuality` and `ChordExtent` are imported from `progression-harmony.ts`
  * rather than redeclared, because a second copy of either would be a second
  * definition of the same concept - the thing the project rules forbid outright.
  * That does leave a model importing from `services/`, which is not a first:
@@ -134,11 +134,11 @@ export interface ChordSlot {
  * narrowly - only pitch edits count - a hand-built rhythm was destroyed by that
  * same key change. Both losses are real, and neither is the one the user meant.
  *
- * Tracking the three separately is what will make regeneration a **merge**
- * rather than a replace, so that a groove written in C survives a switch to A
- * minor while the chords re-voice underneath it - the whole point of storing
- * degrees rather than notes. Nothing reads this field yet: `regenerateSlot`
- * still replaces a slot wholesale, and becomes that merge in M2 Task 4.
+ * Tracking the three separately is what makes regeneration a **merge** rather
+ * than a replace, so that a groove written in C survives a switch to A minor
+ * while the chords re-voice underneath it - the whole point of storing degrees
+ * rather than notes. `regenerateSlot` is the one reader, and its docstring
+ * carries the table each dimension is answered from.
  *
  * The dimensions are the three a piano roll edit can move independently, and
  * they partition a `RollNote`: `midi` is pitch, `startBeat` and `lengthBeats`
@@ -222,13 +222,15 @@ export interface ChordDegree {
    *    no shape to build from is the combination that produced every wrong
    *    numeral in that table, so `chordPitchClasses` throws on it rather than
    *    falling back to the whole-stack shift that got them wrong.
-   *  - **`regenerateSlot` still overwrites this field**, as M1 wrote it, so an
-   *    override survives only until the next key change, complexity step or
-   *    resize. Turning that into a merge - `null` re-derives, a non-null value
-   *    is left alone - is M2 Task 4, and until it lands there is nowhere to
-   *    write an override that keeps.
+   *  - **`'other'` is not one of the values this field can take.** It is a
+   *    `ChordQuality` and a perfectly good *answer* - `degreeQuality` returns it
+   *    for a stack of thirds that is no named chord - but it names no interval
+   *    set, so there is nothing to override a shape with. The type is
+   *    `NamedQuality | null` for that reason and `normalizeChordDegree` refuses
+   *    it at the door. It was storable while `regenerateSlot` wrote the derived
+   *    label into this same field, which is the write M2 Task 4 removed.
    */
-  quality: ChordQuality | null;
+  quality: NamedQuality | null;
   /** Root position is 0. Stored wrapped into the chord, so it is always nameable. */
   inversion: number;
   suspension: SuspensionKind;
@@ -358,9 +360,9 @@ export function createDefaultProgression(): ProgressionDoc {
  * factory has no business knowing - `generateSlotNotes` fills them in.
  *
  * `quality` starts as `null`, which is the answer rather than a placeholder:
- * the shape is the key's to give until a user overrides it. The `'major'` this
- * factory used to write was a guess that happened to be overwritten before
- * anything read it.
+ * the shape is the key's to give until a user overrides it, and it stays `null`
+ * through every regeneration. The `'major'` this factory used to write was a
+ * guess that happened to be overwritten before anything read it.
  */
 export function createDegreeSlot(degree: number, startBeat: number): ChordSlot {
   return normalizeChordSlot({

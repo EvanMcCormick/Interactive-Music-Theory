@@ -347,18 +347,19 @@ export class ProgressionService {
    * Moves the whole progression to a new key, re-deriving what every slot
    * sounds and how it is labelled.
    *
-   * **This still regenerates every degree slot unconditionally, and that is
-   * the simple version rather than the intended one.** A key change should
-   * regenerate only the dimensions the user has not claimed - transposing owned
-   * pitches, keeping owned timing and velocity - and leave a `literal` slot's
-   * notes alone, which is why `ChordSlot` carries `SlotOwnership` and
-   * `SlotHarmony` has a `literal` branch. Neither branch is reachable yet:
-   * nothing here sets ownership, because the piano roll that would is still
-   * being built, and the recogniser that degrades a slot to literal is M3's.
-   * `regenerateSlot` becomes the merge in M2 Task 4, and `setKey` starts
-   * passing it the semitone delta in Task 5. Until then `regenerate` is safe to
-   * run over everything, because every slot so far was generated from its
-   * degree and nothing else.
+   * Every slot is passed through `regenerateSlot`, which is a merge and not a
+   * replace: it re-derives only the dimensions the user has not claimed, and
+   * hands a `literal` slot's notes straight back. So running it over everything
+   * is the right thing rather than merely a safe one.
+   *
+   * **What is still missing here is the interval.** `regenerateSlot` transposes
+   * *owned* pitches by a `transposeBy` it cannot work out for itself - it sees
+   * the new key and not the old one - and this method is the only caller that
+   * can, being the only one that moves a key at all. It does not yet, so a slot
+   * whose pitches are claimed keeps them exactly where they were rather than
+   * following the key. That is M2 Task 5, together with the roll's setters that
+   * are the first thing to write ownership at all; until they land the claimed
+   * branch is unreachable from the page.
    *
    * The key is applied even when its scale cannot build chords. Refusing it
    * would leave this page in a different key from the fretboard behind it,
