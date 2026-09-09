@@ -1,8 +1,8 @@
 import { generateSlotNotes } from './progression-generate';
+import { DEFAULT_VELOCITY } from '../models/progression-normalize';
 import {
   ChordDegree,
   ChordSlot,
-  DEFAULT_VELOCITY,
   ProgressionKey,
   RollNote,
   createDegreeSlot

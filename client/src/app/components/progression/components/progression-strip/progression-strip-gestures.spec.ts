@@ -4,7 +4,7 @@ import {
   draggedBeats,
   dropIndexAt
 } from './progression-strip-gestures';
-import { MIN_SLOT_BEATS } from '../../../../models/progression.model';
+import { MIN_SLOT_BEATS } from '../../../../models/progression-normalize';
 
 /**
  * The arithmetic of the strip's two pointer gestures, checked against a table.

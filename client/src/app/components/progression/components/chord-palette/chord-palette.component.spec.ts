@@ -3,11 +3,8 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ChordPaletteComponent } from './chord-palette.component';
 import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
-import {
-  ChordDegree,
-  OCTAVE_MAX,
-  ProgressionState
-} from '../../../../models/progression.model';
+import { OCTAVE_MAX } from '../../../../models/progression-normalize';
+import { ChordDegree, ProgressionState } from '../../../../models/progression.model';
 
 /**
  * What the palette offers, what it refuses, and what it dispatches.

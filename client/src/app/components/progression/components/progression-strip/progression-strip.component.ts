@@ -13,7 +13,8 @@ import {
 } from '@angular/core';
 import { Subject, takeUntil } from 'rxjs';
 
-import { MIN_SLOT_BEATS, ProgressionState } from '../../../../models/progression.model';
+import { MIN_SLOT_BEATS } from '../../../../models/progression-normalize';
+import { ProgressionState } from '../../../../models/progression.model';
 import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
 import { StripCard, buildStripView } from './progression-strip-cards';

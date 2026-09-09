@@ -2,15 +2,17 @@ import { Injectable, inject } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import {
   CHORD_EXTENTS,
+  normalizeChordSlot,
+  normalizeProgressionKey
+} from '../models/progression-normalize';
+import {
   ChordDegree,
   ChordSlot,
   ProgressionDoc,
   ProgressionKey,
   ProgressionState,
   createDefaultProgression,
-  createDegreeSlot,
-  normalizeChordSlot,
-  normalizeProgressionKey
+  createDegreeSlot
 } from '../models/progression.model';
 import {
   nearestExtent,

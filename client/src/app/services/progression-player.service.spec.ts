@@ -1,11 +1,7 @@
 import { NgZone, provideZoneChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import {
-  ChordSlot,
-  ProgressionDoc,
-  RollNote,
-  createOwnership
-} from '../models/progression.model';
+import { createOwnership } from '../models/progression-normalize';
+import { ChordSlot, ProgressionDoc, RollNote } from '../models/progression.model';
 import {
   PROGRESSION_AUDIO,
   TimedEvent,

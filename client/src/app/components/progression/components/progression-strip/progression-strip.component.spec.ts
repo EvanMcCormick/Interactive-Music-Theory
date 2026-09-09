@@ -3,12 +3,12 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ProgressionStripComponent } from './progression-strip.component';
 import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
+import { createOwnership } from '../../../../models/progression-normalize';
 import {
   ChordSlot,
   ProgressionDoc,
   ProgressionState,
-  createDefaultProgression,
-  createOwnership
+  createDefaultProgression
 } from '../../../../models/progression.model';
 
 /**

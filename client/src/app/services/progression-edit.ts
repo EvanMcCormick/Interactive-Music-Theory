@@ -1,11 +1,13 @@
 import {
   CHORD_EXTENTS,
+  normalizeChordSlot,
+  normalizeProgressionDoc
+} from '../models/progression-normalize';
+import {
   ChordDegree,
   ChordSlot,
   ProgressionDoc,
-  ProgressionKey,
-  normalizeChordSlot,
-  normalizeProgressionDoc
+  ProgressionKey
 } from '../models/progression.model';
 import { generateSlotNotes } from './progression-generate';
 import { ChordExtent, degreeQuality } from './progression-harmony';

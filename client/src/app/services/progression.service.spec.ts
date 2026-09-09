@@ -1,7 +1,8 @@
 import { TestBed } from '@angular/core/testing';
 
 import { ProgressionService } from './progression.service';
-import { CHORD_EXTENTS, ChordSlot, ProgressionState } from '../models/progression.model';
+import { CHORD_EXTENTS } from '../models/progression-normalize';
+import { ChordSlot, ProgressionState } from '../models/progression.model';
 import { ChordExtent } from './progression-harmony';
 
 /**

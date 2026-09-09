@@ -10,11 +10,8 @@ import {
 } from '@angular/core';
 import { Subject, combineLatest, takeUntil } from 'rxjs';
 
-import {
-  ProgressionState,
-  TEMPO_MAX,
-  TEMPO_MIN
-} from '../../../../models/progression.model';
+import { TEMPO_MAX, TEMPO_MIN } from '../../../../models/progression-normalize';
+import { ProgressionState } from '../../../../models/progression.model';
 import { ProgressionPlayerService } from '../../../../services/progression-player.service';
 import { ProgressionService } from '../../../../services/progression.service';
 

@@ -1,4 +1,4 @@
-import { MIN_SLOT_BEATS } from '../../../../models/progression.model';
+import { MIN_SLOT_BEATS } from '../../../../models/progression-normalize';
 
 /**
  * The arithmetic behind the strip's two pointer gestures.

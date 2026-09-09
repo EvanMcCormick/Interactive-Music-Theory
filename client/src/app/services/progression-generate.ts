@@ -1,10 +1,9 @@
+import { DEFAULT_VELOCITY, VOICING_BASE_MIDI } from '../models/progression-normalize';
 import {
   ChordDegree,
   ChordSlot,
-  DEFAULT_VELOCITY,
   ProgressionKey,
-  RollNote,
-  VOICING_BASE_MIDI
+  RollNote
 } from '../models/progression.model';
 import { degreePitchClasses } from './progression-harmony';
 import { voiceChord } from './progression-voicing';
