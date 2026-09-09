@@ -25,7 +25,9 @@ starting. Where they conflict with older sections, they win.
 ```bash
 npx ng test --watch=false --browsers=ChromeHeadless
 ```
-Add `--include='**/<name>.spec.ts'` to run one spec. Baseline is **1330 passing**.
+Add `--include='**/<name>.spec.ts'` to run one spec. The baseline moves as tasks
+land - Tasks 1-6 took it from 1330 to 1542. Check `git log` rather than trusting
+a number written here.
 
 ---
 
@@ -547,7 +549,7 @@ commit.
 
 ## Done when
 
-- `npx ng test` green, from a baseline of 1330
+- `npx ng test` green, from whatever the baseline is when you start
 - `npx ng build` succeeds and the progression route stays lazy
 - By hand: draw a rhythm in C major, switch to A minor on the circle — the groove
   survives and the chords re-voice
