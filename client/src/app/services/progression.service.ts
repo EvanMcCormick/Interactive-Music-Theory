@@ -845,6 +845,14 @@ export class ProgressionService {
    * of having to invent one. `undefined` means "derive it"; `false` is a real
    * request for flats and is not swallowed, which is why this is `??` and not
    * `||`.
+   *
+   * Worth saying plainly: **the derived branch is dead in production today.**
+   * `ProgressionComponent.adopt` is the only caller the running app has and it
+   * always passes the argument, so only specs reach `spellingFor` through here.
+   * It stays because the alternative is a required parameter that every future
+   * caller has to answer with a guess, and because `spellingFor` is the same
+   * rule the argument is derived from one layer up - not a fallback that could
+   * quietly disagree with it.
    */
   setKey(tonic: number, scaleId: string, preferSharps?: boolean): void {
     const scale = this.findScale(scaleId);

@@ -139,7 +139,29 @@ export interface BeatDoc {
   tuplet: Tuplet | null;
   isRest: boolean;
   notes: NoteDoc[];
-  /** null inherits the previous beat's dynamics. */
+  /**
+   * The dynamic marked on this beat. **`null` does not inherit.**
+   *
+   * It reads like an inherit and nothing implements one. `ScoreDocMapperService.
+   * toBeat` skips the assignment on a null and alphaTab's `Beat.dynamics`
+   * defaults to `f`, so an unmarked beat engraves *forte* and alphaTab prints
+   * the change - two bars of one chord at the roll's default velocity came out
+   * `mf` and then `f`, which is how this was found. The round trip is worse
+   * than lossy: `toDoc` reads the same field back off alphaTab, so loading a
+   * document and saving it turns every null into an explicit `f`.
+   *
+   * Nothing in the app writes anything but null. `createRestBeat` does, and
+   * `quantizeBar` does on **every** beat it writes - so the transcription
+   * review preview engraves a whole performance forte through this field.
+   * `progression-score.ts` is the one caller that works around it, stating the
+   * standing dynamic on every beat and saying why at `applyDynamics`. That is a
+   * local fix; the transcription path still has the bug.
+   *
+   * Implementing the inherit means teaching the mapper to carry a standing
+   * value across beats, bars and voices, and it changes what every writer of
+   * this field means. That is its own task; until then the field is what it
+   * says here.
+   */
   dynamics: DynamicValue | null;
   lyrics: string | null;
   text: string | null;

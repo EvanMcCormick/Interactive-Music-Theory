@@ -378,6 +378,83 @@ describe('progressionToScore', () => {
     expect(score.tracks[0].staves[0].bars[0].keySignature).toEqual({ fifths: 0, mode: 'major' });
   });
 
+  /**
+   * The fallback used to catch the mainstream minors too, and that was the one
+   * wrong signature the projection could draw. `MODE_OFFSETS` held only the
+   * seven diatonic modes, so E harmonic minor - on the fretboard's own menu,
+   * heptatonic, so the palette builds and names its chords - came out as C
+   * major with every F sharp written on the note.
+   *
+   * A harmonic or melodic minor carries its *natural* minor's signature, with
+   * the raised degrees drawn as accidentals. E minor's is one sharp, from G
+   * major, whichever of the three minors is selected.
+   */
+  it('gives every mainstream minor its natural minor signature', () => {
+    const eMinor = { fifths: 1, mode: 'minor' } as const;
+
+    for (const scaleId of [
+      'aeolian',
+      'harmonicMinor',
+      'melodicMinor',
+      'harmonicMinorMode1',
+      'melodicMinorMode1',
+      'hungarianMinor'
+    ]) {
+      const score = progressionToScore(
+        docOf([], { key: { tonic: 4, scaleId, preferSharps: true } })
+      ).doc;
+
+      expect(score.tracks[0].staves[0].bars[0].keySignature)
+        .withContext(scaleId)
+        .toEqual(eMinor);
+    }
+  });
+
+  /**
+   * The modes of harmonic minor are each an ordinary diatonic mode with one
+   * note raised, so they take that mode's signature: E phrygian dominant is E
+   * phrygian with a raised third, and E phrygian's parent is C major.
+   */
+  it('gives a mode of harmonic minor its own diatonic parent', () => {
+    const dominant = progressionToScore(
+      docOf([], { key: { tonic: 4, scaleId: 'phrygianDominant', preferSharps: true } })
+    ).doc;
+    expect(dominant.tracks[0].staves[0].bars[0].keySignature).toEqual({
+      fifths: 0,
+      mode: 'major'
+    });
+
+    // Dorian #4 on E is E dorian with a raised fourth: D major, two sharps,
+    // and a minor third, so the label is minor rather than major.
+    const romanian = progressionToScore(
+      docOf([], { key: { tonic: 4, scaleId: 'dorianSharp4', preferSharps: true } })
+    ).doc;
+    expect(romanian.tracks[0].staves[0].bars[0].keySignature).toEqual({
+      fifths: 2,
+      mode: 'minor'
+    });
+  });
+
+  /**
+   * The other side of the same rule. A seven-note scale is not automatically a
+   * key: the modes of melodic minor and the exotic heptatonics read as more
+   * than one diatonic mode plus accidentals, and `MODE_OFFSETS` deliberately
+   * declines to pick one. They keep the empty signature and are labelled major,
+   * because a signature this module could not find is not one it may then call
+   * minor either.
+   */
+  it('still declines a heptatonic scale with no settled signature', () => {
+    for (const scaleId of ['superLocrian', 'ultraLocrian', 'doubleHarmonic', 'persian']) {
+      const score = progressionToScore(
+        docOf([], { key: { tonic: 4, scaleId, preferSharps: true } })
+      ).doc;
+
+      expect(score.tracks[0].staves[0].bars[0].keySignature)
+        .withContext(scaleId)
+        .toEqual({ fifths: 0, mode: 'major' });
+    }
+  });
+
   it('drops to the bass clef when nothing reaches middle C', () => {
     const low = progressionToScore(docOf([slotOf(0, 4, [note(48, 0, 4), note(55, 0, 4)])])).doc;
     expect(low.tracks[0].staves[0].bars[0].clef).toBe('f4');
@@ -458,6 +535,22 @@ describe('progressionToScore', () => {
     expect(long.barCount).toBe(MAX_PREVIEW_BARS + 10);
     expect(long.truncated).toBeTrue();
     expect(long.doc.masterBars.length).toBe(MAX_PREVIEW_BARS);
+  });
+
+  it('holds the bound at the length it was written against', () => {
+    // `MAX_PREVIEW_BARS` argues itself from `setSlotLength(id, 1e9)`, which is
+    // reachable through the public API because `normalizeLengthBeats` floors a
+    // length and gives it no ceiling. That is two hundred and fifty million
+    // bars of 4/4 and the case above only ever asked for five hundred and
+    // twenty-two of them - a bound tested three orders of magnitude below the
+    // number it exists for. It has to allocate the drawn bars and no more, and
+    // still report the real length.
+    const huge = progressionToScore(docOf([slotOf(0, 1e9, [note(60, 0, 1)])]));
+
+    expect(huge.barCount).toBe(250_000_000);
+    expect(huge.truncated).toBeTrue();
+    expect(huge.doc.masterBars.length).toBe(MAX_PREVIEW_BARS);
+    expect(huge.doc.tracks[0].staves[0].bars.length).toBe(MAX_PREVIEW_BARS);
   });
 
   it('gives a note with no length a bar to be struck in', () => {

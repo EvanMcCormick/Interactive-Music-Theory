@@ -535,3 +535,96 @@ the user is already listening in.
    **Settled: it is now 1.** The reach under the new semantics is 45 semitones,
    not 33, and 2 put the ceiling at 129 — off the end of MIDI. See M2 Task 3 for
    the witness and the trade-off.
+
+### Three findings recorded rather than fixed
+
+The M2 review turned up three defects whose honest fix is wider than the piano
+roll. Each is written down where the reader will meet it in the code; this is
+the index.
+
+1. **`BeatDoc.dynamics` does not inherit, and nothing implements the inherit its
+   comment promised.** `ScoreDocMapperService.toBeat` skips the assignment on a
+   null and alphaTab's `Beat.dynamics` defaults to `f`, so an unmarked beat
+   engraves *forte* and alphaTab prints the change. The round trip is worse than
+   lossy: `toDoc` reads the field back, so loading a document and saving it turns
+   every null into an explicit `f`. `quantizeBar` writes `dynamics: null` on
+   every beat it produces, which means the reach is wider than this page — the
+   **transcription review preview engraves whole performances forte** through the
+   same path. `progression-score.ts` works around it locally, stating the
+   standing dynamic on every beat, and `applyDynamics` says why. The real fix is
+   a standing value carried across beats, bars and voices in the mapper, and it
+   changes what every writer of the field means; it belongs with transcription
+   and the composer rather than here.
+
+2. **Four enharmonic keys where the staff and the palette disagree.**
+   `MusicTheoryService.shouldUseSharps` tests for `'#'` before `'b'`, and every
+   combined name in `chromaticScaleWithBoth` carries both spellings — so `D#/Eb`
+   comes back sharp. Selecting it with ionian gives a circle wedge reading "Eb",
+   a fretboard and a palette reading "D#", and an engraved signature of
+   `fifths: -3`, which is E flat major. Same for `A#/Bb`, `G#/Ab` and `C#/Db`;
+   `F#/Gb` is exempt because six o'clock is the one position the circle carries
+   both halves of, so the staff follows `preferSharps` there. The notation
+   surface is the musically right one — D sharp major has nine sharps and is not
+   on the circle at all — and the root cause is upstream in a rule that reads a
+   *name* for a spelling the circle already states as data. It predates M2; what
+   is new is that there is now a surface to disagree with it. Fixing it moves
+   note names on the fretboard, the keyboard and the chord palette at once, so it
+   is its own change with its own tests.
+
+3. **`AlphaTabService` is a root singleton holding one api, and the notation
+   panel disposes it unconditionally.** The panel creates the api in its
+   `@ViewChild` setter and calls `dispose` in `teardown` without checking that
+   the api it is disposing is the one it made — nothing on the service records
+   who made it, and `initializeApi` already disposes an existing api before
+   building its own, so the last caller in wins. Safe today on a fact about the
+   router rather than about the component: the GP library and the composer are on
+   other routes, and a route is deactivated before the next is activated, so no
+   two consumers are alive at once. It stops being safe the moment two engravers
+   share a page. The fix, if that day comes, is a handle on the service rather
+   than a check in the panel.
+
+### The key signature of a scale that is not a diatonic mode
+
+`MODE_OFFSETS` held only the seven diatonic modes, which made
+`ProgressionScore` engrave a **C major signature for every heptatonic minor**:
+E harmonic minor is on the fretboard's own menu, is heptatonic so the palette
+builds and names its chords, and came out with no signature and every F sharp
+written on the note — labelled major, on top of it, because `MINOR_MODES` did
+not list it either. It is the only user-visible wrong output the milestone had.
+
+The table is now what convention says, scale by scale, and it is stated rather
+than derived — like `CIRCLE_POSITIONS`, and for the same reason. No rule
+produces it from a scale's intervals. *The parent scale's own signature* puts
+super locrian in a key nothing writes it in; *the nearest diatonic mode* makes
+melodic minor a tie between ionian ♭3 and dorian ♯7, and so has no answer for
+the one scale whose signature every theory course teaches.
+
+What it now covers, beyond the diatonic modes:
+
+- **Harmonic minor and five of its six other modes.** Harmonic minor is aeolian
+  with a raised seventh, and a chromatic raise moves no letter name — so it is
+  written in the natural minor's signature with the seventh as an accidental,
+  and each rotation is the corresponding rotation of the *natural* minor with
+  one note raised. The app's own names say which: "Locrian ♮6", "Ionian
+  Augmented", "Dorian ♯4", "Lydian ♯2", phrygian dominant. Ultra locrian is left
+  out — its tonic *is* the raised note, so it stands a semitone above the mode
+  it would otherwise correspond to and needs a double flat to spell.
+- **Melodic minor**, on the same convention. Its six modes are not included:
+  two raised degrees leave more than one plausible parent, the parent melodic
+  minor's signature and the mode each is named after disagree for every one of
+  them, and jazz practice settles on neither.
+- **Hungarian minor**, harmonic minor with a raised fourth.
+
+Everything else still falls back to no signature, and that is the right answer
+rather than a failure: scales with fewer than seven notes have no parent major
+and no seven letters to hang a signature on, the octatonic and the bebop scales
+have more notes than a signature has letters, and the exotic heptatonics —
+double harmonic, Hungarian major, both Neapolitans, enigmatic, Persian, Arabic —
+read as more than one diatonic mode plus accidentals with no reading that
+engravers agree on. `naturalNotes` is excluded although it is the major scale's
+shape: it belongs to the fretboard's spelling overlay, and a signature would let
+the table overrule the choice the user made by picking it.
+
+`MINOR_MODES` grew with the offsets and only with them. A scale the table cannot
+place keeps the major label, because a signature this module could not find is
+not one it may then call minor either.

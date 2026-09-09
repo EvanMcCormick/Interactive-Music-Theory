@@ -56,6 +56,24 @@ import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.ser
  * when the user stops moving. `RENDER_DEBOUNCE_MS` is
  * `TranscriptionReviewComponent`'s, whose preview has the same problem with a
  * slider.
+ *
+ * ## It takes and gives back an engraver nobody owns
+ *
+ * `AlphaTabService` is `providedIn: 'root'` and holds **one** api. This
+ * component creates it in the `@ViewChild` setter and calls `dispose` in
+ * `teardown` unconditionally - it does not check whether the api it is
+ * disposing is the one it made, because nothing on the service says who made
+ * it. `initializeApi` already disposes an existing api before building its own,
+ * so the last caller in wins and the previous one's element is left holding
+ * nothing.
+ *
+ * Safe today, on a fact about the router rather than about this component: the
+ * other consumers - the GP library and the composer - are on other routes, and
+ * a route is deactivated before the next is activated, so no two of them are
+ * ever alive at once. It would stop being safe the moment two engravers shared
+ * a page, and the panel that took the api away would be this one. Recorded in
+ * the progression design doc; the fix, if that day comes, is a handle on the
+ * service rather than a check here.
  */
 const RENDER_DEBOUNCE_MS = 120;
 
@@ -183,6 +201,16 @@ export class ProgressionNotationComponent implements OnInit, OnDestroy {
    * merely fail to draw, it would leave a panel that never drew again and said
    * nothing about why. `quantizeBar` throws on a meter its grid cannot express,
    * which is the reachable case.
+   *
+   * **No readout may survive into a render it does not describe.** Two could.
+   * The bar count and the truncation notice are only assigned once the
+   * projection has returned, so a projection that threw left the *previous*
+   * document's count under the error banner; they are now cleared on the way
+   * in. And the error banner was only cleared once alphaTab had drawn, so a
+   * render deferred at the width check left the last failure standing over a
+   * document that projects perfectly well; it is now cleared as soon as the
+   * projection succeeds. Both healed on the next render, which is not the same
+   * as being right in between.
    */
   private render(): void {
     const element = this.container;
@@ -190,9 +218,18 @@ export class ProgressionNotationComponent implements OnInit, OnDestroy {
     if (!this.isOpen || !element || !doc || !this.alphaTab.getApi()) return;
 
     try {
+      // Cleared before the projection rather than after it. They describe the
+      // document being drawn, and a projection that throws never reaches the
+      // assignments below - which left the *previous* document's bar count
+      // standing under the error banner, as though the thing that failed to
+      // draw were that long.
+      this.barCount = 0;
+      this.truncatedTo = null;
+
       const projected = progressionToScore(doc);
       this.barCount = projected.barCount;
       this.truncatedTo = projected.truncated ? projected.doc.masterBars.length : null;
+      this.renderError = null;
 
       if (element.clientWidth === 0) {
         this.renderPending = true;
@@ -206,10 +243,14 @@ export class ProgressionNotationComponent implements OnInit, OnDestroy {
         score,
         score.tracks.map((_, index) => index)
       );
-      this.renderError = null;
     } catch (error) {
       // A projection or a mapping that throws must not take the page with it:
       // the roll above is still editable and the transport still plays.
+      //
+      // The readouts are left where the try put them, which says which half
+      // failed: a projection that threw leaves zero bars, and a mapping that
+      // threw leaves the real count of the score it could not engrave. Both are
+      // facts about *this* document, which is all that was wrong before.
       this.renderError = `Could not draw the notation: ${messageOf(error)}`;
     }
 

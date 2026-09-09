@@ -216,6 +216,13 @@ describe('ProgressionNotationComponent', () => {
 
     expect(component.renderError).toContain('Could not draw');
 
+    // And the bar count goes with it. It is only assigned once the projection
+    // has returned, so a projection that throws used to leave the last good
+    // document's count sitting under the error banner - three bars announced
+    // for a score that could not be drawn at all.
+    expect(component.barCount).toBe(0);
+    expect(component.truncatedTo).toBeNull();
+
     const before = engraver.rendered.length;
     progression.replaceDocument(good);
     tick(PAST_DEBOUNCE);

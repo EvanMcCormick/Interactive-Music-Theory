@@ -178,24 +178,28 @@ export interface ChordDegree {
    */
   degree: number;
   /**
-   * Chromatic shift of the **whole chord**, in semitones.
+   * Chromatic shift of the chord's **root**, in semitones.
    *
-   * Every note moves together, so this is a transposition, and transposition
-   * preserves quality. That is the whole of what the field does, and it is less
-   * than a Roman numeral's accidental needs: an accidental displaces the *root*
-   * and leaves the case to carry the quality, which no uniform shift can do.
-   * So this field cannot express a borrowed chord. Degree 6 of a major scale is
-   * a diminished triad, and altered down a semitone it is a diminished triad on
-   * Bb rather than the Bb major chord bVII names; bVI, bIII and the Neapolitan
-   * bII all come out minor, and #iv-dim comes out major. Overriding `quality`
-   * is what a borrowed chord actually needs, and M1 has no mechanism for it -
-   * see the note in `progression-generate.ts`.
+   * What a Roman numeral's accidental does: it displaces the root and leaves
+   * the case of the letter to carry the quality. `chordPitchClasses` builds the
+   * root as `diatonic[0] + alter` and stacks `quality`'s shape on it, note for
+   * note as far as the shape reaches - so bVII in a major key is *degree 6,
+   * alter -1, quality 'major'*: Bb-D-F, where the key gives B-D-F.
    *
-   * What is left is real but small. `alter` and `key.tonic` are both added to
-   * every pitch class in `generateSlotNotes` and compose into one offset, so
-   * this field reaches no harmony the key does not already reach - the same
-   * diatonic chord, spelled as though the key were a tone away. Its value is
-   * that it moves one slot rather than all of them, not that it adds a chord.
+   * **This field shifted the whole stack until M2 Task 2**, and that is why the
+   * two fields have to be read together. A uniform shift is a transposition and
+   * transposition preserves quality, so bVII came out diminished, bVI, bIII and
+   * the Neapolitan bII came out minor and #iv-dim came out major: every
+   * borrowed chord in the design's own table was wrong. The correction is
+   * `quality`, twenty lines below, and it is what makes this field usable
+   * rather than merely a spelling of the same diatonic chord.
+   *
+   * So the two are not independent. **A non-zero `alter` under a null quality
+   * is refused** - `chordPitchClasses` throws rather than falling back to the
+   * whole-stack shift that produced that table - because a chromatic root with
+   * no shape to build on it is exactly the combination that got them wrong.
+   * `normalizeChordDegree` keeps the pair storable and `progression-generate.ts`
+   * carries it through; `quality` below has the rest of the rules.
    */
   alter: number;
   /** How far the thirds are stacked. The +/- complexity buttons move this. */

@@ -132,26 +132,102 @@ export function circleOrder(direction: CircleDirection): readonly CirclePosition
 
 
 /**
- * Semitones from a parent major's tonic up to each diatonic mode's tonic.
+ * Semitones from a parent major's tonic up to each scale's tonic.
  *
  * This is what lets a key signature be worked out for a mode rather than only
  * for a major key: A aeolian is the ninth degree above C, so it carries C
  * major's signature, and E aeolian carries G major's — one sharp, which is the
  * F sharp that E minor is supposed to have.
  *
- * Only the seven diatonic modes are here, and deliberately. A pentatonic or a
- * blues scale has no parent major to inherit a signature from, so a caller that
- * finds nothing here should fall back to whatever preference the scale itself
- * declares rather than inventing one.
+ * ## Convention, stated — not a derivation
+ *
+ * Like `CIRCLE_POSITIONS` above, and for the same reason. No rule produces this
+ * table from a scale's intervals, and the two plausible candidates each fail on
+ * a case that matters. *The parent scale's own signature* puts super locrian in
+ * a key nothing writes it in. *The nearest diatonic mode, fewest alterations*
+ * makes melodic minor a tie between ionian ♭3 and dorian ♯7, and so has no
+ * answer at all for the one scale whose signature every theory course teaches.
+ * What is written down here is what engravers actually do, decided scale by
+ * scale.
+ *
+ * ## What is in it
+ *
+ * **The seven diatonic modes.** A mode *is* its parent major's notes.
+ *
+ * **Harmonic minor and its modes.** Harmonic minor is aeolian with a raised
+ * seventh, and a chromatic raise moves no letter name — so it is written with
+ * the natural minor's signature and the seventh drawn as an accidental, which
+ * is what "harmonic minor" means on a page. That carries round the rotations:
+ * each mode is the corresponding rotation of the *natural* minor — an ordinary
+ * diatonic mode — with one note raised, which is why the app's own names for
+ * them read "Locrian ♮6", "Ionian Augmented", "Dorian ♯4", "Lydian ♯2". Each
+ * takes the named mode's signature. The seventh mode, ultra locrian, is left
+ * out: its tonic *is* the raised note, so it stands a semitone above the mode
+ * it would otherwise correspond to and needs a double flat to spell.
+ *
+ * **Melodic minor**, on the same convention: the natural minor's signature,
+ * with the raised sixth and seventh as accidentals. Its *modes* are not here.
+ * Two raised degrees leave more than one plausible diatonic parent — the parent
+ * melodic minor's signature and the mode each is named after disagree for all
+ * six of them — and jazz practice settles on neither, writing them in whatever
+ * key the tune is in.
+ *
+ * **Hungarian minor**: harmonic minor with a raised fourth. Two raises, no
+ * letter moved, still the natural minor's signature.
+ *
+ * ## What is not, and why that is right
+ *
+ * A caller that finds nothing here should fall back to whatever preference the
+ * scale itself declares rather than inventing one. Three kinds of scale land
+ * there:
+ *
+ *  - **Fewer than seven notes** — a pentatonic, a blues scale, whole tone,
+ *    augmented, hirajoshi, in-sen, iwato. No parent major, and no seven letter
+ *    names to hang a signature on.
+ *  - **More than seven** — the octatonic and the four bebop scales have more
+ *    notes than a signature has letters.
+ *  - **Seven notes and no settled convention** — the modes of melodic minor,
+ *    ultra locrian, and the exotic heptatonics: double harmonic, Hungarian
+ *    major, both Neapolitans, enigmatic, Persian, Arabic. Each reads as more
+ *    than one diatonic mode plus accidentals and no reading is the one
+ *    engravers use, so an empty signature with every accidental written out is
+ *    the honest answer rather than a guess.
+ *
+ * `naturalNotes` is left out although it is the major scale's shape. It belongs
+ * to the fretboard's spelling overlay — the category whose whole purpose is to
+ * say which accidentals to draw — and a signature here would let this table
+ * overrule the choice the user made by picking it.
  */
 export const MODE_OFFSETS: Readonly<Record<string, number>> = Object.freeze({
+  // The seven diatonic modes.
   ionian: 0,
   dorian: 2,
   phrygian: 4,
   lydian: 5,
   mixolydian: 7,
   aeolian: 9,
-  locrian: 11
+  locrian: 11,
+
+  // Harmonic minor and its modes, each in the diatonic mode's signature its
+  // name states. `harmonicMinor` and `harmonicMinorMode1` are one scale under
+  // two ids - `otherScales` lists it and so does `harmonicMinorModes` - and
+  // either can be the selected item, so both are here. Same for the two
+  // phrygian dominants and the two melodic minors below.
+  harmonicMinor: 9,
+  harmonicMinorMode1: 9,
+  locrianNat6: 11,
+  ionianAugmented: 0,
+  dorianSharp4: 2,
+  phrygianDominant: 4,
+  phrygianDominantMode: 4,
+  lydianSharp2: 5,
+
+  // Melodic minor itself. Its six modes are deliberately absent; see above.
+  melodicMinor: 9,
+  melodicMinorMode1: 9,
+
+  // Harmonic minor with a raised fourth.
+  hungarianMinor: 9
 });
 
 /** What a key signature is made of, or `null` when the key has none at all. */
@@ -176,11 +252,12 @@ export type KeySignatureKind = 'sharp' | 'flat' | 'none';
  *
  * `mode` is a scale id from `MusicTheoryService` and `tonic` a pitch class,
  * 0-11. Returns `null` for anything with no parent major to inherit from - a
- * pentatonic, a blues scale, a chord, an id the app does not know, a tonic that
- * is not a pitch class. Those keep whatever preference they declare for
- * themselves, because inventing a signature for a scale that does not have one
- * would be worse than having no opinion. So would inventing one for a note this
- * function cannot place.
+ * pentatonic, a blues scale, an exotic heptatonic nobody engraves the same way
+ * twice, a chord, an id the app does not know, a tonic that is not a pitch
+ * class. `MODE_OFFSETS` is the list and argues each case. Those keep whatever
+ * preference they declare for themselves, because inventing a signature for a
+ * scale that does not have one would be worse than having no opinion. So would
+ * inventing one for a note this function cannot place.
  */
 export function keySignatureKind(mode: string, tonic: number): KeySignatureKind | null {
   return keySignaturePosition(mode, tonic)?.accidentalKind ?? null;

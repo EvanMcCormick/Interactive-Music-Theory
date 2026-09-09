@@ -84,9 +84,8 @@ import { voiceChord } from './progression-voicing';
  * empty chord that would surface as silence three layers downstream. A caller
  * that would rather explain than fail asks `isHeptatonic` first - that is what
  * it is exported for, and what the chord palette does before it renders a
- * single
- * button. Repeating the check here would give the same rule two homes and let
- * them drift.
+ * single button. Repeating the check here would give the same rule two homes
+ * and let them drift.
  */
 /**
  * The pitch class a chord is rooted on: the same key applied to the same
@@ -132,8 +131,8 @@ export function generateSlotNotes(
   // it: losing the Roman numeral must cost the user nothing they played.
   //
   // Hazard for `ProgressionService.setSlotLength`: it follows that setting a
-  // literal slot's length is a
-  // silent no-op as far as its notes go. Regeneration returns them unchanged,
+  // literal slot's length is a silent no-op as far as its notes go.
+  // Regeneration returns them unchanged,
   // so shrinking the slot leaves notes hanging past its end and lengthening it
   // leaves silence at the end. That is arguably correct under "notes are the
   // truth" - stretching them to fit a drag would be the app rewriting what the

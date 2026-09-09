@@ -265,22 +265,7 @@ export function buildSchedule(doc: ProgressionDoc): PlaybackSchedule {
  * bearing, and a player that did not would be the odd one out for a saving of
  * nothing.
  *
- * ## Past CLAUDE.md's 500-line ceiling, deliberately
- *
- * 155 of these lines are code and 317 are prose, and most of that prose is the
- * three places where the obvious reading is wrong: a trailing cue that Tone is
- * meant to skip and sometimes does not, an `await` that leaves the service
- * looking idle while a play is under way, and a clamp that a `NaN` walks
- * straight through. The rule exists to keep a file holdable in the head, and
- * the only split available here would move those explanations away from the two
- * lines they are about. `buildSchedule` is already extracted, exported and
- * tested on its own, which is the split that was worth making.
- *
- * If the *code* grows past the ceiling the answer is different - the piano roll
- * playhead M2 wants would be the change to watch.
- */
-/**
- * Provided by `ProgressionComponent`, not at the root.
+ * ## Provided by `ProgressionComponent`, not at the root
  *
  * This was written `providedIn: 'root'` with `PROGRESSION_AUDIO` bound in
  * `main.ts` to match, which put `progression-audio.ts` into the eager bundle.

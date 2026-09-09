@@ -177,10 +177,81 @@ describe('circle of fifths data', () => {
       expect(keySignatureKind('mixolydian', index('A'))).toBe('sharp');
     });
 
+    /**
+     * A harmonic minor's key signature is its *natural* minor's, with the
+     * raised seventh written on the note - so E harmonic minor is the one sharp
+     * E aeolian carries, not the C major nothing here used to give it. The same
+     * convention covers melodic minor and Hungarian minor, and each of the two
+     * scales that appears in the app twice is listed under both of its ids.
+     */
+    it('gives every mainstream minor its natural minor signature', () => {
+      for (const scaleId of [
+        'harmonicMinor',
+        'harmonicMinorMode1',
+        'melodicMinor',
+        'melodicMinorMode1',
+        'hungarianMinor'
+      ]) {
+        expect(keySignatureKind(scaleId, index('E'))).withContext(scaleId).toBe('sharp');
+        expect(keySignatureKind(scaleId, index('D'))).withContext(scaleId).toBe('flat');
+        expect(keySignatureKind(scaleId, index('A'))).withContext(scaleId).toBe('none');
+      }
+    });
+
+    /**
+     * Each mode of harmonic minor is an ordinary diatonic mode with one note
+     * raised - a chromatic raise moves no letter name - so it takes that mode's
+     * signature. The app's own names say which mode: "Locrian ♮6", "Ionian
+     * Augmented", "Dorian ♯4", "Lydian ♯2", and phrygian dominant, which is
+     * phrygian with a raised third.
+     */
+    it('reads a mode of harmonic minor as the mode it is named after', () => {
+      // On C rather than E, where phrygian's own answer is 'none' and the
+      // comparison would pass against anything that also had no opinion.
+      expect(keySignatureKind('phrygian', index('C'))).toBe('flat');
+      expect(keySignatureKind('phrygianDominant', index('C'))).toBe('flat');
+      expect(keySignatureKind('phrygianDominantMode', index('C'))).toBe('flat');
+      expect(keySignatureKind('dorianSharp4', index('E'))).toBe(
+        keySignatureKind('dorian', index('E'))
+      );
+      expect(keySignatureKind('locrianNat6', index('E'))).toBe(
+        keySignatureKind('locrian', index('E'))
+      );
+      expect(keySignatureKind('ionianAugmented', index('E'))).toBe(
+        keySignatureKind('ionian', index('E'))
+      );
+      expect(keySignatureKind('lydianSharp2', index('E'))).toBe(
+        keySignatureKind('lydian', index('E'))
+      );
+    });
+
     it('has no opinion about a scale with no parent major', () => {
       expect(keySignatureKind('majorPentatonic', 0)).toBeNull();
       expect(keySignatureKind('minorBlues', 0)).toBeNull();
       expect(keySignatureKind('', 0)).toBeNull();
+    });
+
+    /**
+     * Seven notes is not enough to be a key. The modes of melodic minor carry
+     * two raised degrees and so read as more than one diatonic mode plus
+     * accidentals; ultra locrian is built *on* harmonic minor's raised note, so
+     * it stands a semitone off the mode it would otherwise be; and the exotic
+     * heptatonics have no settled engraving at all. Each keeps whatever
+     * spelling it declares for itself rather than being handed an invented
+     * parent.
+     */
+    it('has no opinion about a heptatonic scale with no settled signature', () => {
+      for (const scaleId of [
+        'lydianDominant',
+        'superLocrian',
+        'locrianNat2',
+        'ultraLocrian',
+        'doubleHarmonic',
+        'neapolitanMajor',
+        'persian'
+      ]) {
+        expect(keySignatureKind(scaleId, index('E'))).withContext(scaleId).toBeNull();
+      }
     });
 
     /**

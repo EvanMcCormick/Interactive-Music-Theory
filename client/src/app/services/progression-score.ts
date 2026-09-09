@@ -142,18 +142,38 @@ const BEAT_EPSILON = 1e-6;
 const MIDDLE_C = 60;
 
 /**
- * Diatonic modes written with a minor key signature.
+ * Scales written with a minor key signature.
  *
  * `KeySignature.mode` chooses between the major and the minor label for the
  * same set of accidentals, so this decides only how the key is *named*, never
  * which accidentals are drawn - `keySignaturePosition` answers that, from the
- * parent major, for all seven modes at once.
+ * parent major.
  *
- * The four with a minor third. A modal progression is not really in a major or
- * a minor key at all, and this is the closer of the two answers rather than the
- * right one; there is no third value to give.
+ * Every id here is one `MODE_OFFSETS` gives a signature to and whose third is
+ * minor. A scale with no signature is left out however minor it sounds:
+ * `keySignatureOf` has already declined to place it, and calling the empty
+ * signature "minor" would be a second claim about a key this module could not
+ * find. That leaves the four diatonic modes with a minor third, the harmonic
+ * and melodic minors, Hungarian minor, and the two modes of harmonic minor
+ * whose own third is minor - locrian ♮6 and dorian ♯4.
+ *
+ * A modal progression is not really in a major or a minor key at all, and this
+ * is the closer of the two answers rather than the right one; there is no third
+ * value to give.
  */
-const MINOR_MODES: ReadonlySet<string> = new Set(['dorian', 'phrygian', 'aeolian', 'locrian']);
+const MINOR_MODES: ReadonlySet<string> = new Set([
+  'dorian',
+  'phrygian',
+  'aeolian',
+  'locrian',
+  'harmonicMinor',
+  'harmonicMinorMode1',
+  'melodicMinor',
+  'melodicMinorMode1',
+  'hungarianMinor',
+  'locrianNat6',
+  'dorianSharp4'
+]);
 
 /**
  * A note placed in a bar, and what the projection needs to remember about it.
@@ -252,6 +272,15 @@ export function velocityDynamic(velocity: number): DynamicValue {
  * slot's end and each note's - because a note that sounds after its slot has
  * finished is a note the page has to be long enough to show, exactly as it is
  * one the transport has to be long enough to play.
+ *
+ * The page is *not* exactly as long as the loop, though, and `struck` below is
+ * the one case where they part. `buildSchedule` measures every end the same
+ * way, so a note of zero length adds nothing to `endBeat` and the loop turns
+ * over on the bar line it sits on - it is scheduled, for no time, at the moment
+ * the transport stops. `struck` gives it a bar anyway. Deliberate and tested:
+ * an attack is something a reader should see whether or not it sounds, and
+ * measuring by ends alone put it in a bar the score did not have, where it was
+ * dropped.
  */
 function barsIn(doc: ProgressionDoc): number {
   const beats = barBeats(doc.timeSignature);
@@ -382,6 +411,39 @@ export function placeProgressionNotes(
  *
  * The struck note wins over the held one at an equal position, which is why the
  * sort breaks ties on `isHeld`: a re-articulated chord tone should be struck.
+ *
+ * ## The second rule is only half of `snapToSlots`, and knowingly
+ *
+ * `slotOf` rounds each placement **on its own**; `snapToSlots` rounds a
+ * cluster's **centre**. With two notes in a cluster the two agree, because a
+ * pair's centre rounds where at least one of its ends does. With three they can
+ * part company, and a duplicate notehead gets through. In 4/4 at
+ * `finestDivision: 64` - sixteen slots to the beat, a clustering window of half
+ * a slot - midi 60 at beat 0.025, midi 64 at 0.053125 and midi 60 at 0.0625
+ * come to slots 0.4, 0.85 and 1.0. This function keeps both 60s: they are
+ * 0.0375 apart, wider than the window, and they round individually onto slots 0
+ * and 1. `snapToSlots` gathers the first two into one cluster (0.45 apart,
+ * inside the window), rounds their centre of 0.625 up to slot 1, and lands the
+ * third on slot 1 as well - one chord, two identical noteheads.
+ *
+ * The two roundings differ because they are answering different questions.
+ * `snapToSlots` clusters before it rounds precisely so that a chord whose notes
+ * straddle a slot boundary is not split into two attacks, and the centre is
+ * what makes that stable; this function runs *before* `quantizeBar` and has no
+ * clusters to consult, because the clusters are what it is trying to keep
+ * clean. Reproducing the clustering here would be the second copy of the rule
+ * `transcription-quantize.ts` exists to be the only copy of - and it would be a
+ * copy that has to guess, since removing a placement moves the very centre the
+ * decision was made from.
+ *
+ * Left as it is. It needs three notes in one cluster with a repeated pitch and
+ * onsets a hand's width apart, which owned timing cannot produce - a generated
+ * slot puts every note at beat 0 - so it is reachable only through free timing
+ * in the roll, and it costs a second notehead rather than a wrong pitch. The
+ * place to fix it, if the free-timing path ever makes it common, is
+ * `addToChord`: it already drops the second of two notes merged onto one
+ * string, and one note per *pitch* on a pitched staff is the same rule stated
+ * for the other kind of staff, applied where the slots are already known.
  */
 function dedupe(
   bar: ProgressionPlacement[],
@@ -582,14 +644,31 @@ function signatureKind(
     : alternative;
 }
 
-/** The key signature a progression is written with. See `MINOR_MODES`. */
+/**
+ * The key signature a progression is written with.
+ *
+ * Two facts from two sources: the accidentals from `keySignaturePosition`,
+ * which works the key back to its parent major, and the major-or-minor label
+ * from `MINOR_MODES`.
+ *
+ * The empty signature is what a scale `MODE_OFFSETS` cannot place gets, and it
+ * is an answer rather than a failure - a pentatonic, a blues scale, an
+ * octatonic, an exotic heptatonic no two engravers write alike, an id the app
+ * does not know. Every accidental the key needs is then drawn on the notes,
+ * which is what a page without a signature means.
+ *
+ * It is *not* what a mainstream minor gets, which is what this did until the
+ * offsets grew. `MODE_OFFSETS` held only the seven diatonic modes, so E
+ * harmonic minor - on the fretboard's own menu, heptatonic, so the palette
+ * builds and names its chords - engraved a C major signature with every F sharp
+ * written out. It carries one sharp, from G major, exactly as E aeolian does: a
+ * harmonic minor's signature is its natural minor's, with the raised seventh as
+ * an accidental. `MODE_OFFSETS` says which scales that reasoning reaches and
+ * which are genuinely left with nothing.
+ */
 function keySignatureOf(key: ProgressionKey): KeySignature {
   const position = keySignaturePosition(key.scaleId, key.tonic);
   const accidentals = position?.accidentals ?? 0;
-  // No parent major means no signature to inherit - a pentatonic, a blues
-  // scale, an id the app does not know - and the empty one is the honest
-  // answer rather than a guess, on the same terms as `keySignatureKind`'s
-  // `null`. Accidentals the key needs are then drawn on the notes.
   const kind = position ? signatureKind(position, key.preferSharps) : 'none';
 
   return {

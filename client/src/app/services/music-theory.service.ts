@@ -715,6 +715,27 @@ export class MusicTheoryService {
     }
 
     // For certain keys with accidentals, make specific decisions
+    //
+    // KNOWN DISAGREEMENT with the notation panel, in four keys. The names in
+    // `chromaticScaleWithBoth` carry both spellings - `D#/Eb` - so every one of
+    // them contains a `#`, and testing for `#` first means they all come back
+    // sharp. Selecting `D#/Eb` + ionian therefore spells the fretboard, the
+    // palette and the rail in D sharp, while `ProgressionScore` engraves the
+    // signature this key actually has: `fifths: -3`, E flat major. Same for
+    // `A#/Bb`, `G#/Ab` and `C#/Db`. The seven natural names have no second
+    // spelling to disagree about, and `F#/Gb` - the fifth combined name - does
+    // not disagree either: six o'clock is the one position the circle carries
+    // both halves of, so the staff follows `preferSharps` there and writes the
+    // six sharps this line asked for.
+    //
+    // The staff is the musically right one - D sharp major has nine sharps and
+    // is not on the circle at all - so the fix belongs here, in a rule that
+    // reads a *name* for a spelling the circle already states as data. It is
+    // not made here because this line predates the notation panel and every
+    // surface above reads it: changing which half of `D#/Eb` wins moves note
+    // names on the fretboard, the keyboard and the chord palette at once, and
+    // that is a change with its own tests to write rather than a comment to
+    // fix. Recorded in the progression design doc under the M2 findings.
     if (state.selectedKey.includes('#') || state.selectedKey.includes('b')) {
       // If key has a # in it, prefer sharps, if it has a b, prefer flats
       return state.selectedKey.includes('#');
