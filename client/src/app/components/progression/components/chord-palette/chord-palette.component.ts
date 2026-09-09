@@ -17,7 +17,7 @@ import {
 } from '../../../../models/progression.model';
 import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { chordRootPitchClass } from '../../../../services/progression-generate';
-import { ProgressionService } from '../../../../services/progression.service';
+import { ChordChoice, ProgressionService } from '../../../../services/progression.service';
 import {
   chordName,
   romanNumeral,
@@ -27,6 +27,7 @@ import {
   ChordExtent,
   degreeQuality
 } from '../../../../services/progression-harmony';
+import { ChordOption, chordVocabulary } from '../../../../services/progression-vocabulary';
 
 /** One button: where the chord sits in the key, and what it is called there. */
 export interface PaletteChord {
@@ -46,6 +47,55 @@ export interface PaletteChord {
   label: string;
   /** The I chord, which takes the root colour the fretboard gives the root. */
   isTonic: boolean;
+}
+
+/**
+ * One button in the three rows below the seven: what it stores, and what it
+ * says.
+ *
+ * It extends `ChordChoice`, so the object the template hands back on a click is
+ * the object the service takes - no adapter, and no chance of a button that
+ * prints one chord and dispatches another. The service copies the four fields
+ * it reads and ignores the rest; `chosen()` there says why that is a guard.
+ *
+ * It is a copy of `ChordOption` rather than the option itself for the reason
+ * `PaletteChord` is a view model at all: the fields a template binds are the
+ * fields the component has decided to draw, and `spoken` and `group` are
+ * neither drawn nor dispatched - they are the inputs to `label` and to which
+ * row this ended up in.
+ */
+export interface PaletteOption extends ChordChoice {
+  numeral: string;
+  name: string;
+  /** What the button says aloud. See `PaletteChord.label`, which argues it. */
+  label: string;
+  /**
+   * Whether the selected slot already holds this chord.
+   *
+   * Copied from `ChordOption.current` and never recomputed here: the comparison
+   * is not the obvious one - a fresh slot's `quality` is `null` - and that
+   * docstring is where it is argued.
+   */
+  current: boolean;
+  /** Identity for `trackBy`. Unique within a row; see `optionKey`. */
+  key: string;
+}
+
+/**
+ * An alternates-row button, which also states the height it will set.
+ *
+ * The other two rows append, so what they build is a fresh slot at the shape's
+ * own height and there is nothing for a user to lose. This row retunes the slot
+ * that is selected, and every shape is offered at *its* height rather than at
+ * the slot's - so choosing one moves the height too, and on a ninth that is two
+ * notes gone. These two fields are how the panel says so before the click
+ * rather than after it.
+ */
+export interface PaletteAlternate extends PaletteOption {
+  /** `Triad`, `7th` - the rung this shape stands on. */
+  heightLabel: string;
+  /** Whether that rung is *below* the one the selected slot is on. */
+  lowersHeight: boolean;
 }
 
 /**
@@ -116,6 +166,60 @@ const NOTHING_SELECTED = '—';
  * of `scaleId` the service already performs to regenerate a slot. The loop that
  * resolved it lived here too, character for character, until the state carried
  * it.
+ *
+ * It refuses the whole panel and not only the seven. Borrowed chords are
+ * exactly as meaningless in a pentatonic key as diatonic ones, and three rows
+ * of them beside a paragraph explaining that this key has no chords would be
+ * the panel contradicting itself. `chordVocabulary` answers with three empty
+ * groups on the same scale, so the two agree by construction.
+ *
+ * ## The three rows below, and the two verbs they are clicked with
+ *
+ * `chordVocabulary` derives them - other shapes on the selected chord, chords
+ * borrowed from the parallel modes, and the dominant of every degree the key
+ * could tonicise. What it cannot decide, because it is pure and sees no page,
+ * is what a click does. This component decides, and it is **not** one answer
+ * for all three:
+ *
+ *  - **Borrowed and secondary append**, as the seven above them do. That is the
+ *    argument `BORROWINGS` makes for harmonic minor's `V` being on that row at
+ *    all: a chord you cannot append is a chord this palette does not offer, and
+ *    the reason a minor key needs `V` is that the `v` it would otherwise have to
+ *    re-shape is the chord you did not want. Retuning the selection instead
+ *    would mean a borrowed chord could only ever *replace* one, which is the
+ *    limit that row exists to lift.
+ *  - **Alternates retune the selected slot.** The row is defined by the
+ *    selection - twelve shapes on the root the selected chord already sits on -
+ *    and it disappears without one. Appending from it would put a second chord
+ *    on the same root at the end of the progression, which is not what "other
+ *    shapes on this chord" can mean.
+ *
+ * The vocabulary's `ChordOption.current` docstring assumes a single verb, and
+ * says of the chord that appears in two rows at once that "clicking either does
+ * the same thing". Under the split above it does not: with a `♭VI` selected,
+ * the alternates row's `major` re-shapes it and the borrowed `♭VI` adds another.
+ * **Both are still marked**, which is the conclusion that mattered, on a reason
+ * the pure layer could not have: each row is telling the truth about the
+ * selection from where it stands - "this is the shape you are on" and "the
+ * chord you are on is the Neapolitan" - and suppressing either would be hiding
+ * a true statement to protect a symmetry the page does not have.
+ *
+ * ## Two orderings and a coincidence, all three deliberately left alone
+ *
+ * `secondary` arrives ordered by the degree each dominant tonicises, so `V/V`
+ * is the fourth of five rather than the first. It is left there: the row then
+ * runs in the same degree order as the seven buttons directly above it, and
+ * leading with the most-used chord would trade that correspondence for one
+ * chord's convenience. The borrowed row is in `BORROWINGS` order, which is the
+ * same degree order for the same reason.
+ *
+ * A secondary dominant can also *be* a chord the key already has - G mixolydian's
+ * `V/IV` is a G7, which is that key's own `I7`. Nothing is said about it in the
+ * UI, and the two labels are the reason: a numeral says where a chord sits and a
+ * slash numeral says what it points at, so `V/IV` and `I7` are two true
+ * descriptions of one chord rather than a contradiction to explain. Nor are the
+ * two ever on screen together - the diatonic row is triads, so it prints `I`
+ * over `G Maj` while the secondary row prints `V/IV` over `G7`.
  */
 @Component({
   selector: 'app-chord-palette',
@@ -128,6 +232,27 @@ const NOTHING_SELECTED = '—';
 export class ChordPaletteComponent implements OnInit, OnDestroy {
   /** The seven buttons, or empty when the key can build no chords. */
   chords: readonly PaletteChord[] = [];
+
+  /** Every named shape on the selected chord's root. Empty with no selection. */
+  alternates: readonly PaletteAlternate[] = [];
+
+  /** Chords from the parallel modes this key does not have of its own. */
+  borrowed: readonly PaletteOption[] = [];
+
+  /** The dominant seventh of every degree this key could tonicise. */
+  secondary: readonly PaletteOption[] = [];
+
+  /**
+   * What choosing an alternate would cost, or null when it would cost nothing.
+   *
+   * The one thing about this panel a user could not otherwise find out before
+   * clicking: every shape is offered at its own height, so on a ninth all
+   * twelve of them shorten the chord - including the one marked as the shape it
+   * already is. The per-button `heightLabel` states where each lands and this
+   * states what is at stake, because a row of heights does not by itself say
+   * that the current one is going.
+   */
+  heightWarning: string | null = null;
 
   /** Why there are no buttons, or null when there are. */
   unavailable: string | null = null;
@@ -166,6 +291,37 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * Adds a borrowed chord or a secondary dominant, as the seven above do.
+   *
+   * `appendChord` rather than `appendSlot`, because a degree cannot say ♭VII:
+   * the accidental and the shape are two more fields, and a path that emits
+   * them has to be a path that regenerates. The service argues both.
+   */
+  addOption(option: PaletteOption): void {
+    this.progression.appendChord(option);
+  }
+
+  /**
+   * Re-shapes the selected chord into another shape on its own root.
+   *
+   * The guard is not decoration: the row is empty without a selection, so a
+   * click can only arrive here in the gap between a selection being cleared and
+   * the row being re-rendered. The service would refuse an id it does not hold,
+   * but `null` is not an id it would refuse - it is a `string` the signature
+   * does not take.
+   *
+   * **Even the marked button does something**, and it is the right something:
+   * the slot's `quality` stops being `null` and becomes an override, so a chord
+   * that was following the mode is pinned to the shape that was clicked. A user
+   * who clicks `major` has said the chord is major, which is what this row is
+   * for; the visible cost is the height, and `heightWarning` is that.
+   */
+  chooseAlternate(option: PaletteAlternate): void {
+    if (this.selectedSlotId === null) return;
+    this.progression.setSlotChord(this.selectedSlotId, option);
+  }
+
+  /**
    * The +/- complexity buttons: one rung up or down the extent ladder.
    *
    * `stepSlotExtent` clamps at both ends, which is why the button is not
@@ -188,6 +344,11 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     return chord.degree;
   }
 
+  /** An option's identity is the chord it stores. See `optionKey`. */
+  trackByKey(_index: number, option: PaletteOption): string {
+    return option.key;
+  }
+
   // -------------------------------------------------------------------------
   // Rendering
   // -------------------------------------------------------------------------
@@ -195,16 +356,21 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   /** Rebuilds everything on screen from one published state. */
   private render(state: ProgressionState): void {
     const scale = state.keyScale;
+    // Read before the rows are built rather than after, because two of the
+    // three read it: the alternates row is shapes on *this* chord's root, and
+    // the height warning is about *this* chord's height.
+    const degree = this.selectedDegree(state);
 
     if (state.canBuildChords && scale) {
       this.chords = this.buildChords(state.doc.key, scale.intervals);
+      this.buildOptions(state.doc.key, scale.intervals, degree);
       this.unavailable = null;
     } else {
       this.chords = [];
+      this.clearOptions();
       this.unavailable = this.explain(scale);
     }
 
-    const degree = this.selectedDegree(state);
     this.selectedSlotId = state.selectedSlotId;
     this.selectedOctave = degree?.octave ?? 0;
     // A key that can build no chords can adjust none either: `editDegree`
@@ -244,6 +410,90 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
         isTonic: degree === 0
       };
     });
+  }
+
+  /**
+   * The three rows, from the vocabulary and the selection.
+   *
+   * `spellNote` is handed over rather than the preference asked for, which is
+   * the same separation `buildChords` keeps one method up: how a pitch class is
+   * written is `MusicTheoryService`'s decision, but *which* preference applies
+   * is the progression key's - and for a displaced root it is neither's, which
+   * is why `chordVocabulary` decides that one itself.
+   */
+  private buildOptions(
+    key: ProgressionKey,
+    intervals: readonly number[],
+    selected: ChordDegree | null
+  ): void {
+    const vocabulary = chordVocabulary(key, intervals, selected, (pitchClass, preferSharps) =>
+      this.musicTheory.spellNote(pitchClass, preferSharps)
+    );
+
+    this.alternates = vocabulary.alternates.map(option =>
+      this.buildAlternate(option, selected)
+    );
+    // The numeral is dropped from both spoken labels and what the row is
+    // supplies the position instead, on `PaletteChord.label`'s argument: read
+    // aloud a numeral is a string of letters, and `♭VII` adds a glyph to it.
+    this.borrowed = vocabulary.borrowed.map(option =>
+      buildOption(option, `Add ${option.spoken}, borrowed chord`)
+    );
+    this.secondary = vocabulary.secondary.map(option =>
+      buildOption(option, `Add ${option.spoken}, secondary dominant`)
+    );
+    this.heightWarning = this.warnAboutHeight(selected);
+  }
+
+  /** Three empty rows, for a key with no chords to offer in the first place. */
+  private clearOptions(): void {
+    this.alternates = [];
+    this.borrowed = [];
+    this.secondary = [];
+    this.heightWarning = null;
+  }
+
+  /**
+   * One alternate, with the height it sets and whether that is a step down.
+   *
+   * The comparison is against the *slot's* height rather than against another
+   * option's, because that is what the click replaces. It is false with nothing
+   * selected for the same reason the row is empty then: there is no chord for a
+   * shape to be shorter than.
+   */
+  private buildAlternate(
+    option: ChordOption,
+    selected: ChordDegree | null
+  ): PaletteAlternate {
+    const heightLabel = EXTENT_LABELS[option.extent];
+    const standing = selected === null ? null : EXTENT_LABELS[selected.extent];
+    const lowersHeight = selected !== null && option.extent < selected.extent;
+    const cost = lowersHeight && standing !== null ? `, down from the ${standing}` : '';
+
+    return {
+      ...buildOption(option, `Change to ${option.spoken}, ${heightLabel.toLowerCase()}${cost}`),
+      heightLabel,
+      lowersHeight
+    };
+  }
+
+  /**
+   * The sentence under the alternates row, or null when there is nothing to
+   * warn about.
+   *
+   * Asked of the buttons rather than of the extent, so the sentence cannot
+   * appear over a row where nothing is marked or fail to appear over one where
+   * something is. It names the height at stake because "these will shorten it"
+   * without saying from what reads as a caution about nothing in particular.
+   */
+  private warnAboutHeight(selected: ChordDegree | null): string | null {
+    if (selected === null) return null;
+    if (!this.alternates.some(option => option.lowersHeight)) return null;
+
+    return (
+      `Every shape has a height of its own, marked on each button. Choosing one ` +
+      `sets that height, so this ${EXTENT_LABELS[selected.extent]} will not stay one.`
+    );
   }
 
   /**
@@ -303,6 +553,44 @@ function paletteDegree(degree: number): ChordDegree {
     suspension: 'none',
     octave: 0
   };
+}
+
+/**
+ * A vocabulary option as a button, with the label its row decided on.
+ *
+ * The four `ChordChoice` fields are copied one at a time rather than spread,
+ * for the reason the service's `chosen()` gives from the other end: what is
+ * being built is the object a click hands to the service, and `spoken` and
+ * `group` have no business in a document. `current` is copied and never
+ * recomputed - see `ChordOption.current`, where the comparison it stands for is
+ * argued at length and is not the obvious one.
+ */
+function buildOption(option: ChordOption, label: string): PaletteOption {
+  return {
+    degree: option.degree,
+    alter: option.alter,
+    quality: option.quality,
+    extent: option.extent,
+    numeral: option.numeral,
+    name: option.name,
+    label,
+    current: option.current,
+    key: optionKey(option)
+  };
+}
+
+/**
+ * A button's identity for `trackBy`: the chord it puts in a slot.
+ *
+ * The numeral would do for the two append rows and not for the alternates,
+ * where all twelve shapes sit on one degree and one accidental - `V` and `V7`
+ * differ, but the numeral is the *rendering* and the shape is the thing. The
+ * quality would do for the alternates and not for the others, where every
+ * secondary dominant is a `dominant7`. The triple is what all three rows vary,
+ * and it is unique within each of them.
+ */
+function optionKey(option: ChordOption): string {
+  return `${option.degree}:${option.alter}:${option.quality}`;
 }
 
 /** `+1`, `0`, `-2` - signed, so the readout says which way it has been moved. */

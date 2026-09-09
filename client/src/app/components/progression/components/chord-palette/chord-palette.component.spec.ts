@@ -1,11 +1,19 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
-import { ChordPaletteComponent } from './chord-palette.component';
+import {
+  ChordPaletteComponent,
+  PaletteAlternate,
+  PaletteOption
+} from './chord-palette.component';
 import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
 import { OCTAVE_MAX } from '../../../../models/progression-normalize';
-import { ChordDegree, ProgressionState } from '../../../../models/progression.model';
-import { effectiveQuality } from '../../../../services/progression-harmony';
+import {
+  ChordDegree,
+  ChordSlot,
+  ProgressionState
+} from '../../../../models/progression.model';
+import { NamedQuality, effectiveQuality } from '../../../../services/progression-harmony';
 
 /**
  * What the palette offers, what it refuses, and what it dispatches.
@@ -51,12 +59,59 @@ describe('ChordPaletteComponent', () => {
     return captured;
   }
 
-  /** The degree of the slot the strip has selected, for the control tests. */
-  function selectedDegree(): ChordDegree {
+  /** The slot the strip has selected, for the tests that read its notes. */
+  function selectedSlot(): ChordSlot {
     const state = currentState();
     const slot = state.doc.slots.find(candidate => candidate.id === state.selectedSlotId);
-    if (!slot || slot.harmony.kind !== 'degree') throw new Error('no degree slot is selected');
+    if (!slot) throw new Error('nothing is selected');
+    return slot;
+  }
+
+  /** The degree of the slot the strip has selected, for the control tests. */
+  function selectedDegree(): ChordDegree {
+    const slot = selectedSlot();
+    if (slot.harmony.kind !== 'degree') throw new Error('no degree slot is selected');
     return slot.harmony.degree;
+  }
+
+  /**
+   * What the selected slot actually sounds, as pitch classes.
+   *
+   * The half of a borrowed chord a label cannot show. A slot can be stored
+   * saying `♭VII` over the notes of the diatonic `VII` - that is precisely what
+   * `replaceDocument` would have left behind - so the numeral on the card and
+   * the notes under it are two claims, and only this one reaches the synth.
+   */
+  function selectedPitchClasses(): number[] {
+    const classes = selectedSlot().notes.map(note => ((note.midi % 12) + 12) % 12);
+    return [...new Set(classes)].sort((first, second) => first - second);
+  }
+
+  /** The one option in a row with this numeral, or a failure that names the row. */
+  function option(row: readonly PaletteOption[], numeral: string): PaletteOption {
+    const found = row.find(candidate => candidate.numeral === numeral);
+    if (found === undefined) {
+      throw new Error(`no ${numeral} among [${row.map(one => one.numeral).join(', ')}]`);
+    }
+    return found;
+  }
+
+  function borrowed(numeral: string): PaletteOption {
+    return option(component.borrowed, numeral);
+  }
+
+  function secondary(numeral: string): PaletteOption {
+    return option(component.secondary, numeral);
+  }
+
+  /**
+   * An alternate by its shape rather than its numeral, because the shape is
+   * what that row varies: all twelve sit on one root.
+   */
+  function alternate(quality: NamedQuality): PaletteAlternate {
+    const found = component.alternates.find(candidate => candidate.quality === quality);
+    if (found === undefined) throw new Error(`no ${quality} on the alternates row`);
+    return found;
   }
 
   describe('what it offers', () => {
@@ -485,6 +540,457 @@ describe('ChordPaletteComponent', () => {
       settle();
 
       expect(component.canAdjust).toBeFalse();
+    });
+  });
+
+  /**
+   * The three rows below the seven, and the two verbs they are clicked with.
+   *
+   * `progression-vocabulary.spec.ts` checks every numeral in every seven-note
+   * scale the app offers, so this is not that sweep again. What is checked here
+   * is the wiring: that the rows reach the screen at all, that a click writes
+   * the *whole* triple into a slot, and that the notes under the label move
+   * with it - which is the one thing a document route would have got wrong.
+   */
+  describe('the vocabulary rows', () => {
+    /**
+     * C major's borrowed row, hand-checked: the parallel minor's ♭III, iv, ♭VI
+     * and ♭VII, plus the Neapolitan from the parallel phrygian.
+     */
+    it('offers the parallel minor and the Neapolitan in a major key', () => {
+      expect(component.borrowed.map(chord => chord.numeral))
+        .toEqual(['♭II', '♭III', 'iv', '♭VI', '♭VII']);
+      expect(component.borrowed.map(chord => chord.name))
+        .toEqual(['Db Maj', 'Eb Maj', 'F min', 'Ab Maj', 'Bb Maj']);
+    });
+
+    /**
+     * The row is in target order - the dominant of the second, then of the
+     * third - which is the order of the seven buttons above it rather than an
+     * order of usefulness. `V/V` is the fourth of the five, and putting it
+     * first would break the correspondence for the sake of one chord.
+     */
+    it('offers a dominant for every degree the key could tonicise', () => {
+      expect(component.secondary.map(chord => chord.numeral))
+        .toEqual(['V/ii', 'V/iii', 'V/IV', 'V/V', 'V/vi']);
+      expect(component.secondary.map(chord => chord.name))
+        .toEqual(['A7', 'B7', 'C7', 'D7', 'E7']);
+    });
+
+    /**
+     * The fix that made a minor key's dominant reachable at all.
+     *
+     * C minor's diatonic row shows `v`, a G minor triad, and nothing on it is a
+     * G major chord. The borrowed row is where harmonic minor supplies one -
+     * and the leading-tone triad beside it - so this row is not a smaller
+     * version of the major key's but a different one.
+     */
+    it('gives a minor key the dominant its diatonic row lacks', () => {
+      progression.setKey(0, 'aeolian');
+      settle();
+
+      expect(component.chords.map(chord => chord.numeral))
+        .toEqual(['i', 'ii°', 'III', 'iv', 'v', 'VI', 'VII']);
+      expect(component.borrowed.map(chord => chord.numeral)).toEqual(['♭II', 'V', '♯vii°']);
+      expect(component.borrowed.map(chord => chord.name)).toEqual(['Db Maj', 'G Maj', 'B°']);
+    });
+
+    // Borrowed chords and secondary dominants do not depend on the selection,
+    // which is what lets a user start a progression with one.
+    it('offers both append rows before anything is selected', () => {
+      expect(currentState().doc.slots).toEqual([]);
+      expect(component.borrowed.length).toBe(5);
+      expect(component.secondary.length).toBe(5);
+    });
+
+    // The alternates row is other shapes on the selected chord, so with nothing
+    // selected there is no root for it to sit on.
+    it('offers no alternates until a chord is selected', () => {
+      expect(component.alternates).toEqual([]);
+
+      component.addChord(component.chords[4]);
+      settle();
+
+      expect(component.alternates.length).toBe(12);
+      expect(component.alternates.map(chord => chord.name)).toContain('G Maj');
+    });
+
+    /**
+     * The whole panel refuses together. Borrowed chords are exactly as
+     * meaningless in a pentatonic key as diatonic ones, and offering three rows
+     * of them beside a paragraph explaining that there are no chords would be
+     * the panel contradicting itself.
+     */
+    it('offers none of the three in a key that can build no chords', () => {
+      component.addChord(component.chords[0]);
+      progression.setKey(0, 'majorPentatonic');
+      settle();
+
+      expect(component.alternates).toEqual([]);
+      expect(component.borrowed).toEqual([]);
+      expect(component.secondary).toEqual([]);
+      expect(component.unavailable).not.toBeNull();
+    });
+
+    it('offers them again when a heptatonic key comes back', () => {
+      progression.setKey(0, 'majorPentatonic');
+      settle();
+      progression.setKey(0, 'ionian');
+      settle();
+
+      expect(component.borrowed.length).toBe(5);
+      expect(component.secondary.length).toBe(5);
+    });
+  });
+
+  /**
+   * Which button is lit, which is a claim about the selected chord rather than
+   * about the last click.
+   */
+  describe('marking the chord that is already there', () => {
+    /**
+     * A fresh slot stores `quality: null` - "as the key gives it" - so a mark
+     * that compared the stored field would light nothing on the row a user
+     * first opens, even though one of the twelve is the chord that is sounding.
+     */
+    it('marks the shape a diatonic slot is playing, not its stored null', () => {
+      component.addChord(component.chords[4]);
+      settle();
+
+      expect(selectedDegree().quality).toBeNull();
+      expect(alternate('major').current).toBeTrue();
+      expect(component.alternates.filter(chord => chord.current).length).toBe(1);
+    });
+
+    /** And it follows the height, because that is what the slot is playing. */
+    it('marks the seventh once the slot is raised to one', () => {
+      component.addChord(component.chords[4]);
+      settle();
+      component.stepComplexity(1);
+      settle();
+
+      expect(alternate('dominant7').current).toBeTrue();
+      expect(alternate('major').current).toBeFalse();
+    });
+
+    /**
+     * One mark per row, and two rows can carry one.
+     *
+     * A borrowed chord in a slot *is* a shape on that slot's own root, so it is
+     * honestly reachable from two rows at once - and marking one of them and
+     * not the other would be picking a winner between two true statements.
+     */
+    it('marks the same chord in both rows that reach it', () => {
+      component.addOption(borrowed('♭VII'));
+      settle();
+
+      expect(borrowed('♭VII').current).toBeTrue();
+      expect(alternate('major').current).toBeTrue();
+      expect(component.borrowed.filter(chord => chord.current).length).toBe(1);
+      expect(component.alternates.filter(chord => chord.current).length).toBe(1);
+    });
+
+    it('marks nothing at all with nothing selected', () => {
+      expect(component.borrowed.some(chord => chord.current)).toBeFalse();
+      expect(component.secondary.some(chord => chord.current)).toBeFalse();
+    });
+  });
+
+  /**
+   * The append rows: a borrowed chord and a secondary dominant are chords you
+   * *add*, which is the argument the vocabulary's `BORROWINGS` makes for
+   * harmonic minor's `V` being on that row at all - a chord you cannot append
+   * is a chord this palette does not offer.
+   */
+  describe('clicking a borrowed chord or a secondary dominant', () => {
+    it('appends the whole triple the button names', () => {
+      component.addOption(borrowed('♭VII'));
+      settle();
+
+      const degree = selectedDegree();
+      expect(currentState().doc.slots.length).toBe(1);
+      expect([degree.degree, degree.alter, degree.extent]).toEqual([6, -1, 3]);
+      expect(degree.quality).toBe('major');
+    });
+
+    /**
+     * The reason this needed a service method of its own.
+     *
+     * `appendSlot` takes a degree and nothing else, so ♭VII could only have
+     * arrived as the diatonic degree 6 - a B diminished triad under a ♭VII
+     * label. Assembling a document instead would have been worse: `settle()`
+     * bounds and re-flows but never regenerates, so the notes would have stayed
+     * B D F under the new name for as long as the document lived.
+     */
+    it('sounds B flat major rather than the diatonic chord on that degree', () => {
+      component.addOption(borrowed('♭VII'));
+      settle();
+
+      expect(selectedPitchClasses()).toEqual([2, 5, 10]);
+    });
+
+    /** A secondary dominant arrives at a seventh's height, which names it. */
+    it('appends a secondary dominant as a seventh', () => {
+      component.addOption(secondary('V/V'));
+      settle();
+
+      const degree = selectedDegree();
+      expect([degree.degree, degree.alter, degree.extent]).toEqual([1, 0, 7]);
+      expect(degree.quality).toBe('dominant7');
+      // D F♯ A C: the F♯ is the accidental that makes it a dominant of G
+      // rather than the key's own ii7.
+      expect(selectedPitchClasses()).toEqual([0, 2, 6, 9]);
+    });
+
+    it('adds to the end rather than replacing what is selected', () => {
+      component.addChord(component.chords[0]);
+      settle();
+      component.addOption(borrowed('♭VI'));
+      settle();
+
+      const slots = currentState().doc.slots;
+      expect(slots.length).toBe(2);
+      expect(slots[1].id).toBe(currentState().selectedSlotId ?? '');
+    });
+
+    // The row is gone by then, so this is a click that raced a key change - and
+    // the service is the thing that has to refuse it, not the empty row.
+    it('refuses in a key that can build no chords', () => {
+      const flatSeven = borrowed('♭VII');
+      progression.setKey(0, 'majorPentatonic');
+      settle();
+      component.addOption(flatSeven);
+      settle();
+
+      expect(currentState().doc.slots).toEqual([]);
+    });
+  });
+
+  /**
+   * The alternates row is the other verb: it re-shapes the chord that is
+   * selected rather than adding one, which is the only thing twelve shapes on a
+   * root the user is already sitting on could usefully mean.
+   */
+  describe('clicking an alternate', () => {
+    beforeEach(() => {
+      component.addChord(component.chords[4]);
+      settle();
+    });
+
+    it('retunes the selected slot rather than appending', () => {
+      component.chooseAlternate(alternate('minor'));
+      settle();
+
+      expect(currentState().doc.slots.length).toBe(1);
+      expect(selectedDegree().quality).toBe('minor');
+      // G B♭ D.
+      expect(selectedPitchClasses()).toEqual([2, 7, 10]);
+    });
+
+    it('keeps the degree and the accidental it is a shape of', () => {
+      component.addOption(borrowed('♭VI'));
+      settle();
+      component.chooseAlternate(alternate('minor7'));
+      settle();
+
+      const degree = selectedDegree();
+      expect([degree.degree, degree.alter]).toEqual([5, -1]);
+      expect(degree.quality).toBe('minor7');
+    });
+
+    /**
+     * The marked button is not a no-op, and that is deliberate rather than
+     * overlooked: a fresh slot follows the mode, and clicking the shape it
+     * happens to be pins it to that shape. Which is what the row means - a user
+     * who clicks `major` has said the chord is major - so the key change that
+     * would have turned it minor now leaves it alone.
+     */
+    it('pins the shape even when it is the one already marked', () => {
+      expect(selectedDegree().quality).toBeNull();
+      expect(alternate('major').current).toBeTrue();
+
+      component.chooseAlternate(alternate('major'));
+      settle();
+
+      expect(selectedDegree().quality).toBe('major');
+      // G B D still, because the shape did not move - only the claim did.
+      expect(selectedPitchClasses()).toEqual([2, 7, 11]);
+    });
+
+    it('dispatches nothing with nothing selected', () => {
+      const shape = alternate('minor');
+      progression.selectSlot(null);
+      settle();
+      spyOn(progression, 'setSlotChord');
+
+      component.chooseAlternate(shape);
+
+      expect(progression.setSlotChord).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The cost the vocabulary could not fix from the pure layer: every shape is
+   * offered at the height its own name is true at, so choosing one sets the
+   * slot's height as well as its shape - and a user sitting on a ninth loses
+   * the ninth. The panel has to say so before the click, not after.
+   */
+  describe('the height an alternate sets', () => {
+    beforeEach(() => {
+      component.addChord(component.chords[4]);
+      settle();
+    });
+
+    it('states that height on every button', () => {
+      expect(alternate('major').heightLabel).toBe('Triad');
+      expect(alternate('dominant7').heightLabel).toBe('7th');
+    });
+
+    it('says nothing while no shape would shorten the chord', () => {
+      expect(component.extentLabel).toBe('Triad');
+      expect(component.alternates.some(chord => chord.lowersHeight)).toBeFalse();
+      expect(component.heightWarning).toBeNull();
+    });
+
+    /**
+     * On a ninth, every one of the twelve is shorter - the triads by two rungs
+     * and the sevenths by one - so all twelve are marked and the row says which
+     * height is at stake.
+     */
+    it('marks every button that would shorten it, and names what is at stake', () => {
+      component.stepComplexity(1);
+      component.stepComplexity(1);
+      settle();
+
+      expect(component.extentLabel).toBe('9th');
+      expect(component.alternates.every(chord => chord.lowersHeight)).toBeTrue();
+      expect(component.heightWarning).toContain('9th');
+    });
+
+    /** On a seventh only the triads shorten it, and only those are marked. */
+    it('marks only the shapes that are shorter than the chord', () => {
+      component.stepComplexity(1);
+      settle();
+
+      expect(alternate('major').lowersHeight).toBeTrue();
+      expect(alternate('dominant7').lowersHeight).toBeFalse();
+    });
+
+    /**
+     * The warning is about something that really happens, including on the
+     * button that matches the shape the slot already has: `major` is marked
+     * `current` on this ninth and clicking it still takes two notes away.
+     */
+    it('takes the ninth away when one of them is clicked', () => {
+      component.stepComplexity(1);
+      component.stepComplexity(1);
+      settle();
+      expect(selectedSlot().notes.length).toBe(5);
+
+      component.chooseAlternate(alternate('major'));
+      settle();
+
+      expect(selectedDegree().extent).toBe(3);
+      expect(selectedSlot().notes.length).toBe(3);
+      expect(component.extentLabel).toBe('Triad');
+    });
+
+    /** And the spoken label carries it, for a user who cannot see the mark. */
+    it('says on the button that it will shorten the chord', () => {
+      component.stepComplexity(1);
+      component.stepComplexity(1);
+      settle();
+
+      expect(alternate('major').label).toContain('down from the 9th');
+      expect(alternate('major7').label).toContain('down from the 9th');
+    });
+
+    it('says nothing of the kind on a shape that stands taller', () => {
+      expect(alternate('dominant7').label).not.toContain('down from');
+    });
+  });
+
+  /**
+   * The rows on screen, checked through the hit test a pointer does rather than
+   * by naming an element with a selector.
+   *
+   * Task 7 shipped a Critical bug behind a spec that reached for the first
+   * element matching a selector while a different one was drawn on top of it.
+   * Three new rows of buttons is exactly the change that can put one element
+   * over another, so the click below goes to whatever a press at the button's
+   * own centre would actually reach.
+   */
+  describe('on screen', () => {
+    /** The option button whose numeral is this one, in any of the three rows. */
+    function optionButton(numeral: string): HTMLElement {
+      const buttons: HTMLElement[] =
+        Array.from(fixture.nativeElement.querySelectorAll('button.option'));
+      const found = buttons.find(
+        button => button.querySelector('.numeral')?.textContent?.trim() === numeral
+      );
+      if (!found) throw new Error(`no option button for ${numeral}`);
+      return found;
+    }
+
+    /** The element a press at the middle of this one would actually land on. */
+    function pressed(button: HTMLElement): HTMLElement {
+      button.scrollIntoView({ block: 'center' });
+      const rect = button.getBoundingClientRect();
+      const hit = document
+        .elementsFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+        .find(candidate => candidate.closest('button.option') !== null);
+      if (!(hit instanceof HTMLElement)) {
+        throw new Error('nothing clickable at the middle of that button');
+      }
+      return hit;
+    }
+
+    it('draws every option as a button of its own', () => {
+      component.addChord(component.chords[4]);
+      settle();
+
+      expect(fixture.nativeElement.querySelectorAll('button.option').length)
+        .toBe(component.alternates.length + component.borrowed.length + component.secondary.length);
+    });
+
+    it('appends the chord a press at that button would reach', () => {
+      const button = optionButton('♭VII');
+      expect(pressed(button).closest('button.option')).toBe(button);
+
+      pressed(button).click();
+      settle();
+
+      expect(selectedDegree().alter).toBe(-1);
+      expect(selectedPitchClasses()).toEqual([2, 5, 10]);
+    });
+
+    it('retunes the selected slot from a press on an alternate', () => {
+      component.addChord(component.chords[4]);
+      settle();
+
+      const button = optionButton('v');
+      expect(pressed(button).closest('button.option')).toBe(button);
+
+      pressed(button).click();
+      settle();
+
+      expect(currentState().doc.slots.length).toBe(1);
+      expect(selectedDegree().quality).toBe('minor');
+    });
+
+    it('puts a spoken label on each of them', () => {
+      const buttons: HTMLElement[] =
+        Array.from(fixture.nativeElement.querySelectorAll('button.option'));
+
+      expect(buttons.map(button => button.getAttribute('aria-label')))
+        .toEqual([...component.borrowed, ...component.secondary].map(chord => chord.label));
+    });
+
+    it('draws no option rows at all in a key that can build none', () => {
+      progression.setKey(0, 'majorPentatonic');
+      settle();
+
+      expect(fixture.nativeElement.querySelectorAll('button.option').length).toBe(0);
     });
   });
 

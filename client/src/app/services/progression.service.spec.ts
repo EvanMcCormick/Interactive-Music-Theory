@@ -218,6 +218,155 @@ describe('ProgressionService', () => {
   });
 
   /**
+   * The wider door: a chord with an accidental and a shape of its own, which is
+   * every chord the palette's borrowed and secondary rows offer.
+   *
+   * `appendSlot` takes a degree, and a degree is every chord a key *has* and no
+   * chord it borrows. The three fields that make ♭VII a B flat major triad
+   * rather than a B diminished one - the accidental, the shape and the height -
+   * have no way in through a single number.
+   */
+  describe('appendChord', () => {
+    /** C major's ♭VII: degree 6 with its root pulled down a semitone. */
+    const FLAT_SEVEN = { degree: 6, alter: -1, quality: 'major' as const, extent: 3 as const };
+
+    /**
+     * The whole reason this is a setter rather than a document the palette
+     * assembles. `replaceDocument` settles - it bounds and re-flows - and never
+     * regenerates, so that route stores the new label over the old notes.
+     */
+    it('sounds the chord it names rather than the key’s own degree', () => {
+      service.appendChord(FLAT_SEVEN);
+
+      // B♭ D F, voiced up from middle C. The diatonic degree 6 is B D F -
+      // [71, 74, 77] - so the first note is the whole of the difference, and it
+      // is the note that makes the chord major rather than diminished.
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([70, 74, 77]);
+    });
+
+    it('stores the triple it was given', () => {
+      service.appendChord(FLAT_SEVEN);
+      const harmony = slots()[0].harmony;
+      if (harmony.kind !== 'degree') throw new Error('appendChord built no degree');
+
+      expect(harmony.degree.degree).toBe(6);
+      expect(harmony.degree.alter).toBe(-1);
+      expect(harmony.degree.quality).toBe('major');
+      expect(harmony.degree.extent).toBe(3);
+    });
+
+    /**
+     * A secondary dominant arrives at a seventh, because that is the height its
+     * name is true at - and the height is the field `appendSlot` fixes at three.
+     */
+    it('takes the height the choice names', () => {
+      service.appendChord({ degree: 1, alter: 0, quality: 'dominant7', extent: 7 });
+
+      // D F♯ A C.
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([62, 66, 69, 72]);
+    });
+
+    it('appends and selects on the same terms as a diatonic chord', () => {
+      service.appendSlot(0);
+      service.appendChord(FLAT_SEVEN);
+
+      expect(slots().length).toBe(2);
+      expect(slots().map(slot => slot.startBeat)).toEqual([0, 4]);
+      expect(currentState().selectedSlotId).toBe(slots()[1].id);
+      expectContiguous();
+    });
+
+    it('refuses in a key that can build no chords', () => {
+      service.setKey(0, 'majorPentatonic');
+      expectNoCommit(() => service.appendChord(FLAT_SEVEN));
+    });
+
+    /**
+     * The palette hands its own view model over, which carries a numeral, a
+     * name and four more fields for the screen. Only the four the service reads
+     * may reach the document: a spread would copy the rest into a `ChordDegree`
+     * and from there into every undo entry for the life of the document.
+     */
+    it('stores none of the extra fields a caller’s object carries', () => {
+      // A variable rather than a literal at the call, which is both what the
+      // palette passes and what gets past the excess-property check - the same
+      // hole the guard in `chosen()` covers.
+      const decorated = { ...FLAT_SEVEN, numeral: '♭VII', name: 'Bb Maj', current: false };
+      service.appendChord(decorated);
+      const harmony = slots()[0].harmony;
+      if (harmony.kind !== 'degree') throw new Error('appendChord built no degree');
+
+      expect(Object.keys(harmony.degree).sort())
+        .toEqual(['alter', 'degree', 'extent', 'inversion', 'octave', 'quality', 'suspension']);
+    });
+  });
+
+  /**
+   * Retuning a slot to another chord: the palette's alternates row, and the one
+   * command that moves all four harmony fields at once.
+   */
+  describe('setSlotChord', () => {
+    beforeEach(() => service.appendSlot(4));
+
+    it('re-shapes the slot in place rather than adding one', () => {
+      service.setSlotChord(slots()[0].id, { degree: 4, alter: 0, quality: 'minor', extent: 3 });
+
+      expect(slots().length).toBe(1);
+      // G B♭ D.
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([67, 70, 74]);
+    });
+
+    /**
+     * The height comes with the shape, which is the cost the palette has to
+     * show: a slot standing on a ninth is stood back down by a triad's name.
+     */
+    it('sets the height the shape names, ninth and all', () => {
+      const id = slots()[0].id;
+      service.setSlotExtent(id, 9);
+      expect(slots()[0].notes.length).toBe(5);
+
+      service.setSlotChord(id, { degree: 4, alter: 0, quality: 'major', extent: 3 });
+
+      expect(slots()[0].notes.length).toBe(3);
+    });
+
+    it('reclaims the pitches, as every other harmony command does', () => {
+      const id = slots()[0].id;
+      service.setSlotNotes(id, [{ midi: 61, startBeat: 0, lengthBeats: 4, velocity: 80 }]);
+      expect(slots()[0].owned.pitches).toBeTrue();
+
+      service.setSlotChord(id, { degree: 4, alter: 0, quality: 'minor', extent: 3 });
+
+      expect(slots()[0].owned.pitches).toBeFalse();
+      expect(slots()[0].notes.map(note => note.midi)).toEqual([67, 70, 74]);
+    });
+
+    it('records nothing when the slot already holds that chord', () => {
+      const id = slots()[0].id;
+      service.setSlotChord(id, { degree: 4, alter: 0, quality: 'major', extent: 3 });
+
+      expectNoCommit(() =>
+        service.setSlotChord(id, { degree: 4, alter: 0, quality: 'major', extent: 3 })
+      );
+    });
+
+    it('refuses in a key that can build no chords', () => {
+      const id = slots()[0].id;
+      service.setKey(0, 'majorPentatonic');
+
+      expectNoCommit(() =>
+        service.setSlotChord(id, { degree: 4, alter: 0, quality: 'minor', extent: 3 })
+      );
+    });
+
+    it('ignores an id the document does not hold', () => {
+      expectNoCommit(() =>
+        service.setSlotChord('no-such-slot', { degree: 0, alter: 0, quality: 'minor', extent: 3 })
+      );
+    });
+  });
+
+  /**
    * The four mutations that disturb the contiguity invariant, each checked
    * against it. The plan names this as the invariant to test explicitly, and it
    * is tested four times rather than once because a re-flow that ran on three

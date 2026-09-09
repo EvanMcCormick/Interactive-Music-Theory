@@ -25,6 +25,86 @@
     </button>
   </div>
 
+  <!-- The three rows the vocabulary derives. Each is hidden when it is empty
+       rather than drawn as a heading over nothing: the alternates row has no
+       root to sit on until a chord is selected, and a mode can already own
+       every chord the borrowed row would offer it.
+
+       The buttons carry `option` and not `chord`, which is what keeps the seven
+       above countable: they are the row the panel is titled after, and a spec
+       or a stylesheet that means those seven should not have to say "the first
+       seven of them".
+
+       `current` is one mark on all three rows and does not mean quite the same
+       thing on each. On the alternates it is the shape you are on, and that
+       button re-states it; on the two append rows it is a fact about the
+       selection - the chord you are on is this borrowed one - and the button
+       still adds another. Both are statements about the selected chord, which
+       is what `aria-current` says and all it says. -->
+  <section
+    class="group"
+    *ngIf="alternates.length > 0"
+    role="group"
+    aria-label="Other shapes on the selected chord">
+    <h4 class="group-title">Other shapes</h4>
+    <div class="options">
+      <button
+        type="button"
+        class="option"
+        *ngFor="let option of alternates; trackBy: trackByKey"
+        [class.current]="option.current"
+        [attr.aria-current]="option.current ? 'true' : null"
+        [attr.aria-label]="option.label"
+        (click)="chooseAlternate(option)">
+        <span class="numeral">{{ option.numeral }}</span>
+        <span class="name">{{ option.name }}</span>
+        <!-- The height this shape stands on, and an arrow when that is below
+             the one the slot is on. The arrow rather than the colour alone is
+             the part a user who cannot see the amber gets; the spoken label
+             carries the same fact in words. -->
+        <span class="height" [class.lowers]="option.lowersHeight">
+          <span class="lowers-mark" *ngIf="option.lowersHeight" aria-hidden="true">&darr;</span
+          >{{ option.heightLabel }}
+        </span>
+      </button>
+    </div>
+    <p class="hint" *ngIf="heightWarning">{{ heightWarning }}</p>
+  </section>
+
+  <section class="group" *ngIf="borrowed.length > 0" role="group" aria-label="Borrowed chords">
+    <h4 class="group-title">Borrowed</h4>
+    <div class="options">
+      <button
+        type="button"
+        class="option"
+        *ngFor="let option of borrowed; trackBy: trackByKey"
+        [class.current]="option.current"
+        [attr.aria-current]="option.current ? 'true' : null"
+        [attr.aria-label]="option.label"
+        (click)="addOption(option)">
+        <span class="numeral">{{ option.numeral }}</span>
+        <span class="name">{{ option.name }}</span>
+      </button>
+    </div>
+  </section>
+
+  <section class="group" *ngIf="secondary.length > 0" role="group" aria-label="Secondary dominants">
+    <h4 class="group-title">Secondary dominants</h4>
+    <div class="options">
+      <button
+        type="button"
+        class="option"
+        *ngFor="let option of secondary; trackBy: trackByKey"
+        [class.current]="option.current"
+        [attr.aria-current]="option.current ? 'true' : null"
+        [attr.aria-label]="option.label"
+        (click)="addOption(option)">
+        <span class="numeral">{{ option.numeral }}</span>
+        <span class="name">{{ option.name }}</span>
+      </button>
+    </div>
+  </section>
+
   <!-- Hidden rather than greyed in a key that can build no chords. They act on
        a selected chord, and there is none to select: the panel would otherwise
        be half grey with the hint that explains grey steppers suppressed, in
