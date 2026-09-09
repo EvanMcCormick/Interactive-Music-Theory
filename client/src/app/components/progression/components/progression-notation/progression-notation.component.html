@@ -1,0 +1,29 @@
+<section class="notation" [class.notation-open]="isOpen">
+  <header class="notation-bar">
+    <button
+      type="button"
+      class="notation-toggle"
+      [attr.aria-expanded]="isOpen"
+      aria-controls="progression-notation-panel"
+      (click)="toggle()"
+    >
+      <span class="notation-caret" aria-hidden="true">{{ isOpen ? '▾' : '▸' }}</span>
+      Notation
+    </button>
+
+    <!-- Only while there is something drawn to count. Closed, the panel says
+         what it is and nothing about a score it has not projected. -->
+    <p class="notation-count" *ngIf="isOpen && barCount > 0">
+      {{ barCount }} {{ barCount === 1 ? 'bar' : 'bars' }}
+    </p>
+  </header>
+
+  <div class="notation-panel" id="progression-notation-panel" *ngIf="isOpen">
+    <p class="notation-warning" *ngIf="truncatedTo !== null">
+      Too long to draw in full — showing the first {{ truncatedTo }} bars of {{ barCount }}.
+    </p>
+    <p class="notation-error" *ngIf="renderError" role="alert">{{ renderError }}</p>
+
+    <div class="notation-surface" #previewContainer></div>
+  </div>
+</section>

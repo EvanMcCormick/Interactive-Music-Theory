@@ -183,6 +183,27 @@ export type KeySignatureKind = 'sharp' | 'flat' | 'none';
  * function cannot place.
  */
 export function keySignatureKind(mode: string, tonic: number): KeySignatureKind | null {
+  return keySignaturePosition(mode, tonic)?.accidentalKind ?? null;
+}
+
+/**
+ * The circle position a key inherits its signature from, or `null` when it
+ * inherits from none.
+ *
+ * The whole of `keySignatureKind`'s rule, stopping one field short of its
+ * answer. It is separate because a signature is two facts and that function
+ * returns one: *what* the accidentals are, which is all the fretboard's
+ * spelling decision needs, and *how many* there are, which is what notation
+ * needs - `KeySignature.fifths` is a signed count, and E flat major is three
+ * flats rather than merely flat. `progression-score.ts` is the caller that
+ * needs the count, and reading `accidentals` off the position it already had
+ * to find is cheaper and safer than a second walk back to the parent major.
+ *
+ * Splitting it out rather than widening the return type keeps the call the
+ * fretboard makes exactly as it was: `shouldUseSharps` asks a yes-or-no
+ * question and should not have to unwrap a record to hear the answer.
+ */
+export function keySignaturePosition(mode: string, tonic: number): CirclePosition | null {
   const offset = MODE_OFFSETS[mode];
   if (offset === undefined) {
     return null;
@@ -195,7 +216,5 @@ export function keySignatureKind(mode: string, tonic: number): KeySignatureKind 
   }
 
   const parent = (tonic - offset + 12) % 12;
-  const position = CIRCLE_POSITIONS.find(candidate => candidate.pitchClass === parent);
-
-  return position ? position.accidentalKind : null;
+  return CIRCLE_POSITIONS.find(candidate => candidate.pitchClass === parent) ?? null;
 }

@@ -21,11 +21,12 @@
 .progression-page {
   display: grid;
   grid-template-columns: minmax(14rem, 17rem) minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   grid-template-areas:
     'rail palette'
     'rail transport'
     'rail roll'
+    'rail notation'
     'rail strip';
   // Fills the window under the shell's header, so the page reads as a
   // workspace rather than as three panels that happen to be stacked: the rail
@@ -70,6 +71,13 @@
   min-width: 0;
   overflow-y: auto;
   background: var(--page-rail);
+}
+
+// Same reason as the roll: the engraved page can be wider than the column, and
+// the panel scrolls it rather than the page.
+.notation {
+  grid-area: notation;
+  min-width: 0;
 }
 
 .strip {

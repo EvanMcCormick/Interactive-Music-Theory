@@ -32,5 +32,9 @@
        read down the page as "which chord" and then "what it plays". -->
   <app-progression-transport class="transport"></app-progression-transport>
   <app-piano-roll class="roll"></app-piano-roll>
+  <!-- Under the roll, because it reads what the roll writes: the same notes,
+       barred and given written durations. Collapsed until asked for - see the
+       component, which owns the engraver only while it is open. -->
+  <app-progression-notation class="notation"></app-progression-notation>
   <app-progression-strip class="strip"></app-progression-strip>
 </div>

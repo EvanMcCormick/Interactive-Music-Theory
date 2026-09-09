@@ -12,6 +12,7 @@ import { Subject, distinctUntilChanged, map, takeUntil } from 'rxjs';
 
 import { ChordPaletteComponent } from './components/chord-palette/chord-palette.component';
 import { PianoRollComponent } from './components/piano-roll/piano-roll.component';
+import { ProgressionNotationComponent } from './components/progression-notation/progression-notation.component';
 import { ProgressionStripComponent } from './components/progression-strip/progression-strip.component';
 import { ProgressionTransportComponent } from './components/progression-transport/progression-transport.component';
 import { ProgressionState } from '../../models/progression.model';
@@ -34,7 +35,7 @@ interface AppSelection {
  *
  * ## It composes, and owns five things nothing else can
  *
- * The four components below wire themselves to `ProgressionService`, so this
+ * The five components below wire themselves to `ProgressionService`, so this
  * shell passes them nothing - no inputs, no outputs, no state. The roll is the
  * clearest case rather than an exception to it: it edits whichever slot the
  * strip has selected, and it learns which that is from `selectedSlotId` on the
@@ -117,6 +118,7 @@ interface AppSelection {
     CommonModule,
     ChordPaletteComponent,
     PianoRollComponent,
+    ProgressionNotationComponent,
     ProgressionStripComponent,
     ProgressionTransportComponent
   ],

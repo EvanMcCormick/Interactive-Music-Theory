@@ -1,0 +1,108 @@
+// The page's scheme, named here as the transport, palette and strip each name
+// it, so this panel's theming is one block to read and the blue that means
+// "engaged" is the same blue everywhere on the page.
+//
+// The engraving surface is the exception and is deliberately white: alphaTab
+// draws black glyphs, and there is no setting on this side that would recolour
+// them. A dark panel with a white page in it is what a score looks like.
+:host {
+  --notation-surface: #2c3e50;
+  --notation-line: #22303d;
+  --notation-text: #ecf0f1;
+  // 5.7:1 on --notation-surface.
+  --notation-text-dim: #adbcc8;
+  // The transport's accent, for the same meaning.
+  --notation-accent: #1b6ea3;
+  // 8.6:1 on --notation-surface.
+  --notation-warning: #f5b041;
+  // 5.4:1 on --notation-surface.
+  --notation-error: #f1948a;
+
+  display: block;
+}
+
+.notation {
+  background: var(--notation-surface);
+  color: var(--notation-text);
+  border-top: 1px solid var(--notation-line);
+}
+
+.notation-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 1rem;
+}
+
+.notation-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--notation-line);
+  }
+
+  // Kept rather than replaced with a custom ring: this is the only control in
+  // the panel, and a keyboard user reaching it has nothing else to land on.
+  &:focus-visible {
+    outline: 2px solid var(--notation-accent);
+    outline-offset: 2px;
+  }
+}
+
+.notation-caret {
+  // A fixed box, so the label does not shift a pixel as the caret turns.
+  display: inline-block;
+  width: 0.8rem;
+  text-align: center;
+}
+
+.notation-count {
+  margin: 0;
+  color: var(--notation-text-dim);
+  font-size: 0.85rem;
+}
+
+.notation-panel {
+  padding: 0 1rem 0.75rem;
+}
+
+.notation-warning,
+.notation-error {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+.notation-warning {
+  color: var(--notation-warning);
+}
+
+.notation-error {
+  color: var(--notation-error);
+}
+
+.notation-surface {
+  // Capped rather than unbounded: a long progression engraves to several
+  // systems, and a panel that grew with it would push the strip off the page.
+  // The roll above is the thing on this page allowed to take the room.
+  max-height: 16rem;
+  overflow: auto;
+  // The gutter is reserved whether or not a scrollbar is showing, which breaks
+  // a feedback loop rather than tidying one up: the `ResizeObserver` below
+  // re-renders on a width change, a render that crosses the 16rem cap adds a
+  // classic scrollbar, and the narrower box can lay the score back out under
+  // the cap - so the panel flips between two states forever.
+  scrollbar-gutter: stable;
+  padding: 0.5rem;
+  border-radius: 0.25rem;
+  background: #fff;
+}
