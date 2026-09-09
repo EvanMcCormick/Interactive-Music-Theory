@@ -16,6 +16,7 @@ import {
 } from '../models/progression.model';
 import {
   nearestExtent,
+  reclaimPitches,
   regenerateSlot,
   requireUniqueSlotIds,
   retimeNotes,
@@ -288,6 +289,21 @@ export class ProgressionService {
    * octave controls are steppers that clamp, so pressing one at its limit is a
    * normal thing to do repeatedly, and a hundred of those would empty the undo
    * stack of everything the user actually did.
+   *
+   * ## It reclaims the pitches, where `setKey` does not
+   *
+   * Every command that reaches here - `setSlotExtent`, `stepSlotExtent`,
+   * `setSlotInversion`, `setSlotOctave` - restates the chord or its voicing, so
+   * the pitches the slot is holding are the ones the user is asking to replace.
+   * Leaving a claim over them intact would let the label move while the notes
+   * did not: a complexity step on a claimed slot stores `extent: 7`, the card
+   * prints `Imaj7`, and the synth keeps sounding the three pitches that were
+   * there. `reclaimPitches` is that decision, and its docstring carries the
+   * argument.
+   *
+   * The reclaim happens **after** the no-op comparison above, so a stepper
+   * resting on its limit reclaims nothing - there is no commit to reclaim in.
+   * `owned.timing` and `owned.velocity` are not touched by any of the four.
    */
   private editDegree(id: string, change: (degree: ChordDegree) => ChordDegree): void {
     const doc = this.doc;
@@ -308,7 +324,7 @@ export class ProgressionService {
     if (edited.harmony.kind !== 'degree') return;
     if (sameDegree(edited.harmony.degree, current)) return;
 
-    this.replaceSlot(id, draftKey => this.regenerate(edited, draftKey));
+    this.replaceSlot(id, draftKey => this.regenerate(reclaimPitches(edited), draftKey));
   }
 
   /** The slot with this id, or null when the document does not hold one. */
@@ -345,12 +361,18 @@ export class ProgressionService {
 
   /**
    * Moves the whole progression to a new key, re-deriving what every slot
-   * sounds and how it is labelled.
+   * sounds. The labels move with the key on their own - `effectiveQuality`
+   * reads them off the chord that was built, and no field here holds one.
    *
    * Every slot is passed through `regenerateSlot`, which is a merge and not a
    * replace: it re-derives only the dimensions the user has not claimed, and
    * hands a `literal` slot's notes straight back. So running it over everything
    * is the right thing rather than merely a safe one.
+   *
+   * **It does not reclaim anything.** A key change restates no chord - it moves
+   * every chord at once - so a claimed voicing is meant to survive it, which is
+   * the case the whole merge is argued from. The harmony commands are the ones
+   * that reclaim, and `editDegree` says why.
    *
    * **What is still missing here is the interval.** `regenerateSlot` transposes
    * *owned* pitches by a `transposeBy` it cannot work out for itself - it sees
@@ -518,6 +540,38 @@ export class ProgressionService {
    * It is also the only door in M1 through which a `literal` slot can arrive,
    * which is how the characterisation of resizing one is testable at all
    * before M3 builds the recogniser that makes them for real.
+   *
+   * ## It settles the document; it does not regenerate it
+   *
+   * `settle()` bounds and re-flows. Nothing in it rebuilds a slot's notes from
+   * its degree, so **a document is installed exactly as it was handed over,
+   * disagreements and all**, and the disagreement lives until something else
+   * triggers a regeneration - a key change, a complexity step, an inversion.
+   * A document whose `harmony.degree` says bVII while its `notes` still sound
+   * B-D-F is stored saying one thing and sounding another.
+   *
+   * That used to be self-correcting and invisible. `quality` was a transient
+   * label that every regeneration overwrote, so a stale document was repaired
+   * by whatever the user did next and no state persisted the disagreement. M2
+   * Task 4 made the field **durable user intent**: it is now the override that
+   * survives every regeneration, so a loaded document can hold a card and a
+   * synth that disagree about one chord indefinitely - the failure
+   * `effectiveQuality`'s docstring exists to prevent, arriving by the one road
+   * that does not go through it.
+   *
+   * The consequence for callers is a rule, and it is not only this method's:
+   * **a path that emits harmony must be a path that regenerates.** Task 9's
+   * palette emits `(degree, alter, quality)` for a borrowed chord, and it has
+   * to reach the slot through `editDegree` - or through a new setter that
+   * regenerates - rather than by assembling a document and handing it here. The
+   * spec that installs a bVII works around this with a no-op `setKey` and says
+   * so at the call; that is a test's licence, not an example to follow.
+   *
+   * Regenerating here was considered and is not obviously wrong. It is not done
+   * because this method has no production caller yet and regenerating would
+   * silently rewrite the notes of a document that meant them - which is the
+   * whole of what a `literal` slot is for, and the distinction a loader will
+   * need to make deliberately rather than inherit.
    */
   replaceDocument(doc: ProgressionDoc, markClean = false): void {
     const state = this.stateSubject.getValue();
@@ -591,7 +645,15 @@ export class ProgressionService {
   // Harmony
   // -------------------------------------------------------------------------
 
-  /** Re-derives a slot's quality label and its notes, in the key it is in. */
+  /**
+   * Re-derives what a slot sounds, in the key it is in.
+   *
+   * It does **not** re-derive the label. `ChordDegree.quality` is the user's
+   * override and `regenerateSlot` leaves it exactly as it found it; the name on
+   * the card comes from `effectiveQuality`, read off the chord that was
+   * actually built. Writing the derived label into the field here is what M2
+   * Task 4 removed, and this line used to say so.
+   */
   private regenerate(slot: ChordSlot, key: ProgressionKey): ChordSlot {
     return regenerateSlot(slot, key, this.chordScale(this.findScale(key.scaleId)));
   }

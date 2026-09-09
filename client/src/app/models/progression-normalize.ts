@@ -8,6 +8,7 @@ import type {
   ChordSlot,
   ProgressionDoc,
   ProgressionKey,
+  RollNote,
   SlotOwnership
 } from './progression.model';
 
@@ -473,6 +474,100 @@ function requireOwnershipFlag(value: boolean, dimension: string): boolean {
   return value;
 }
 
+/**
+ * The first clause of the rule above, applied to the notes themselves.
+ *
+ * **This was owed from the commit that made regeneration a merge**, and until
+ * then it genuinely was not. While every note was rebuilt wholesale from the
+ * degree on every regeneration, a bad one arriving through `replaceDocument`
+ * was scrubbed by the next edit and there was nothing a check could catch that
+ * the rebuild did not already remove. `mergeNotes` is the first code that
+ * carries a caller-supplied `RollNote` *through* a regeneration: a note with
+ * `midi: NaN` on a slot claiming `pitches` is now preserved by that
+ * regeneration and by every one after it, silent on `Tone.PolySynth` and
+ * indistinguishable from a chord the user muted.
+ *
+ * The asymmetry that made it obvious sits inside one function.
+ * `regenerateSlot` throws on a `transposeBy` that is not an integer, arguing
+ * that a `NaN` reaching `RollNote.midi` "is silence rather than an error, three
+ * layers from the caller" - and then adds that checked delta to a `note.midi`
+ * nothing had checked. The guard was right; the operand was the hole.
+ *
+ * ## Kind is checked here; range is deliberately not
+ *
+ * Every check below is the wrong-kind clause and nothing more. Nothing is
+ * clamped, and the ranges are deliberately open:
+ *
+ *  - **`midi` is not bounded to 0-127.** It could be, and the bound would be
+ *    half a guard: `regenerateSlot` adds `transposeBy` to it afterwards and
+ *    that parameter is integer-checked but *not* range-checked, so
+ *    `midi + transposeBy` has no bound whatever this function decides. Bounding
+ *    one end of that sum while the other is open buys a false sense of a
+ *    guarded pitch. `OCTAVE_MAX` is the bound that actually holds today, and it
+ *    holds by bounding the *input* to the generator - the choice its own note
+ *    argues at length.
+ *  - **`lengthBeats` and `velocity` are not clamped** for the reason
+ *    `MIN_SLOT_BEATS` is a slot's floor and not a note's: the roll has not been
+ *    drawn yet, and the ends a drag should rest on are M2 Task 5's to choose
+ *    with the setters that produce them. Inventing them here would be this file
+ *    deciding what a note gesture means.
+ *
+ * A negative `startBeat` is refused rather than left open, because it is not a
+ * control at its limit: a note before the start of the slot that holds it is
+ * outside the slot, not at the end of it. That is `requireStartBeat`'s argument
+ * one frame down - these offsets are relative to the slot's own start.
+ *
+ * The four fields are listed rather than spread, so a field added to `RollNote`
+ * is a compile error here rather than a value this rule quietly stops covering
+ * - the device `sameDegree` uses for the same purpose.
+ */
+function normalizeRollNote(note: RollNote, index: number): RollNote {
+  const midi = note.midi;
+  if (!Number.isInteger(midi)) {
+    throw new Error(`RollNote ${index} midi must be a whole MIDI note number; got ${midi}`);
+  }
+
+  const startBeat = note.startBeat;
+  if (!Number.isFinite(startBeat) || startBeat < 0) {
+    throw new Error(
+      `RollNote ${index} startBeat must be a finite offset at or after the slot's ` +
+        `start; got ${startBeat}`
+    );
+  }
+
+  const lengthBeats = note.lengthBeats;
+  if (!Number.isFinite(lengthBeats)) {
+    throw new Error(
+      `RollNote ${index} lengthBeats must be a finite duration; got ${lengthBeats}`
+    );
+  }
+
+  const velocity = note.velocity;
+  if (!Number.isFinite(velocity)) {
+    throw new Error(
+      `RollNote ${index} velocity must be a finite MIDI velocity; got ${velocity}`
+    );
+  }
+
+  return { midi, startBeat, lengthBeats, velocity };
+}
+
+/**
+ * Checks every note on a slot, and hands back an array that shares nothing with
+ * the one it was given.
+ *
+ * The container is checked before the contents because a missing `notes` is not
+ * `owned`'s migration case - the field is as old as `ChordSlot` and no document
+ * was ever written without it - so it is corruption, and `.map` of `undefined`
+ * would report it as a `TypeError` naming neither the field nor the slot.
+ */
+function normalizeNotes(notes: RollNote[]): RollNote[] {
+  if (!Array.isArray(notes)) {
+    throw new Error(`ChordSlot notes must be an array of RollNote; got ${notes}`);
+  }
+  return notes.map((note, index) => normalizeRollNote(note, index));
+}
+
 function normalizeChordDegree(degree: ChordDegree): ChordDegree {
   const extent = requireExtent(degree.extent);
   const alter = clamp(requireInteger(degree.alter, 'alter'), ALTER_MIN, ALTER_MAX);
@@ -499,24 +594,28 @@ function normalizeChordDegree(degree: ChordDegree): ChordDegree {
  * Builds a new slot rather than editing in place, so a document already on the
  * `structuredClone` undo stack is not quietly amended behind it.
  *
- * The copy is shallow, and the promise should be read as exactly that: `notes`
- * is the same array by reference, holding the same `RollNote` objects, and a
- * literal slot's `harmony` is the same object too, where the degree branch and
- * `owned` both build fresh ones. Enough for the undo stack, which deep-clones on
- * the way in; not enough for a caller assuming it may now edit `notes` in place.
+ * The copy is shallow in one place only: a literal slot's `harmony` is the same
+ * object it arrived as, where the degree branch, `owned` and `notes` all build
+ * fresh ones. Enough for the undo stack, which deep-clones on the way in.
  *
- * `notes` is also not checked, for the reason it is safe not to copy: in M1 it
- * is regenerated wholesale from the fields above, which are checked, and never
- * mutated, so there is nothing a check could catch and nothing a shared
- * reference can spoil. M2's piano roll ends both at once, which is why the deep
- * copy and the `notes` check belong in one change.
+ * `notes` used to be shared and unchecked, and this docstring used to argue
+ * that both were safe because M1 regenerated every note wholesale from the
+ * fields above. **M2 Task 4 ended that** - `mergeNotes` carries a
+ * caller-supplied note through a regeneration, so an unchecked one now
+ * persists rather than being scrubbed by the next edit. The two went together
+ * exactly as this note predicted they would: `normalizeRollNote` is the check,
+ * and rebuilding each note is the copy, in one pass. What it does *not* do is
+ * bound anything, and that line is drawn there rather than here.
  */
 export function normalizeChordSlot(slot: ChordSlot): ChordSlot {
   const timed: ChordSlot = {
     ...slot,
     startBeat: requireStartBeat(slot.startBeat),
     lengthBeats: normalizeLengthBeats(slot.lengthBeats),
-    // Before the literal branch returns, so both kinds of slot get one.
+    // Both before the literal branch returns, so both kinds of slot get them.
+    // A literal slot's notes are the only thing it has, which makes it the kind
+    // that can least afford an unchecked one.
+    notes: normalizeNotes(slot.notes),
     owned: normalizeOwnership(slot.owned)
   };
 

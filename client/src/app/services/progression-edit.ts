@@ -141,6 +141,37 @@ export function settle(doc: ProgressionDoc): ProgressionDoc {
 }
 
 /**
+ * Hands a slot's pitches back to the generator.
+ *
+ * The one thing a command may do to ownership that the user did not do
+ * directly, and it is narrow on purpose: it is for a command that **restates
+ * the chord or its voicing** - `setSlotExtent`, `stepSlotExtent`,
+ * `setSlotInversion`, `setSlotOctave`. Without it those four collide with a
+ * claim over `pitches`, and the collision is not a near miss. A complexity step
+ * on such a slot writes `extent: 7`, so `effectiveQuality` prints `Imaj7` on
+ * the card, while `mergeNotes` hands back the three pitches the user was
+ * holding: the stepper does nothing audible and mislabels the slot in the same
+ * press. `effectiveQuality`'s own docstring spends two sections arguing that
+ * exactly that - the label disagreeing with the synth about one chord on one
+ * card - is the failure it exists to prevent.
+ *
+ * Between honouring the request and preserving the pitches the user is in the
+ * act of replacing, the request wins. It is undoable, which is what makes that
+ * safe: one press of undo puts the claimed voicing back, where a stepper that
+ * silently refused to move would leave the user with no way to find out why.
+ *
+ * **A key change does not reclaim.** Preserving a voicing across a
+ * transposition is the entire point of the merge, and a key change restates no
+ * chord - it moves every chord at once, which is what `transposeBy` is for.
+ *
+ * `timing` and `velocity` are left alone by all four, because none of them
+ * restates a rhythm or a dynamic: a complexity step should keep your groove.
+ */
+export function reclaimPitches(slot: ChordSlot): ChordSlot {
+  return { ...slot, owned: { ...slot.owned, pitches: false } };
+}
+
+/**
  * Re-derives what a slot sounds, keeping the dimensions the user has claimed.
  *
  * This is a **merge**, not a replace, and that is the idea M2 turns on. M1
@@ -172,6 +203,27 @@ export function settle(doc: ProgressionDoc): ProgressionDoc {
  * compute one, and every other call site passes 0 - which is not a default
  * standing in for a missing answer but the honest one: a complexity step or an
  * inversion moves no key, so there is no interval to move claimed pitches by.
+ *
+ * ## The two paths in here differ in intent, not only in `transposeBy`
+ *
+ * A **key change** regenerates to keep what the user has: the pitch row's
+ * "owned" column is the whole point of the merge, because a voicing written in
+ * C should follow the progression to A minor rather than be thrown away by it.
+ * That path arrives with `owned` exactly as the document holds it.
+ *
+ * A **harmony command** - `setSlotExtent`, `stepSlotExtent`, `setSlotInversion`,
+ * `setSlotOctave` - regenerates to *replace* what the user has, because that is
+ * what the user just asked for: each of those restates the chord or its
+ * voicing, and a stepper that left claimed pitches alone would move the label
+ * without moving a note. So `ProgressionService.editDegree` calls
+ * `reclaimPitches` first, and that path arrives with `owned.pitches` already
+ * false. This function does not know which path it is on and does not need to:
+ * the caller has already said so in the only vocabulary it reads.
+ *
+ * The consequence for the table is that its pitch row's "owned" column is
+ * reachable **from the key path alone**. `owned.timing` and `owned.velocity`
+ * are untouched on both - a complexity step keeps your rhythm and your
+ * dynamics, because neither is a restatement of the chord.
  *
  * Bounds first, generate second. The order is load-bearing for the same reason
  * it is in `commit()`: `generateSlotNotes` copies `lengthBeats` onto every note
@@ -246,9 +298,14 @@ function mergeNotes(
   const held = slot.notes;
   const owned = slot.owned;
 
-  const pitched = owned.pitches
-    ? held.map(note => ({ ...note, midi: note.midi + transposeBy }))
-    : generated;
+  // The list is walked rather than rebuilt: the map below writes every field of
+  // every note anyway, so a transposed copy made here would be an object built
+  // to have one number read off it. The shift is hoisted to match - it is 0 on
+  // the re-voiced branch by the same argument that makes `transposeBy` 0 at
+  // every call site but `setKey`: a chord rebuilt from the degree is already in
+  // the new key, so moving it again would move it twice.
+  const pitched = owned.pitches ? held : generated;
+  const shift = owned.pitches ? transposeBy : 0;
 
   return pitched.map((note, index) => {
     // `note` as the last resort rather than a written-out block: when timing is
@@ -259,7 +316,7 @@ function mergeNotes(
     const timing = noteAt(owned.timing ? held : generated, index) ?? note;
 
     return {
-      midi: note.midi,
+      midi: note.midi + shift,
       startBeat: timing.startBeat,
       lengthBeats: timing.lengthBeats,
       velocity: owned.velocity
@@ -279,6 +336,33 @@ function mergeNotes(
  * because a chord tone added under a rhythm belongs to the event that rhythm
  * ends on; springing back to the slot's start and full length would make it the
  * one voice ignoring the groove.
+ *
+ * ## One extra note is the easy case, and not the argument
+ *
+ * The gap is a gap and not an off-by-one: three held notes against a thirteenth
+ * chord's seven puts **four** notes on the last onset, all sounding together
+ * where the user wrote one. That is a real change to what the slot sounds like,
+ * and no rule available here avoids it - the user owns three onsets and the
+ * chord has seven notes, so at least two tones must share.
+ *
+ * The clamp is still the right rule, for a stronger reason than "the last event
+ * is the closest one". It keeps the onsets **monotone in chord-tone order**:
+ * read up the stack and the attacks never go backwards. The obvious
+ * alternative - wrapping round to note 0 - would put the eleventh and the
+ * thirteenth at the *start* of an ascending arpeggio and the root at its end,
+ * inverting the figure the user actually wrote. And the clamp invents no
+ * attack: every onset in the result is one the user placed, where spreading the
+ * overflow across the slot would be the app writing rhythm on their behalf.
+ * Piling notes onto an onset that exists is a smaller lie than inventing one
+ * that does not.
+ *
+ * **The same clamp decides velocity, and there it has a shape worth knowing.**
+ * The overflow tones inherit the *last* note's velocity, so under a decrescendo
+ * the chord tones the step adds are the quietest notes in the slot - the added
+ * seventh and ninth arrive under the chord rather than on top of it. That reads
+ * as a deliberate voicing more often than not, but it is a consequence of the
+ * clamp rather than a decision about dynamics, and a roll that later wants to
+ * spread the added tones should change both dimensions together.
  *
  * `null` rather than `undefined` so the caller has to say what an empty list
  * means for its own dimension, which is not the same answer twice: timing falls

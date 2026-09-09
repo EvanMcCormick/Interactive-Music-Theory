@@ -25,6 +25,7 @@ import {
   ChordSlot,
   ProgressionDoc,
   ProgressionKey,
+  RollNote,
   SlotOwnership,
   createDefaultProgression,
   createDegreeSlot
@@ -394,6 +395,93 @@ describe('normalizeChordSlot', () => {
     expect(normalizeChordSlot(literal)).toEqual(literal);
     expect(() => normalizeChordSlot({ ...literal, lengthBeats: NaN }))
       .toThrowError(/lengthBeats/);
+  });
+
+  /**
+   * `notes` was the one field this function let through unchecked, on the
+   * argument that M1 regenerated every note wholesale so there was nothing a
+   * check could catch. M2 Task 4 ended that: `mergeNotes` carries a
+   * caller-supplied note through a regeneration, so a bad one now persists
+   * instead of being scrubbed by the next edit.
+   *
+   * What is checked is kind and only kind. The ranges are left open on purpose,
+   * and one of these specs says so - bounding `midi` here while
+   * `regenerateSlot` adds an unbounded `transposeBy` to it afterwards would
+   * buy a guarded-looking pitch and not a guarded one.
+   */
+  describe('the notes on a slot', () => {
+    const NOTE: RollNote = { midi: 60, startBeat: 0, lengthBeats: 4, velocity: 80 };
+
+    /** A degree slot holding whatever is handed over, however wrong. */
+    function withNotes(notes: unknown): ChordSlot {
+      return { ...createDegreeSlot(0, 0), notes } as ChordSlot;
+    }
+
+    function withNote(overrides: Partial<Record<keyof RollNote, unknown>>): () => ChordSlot {
+      return () => normalizeChordSlot(withNotes([{ ...NOTE, ...overrides }]));
+    }
+
+    // A `NaN` here reaches `Tone.PolySynth` with nothing in between that looks
+    // at it again, which is the whole argument for the first clause of the
+    // rule: silence rather than an error, three layers from the caller.
+    it('refuses a pitch that is not a whole MIDI note number', () => {
+      expect(withNote({ midi: NaN })).toThrowError(/midi/);
+      expect(withNote({ midi: 60.5 })).toThrowError(/midi/);
+      expect(withNote({ midi: undefined })).toThrowError(/midi/);
+    });
+
+    it('refuses a note position that is not a real offset', () => {
+      expect(withNote({ startBeat: NaN })).toThrowError(/startBeat/);
+      // Before the slot that holds it, which is outside the slot rather than at
+      // the end of it - so it is refused where a length is clamped.
+      expect(withNote({ startBeat: -1 })).toThrowError(/startBeat/);
+    });
+
+    it('refuses a note length that is not a real duration', () => {
+      expect(withNote({ lengthBeats: NaN })).toThrowError(/lengthBeats/);
+      expect(withNote({ lengthBeats: Infinity })).toThrowError(/lengthBeats/);
+    });
+
+    it('refuses a velocity that is not a real number', () => {
+      expect(withNote({ velocity: NaN })).toThrowError(/velocity/);
+      expect(withNote({ velocity: undefined })).toThrowError(/velocity/);
+    });
+
+    // A slot holds several, so the message has to say which - a chord with one
+    // bad note is otherwise a hunt through four that look alike.
+    it('names the note that is wrong', () => {
+      expect(() => normalizeChordSlot(withNotes([NOTE, NOTE, { ...NOTE, midi: NaN }])))
+        .toThrowError(/RollNote 2/);
+    });
+
+    // Not the migration case `owned` gets: `notes` is as old as `ChordSlot`, so
+    // an absent one is corruption, and `.map` of `undefined` would report it as
+    // a `TypeError` naming neither the field nor the slot.
+    it('refuses a slot whose notes are not an array at all', () => {
+      expect(() => normalizeChordSlot(withNotes(undefined))).toThrowError(/notes/);
+      expect(() => normalizeChordSlot(withNotes({}))).toThrowError(/notes/);
+    });
+
+    /**
+     * Deliberate, and pinned so it reads as a decision rather than a gap. The
+     * ends a note gesture should rest on belong to the roll's setters in M2
+     * Task 5; choosing them here would be this file deciding what a drag means.
+     */
+    it('bounds nothing, leaving the ranges to the roll that will draw them', () => {
+      const wild: RollNote[] = [{ midi: 200, startBeat: 9, lengthBeats: 0.01, velocity: 500 }];
+      expect(normalizeChordSlot(withNotes(wild)).notes).toEqual(wild);
+    });
+
+    // The copy half of the same change. `structuredClone` undo is only safe
+    // while no two documents point at the same note.
+    it('does not hand back the array or the notes it was given', () => {
+      const notes: RollNote[] = [{ ...NOTE }];
+      const normalized = normalizeChordSlot(withNotes(notes));
+
+      expect(normalized.notes).not.toBe(notes);
+      expect(normalized.notes[0]).not.toBe(notes[0]);
+      expect(normalized.notes).toEqual(notes);
+    });
   });
 });
 

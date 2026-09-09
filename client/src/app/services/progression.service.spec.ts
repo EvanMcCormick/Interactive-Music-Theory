@@ -855,10 +855,29 @@ describe('ProgressionService', () => {
       expect(notes().map(note => note.velocity)).toEqual([80, 80, 80]);
     });
 
-    it('keeps the pitches of a slot that owns them rather than re-voicing them', () => {
+    /**
+     * **A characterisation, and Task 5 is meant to break it.**
+     *
+     * The rule being exercised is that owned pitches are not re-voiced - that
+     * much is permanent. The *numbers* are not: `setKey` does not yet compute
+     * the semitone delta between the old key and the new one, so the pitches do
+     * not merely escape re-voicing, they do not move at all. Once Task 5 passes
+     * the delta, C-Eb-G moving from C major to A minor becomes `[57, 60, 64]`
+     * and this spec should be updated to say so rather than believed.
+     *
+     * The name says which of the two it is, deliberately. A spec called "keeps
+     * the pitches of a slot that owns them" is a green test asserting the
+     * opposite of Task 5's job, under a name that reads like a rule.
+     *
+     * The transposition itself is exercised directly further down, where the
+     * delta can be passed without `setKey`'s help.
+     */
+    it('characterises the missing key-change delta: owned pitches do not move', () => {
       claim({ pitches: true }, handEdited());
       service.setKey(9, 'aeolian');
 
+      // Not re-voiced - the permanent half - but also not transposed, which is
+      // the half Task 5 changes to [57, 60, 64].
       expect(notes().map(note => note.midi)).toEqual([60, 63, 67]);
       // Neither of the other two was claimed, so the block returns.
       expect(notes().map(note => note.startBeat)).toEqual([0, 0, 0]);
@@ -886,6 +905,37 @@ describe('ProgressionService', () => {
       expect(notes().map(note => note.startBeat)).toEqual([0, 1.5, 3]);
       expect(notes().map(note => note.lengthBeats)).toEqual([0.5, 0.25, 1]);
       expect(notes().map(note => note.velocity)).toEqual([40, 100, 20]);
+    });
+
+    /**
+     * The other two pairs, which had no spec of their own.
+     *
+     * `mergeNotes` answers each dimension from its own branch and has no
+     * combination branch at all, so a pair carries little risk - but "no
+     * combination branch" is a fact about today's implementation rather than
+     * part of the contract, and six of eight subsets covered is a gap that
+     * reads as an oversight. With these two, all eight are stated.
+     */
+    it('keeps owned pitches and owned timing together', () => {
+      claim({ pitches: true, timing: true }, handEdited());
+      service.setKey(9, 'aeolian');
+
+      expect(notes().map(note => note.midi)).toEqual([60, 63, 67]);
+      expect(notes().map(note => note.startBeat)).toEqual([0, 1.5, 3]);
+      expect(notes().map(note => note.lengthBeats)).toEqual([0.5, 0.25, 1]);
+      // Velocity is the one dimension not claimed here.
+      expect(notes().map(note => note.velocity)).toEqual([80, 80, 80]);
+    });
+
+    it('keeps owned pitches and owned velocities together', () => {
+      claim({ pitches: true, velocity: true }, handEdited());
+      service.setKey(9, 'aeolian');
+
+      expect(notes().map(note => note.midi)).toEqual([60, 63, 67]);
+      expect(notes().map(note => note.velocity)).toEqual([40, 100, 20]);
+      // Timing is the one dimension not claimed here, so the block returns.
+      expect(notes().map(note => note.startBeat)).toEqual([0, 0, 0]);
+      expect(notes().map(note => note.lengthBeats)).toEqual([4, 4, 4]);
     });
 
     it('leaves a slot that owns all three exactly as it found it', () => {
@@ -965,6 +1015,126 @@ describe('ProgressionService', () => {
       expect(notes().map(note => note.startBeat)).toEqual([0, 0, 0]);
       expect(notes().map(note => note.lengthBeats)).toEqual([4, 4, 4]);
     });
+
+    /**
+     * The four commands that restate the chord take the pitches back.
+     *
+     * Without this they collide with a claim over `pitches`, and the collision
+     * is not a near miss: a complexity step stores `extent: 7`, so
+     * `effectiveQuality` prints `Imaj7` on the card while `mergeNotes` hands
+     * back the three pitches the user was holding. One press, no audible
+     * change, and the label now disagrees with the synth - which is the exact
+     * failure `effectiveQuality`'s docstring is built to prevent.
+     *
+     * A key change is the other half of the rule and reclaims nothing, because
+     * it restates no chord: keeping a voicing across a transposition is what
+     * the merge is for.
+     */
+    describe('a harmony command reclaiming the pitches', () => {
+      /**
+       * All four, and what each re-voices a claimed I in C major to. Listed
+       * rather than written out one `it` at a time so that "all four" is
+       * visible: a fifth command routed through `editDegree` should arrive here
+       * as a row rather than be left to be noticed.
+       */
+      const COMMANDS: readonly {
+        name: string;
+        run: (id: string) => void;
+        revoiced: number[];
+      }[] = [
+        {
+          name: 'setSlotExtent',
+          run: id => service.setSlotExtent(id, 7),
+          revoiced: [60, 64, 67, 71]
+        },
+        {
+          name: 'stepSlotExtent',
+          run: id => service.stepSlotExtent(id, 1),
+          revoiced: [60, 64, 67, 71]
+        },
+        {
+          name: 'setSlotInversion',
+          run: id => service.setSlotInversion(id, 1),
+          revoiced: [64, 67, 72]
+        },
+        {
+          name: 'setSlotOctave',
+          run: id => service.setSlotOctave(id, 1),
+          revoiced: [72, 76, 79]
+        }
+      ];
+
+      function owned(): SlotOwnership {
+        return slots()[0].owned;
+      }
+
+      for (const command of COMMANDS) {
+        it(`${command.name} re-voices a claimed slot rather than mislabelling it`, () => {
+          const id = claim({ pitches: true }, handEdited());
+          command.run(id);
+
+          expect(notes().map(note => note.midi)).toEqual(command.revoiced);
+          expect(owned().pitches).toBeFalse();
+        });
+      }
+
+      /**
+       * The reclaim is narrow. A complexity step restates the chord and not the
+       * groove, so the rhythm and the dynamics the user wrote come through it -
+       * the fourth note the seventh adds joins the last onset, which is
+       * `noteAt`'s clamp.
+       */
+      it('keeps the rhythm and the dynamics it did not restate', () => {
+        const id = claim({ pitches: true, timing: true, velocity: true }, handEdited());
+        service.stepSlotExtent(id, 1);
+
+        expect(notes().map(note => note.midi)).toEqual([60, 64, 67, 71]);
+        expect(notes().map(note => note.startBeat)).toEqual([0, 1.5, 3, 3]);
+        expect(notes().map(note => note.lengthBeats)).toEqual([0.5, 0.25, 1, 1]);
+        expect(notes().map(note => note.velocity)).toEqual([40, 100, 20, 20]);
+        expect(owned()).toEqual({ pitches: false, timing: true, velocity: true });
+      });
+
+      /**
+       * Which is what makes taking the pitches back the safe answer rather than
+       * a destructive one: the user who did not mean it is one keystroke from
+       * having them, where a stepper that silently refused to move would leave
+       * them no way to find out why.
+       */
+      it('is undone by undo, claim and all', () => {
+        const id = claim({ pitches: true }, handEdited());
+        service.stepSlotExtent(id, 1);
+        service.undo();
+
+        expect(notes()).toEqual(handEdited());
+        expect(owned().pitches).toBeTrue();
+      });
+
+      /**
+       * The reclaim rides on the commit, so a command that is refused as a
+       * no-op reclaims nothing. A stepper resting on its limit is a normal
+       * thing to press repeatedly, and pressing it must not cost a claim.
+       */
+      it('reclaims nothing when the command changes nothing', () => {
+        const id = claim({ pitches: true }, handEdited());
+        service.stepSlotExtent(id, -1);
+
+        expect(owned().pitches).toBeTrue();
+        expect(notes()).toEqual(handEdited());
+      });
+
+      /**
+       * The other half of the rule, asserted so that moving the reclaim down
+       * into `regenerateSlot` - where it would catch every path - fails here
+       * rather than quietly undoing the merge's whole purpose.
+       */
+      it('is not something a key change does', () => {
+        claim({ pitches: true }, handEdited());
+        service.setKey(9, 'aeolian');
+
+        expect(owned().pitches).toBeTrue();
+      });
+    });
   });
 
   /**
@@ -999,6 +1169,9 @@ describe('ProgressionService', () => {
       // the override reaches the notes on the first regeneration after it.
       // Re-selecting the key already in force is the smallest one available,
       // and until the palette can emit a borrowed chord there is no other.
+      // `replaceDocument`'s own docstring records the consequence and the rule
+      // it puts on Task 9: a path that emits harmony must be a path that
+      // regenerates, and this is a test's licence rather than an example.
       service.setKey(0, 'ionian');
       return slot.id;
     }
@@ -1016,7 +1189,18 @@ describe('ProgressionService', () => {
       expect(slots()[0].notes.map(note => note.midi)).toEqual([70, 74, 77]);
     });
 
-    it('survives a resize', () => {
+    /**
+     * A regression guard rather than a test of the merge, and named so.
+     *
+     * `setSlotLength` goes through `retimeNotes`, which writes the new length
+     * onto the notes that are already there and never regenerates - so the
+     * override survives it trivially, and would have survived it before the
+     * write into `quality` was removed. It is kept because a future
+     * `setSlotLength` that regenerated instead would be a real way to lose an
+     * override, and this is where that would show. It proves nothing about the
+     * paths that do regenerate; the three specs below are those.
+     */
+    it('survives a resize, which does not regenerate the slot at all', () => {
       const id = borrow();
       service.setSlotLength(id, 2);
 
