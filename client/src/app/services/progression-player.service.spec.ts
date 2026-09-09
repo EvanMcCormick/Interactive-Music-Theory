@@ -460,13 +460,44 @@ describe('buildSchedule', () => {
     expect(schedule.lengthSeconds).toBe(0);
   });
 
-  it('measures the progression to the end of its last slot', () => {
-    // Not to the end of its last *note*: the loop turns over where the timeline
-    // the strip draws ends, so a literal slot's note hanging past its own slot
-    // is cut off rather than stretching the loop under everything else.
+  /**
+   * A note the roll draws has to be a note the transport reaches.
+   *
+   * This used to measure to the end of the last *slot*, on the argument that
+   * the loop should turn over where the timeline the strip draws ends. That
+   * left a note hanging off the last slot permanently silent - with looping on
+   * the transport rewound before the event, and with looping off the trailing
+   * cue halted first - while the roll went on drawing it and nothing said why.
+   * `retimeNotes` leaves such a note there on purpose, so the schedule has to
+   * reach it.
+   */
+  it('measures the progression to the last thing that sounds', () => {
     const doc = progression([literalSlot('lit', 0, 2, [note(60, 0, 8)])]);
 
-    expect(buildSchedule(doc).lengthSeconds).toBe(1);
+    // Eight beats at 120 BPM, not the two the slot draws.
+    expect(buildSchedule(doc).lengthSeconds).toBe(4);
+  });
+
+  it('measures a note that starts past the end of its slot too', () => {
+    // The roll's own case rather than the resized literal slot's: a note placed
+    // after the slot it belongs to, which `setNoteTiming` allows deliberately.
+    // It is the start that is outside, so a schedule measuring only lengths
+    // would still leave it unreachable.
+    const doc = progression([degreeSlot('one', 0, 4, [note(60, 6, 1)])]);
+
+    expect(buildSchedule(doc).lengthSeconds).toBe(3.5);
+  });
+
+  it('leaves a note overhanging into the next chord out of the measurement', () => {
+    // The case the old rule was written for, and it is unchanged: the note runs
+    // over the chord after it, which is the accepted trade, and the slot ends
+    // are still what the progression is as long as.
+    const doc = progression([
+      degreeSlot('one', 0, 4, [note(60, 0, 6)]),
+      degreeSlot('two', 4, 4, [note(67, 0, 4)])
+    ]);
+
+    expect(buildSchedule(doc).lengthSeconds).toBe(4);
   });
 
   it('measures to the furthest slot end rather than adding the lengths up', () => {
@@ -499,16 +530,33 @@ describe('buildSchedule', () => {
   });
 
   it('gives a progression with no length in it no trailing cue', () => {
-    // Every slot zero beats long: there are slots, so the old guard would have
-    // pushed a `null` cue at time 0 alongside the slot's own cue at time 0 -
-    // two contradictory cues at the same instant. There is no moment at which
-    // this progression is over, because there is no moment at which it is on.
-    const doc = progression([degreeSlot('flat', 0, 0, [note(60, 0, 1)])]);
+    // Every slot zero beats long and holding nothing that lasts: there are
+    // slots, so the old guard would have pushed a `null` cue at time 0
+    // alongside the slot's own cue at time 0 - two contradictory cues at the
+    // same instant. There is no moment at which this progression is over,
+    // because there is no moment at which it is on.
+    const doc = progression([degreeSlot('flat', 0, 0, [note(60, 0, 0)])]);
 
     const schedule = buildSchedule(doc);
 
     expect(schedule.lengthSeconds).toBe(0);
     expect(schedule.cues).toEqual([{ time: 0, slotId: 'flat' }] as SlotCue[]);
+  });
+
+  it('gives a zero-length slot the length of the note it holds', () => {
+    // The other half of the line above: a slot with no length of its own still
+    // sounds for as long as its note does, and a progression that sounds has a
+    // moment at which it is over. `settle` clamps a slot to `MIN_SLOT_BEATS`,
+    // so this arrives through `play`, which takes a document from anywhere.
+    const doc = progression([degreeSlot('flat', 0, 0, [note(60, 0, 1)])]);
+
+    const schedule = buildSchedule(doc);
+
+    expect(schedule.lengthSeconds).toBe(0.5);
+    expect(schedule.cues).toEqual([
+      { time: 0, slotId: 'flat' },
+      { time: 0.5, slotId: null }
+    ] as SlotCue[]);
   });
 });
 
@@ -693,7 +741,12 @@ describe('ProgressionPlayerService', () => {
     it('starts no transport for a progression with no length in it', async () => {
       // Slots, but no time: there is nothing to play and nowhere for a loop to
       // turn over. Refused for the same reason a tempo of zero is.
-      await player.play(progression([degreeSlot('flat', 0, 0, [note(60, 0, 1)])]));
+      //
+      // The note has no length either, which it did not have to before
+      // `buildSchedule` began measuring to the last thing that sounds. A slot
+      // of no length holding a note of some is a progression that *does* have
+      // time in it, and it plays - see the arithmetic above.
+      await player.play(progression([degreeSlot('flat', 0, 0, [note(60, 0, 0)])]));
 
       expect(audio.parts.length).toBe(0);
       expect(audio.transportStub.starts).toBe(0);

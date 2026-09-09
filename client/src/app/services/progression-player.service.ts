@@ -116,19 +116,32 @@ function byTime<Event extends TimedEvent>(events: Event[]): Event[] {
  *
  * ## Where the progression ends
  *
- * At the end of the last slot, not the end of the last note. The two can
- * differ: `generateSlotNotes` returns a literal slot's notes untouched, so
- * shrinking such a slot leaves notes hanging past its end. Looping to the
- * longer of the two would put a bar of silence under every repeat because one
- * slot's note overhangs; looping to the timeline the strip actually draws cuts
- * the overhang off. The strip is what the user is looking at, so the strip
- * wins.
+ * At the last thing that sounds: the furthest of every slot end **and** every
+ * note end. The two can differ, and a note is what settles it.
  *
- * Measured as the furthest slot end rather than the sum of the lengths, because
- * a document that reaches here has not necessarily been through
- * `ProgressionService.settle` - `play` takes a `ProgressionDoc`, not the
- * service's state - and a max is right for both a contiguous timeline and one
- * with a hole in it.
+ * This used to measure slot extents alone, on the argument that the strip draws
+ * the timeline and the strip is what the user is looking at. That argument
+ * covered the case it was written for - a note overhanging into the *next*
+ * chord, where the note sounds over that chord and the loop point is
+ * unaffected - and it broke on the one M2 added. A note hanging past the end of
+ * the **last** slot is outside the measured length entirely: with looping on
+ * the transport rewinds before the event, and with looping off the trailing cue
+ * calls `halt()` first. Either way the event never fires. `retimeNotes` leaves
+ * such a note there deliberately and the roll draws it, so the user had a note
+ * on screen that was permanently silent with nothing to say why.
+ *
+ * A note the roll draws has to be a note the transport reaches. That is the
+ * rule, and the cost of it is the one the old argument named: a literal slot
+ * shrunk under its notes now loops longer than the strip draws, so a repeat
+ * carries whatever hangs off the end. That is audible and correct - the notes
+ * are the playback truth for a literal slot, which is the whole of what one is
+ * for - where the alternative was silence the user could see but not hear.
+ *
+ * Measured as a maximum rather than by summing lengths, because a document that
+ * reaches here has not necessarily been through `ProgressionService.settle` -
+ * `play` takes a `ProgressionDoc`, not the service's state - and a max is right
+ * for a contiguous timeline, one with a hole in it, and one with a note over
+ * the end alike.
  *
  * ## The trailing cue
  *
@@ -164,6 +177,10 @@ export function buildSchedule(doc: ProgressionDoc): PlaybackSchedule {
     endBeat = Math.max(endBeat, slot.startBeat + slot.lengthBeats);
 
     for (const note of slot.notes) {
+      // Both frames summed, as the note's own `time` below is: the note's beats
+      // are relative to its slot and the slot's are absolute.
+      endBeat = Math.max(endBeat, slot.startBeat + note.startBeat + note.lengthBeats);
+
       notes.push({
         slotId: slot.id,
         midi: note.midi,

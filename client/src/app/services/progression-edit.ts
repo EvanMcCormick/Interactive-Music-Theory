@@ -127,11 +127,21 @@ export function boundVelocity(velocity: number): number {
  *
  * **`midi` is passed through untouched**, and that is a decision rather than an
  * omission - the same one `normalizeRollNote` records for itself.
- * `regenerateSlot` adds an unbounded `transposeBy` to a claimed pitch after
- * this runs, so a bound here would guard one end of a sum whose other end is
- * open. `OCTAVE_MAX` is the bound that actually holds, and it holds by bounding
- * the generator's input; where a pitch drag stops on screen is the roll's
- * geometry to decide.
+ *
+ * It used to be argued from the transposition: `regenerateSlot` added a
+ * `transposeBy` to a claimed pitch after this ran, so a bound here would have
+ * guarded one end of a sum whose other end was open. That argument was
+ * backwards. Every *term* of that sum was bounded - `keyTransposeInterval`
+ * returns -6 to 6 and `regenerateSlot` integer-checks it - and it was the
+ * **accumulator** that was open, which is to say `RollNote.midi` itself.
+ * Bounding the summand was never the option; bounding the sum was, and
+ * `anchoredShift` below is where it is done.
+ *
+ * What is left is the honest reason, and it is enough on its own: where a pitch
+ * drag stops on screen is the roll's geometry to decide, and a clamp here would
+ * rewrite a voicing the caller meant - collapsing it onto the ceiling one note
+ * at a time, which is exactly the failure `OCTAVE_MAX` refuses to accept for
+ * the generator.
  */
 export function boundNote(note: RollNote): RollNote {
   return {
@@ -258,9 +268,11 @@ export function sameDegree(a: ChordDegree, b: ChordDegree): boolean {
  * that ended exactly where it started, and the only way back would be to undo
  * the whole drag. Keeping the notes makes the gesture reversible by definition.
  *
- * The consequence is audible and is meant to be: `buildSchedule` measures the
- * progression by its *slots*, so a note hanging off a shortened slot sounds over
- * the chord after it, and one hanging off the last slot is cut by the loop.
+ * The consequence is audible and is meant to be: a note hanging off a shortened
+ * slot sounds over the chord after it, and one hanging off the **last** slot
+ * lengthens the progression rather than being cut off by it. `buildSchedule`
+ * measures to the last thing that sounds, and its own docstring argues why that
+ * is worth a loop longer than the strip draws.
  * `ProgressionService.resetSlotToChord` is the way back to a block.
  */
 export function retimeNotes(slot: ChordSlot): ChordSlot {
@@ -304,15 +316,31 @@ export function retimeNotes(slot: ChordSlot): ChordSlot {
  * the function antisymmetric - `keyTransposeInterval(a, b)` is exactly
  * `-keyTransposeInterval(b, a)` for **every** pair, tritone included.
  *
- * Antisymmetry is the property, not the elegance. A key change and its inverse
- * have to cancel, because `mergeNotes` adds this interval straight to
- * `RollNote.midi` and nothing downstream bounds the sum: `normalizeRollNote`
- * checks the kind of a pitch and not its range, and `OCTAVE_MAX` bounds the
- * generator's input rather than a claimed note. A user flipping between two
- * keys on the circle of fifths would otherwise walk their voicing an octave per
- * flip, with no floor and no ceiling to stop it - eight flips and the chord is
- * past the top of MIDI. Every other pair cancels for free; the tritone cancels
- * only because of the line below.
+ * Antisymmetry is the property, not the elegance: a key change and its inverse
+ * cancel, so flipping between two keys leaves a claimed voicing where it was.
+ * Every other pair cancels for free; the tritone cancels only because of the
+ * line below.
+ *
+ * ## Antisymmetry covers **pairs**, and only pairs
+ *
+ * This used to be written as though it bounded a claimed voicing outright. It
+ * does not, and the gap is not a corner case. A *lap* of the circle is a sum of
+ * twelve terms rather than a pair, and no pairwise property constrains a sum:
+ * twelve clockwise fifths are twelve moves of -5 and carry a voicing five
+ * octaves down, twelve anticlockwise are twelve of +5 and carry it five up, and
+ * C to E to G sharp and home is three moves of +4 that gain an octave every lap
+ * for as long as the user keeps clicking. Each term is bounded and the
+ * accumulator - `RollNote.midi` - was not.
+ *
+ * The sum is bounded in `mergeNotes` now, by `anchoredShift`, which re-anchors
+ * a transposed voicing onto the chord the degree generates in the new key. That
+ * makes the whole thing a function of the key rather than of the route taken to
+ * it, which is the only shape that can close a cycle - and it means the
+ * **octave** of the interval this function returns is no longer observable in
+ * what a slot ends up sounding, only its pitch class. The nearest reading is
+ * kept regardless: it is the honest answer to "how far did the key move", it is
+ * what a reader finding a `transposeBy` in a debugger will expect, and it is
+ * what the merge would fall back on if the anchor were ever removed.
  *
  * Both tonics are already whole pitch classes: they come from
  * `normalizeProgressionKey`, which throws on a fractional one and wraps the
@@ -401,9 +429,12 @@ export function reclaimPitches(slot: ChordSlot): ChordSlot {
  *
  * | dimension | owned | not owned |
  * |---|---|---|
- * | pitches | transposed by `transposeBy` | re-voiced from the degree |
+ * | pitches | transposed by `transposeBy`, then re-anchored | re-voiced from the degree |
  * | timing | kept | regenerated as a block |
  * | velocity | kept | reset to `DEFAULT_VELOCITY` |
+ *
+ * "Re-anchored" is `anchoredShift`, and it is what keeps the pitch row's owned
+ * column from being an open-ended running sum. Read it before reading the row.
  *
  * **`quality` is left exactly as it arrived.** M1 wrote the *derived* label
  * into it here, which is consequence 4 of the design doc's correction section:
@@ -522,14 +553,20 @@ function mergeNotes(
   // every call site but `setKey`: a chord rebuilt from the degree is already in
   // the new key, so moving it again would move it twice.
   const pitched = owned.pitches ? held : generated;
-  const shift = owned.pitches ? transposeBy : 0;
+  const shift = owned.pitches ? anchoredShift(held, generated, transposeBy) : 0;
 
   return pitched.map((note, index) => {
     // `note` as the last resort rather than a written-out block: when timing is
     // not owned the source *is* the generated list, so this falls back to the
     // note it is already standing on, and the block-chord rule stays stated in
-    // `generateSlotNotes` alone. It is only reached by a claim over an empty
-    // note list, which `replaceDocument` can bring in.
+    // `generateSlotNotes` alone.
+    //
+    // It is reached by a claim over timing sitting above an **empty** held
+    // list, which is a state the page can now produce: `setNoteTiming` claims
+    // the timing, `setSlotNotes(id, [])` empties the notes, and the next
+    // `stepSlotExtent` reclaims the pitches and lands here with nothing owned
+    // to read a start or a length off. `replaceDocument` is the other door and
+    // was once the only one.
     const timing = noteAt(owned.timing ? held : generated, index) ?? note;
 
     return {
@@ -541,6 +578,89 @@ function mergeNotes(
         : DEFAULT_VELOCITY
     };
   });
+}
+
+/**
+ * How far a claimed voicing actually moves when the key does: the interval,
+ * plus however many whole octaves put the result back on the chord.
+ *
+ * ## The sum this closes
+ *
+ * `mergeNotes` used to add `transposeBy` straight to `RollNote.midi` and store
+ * what came out, which made the stored pitch a **running sum** over every key
+ * change the progression had ever seen. Each term of that sum was bounded -
+ * `keyTransposeInterval` returns -6 to 6, and `regenerateSlot` refuses a term
+ * that is not a whole number of semitones - and the accumulator was not, which
+ * is a different thing and the one that mattered. Antisymmetry cancels a *pair*
+ * of key changes and says nothing about a longer route, so any cycle of three
+ * or more walked: twelve clicks clockwise round the circle of fifths carried a
+ * voicing from middle C to MIDI 0, twelve anticlockwise to 120, and C to E to G
+ * sharp and home gained an octave a lap with nothing at either end to stop it.
+ * `frequencyOf` sounds those at 8 Hz and 790 kHz, and Task 6's
+ * `visibleMidiRange` would have scrolled the roll to follow.
+ *
+ * ## Re-anchoring instead of accumulating
+ *
+ * The voicing is transposed as before, then shifted by whole octaves until its
+ * lowest note sits as near as it can to the lowest note of the chord the degree
+ * generates in the **new** key. One shift moves every note, so the intervals
+ * the user stacked survive exactly, and so does their offset from the chord for
+ * anything within a tritone of it.
+ *
+ * What that buys is **path independence**. The answer is a function of the key
+ * the progression has arrived in and the pitch class the voicing has arrived
+ * on, and of nothing about the route taken to either - so every cycle closes by
+ * construction, three-key laps included, and the *octave*
+ * `keyTransposeInterval` picked stops being observable at all. It is bounded as
+ * well as closed, which is what makes this a fix rather than a rearrangement:
+ * `OCTAVE_MAX` bounds the generated chord, the anchor holds the voicing within
+ * a tritone of that, and the span of the voicing is whatever the user drew and
+ * never grows.
+ *
+ * ## What it costs, and why the cost is not avoidable
+ *
+ * A user who parks a voicing more than a tritone from the chord it belongs to
+ * has that register pulled back on the next key change. Preserving the register
+ * across a lap means preserving *history*, and a rule that reads history is a
+ * rule a cycle can walk - the two cannot both be had, and an unbounded pitch is
+ * the worse half to keep. Storing the offset on the slot is the design that
+ * would keep both; it is model surgery, and it is not this fix.
+ *
+ * The second consequence is worth stating rather than discovering. The
+ * generator's own register jumps: `voiceChord` stacks from a floor, so the I of
+ * C sits at 60 while the I of B - one semitone down - sits at 71. An anchored
+ * voicing follows that jump where a plain nearest-interval move did not, and it
+ * follows it **in company**, because every unclaimed slot in the progression
+ * jumps the same way at the same moment. Any rule that closes a cycle has to
+ * put one discontinuity somewhere round the circle; this one puts it where the
+ * app already had one, rather than adding a second.
+ *
+ * The lowest note is the anchor on both sides. It is what `voiceChord` itself
+ * anchors on - `baseMidi` is a floor under the first note and the rest are
+ * stacked above it - and it is the statistic that survives the two lists being
+ * different lengths, which they are whenever the user has added or deleted a
+ * note: a mean would compare a five-note hand voicing against a three-note
+ * triad and read the difference as register.
+ */
+function anchoredShift(
+  held: readonly RollNote[],
+  generated: readonly RollNote[],
+  transposeBy: number
+): number {
+  // Nothing to anchor, and nothing to anchor to. The empty `held` case is the
+  // one the page can reach - see the `?? note` fallback in `mergeNotes` - and
+  // it maps no notes anyway, so the shift it returns is never added to
+  // anything.
+  if (held.length === 0 || generated.length === 0) return transposeBy;
+
+  const moved = lowestMidi(held) + transposeBy;
+  const octaves = Math.round((lowestMidi(generated) - moved) / 12);
+  return transposeBy + octaves * 12;
+}
+
+/** The lowest pitch in a note list. Its one caller turns an empty list away first. */
+function lowestMidi(notes: readonly RollNote[]): number {
+  return notes.reduce((lowest, note) => Math.min(lowest, note.midi), notes[0].midi);
 }
 
 /**

@@ -217,6 +217,15 @@ export const DEFAULT_VELOCITY = 80;
  * sixteenth of a beat. Anything shorter is a note M2 Task 11's notation preview
  * has no symbol for, so the roll should not let a drag make one.
  *
+ * **The derivation is 4/4's, and this constant is not.** A beat is a quarter
+ * note only where the denominator is 4; `quantizeBar` takes a time signature,
+ * and in 6/8 the beat a `RollNote` counts in is a dotted quarter, which makes
+ * one sixteenth of it a ninety-sixth note rather than a sixty-fourth. So the
+ * floor is finer than the finest notatable event in compound meter and coarser
+ * in nothing the app offers - safe in the direction that matters, but no longer
+ * the tight bound the paragraph above describes. Task 11 is where that starts
+ * to matter, and a floor derived per signature is what it would want.
+ *
  * It has to be strictly positive whatever its value, which the notation
  * argument gives for free: `buildSchedule` hands `lengthBeats` to Tone as a
  * duration, where 0 is a note that never sounds and a negative one is a note
@@ -538,14 +547,21 @@ function requireOwnershipFlag(value: boolean, dimension: string): boolean {
  * Every check below is the wrong-kind clause and nothing more. Nothing is
  * clamped, and the ranges are deliberately open:
  *
- *  - **`midi` is not bounded to 0-127.** It could be, and the bound would be
- *    half a guard: `regenerateSlot` adds `transposeBy` to it afterwards and
- *    that parameter is integer-checked but *not* range-checked, so
- *    `midi + transposeBy` has no bound whatever this function decides. Bounding
- *    one end of that sum while the other is open buys a false sense of a
- *    guarded pitch. `OCTAVE_MAX` is the bound that actually holds today, and it
- *    holds by bounding the *input* to the generator - the choice its own note
- *    argues at length.
+ *  - **`midi` is not bounded to 0-127.** This used to be argued from the
+ *    transposition - `regenerateSlot` adds `transposeBy` afterwards, so
+ *    bounding one end of an open sum buys a false sense of a guarded pitch -
+ *    and that argument had the sum the wrong way round. Each term was bounded
+ *    already; the *accumulator* was `RollNote.midi` itself, and it is bounded
+ *    now by `anchoredShift`, which re-anchors a transposed voicing onto the
+ *    chord the new key generates instead of adding to it for ever.
+ *
+ *    What is left is the reason a range check here would be wrong rather than
+ *    merely incomplete: a clamp applied note by note collapses a voicing onto
+ *    its ceiling, silently turning a chord into a cluster. `OCTAVE_MAX` refuses
+ *    that for the generator and bounds the generator's *input* instead - the
+ *    choice its own note argues at length - and the anchor is the same choice
+ *    made for a claimed voicing. Where a pitch drag stops on screen is the
+ *    roll's geometry to decide; see `boundNote` in `progression-edit.ts`.
  *  - **`lengthBeats` and `velocity` are not clamped** for the reason
  *    `MIN_SLOT_BEATS` is a slot's floor and not a note's: the ends a drag
  *    should rest on belong with the setters that produce them, and inventing

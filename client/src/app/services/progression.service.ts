@@ -267,16 +267,57 @@ export class ProgressionService {
    * exists to replace, one setter at a time, and a pitch drag would silently
    * tell the app the user wrote the rhythm.
    *
-   * The consequence for the roll is a rule rather than a surprise: a gesture
-   * that *places* a note in time is a timing edit as well as a pitch one, and
-   * must follow with `setNoteTiming` for the note it placed. Coalescing is what
-   * keeps the pair one undo step.
+   * So a gesture that *places* a note in time is a timing edit as well as a
+   * pitch one, and this is not the setter for it: **`placeNotes` is**. This
+   * used to tell the caller to follow with `setNoteTiming` and to lean on
+   * coalescing to keep the pair one undo step, which was a promise the service
+   * could not keep - the two runs are named differently on purpose, so `commit`
+   * refuses to fold them and no argument a component can pass makes it.
    *
    * Every note is bounded on the way in - see `boundNote`, which passes `midi`
    * through untouched and says why.
    */
   setSlotNotes(id: string, notes: readonly RollNote[], options: EditOptions = {}): void {
     this.writeNotes(id, { pitches: true }, () => notes.map(boundNote), `notes:${id}`, options);
+  }
+
+  /**
+   * Replaces a slot's notes as `setSlotNotes` does, and claims the timing with
+   * the pitches: the setter for a gesture that puts a note *somewhere*.
+   *
+   * Double-click to add, and a drag that moves a note in pitch and time at
+   * once. Both say two things about the slot in one movement - these are the
+   * pitches, and this is when they sound - so both claims are the user's, and
+   * both are recorded in **one commit**.
+   *
+   * ## Why a setter and not a run key the caller names
+   *
+   * The alternative was to let a caller pass its own key on `EditOptions` and
+   * coalesce `setSlotNotes` and `setNoteTiming` into a single undo entry. That
+   * would have made the pair *undo* as one step while still committing twice,
+   * so the state between them - the note present, snapped back to beat 0,
+   * pitches owned and timing not - would still be published, rendered, and
+   * available to anything reading `getState()`. It is a state no gesture ever
+   * meant and no user ever asked for, and one commit is how it stops existing
+   * rather than merely stops being reachable by undo.
+   *
+   * It also keeps the run keys the service's own. A caller-supplied key is a
+   * caller-supplied way to fold two unrelated gestures together, which is the
+   * one thing the per-gesture keying is for.
+   *
+   * The narrow reading `setSlotNotes` argues for is intact: neither setter
+   * claims all three, the gesture still chooses what it claims, and a pitch
+   * drag that moves nothing in time still says nothing about the rhythm - it
+   * just calls the other one.
+   */
+  placeNotes(id: string, notes: readonly RollNote[], options: EditOptions = {}): void {
+    this.writeNotes(
+      id,
+      { pitches: true, timing: true },
+      () => notes.map(boundNote),
+      `place:${id}`,
+      options
+    );
   }
 
   /**
@@ -389,9 +430,20 @@ export class ProgressionService {
    * one already there. Comparing only the numbers would drop that claim
    * silently, and a claim dropped is a hand edit the next key change erases.
    *
-   * The run is keyed per *note* rather than per slot, so a continuation meant
-   * for one note cannot fold into the entry another note's drag opened - the
-   * same reason `setSlotLength` keys its run by slot rather than globally.
+   * ## How far the run key protects a caller, which is not as far as it reads
+   *
+   * The key names the gesture, and each setter picks the finest name it honestly
+   * can. `setNoteTiming` and `setNoteVelocity` act on one note and key their
+   * runs by it, so a continuation meant for one note cannot fold into the entry
+   * another note's drag opened. `setSlotNotes` and `placeNotes` write the whole
+   * list and so can only key by **slot** - there is no note for them to name.
+   *
+   * The consequence is a discipline rather than a guarantee, and Task 7 has to
+   * keep it: two pitch drags on two different notes of the same slot fold into
+   * one undo entry unless each pointerdown passes `coalesce: false`. That is
+   * the same rule `setSlotLength` states for two consecutive resizes of one
+   * card - the service cannot see where one gesture ends and the next begins -
+   * but it is easy to read the keying as covering it, and it does not.
    *
    * Nothing here bounds a value the setters did not already bound; `settle()`
    * inside `commit` is still the funnel, and a value of the wrong kind throws
@@ -410,6 +462,14 @@ export class ProgressionService {
     const notes = edit(slot);
     if (notes === null) return;
 
+    // The comparison is against the notes as they arrive, before `settle()` has
+    // seen them, where the slot's own notes have been through it already. That
+    // is exact today because every value a setter can produce normalises to
+    // itself - the bounds are applied on the way in and `normalizeRollNote`
+    // only checks kinds. A normaliser that ever *transformed* a note rather
+    // than clamping it would break the symmetry, and this guard would start
+    // recording no-ops as edits. It is a note rather than a defence: comparing
+    // settled notes here would mean settling twice per keystroke.
     const owned: SlotOwnership = { ...slot.owned, ...claims };
     if (sameOwnership(owned, slot.owned) && sameNotes(notes, slot.notes)) return;
 
@@ -581,6 +641,13 @@ export class ProgressionService {
    * an octave up, and an interval measured from it would carry a claimed
    * voicing most of two octaves. `keyTransposeInterval` is the rule, and its
    * docstring argues the direction.
+   *
+   * What reaches a claimed note is that interval **re-anchored** to the chord
+   * the degree generates in the new key - `anchoredShift` in `progression-edit`
+   * - so the octave chosen here is not the octave the voicing ends up in. That
+   * is what keeps a lap of the circle of fifths from walking a voicing off the
+   * end of MIDI, and the reason is worth reading there before this method's
+   * interval is changed.
    *
    * The key is applied even when its scale cannot build chords. Refusing it
    * would leave this page in a different key from the fretboard behind it,
