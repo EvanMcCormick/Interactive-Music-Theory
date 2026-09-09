@@ -136,6 +136,51 @@ A comprehensive web application for exploring scales, modes, chords, and music t
 - Add 9, Minor Add 9
 - 6th, Minor 6th
 
+### Circle of Fifths
+- Collapsible drawer, reachable from the header on the pages that read the key
+- Three rings: key signatures outside, majors in the middle, relative minors inside
+- Toggle between fifths and fourths — the same twelve positions read the other way round
+- Clicking a key sets it for the fretboard and the progression composer at once
+- Choosing G♭ puts the app into flats and B into sharps, so the half you pick from
+  selects the spelling as well as the pitch
+
+### Progression Composer
+- **Chord palette**: the seven diatonic chords of the current key, as Roman numerals
+  over concrete chord names — turn the circle and the numerals hold while the names
+  move underneath
+- **Borrowed chords and secondary dominants**: ♭II, ♭III, iv, ♭VI, ♭VII and V/V, V/vi,
+  V/IV, V/ii, V/iii, each labelled with its function rather than as a raw chord symbol
+- **Alternates row**: every named quality on the selected chord's own root
+- **Progression strip**: click chords into a timeline; drag to reorder, drag an edge to
+  resize
+- **Piano roll**: free timing and velocity — drag notes in pitch and time, resize them,
+  draw a rhythm
+- **Edits survive a key change**: the roll tracks which dimensions you own, so a groove
+  written in C keeps its rhythm when you switch to A minor while the chords re-voice
+  underneath it
+- **Loop playback**: edits are applied when the loop turns over, so the next pass plays
+  what you see
+- **Notation preview**: the progression engraved as sheet music, ties across bar lines
+  and all
+- The sounding chord lights up on the fretboard as the progression plays
+
+### Sheet Music Composer
+- Multi-track score editing with standard notation and guitar tab side by side
+- Note entry directly on the staff or the tab
+- Key and time signature changes, dynamics, repeats
+- Score model shaped after Guitar Pro 7, engraved and played by alphaTab
+- Undo/redo, and an alphaTex escape hatch for editing the source directly
+- Export to MIDI and to a real `.gp` file
+
+### Audio Transcription
+- Drop in an audio file and get notation back
+- Note detection with Spotify's Basic Pitch, run in a web worker so the page stays live
+- Beat tracking, metrical-level inference, and quantisation into bars that sum exactly
+- Harmonic suppression to drop partials the detector mistook for notes
+- Review panel: correct the tempo, the downbeat and the metrical level, and toggle any
+  suppressed note back in — discards are shown as ghost notes rather than hidden
+- Optional server tier running the same model under ONNX Runtime
+
 ### Guitar Pro File Viewer
 - **GP File Support**: Load and play Guitar Pro files (.gp, .gp3, .gp4, .gp5, .gpx)
 - **Full Playback**: Play/pause, tempo control, seeking, and looping
@@ -183,21 +228,26 @@ A comprehensive web application for exploring scales, modes, chords, and music t
 ## Tech Stack
 
 ### Frontend (Client)
-- **Framework**: Angular 21
-- **Audio**: Tone.js for sound synthesis
-- **Sheet Music**: alphaTab for Guitar Pro file rendering and playback
+- **Framework**: Angular 21, standalone components, TypeScript 5.9 in strict mode
+- **State**: RxJS 7.8
+- **Audio**: Tone.js 15 for sound synthesis
+- **Sheet Music**: alphaTab 1.8 for engraving and playback
+- **Note detection**: Spotify Basic Pitch, running on TensorFlow.js in a web worker
 - **Styling**: SCSS with responsive design
 
 ### Backend (Server)
-- **Framework**: ASP.NET Core (C#)
+- **Framework**: ASP.NET Core 10 (C#)
 - **Architecture**: RESTful API
+- **Data**: Entity Framework Core with SQL Server
+- **Auth**: ASP.NET Identity with JWT bearer tokens
 
 ## Getting Started
 
 ### Prerequisites
-- Node.js (v18 or higher)
+- Node.js 20 or higher
 - npm
-- .NET SDK (6.0 or higher)
+- .NET SDK 10.0
+- Docker, for the development database (or your own SQL Server)
 
 ### Client Setup
 
@@ -287,17 +337,25 @@ MusicTheory/
 │   │   │   ├── components/          # UI components
 │   │   │   │   ├── fretboard/       # Main fretboard/keyboard component
 │   │   │   │   ├── keyboard/        # Piano keyboard component
+│   │   │   │   ├── circle-of-fifths/# App-wide key selector
+│   │   │   │   ├── progression/     # Progression composer: palette, strip,
+│   │   │   │   │                    #   piano roll, transport, notation
+│   │   │   │   ├── composer/        # Sheet music composer
+│   │   │   │   ├── transcription/   # Audio transcription and its review panel
 │   │   │   │   ├── gp-viewer/       # Guitar Pro file viewer
 │   │   │   │   └── gp-library/      # GP file library browser
-│   │   │   ├── models/              # TypeScript interfaces (auth, user, music)
-│   │   │   ├── services/            # Music theory, auth, alphaTab services
+│   │   │   ├── models/              # TypeScript interfaces (auth, user, music,
+│   │   │   │                        #   composer, progression, transcription)
+│   │   │   ├── services/            # Music theory, harmony, voicing, playback,
+│   │   │   │                        #   detection, auth, alphaTab
+│   │   │   ├── workers/             # Web worker for note detection
 │   │   │   ├── guards/              # Route guards (auth, role)
 │   │   │   └── interceptors/        # HTTP interceptor for JWT
 │   │   ├── environments/            # Environment configs
 │   │   └── assets/
 │   └── package.json
 │
-├── server/                          # ASP.NET Core 9 backend
+├── server/                          # ASP.NET Core 10 backend
 │   └── MusicTheory.API/
 │       ├── Controllers/             # Auth, Users (+ future endpoints)
 │       ├── Data/                    # DbContext
@@ -326,7 +384,62 @@ MusicTheory/
 7. **Play**: Click the Play button to hear the scale or chord
 8. **Explore**: Click individual notes on the fretboard or keys on the keyboard to hear them
 
+### The other pages
+
+The header switches between six views, and the **Circle of Fifths** drawer sets the key
+for the ones that read it:
+
+| Page | What it is for |
+|---|---|
+| **Fretboard** | The scale and chord explorer above |
+| **Composer** | Writing sheet music from scratch, notation and tab |
+| **Progression** | Building a chord progression and editing its notes in a piano roll |
+| **Transcribe** | Turning an audio file into notation |
+| **GP Viewer** | Reading and playing a Guitar Pro file |
+| **GP Library** | The Guitar Pro files you have saved |
+
+A quick tour of the progression composer: open the **Circle of Fifths** and pick a key,
+click a few chords from **Chords in this key** to build a progression, press **Play** with
+**Loop** on, then drag a note in the roll and watch the change arrive on the next pass.
+Change the key while it plays and the chords follow it while your rhythm stays put.
+
 ## Recent Updates
+
+### Progression Composer (September 2026)
+- ✨ **New**: Progression composer at `/progression` — diatonic chord palette, a
+  drag-and-drop progression strip, and a piano roll with free timing and velocity
+- ✨ **New**: Borrowed chords (♭II, ♭III, iv, ♭VI, ♭VII) and secondary dominants
+  (V/V, V/vi, V/IV, V/ii, V/iii), each named by its function
+- ✨ **New**: Per-aspect edit protection — a key change re-voices the chords you did not
+  touch and transposes the ones you did, so a hand-drawn rhythm survives it
+- ✨ **New**: Notation preview of a progression, with ties across bar lines
+- 🎵 **Enhanced**: Playback applies edits at the loop boundary, so a change is audible on
+  the next pass rather than clicking mid-chord
+- 🎸 **Enhanced**: The fretboard lights up the sounding chord during playback, and gives
+  back your own key when it stops
+- 🐛 **Fixed**: A heptatonic minor now engraves the key signature it actually has
+- 🧪 **Tests**: 1,855 passing
+
+### Circle of Fifths (September 2026)
+- ✨ **New**: Circle of fifths drawer that selects the key for the whole app, with key
+  signatures, majors and relative minors in three rings, and a fourths toggle
+- 🐛 **Fixed**: A minor key is now spelled from its own signature rather than the scale's
+  default, so E minor stops coming back with a G♭ in it
+
+### Audio Transcription (September 2026)
+- ✨ **New**: Transcription page at `/transcribe` — drop in audio, get notation
+- ✨ **New**: Note detection with Spotify Basic Pitch in a web worker, beat tracking, and
+  quantisation into bars that sum exactly
+- ✨ **New**: Harmonic suppression, with every discarded note shown as a ghost you can
+  toggle back in rather than silently dropped
+- ✨ **New**: Review panel for correcting tempo, downbeat and metrical level
+- ✨ **New**: Optional server tier running the same model under ONNX Runtime
+
+### Sheet Music Composer (September 2026)
+- ✨ **New**: Composer page at `/composer` — multi-track scores with notation and tab,
+  key and time signature changes, dynamics and repeats
+- ✨ **New**: Note entry directly on the staff and on the tab
+- ✨ **New**: Export to MIDI and to a real `.gp` file, with an alphaTex escape hatch
 
 ### SaaS Platform - Phase 1 Complete (January 2026)
 - 🚀 **Backend**: ASP.NET Core 9 API with Identity and JWT authentication

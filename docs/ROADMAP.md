@@ -1,8 +1,15 @@
 # MusicTheory SaaS Platform Roadmap
 
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-09-09
 
 This document tracks the progress of transforming MusicTheory from a standalone learning tool into a B2B SaaS platform for music education.
+
+> **Scope note.** The numbered phases below are the *platform* — accounts, teachers,
+> students, lessons, payments. A second line of work has been running alongside them on
+> the *tools* those lessons will be taught with: the sheet music composer, audio
+> transcription, the circle of fifths, and the progression composer. That work is
+> tracked in [Music Tooling](#music-tooling) rather than in the phase table, because it
+> does not block any phase and no phase blocks it.
 
 ---
 
@@ -274,7 +281,7 @@ client/src/
 
 ### Current Setup (Development)
 - **Database**: SQL Server 2022 in Docker on Ubuntu server (192.168.1.36)
-- **API**: ASP.NET Core 9 running locally
+- **API**: ASP.NET Core 10 running locally
 - **Frontend**: Angular 21 on localhost:4200
 
 ### Planned Production (Azure)
@@ -289,13 +296,51 @@ client/src/
 
 ---
 
+## Music Tooling
+
+Built alongside the platform phases, and shipped. Each has a design document that
+records the decisions and — where implementation disproved one — the correction.
+
+| Tool | Route | State |
+|---|---|---|
+| Sheet music composer | `/composer` | Shipped. Multi-track notation and tab, MIDI and `.gp` export |
+| Audio transcription | `/transcribe` | Shipped. Basic Pitch detection, beat tracking, correctable review |
+| Circle of fifths | drawer | Shipped. Sets the key app-wide |
+| Progression composer | `/progression` | M1 and M2 shipped. M3 not started |
+
+**Progression composer milestones:**
+
+| | | |
+|---|---|---|
+| M1 | Shipped | Model, service, palette, strip, block chords, Tone loop |
+| M2 | Shipped | Piano roll, per-aspect edit protection, borrowed chords and secondary dominants, loop-boundary rescheduling, notation projection |
+| M3 | Not started | The recogniser: a hand-edited slot reading its identity back, `literal` degradation, the alternates chip |
+| M4 | Not started | Generated track in the composer, Flatten, MIDI and `.gp` export |
+
+Two things are recorded as known limitations rather than bugs, both in the design doc:
+`quantizeBar` is onset-driven and has no note-off, so a staccato roll engraves legato;
+and `BeatDoc.dynamics: null` is documented as "inherit" but nothing implements it, which
+affects transcription as well as the progression preview.
+
+---
+
 ## Design Documents
 
 | Document | Path | Status |
 |----------|------|--------|
-| Platform Design | [docs/plans/2026-01-20-saas-platform-design.md](plans/2026-01-20-saas-platform-design.md) | Complete |
-| Phase 1 Plan | [docs/plans/2026-01-20-phase1-foundation-plan.md](plans/2026-01-20-phase1-foundation-plan.md) | Complete |
-| Azure Pricing | [docs/azure-saas-pricing-estimate.md](azure-saas-pricing-estimate.md) | Draft |
+| Platform Design | [plans/2026-01-20-saas-platform-design.md](plans/2026-01-20-saas-platform-design.md) | Complete |
+| Phase 1 Plan | [plans/2026-01-20-phase1-foundation-plan.md](plans/2026-01-20-phase1-foundation-plan.md) | Complete |
+| Azure Pricing | [azure-saas-pricing-estimate.md](azure-saas-pricing-estimate.md) | Draft |
+| Sheet Music Composer | [plans/2026-09-04-sheet-music-composer-design.md](plans/2026-09-04-sheet-music-composer-design.md) | Implemented |
+| Audio Transcription | [plans/2026-09-05-audio-transcription-design.md](plans/2026-09-05-audio-transcription-design.md) | Implemented, M1-M3 |
+| Two-Tier Transcription | [plans/2026-09-07-two-tier-transcription-design.md](plans/2026-09-07-two-tier-transcription-design.md) | Implemented |
+| Circle of Fifths | [plans/2026-09-07-circle-of-fifths-design.md](plans/2026-09-07-circle-of-fifths-design.md) | Implemented |
+| Progression Composer | [plans/2026-09-08-progression-composer-design.md](plans/2026-09-08-progression-composer-design.md) | M1-M2 implemented |
+
+Implementation plans, one per milestone, sit beside each design in `plans/`. The
+transcription investigations that produced *negative* results are kept too — the onset
+posteriorgram, stem separation, and the neural tempo estimator — because knowing what
+was tried and did not work is worth as much as the designs that shipped.
 
 ---
 
@@ -303,7 +348,7 @@ client/src/
 
 ### Prerequisites
 - Node.js 20+
-- .NET 9 SDK
+- .NET 10 SDK
 - Docker (for SQL Server) OR SQL Server LocalDB
 
 ### Start Database (Docker)
@@ -331,4 +376,5 @@ npm start  # Opens on http://localhost:4200
 
 ## Contributing
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) and [CLA.md](../CLA.md) for contribution guidelines.
+See [CLA.md](../CLA.md), and the Contributing section of the
+[README](../README.md#contributing), for contribution guidelines.
