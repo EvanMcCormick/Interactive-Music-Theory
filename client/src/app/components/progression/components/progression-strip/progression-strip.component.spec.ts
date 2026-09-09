@@ -186,12 +186,14 @@ describe('ProgressionStripComponent', () => {
      * JavaScript's `%` keeps the sign and the spelling would be read off the
      * front of it. Nothing in M1 moves `alter`; `replaceDocument` can bring in
      * a document that already has.
+     *
+     * A doubly lowered root, so it is spelled flat: see `rootPrefersSharps`.
      */
     it('names a chord whose alteration takes its root below the tonic', () => {
       progression.replaceDocument(docOf(degreeSlot('altered', -2, 4)));
       settle();
 
-      expect(component.cards[0].name).toBe('A# Maj');
+      expect(component.cards[0].name).toBe('Bb Maj');
     });
 
     /**
@@ -209,9 +211,9 @@ describe('ProgressionStripComponent', () => {
       );
       settle();
 
-      expect(component.cards[0].numeral).toBe('VII');
-      expect(component.cards[0].name).toBe('A# Maj');
-      expect(component.cards[0].label).toContain('A sharp major');
+      expect(component.cards[0].numeral).toBe('♭VII');
+      expect(component.cards[0].name).toBe('Bb Maj');
+      expect(component.cards[0].label).toContain('B flat major');
     });
 
     /**
@@ -221,7 +223,8 @@ describe('ProgressionStripComponent', () => {
      * Bb-D-F-A - a Bb major seventh, which is what `chordPitchClasses` builds
      * and what `generateSlotNotes` plays. The card used to read `VII` / `A# Maj`
      * over it, because it printed the override's name and the override said
-     * `major`.
+     * `major`. Task 8 gave it the other two halves it was missing: the numeral
+     * can carry an accidental, and a lowered root is spelled with a flat.
      */
     it('names an override extended by the key after the chord it became', () => {
       progression.replaceDocument(
@@ -229,8 +232,8 @@ describe('ProgressionStripComponent', () => {
       );
       settle();
 
-      expect(component.cards[0].numeral).toBe('VIImaj7');
-      expect(component.cards[0].name).toBe('A# Maj7');
+      expect(component.cards[0].numeral).toBe('♭VIImaj7');
+      expect(component.cards[0].name).toBe('Bb Maj7');
     });
 
     it('marks the selected card and only that one', () => {

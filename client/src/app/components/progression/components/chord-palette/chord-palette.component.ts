@@ -57,6 +57,17 @@ export interface PaletteChord {
  */
 const PALETTE_EXTENT: ChordExtent = 3;
 
+/**
+ * The diatonic row is unaltered, which is what makes it the diatonic row.
+ *
+ * Named rather than written as a bare `0` at the `romanNumeral` call, because
+ * the argument it fills is the one Task 8 added for borrowed chords: the seven
+ * buttons here are the key's own degrees and the accidental is what the
+ * borrowed group below them carries. It is `createDegreeSlot`'s `alter` and
+ * `paletteDegree`'s, for the same reason both of those write it down.
+ */
+const PALETTE_ALTER = 0;
+
 /** What each rung of the ladder is called, for the complexity readout. */
 const EXTENT_LABELS: Record<ChordExtent, string> = {
   3: 'Triad',
@@ -223,7 +234,7 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
 
       return {
         degree,
-        numeral: romanNumeral(degree, quality),
+        numeral: romanNumeral(degree, PALETTE_ALTER, quality),
         name: chordName(root, quality),
         // The numeral is dropped from the spoken label rather than translated:
         // read aloud it is a string of letters ("vee eye eye") and the one fact

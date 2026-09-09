@@ -20,6 +20,53 @@ import type { ChordQuality } from './progression-harmony';
  */
 
 /**
+ * How a pitch class is written: `MusicTheoryService.spellNote`, passed in.
+ *
+ * It lives here because this is the module about how a chord is written, and
+ * because it was written out three times before it lived anywhere - once in
+ * `progression-strip-cards.ts`, once in `piano-roll-view.ts`, and `Task 8`
+ * would have been the third. Three declarations of one function type is the
+ * duplicate the project rules forbid outright, and the type belongs beside
+ * `chordName`, whose whole argument is that the *spelling* is somebody else's
+ * decision arriving as an argument.
+ *
+ * A spelling is asked for with an explicit preference rather than asked to
+ * decide one: `getNoteName` answers for the fretboard's key, the progression
+ * carries a key of its own, and asking the app-wide rule is how the palette
+ * came to print `D♯ Maj` as the tonic chord of E flat major.
+ */
+export type SpellNote = (pitchClass: number, preferSharps: boolean) => string;
+
+/**
+ * Which way a chord's root leans, which is not always the way its key does.
+ *
+ * C major's `preferSharps` is `true` - its signature is empty, so the ionian
+ * scale's own default decides it - so spelling a borrowed ♭VII the way that key
+ * spells everything else prints `A♯ Maj` under a numeral that reads `♭VII`. The
+ * numeral's accidental and the name's accidental are the same accidental, and a
+ * card disagreeing with itself about one chord is the failure this page has
+ * been fixed for twice already.
+ *
+ * So a **displaced** root is spelled in the direction it was displaced, and an
+ * **undisplaced** one has no opinion of its own and follows the key - which is
+ * what every other label on this page does, and what keeps a secondary
+ * dominant's `D7` spelled by the progression's own signature.
+ *
+ * It lives here rather than in either caller because the palette's borrowed
+ * button and the strip card it becomes have to reach the same answer: a button
+ * reading `Bb Maj` that turns into a card reading `A# Maj` is one chord with two
+ * names, one click apart.
+ *
+ * It does not fix everything, and cannot. The app spells from two twelve-name
+ * chromatic tables, so ♭VI in E flat major is a C flat and comes back `B`. That
+ * is a limit of `spellNote` rather than of this rule, and the rule still turns
+ * the four borrowed chords of every sharp-preferring key from wrong to right.
+ */
+export function rootPrefersSharps(keyPrefersSharps: boolean, alter: number): boolean {
+  return alter === 0 ? keyPrefersSharps : alter > 0;
+}
+
+/**
  * How a quality is written, in the three places a chord is written at all.
  *
  * All three tables live together rather than one per module, and here rather
@@ -114,7 +161,40 @@ const SPOKEN_QUALITIES: Record<ChordQuality, string> = {
 const ROMAN_NUMERALS: readonly string[] = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
 
 /**
- * The Roman numeral for a diatonic chord: `I`, `ii`, `vii°`, `V7`.
+ * The glyphs an accidental is written with, and they are the musical signs
+ * rather than the letters `b` and `#`.
+ *
+ * `♭VII` beside `Bb Maj` does mix two conventions on one card, and it is the
+ * right way round. A note name is `MusicTheoryService`'s to spell and its two
+ * chromatic tables are ASCII; a numeral is this module's to write, and this
+ * module already prefers `°` to `dim` and `ø7` to `m7b5` for the same reason.
+ * `bVII` also reads as a chord on B, which is exactly the chord it is not.
+ *
+ * The app prints these glyphs elsewhere already - the circle of fifths labels a
+ * wedge `3♭`, and two scales are named `Dorian ♭2` and `Mixolydian ♭6` - so
+ * this is the existing convention rather than a new one.
+ */
+const FLAT_SIGN = '♭';
+const SHARP_SIGN = '♯';
+
+/**
+ * The degree a slash numeral points at: `V/vi` tonicises the sixth.
+ *
+ * It carries no accidental of its own, because a secondary dominant tonicises a
+ * *degree of the key* and the degrees of a key are diatonic by definition. It
+ * carries a quality because the target's numeral has to be written in the key's
+ * own terms - the sixth is `vi` in a major key and `VI` in a minor one, and a
+ * numeral that said `V/vi` in C minor would be pointing at a chord the palette
+ * does not offer.
+ */
+export interface RomanTarget {
+  degree: number;
+  quality: ChordQuality;
+}
+
+/**
+ * The Roman numeral for a chord in a key: `I`, `ii`, `vii°`, `V7`, `♭VII`,
+ * `V/vi`.
  *
  * This is the teaching content of the whole progression page, which is why it
  * is a function with a table behind it rather than a line of template. The
@@ -129,6 +209,37 @@ const ROMAN_NUMERALS: readonly string[] = ['I', 'II', 'III', 'IV', 'V', 'VI', 'V
  * the same table print major's I ii iii IV V vi vii° and natural minor's
  * i ii° III iv v VI VII, and print harmonic minor's III+ without anyone having
  * enumerated harmonic minor.
+ *
+ * ## The accidental, which the case cannot carry
+ *
+ * `alter` displaces the *root* and the case still describes the third, and
+ * that split is the whole of the design doc's correction: `♭VII` in C major is
+ * B flat **major**, where shifting the degree-6 stack down a semitone gives a B
+ * flat diminished. The two halves of a borrowed chord's numeral come from two
+ * different arguments here for exactly that reason, and a numeral that could
+ * only take a quality could not write one at all.
+ *
+ * A double accidental is the sign twice rather than a third sign, which is what
+ * `ALTER_MIN` of -2 makes reachable. Nothing in the app writes one today.
+ *
+ * ## The slash, which names a function rather than a position
+ *
+ * `V/vi` is *the dominant of the sixth degree*, so with a target present the
+ * `degree` argument is read against the target and not against the home key -
+ * which is why all five of a major key's secondary dominants pass 4. The
+ * accidental, if there is one, still belongs to the chord.
+ *
+ * **The figure is dropped on the left of a slash and kept on the right.** Every
+ * secondary dominant this app builds is a dominant seventh, so a `7` there
+ * would be on all five and tell a reader nothing the group's own heading does
+ * not; the design doc writes all three of its examples `V/V`, `V/vi`, `V/IV`;
+ * and the chord name beside the numeral reads `D7`, so the height is on screen
+ * either way. The target keeps its figure because that one *is* carrying
+ * information - which chord is being tonicised.
+ *
+ * This is the line to revisit if a later milestone adds secondary leading-tone
+ * chords. `vii°7/V` needs its figure, and dropping it would turn a diminished
+ * seventh into a numeral that reads as a dominant.
  *
  * ## What it does not know: how tall the chord is
  *
@@ -148,29 +259,71 @@ const ROMAN_NUMERALS: readonly string[] = ['I', 'II', 'III', 'IV', 'V', 'VI', 'V
  * not to print the height: its two lines are the numeral and the chord name,
  * and the panel that says "9th" is labelled "Complexity", a different question.
  *
- * **And the M2 fix is bigger than this signature.** Widening it to take the
- * extent, on its own, prints `V9` over a card whose name still reads `G7` -
- * `chordName` reads the same `quality` field and is blind to the height in the
- * same way, so the disagreement moves onto the card rather than off it. It
- * starts below both of them: `ChordQuality` has no ninth, eleventh or
- * thirteenth member for either function to name, and the three tables here are
- * keyed by it. M2 has to widen the type, or widen both functions together.
+ * **Settled at M2 Task 8: the height stays unnamed.** The alternative was to
+ * give `ChordQuality` ninth, eleventh and thirteenth members, and it is a much
+ * larger change than the `V9` it buys:
  *
- * ## And the one thing it refuses
+ *  - `QUALITY_INTERVALS` is read in both directions and rests on no two
+ *    entries sharing a shape. A ninth admits `[0,4,7,10,14]`, `[0,4,7,10,13]`
+ *    and `[0,4,7,10,15]` - the app's own chord table lists all three - and the
+ *    invariant would have to hold across the eleventh and thirteenth variants
+ *    of each.
+ *  - The three tables here are keyed exhaustively on `ChordQuality`, so every
+ *    new member needs a numeral figure, a printed suffix and a spoken phrase:
+ *    typographic decisions, made to serve an arithmetic problem.
+ *  - `ChordDegree.quality` is an **override**, and a `dominant9` override at
+ *    extent 9 builds the same five notes a `dominant7` override does, because
+ *    the ninth is diatonic either way. The widening buys nothing at the point
+ *    of choice; it only changes a label.
+ *
+ * What deferring costs is one truncation, and it is a truncation rather than a
+ * falsehood: a borrowed `♭VII` on a slot raised to a ninth prints `♭VIImaj7`
+ * over a stack that really is a B flat major seventh with the key's own ninth
+ * on top, and the palette's "Complexity: 9th" readout states the height beside
+ * it. Truncated rather than wrong is the same rule as unlabelled rather than
+ * mislabelled.
+ *
+ * ## And the two things it refuses
  *
  * A degree outside 0-6 throws, on exactly the argument `degreePitchClasses`
  * makes for the same guard: the index would read `undefined` out of the table
  * and the button would print the string `undefinedmaj7` rather than fail.
+ *
+ * A fractional accidental throws for the same kind of reason. `repeat` takes
+ * the floor of its argument, so half a flat would render as no flat at all -
+ * a `VII` where a `♭VII` was asked for, which is a different chord printed
+ * silently rather than a failure.
  */
-export function romanNumeral(degree: number, quality: ChordQuality): string {
+export function romanNumeral(
+  degree: number,
+  alter: number,
+  quality: ChordQuality,
+  of?: RomanTarget
+): string {
   if (!Number.isInteger(degree) || degree < 0 || degree > 6) {
     throw new Error(`A Roman numeral needs a scale degree from 0 to 6; got ${degree}`);
   }
+  if (!Number.isInteger(alter)) {
+    throw new Error(
+      `A Roman numeral's accidental must be a whole number of semitones; got ${alter}`
+    );
+  }
 
   const figure = NUMERAL_FIGURES[quality];
-  const numeral = ROMAN_NUMERALS[degree];
+  const roman = ROMAN_NUMERALS[degree];
+  const numeral =
+    accidental(alter) + (figure.lowerCase ? roman.toLowerCase() : roman);
 
-  return (figure.lowerCase ? numeral.toLowerCase() : numeral) + figure.suffix;
+  // The figure is the target's rather than this chord's once there is a slash.
+  // See the note above for why the left-hand one is dropped.
+  return of === undefined
+    ? numeral + figure.suffix
+    : `${numeral}/${romanNumeral(of.degree, 0, of.quality)}`;
+}
+
+/** `-1` -> `♭`, `2` -> `♯♯`, `0` -> nothing at all. */
+function accidental(alter: number): string {
+  return (alter < 0 ? FLAT_SIGN : SHARP_SIGN).repeat(Math.abs(alter));
 }
 
 /**

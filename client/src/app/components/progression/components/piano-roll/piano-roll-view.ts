@@ -1,5 +1,6 @@
 import { VELOCITY_MAX, VELOCITY_MIN } from '../../../../models/progression-normalize';
 import { ChordSlot, ProgressionState, RollNote } from '../../../../models/progression.model';
+import type { SpellNote } from '../../../../services/progression-chord-names';
 import { MAX_BEAT_DIVISION, MidiRange, midiToY, rowCount, visibleMidiRange } from './piano-roll-geometry';
 
 /**
@@ -44,8 +45,16 @@ import { MAX_BEAT_DIVISION, MidiRange, midiToY, rowCount, visibleMidiRange } fro
  * chord in two components. `positionText` says only *which* slot is open.
  */
 
-/** How a pitch class is written. `MusicTheoryService.spellNote`, passed in. */
-export type SpellNote = (pitchClass: number, preferSharps: boolean) => string;
+/**
+ * How a pitch class is written, re-exported from the module that owns the type.
+ *
+ * It was declared here and in `progression-strip-cards.ts`, character for
+ * character, which is one concept with two definitions - and Task 8 would have
+ * made three. It now lives beside `chordName`, whose whole argument is that
+ * spelling arrives as an argument, and is re-exported here so the component
+ * beside this file still reads it off its own view model.
+ */
+export type { SpellNote };
 
 /** The pitch classes drawn as black keys. */
 const BLACK_PITCH_CLASSES: ReadonlySet<number> = new Set([1, 3, 6, 8, 10]);

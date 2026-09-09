@@ -6,8 +6,10 @@ import {
 } from '../../../../models/progression.model';
 import { chordRootPitchClass } from '../../../../services/progression-generate';
 import {
+  SpellNote,
   chordName,
   romanNumeral,
+  rootPrefersSharps,
   spokenChordName
 } from '../../../../services/progression-chord-names';
 import { effectiveQuality } from '../../../../services/progression-harmony';
@@ -115,9 +117,6 @@ export interface StripView {
   unlabelledHint: string | null;
 }
 
-/** How a pitch class is written. `MusicTheoryService.spellNote`, passed in. */
-export type SpellNote = (pitchClass: number, preferSharps: boolean) => string;
-
 /** The numeral slot of a card that has no numeral. */
 const NO_NUMERAL = '—';
 
@@ -204,7 +203,14 @@ function describeSlot(
   if (!intervals) return unlabelled('this key cannot name it');
 
   const degree = harmony.degree;
-  const root = spell(chordRootPitchClass(key, intervals, degree), key.preferSharps);
+  // Spelled by the *displacement* where there is one and by the key where there
+  // is not. A borrowed chord's numeral prints a flat, so its name has to as
+  // well - and the palette button this card came from spells it through the
+  // same rule. See `rootPrefersSharps`.
+  const root = spell(
+    chordRootPitchClass(key, intervals, degree),
+    rootPrefersSharps(key.preferSharps, degree.alter)
+  );
   // `quality` is nullable and `null` means "as the key gives it", so the card
   // prints the key's own answer for a slot the user has not overridden. Asked
   // through `effectiveQuality` rather than resolved here, so that the strip and
@@ -222,7 +228,7 @@ function describeSlot(
 
   return {
     isUnlabelled: false,
-    numeral: romanNumeral(degree.degree, quality),
+    numeral: romanNumeral(degree.degree, degree.alter, quality),
     name: chordName(root, quality),
     subject: spokenChordName(root, quality),
     // The numeral is dropped from the spoken label and the position given as a

@@ -27,7 +27,7 @@ const NATURAL_MINOR = [0, 2, 3, 5, 7, 8, 10];
 describe('romanNumeral', () => {
   /** The numeral for each degree of `scale`, as the palette would print them. */
   function figures(scale: readonly number[], extent: ChordExtent = 3): string[] {
-    return [0, 1, 2, 3, 4, 5, 6].map(d => romanNumeral(d, degreeQuality(scale, d, extent)));
+    return [0, 1, 2, 3, 4, 5, 6].map(d => romanNumeral(d, 0, degreeQuality(scale, d, extent)));
   }
 
   // The first of the two tables this module is checked against, and the one
@@ -46,20 +46,20 @@ describe('romanNumeral', () => {
   // a plus rather than lower case: III+ in harmonic minor is a major third
   // with a sharpened fifth, not a minor chord.
   it('marks the augmented triad with a plus and keeps it upper case', () => {
-    expect(romanNumeral(2, 'augmented')).toBe('III+');
+    expect(romanNumeral(2, 0, 'augmented')).toBe('III+');
   });
 
   // The seventh figures, each against the shape it is conventionally written
   // as: Imaj7, V7, ii7, viiø7, vii°7.
   it('writes the seventh chords with their usual figures', () => {
-    expect(romanNumeral(0, 'major7')).toBe('Imaj7');
-    expect(romanNumeral(4, 'dominant7')).toBe('V7');
-    expect(romanNumeral(1, 'minor7')).toBe('ii7');
-    expect(romanNumeral(0, 'minorMajor7')).toBe('i(maj7)');
-    expect(romanNumeral(6, 'halfDiminished7')).toBe('viiø7');
-    expect(romanNumeral(6, 'diminished7')).toBe('vii°7');
-    expect(romanNumeral(2, 'augmented7')).toBe('III+7');
-    expect(romanNumeral(2, 'augmentedMajor7')).toBe('III+maj7');
+    expect(romanNumeral(0, 0, 'major7')).toBe('Imaj7');
+    expect(romanNumeral(4, 0, 'dominant7')).toBe('V7');
+    expect(romanNumeral(1, 0, 'minor7')).toBe('ii7');
+    expect(romanNumeral(0, 0, 'minorMajor7')).toBe('i(maj7)');
+    expect(romanNumeral(6, 0, 'halfDiminished7')).toBe('viiø7');
+    expect(romanNumeral(6, 0, 'diminished7')).toBe('vii°7');
+    expect(romanNumeral(2, 0, 'augmented7')).toBe('III+7');
+    expect(romanNumeral(2, 0, 'augmentedMajor7')).toBe('III+maj7');
   });
 
   /**
@@ -73,8 +73,8 @@ describe('romanNumeral', () => {
    * the convention brackets the minor-major.
    */
   it('does not distinguish two seventh figures by letter case alone', () => {
-    const major = romanNumeral(0, 'major7');
-    const minorMajor = romanNumeral(0, 'minorMajor7');
+    const major = romanNumeral(0, 0, 'major7');
+    const minorMajor = romanNumeral(0, 0, 'minorMajor7');
 
     expect(minorMajor).not.toBe(major);
     expect(minorMajor.toLowerCase()).not.toBe(major.toLowerCase());
@@ -92,7 +92,7 @@ describe('romanNumeral', () => {
    */
   it('prints an extended chord with its seventh figure', () => {
     for (const extent of [9, 11, 13] as ChordExtent[]) {
-      expect(romanNumeral(4, degreeQuality(MAJOR, 4, extent))).toBe('V7');
+      expect(romanNumeral(4, 0, degreeQuality(MAJOR, 4, extent))).toBe('V7');
     }
   });
 
@@ -106,17 +106,101 @@ describe('romanNumeral', () => {
    * here rather than letting it lie.
    */
   it('marks a stack that is not a named chord', () => {
-    expect(romanNumeral(6, 'other')).toBe('VII?');
+    expect(romanNumeral(6, 0, 'other')).toBe('VII?');
   });
 
   // The same domain `degreePitchClasses` enforces, and for the same reason: a
   // degree off the end of the table would otherwise read `undefined` and print
   // the string "undefined" into a button.
   it('refuses a degree that is not one of the seven', () => {
-    expect(() => romanNumeral(-1, 'major')).toThrowError(/degree/i);
-    expect(() => romanNumeral(7, 'major')).toThrowError(/degree/i);
-    expect(() => romanNumeral(1.5, 'major')).toThrowError(/degree/i);
-    expect(() => romanNumeral(NaN, 'major')).toThrowError(/degree/i);
+    expect(() => romanNumeral(-1, 0, 'major')).toThrowError(/degree/i);
+    expect(() => romanNumeral(7, 0, 'major')).toThrowError(/degree/i);
+    expect(() => romanNumeral(1.5, 0, 'major')).toThrowError(/degree/i);
+    expect(() => romanNumeral(NaN, 0, 'major')).toThrowError(/degree/i);
+  });
+
+  /**
+   * The accidental, which is the half of a borrowed chord's numeral the case
+   * cannot carry.
+   *
+   * These are the four rows of the design doc's correction table that M1 could
+   * not print at all. The accidental displaces the *root* and the case still
+   * carries the third, which is exactly why `♭VII` is upper case: B flat major,
+   * not the B diminished a whole-stack transposition produced.
+   */
+  it('writes a lowered root with a flat and keeps the case for the third', () => {
+    expect(romanNumeral(6, -1, 'major')).toBe('♭VII');
+    expect(romanNumeral(5, -1, 'major')).toBe('♭VI');
+    expect(romanNumeral(2, -1, 'major')).toBe('♭III');
+    expect(romanNumeral(1, -1, 'major')).toBe('♭II');
+  });
+
+  // The fifth row of that table, and the one that goes the other way: a raised
+  // root takes a sharp, and the figure still follows the shape.
+  it('writes a raised root with a sharp', () => {
+    expect(romanNumeral(3, 1, 'diminished')).toBe('♯iv°');
+    expect(romanNumeral(4, 2, 'major')).toBe('♯♯V');
+  });
+
+  // A double flat is two glyphs rather than a different sign, which is what
+  // `ALTER_MIN` of -2 makes reachable.
+  it('repeats the glyph for a double accidental', () => {
+    expect(romanNumeral(1, -2, 'major')).toBe('♭♭II');
+  });
+
+  // An unaltered degree prints no accidental at all - the M1 numeral, unchanged
+  // by widening the signature.
+  it('prints nothing for an unaltered root', () => {
+    expect(romanNumeral(3, 0, 'minor')).toBe('iv');
+  });
+
+  // Wrong kind throws, on the same rule as the degree beside it: a fractional
+  // accidental would render as an empty string through `repeat`, which is a
+  // silently missing flat rather than a failure.
+  it('refuses an accidental that is not a whole number of semitones', () => {
+    expect(() => romanNumeral(6, -0.5, 'major')).toThrowError(/accidental/i);
+    expect(() => romanNumeral(6, NaN, 'major')).toThrowError(/accidental/i);
+  });
+
+  /**
+   * The slash, which names a chord's function in a key it is not in.
+   *
+   * `V/vi` is the dominant *of the sixth degree*, so the numeral on the left is
+   * measured against the target and not against the home key - which is why the
+   * degree argument reads 4 for all five secondary dominants a major key has.
+   */
+  it('names a chord after the degree it tonicises', () => {
+    expect(romanNumeral(4, 0, 'dominant7', { degree: 5, quality: 'minor' })).toBe('V/vi');
+    expect(romanNumeral(4, 0, 'dominant7', { degree: 4, quality: 'major' })).toBe('V/V');
+    expect(romanNumeral(4, 0, 'dominant7', { degree: 3, quality: 'major' })).toBe('V/IV');
+  });
+
+  /**
+   * The figure is dropped on the left of a slash, and kept on the right.
+   *
+   * `V/vi` rather than `V7/vi` is how the design doc writes all three of its
+   * examples, and the group these appear under is called "secondary dominants",
+   * so a `7` on every member would distinguish none of them. The target keeps
+   * its own figure, because that one is telling the reader which chord is being
+   * tonicised.
+   */
+  it('drops the dominant seventh figure and keeps the target one', () => {
+    expect(romanNumeral(4, 0, 'dominant7', { degree: 5, quality: 'minor' })).not.toContain('7/');
+    expect(romanNumeral(4, 0, 'dominant7', { degree: 6, quality: 'diminished' })).toBe('V/vii°');
+  });
+
+  // The target is a degree of the key, so it is never itself altered - and the
+  // accidental on the left, if there is one, belongs to the chord rather than
+  // to the thing it points at.
+  it('puts an accidental on the chord and not on its target', () => {
+    expect(romanNumeral(1, -1, 'major', { degree: 4, quality: 'major' })).toBe('♭II/V');
+  });
+
+  // A bad target degree is refused on the same terms as a bad degree, because
+  // it is read out of the same table.
+  it('refuses a target degree that is not one of the seven', () => {
+    expect(() => romanNumeral(4, 0, 'dominant7', { degree: 7, quality: 'major' }))
+      .toThrowError(/degree/i);
   });
 });
 
