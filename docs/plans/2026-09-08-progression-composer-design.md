@@ -1,7 +1,10 @@
 # Progression Composer — Design
 
 **Date:** 2026-09-08
-**Status:** Designed. Not yet implemented.
+**Status:** M1 implemented and merged. See `2026-09-08-progression-m1-core.md` for
+the plan it was built from, and "Correction: `alter` cannot express a borrowed
+chord" at the end of this document for what implementation disproved. M2 (the
+piano roll) and M3 (the recogniser) are designed here but not built.
 
 ## Goal
 
