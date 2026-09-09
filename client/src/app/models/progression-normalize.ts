@@ -1,8 +1,8 @@
-// Split by kind so the one runtime edge is visible: the types come back from
-// the model erased, and `noteCount` is the only import here that survives to
-// runtime. See the layering note below.
-import type { ChordExtent } from '../services/progression-harmony';
-import { noteCount } from '../services/progression-harmony';
+// Split by kind so the runtime edge is visible: the types come back from the
+// model erased, and only `noteCount` and `CHORD_QUALITIES` survive to runtime.
+// See the layering note below.
+import type { ChordExtent, ChordQuality } from '../services/progression-harmony';
+import { CHORD_QUALITIES, noteCount } from '../services/progression-harmony';
 import type {
   ChordDegree,
   ChordSlot,
@@ -44,8 +44,9 @@ import type {
  * in the model it would be the one value these guards needed from there, and so
  * the one thing that would make that cycle real.
  *
- * `noteCount` is the one genuine runtime edge out of this file, and it carries
- * no Angular or audio dependency.
+ * `noteCount` and `CHORD_QUALITIES` are the genuine runtime edges out of this
+ * file, and neither carries an Angular or audio dependency. Both are twins of a
+ * type this file has to check at runtime, where the type is gone.
  *
  * ## The normalisation rule
  *
@@ -65,12 +66,16 @@ import type {
  *  - **A cyclic control past its limit wraps** - `inversion`, and the key's
  *    `tonic`. The inversion above the last is root position again; the pitch
  *    class above B is C. Storing them wrapped keeps them nameable.
- *  - **A value outside an enumerated set throws** - `extent`. `ChordExtent` is a
- *    union rather than a range, so a value that is not in it is a type violation
- *    rather than a control at its limit, and there is no end to clamp to: the
- *    set is a ladder, not an interval. Keeping the +/- complexity buttons inside
- *    `CHORD_EXTENTS` is therefore the *stepper's* job - stepping off either end
- *    should fail loudly here rather than be rounded back onto the last rung.
+ *  - **A value outside an enumerated set throws** - `extent` and `quality`. Both
+ *    are unions rather than ranges, so a value that is not in one is a type
+ *    violation rather than a control at its limit, and there is no end to clamp
+ *    to: the set is a ladder, not an interval. Keeping the +/- complexity
+ *    buttons inside `CHORD_EXTENTS` is therefore the *stepper's* job - stepping
+ *    off either end should fail loudly here rather than be rounded back onto the
+ *    last rung. `quality` also carries the one *cross-field* rule in this file:
+ *    a chromatic root needs a quality that names a shape, which is design
+ *    decision 1 and falls under the first clause, neither field being wrong on
+ *    its own.
  *  - **A field that reaches no audio path and has a defined safe default is
  *    filled when it is absent, rather than thrown on** - `owned`. The clauses
  *    above are about values that arrive somewhere unlooked-at, where "I cannot
@@ -115,9 +120,11 @@ export const VOICING_BASE_MIDI = 60;
  * The top is arithmetic rather than taste. `voiceChord` has no MIDI clamp, so
  * this is the last line before a note reaches `Tone.PolySynth`. Measured over
  * the pipeline `generateSlotNotes` actually runs - all 33 heptatonic scales the
- * app offers, every degree, extent, inversion, `alter` and tonic - the highest
- * note a chord can reach is **33** semitones above the base: a 9th on the double
- * harmonic scale, fourth inversion, altered down a tone.
+ * app offers, every degree, extent, inversion and tonic, and every `(alter,
+ * quality)` pair a stored slot may carry - the highest note a chord can reach is
+ * **45** semitones above the base. The witness is Hungarian minor's degree 5 at
+ * extent 13, altered down a tone and overridden to `augmented7`, third
+ * inversion, in G.
  *
  * `alter` and `tonic` belong in that measurement rather than being factored out
  * of it, because the reach is not transposition-invariant: `voiceChord` places
@@ -125,9 +132,27 @@ export const VOICING_BASE_MIDI = 60;
  * transposing a chord can widen it. A sweep of untransposed chords measures 32,
  * and is measuring a pipeline this bound does not guard.
  *
- * `OCTAVE_MAX` of 2 puts the base at C6 and that ceiling at 117, ten short of
- * 127; 3 would put it at 129, off the end of MIDI. The spec proves both halves,
+ * `quality` belongs there for a sharper reason. It used to be safe to leave out
+ * because `alter` was a transposition and no override was ever read, so the
+ * diatonic stack was the whole reachable set; that sweep measured 33, and 33 is
+ * what this note used to quote. Root-only alteration made the override part of
+ * the chord, and the reachable set grew by an octave: 34 with an override at
+ * `alter` 0, 45 once `alter` moves. A plain alternates row with no chromatic
+ * root at all already passes the old figure.
+ *
+ * `OCTAVE_MAX` of 1 puts the base at C5 and that ceiling at 117, ten short of
+ * 127; 2 would put it at 129, off the end of MIDI. The spec proves both halves,
  * so a new scale that widened the stack would fail rather than clip.
+ *
+ * **It was 2, and dropping it costs the user the top octave of the control.**
+ * That is the price of bounding the *input*, and it is paid deliberately: the
+ * alternatives all bound the output instead, and every one of them rewrites the
+ * chord without saying so - clamping notes individually collapses a voicing onto
+ * its ceiling, and transposing an overflowing chord back down makes the control
+ * non-monotonic. A wrong chord rather than a crash is the failure every guard
+ * here exists to avoid. See M2 Task 3 in the piano roll plan for the option that
+ * keeps the range - a per-slot ceiling derived from the chord itself - and what
+ * that costs instead.
  *
  * The bottom is taste, and the spec pins it as taste rather than deriving it:
  * `voiceChord` never voices below its base, so the MIDI floor would permit
@@ -136,7 +161,7 @@ export const VOICING_BASE_MIDI = 60;
  * chords voiced under it are mud rather than music.
  */
 export const OCTAVE_MIN = -2;
-export const OCTAVE_MAX = 2;
+export const OCTAVE_MAX = 1;
 
 /**
  * How far a degree may be chromatically altered, in semitones. Past a whole
@@ -266,6 +291,62 @@ function requireExtent(extent: ChordExtent): ChordExtent {
 }
 
 /**
+ * The enumerated-set clause again, one field over.
+ *
+ * `quality` was the one member of a `ChordDegree` this function let through
+ * untouched, which made `replaceDocument` a door for a value the type says
+ * cannot exist. An arbitrary string reaches `QUALITY_INTERVALS[quality]` as
+ * `undefined` and throws a raw `TypeError` off `shape.length` - from the audio
+ * path, three layers downstream, naming neither the field nor the document it
+ * came from. `ChordQuality` is a union rather than a range, so there is no
+ * nearest legal value to clamp to and the answer is `extent`'s.
+ *
+ * `null` is legal and is not a missing value: it is what a fresh slot carries
+ * and it means "as the key gives it". `'other'` is legal too, and for a less
+ * obvious reason - it is a *label* rather than an override, and `regenerateSlot`
+ * writes it into this field whenever the derived stack is no named chord.
+ * Refusing it would make Hungarian minor's second degree unopenable.
+ */
+function requireQuality(quality: ChordQuality | null): ChordQuality | null {
+  if (quality === null) return null;
+  if (!CHORD_QUALITIES.includes(quality)) {
+    throw new Error(
+      `ChordDegree quality must be null or one of ${CHORD_QUALITIES.join(', ')}; ` +
+        `got ${quality}`
+    );
+  }
+  return quality;
+}
+
+/**
+ * The cross-field half of design decision 1: a displaced root needs a shape.
+ *
+ * Neither field is wrong on its own - `alter` is a bounded integer and `null` is
+ * the quality every fresh slot carries - and only the pair names nothing to
+ * build. `chordPitchClasses` refuses the same pair, and keeping both is
+ * deliberate rather than redundant: that one guards the arithmetic against a
+ * caller, this one guards the *document* against a file. Without it,
+ * `replaceDocument` accepted the pair, stored it, and threw from the audio path
+ * on whatever edit next regenerated the slot - which is the failure the first
+ * clause of the rule above exists to move back to where it was introduced.
+ *
+ * `'other'` is refused beside `null` because it names no interval set either,
+ * and the message says which arrived. "Needs an explicit quality" is a
+ * misdirection when one was supplied and could not be used - and it is the
+ * message the caller got, because `generateSlotNotes` reads a stored `'other'`
+ * as no override before `chordPitchClasses` ever sees it.
+ */
+function requireBuildableRoot(alter: number, quality: ChordQuality | null): void {
+  if (alter === 0) return;
+  if (quality !== null && quality !== 'other') return;
+
+  throw new Error(
+    `A chromatic ChordDegree needs a quality that names a shape; got alter ` +
+      `${alter} with quality ${quality === null ? 'null' : `'${quality}'`}`
+  );
+}
+
+/**
  * Inversion wraps where octave clamps, because it is cyclic: the inversion
  * above the last one is root position again. Storing it wrapped keeps it
  * nameable, so a control that has been stepped round twice still reads as
@@ -386,11 +467,19 @@ function requireOwnershipFlag(value: boolean, dimension: string): boolean {
 
 function normalizeChordDegree(degree: ChordDegree): ChordDegree {
   const extent = requireExtent(degree.extent);
+  const alter = clamp(requireInteger(degree.alter, 'alter'), ALTER_MIN, ALTER_MAX);
+  const quality = requireQuality(degree.quality);
+  // Judged on the alteration that will be *stored*, not the one that arrived:
+  // an out-of-range `alter` is clamped above and the pair is only meaningful
+  // against the value the document ends up holding.
+  requireBuildableRoot(alter, quality);
+
   return {
     ...degree,
     degree: requireDegreeIndex(degree.degree),
-    alter: clamp(requireInteger(degree.alter, 'alter'), ALTER_MIN, ALTER_MAX),
+    alter,
     extent,
+    quality,
     inversion: normalizeInversion(requireInteger(degree.inversion, 'inversion'), extent),
     octave: clamp(requireInteger(degree.octave, 'octave'), OCTAVE_MIN, OCTAVE_MAX)
   };

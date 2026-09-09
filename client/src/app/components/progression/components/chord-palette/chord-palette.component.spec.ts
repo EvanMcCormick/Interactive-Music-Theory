@@ -15,7 +15,7 @@ import { ChordDegree, ProgressionState } from '../../../../models/progression.mo
  * worth protecting is the one with the service, so these tests call the
  * component's own methods and read the service back, exactly as a click would.
  *
- * The two label tables are not re-tested here. `progression-harmony.spec.ts`
+ * The two label tables are not re-tested here. `progression-chord-names.spec.ts`
  * checks `romanNumeral` and `chordName` against both figure tables directly,
  * and repeating that through a fixture would test the same table twice and the
  * wiring not at all. What is tested here is that the palette reads the *key's*

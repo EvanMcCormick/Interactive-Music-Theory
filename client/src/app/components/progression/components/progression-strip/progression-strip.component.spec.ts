@@ -5,6 +5,7 @@ import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
 import { createOwnership } from '../../../../models/progression-normalize';
 import {
+  ChordDegree,
   ChordSlot,
   ProgressionDoc,
   ProgressionState,
@@ -25,9 +26,10 @@ import {
  * here, so the binding that carries it is checked once, and once through the
  * geometry it produces.
  *
- * The label tables are not re-tested - `progression-harmony.spec.ts` checks
+ * The label tables are not re-tested - `progression-chord-names.spec.ts` checks
  * `romanNumeral` and `chordName` directly. What is tested here is that a card
- * reads the *slot's* stored quality and the *progression's* key.
+ * reads the *slot's* own harmony and the *progression's* key: the override when
+ * the slot carries one, and the key's own answer when it does not.
  */
 describe('ProgressionStripComponent', () => {
   let fixture: ComponentFixture<ProgressionStripComponent>;
@@ -94,7 +96,12 @@ describe('ProgressionStripComponent', () => {
   }
 
   /** A degree slot built by hand, for the fields no M1 control moves. */
-  function degreeSlot(id: string, alter: number, lengthBeats: number): ChordSlot {
+  function degreeSlot(
+    id: string,
+    alter: number,
+    lengthBeats: number,
+    overrides: Partial<ChordDegree> = {}
+  ): ChordSlot {
     return {
       id,
       harmony: {
@@ -106,7 +113,8 @@ describe('ProgressionStripComponent', () => {
           quality: 'major',
           inversion: 0,
           suspension: 'none',
-          octave: 0
+          octave: 0,
+          ...overrides
         }
       },
       startBeat: 0,
@@ -184,6 +192,45 @@ describe('ProgressionStripComponent', () => {
       settle();
 
       expect(component.cards[0].name).toBe('A# Maj');
+    });
+
+    /**
+     * The override path through `effectiveQuality`, which no spec reached.
+     *
+     * bVII in C major: degree 6 is diminished, and the whole point of the
+     * override is that a borrowed chord is not what the key gives that degree.
+     * Deleting the override branch - naming every slot from `degreeQuality` -
+     * left the suite green while printing `vii°` over a major chord, which is
+     * the exact mislabelling the correction exists to fix.
+     */
+    it('names a borrowed chord from its override rather than from the key', () => {
+      progression.replaceDocument(
+        docOf(degreeSlot('borrowed', -1, 4, { degree: 6, quality: 'major' }))
+      );
+      settle();
+
+      expect(component.cards[0].numeral).toBe('VII');
+      expect(component.cards[0].name).toBe('A# Maj');
+      expect(component.cards[0].label).toContain('A sharp major');
+    });
+
+    /**
+     * And the card names what sounds rather than what was asked for.
+     *
+     * The same bVII stepped to a seventh keeps the key's own A, so the chord is
+     * Bb-D-F-A - a Bb major seventh, which is what `chordPitchClasses` builds
+     * and what `generateSlotNotes` plays. The card used to read `VII` / `A# Maj`
+     * over it, because it printed the override's name and the override said
+     * `major`.
+     */
+    it('names an override extended by the key after the chord it became', () => {
+      progression.replaceDocument(
+        docOf(degreeSlot('borrowed7', -1, 4, { degree: 6, extent: 7, quality: 'major' }))
+      );
+      settle();
+
+      expect(component.cards[0].numeral).toBe('VIImaj7');
+      expect(component.cards[0].name).toBe('A# Maj7');
     });
 
     it('marks the selected card and only that one', () => {

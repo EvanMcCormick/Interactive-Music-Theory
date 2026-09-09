@@ -19,12 +19,14 @@ import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { chordRootPitchClass } from '../../../../services/progression-generate';
 import { ProgressionService } from '../../../../services/progression.service';
 import {
-  ChordExtent,
-  ChordQuality,
   chordName,
-  degreeQuality,
   romanNumeral,
   spokenChordName
+} from '../../../../services/progression-chord-names';
+import {
+  ChordExtent,
+  ChordQuality,
+  degreeQuality
 } from '../../../../services/progression-harmony';
 
 /** One button: where the chord sits in the key, and what it is called there. */

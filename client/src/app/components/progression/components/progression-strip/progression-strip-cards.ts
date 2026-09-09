@@ -7,10 +7,10 @@ import {
 import { chordRootPitchClass } from '../../../../services/progression-generate';
 import {
   chordName,
-  effectiveQuality,
   romanNumeral,
   spokenChordName
-} from '../../../../services/progression-harmony';
+} from '../../../../services/progression-chord-names';
+import { effectiveQuality } from '../../../../services/progression-harmony';
 
 /**
  * What the strip says about a progression: one card per slot, and the sentence
@@ -31,12 +31,20 @@ import {
  *
  * ## What a card prints, and what it deliberately does not
  *
- * The numeral and the name both come from `ChordDegree.quality` - the field the
- * model stores and `regenerateSlot` recomputes on every change that could move
- * it. That source of truth is chosen rather than fallen into, because a second
- * one is available and the two disagree: `degreeQuality` names a ninth after its
- * seventh, so a slot raised to a ninth reports `dominant7` and prints `V7` while
- * the palette's complexity readout beside it says "9th".
+ * The numeral and the name both come from `effectiveQuality`, which is the
+ * name of the chord the slot actually builds: the key's own answer for a slot
+ * the user has not overridden, and the *built* chord's name for one they have.
+ * They used to come from `ChordDegree.quality` directly, which is the label the
+ * model happens to store, and the two part company the moment an override does
+ * not fill the extent it was chosen at - see `effectiveQuality`'s own note.
+ *
+ * Asking one function for it is what keeps this card and the fretboard
+ * selection agreeing about one chord; resolving it here would be the second
+ * writing of a rule that has two readers. That source of truth is chosen rather
+ * than fallen into, because a second one is available and the two disagree:
+ * `degreeQuality` names a ninth after its seventh, so a slot raised to a ninth
+ * reports `dominant7` and prints `V7` while the palette's complexity readout
+ * beside it says "9th".
  *
  * **The card does not show the height.** Numeral and name are both figured from
  * the one stored quality, so a card's two lines can never disagree with each
@@ -200,8 +208,17 @@ function describeSlot(
   // `quality` is nullable and `null` means "as the key gives it", so the card
   // prints the key's own answer for a slot the user has not overridden. Asked
   // through `effectiveQuality` rather than resolved here, so that the strip and
-  // the fretboard cannot come to different answers about one chord.
-  const quality = effectiveQuality(intervals, degree.degree, degree.extent, degree.quality);
+  // the fretboard cannot come to different answers about one chord - and given
+  // `alter` as well, because an override built on a displaced root is a
+  // different chord from the one the override is called, and the card names
+  // what sounds.
+  const quality = effectiveQuality(
+    intervals,
+    degree.degree,
+    degree.extent,
+    degree.alter,
+    degree.quality
+  );
 
   return {
     isUnlabelled: false,

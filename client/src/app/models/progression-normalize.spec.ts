@@ -1,4 +1,9 @@
-import { noteCount } from '../services/progression-harmony';
+import {
+  ChordQuality,
+  NamedQuality,
+  QUALITY_INTERVALS,
+  noteCount
+} from '../services/progression-harmony';
 import { generateSlotNotes } from '../services/progression-generate';
 import { MusicTheoryService } from '../services/music-theory.service';
 import {
@@ -185,12 +190,20 @@ describe('normalizeChordSlot', () => {
   // identical. Both ranges are pinned to literals instead, which at least
   // catches either one moving, and would make the swap detectable the moment
   // they stop agreeing.
+  // A quality goes with every altered degree here, because a chromatic root
+  // with no shape to build on it is now refused outright - see 'refuses a
+  // chromatic root with no shape to build on it' below. The clamp is what is
+  // under test, so the quality is the least interesting one that makes the
+  // degree legal at all.
   it('clamps an alteration beyond a whole tone', () => {
     expect(ALTER_MIN).toBe(-2);
     expect(ALTER_MAX).toBe(2);
-    expect(degreeOf(normalizeChordSlot(slotWithDegree({ alter: 5 }))).alter).toBe(2);
-    expect(degreeOf(normalizeChordSlot(slotWithDegree({ alter: -5 }))).alter).toBe(-2);
-    expect(degreeOf(normalizeChordSlot(slotWithDegree({ alter: -1 }))).alter).toBe(-1);
+    expect(degreeOf(normalizeChordSlot(slotWithDegree({ alter: 5, quality: 'major' }))).alter)
+      .toBe(2);
+    expect(degreeOf(normalizeChordSlot(slotWithDegree({ alter: -5, quality: 'major' }))).alter)
+      .toBe(-2);
+    expect(degreeOf(normalizeChordSlot(slotWithDegree({ alter: -1, quality: 'major' }))).alter)
+      .toBe(-1);
   });
 
   it('refuses an alteration that is not a whole number', () => {
@@ -222,6 +235,107 @@ describe('normalizeChordSlot', () => {
 
   it('refuses a degree the diatonic stack cannot build', () => {
     expect(() => normalizeChordSlot(slotWithDegree({ degree: 7 }))).toThrowError(/degree/);
+  });
+
+  /**
+   * `quality` under the same rule as `extent`, and for the same reason.
+   *
+   * It used to be the one field on a `ChordDegree` the normaliser let through
+   * untouched, which made `replaceDocument` a door for two documents the model
+   * says are impossible. A string that is not a quality reached
+   * `QUALITY_INTERVALS[quality]` as `undefined` and threw a raw `TypeError` off
+   * `shape.length`, three layers downstream of where it arrived and saying
+   * nothing about which field was wrong. `ChordQuality` is an enumerated set
+   * rather than a range, so the fourth clause of the rule applies to it exactly
+   * as it does to the extent ladder: there is no nearest legal quality.
+   */
+  it('refuses a quality that is not one of the named ones', () => {
+    expect(() => normalizeChordSlot(slotWithDegree({ quality: 'sus4' })))
+      .toThrowError(/quality/i);
+    expect(() => normalizeChordSlot(slotWithDegree({ quality: 'Major' })))
+      .toThrowError(/quality/i);
+    expect(() => normalizeChordSlot(slotWithDegree({ quality: 7 })))
+      .toThrowError(/quality/i);
+    // `undefined` is not `null`. A degree missing the field entirely is a
+    // half-written record, where `null` is the value a fresh slot carries.
+    expect(() => normalizeChordSlot(slotWithDegree({ quality: undefined })))
+      .toThrowError(/quality/i);
+  });
+
+  it('accepts every quality a chord can be named by, and the absence of one', () => {
+    const qualities: ChordQuality[] = [
+      'major', 'minor', 'diminished', 'augmented',
+      'major7', 'minor7', 'dominant7', 'minorMajor7',
+      'halfDiminished7', 'diminished7', 'augmented7', 'augmentedMajor7',
+      // Not an override, but a label the model stores: `regenerateSlot` writes
+      // the derived quality into this field, and Hungarian minor's second
+      // degree derives as `'other'`. Refusing it here would make that chord
+      // unopenable.
+      'other'
+    ];
+
+    for (const quality of qualities) {
+      expect(degreeOf(normalizeChordSlot(slotWithDegree({ quality }))).quality)
+        .withContext(`${quality} was refused`)
+        .toBe(quality);
+    }
+
+    expect(degreeOf(normalizeChordSlot(slotWithDegree({ quality: null }))).quality).toBeNull();
+  });
+
+  /**
+   * Design decision 1, checked at the door rather than only at the point of use.
+   *
+   * A chromatic root needs a shape to build on it, and neither field is wrong
+   * alone: `alter` is a bounded integer and `null` is what every fresh slot
+   * carries. Only the pair names nothing. `chordPitchClasses` already refuses
+   * it, but it refuses it from the audio path - so without this guard
+   * `replaceDocument` accepted the document, stored it, and threw later from
+   * `generateSlotNotes` on whatever edit happened to regenerate the slot.
+   */
+  it('refuses a chromatic root with no shape to build on it', () => {
+    expect(() => normalizeChordSlot(slotWithDegree({ alter: -1, quality: null })))
+      .toThrowError(/quality/i);
+    expect(() => normalizeChordSlot(slotWithDegree({ alter: 1, quality: null })))
+      .toThrowError(/quality/i);
+  });
+
+  /**
+   * The same refusal for `'other'`, and it says so rather than asking for a
+   * quality that was already supplied.
+   *
+   * `'other'` is storable - it is the label for a stack that is no named chord -
+   * but it names no interval set, so it cannot carry a displaced root any more
+   * than `null` can. The distinction is only visible in the message, which is
+   * the whole point: "needs an explicit quality" is a misdirection when one was
+   * given and could not be used.
+   */
+  it('says which unusable quality a chromatic root was given', () => {
+    expect(() => normalizeChordSlot(slotWithDegree({ alter: -1, quality: 'other' })))
+      .toThrowError(/other/);
+    expect(() => normalizeChordSlot(slotWithDegree({ alter: -1, quality: null })))
+      .not.toThrowError(/other/);
+  });
+
+  /** An unaltered root needs nothing, so both stay legal at `alter` 0. */
+  it('leaves an unaltered degree free to have no quality at all', () => {
+    expect(degreeOf(normalizeChordSlot(slotWithDegree({ alter: 0, quality: null }))).quality)
+      .toBeNull();
+    expect(degreeOf(normalizeChordSlot(slotWithDegree({ alter: 0, quality: 'other' }))).quality)
+      .toBe('other');
+  });
+
+  /**
+   * The clamp runs before the pair is judged, so a document that stored an
+   * out-of-range `alter` is refused on the alteration it will actually get
+   * rather than on the one it asked for. An `alter` of 5 with no quality clamps
+   * to 2 and is still chromatic, so it is still refused; the ordering only
+   * matters in the other direction, and there is no other direction while
+   * `ALTER_MIN` and `ALTER_MAX` sit either side of zero.
+   */
+  it('judges the pair on the alteration it will store', () => {
+    expect(() => normalizeChordSlot(slotWithDegree({ alter: 9, quality: null })))
+      .toThrowError(/quality/i);
   });
 
   // Both ends of the range, because every other spec in this file builds a
@@ -362,6 +476,22 @@ describe('the octave bound', () => {
   const sweeps = new Map<number, { lowest: number; highest: number }>();
 
   /**
+   * Every `(alter, quality)` pair a stored slot can carry.
+   *
+   * A null quality is the diatonic chord and only survives at `alter` 0 - the
+   * pair is refused above, and `chordPitchClasses` refuses it again - so the
+   * two axes are swept together as legal combinations rather than as a product
+   * with an illegal corner. `'other'` is left out for the same reason: it is a
+   * label rather than a shape, and it carries no root either.
+   */
+  const SHAPES: readonly { alter: number; quality: ChordQuality | null }[] = [
+    { alter: 0, quality: null },
+    ...(Object.keys(QUALITY_INTERVALS) as NamedQuality[]).flatMap(quality =>
+      [ALTER_MIN, -1, 0, 1, ALTER_MAX].map(alter => ({ alter, quality }))
+    )
+  ];
+
+  /**
    * One sweep slot, spread from the factory's defaults rather than normalised.
    *
    * Normalising would clamp `octave` back inside the bound, and the spec below
@@ -397,22 +527,32 @@ describe('the octave bound', () => {
    * pipeline this bound does not guard, and would come up a semitone short of
    * the real maximum.
    *
-   * ## Why `alter` is no longer an axis here, and what owes a re-measurement
+   * ## Why `alter` and `quality` are axes, and what it cost to leave them out
    *
-   * It used to be one. Under the old semantics `alter` shifted the whole stack,
-   * so `alter` and `tonic` composed into a single uniform offset and the tonic
-   * loop alone already covered all twelve residues - the `alter` loop added no
-   * case, and stayed only because a guard should walk the path it guards.
+   * `alter` used to be a transposition: it shifted the whole stack, so it and
+   * `tonic` composed into a single uniform offset and the tonic loop alone
+   * already covered all twelve residues. Dropping the `alter` loop cost
+   * nothing, and it was dropped.
    *
-   * `alter` now displaces the *root* alone and needs a quality beside it to
-   * build a shape on, so it is no longer a transposition and no longer implied
-   * by the tonic loop: it reaches chords this sweep does not visit. Sweeping it
-   * means sweeping every named quality with it, and re-deriving the bound over
-   * that larger set is M2 Task 3's job rather than this commit's. What is
-   * measured below is therefore the diatonic pipeline - every scale, degree,
-   * extent, inversion and tonic - which is what every slot the app can build
-   * today goes through, and it is knowingly narrower than the reachable set
-   * until Task 3 widens it.
+   * It is not a transposition any more. It displaces the *root* alone and needs
+   * a quality beside it to build a shape on, so it reaches chords no tonic
+   * reaches, and the reach it opens is not small:
+   *
+   * | swept set | highest note above the base |
+   * |---|---|
+   * | diatonic only | 33 |
+   * | + a quality override at `alter` 0 | 34 |
+   * | + `alter` across its clamped range | **45** |
+   *
+   * Twelve semitones is the difference between a bound that holds and one that
+   * does not, and the narrow sweep measured 33 either way - which is exactly
+   * how `OCTAVE_MAX` came to be one octave too high while a spec said it was
+   * maximal. Note that even the middle row overflows nothing but is already
+   * past 33: a plain alternates row with no chromatic root at all reaches 34.
+   *
+   * So both are swept here. The cost is one full pass of roughly four million
+   * chords per octave, which is the price of measuring the pipeline rather than
+   * a model of it.
    */
   function extremesAt(octave: number): { lowest: number; highest: number } {
     const cached = sweeps.get(octave);
@@ -425,13 +565,15 @@ describe('the octave bound', () => {
       for (let degree = 0; degree <= 6; degree++) {
         for (const extent of CHORD_EXTENTS) {
           const inversions = noteCount(extent);
-          for (let tonic = 0; tonic < 12; tonic++) {
-            const key: ProgressionKey = { tonic, scaleId: 'ionian', preferSharps: true };
-            for (let inversion = 0; inversion < inversions; inversion++) {
-              const slot = sweepSlot({ degree, extent, inversion, octave });
-              for (const note of generateSlotNotes(slot, key, intervals)) {
-                if (note.midi < lowest) lowest = note.midi;
-                if (note.midi > highest) highest = note.midi;
+          for (const { alter, quality } of SHAPES) {
+            for (let tonic = 0; tonic < 12; tonic++) {
+              const key: ProgressionKey = { tonic, scaleId: 'ionian', preferSharps: true };
+              for (let inversion = 0; inversion < inversions; inversion++) {
+                const slot = sweepSlot({ degree, extent, inversion, octave, alter, quality });
+                for (const note of generateSlotNotes(slot, key, intervals)) {
+                  if (note.midi < lowest) lowest = note.midi;
+                  if (note.midi > highest) highest = note.midi;
+                }
               }
             }
           }
@@ -451,20 +593,47 @@ describe('the octave bound', () => {
     expect(HEPTATONIC_SCALES.length).toBe(33);
   });
 
-  // The figure the whole bound rests on, asserted rather than left in prose.
-  // The witness is the double harmonic scale, degree 0, extent 9, inversion 4,
-  // in the key of Bb: pitch classes [0, 4, 7, 11, 13] carry the tonic to
-  // [10, 14, 17, 21, 23], which rotate to [23, 10, 14, 17, 21] and voice from
-  // base 60 to 71, 82, 86, 89, 93. It used to be quoted as the same scale in C
-  // altered down a tone, which was the same chord by another road while `alter`
-  // was a transposition - it no longer is, and the key is the road that stayed.
-  it('reaches 33 semitones above the base at its widest', () => {
+  /**
+   * The figure the whole bound rests on, asserted rather than left in prose.
+   *
+   * The witness is Hungarian minor, degree 5 at extent 13, altered down a tone
+   * and overridden to `augmented7`, third inversion, in the key of G. The
+   * override displaces the root to a shape the scale does not give that degree
+   * and the four diatonic notes above it stay where they were, so the stack is
+   * [6, 10, 14, 16, 23, 26, 30] - strictly ascending, so no artefact of the
+   * lift - which carries the tonic to [13, 17, 21, 23, 30, 33, 37], rotates to
+   * put 23 in the bass and voices from 60 to 71, 78, 81, 85, 97, 101, 105.
+   *
+   * The reach is spelled out here as well as asserted, because a bound derived
+   * from a sweep is only auditable if the case that produced it is written down.
+   */
+  it('reaches 45 semitones above the base at its widest', () => {
     const base = VOICING_BASE_MIDI;
     const { lowest, highest } = extremesAt(0);
     // `voiceChord` never places a note below its base, so the base is the floor
     // exactly, and the reach is measured from it.
     expect(lowest).toBe(base);
-    expect(highest - base).toBe(33);
+    expect(highest - base).toBe(45);
+  });
+
+  /**
+   * The witness itself, built by hand, so the sweep's answer has a case behind
+   * it that a reader can check without running four million chords.
+   */
+  it('voices its widest chord where the sweep says it does', () => {
+    const slot = sweepSlot({
+      degree: 5,
+      extent: 13,
+      alter: -2,
+      quality: 'augmented7',
+      inversion: 3,
+      octave: 0
+    });
+    const key: ProgressionKey = { tonic: 7, scaleId: 'hungarianMinor', preferSharps: false };
+    const hungarianMinor = [0, 2, 3, 6, 7, 8, 11];
+
+    expect(generateSlotNotes(slot, key, hungarianMinor).map(note => note.midi))
+      .toEqual([71, 78, 81, 85, 97, 101, 105]);
   });
 
   // `voiceChord` has no MIDI clamp, so nothing below this stops an out-of-range
@@ -495,7 +664,7 @@ describe('the octave bound', () => {
   it('floors the octave control at C2 by taste, not by arithmetic', () => {
     expect(OCTAVE_MIN).toBe(-2);
     expect(VOICING_BASE_MIDI + OCTAVE_MIN * 12).toBe(36);
-    expect(OCTAVE_MAX).toBe(2);
+    expect(OCTAVE_MAX).toBe(1);
   });
 });
 

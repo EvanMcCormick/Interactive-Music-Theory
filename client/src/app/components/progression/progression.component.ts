@@ -411,11 +411,12 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    * happens if it ever stops being true: an id no category holds lights
    * nothing, rather than selecting a category that does not contain it.
    *
-   * The quality is read from the slot rather than recomputed, so the fretboard
-   * lights what the card beside it is called. That has one visible consequence:
-   * `degreeQuality` names a ninth after its seventh, so a chord raised to a
-   * ninth lights the seventh - a subset of what is sounding, and the same chord
-   * the card prints.
+   * The quality comes from `effectiveQuality`, which is the function the strip
+   * card asks too, so the fretboard lights what the card beside it is called
+   * rather than reaching its own conclusion about the same slot. That has one
+   * visible consequence: a ninth is named after its seventh, so a chord raised
+   * to a ninth lights the seventh - a subset of what is sounding, and the same
+   * chord the card prints.
    */
   private chordFor(slotId: string): AppSelection | null {
     const state = this.latest;
@@ -433,6 +434,7 @@ export class ProgressionComponent implements OnInit, OnDestroy {
       state.keyScale.intervals,
       degree.degree,
       degree.extent,
+      degree.alter,
       degree.quality
     );
     if (quality === 'other') return null;

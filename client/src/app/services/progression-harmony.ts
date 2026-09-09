@@ -155,6 +155,27 @@ const NAMED_QUALITIES = Object.entries(QUALITY_INTERVALS) as [
 ][];
 
 /**
+ * The runtime twin of `ChordQuality`, for the guard that has to check a stored
+ * value against the union at a point where the union no longer exists.
+ *
+ * Derived from `QUALITY_INTERVALS` rather than written out, so it cannot fall
+ * behind the type: that table is keyed exhaustively on `NamedQuality`, so a
+ * quality added to the union has to appear there before anything compiles, and
+ * appearing there puts it here. `'other'` is appended because it is the one
+ * member the table cannot hold - it names no intervals - and it is nonetheless
+ * a value the model stores, `regenerateSlot` writing it as the label for a
+ * stack that is no named chord.
+ *
+ * `CHORD_EXTENTS` is the same device one field over, and lives beside the guard
+ * that reads it rather than beside its union; this one lives beside its union
+ * because deriving it needs the table.
+ */
+export const CHORD_QUALITIES: readonly ChordQuality[] = [
+  ...(Object.keys(QUALITY_INTERVALS) as NamedQuality[]),
+  'other'
+];
+
+/**
  * The name for a stack of notes, from its intervals above its own root.
  *
  * Takes the notes as `degreePitchClasses` returns them - ascending, not reduced
@@ -195,26 +216,6 @@ export function degreeQuality(
   extent: ChordExtent
 ): ChordQuality {
   return qualityOfIntervals(degreePitchClasses(scaleIntervals, degree, extent));
-}
-
-/**
- * The quality a slot is *named* by: its override, or the one the key gives that
- * degree.
- *
- * `null` means "as the key gives it", so every reader wanting a name rather
- * than an override has this same line to write - and writing it twice is how
- * two parts of one screen come to disagree about one chord. The strip's card
- * and the fretboard selection are the two that want it today. It is the naming
- * counterpart of `chordPitchClasses`, which resolves the same `null` into the
- * same diatonic answer one axis over, in pitches rather than in words.
- */
-export function effectiveQuality(
-  scaleIntervals: readonly number[],
-  degree: number,
-  extent: ChordExtent,
-  quality: ChordQuality | null
-): ChordQuality {
-  return quality ?? degreeQuality(scaleIntervals, degree, extent);
 }
 
 /**
@@ -267,6 +268,46 @@ export function effectiveQuality(
  * own extent would put both out of step with what is sounding. Nothing musical
  * is lost, because every seventh in `QUALITY_INTERVALS` opens with the triad of
  * the same name: the seventh is dropped and that quality's chord is left.
+ *
+ * ## And the gap a displaced root opens above it
+ *
+ * The extensions staying diatonic has a consequence the note count does not
+ * describe: the interval between the override's topmost note and the first
+ * extension is whatever the displacement left, and it can be very wide. A
+ * Hungarian minor 13th on degree 5, altered down a tone and overridden to
+ * `augmented7`, leaves **seven semitones** between its seventh and the scale's
+ * own ninth. That is a fifth where a chord of stacked thirds would have had a
+ * second or a third, and it is the arithmetic working rather than failing: the
+ * override moved its four notes and the scale kept the other three where they
+ * were. It is recorded here because "extensions stay diatonic" says how many
+ * notes come from where and says nothing about the shape of the seam.
+ *
+ * ## Ascending is a promise, and a displaced root can break it
+ *
+ * The stack is handed to `voiceChord`, whose header states its precondition
+ * outright: a rotation is an *inversion* only if the input is root position and
+ * ascending. Nothing about the mapping above guarantees the second half.
+ * `root + shape[k]` can land on, or above, the diatonic note that follows it -
+ * over the reachable grid it does so 1560 times, 72 of them by an outright
+ * descent - so the last step is to lift each note by whole octaves until it
+ * clears the one before it.
+ *
+ * An octave is a register and not a pitch, so nothing about the chord changes:
+ * the same pitch classes come out in the same order. The lift is therefore a
+ * fix to the *contract* rather than to the sound, and deliberately so. Two
+ * consequences worth being explicit about:
+ *
+ *  - **It is audible nowhere today.** `voiceChord` places each note from the
+ *    previous one modulo 12, so adding twelves to its input cannot move its
+ *    output. What the lift buys is that the precondition is true rather than
+ *    incidentally survivable - which is what M2's voice leading will need, and
+ *    what no reader should have to re-derive from `voiceChord`'s arithmetic.
+ *  - **A duplicated pitch class stays duplicated**, lifted to an octave above
+ *    rather than dropped. Dropping it is the other candidate fix and it is the
+ *    wrong one: it would return fewer notes than `noteCount(extent)`, which is
+ *    what `normalizeInversion` wraps against and what the complexity readout
+ *    prints. A doubled voice is a chord; a chord with a note missing from the
+ *    count two other things are derived from is a bug in three places.
  */
 export function chordPitchClasses(
   scaleIntervals: readonly number[],
@@ -298,204 +339,103 @@ export function chordPitchClasses(
   // Mapped over the diatonic stack rather than concatenated onto the shape,
   // which is what keeps the count the extent's in both directions: the shape is
   // read while it lasts, and every position past it keeps the scale's own note.
-  return diatonic.map((note, i) => (i < shape.length ? root + shape[i] : note));
+  const stacked = diatonic.map((note, i) => (i < shape.length ? root + shape[i] : note));
+
+  return liftIntoAscent(stacked);
 }
 
-// ---------------------------------------------------------------------------
-// Naming
-// ---------------------------------------------------------------------------
-
 /**
- * How a quality is written, in the three places a chord is written at all.
+ * Raises each note by whole octaves until it clears the one below it.
  *
- * All three tables live beside `ChordQuality` rather than in the palette that
- * prints them, and beside each other rather than one per module, for one
- * reason: they are keyed exhaustively on the union declared above, so adding a
- * quality cannot compile until every way of writing it has been decided. A
- * table in a component would be as correct today and would not have that
- * property - the next quality would reach the screen as `undefined`.
- *
- * They are three tables rather than one because they answer to three different
- * conventions. A Roman numeral spells its sevenths in lower case (`imaj7`)
- * because the numeral's own case is already carrying the third; a chord symbol
- * spells them as they are printed on a chart (`C Maj7`); and neither is a
- * sequence of letters a screen reader can say, which is what the third is for
- * (`C major seventh`). Folding any two together would mean picking one
- * convention and being wrong everywhere the other is used.
+ * The same rule `voiceChord` applies to pitch classes, applied here to the
+ * stack before it gets there - which is what makes this the fix that satisfies
+ * that function's precondition rather than one that works around it. See the
+ * last section of `chordPitchClasses`' note for why an octave is free and why a
+ * duplicate is lifted rather than dropped.
  */
-interface NumeralFigure {
-  /** Whether the numeral is lower case: a claim about the third, not the mode. */
-  lowerCase: boolean;
-  suffix: string;
-}
+function liftIntoAscent(notes: readonly number[]): number[] {
+  const ascending: number[] = [];
 
-const NUMERAL_FIGURES: Record<ChordQuality, NumeralFigure> = {
-  major: { lowerCase: false, suffix: '' },
-  minor: { lowerCase: true, suffix: '' },
-  diminished: { lowerCase: true, suffix: '°' },
-  augmented: { lowerCase: false, suffix: '+' },
-  major7: { lowerCase: false, suffix: 'maj7' },
-  dominant7: { lowerCase: false, suffix: '7' },
-  minor7: { lowerCase: true, suffix: '7' },
-  // Parenthesised, and that is the convention rather than a house style. The
-  // minor-major seventh differs from the major seventh by the *case* of one
-  // leading letter - `imaj7` against `Imaj7` - and both are reachable here:
-  // major7 from ionian's tonic, minorMajor7 from harmonic and melodic minor's.
-  // Two figures a reader tells apart only by letter case, in a font they did
-  // not choose, is not a distinction to rest a teaching page on.
-  minorMajor7: { lowerCase: true, suffix: '(maj7)' },
-  halfDiminished7: { lowerCase: true, suffix: 'ø7' },
-  diminished7: { lowerCase: true, suffix: '°7' },
-  augmented7: { lowerCase: false, suffix: '+7' },
-  augmentedMajor7: { lowerCase: false, suffix: '+maj7' },
-  // See `romanNumeral` for why an unnameable stack is marked rather than left
-  // to whichever case the table happened to pick.
-  other: { lowerCase: false, suffix: '?' }
-};
-
-const CHORD_SUFFIXES: Record<ChordQuality, string> = {
-  major: 'Maj',
-  minor: 'min',
-  diminished: '°',
-  augmented: '+',
-  major7: 'Maj7',
-  dominant7: '7',
-  minor7: 'min7',
-  minorMajor7: 'minMaj7',
-  halfDiminished7: 'ø7',
-  diminished7: '°7',
-  augmented7: '+7',
-  augmentedMajor7: '+Maj7',
-  other: '?'
-};
-
-/**
- * The same qualities as words, for a label that is heard rather than read.
- *
- * `°`, `ø7` and `+` are typography. A screen reader announces them as "degree
- * sign", "latin small letter o with stroke" or nothing at all, so a button
- * labelled `B°` is announced as something that is not a chord. Spelled out, the
- * same button says "B diminished".
- */
-const SPOKEN_QUALITIES: Record<ChordQuality, string> = {
-  major: 'major',
-  minor: 'minor',
-  diminished: 'diminished',
-  augmented: 'augmented',
-  major7: 'major seventh',
-  dominant7: 'dominant seventh',
-  minor7: 'minor seventh',
-  minorMajor7: 'minor major seventh',
-  halfDiminished7: 'half diminished seventh',
-  diminished7: 'diminished seventh',
-  augmented7: 'augmented seventh',
-  augmentedMajor7: 'augmented major seventh',
-  // `chordName` prints `?` here, which is honest on screen and says nothing at
-  // all aloud. The chord is real and only its name is missing, so the spoken
-  // form says exactly that rather than dropping the button's identity.
-  other: 'unnamed chord'
-};
-
-/** The seven numerals, in the case the tables above then choose. */
-const ROMAN_NUMERALS: readonly string[] = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
-
-/**
- * The Roman numeral for a diatonic chord: `I`, `ii`, `vii°`, `V7`.
- *
- * This is the teaching content of the whole progression page, which is why it
- * is a function with a table behind it rather than a line of template. The
- * numeral says *where in the key* a chord sits and its case says *what kind of
- * chord* that turns out to be, and those two facts moving independently is the
- * thing the page exists to show: turn the circle of fifths and every numeral
- * holds while the chord names change underneath it.
- *
- * Case carries the third. Upper for a major third, lower for a minor one, so a
- * diminished chord is lower case with a `°` and an augmented chord is upper
- * case with a `+`. That rule - rather than a per-mode lookup - is what makes
- * the same table print major's I ii iii IV V vi vii° and natural minor's
- * i ii° III iv v VI VII, and print harmonic minor's III+ without anyone having
- * enumerated harmonic minor.
- *
- * ## What it does not know: how tall the chord is
- *
- * It takes a quality and not an extent, and `degreeQuality` names a ninth,
- * eleventh and thirteenth after their seventh. So a V9 arrives here as
- * `dominant7` and prints `V7`: the figure describes the quality, not the height
- * of the stack, and the + complexity button changes what a slot sounds without
- * changing what it is called.
- *
- * That is deliberate and it is the model's existing convention rather than a
- * new one - `ChordDegree.quality` stores `dominant7` for a ninth too - so the
- * numeral agrees with the field it was computed from.
- *
- * **Note for the chord palette, settled.** Its complexity readout prints
- * the extent in words, so a user who presses `+` twice reads "Complexity: 9th"
- * in that panel while the strip card beside it reads `V7`. The strip decided
- * not to print the height: its two lines are the numeral and the chord name,
- * and the panel that says "9th" is labelled "Complexity", a different question.
- *
- * **And the M2 fix is bigger than this signature.** Widening it to take the
- * extent, on its own, prints `V9` over a card whose name still reads `G7` -
- * `chordName` reads the same `quality` field and is blind to the height in the
- * same way, so the disagreement moves onto the card rather than off it. It
- * starts below both of them: `ChordQuality` has no ninth, eleventh or
- * thirteenth member for either function to name, and the three tables here are
- * keyed by it. M2 has to widen the type, or widen both functions together.
- *
- * ## And the one thing it refuses
- *
- * A degree outside 0-6 throws, on exactly the argument `degreePitchClasses`
- * makes for the same guard: the index would read `undefined` out of the table
- * and the button would print the string `undefinedmaj7` rather than fail.
- */
-export function romanNumeral(degree: number, quality: ChordQuality): string {
-  if (!Number.isInteger(degree) || degree < 0 || degree > 6) {
-    throw new Error(`A Roman numeral needs a scale degree from 0 to 6; got ${degree}`);
+  for (const note of notes) {
+    let lifted = note;
+    // `ascending` is empty only on the first note, which has nothing to clear.
+    // Read through `at` rather than by index arithmetic so the empty case is
+    // `undefined` rather than `notes[-1]`, which reads the same and says less.
+    const previous = ascending.at(-1);
+    if (previous !== undefined) {
+      while (lifted <= previous) lifted += 12;
+    }
+    ascending.push(lifted);
   }
 
-  const figure = NUMERAL_FIGURES[quality];
-  const numeral = ROMAN_NUMERALS[degree];
-
-  return (figure.lowerCase ? numeral.toLowerCase() : numeral) + figure.suffix;
+  return ascending;
 }
 
 /**
- * The concrete chord name beside the numeral: `C Maj`, `A min`, `B°`, `G7`.
+ * The quality a slot is *named* by: the name of the chord it actually builds.
  *
- * The root arrives already spelled, because how a pitch class is spelled is
- * `MusicTheoryService`'s app-wide decision and not this module's - the same
- * separation that keeps every other function here relative to a tonic it is
- * never told the name of.
+ * `null` means "as the key gives it", so every reader wanting a name rather
+ * than an override has this same line to write - and writing it twice is how
+ * two parts of one screen come to disagree about one chord. The strip's card
+ * and the fretboard selection are the two that want it today.
  *
- * The separator is a rule rather than a column in the table: a suffix that
- * begins with a letter is a word and takes a space, and one that begins with a
- * symbol or a digit is a figure and closes up. That gives `C Maj7` and `G7`,
- * which is how each is written, from one line instead of thirteen decisions.
+ * ## Why it names the chord rather than repeating the override
+ *
+ * It used to be `quality ?? degreeQuality(...)`, which is the override's own
+ * name and not the chord's, and the two are different in both directions:
+ *
+ *  - **Below the override's height.** A `major7` chosen while the slot is still
+ *    a triad builds a plain major triad - the extent decides the note count -
+ *    and the card printed `Imaj7` over three notes.
+ *  - **Above it.** A `major` chosen at extent 7 keeps the key's own seventh, so
+ *    bVII in C major is Bb-D-F-A. `chordPitchClasses`' note calls that a
+ *    decision rather than an accident, and the spec below names the chord that
+ *    comes out of it a Bb major seventh - while the card printed `B♭ Maj`.
+ *
+ * Neither is a near miss. The first prints a seventh over a triad, the second a
+ * triad over a seventh, and both are the label disagreeing with the synth about
+ * one chord on one card. So the name is read off the chord, through the same
+ * pair of functions that already read the naming in both directions: build the
+ * stack, then ask what it is. Two readings of one arithmetic cannot drift the
+ * way two tables can, which is the argument `QUALITY_INTERVALS` is built on.
+ *
+ * At the height the override itself names - a triad at extent 3, a seventh at
+ * extent 7 - the answer is always the override, unchanged, over every scale the
+ * app offers and every `alter` the model stores. The user's own choice is never
+ * contradicted; only the notes the override deliberately left to the key can
+ * move the name.
+ *
+ * ## The two qualities it will not build
+ *
+ * **`'other'` is answered with itself.** It names no interval set, so there is
+ * no chord to build and read back - `chordPitchClasses` refuses it outright.
+ * `'other'` *is* the honest name for a stack that is no named chord, so handing
+ * it straight back is the answer rather than a fallback.
+ *
+ * **A null quality is answered from the key**, without building anything. That
+ * is what `null` means, and it also sidesteps the one pair `chordPitchClasses`
+ * throws on: a chromatic root with no shape under it. The pair is refused at
+ * the door by `normalizeChordDegree`, so a stored slot cannot carry it, and
+ * naming is not the place to discover that it did.
+ *
+ * A stack that no name fits comes back as `'other'` even though an override
+ * asked for something else, and that is the intended answer rather than a gap:
+ * the numeral prints `?` and the fretboard lights nothing, which is what both
+ * already do for a diatonic stack with no name. Unlabelled rather than
+ * mislabelled is the rule the strip is built on.
  */
-export function chordName(root: string, quality: ChordQuality): string {
-  const suffix = CHORD_SUFFIXES[quality];
-  return /^[A-Za-z]/.test(suffix) ? `${root} ${suffix}` : `${root}${suffix}`;
+export function effectiveQuality(
+  scaleIntervals: readonly number[],
+  degree: number,
+  extent: ChordExtent,
+  alter: number,
+  quality: ChordQuality | null
+): ChordQuality {
+  if (quality === null) return degreeQuality(scaleIntervals, degree, extent);
+  if (quality === 'other') return 'other';
+
+  return qualityOfIntervals(
+    chordPitchClasses(scaleIntervals, degree, extent, alter, quality)
+  );
 }
 
-/**
- * The same chord as a phrase to be read aloud: `E flat major`, `B diminished`.
- *
- * For `aria-label`, where `chordName`'s output is not a name but a rendering of
- * one. Two things go wrong when a chord symbol is announced instead of read:
- * the suffix is punctuation - `B°` is "B degree sign" - and the accidental is a
- * letter, so `Eb` is "E b" and `A#` is "A hash" or "A number sign" depending on
- * the reader. Both are fixed here rather than at the call site, so that a
- * component that wants a spoken label cannot get half of one.
- *
- * The root arrives spelled, as `chordName`'s does and for the same reason: how
- * a pitch class is spelled is a decision this module is never party to.
- */
-export function spokenChordName(root: string, quality: ChordQuality): string {
-  return `${spokenRoot(root)} ${SPOKEN_QUALITIES[quality]}`;
-}
-
-/** `Eb` -> `E flat`, `A#` -> `A sharp`, `C` -> `C`. */
-function spokenRoot(root: string): string {
-  if (root.length < 2) return root;
-  return root[0] + (root[1] === '#' ? ' sharp' : ' flat');
-}

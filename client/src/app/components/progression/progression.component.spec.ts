@@ -601,6 +601,77 @@ describe('ProgressionComponent', () => {
     });
 
     /**
+     * The override path through `effectiveQuality`, which no spec reached from
+     * this side either - so deleting that function's override branch lit the
+     * key's own chord under a borrowed one and nothing failed.
+     *
+     * bVII in C major is a major triad on Bb where the key gives a diminished
+     * one on B. The fretboard has to light the major triad the slot names, or it
+     * would highlight notes that are not sounding while the card beside it reads
+     * `VII`.
+     */
+    it('lights the chord an override names, not the one the key gives', () => {
+      progression.setKey(0, 'ionian');
+      progression.appendSlot(6);
+      const built = progression.doc;
+      progression.replaceDocument({
+        ...built,
+        slots: built.slots.map(slot =>
+          slot.harmony.kind === 'degree'
+            ? {
+                ...slot,
+                harmony: {
+                  kind: 'degree' as const,
+                  degree: { ...slot.harmony.degree, alter: -1, quality: 'major' as const }
+                }
+              }
+            : slot
+        )
+      });
+
+      player.publish(slotId(0));
+
+      expect(selection()).toEqual({ key: 'A#', categoryId: 'triads', itemId: 'major' });
+    });
+
+    /**
+     * And it lights what sounds rather than what was asked for.
+     *
+     * The same bVII at extent 7 keeps the key's own A above the override's
+     * triad, so the chord is Bb-D-F-A. Lighting `major` there would highlight
+     * three of the four notes playing and call the fourth an accident; the
+     * fretboard shows the major seventh the slot actually builds.
+     */
+    it('lights the seventh an extended override becomes', () => {
+      progression.setKey(0, 'ionian');
+      progression.appendSlot(6);
+      const built = progression.doc;
+      progression.replaceDocument({
+        ...built,
+        slots: built.slots.map(slot =>
+          slot.harmony.kind === 'degree'
+            ? {
+                ...slot,
+                harmony: {
+                  kind: 'degree' as const,
+                  degree: {
+                    ...slot.harmony.degree,
+                    alter: -1,
+                    extent: 7 as const,
+                    quality: 'major' as const
+                  }
+                }
+              }
+            : slot
+        )
+      });
+
+      player.publish(slotId(0));
+
+      expect(selection()).toEqual({ key: 'A#', categoryId: 'seventh', itemId: 'major7' });
+    });
+
+    /**
      * A literal slot has no degree, so there is no chord to publish - the same
      * refusal the strip makes when it prints no numeral on such a card. It is
      * unreachable in M1; `replaceDocument` is the one door it can come through,

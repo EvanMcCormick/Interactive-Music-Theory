@@ -274,23 +274,43 @@ feat: Let alter displace the root and quality override the shape
 
 ---
 
-## Task 3: Re-derive `OCTAVE_MAX`
+## Task 3: Re-derive `OCTAVE_MAX` — **DONE**
 
-**Files:** `client/src/app/models/progression.model.spec.ts`, and the constant if it moves.
+**Files:** `client/src/app/models/progression-normalize.{ts,spec.ts}`
 
-Design decision 3. `OCTAVE_MAX = 2` was measured by sweeping the real pipeline
-*including* `alter` under its old meaning. The sweep lives in the model spec and
-already calls `generateSlotNotes`; the maximum reach it found was 33 semitones.
+Done in the M2 Task 2 review fixes rather than as a task of its own, because the
+answer turned out to be **change, not confirm**, and leaving an overflowing bound
+in place while the override path went live was not a thing to schedule.
 
-Root-only alteration changes the reachable set. Re-run the sweep across all
-heptatonic scales × degrees × extents × inversions × `alter` × every named
-quality × all 12 tonics, find the new maximum reach, and either confirm 2 or
-change it. **Keep the spec that asserts `OCTAVE_MAX + 1` overflows MIDI 127** —
-that is what makes the constant maximal rather than merely safe.
+**`OCTAVE_MAX` is now 1.** The sweep in `progression-normalize.spec.ts` was
+widened from the diatonic pipeline to every `(alter, quality)` pair a stored slot
+can carry, across all 33 heptatonic scales × degrees × extents × inversions × 12
+tonics. What it measures:
 
-Report the new maximum reach and the witness that produces it.
+| swept set | max reach above the base | ceiling at `OCTAVE_MAX = 2` |
+|---|---|---|
+| diatonic only (what the old spec measured) | 33 | 117 |
+| + a quality override at `alter` 0 | 34 | 118 |
+| + `alter` across its clamped range | **45** | **129 — over MIDI 127** |
 
-**Commit:** `test: Re-derive the octave bound under root-only alteration`
+The witness for 45: Hungarian minor, degree 5, extent 13, `alter -2`,
+`augmented7`, tonic 7, inversion 3 → pitch classes `[6, 10, 14, 16, 23, 26, 30]`,
+voicing to `[71, 78, 81, 85, 97, 101, 105]`. Note the middle row: even an
+alternates row with no chromatic root at all already passes the old figure of 33.
+
+**The trade-off, recorded.** Dropping the constant costs the user the top octave
+of the control — the base ceiling moves from C6 to C5. The alternative is to
+leave the octave alone and clamp the *voiced result* into MIDI range, which is a
+different answer with different costs: clamping notes individually collapses a
+voicing onto its ceiling, and transposing an overflowing chord back down makes
+the control non-monotonic. Both silently rewrite the chord, which is the failure
+every guard in that file exists to prevent. A third option — deriving each slot's
+ceiling from the chord it holds, so only the widest chords lose the octave — is
+recorded in the constant's docstring as the thing to reach for if the top octave
+is ever missed.
+
+The spec asserting `OCTAVE_MAX + 1` overflows MIDI 127 is kept, so the constant
+is still maximal rather than merely safe.
 
 ---
 

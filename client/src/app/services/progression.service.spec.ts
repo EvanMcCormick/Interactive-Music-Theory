@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 
 import { ProgressionService } from './progression.service';
-import { CHORD_EXTENTS } from '../models/progression-normalize';
+import { CHORD_EXTENTS, OCTAVE_MAX } from '../models/progression-normalize';
 import { ChordSlot, ProgressionState } from '../models/progression.model';
 import { ChordExtent } from './progression-harmony';
 
@@ -587,10 +587,15 @@ describe('ProgressionService', () => {
       expect(slots()[0].notes.map(note => note.midi)).toEqual([72, 76, 79]);
     });
 
+    // Against the constant rather than its value: what this spec is about is
+    // that the setter clamps and then records nothing at the stop, and the
+    // number itself is derived from a MIDI sweep and pinned to a literal in
+    // `progression-normalize.spec.ts`. Writing it twice made this spec fail when
+    // the sweep moved the bound, which is noise rather than a finding.
     it('clamps past the top of the range and records nothing there', () => {
       service.setSlotOctave(slots()[0].id, 9);
       const harmony = slots()[0].harmony;
-      expect(harmony.kind === 'degree' && harmony.degree.octave).toBe(2);
+      expect(harmony.kind === 'degree' && harmony.degree.octave).toBe(OCTAVE_MAX);
       expectNoCommit(() => service.setSlotOctave(slots()[0].id, 9));
     });
   });

@@ -143,13 +143,24 @@ export function generateSlotNotes(
 
   const degree = slot.harmony.degree;
 
-  // `regenerateSlot` still writes the *derived* quality into this field on every
-  // regeneration - M2 Task 4 turns that into a merge - so what arrives here is a
-  // label as often as it is an override. `'other'` is the label for a stack that
-  // is no named chord, reachable today on the second degree of Hungarian minor,
-  // and as an override it names no intervals at all: read as no override, so the
-  // key builds the chord it was building before this field was read. This line
-  // goes when Task 4 stops writing labels here.
+  // `'other'` is the label for a stack of thirds that is no named chord -
+  // reachable today on the second degree of Hungarian minor - and as an override
+  // it names no intervals at all, so `chordPitchClasses` refuses it outright.
+  // Read here as no override, which lets the key build the chord it was building
+  // before this field was read at all.
+  //
+  // It arrives because `regenerateSlot` writes the *derived* quality into this
+  // field on every regeneration, so what reaches this line is a label as often
+  // as it is an override. **M2 Task 4 does not, on its own, retire this line.**
+  // Its merge preserves a non-null quality, and `'other'` is non-null: without
+  // the mapping, the first stored `'other'` to come back through
+  // `replaceDocument` crashes here again. Task 4 owes two things rather than
+  // one - the merge, *and* stopping `regenerateSlot` writing a derived label
+  // into an override field, which it must do anyway or the first regeneration
+  // freezes every derived quality into a permanent override. Even then this line
+  // stays: nothing in the app would write `'other'` any more, but the normaliser
+  // still stores it, so a loaded document can still carry one. Retiring it means
+  // narrowing what the model accepts, which is a third change and a later one.
   const override = degree.quality === 'other' ? null : degree.quality;
 
   // Relative to the tonic, as `degreePitchClasses` returns it, with `alter` and

@@ -314,6 +314,24 @@ Four consequences worth knowing before that lands:
    9, 11 or 13 has no name to build from. Either the override adjusts the third,
    fifth and seventh against the diatonic stack and leaves the extensions
    diatonic, or overrides are refused above extent 7.
+
+   **Settled: extensions stay diatonic — and the chord is named after what that
+   makes it.** The consequence this list did not anticipate is that the override
+   is then not the chord's name. bVII at extent 7 in C major is Bb-D-F over the
+   key's own A, which is a Bb major seventh; a `major7` chosen at extent 3 is
+   cut to a plain triad. Both directions had the card printing the override's
+   name over a chord the synth was playing differently, so `effectiveQuality`
+   now reads the name off the built stack rather than repeating the field. At
+   the height the override itself names, the answer is always the override
+   unchanged — swept over every scale, degree and `alter` — so the user's own
+   choice is never contradicted; only the notes the override left to the key can
+   move the name. A stack no name fits comes back `'other'`, which prints `?`
+   and lights nothing: unlabelled rather than mislabelled, as everywhere else.
+
+   The seam this opens is worth stating: the gap between an override's top note
+   and the first diatonic extension is whatever the displacement left, and can
+   be as wide as seven semitones. That follows from "extensions stay diatonic"
+   and is recorded in `chordPitchClasses`.
 3. **It invalidates a tested constant.** `OCTAVE_MAX = 2` was measured by
    sweeping the real pipeline *including* `alter`, and the 33-semitone maximum
    reach depends on `alter` meaning what it means today. Changing its semantics
@@ -424,3 +442,7 @@ the user is already listening in.
    the real pipeline including `alter`, and the 33-semitone maximum reach depends
    on `alter` meaning what it means today. Re-run that sweep under root-only
    alteration before trusting the constant.
+
+   **Settled: it is now 1.** The reach under the new semantics is 45 semitones,
+   not 33, and 2 put the ceiling at 129 — off the end of MIDI. See M2 Task 3 for
+   the witness and the trade-off.
