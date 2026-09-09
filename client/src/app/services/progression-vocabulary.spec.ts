@@ -4,6 +4,7 @@ import { ALTER_MAX, ALTER_MIN } from '../models/progression-normalize';
 import { ChordDegree, ProgressionKey } from '../models/progression.model';
 import { MusicTheoryService } from './music-theory.service';
 import { chordRootPitchClass } from './progression-generate';
+import { romanNumeral } from './progression-chord-names';
 import {
   ChordExtent,
   NAMED_QUALITIES,
@@ -65,6 +66,21 @@ describe('chordVocabulary', () => {
     return options.map(option => option.name);
   }
 
+  /**
+   * The one option with this numeral, or a failure that says what was there.
+   *
+   * `find` returns `undefined` and a `!` on the result turns a missing option
+   * into "cannot read property of undefined" three lines later, naming neither
+   * the numeral that went missing nor the row it went missing from.
+   */
+  function withNumeral(options: readonly ChordOption[], numeral: string): ChordOption {
+    const found = options.find(option => option.numeral === numeral);
+    if (found === undefined) {
+      throw new Error(`no ${numeral} among [${numerals(options).join(', ')}]`);
+    }
+    return found;
+  }
+
   /** Every seven-note scale the app offers, which is what the sweeps walk. */
   function heptatonicScales(): { name: string; intervals: readonly number[] }[] {
     const found: { name: string; intervals: readonly number[] }[] = [];
@@ -76,8 +92,35 @@ describe('chordVocabulary', () => {
     return found;
   }
 
-  function everyOption(intervals: readonly number[], key: ProgressionKey): ChordOption[] {
-    const vocabulary = chordVocabulary(key, intervals, selection(0), spell);
+  /**
+   * Every selection a slot can carry: seven degrees times five accidentals.
+   *
+   * The alternates row is the only group that reads the selection, and it is
+   * also the only group whose degree and accidental come from *outside* this
+   * module - so a sweep anchored on one selection tests the borrowed and
+   * secondary rules thoroughly and the alternates rule on a thirty-fifth of its
+   * input. `ALTER_MIN`..`ALTER_MAX` is the whole range `normalizeChordDegree`
+   * lets into a slot, so this is every selection the app can reach.
+   */
+  function everySelection(): ChordDegree[] {
+    const selections: ChordDegree[] = [];
+    for (let degree = 0; degree <= 6; degree++) {
+      for (let alter = ALTER_MIN; alter <= ALTER_MAX; alter++) {
+        // A chromatic root needs a shape to build from; `major` is the one every
+        // reachable slot could carry, and the alternates row overrides it
+        // twelve ways regardless.
+        selections.push(selection(degree, alter, alter === 0 ? null : 'major'));
+      }
+    }
+    return selections;
+  }
+
+  function everyOption(
+    intervals: readonly number[],
+    key: ProgressionKey,
+    selected: ChordDegree
+  ): ChordOption[] {
+    const vocabulary = chordVocabulary(key, intervals, selected, spell);
     return [...vocabulary.alternates, ...vocabulary.borrowed, ...vocabulary.secondary];
   }
 
@@ -113,39 +156,61 @@ describe('chordVocabulary', () => {
      */
     it('spells a borrowed chord as a displaced root under an explicit shape', () => {
       const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null, spell);
-      const flatSeven = borrowed.find(option => option.numeral === '♭VII');
+      const flatSeven = withNumeral(borrowed, '♭VII');
 
-      expect(flatSeven).toBeDefined();
-      expect(flatSeven!.degree).toBe(6);
-      expect(flatSeven!.alter).toBe(-1);
-      expect(flatSeven!.quality).toBe('major');
-      expect(flatSeven!.group).toBe('borrowed');
+      expect(flatSeven.degree).toBe(6);
+      expect(flatSeven.alter).toBe(-1);
+      expect(flatSeven.quality).toBe('major');
+      expect(flatSeven.group).toBe('borrowed');
     });
 
     /**
-     * A minor key has almost nothing to borrow, and that is the answer rather
-     * than a gap.
+     * A minor key borrows the Neapolitan and harmonic minor's two, and nothing
+     * else - because it has the rest already.
      *
      * ♭III, ♭VI, ♭VII and iv *are* the chords of a natural minor key, so
      * offering them as borrowings would be offering the key its own diatonic
-     * row a second time - and with an accidental on a degree that is already
-     * flat. What a minor key really does borrow - the major V, the Picardy I,
-     * the dorian IV - all sit on roots the key already has, which makes them
-     * alternates rather than borrowings. The Neapolitan is the one chord left
-     * with a root of its own.
+     * row a second time, with an accidental on a degree that is already flat.
+     *
+     * The two that are left are the ones minor-key harmony is actually built
+     * on. `V` is the major dominant - C aeolian's own fifth degree is `v`, a G
+     * minor triad, and nothing on the diatonic row is a G7 - and `♯vii°` is the
+     * leading-tone triad that a raised seventh produces. Both come from the
+     * parallel harmonic minor, and neither is reachable through the alternates
+     * row, which can only re-shape a slot that already exists.
      */
-    it('offers a minor key only the chords it does not already have', () => {
+    it('offers a minor key the Neapolitan and harmonic minor’s dominant pair', () => {
       const { borrowed } = chordVocabulary(C_MINOR, AEOLIAN, null, spell);
 
-      expect(numerals(borrowed)).toEqual(['♭II']);
-      expect(names(borrowed)).toEqual(['Db Maj']);
+      expect(numerals(borrowed)).toEqual(['♭II', 'V', '♯vii°']);
+      expect(names(borrowed)).toEqual(['Db Maj', 'G Maj', 'B°']);
+    });
+
+    /**
+     * The Picardy third is not among them, and that is a decision.
+     *
+     * It sits on the tonic, which is a root the key already has - so it is an
+     * alternate, and the alternates row's limit (it can only re-shape a slot
+     * that exists and is selected) does not bite on the one slot a Picardy third
+     * is by definition applied to. See `BORROWINGS` for the argument in full;
+     * this pins the behaviour so that adding it later is a deliberate change
+     * rather than a silent one.
+     */
+    it('leaves the Picardy third to the alternates row', () => {
+      const { borrowed, alternates } = chordVocabulary(C_MINOR, AEOLIAN, selection(0), spell);
+
+      expect(numerals(borrowed)).not.toContain('I');
+      expect(numerals(alternates)).toContain('I');
+      expect(withNumeral(alternates, 'I').name).toBe('C Maj');
     });
 
     /**
      * The filter is a comparison against the key, not a list of minor modes.
      *
      * Dorian's own fourth is major, so minor iv is a genuine borrowing there
-     * while ♭III and ♭VII are not - dorian already has both.
+     * while ♭III and ♭VII are not - dorian already has both. Its fifth degree is
+     * minor and its seventh flat, so it takes harmonic minor's `V` and `♯vii°`
+     * on the same terms a natural minor key does.
      */
     it('borrows into dorian what dorian does not already have', () => {
       const dorian = [0, 2, 3, 5, 7, 9, 10];
@@ -156,7 +221,22 @@ describe('chordVocabulary', () => {
         spell
       );
 
-      expect(numerals(borrowed)).toEqual(['♭II', 'iv', '♭VI']);
+      expect(numerals(borrowed)).toEqual(['♭II', 'iv', 'V', '♭VI', '♯vii°']);
+    });
+
+    /**
+     * A major key's row does not move by a single button.
+     *
+     * Harmonic minor's degree 4 is a major triad and ionian's already is; its
+     * degree 6 is diminished and ionian's already is. Both are dropped by the
+     * "the key already has it" filter, so the two rows added for minor keys are
+     * invisible in a major one. Pinned because it is the property that made the
+     * addition safe.
+     */
+    it('adds nothing to a major key', () => {
+      const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null, spell);
+
+      expect(numerals(borrowed)).toEqual(['♭II', '♭III', 'iv', '♭VI', '♭VII']);
     });
 
     /**
@@ -165,33 +245,50 @@ describe('chordVocabulary', () => {
      * The claim the group's name makes, swept rather than sampled: if a chord
      * with this root and this shape is already on the diatonic row, offering it
      * under "Borrowed" is a false label.
+     *
+     * Checked against **the whole diatonic row by pitch class**, not against the
+     * implementation's own filter. That filter compares an option with the
+     * chord on its own degree index and only when `alter` is zero, so restating
+     * it here would be a test that cannot fail for its stated reason - it would
+     * pass against any implementation that used the same rule, right or wrong.
+     * Rooting both sides through `chordRootPitchClass` also catches the case the
+     * index comparison would miss: a displaced root landing on some *other*
+     * degree's chord.
      */
     it('never offers a chord the key already has', () => {
       for (const scale of heptatonicScales()) {
         const { borrowed } = chordVocabulary(C_MAJOR, scale.intervals, null, spell);
 
-        for (const option of borrowed) {
-          const alreadyThere =
-            option.alter === 0 &&
-            degreeQuality(scale.intervals, option.degree, 3) === option.quality;
+        const diatonic = new Set<string>();
+        for (let degree = 0; degree <= 6; degree++) {
+          const root = chordRootPitchClass(C_MAJOR, scale.intervals, selection(degree));
+          diatonic.add(`${root}:${degreeQuality(scale.intervals, degree, 3)}`);
+        }
 
-          expect(alreadyThere)
-            .withContext(`${scale.name} already has ${option.numeral}`)
+        for (const option of borrowed) {
+          const root = chordRootPitchClass(
+            C_MAJOR,
+            scale.intervals,
+            selection(option.degree, option.alter, option.quality)
+          );
+
+          expect(diatonic.has(`${root}:${option.quality}`))
+            .withContext(`${scale.name} already has ${option.numeral} (${option.name})`)
             .toBeFalse();
         }
       }
     });
 
     /**
-     * The two source modes are the app's own, checked against its table.
+     * The three source modes are the app's own, checked against its table.
      *
      * They are written out in `progression-vocabulary.ts` because that module
      * is pure and must not reach into an Angular service for reference data.
      * This is what stops the copy drifting: the borrowed group is derived from
-     * these intervals, so a change to either mode here changes every borrowed
-     * chord the palette offers.
+     * these intervals, so a change to any of the three here changes every
+     * borrowed chord the palette offers.
      */
-    it('borrows from the app’s own aeolian and phrygian', () => {
+    it('borrows from the app’s own aeolian, phrygian and harmonic minor', () => {
       const byId = (id: string): readonly number[] => {
         for (const category of service.getScaleCategories()) {
           const scale = category.scales.find(candidate => candidate.id === id);
@@ -200,14 +297,40 @@ describe('chordVocabulary', () => {
         throw new Error(`no scale ${id}`);
       };
 
+      const rootOf = (option: ChordOption, key: ProgressionKey, intervals: readonly number[]) =>
+        chordRootPitchClass(key, intervals, selection(option.degree, option.alter, option.quality));
+
       // C aeolian gives E♭, Fm, A♭ and B♭; C phrygian gives the D♭.
-      const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null, spell);
-      const roots = borrowed.map(option =>
-        chordRootPitchClass(C_MAJOR, IONIAN, selection(option.degree, option.alter, option.quality))
-      );
+      const major = chordVocabulary(C_MAJOR, IONIAN, null, spell).borrowed;
+      const roots = major.map(option => rootOf(option, C_MAJOR, IONIAN));
 
       expect(roots.slice(1)).toEqual([byId('aeolian')[2], byId('aeolian')[3], byId('aeolian')[5], byId('aeolian')[6]]);
       expect(roots[0]).toBe(byId('phrygian')[1]);
+
+      // C harmonic minor gives the G and the B - its fifth degree and its
+      // raised seventh, which is the whole reason it is a source at all.
+      const minor = chordVocabulary(C_MINOR, AEOLIAN, null, spell).borrowed;
+      const harmonic = byId('harmonicMinor');
+
+      expect(rootOf(withNumeral(minor, 'V'), C_MINOR, AEOLIAN)).toBe(harmonic[4]);
+      expect(rootOf(withNumeral(minor, '♯vii°'), C_MINOR, AEOLIAN)).toBe(harmonic[6]);
+    });
+
+    /**
+     * Two rows of `BORROWINGS` can share a degree, so no two may share a label.
+     *
+     * Lydian takes ♭VII from aeolian and vii° from harmonic minor, both on
+     * degree 6, and they are different chords on different roots. A duplicate
+     * numeral would be two buttons a user cannot tell apart.
+     */
+    it('never offers two borrowed chords with the same numeral', () => {
+      for (const scale of heptatonicScales()) {
+        const { borrowed } = chordVocabulary(C_MAJOR, scale.intervals, null, spell);
+
+        expect(new Set(numerals(borrowed)).size)
+          .withContext(`${scale.name}: ${numerals(borrowed).join(' ')}`)
+          .toBe(borrowed.length);
+      }
     });
   });
 
@@ -297,6 +420,57 @@ describe('chordVocabulary', () => {
         }
       }
     });
+
+    /**
+     * And the other half of that rule: a degree no key could be in is not
+     * tonicised, in any seven-note scale.
+     *
+     * The sweep above only ever asserts that something *is* offered, so dropping
+     * the quality filter altogether would leave it green - and the palette would
+     * grow a `V/vii°` and a `V/III+` that point at chords no music is ever in.
+     * The target is read off the numeral rather than off the root, because two
+     * degrees a fifth apart can share a dominant's pitch class while only one of
+     * them is a legal target.
+     */
+    it('tonicises no diminished or augmented degree', () => {
+      for (const scale of heptatonicScales()) {
+        const { secondary } = chordVocabulary(C_MAJOR, scale.intervals, null, spell);
+
+        for (let degree = 0; degree < 7; degree++) {
+          const quality = degreeQuality(scale.intervals, degree, 3);
+          if (quality === 'major' || quality === 'minor') continue;
+
+          const target = romanNumeral(degree, 0, quality);
+
+          expect(secondary.some(option => option.numeral.endsWith(`/${target}`)))
+            .withContext(`${scale.name} tonicises ${target}, which is ${quality}`)
+            .toBeFalse();
+        }
+      }
+    });
+
+    /**
+     * The numeral on the left of the slash is a plain `V`, never an altered one.
+     *
+     * It is measured against the *target*, and a secondary dominant's root is a
+     * perfect fifth above its target by construction, so relative to that target
+     * there is nothing to alter. The chord's displacement within the key is a
+     * different measurement: pass it here and admitting a diminished target to C
+     * major would print `♯V/vii°` for what is simply `V/vii°`. Every target the
+     * filter admits today has `alter` zero, so this cannot fail now - it is here
+     * so that widening the filter fails loudly rather than quietly relabelling.
+     */
+    it('never puts an accidental on the left of the slash', () => {
+      for (const scale of heptatonicScales()) {
+        const { secondary } = chordVocabulary(C_MAJOR, scale.intervals, null, spell);
+
+        for (const option of secondary) {
+          expect(option.numeral)
+            .withContext(`${scale.name} ${option.name}`)
+            .toMatch(/^V\//);
+        }
+      }
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -331,8 +505,11 @@ describe('chordVocabulary', () => {
      *
      * "Turns V into V7" is a change of height as much as of shape, and the
      * alternative - offering every quality at the slot's own extent - prints
-     * two buttons with the same name the moment the slot is a ninth, because a
-     * `major` and a `major7` override build the same stack there.
+     * duplicate buttons the moment the slot is a triad, which every fresh slot
+     * is: a seventh override at extent 3 is cut back to its own triad, so
+     * `major`, `major7` and `dominant7` would be three buttons building one
+     * chord. The test below pins that, and `progression-vocabulary.ts` gives the
+     * counts.
      */
     it('offers each quality at its own height', () => {
       const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(4), spell);
@@ -359,6 +536,134 @@ describe('chordVocabulary', () => {
 
       expect(vocabulary.alternates).toEqual([]);
       expect(vocabulary.borrowed.length).toBeGreaterThan(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Which option the slot already holds
+  // -------------------------------------------------------------------------
+
+  describe('the current option', () => {
+    /**
+     * The commonest case of all, and the one a naive comparison gets wrong.
+     *
+     * A slot the user has not altered carries `quality: null`, so matching an
+     * option against the stored field marks nothing on the row a user first
+     * opens - even though one of the twelve buttons builds exactly the chord
+     * that is sounding. It is resolved through the key instead: a plain V slot
+     * at a triad's height is a G major triad, and `major` is the button.
+     */
+    it('marks the key’s own quality for a slot with no override', () => {
+      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(4), spell);
+
+      expect(alternates.filter(option => option.current).map(option => option.quality))
+        .toEqual(['major']);
+    });
+
+    /**
+     * And it follows the slot's height, because that is what decides the chord.
+     *
+     * The same degree at a seventh is a G7, so the marked button moves with the
+     * extent rather than staying on the triad. Resolving at each *option's* own
+     * height instead would mark `major` and `dominant7` both, which is two marks
+     * for one chord.
+     */
+    it('follows the slot’s height when the key supplies the quality', () => {
+      const seventh: ChordDegree = { ...selection(4), extent: 7 };
+      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, seventh, spell);
+
+      expect(alternates.filter(option => option.current).map(option => option.quality))
+        .toEqual(['dominant7']);
+    });
+
+    /** An override is its own answer, and marks the button that names it. */
+    it('marks the override a slot carries', () => {
+      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(4, 0, 'minor'), spell);
+
+      expect(withNumeral(alternates, 'v').current).toBeTrue();
+      expect(withNumeral(alternates, 'V').current).toBeFalse();
+    });
+
+    /**
+     * A borrowed slot marks its own button in the borrowed row, and keeps it
+     * marked when the complexity stepper raises the slot.
+     *
+     * A ♭VII raised to a seventh builds a B flat major *seventh*, so a
+     * comparison against the built chord would un-mark the ♭VII button the
+     * moment a user pressed `+`. The shape the slot holds has not changed, so
+     * neither has the answer.
+     */
+    it('marks a borrowed slot’s own button at any height', () => {
+      for (const extent of [3, 7, 9] as ChordExtent[]) {
+        const slot: ChordDegree = { ...selection(6, -1, 'major'), extent };
+        const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, slot, spell);
+
+        expect(withNumeral(borrowed, '♭VII').current)
+          .withContext(`extent ${extent}`)
+          .toBeTrue();
+      }
+    });
+
+    /** With nothing selected there is nothing to mark, in any group. */
+    it('marks nothing when nothing is selected', () => {
+      const vocabulary = chordVocabulary(C_MAJOR, IONIAN, null, spell);
+
+      expect([...vocabulary.borrowed, ...vocabulary.secondary].some(option => option.current))
+        .toBeFalse();
+    });
+
+    /**
+     * At most one option **per row** is ever marked, over every scale and every
+     * selection.
+     *
+     * A row draws one highlight, so two in one row would be a contradiction on
+     * screen. Within a row the three fields compared - degree, accidental and
+     * shape - are distinct, which is what makes this an invariant rather than an
+     * accident of the current contents.
+     */
+    it('marks at most one option per row, in every scale and every selection', () => {
+      for (const scale of heptatonicScales()) {
+        for (const selected of everySelection()) {
+          const vocabulary = chordVocabulary(C_MAJOR, scale.intervals, selected, spell);
+          const rows = [vocabulary.alternates, vocabulary.borrowed, vocabulary.secondary];
+
+          for (const row of rows) {
+            const marked = row.filter(option => option.current);
+
+            expect(marked.length)
+              .withContext(
+                `${scale.name} degree ${selected.degree} alter ${selected.alter}: ` +
+                  marked.map(option => option.numeral).join(', ')
+              )
+              .toBeLessThanOrEqual(1);
+          }
+        }
+      }
+    });
+
+    /**
+     * Two rows can mark the same chord, and that is the answer rather than a
+     * leak.
+     *
+     * The alternates row offers all twelve shapes on the *selected* root, so a
+     * slot that already holds a borrowed chord finds itself in both rows.
+     * Lydian ♯2 borrows a ♭VI, and selecting it marks the borrowed button and
+     * the alternates row's `major` together: one chord, two ways to reach it,
+     * and clicking either does the same thing. Pinned so that a future "exactly
+     * one" rule is a deliberate choice about the UI rather than a silent one.
+     */
+    it('marks a chord that is both a borrowing and an alternate in both rows', () => {
+      const lydianSharp2 = [0, 3, 4, 6, 7, 9, 11];
+      const key: ProgressionKey = { tonic: 0, scaleId: 'lydianSharp2', preferSharps: false };
+      const { alternates, borrowed } = chordVocabulary(
+        key,
+        lydianSharp2,
+        selection(5, -1, 'major'),
+        spell
+      );
+
+      expect(withNumeral(borrowed, '♭VI').current).toBeTrue();
+      expect(withNumeral(alternates, '♭VI').current).toBeTrue();
     });
   });
 
@@ -411,9 +716,8 @@ describe('chordVocabulary', () => {
   /** The spoken label says the accidental and the shape rather than printing them. */
   it('says a borrowed chord aloud rather than spelling its symbols', () => {
     const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null, spell);
-    const flatSeven = borrowed.find(option => option.numeral === '♭VII');
 
-    expect(flatSeven!.spoken).toBe('B flat major');
+    expect(withNumeral(borrowed, '♭VII').spoken).toBe('B flat major');
   });
 
   /**
@@ -447,19 +751,25 @@ describe('chordVocabulary', () => {
    * `normalizeChordDegree` on its way into a slot, so the chord that sounded
    * would not be the chord the button named - the one failure this whole module
    * exists to prevent, arriving through the back door.
+   *
+   * Swept over every selection as well as every scale, because the alternates
+   * row takes its degree and accidental from the selection: anchored on one
+   * slot, this would cover a thirty-fifth of that group's input.
    */
   it('only offers chords the model can store', () => {
     for (const scale of heptatonicScales()) {
-      for (const option of everyOption(scale.intervals, C_MAJOR)) {
-        expect(option.alter)
-          .withContext(`${scale.name} ${option.numeral}`)
-          .toBeGreaterThanOrEqual(ALTER_MIN);
-        expect(option.alter)
-          .withContext(`${scale.name} ${option.numeral}`)
-          .toBeLessThanOrEqual(ALTER_MAX);
-        expect(Number.isInteger(option.degree) && option.degree >= 0 && option.degree <= 6)
-          .withContext(`${scale.name} ${option.numeral} has degree ${option.degree}`)
-          .toBeTrue();
+      for (const selected of everySelection()) {
+        for (const option of everyOption(scale.intervals, C_MAJOR, selected)) {
+          expect(option.alter)
+            .withContext(`${scale.name} ${option.numeral}`)
+            .toBeGreaterThanOrEqual(ALTER_MIN);
+          expect(option.alter)
+            .withContext(`${scale.name} ${option.numeral}`)
+            .toBeLessThanOrEqual(ALTER_MAX);
+          expect(Number.isInteger(option.degree) && option.degree >= 0 && option.degree <= 6)
+            .withContext(`${scale.name} ${option.numeral} has degree ${option.degree}`)
+            .toBeTrue();
+        }
       }
     }
   });
@@ -472,16 +782,23 @@ describe('chordVocabulary', () => {
    * marks a stack with no name cannot appear on a button here. That is what
    * offering `major7` at a seventh rather than at the slot's own extent buys:
    * an option that names what it builds, everywhere.
+   *
+   * Swept over every selection for the same reason as the test above: a `?`
+   * would appear on an *alternate*, whose root comes from the slot, so a sweep
+   * that fixed the slot would be checking the two groups that cannot produce
+   * one.
    */
   it('never offers an unnameable chord', () => {
     for (const scale of heptatonicScales()) {
-      for (const option of everyOption(scale.intervals, C_MAJOR)) {
-        expect(option.name)
-          .withContext(`${scale.name} ${option.numeral}`)
-          .not.toContain('?');
-        expect(option.numeral)
-          .withContext(`${scale.name} ${option.name}`)
-          .not.toContain('?');
+      for (const selected of everySelection()) {
+        for (const option of everyOption(scale.intervals, C_MAJOR, selected)) {
+          expect(option.name)
+            .withContext(`${scale.name} ${option.numeral}`)
+            .not.toContain('?');
+          expect(option.numeral)
+            .withContext(`${scale.name} ${option.name}`)
+            .not.toContain('?');
+        }
       }
     }
   });

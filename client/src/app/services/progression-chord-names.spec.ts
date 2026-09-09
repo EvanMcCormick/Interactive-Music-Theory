@@ -189,9 +189,20 @@ describe('romanNumeral', () => {
     expect(romanNumeral(4, 0, 'dominant7', { degree: 6, quality: 'diminished' })).toBe('V/vii°');
   });
 
-  // The target is a degree of the key, so it is never itself altered - and the
-  // accidental on the left, if there is one, belongs to the chord rather than
-  // to the thing it points at.
+  /**
+   * The target is a degree of the key, so it is never itself altered - and the
+   * accidental on the left, if there is one, belongs to the chord rather than to
+   * the thing it points at.
+   *
+   * **This is a statement about `romanNumeral`, not a licence for its callers.**
+   * The accidental it keeps is one measured *against the target*: `♭II/V` is a
+   * Neapolitan of the dominant, a chord whose root really is a flattened second
+   * above the thing it points at. A secondary dominant never is one - its root
+   * is a perfect fifth above its target by construction - so
+   * `progression-vocabulary.ts` passes a constant zero here rather than the
+   * chord's displacement within the *key*, which is a different measurement and
+   * would print `♯V/vii°` for a plain `V/vii°`. See `ALTER_AGAINST_TARGET`.
+   */
   it('puts an accidental on the chord and not on its target', () => {
     expect(romanNumeral(1, -1, 'major', { degree: 4, quality: 'major' })).toBe('♭II/V');
   });

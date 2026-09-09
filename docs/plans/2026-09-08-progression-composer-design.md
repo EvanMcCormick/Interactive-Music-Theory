@@ -417,6 +417,95 @@ and it abandons the Roman numeral framing that is the teaching feature: a chord
 picked that way has no function relative to the key, so the circle-of-fifths
 coupling stops meaning anything.
 
+**Amended at M2 Task 8: the borrowed row also carries what a *minor* key
+borrows.** The five above are what a major key borrows, and in a minor key four
+of them are the key's own diatonic chords and are correctly filtered out. That
+left C minor offered one borrowed chord and no route at all to `V` — the major
+dominant, which is the single most important non-diatonic chord in minor-key
+harmony — or to the raised `vii°` beside it. Neither is on the diatonic row (C
+aeolian shows `v`, a G minor triad) and neither could be appended, because the
+alternates row can only re-shape a slot that already exists.
+
+The fix is one more source mode, the parallel **harmonic** minor, at degrees 4
+and 6. Its raised seventh makes its degree-4 triad major and its degree-6 triad
+diminished, so `V` and `♯vii°` fall out of the same derivation as everything
+else, with no chord written down. In a major key both are dropped by the
+existing "the key already has it" filter, so no major key's row changes.
+
+The Picardy `I` was considered and left out. It sits on the tonic, and the
+alternates row's real limit — that it can only re-shape an existing, selected
+slot — does not bite on the one slot a Picardy third is by definition applied to.
+See `BORROWINGS` in `progression-vocabulary.ts` for the argument and the one-line
+change if it is ever wanted.
+
+### Numerals are the mode's, not the parallel major's
+
+The correction table above writes `#iv-dim`, which is a *major-relative* reading.
+The app does not use one. `romanNumeral` measures `alter` from the current
+scale's own degree, so F lydian prints `♭iv` for a B flat minor triad where
+standard practice writes `iv`, and E phrygian prints `VII` for a D major triad
+where standard practice writes `♭VII`. That is the same reading the diatonic row
+already uses — it prints phrygian's second degree as `II`, not `♭II` — and one
+reading throughout is worth more than agreeing with convention only in the modes
+where the two coincide. The table is describing the bug, not quoting a numeral
+the app prints.
+
+### The two chromatic tables cannot spell every borrowed root
+
+**Known limit, M3.** `MusicTheoryService` spells from two twelve-name chromatic
+arrays, and between them they have no `C♭`, `F♭`, `B♯`, `E♯` or double accidental
+at all. So a borrowed root whose correct spelling is one of those comes back as
+the wrong *letter*, and the numeral above it contradicts the name beside it.
+Across the seven diatonic modes in all twelve keys that is 55 buttons:
+
+- **35 in the flat keys**, all in the borrowed row, wherever a lowered root lands
+  on a C flat, an F flat or a double flat. B♭ major's `♭II` is a C flat and prints
+  `B Maj`; E♭ major's `♭VI` is a C flat and prints `B Maj`; D♭ major's `♭II` is an
+  E double flat and prints `D Maj`. `♭II` over `B Maj` reads as a raised seventh,
+  which is the opposite of what the numeral says.
+- **20 in the sharp keys**, nineteen of them the `♯vii°` borrowed from harmonic
+  minor: C♯ aeolian's is a B sharp and prints `C°`, G♯ aeolian's is an F double
+  sharp and prints `G°`.
+
+`rootPrefersSharps` — the rule that decides whether a *displaced* root leans sharp
+or flat — cannot reach any of this, because the failure is a missing letter and
+not a wrong preference. Fixing it needs a spelling model that carries a letter and
+an accidental separately, so a note can *be* a C flat rather than being whichever
+of twelve names shares its pitch. That is a change to those two arrays and to
+every caller of `spellNote`, and it is out of scope for a palette task.
+
+The same rule has a smaller, separate failure of its own: it is right only when
+the displaced note's correct accidental has the *sign* of the displacement, and
+over every scale and key it gets 996 displaced roots right, 112 wrong where
+following the key would have been right, and 176 wrong that the key would also
+have got wrong. Seven of the 112 are in keys whose own name is a plain letter —
+F super locrian's and F ultra locrian's `♯iv`, C and F ultra locrian's `♯VII`, and
+the `♭V` of B enigmatic, B lydian augmented and B ionian augmented. No diatonic
+mode is affected. Both are recorded in full on `rootPrefersSharps`.
+
+### A real ninth chord is unreachable
+
+**Known gap, M3.** `ChordQuality` names triads and sevenths only, and
+`ChordDegree.quality` overrides the chord tones from the bottom up while
+everything above the override stays diatonic. So the ninth, eleventh and
+thirteenth of *every* chord in the app come from the key, and there is no way to
+ask for any others: `V/vi` in C major raised to a ninth builds `E G♯ B D F`, a
+flat ninth, and a plain dominant ninth `E G♯ B D F♯` cannot be built at all.
+
+M2 Task 8 recorded this the wrong way round — it claimed a `dominant9` override
+would build the same notes a `dominant7` one does, "because the ninth is diatonic
+either way". It does not: the two disagree in 812 of the 1015 (scale, degree,
+alter) combinations the app can reach. So widening `ChordQuality` is not a
+relabelling, it is **new reachable harmony**, and that makes it a feature to plan
+rather than a naming preference that was declined.
+
+The reasons it was still deferred stand: `QUALITY_INTERVALS` is read in both
+directions and rests on no two entries sharing a shape, which a ninth breaks
+three ways over (`[0,4,7,10,14]`, `[0,4,7,10,13]`, `[0,4,7,10,15]` are all in the
+app's chord table), and the three naming tables in `progression-chord-names.ts`
+are keyed exhaustively on `ChordQuality`, so each new member needs a numeral
+figure, a printed suffix and a spoken phrase.
+
 ### Edits during playback take effect at the loop boundary
 
 The schedule is a snapshot, and M1 could live with that because a chord strip

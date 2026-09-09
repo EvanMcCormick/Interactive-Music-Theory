@@ -57,10 +57,55 @@ export type SpellNote = (pitchClass: number, preferSharps: boolean) => string;
  * reading `Bb Maj` that turns into a card reading `A# Maj` is one chord with two
  * names, one click apart.
  *
- * It does not fix everything, and cannot. The app spells from two twelve-name
- * chromatic tables, so ♭VI in E flat major is a C flat and comes back `B`. That
- * is a limit of `spellNote` rather than of this rule, and the rule still turns
- * the four borrowed chords of every sharp-preferring key from wrong to right.
+ * ## Where the rule itself is wrong
+ *
+ * It is right when the displaced note's correct accidental has the *sign* of the
+ * displacement, and that is not a theorem. Over every seven-note scale the app
+ * offers, in all twelve keys, it gets 996 displaced roots right, gets 112 wrong
+ * where following the key would have been right, and gets 176 wrong that the key
+ * would also have got wrong.
+ *
+ * Most of that 112 is in keys whose own tonic is already spelled enharmonically,
+ * where nothing downstream can help. **Seven are not**, and they are worth naming
+ * because they are keys a user might really be in: F super locrian's `♯iv` and F
+ * ultra locrian's `♯iv` are B flats printed `A♯`, C ultra locrian's `♯VII` is a B
+ * flat printed `A♯` and F ultra locrian's is an E flat printed `D♯`, and the
+ * `♭V` that B enigmatic, B lydian augmented and B ionian augmented each borrow is
+ * an F sharp printed `G♭`. In every one the sign of the displacement and the sign
+ * of the correct accidental disagree. **No diatonic mode is affected**, in any
+ * key.
+ *
+ * ## And the limit underneath it, which no preference can reach
+ *
+ * The app spells from two twelve-name chromatic tables, and between them those
+ * tables have no `C♭`, `F♭`, `B♯`, `E♯` or double accidental at all. A root whose
+ * correct spelling is one of those comes back as the wrong *letter* however the
+ * preference is set, and the numeral above it then contradicts the name beside
+ * it. Across the seven diatonic modes in all twelve keys that is **55 buttons**:
+ *
+ *  - **35 in the flat keys**, every one of them in the borrowed group, wherever
+ *    a lowered root lands on a C flat, an F flat or a double flat. B♭ major's
+ *    `♭II` is a C flat and prints `B Maj`; E♭ major's `♭VI` is a C flat and
+ *    prints `B Maj`; D♭ major's `♭II` is an E double flat and prints `D Maj`.
+ *    `♭II` over `B Maj` reads as a raised seventh, which is the opposite of what
+ *    the numeral says.
+ *  - **20 in the sharp keys**, nineteen of them the `♯vii°` borrowed from
+ *    harmonic minor. C♯ aeolian's is a B sharp and prints `C°`; G♯ aeolian's is
+ *    an F double sharp and prints `G°`.
+ *
+ * A further 13 are unaltered roots that the *key's* own spelling gets wrong - F
+ * locrian is treated as a six-sharp key and prints `G♯` for its A flat - and
+ * those are not this rule's to fix, because the diatonic row prints them the
+ * same way.
+ *
+ * Fixing any of it needs a spelling model that carries a letter and an accidental
+ * separately, so a note can *be* a C flat rather than being whichever of twelve
+ * names shares its pitch. That is a change to `MusicTheoryService`'s two tables
+ * and to every caller of `spellNote`, not to this function; it is recorded in the
+ * design doc under "The two chromatic tables cannot spell every borrowed root".
+ * Until then this rule is what there is, and it is still the difference between
+ * right and wrong on the great majority of displaced roots - including all four
+ * borrowed chords of every sharp-preferring diatonic key.
  */
 export function rootPrefersSharps(keyPrefersSharps: boolean, alter: number): boolean {
   return alter === 0 ? keyPrefersSharps : alter > 0;
@@ -220,7 +265,24 @@ export interface RomanTarget {
  * only take a quality could not write one at all.
  *
  * A double accidental is the sign twice rather than a third sign, which is what
- * `ALTER_MIN` of -2 makes reachable. Nothing in the app writes one today.
+ * `ALTER_MIN` and `ALTER_MAX` of -2 and 2 make reachable - and the palette
+ * reaches it. The borrowed row prints `♭♭II` in Hungarian major and in Lydian
+ * ♯2, `♭♭VI` in the enigmatic scale, and `♯♯vii°` in ultra locrian.
+ *
+ * ## The numerals are the mode's, not the parallel major's
+ *
+ * `degree` indexes the *current* scale, so `alter` measures displacement from
+ * that scale's own degree rather than from a major scale on the same tonic. F
+ * lydian's fourth is a B, so a B flat minor triad there is `♭iv` where standard
+ * practice writes `iv`; E phrygian's seventh is a D, so a D major triad is `VII`
+ * where standard practice writes `♭VII`.
+ *
+ * That is the same reading the diatonic row already uses - it prints phrygian's
+ * second degree `II`, not `♭II` - so one reading throughout is worth more than
+ * agreeing with convention in the modes where the two happen to coincide. It is
+ * worth knowing when reading the design doc, whose correction table writes
+ * `#iv-dim`: that table is describing a *bug* in major-relative terms, not
+ * quoting a numeral this function prints.
  *
  * ## The slash, which names a function rather than a position
  *
@@ -260,8 +322,8 @@ export interface RomanTarget {
  * and the panel that says "9th" is labelled "Complexity", a different question.
  *
  * **Settled at M2 Task 8: the height stays unnamed.** The alternative was to
- * give `ChordQuality` ninth, eleventh and thirteenth members, and it is a much
- * larger change than the `V9` it buys:
+ * give `ChordQuality` ninth, eleventh and thirteenth members, and two things
+ * make that a much larger change than the `V9` label it buys:
  *
  *  - `QUALITY_INTERVALS` is read in both directions and rests on no two
  *    entries sharing a shape. A ninth admits `[0,4,7,10,14]`, `[0,4,7,10,13]`
@@ -271,17 +333,31 @@ export interface RomanTarget {
  *  - The three tables here are keyed exhaustively on `ChordQuality`, so every
  *    new member needs a numeral figure, a printed suffix and a spoken phrase:
  *    typographic decisions, made to serve an arithmetic problem.
- *  - `ChordDegree.quality` is an **override**, and a `dominant9` override at
- *    extent 9 builds the same five notes a `dominant7` override does, because
- *    the ninth is diatonic either way. The widening buys nothing at the point
- *    of choice; it only changes a label.
  *
- * What deferring costs is one truncation, and it is a truncation rather than a
- * falsehood: a borrowed `♭VII` on a slot raised to a ninth prints `♭VIImaj7`
- * over a stack that really is a B flat major seventh with the key's own ninth
- * on top, and the palette's "Complexity: 9th" readout states the height beside
- * it. Truncated rather than wrong is the same rule as unlabelled rather than
- * mislabelled.
+ * **And a third consideration cuts the other way, so it is stated as a cost of
+ * deferring rather than a reason for it.** An earlier version of this note
+ * claimed a `dominant9` override at extent 9 would build the same five notes a
+ * `dominant7` override does, "because the ninth is diatonic either way". It does
+ * not. `ChordDegree.quality` overrides the chord tones from the bottom up and
+ * everything above the override stays diatonic, so the ninth comes from the
+ * *key*: `V/vi` in C major raised to a ninth builds `E G♯ B D F` - a flat ninth
+ * - where a real `dominant9` would build `E G♯ B D F♯`. The two disagree in
+ * **812 of the 1015** (scale, degree, alter) combinations the app can reach.
+ *
+ * So the widening would buy genuinely unreachable chords rather than a
+ * relabelling: a plain dominant ninth cannot be built at all today, on a chord
+ * this feature offers. That makes it an M3 feature, recorded in the design doc
+ * under "A real ninth chord is unreachable", and not a naming preference that
+ * was dismissed.
+ *
+ * What deferring costs is therefore two things. One is a truncation, and a
+ * truncation rather than a falsehood: a borrowed `♭VII` on a slot raised to a
+ * ninth prints `♭VIImaj7` over a stack that really is a B flat major seventh
+ * with the key's own ninth on top, and the palette's "Complexity: 9th" readout
+ * states the height beside it. Truncated rather than wrong is the same rule as
+ * unlabelled rather than mislabelled. The other is the harmony above: the
+ * extensions a user gets are the key's, and there is no way to ask for any
+ * others.
  *
  * ## And the two things it refuses
  *

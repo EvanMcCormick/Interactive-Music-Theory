@@ -11,6 +11,7 @@ import {
 import { chordRootPitchClass } from './progression-generate';
 import {
   ChordExtent,
+  ChordQuality,
   NAMED_QUALITIES,
   NamedQuality,
   QUALITY_INTERVALS,
@@ -62,10 +63,26 @@ import {
  *     answer is always that quality - swept over every scale, degree and
  *     `alter` the app can reach. So no button here can print `?`, and no two
  *     buttons can print the same name.
- *  3. **The alternative prints duplicates.** Offered at a slot's own extent of
- *     9, a `major` override and a `major7` override build the same five notes,
- *     because the seventh they disagree about is diatonic there anyway. Two
- *     buttons, one chord, one name.
+ *  3. **The alternative prints duplicates below and `?` above.** Offered at the
+ *     slot's own extent, a seventh is cut back to its triad the moment the slot
+ *     is one - and every fresh slot is. At extent 3 the twelve qualities build
+ *     **four** distinct chords, in all 1015 (scale, degree, alter) combinations
+ *     the app can reach: `major`, `major7` and `dominant7` are one button's
+ *     worth of chord, and so are the minor, the diminished and the augmented
+ *     families. Nine buttons in twelve would duplicate another, always.
+ *
+ *     At extent 7 or higher the collapse is smaller - 609 of the 1015 still
+ *     produce a duplicate - and a second failure replaces it: a triad quality
+ *     there keeps the key's own seventh, and that stack often has no name, so
+ *     2436 of the 12180 buttons would print `?`. The natural height is the one
+ *     rule with neither.
+ *
+ *     What those two qualities do *not* do at extent 9 is coincide, and an
+ *     earlier version of this note said they did. `major` and `major7` differ
+ *     there in **812 of the 1015** combinations - on C major's V they give
+ *     `G B D F` against `G B D F♯` - so "the seventh is diatonic anyway" was
+ *     never the argument. It is recorded here because it is the kind of claim a
+ *     reader would build on rather than re-derive.
  *
  * The cost is that clicking an option sets the slot's height as well as its
  * shape. That is what the complexity stepper is for, and it is beside the
@@ -113,6 +130,41 @@ export interface ChordOption {
   /** The same chord as a phrase, for a label that is heard. `B flat major`. */
   spoken: string;
   group: ChordOptionGroup;
+  /**
+   * Whether this is the shape the selected slot already has: the button to mark
+   * rather than the hole to leave.
+   *
+   * The alternates row offers all twelve qualities precisely so the chosen one
+   * has a place, and a place needs a mark. It is computed here rather than left
+   * to the palette for the reason the numeral and the name are: the comparison
+   * is not the obvious one, and a caller doing it by eye gets it wrong in the
+   * commonest case of all.
+   *
+   * **The comparison is against the slot's shape, with `null` resolved.** A
+   * fresh slot carries `quality: null`, meaning "as the key gives it", so
+   * matching on the stored field alone marks nothing at all on the row a user
+   * first opens - even though one of the twelve builds exactly the chord that is
+   * sounding. So a null quality is read as the key's own quality *at the slot's
+   * own height*: a plain V slot marks `major` at extent 3 and `dominant7` at
+   * extent 7, which is the chord it is playing in each case.
+   *
+   * **At most one option per group**, because within a group the three fields
+   * compared are distinct: the twelve alternates have twelve distinct qualities,
+   * and no two rows of `BORROWINGS` or two targets produce the same triple.
+   *
+   * Across groups two can be marked, and that is right rather than a leak. The
+   * alternates row offers all twelve shapes on the *selected* root, so whenever
+   * the selection is itself a borrowed chord that chord appears in both rows -
+   * select the `♭VI` of Lydian ♯2 and the borrowed `♭VI` and the alternates row's
+   * `major` are the same chord, reached two ways. Marking one and not the other
+   * would be picking a winner between two buttons that do the same thing.
+   *
+   * None is marked when no option names what the slot builds. A slot whose stack
+   * no name fits resolves to `'other'`, which no option carries, so the row is
+   * left unmarked rather than marked wrongly - the same rule the numeral's `?`
+   * follows one layer down.
+   */
+  current: boolean;
 }
 
 /** The three groups, in the order the palette stacks them. */
@@ -129,11 +181,37 @@ const TRIAD: ChordExtent = 3;
 /** A seventh, which is the height every secondary dominant is offered at. */
 const SEVENTH: ChordExtent = 7;
 
-/** The tonic. Its own dominant is `V`, which the diatonic row already offers. */
+/** The tonic, which is the one degree no secondary tonicises. See `secondary`. */
 const TONIC_DEGREE = 0;
 
 /** Degree 5 of a key, zero-indexed: the `V` on the left of every slash. */
 const DOMINANT_DEGREE = 4;
+
+/**
+ * The accidental on the left of a slash, which for a secondary dominant is
+ * always none.
+ *
+ * `alter` is this chord's displacement *within the key*, and the numeral on the
+ * left of a slash is not measured in the key at all - it is measured against the
+ * target. A secondary dominant's root is a perfect fifth above its target's root
+ * by construction, so relative to that target it is a plain `V` whatever `alter`
+ * turned out to be, and passing `alter` there would print an accidental from the
+ * wrong frame of reference.
+ *
+ * `alter` is zero for every target the filter admits today, so nothing shows;
+ * the constant is here for the day that filter widens. Admit a diminished target
+ * and C major offers a dominant of `vii°`: degree 3, alter +1, root F sharp -
+ * where `alter` would print `♯V/vii°` for what is simply the dominant of the
+ * seventh degree, `V/vii°`.
+ *
+ * This is not `romanNumeral` being handed something false. Its contract is that
+ * the accidental belongs to the chord and survives on the left of a slash -
+ * `♭II/V` is a real numeral, and `progression-chord-names.spec.ts` pins it - and
+ * that is right for a chord altered *relative to its target*, which a secondary
+ * dominant by definition never is. The zero is a fact about this call site, not
+ * a correction to that one.
+ */
+const ALTER_AGAINST_TARGET = 0;
 
 /** A fifth is four steps through a seven-note scale, and seven semitones. */
 const STEPS_TO_A_FIFTH = 4;
@@ -161,21 +239,76 @@ const PARALLEL_MINOR: readonly number[] = [0, 2, 3, 5, 7, 8, 10];
 const PARALLEL_PHRYGIAN: readonly number[] = [0, 1, 3, 5, 7, 8, 10];
 
 /**
+ * The parallel harmonic minor, which is where a *minor* key's two borrowings
+ * come from.
+ *
+ * `MusicTheoryService`'s own `harmonicMinor`, on the same terms as the two above
+ * and checked against the same table by the same spec. It is here for two
+ * degrees and only two: its raised seventh is what makes its degree 4 a major
+ * triad and its degree 6 a diminished one, which are the major dominant and the
+ * leading-tone triad that a natural minor key has no other way to reach.
+ */
+const PARALLEL_HARMONIC_MINOR: readonly number[] = [0, 2, 3, 5, 7, 8, 11];
+
+/**
  * Which degrees are borrowed, and which parallel mode each is borrowed from.
  *
- * The five the design doc names - ♭II, ♭III, iv, ♭VI, ♭VII - and this is the
- * whole of what is written down about them. The accidental is the distance
- * between the source mode's degree and the current key's, and the shape is the
- * source mode's own triad on that degree, so both fall out of the two arrays
- * above rather than being asserted here.
+ * The five the design doc names - ♭II, ♭III, iv, ♭VI, ♭VII - plus the two a
+ * minor key needs and nothing else offers, and this is the whole of what is
+ * written down about them. The accidental is the distance between the source
+ * mode's degree and the current key's, and the shape is the source mode's own
+ * triad on that degree, so both fall out of the three arrays above rather than
+ * being asserted here. A source is always a *parallel mode* and never a pitch
+ * class, which is what makes the same seven rows right in D flat lydian and in
+ * Hungarian minor.
  *
- * The parallel minor's other three degrees are deliberately not on this list.
+ * ## The two harmonic-minor rows, and why a minor key needed them
+ *
+ * The first five rows are borrowings a *major* key makes, and in a minor key the
+ * "the key already has it" filter drops nearly all of them. That is correct -
+ * ♭III, ♭VI, ♭VII and iv *are* natural minor's own chords, and relabelling them
+ * as borrowings would say something false about the diatonic row. What it left
+ * was a minor key offered one borrowed chord and no route at all to the two it
+ * actually borrows most: **its major dominant** and **its raised leading-tone
+ * triad**. C aeolian's diatonic row shows `v`, a G minor triad; G7 appeared
+ * nowhere in the palette, and `♮vii°` nowhere either.
+ *
+ * The claim that the alternates row covers them does not hold. That row can only
+ * re-shape a slot that already exists and is selected, so reaching a major V
+ * needed a degree-4 slot to be there already - and the reason you want it is
+ * that the `v` which would be in it is the chord you did not want. A chord you
+ * cannot **append** is a chord this palette does not offer.
+ *
+ * Harmonic minor supplies both from one array and asserts neither. Its degree 4
+ * stacks a major triad and its degree 6 a diminished one, so `degreeQuality`
+ * reads them out as `V` (alter 0) and `♯vii°` (alter +1) in aeolian. In a major
+ * key both are dropped by the same filter that drops the rest - ionian's own
+ * degree 4 is already major and its degree 6 already diminished - so no major
+ * key's row moves by a single button.
+ *
+ * ## The Picardy third is deliberately not here
+ *
+ * It would be one more row, `{ degree: 0, source: PARALLEL_MAJOR }` over
+ * `[0, 2, 4, 5, 7, 9, 11]`, and it is left out on the distinction that put `V`
+ * in: **this group exists to offer chords a user cannot otherwise reach, and the
+ * alternates row's real limit is that it can only re-shape a slot that already
+ * exists.** A major dominant in a minor key is a chord you append. A Picardy
+ * third is, by construction, a change to the final tonic you have just written -
+ * the slot is there, selecting it is the click you were going to make anyway,
+ * and the alternates row on it already offers `I` among its twelve. The limit
+ * does not bite, so the row would be a second way to reach a chord that is never
+ * more than one click away. If a later milestone finds users hunting for it, the
+ * row above is the whole change.
+ *
+ * ## And the parallel minor's other three degrees
+ *
  * Its tonic, second and fifth - `i`, `ii°`, `v` in a major key - are the three
  * whose roots the key already has, so they are shapes on an existing root:
  * alternates, which is the row that offers them, and which offers all twelve
  * shapes rather than the parallel minor's one. `iv` is on the list despite
- * sharing that property, because it is the one modal-mixture chord common
- * enough that a user looking for a borrowed sound expects to find it here.
+ * sharing that property, because it is the one modal-mixture chord common enough
+ * that a user looking for a borrowed sound expects to find it here - and the
+ * harmonic minor `V` is on it for the stronger version of the same argument.
  */
 interface Borrowing {
   degree: number;
@@ -186,8 +319,10 @@ const BORROWINGS: readonly Borrowing[] = [
   { degree: 1, source: PARALLEL_PHRYGIAN },
   { degree: 2, source: PARALLEL_MINOR },
   { degree: 3, source: PARALLEL_MINOR },
+  { degree: 4, source: PARALLEL_HARMONIC_MINOR },
   { degree: 5, source: PARALLEL_MINOR },
-  { degree: 6, source: PARALLEL_MINOR }
+  { degree: 6, source: PARALLEL_MINOR },
+  { degree: 6, source: PARALLEL_HARMONIC_MINOR }
 ];
 
 /**
@@ -215,10 +350,66 @@ export function chordVocabulary(
     return { alternates: [], borrowed: [], secondary: [] };
   }
 
+  const context: OptionContext = {
+    key,
+    scaleIntervals,
+    spell,
+    current: currentChord(scaleIntervals, selected)
+  };
+
   return {
-    alternates: alternates(key, scaleIntervals, selected, spell),
-    borrowed: borrowed(key, scaleIntervals, spell),
-    secondary: secondary(key, scaleIntervals, spell)
+    alternates: alternates(context, selected),
+    borrowed: borrowed(context),
+    secondary: secondary(context)
+  };
+}
+
+/**
+ * What every option in one call needs and none of them decides: the key, its
+ * scale, how to spell a pitch class, and what the slot already holds.
+ *
+ * Bundled rather than threaded through four functions as four arguments, which
+ * is what they were until `current` made it five. The three groups differ in
+ * *which chords they offer* and in nothing else, so the shared half is worth a
+ * name - and `buildOption` reads all four of them.
+ */
+interface OptionContext {
+  key: ProgressionKey;
+  scaleIntervals: readonly number[];
+  spell: SpellNote;
+  current: CurrentChord | null;
+}
+
+/**
+ * The chord the selected slot holds, with `null` resolved to the key's answer.
+ *
+ * See `ChordOption.current` for why the resolution is the whole point: a slot's
+ * stored `quality` is an override and is `null` on every slot the user has not
+ * altered, so comparing options against the raw field marks nothing on the row
+ * a user first opens.
+ *
+ * The height is the *slot's* and not the option's, which is what makes the
+ * answer single. Resolved at each option's own height instead, a plain V slot
+ * would match `major` at 3 and `dominant7` at 7 and the row would carry two
+ * marks for one chord.
+ */
+interface CurrentChord {
+  degree: number;
+  alter: number;
+  quality: ChordQuality;
+}
+
+function currentChord(
+  scaleIntervals: readonly number[],
+  selected: ChordDegree | null
+): CurrentChord | null {
+  if (selected === null) return null;
+
+  return {
+    degree: selected.degree,
+    alter: selected.alter,
+    quality:
+      selected.quality ?? degreeQuality(scaleIntervals, selected.degree, selected.extent)
   };
 }
 
@@ -231,21 +422,16 @@ export function chordVocabulary(
  * hole to leave. `NAMED_QUALITIES` is derived from `QUALITY_INTERVALS`, so a
  * quality added there appears here without anything being edited.
  */
-function alternates(
-  key: ProgressionKey,
-  scaleIntervals: readonly number[],
-  selected: ChordDegree | null,
-  spell: SpellNote
-): ChordOption[] {
+function alternates(context: OptionContext, selected: ChordDegree | null): ChordOption[] {
   if (selected === null) return [];
 
   return NAMED_QUALITIES.map(quality =>
-    buildOption(key, scaleIntervals, 'alternate', selected.degree, selected.alter, quality, spell)
+    buildOption(context, 'alternate', selected.degree, selected.alter, quality)
   );
 }
 
 /**
- * The parallel minor's chords, read through this key's degrees.
+ * The parallel modes' chords, read through this key's degrees.
  *
  * The accidental is the distance between the two modes at that degree, so ♭VII
  * is `-1` in a major key, `0` in phrygian - which already has a flat seventh -
@@ -258,7 +444,8 @@ function alternates(
  *  - **A chord the key already has is not borrowed.** Aeolian's own ♭VII is
  *    its VII, and offering it under "Borrowed" would say something false about
  *    a chord the diatonic row is already showing. This is why a natural minor
- *    key is offered only the Neapolitan: it has the other four.
+ *    key is offered the Neapolitan and the two harmonic-minor rows and nothing
+ *    else: it has the other four already.
  *  - **A chord the model cannot store is not offered.** `normalizeChordDegree`
  *    clamps `alter` into `ALTER_MIN`..`ALTER_MAX`, so an option past those
  *    bounds would be silently retuned on its way into the slot and the chord
@@ -266,19 +453,16 @@ function alternates(
  *    offers reaches that bound today; the guard is here because the failure it
  *    prevents is invisible.
  */
-function borrowed(
-  key: ProgressionKey,
-  scaleIntervals: readonly number[],
-  spell: SpellNote
-): ChordOption[] {
+function borrowed(context: OptionContext): ChordOption[] {
+  const { scaleIntervals } = context;
   const options: ChordOption[] = [];
 
   for (const borrowing of BORROWINGS) {
     const quality = degreeQuality(borrowing.source, borrowing.degree, TRIAD);
-    // Unreachable for these two modes - every triad of aeolian and phrygian is
-    // a named chord - and the type says so honestly rather than asserting it:
-    // an unnameable stack cannot be an override, so there would be nothing to
-    // offer even if a future source mode produced one.
+    // Unreachable for these three modes - every triad of aeolian, phrygian and
+    // harmonic minor is a named chord - and the type says so honestly rather
+    // than asserting it: an unnameable stack cannot be an override, so there
+    // would be nothing to offer even if a future source mode produced one.
     if (quality === 'other') continue;
 
     const alter = nearestZero(
@@ -289,9 +473,7 @@ function borrowed(
       continue;
     }
 
-    options.push(
-      buildOption(key, scaleIntervals, 'borrowed', borrowing.degree, alter, quality, spell)
-    );
+    options.push(buildOption(context, 'borrowed', borrowing.degree, alter, quality));
   }
 
   return options;
@@ -306,25 +488,34 @@ function borrowed(
  * what gives it the right letter - the dominant of `ii` in C major is A and not
  * B double flat. The **targets** are the degrees a key could be in: a
  * diminished or augmented triad is nobody's tonic, so there is nothing to
- * tonicise, and the tonic itself is excluded because its dominant is `V`, which
- * the diatonic row is already showing.
+ * tonicise, and the tonic itself is excluded because `V/I` is a numeral nobody
+ * writes. The dominant of the home key is *the* `V`, named without a slash, and
+ * a button for it here would say that the key's own dominant belonged somewhere
+ * else.
+ *
+ * **That is a claim about the numeral, not about the chord.** In a minor key the
+ * major dominant genuinely is missing: C aeolian's diatonic row shows `v`, a G
+ * minor triad, and G7 is nowhere on it. This group is not where that is fixed,
+ * because what is missing there is a chord *of* the key rather than a chord
+ * pointing at one - the **borrowed** group fixes it, through harmonic minor. See
+ * `BORROWINGS`, which is also where the claim this paragraph replaced is
+ * recorded as having been false.
  *
  * In a major key that rule selects exactly the five the design doc lists -
  * V/ii, V/iii, V/IV, V/V, V/vi, with `vii°` falling out on its own - and in a
  * natural minor key it selects V/III, V/iv, V/v, V/VI and V/VII, because those
  * are that key's five tonicisable degrees.
  *
- * The accidental is always zero in practice and computed anyway. That is not
- * dead arithmetic: it is zero *because* the targets are filtered to major and
- * minor triads, whose fifth is perfect and whose fifth is the very degree the
- * root is expressed against. Writing the zero down instead would be asserting a
- * theorem the filter above is free to change.
+ * The accidental within the key is always zero in practice and computed anyway.
+ * That is not dead arithmetic: it is zero *because* the targets are filtered to
+ * major and minor triads, whose fifth is perfect and whose fifth is the very
+ * degree the root is expressed against. Writing the zero down instead would be
+ * asserting a theorem the filter above is free to change. The zero that *is*
+ * written down is a different one - the accidental on the left of the slash, in
+ * `ALTER_AGAINST_TARGET` - and that one is a theorem the filter cannot touch.
  */
-function secondary(
-  key: ProgressionKey,
-  scaleIntervals: readonly number[],
-  spell: SpellNote
-): ChordOption[] {
+function secondary(context: OptionContext): ChordOption[] {
+  const { scaleIntervals } = context;
   const options: ChordOption[] = [];
 
   for (let target = 0; target < scaleIntervals.length; target++) {
@@ -340,7 +531,7 @@ function secondary(
     if (alter < ALTER_MIN || alter > ALTER_MAX) continue;
 
     options.push(
-      buildOption(key, scaleIntervals, 'secondary', degree, alter, SECONDARY_QUALITY, spell, {
+      buildOption(context, 'secondary', degree, alter, SECONDARY_QUALITY, {
         degree: target,
         quality: targetQuality
       })
@@ -361,15 +552,14 @@ function secondary(
  * changes, and is the difference between an invariant and a coincidence.
  */
 function buildOption(
-  key: ProgressionKey,
-  scaleIntervals: readonly number[],
+  context: OptionContext,
   group: ChordOptionGroup,
   degree: number,
   alter: number,
   quality: NamedQuality,
-  spell: SpellNote,
   of?: RomanTarget
 ): ChordOption {
+  const { key, scaleIntervals, spell, current } = context;
   const extent = naturalExtent(quality);
   const built = effectiveQuality(scaleIntervals, degree, extent, alter, quality);
   const root = spell(
@@ -384,14 +574,23 @@ function buildOption(
     extent,
     // A slash numeral is measured against its target, so the degree on the left
     // is the dominant of that target rather than this chord's own position in
-    // the key. See `romanNumeral`.
+    // the key - and the accidental on the left is measured there too, which is
+    // why it is a constant rather than `alter`. See `ALTER_AGAINST_TARGET`.
     numeral:
       of === undefined
         ? romanNumeral(degree, alter, built)
-        : romanNumeral(DOMINANT_DEGREE, alter, built, of),
+        : romanNumeral(DOMINANT_DEGREE, ALTER_AGAINST_TARGET, built, of),
     name: chordName(root, built),
     spoken: spokenChordName(root, built),
-    group
+    group,
+    // The *stored* quality rather than the built one, so raising a borrowed
+    // chord's complexity does not un-mark its button: the shape the slot holds
+    // is still the shape that button offers. See `ChordOption.current`.
+    current:
+      current !== null &&
+      current.degree === degree &&
+      current.alter === alter &&
+      current.quality === quality
   };
 }
 

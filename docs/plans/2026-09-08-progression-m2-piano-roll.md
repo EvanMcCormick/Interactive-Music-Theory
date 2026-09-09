@@ -494,6 +494,35 @@ and labelled. Clicking one appends or retunes a slot with the right
 Keep the non-heptatonic refusal working — borrowed chords are just as meaningless
 in a pentatonic key.
 
+**What Task 8 leaves for you.** Five things it found and could not fix from the
+pure layer:
+
+1. **Clicking any option resets the slot's extent**, to 3 for a triad shape and 7
+   for a seventh — including the button matching the shape the slot already has.
+   A user sitting on a ninth who clicks the highlighted button silently loses the
+   ninth. Every option is offered at the height its own quality names, and
+   `progression-vocabulary.ts` gives the argument for that; the cost is real and
+   the **UI has to show it**, not the doc.
+2. **`ChordOption.current` is already computed** — do not recompute it. It marks
+   the option whose (degree, alter, shape) the selected slot holds, with a `null`
+   quality resolved through the key at the slot's own height, which is the case a
+   hand-rolled comparison gets wrong: a fresh slot stores `quality: null` and
+   matching on that field alone marks nothing at all. At most one option per row
+   is marked; two rows can mark the same chord when the selection is itself a
+   borrowed chord, and clicking either does the same thing.
+3. **`secondary` is ordered by target degree**, so `V/V` is the fourth of five
+   rather than the first. If the row should lead with `V/V`, order it in the
+   component.
+4. **A secondary can coincide with a chord the key already has.** G mixolydian's
+   `V/IV` is a G7, which is also its own `I7`. Nothing is wrong; the label is
+   about function, and the palette should not be surprised by two buttons that
+   sound the same.
+5. **Numerals use the `♭` and `♯` glyphs, not ASCII `b` and `#`.** Markup and
+   specs must expect `♭VII`, not `bVII`. Chord *names* are still ASCII, because
+   those come from `MusicTheoryService`'s chromatic tables — so a card really does
+   read `♭VII` over `Bb Maj`, and that mixture is deliberate (see
+   `progression-chord-names.ts`).
+
 **Commit:** `feat: Show alternates, borrowed chords and secondaries in the palette`
 
 ---
