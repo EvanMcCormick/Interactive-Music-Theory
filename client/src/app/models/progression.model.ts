@@ -5,6 +5,7 @@ import type { Scale } from './music-theory.model';
 import { TimeSignature } from './composer.model';
 import {
   BEATS_PER_SLOT_DEFAULT,
+  createExtensions,
   createOwnership,
   normalizeChordSlot
 } from './progression-normalize';
@@ -70,6 +71,12 @@ import {
  * rule's fifth clause fills an absent record with, and `normalizeOwnership`
  * calls it. Left here it would be the one value those guards needed from this
  * file, and so the one thing that would make that cycle real.
+ *
+ * `createExtensions` is there for exactly the same reason, one field over, and
+ * the argument is worth repeating rather than assuming: `ExtensionAlterations`
+ * is declared below, beside the `ChordDegree` that holds it, while the record
+ * of three nulls that is both a fresh slot's value and the fifth clause's fill
+ * for an absent one is built there.
  */
 
 /** The key a progression is in. `tonic` is 0-11, C through B. */
@@ -167,8 +174,55 @@ export type SlotHarmony =
   | { kind: 'degree'; degree: ChordDegree }
   | { kind: 'literal'; reason: 'unrecognised' | 'user-detached' };
 
-/** Suspensions are stored in M1 but not sounded until M2. */
+/**
+ * Which note stands in for the third.
+ *
+ * Stored since M1 and read by nothing until M3, which is the milestone that
+ * sounds it: `chordPitchClasses` replaces the chord's second note with the
+ * second or the fourth above the root, at every height, so `7sus4` and `9sus4`
+ * fall out of the one rule. Where the suspended note is also an extension -
+ * sus4 at extent 11, sus2 at 9 and above - the chord sounds that pitch class
+ * twice an octave apart rather than dropping a note, for the reason
+ * `chordPitchClasses` gives about a duplicated voice: `noteCount(extent)` is
+ * what the inversion wraps against and what the complexity readout prints.
+ */
 export type SuspensionKind = 'none' | 'sus2' | 'sus4';
+
+/** ♭9, 9, ♯9 - semitones from a major ninth. */
+export type NinthAlteration = -1 | 0 | 1;
+/** 11, ♯11 - from a perfect eleventh. */
+export type EleventhAlteration = 0 | 1;
+/** ♭13, 13 - from a major thirteenth. */
+export type ThirteenthAlteration = -1 | 0;
+
+/**
+ * One alteration per extension, each `null` for "as the key gives it" - the
+ * convention `quality` already uses, which is what makes this a migration with
+ * nothing to migrate: a slot with all three null builds exactly what it built
+ * before the field existed.
+ *
+ * A number overrides that one extension **relative to the root**, where `null`
+ * leaves the scale's own note where it was. Each is read only once `extent`
+ * reaches the extension it names, so `extent` stays the single height control
+ * and this record never adds a note to a chord.
+ *
+ * The unions are the alterations conventional harmony has names for and no
+ * others: a ninth may be flattened, natural or raised; an eleventh raised; a
+ * thirteenth flattened. That is what makes the composed names of M3 Task 5 a
+ * finite set rather than a rendering problem, and it is why the three are
+ * separate unions rather than one signed integer.
+ *
+ * Rejected: widening `ChordQuality` into a flat list of named extended chords.
+ * It stores the height twice - in the name and in `extent` - which multiplies
+ * exactly the disagreements `effectiveQuality` already spends two sections on,
+ * and it cannot build a combination nobody listed. See "The chord model grows
+ * three ways, all through `null`" in the design doc.
+ */
+export interface ExtensionAlterations {
+  ninth: NinthAlteration | null;
+  eleventh: EleventhAlteration | null;
+  thirteenth: ThirteenthAlteration | null;
+}
 
 export interface ChordDegree {
   /**
@@ -212,7 +266,14 @@ export interface ChordDegree {
    * and `effectiveQuality` for the name, so a slot left alone re-derives its
    * chord from whichever scale is selected, and a key change re-voices it.
    *
-   * A non-null value **overrides** the shape, which is what a borrowed chord
+   * A non-null value **overrides** the shape, and since M3 the shapes it may
+   * name include four whose fourth note is not a seventh - `major6`, `minor6`,
+   * `add9` and `minorAdd9`. They are qualities rather than heights because
+   * `extent` counts stacked thirds and an added sixth or ninth is not one; a
+   * `major6` at extent 9 is a 6/9, with the key's own ninth over the shape's
+   * four notes.
+   *
+   * Overriding is what a borrowed chord
    * needs and what `alter` could not give it. `alter` moves the root alone; the
    * quality carries what the case of a Roman numeral's letter carries; and the
    * two together spell bVII as *degree 6, alter -1, quality 'major'* - Bb-D-F,
@@ -238,6 +299,17 @@ export interface ChordDegree {
   /** Root position is 0. Stored wrapped into the chord, so it is always nameable. */
   inversion: number;
   suspension: SuspensionKind;
+  /**
+   * How the ninth, eleventh and thirteenth are altered, each `null` for "as
+   * the key gives it". See `ExtensionAlterations`.
+   *
+   * It is the answer to the design doc's "A real ninth chord is unreachable":
+   * `quality` overrides the chord tones from the bottom up and leaves
+   * everything above it diatonic, so before this field every extension in the
+   * app came from the key and a plain `E9` as `V/vi` in C major - E G♯ B D F♯ -
+   * could not be built at all.
+   */
+  extensions: ExtensionAlterations;
   /** Octave shift applied to the voicing base. 0 sounds from middle C. */
   octave: number;
 }
@@ -380,6 +452,10 @@ export function createDegreeSlot(degree: number, startBeat: number): ChordSlot {
         quality: null,
         inversion: 0,
         suspension: 'none',
+        // All three null, for the same reason `quality` is: the key decides
+        // until the user says otherwise. That is what makes the field a
+        // migration with nothing to migrate.
+        extensions: createExtensions(),
         octave: 0
       }
     },

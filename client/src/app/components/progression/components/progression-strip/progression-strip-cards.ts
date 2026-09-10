@@ -209,16 +209,10 @@ function describeSlot(
   // prints the key's own answer for a slot the user has not overridden. Asked
   // through `effectiveQuality` rather than resolved here, so that the strip and
   // the fretboard cannot come to different answers about one chord - and given
-  // `alter` as well, because an override built on a displaced root is a
-  // different chord from the one the override is called, and the card names
-  // what sounds.
-  const quality = effectiveQuality(
-    intervals,
-    degree.degree,
-    degree.extent,
-    degree.alter,
-    degree.quality
-  );
+  // the whole degree, because an override built on a displaced root, or under a
+  // suspension, or over a pinned extension, is a different chord from the one
+  // the override is called, and the card names what sounds.
+  const quality = effectiveQuality(intervals, degree);
 
   return {
     isUnlabelled: false,

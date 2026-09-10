@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 
-import { ALTER_MAX, ALTER_MIN } from '../models/progression-normalize';
+import { ALTER_MAX, ALTER_MIN, createExtensions } from '../models/progression-normalize';
 import { ChordDegree, ProgressionKey } from '../models/progression.model';
 import { MusicTheoryService } from './music-theory.service';
 import { chordRootPitchClass } from './progression-generate';
@@ -62,7 +62,16 @@ describe('chordVocabulary', () => {
 
   /** A selected slot on `degree`, which is all the alternates group reads. */
   function selection(degree: number, alter = 0, quality: NamedQuality | null = null): ChordDegree {
-    return { degree, alter, extent: 3, quality, inversion: 0, suspension: 'none', octave: 0 };
+    return {
+      degree,
+      alter,
+      extent: 3,
+      quality,
+      inversion: 0,
+      suspension: 'none',
+      extensions: createExtensions(),
+      octave: 0
+    };
   }
 
   function numerals(options: readonly ChordOption[]): string[] {
@@ -124,7 +133,7 @@ describe('chordVocabulary', () => {
       for (let alter = ALTER_MIN; alter <= ALTER_MAX; alter++) {
         // A chromatic root needs a shape to build from; `major` is the one every
         // reachable slot could carry, and the alternates row overrides it
-        // twelve ways regardless.
+        // sixteen ways regardless.
         selections.push(selection(degree, alter, alter === 0 ? null : 'major'));
       }
     }
@@ -505,12 +514,19 @@ describe('chordVocabulary', () => {
       expect(names(alternates)).toEqual([
         'C Maj', 'C min', 'C°', 'C+',
         'C Maj7', 'C7', 'C min7', 'C minMaj7',
-        'Cø7', 'C°7', 'C+7', 'C+Maj7'
+        'Cø7', 'C°7', 'C+7', 'C+Maj7',
+        // The four added-tone shapes M3 Task 4 put in `QUALITY_INTERVALS`.
+        // `C6` closes up and `C add9` takes a space, which is `chordName`'s
+        // separator rule reading the first character of the suffix.
+        'C6', 'C min6', 'C add9', 'C minadd9'
       ]);
       expect(numerals(alternates)).toEqual([
         'I', 'i', 'i°', 'I+',
         'Imaj7', 'I7', 'i7', 'i(maj7)',
-        'iø7', 'i°7', 'I+7', 'I+maj7'
+        'iø7', 'i°7', 'I+7', 'I+maj7',
+        // Case carries the third here as everywhere else, so the sixth and the
+        // added ninth each take an upper- and a lower-case numeral.
+        'I6', 'i6', 'Iadd9', 'iadd9'
       ]);
     });
 
@@ -660,7 +676,7 @@ describe('chordVocabulary', () => {
      * Two rows can mark the same chord, and that is the answer rather than a
      * leak.
      *
-     * The alternates row offers all twelve shapes on the *selected* root, so a
+     * The alternates row offers every shape on the *selected* root, so a
      * slot that already holds a borrowed chord finds itself in both rows.
      * Lydian ♯2 borrows a ♭VI, and selecting it marks the borrowed button and
      * the alternates row's `major` together: one chord, two ways to reach it,
@@ -913,21 +929,28 @@ describe('chordVocabulary', () => {
 
   /**
    * The whole reach of the fallback, across all 33 heptatonic scales in all
-   * twelve keys: **twelve buttons, on one root.**
+   * twelve keys: **sixteen buttons, on one root.**
    *
    * `spellAt` refuses past a double accidental and the caller falls back to
    * `spellPitchClass`, which spells by preference and so lands on a letter the
    * numeral did not name. That is the only way a button here can still be on
    * the wrong letter, and it is worth a number rather than a hand-wave.
    *
-   * All twelve are the **sixth degree of A♯ enigmatic**, which needs an F triple
-   * sharp. Enigmatic is `[0, 1, 4, 6, 8, 10, 11]` and inherits no key signature,
-   * so its own `preferSharps` decides and pitch class 10 is spelled `A♯`; from
-   * an A the sixth degree is written on an F, and ten semitones above A♯ is
-   * pitch class 8 - three semitones above F. There is nowhere further to go,
-   * because a triple sharp is not notation. The twelve are one root printed
-   * twelve times: the alternates row offers all twelve shapes on the selected
-   * chord, so every quality repeats it.
+   * All sixteen are the **sixth degree of A♯ enigmatic**, which needs an F
+   * triple sharp. Enigmatic is `[0, 1, 4, 6, 8, 10, 11]` and inherits no key
+   * signature, so its own `preferSharps` decides and pitch class 10 is spelled
+   * `A♯`; from an A the sixth degree is written on an F, and ten semitones above
+   * A♯ is pitch class 8 - three semitones above F. There is nowhere further to
+   * go, because a triple sharp is not notation. The sixteen are one root printed
+   * sixteen times: the alternates row offers every shape on the selected chord,
+   * so every quality repeats it.
+   *
+   * **It was twelve, and it moved at M3 Task 4** when `QUALITY_INTERVALS` gained
+   * `major6`, `minor6`, `add9` and `minorAdd9`. The ruling this docstring asks
+   * for is therefore the mildest one available: no new *root* falls back, the
+   * one that already did is now printed on four more buttons, and the set is
+   * still "the sixth degree of A♯ enigmatic" exactly as it was. The assertion
+   * below that every entry starts `enigmatic on 10:` is what says so.
    *
    * **No borrowed or secondary option is ever affected, in any scale**, and no
    * diatonic mode is affected at all - the test above pins that half at zero.
@@ -937,7 +960,7 @@ describe('chordVocabulary', () => {
    * cannot enlarge the set silently. If this number moves, the new members are
    * printed in the failure and each is a ruling to make, not a count to update.
    */
-  const TRIPLE_ACCIDENTAL_OPTIONS = 12;
+  const TRIPLE_ACCIDENTAL_OPTIONS = 16;
 
   it('falls back to the tables only past a double accidental', () => {
     const wrong: string[] = [];

@@ -1,4 +1,4 @@
-import { ALTER_MAX, ALTER_MIN } from '../models/progression-normalize';
+import { ALTER_MAX, ALTER_MIN, createExtensions } from '../models/progression-normalize';
 import { ChordDegree, ProgressionKey } from '../models/progression.model';
 import {
   RomanTarget,
@@ -63,17 +63,25 @@ import {
  *     buttons can print the same name.
  *  3. **The alternative prints duplicates below and `?` above.** Offered at the
  *     slot's own extent, a seventh is cut back to its triad the moment the slot
- *     is one - and every fresh slot is. At extent 3 the twelve qualities build
+ *     is one - and every fresh slot is. At extent 3 the sixteen qualities build
  *     **four** distinct chords, in all 1015 (scale, degree, alter) combinations
- *     the app can reach: `major`, `major7` and `dominant7` are one button's
- *     worth of chord, and so are the minor, the diminished and the augmented
- *     families. Nine buttons in twelve would duplicate another, always.
+ *     the app can reach: `major`, `major7`, `dominant7`, `major6` and `add9` are
+ *     one button's worth of chord, and so are the minor, the diminished and the
+ *     augmented families. Twelve buttons in sixteen would duplicate another,
+ *     always - it was nine in twelve before M3 Task 4 added the added-tone
+ *     shapes, which land on their own triads too.
  *
  *     At extent 7 or higher the collapse is smaller - 609 of the 1015 still
  *     produce a duplicate - and a second failure replaces it: a triad quality
  *     there keeps the key's own seventh, and that stack often has no name, so
  *     2436 of the 12180 buttons would print `?`. The natural height is the one
  *     rule with neither.
+ *
+ *     Those two figures were measured over the original twelve qualities, and
+ *     12180 is 1015 times twelve. M3 Task 4 made it sixteen, so both counts are
+ *     now floors rather than totals - re-measuring them would sharpen a case
+ *     against an alternative that was already rejected, which is why they are
+ *     annotated rather than re-run.
  *
  *     What those two qualities do *not* do at extent 9 is coincide, and an
  *     earlier version of this note said they did. `major` and `major7` differ
@@ -132,7 +140,7 @@ export interface ChordOption {
    * Whether this is the shape the selected slot already has: the button to mark
    * rather than the hole to leave.
    *
-   * The alternates row offers all twelve qualities precisely so the chosen one
+   * The alternates row offers every named quality precisely so the chosen one
    * has a place, and a place needs a mark. It is computed here rather than left
    * to the palette for the reason the numeral and the name are: the comparison
    * is not the obvious one, and a caller doing it by eye gets it wrong in the
@@ -141,17 +149,17 @@ export interface ChordOption {
    * **The comparison is against the slot's shape, with `null` resolved.** A
    * fresh slot carries `quality: null`, meaning "as the key gives it", so
    * matching on the stored field alone marks nothing at all on the row a user
-   * first opens - even though one of the twelve builds exactly the chord that is
+   * first opens - even though one of them builds exactly the chord that is
    * sounding. So a null quality is read as the key's own quality *at the slot's
    * own height*: a plain V slot marks `major` at extent 3 and `dominant7` at
    * extent 7, which is the chord it is playing in each case.
    *
    * **At most one option per group**, because within a group the three fields
-   * compared are distinct: the twelve alternates have twelve distinct qualities,
-   * and no two rows of `BORROWINGS` or two targets produce the same triple.
+   * compared are distinct: the alternates carry one distinct quality each, and
+   * no two rows of `BORROWINGS` or two targets produce the same triple.
    *
    * Across groups two can be marked, and that is right rather than a leak. The
-   * alternates row offers all twelve shapes on the *selected* root, so whenever
+   * alternates row offers every named shape on the *selected* root, so whenever
    * the selection is itself a borrowed chord that chord appears in both rows -
    * select the `♭VI` of Lydian ♯2 and the borrowed `♭VI` and the alternates row's
    * `major` are the same chord, reached two ways. Marking one and not the other
@@ -293,7 +301,7 @@ const PARALLEL_HARMONIC_MINOR: readonly number[] = [0, 2, 3, 5, 7, 8, 11];
  * exists.** A major dominant in a minor key is a chord you append. A Picardy
  * third is, by construction, a change to the final tonic you have just written -
  * the slot is there, selecting it is the click you were going to make anyway,
- * and the alternates row on it already offers `I` among its twelve. The limit
+ * and the alternates row on it already offers `I` among its own shapes. The limit
  * does not bite, so the row would be a second way to reach a chord that is never
  * more than one click away. If a later milestone finds users hunting for it, the
  * row above is the whole change.
@@ -302,8 +310,8 @@ const PARALLEL_HARMONIC_MINOR: readonly number[] = [0, 2, 3, 5, 7, 8, 11];
  *
  * Its tonic, second and fifth - `i`, `ii°`, `v` in a major key - are the three
  * whose roots the key already has, so they are shapes on an existing root:
- * alternates, which is the row that offers them, and which offers all twelve
- * shapes rather than the parallel minor's one. `iv` is on the list despite
+ * alternates, which is the row that offers them, and which offers every named
+ * shape rather than the parallel minor's one. `iv` is on the list despite
  * sharing that property, because it is the one modal-mixture chord common enough
  * that a user looking for a borrowed sound expects to find it here - and the
  * harmonic minor `V` is on it for the stronger version of the same argument.
@@ -413,8 +421,8 @@ function currentChord(
 /**
  * Every named quality on the selected chord's own root.
  *
- * All twelve rather than eleven: the shape the slot already has is offered back
- * to it, so the row is the same twelve buttons in the same order whatever is
+ * All of them rather than all but one: the shape the slot already has is offered
+ * back to it, so the row is the same buttons in the same order whatever is
  * selected, and the one that is already chosen is a place to mark rather than a
  * hole to leave. `NAMED_QUALITIES` is derived from `QUALITY_INTERVALS`, so a
  * quality added there appears here without anything being edited.
@@ -558,17 +566,14 @@ function buildOption(
 ): ChordOption {
   const { key, scaleIntervals, current } = context;
   const extent = naturalExtent(quality);
-  const built = effectiveQuality(scaleIntervals, degree, extent, alter, quality);
+  const option = optionDegree(degree, alter, quality, extent);
+  const built = effectiveQuality(scaleIntervals, option);
   // On the letter the numeral names, whatever `alter` does to the pitch: a
   // `♭II` button and a `II` button are written on the same letter, and the
   // accidental in the name is the one the numeral is already showing. That is
   // what makes a borrowed root print `Cb` in B flat major rather than the `B`
   // the chromatic tables could only give.
-  const root = chordRootName(
-    key,
-    scaleIntervals,
-    optionDegree(degree, alter, quality, extent)
-  );
+  const root = chordRootName(key, scaleIntervals, option);
 
   return {
     degree,
@@ -621,9 +626,11 @@ function naturalExtent(quality: NamedQuality): ChordExtent {
  * folds a negative sum back into range, which a displaced root in a flat key
  * reaches.
  *
- * Only `degree` and `alter` are read. The other three are what a fresh slot
- * carries, and they are here because the function takes a whole `ChordDegree`
- * rather than because this module has an opinion about inversion.
+ * `chordRootName` reads only `degree` and `alter`; `effectiveQuality`, the
+ * other caller, reads everything but `inversion` and `octave`. The fields a
+ * palette button does not choose are what a fresh slot carries - no
+ * suspension, no pinned extension - which is also what makes the name it
+ * prints the name of the chord the button will actually build.
  */
 function optionDegree(
   degree: number,
@@ -631,7 +638,16 @@ function optionDegree(
   quality: NamedQuality,
   extent: ChordExtent
 ): ChordDegree {
-  return { degree, alter, extent, quality, inversion: 0, suspension: 'none', octave: 0 };
+  return {
+    degree,
+    alter,
+    extent,
+    quality,
+    inversion: 0,
+    suspension: 'none',
+    extensions: createExtensions(),
+    octave: 0
+  };
 }
 
 /**

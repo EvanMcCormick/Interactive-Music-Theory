@@ -454,13 +454,7 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     // `null` means "as the key gives it", and the fretboard wants the name
     // rather than the override - the same resolution the strip's card makes,
     // through the same function so the two cannot disagree.
-    const quality = effectiveQuality(
-      state.keyScale.intervals,
-      degree.degree,
-      degree.extent,
-      degree.alter,
-      degree.quality
-    );
+    const quality = effectiveQuality(state.keyScale.intervals, degree);
     if (quality === 'other') return null;
 
     const category = this.musicTheory.findChordCategory(quality);

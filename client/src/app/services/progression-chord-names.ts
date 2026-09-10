@@ -87,6 +87,14 @@ const NUMERAL_FIGURES: Record<ChordQuality, NumeralFigure> = {
   diminished7: { lowerCase: true, suffix: '°7' },
   augmented7: { lowerCase: false, suffix: '+7' },
   augmentedMajor7: { lowerCase: false, suffix: '+maj7' },
+  // The four added-tone shapes. Case carries the third here as everywhere else,
+  // so the sixth and the added ninth each take two rows rather than one - `I6`
+  // against `i6` is the same distinction `IV` against `iv` is - and the figure
+  // itself says nothing about the third, which is why one figure serves both.
+  major6: { lowerCase: false, suffix: '6' },
+  minor6: { lowerCase: true, suffix: '6' },
+  add9: { lowerCase: false, suffix: 'add9' },
+  minorAdd9: { lowerCase: true, suffix: 'add9' },
   // See `romanNumeral` for why an unnameable stack is marked rather than left
   // to whichever case the table happened to pick.
   other: { lowerCase: false, suffix: '?' }
@@ -105,6 +113,13 @@ const CHORD_SUFFIXES: Record<ChordQuality, string> = {
   diminished7: '°7',
   augmented7: '+7',
   augmentedMajor7: '+Maj7',
+  // `chordName`'s separator rule reads the first character: `6` is a figure and
+  // closes up to give `C6`, where `min6`, `add9` and `minadd9` begin with a
+  // letter and take a space. That is how each is written on a chart.
+  major6: '6',
+  minor6: 'min6',
+  add9: 'add9',
+  minorAdd9: 'minadd9',
   other: '?'
 };
 
@@ -129,6 +144,10 @@ const SPOKEN_QUALITIES: Record<ChordQuality, string> = {
   diminished7: 'diminished seventh',
   augmented7: 'augmented seventh',
   augmentedMajor7: 'augmented major seventh',
+  major6: 'sixth',
+  minor6: 'minor sixth',
+  add9: 'added ninth',
+  minorAdd9: 'minor added ninth',
   // `chordName` prints `?` here, which is honest on screen and says nothing at
   // all aloud. The chord is real and only its name is missing, so the spoken
   // form says exactly that rather than dropping the button's identity.

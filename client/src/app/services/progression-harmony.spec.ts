@@ -1,8 +1,10 @@
 import { ALTER_MAX, ALTER_MIN, CHORD_EXTENTS } from '../models/progression-normalize';
+import { ExtensionAlterations } from '../models/progression.model';
 import { MusicTheoryService } from './music-theory.service';
 import {
   ChordExtent,
   ChordQuality,
+  ChordShape,
   NamedQuality,
   QUALITY_INTERVALS,
   chordPitchClasses,
@@ -13,6 +15,37 @@ import {
   noteCount,
   qualityOfIntervals
 } from './progression-harmony';
+
+/** Nothing pinned above the seventh: what a fresh slot carries. */
+const NONE: ExtensionAlterations = { ninth: null, eleventh: null, thirteenth: null };
+
+/**
+ * A chord shape spread from a plain I triad.
+ *
+ * The builder takes an object because seven positional arguments is where
+ * positional stops being readable, and the default is the chord every existing
+ * case in this file was written against - so a spec that names none of the new
+ * fields is asserting exactly what it asserted before they existed.
+ */
+function shape(overrides: Partial<ChordShape> = {}): ChordShape {
+  return {
+    degree: 0,
+    alter: 0,
+    extent: 3,
+    quality: null,
+    suspension: 'none',
+    extensions: NONE,
+    ...overrides
+  };
+}
+
+/**
+ * How many shapes the table names, read off the table rather than written
+ * down: the sweeps below multiply by it to prove they ran, and a hand-written
+ * 12 is what those assertions would have been checked against after four
+ * entries were added and the loop quietly grew.
+ */
+const NAMED_QUALITY_COUNT = Object.keys(QUALITY_INTERVALS).length;
 
 const MAJOR = [0, 2, 4, 5, 7, 9, 11];
 const NATURAL_MINOR = [0, 2, 3, 5, 7, 8, 10];
@@ -232,14 +265,24 @@ describe('QUALITY_INTERVALS', () => {
     const named: ChordQuality[] = [
       'major', 'minor', 'diminished', 'augmented',
       'major7', 'minor7', 'dominant7', 'minorMajor7',
-      'halfDiminished7', 'diminished7', 'augmented7', 'augmentedMajor7'
+      'halfDiminished7', 'diminished7', 'augmented7', 'augmentedMajor7',
+      // The four added-tone shapes M3 adds. They are four-note chords whose
+      // fourth note is a sixth or a ninth rather than a seventh, so `extent` -
+      // a count of stacked thirds - has nowhere to put them and they are
+      // qualities instead.
+      'major6', 'minor6', 'add9', 'minorAdd9'
     ];
 
     expect(Object.keys(QUALITY_INTERVALS).sort()).toEqual([...named].sort());
   });
 
-  /** Each seventh chord opens with the triad of the same name. */
-  it('opens every seventh with its own triad', () => {
+  /**
+   * Each four-note shape opens with the triad of the same name, which is the
+   * property `chordPitchClasses` truncates against: a seventh or an added-tone
+   * shape chosen at a triad's height is cut to three notes, and what is left
+   * has to be that chord's own triad rather than some other chord.
+   */
+  it('opens every four-note shape with its own triad', () => {
     expect(QUALITY_INTERVALS.dominant7.slice(0, 3)).toEqual(QUALITY_INTERVALS.major);
     expect(QUALITY_INTERVALS.major7.slice(0, 3)).toEqual(QUALITY_INTERVALS.major);
     expect(QUALITY_INTERVALS.minor7.slice(0, 3)).toEqual(QUALITY_INTERVALS.minor);
@@ -248,6 +291,26 @@ describe('QUALITY_INTERVALS', () => {
     expect(QUALITY_INTERVALS.diminished7.slice(0, 3)).toEqual(QUALITY_INTERVALS.diminished);
     expect(QUALITY_INTERVALS.augmented7.slice(0, 3)).toEqual(QUALITY_INTERVALS.augmented);
     expect(QUALITY_INTERVALS.augmentedMajor7.slice(0, 3)).toEqual(QUALITY_INTERVALS.augmented);
+    expect(QUALITY_INTERVALS.major6.slice(0, 3)).toEqual(QUALITY_INTERVALS.major);
+    expect(QUALITY_INTERVALS.minor6.slice(0, 3)).toEqual(QUALITY_INTERVALS.minor);
+    expect(QUALITY_INTERVALS.add9.slice(0, 3)).toEqual(QUALITY_INTERVALS.major);
+    expect(QUALITY_INTERVALS.minorAdd9.slice(0, 3)).toEqual(QUALITY_INTERVALS.minor);
+  });
+
+  /**
+   * The invariant the reverse reading rests on, asserted directly rather than
+   * left to the round trip above.
+   *
+   * `qualityOfIntervals` returns the *first* entry whose shape matches, so two
+   * entries sharing a shape would make it a first match dressed as a function
+   * and the second of the two unreachable. The round trip cannot see that from
+   * the loser's side - it would report the winner's name for both - and this
+   * check can, which is what makes it worth writing separately for four new
+   * entries added against twelve existing ones.
+   */
+  it('gives no two qualities the same shape', () => {
+    const shapes = Object.values(QUALITY_INTERVALS).map(intervals => intervals.join(','));
+    expect(new Set(shapes).size).toBe(shapes.length);
   });
 });
 
@@ -290,7 +353,7 @@ describe('chordPitchClasses', () => {
     alter: number,
     quality: ChordQuality | null
   ): number[] {
-    return chordPitchClasses(MAJOR, degree, extent, alter, quality);
+    return chordPitchClasses(MAJOR, shape({ degree, extent, alter, quality }));
   }
 
   it('gives the diatonic stack when no quality overrides it', () => {
@@ -404,7 +467,10 @@ describe('chordPitchClasses', () => {
         for (const extent of CHORD_EXTENTS) {
           for (const alter of ALTERS) {
             for (const quality of Object.keys(QUALITY_INTERVALS) as ChordQuality[]) {
-              const notes = chordPitchClasses(intervals, degree, extent, alter, quality);
+              const notes = chordPitchClasses(
+                intervals,
+                shape({ degree, extent, alter, quality })
+              );
               checked++;
 
               for (let i = 1; i < notes.length; i++) {
@@ -423,7 +489,13 @@ describe('chordPitchClasses', () => {
 
     // The sweep is only worth anything if it ran: a filter that quietly emptied
     // `APP_SCALES` would pass every expectation above by making none.
-    expect(checked).toBe(APP_SCALES.length * 7 * CHORD_EXTENTS.length * ALTERS.length * 12);
+    expect(checked).toBe(
+      APP_SCALES.length *
+        7 *
+        CHORD_EXTENTS.length *
+        ALTERS.length *
+        NAMED_QUALITY_COUNT
+    );
   });
 
   /**
@@ -440,14 +512,17 @@ describe('chordPitchClasses', () => {
         for (const extent of CHORD_EXTENTS) {
           for (const alter of ALTERS) {
             for (const quality of Object.keys(QUALITY_INTERVALS) as ChordQuality[]) {
-              const shape = QUALITY_INTERVALS[quality as NamedQuality];
+              const qualityIntervals = QUALITY_INTERVALS[quality as NamedQuality];
               const diatonic = degreePitchClasses(intervals, degree, extent);
               const root = diatonic[0] + alter;
               const unlifted = diatonic.map((note, i) =>
-                i < shape.length ? root + shape[i] : note
+                i < qualityIntervals.length ? root + qualityIntervals[i] : note
               );
 
-              const built = chordPitchClasses(intervals, degree, extent, alter, quality);
+              const built = chordPitchClasses(
+                intervals,
+                shape({ degree, extent, alter, quality })
+              );
 
               expect(built.map(pitchClass => (((pitchClass % 12) + 12) % 12)))
                 .withContext(`${quality} on degree ${degree} at extent ${extent}`)
@@ -473,7 +548,12 @@ describe('chordPitchClasses', () => {
     expect(chord(6, 7, 2, 'augmented')).toEqual([13, 17, 21, 33]);
     // Harmonic minor, the same degree and shape: the diatonic seventh is a
     // semitone *below* the fifth above it. [13, 17, 21, 20] before the lift.
-    expect(chordPitchClasses(HARMONIC_MINOR, 6, 7, 2, 'augmented')).toEqual([13, 17, 21, 32]);
+    expect(
+      chordPitchClasses(
+        HARMONIC_MINOR,
+        shape({ degree: 6, extent: 7, alter: 2, quality: 'augmented' })
+      )
+    ).toEqual([13, 17, 21, 32]);
   });
 
   /**
@@ -495,9 +575,10 @@ describe('chordPitchClasses', () => {
 
   /** The guards under it still apply: the scale and the degree are checked. */
   it('refuses a scale that cannot stack thirds, and a degree off the scale', () => {
-    expect(() => chordPitchClasses([0, 2, 4, 7, 9], 0, 3, 0, 'major'))
+    expect(() => chordPitchClasses([0, 2, 4, 7, 9], shape({ quality: 'major' })))
       .toThrowError(/heptatonic/i);
-    expect(() => chordPitchClasses(MAJOR, 7, 3, 0, 'major')).toThrowError(/degree/i);
+    expect(() => chordPitchClasses(MAJOR, shape({ degree: 7, quality: 'major' })))
+      .toThrowError(/degree/i);
   });
 
   /**
@@ -542,6 +623,192 @@ describe('chordPitchClasses', () => {
 });
 
 /**
+ * The design doc's "A real ninth chord is unreachable", answered.
+ *
+ * Every figure below is worked out from the chord rather than read off the
+ * code: pitch classes are relative to the tonic and keep climbing past the
+ * octave, so 14 is the D above 2 and a major ninth above the root is
+ * `root + 14`.
+ */
+describe('chordPitchClasses: extensions', () => {
+  // V9 in C major is G-B-D-F-A. The ninth is the key's own A, which is what the
+  // field leaves alone while it is null.
+  it('builds the diatonic V9 of C major', () => {
+    expect(chordPitchClasses(MAJOR, shape({ degree: 4, extent: 9 })))
+      .toEqual([7, 11, 14, 17, 21]);
+  });
+
+  // G7b9 is G-B-D-F-Ab. A major ninth above G is 7 + 14 = 21, an A; flattened
+  // it is 20, which is that A flat.
+  it('flattens the ninth: G7♭9', () => {
+    expect(chordPitchClasses(MAJOR, shape({
+      degree: 4, extent: 9, extensions: { ...NONE, ninth: -1 }
+    }))).toEqual([7, 11, 14, 17, 20]);
+  });
+
+  /**
+   * The gap this field exists to close. `V/vi` in C major is an E dominant
+   * seventh - E G♯ B D - and raising it to a ninth took the ninth from the key,
+   * which gives F: a flat ninth nobody asked for, with no way to ask for the
+   * F♯ that makes a plain E9.
+   *
+   * A major ninth above E is 4 + 14 = 18, which is that F♯. The diatonic
+   * version is 17, an F, and both are asserted so the fix reads as a difference
+   * rather than as a figure.
+   */
+  it('builds a real E9 as V/vi in C major', () => {
+    const e7 = shape({ degree: 2, extent: 9, quality: 'dominant7' });
+    expect(chordPitchClasses(MAJOR, e7)).toEqual([4, 8, 11, 14, 17]);
+    expect(chordPitchClasses(MAJOR, { ...e7, extensions: { ...NONE, ninth: 0 } }))
+      .toEqual([4, 8, 11, 14, 18]);
+  });
+
+  // Cmaj13#11 is C-E-G-B-D-F♯-A. A perfect eleventh above C is 17, an F; raised
+  // it is 18, that F♯, and the thirteenth above it stays the key's own A.
+  it('sharpens the eleventh: Imaj13♯11', () => {
+    expect(chordPitchClasses(MAJOR, shape({
+      extent: 13, extensions: { ...NONE, eleventh: 1 }
+    }))).toEqual([0, 4, 7, 11, 14, 18, 21]);
+  });
+
+  // A major thirteenth above C is 21, an A; flattened it is 20, an A flat.
+  it('flattens the thirteenth', () => {
+    expect(chordPitchClasses(MAJOR, shape({
+      extent: 13, extensions: { ...NONE, thirteenth: -1 }
+    }))).toEqual([0, 4, 7, 11, 14, 17, 20]);
+  });
+
+  /**
+   * `extent` stays the single height control, which is what "read only once
+   * `extent` reaches the extension" means: a ninth pinned on a triad is a pin
+   * on a note the chord does not have, and it neither adds one nor moves
+   * anything else. Without this the field would be a second, silent height
+   * control and `noteCount(extent)` would stop describing the chord.
+   */
+  it('pins nothing on an extension the extent does not reach', () => {
+    const pinned = { ninth: -1 as const, eleventh: 1 as const, thirteenth: -1 as const };
+    expect(chordPitchClasses(MAJOR, shape({ extensions: pinned }))).toEqual([0, 4, 7]);
+    expect(chordPitchClasses(MAJOR, shape({ extent: 7, extensions: pinned })))
+      .toEqual([0, 4, 7, 11]);
+    // The ninth is the one extension extent 9 does reach, and the two above it
+    // stay silent: 0 + 14 - 1 = 13, a D flat.
+    expect(chordPitchClasses(MAJOR, shape({ extent: 9, extensions: pinned })))
+      .toEqual([0, 4, 7, 11, 13]);
+  });
+
+  /**
+   * Each alteration is measured from the *chord's* natural extension and not
+   * from the scale's, which is the whole of what makes a real ninth reachable.
+   * Swept rather than argued: on every degree of a major key, `ninth: 0` puts a
+   * major ninth above that chord's own root, wherever the key's ninth sits.
+   */
+  it('measures every alteration from the root, not from the key', () => {
+    for (const degree of [0, 1, 2, 3, 4, 5, 6]) {
+      const built = chordPitchClasses(
+        MAJOR,
+        shape({ degree, extent: 9, extensions: { ...NONE, ninth: 0 } })
+      );
+      expect(built[4] - built[0]).withContext(`degree ${degree}`).toBe(14);
+    }
+  });
+});
+
+describe('chordPitchClasses: suspensions', () => {
+  // Csus4 is C-F-G and Csus2 is C-D-G: the fourth and the second standing in
+  // for the third, which is the note a suspension replaces.
+  it('replaces the third', () => {
+    expect(chordPitchClasses(MAJOR, shape({ suspension: 'sus4' }))).toEqual([0, 5, 7]);
+    expect(chordPitchClasses(MAJOR, shape({ suspension: 'sus2' }))).toEqual([0, 2, 7]);
+  });
+
+  // G7sus4 is G-C-D-F. The replacement happens at every height, so the seventh
+  // above it is untouched and 7sus4 falls out with no rule of its own.
+  // 7 + 5 = 12, which is the C above the tonic.
+  it('suspends at every height: G7sus4', () => {
+    expect(chordPitchClasses(MAJOR, shape({ degree: 4, extent: 7, suspension: 'sus4' })))
+      .toEqual([7, 12, 14, 17]);
+  });
+
+  // The suspended fourth and the eleventh are one pitch class an octave apart.
+  // Doubled, not dropped: the note count is what normalizeInversion wraps
+  // against and what the complexity readout prints.
+  it('doubles the fourth under an eleventh rather than dropping it', () => {
+    expect(chordPitchClasses(MAJOR, shape({ extent: 11, suspension: 'sus4' })))
+      .toEqual([0, 5, 7, 11, 14, 17]);
+  });
+
+  /**
+   * The suspension is measured from the root the *shape* gave rather than from
+   * the degree that root displaces. `♭VII` in C major is rooted on B flat, so
+   * the fourth above it is an E flat - 10 + 5 = 15 - and not the E natural a
+   * fourth above the key's own B.
+   */
+  it('suspends above a displaced root', () => {
+    expect(chordPitchClasses(MAJOR, shape({
+      degree: 6, alter: -1, quality: 'major', suspension: 'sus4'
+    }))).toEqual([10, 15, 17]);
+  });
+
+  /** Every extent keeps its own note count with a suspension on it. */
+  it('gives the extent its own note count for every suspension', () => {
+    for (const extent of CHORD_EXTENTS) {
+      for (const suspension of ['none', 'sus2', 'sus4'] as const) {
+        expect(chordPitchClasses(MAJOR, shape({ extent, suspension })).length)
+          .withContext(`${suspension} at extent ${extent}`)
+          .toBe(noteCount(extent));
+      }
+    }
+  });
+});
+
+describe('chordPitchClasses: added tones', () => {
+  // C6 is C-E-G-A and C6/9 is C-E-G-A-D. The 6/9 needs no rule of its own: the
+  // shape gives four notes and the key's own ninth sits on top of them.
+  it('builds C6, and C6/9 with no rule of its own', () => {
+    expect(chordPitchClasses(MAJOR, shape({ extent: 7, quality: 'major6' })))
+      .toEqual([0, 4, 7, 9]);
+    expect(chordPitchClasses(MAJOR, shape({ extent: 9, quality: 'major6' })))
+      .toEqual([0, 4, 7, 9, 14]);
+  });
+
+  // Cadd9 is C-E-G-D: a ninth added over a triad with no seventh under it,
+  // which is exactly why it is a shape rather than an extent.
+  it('builds Cadd9', () => {
+    expect(chordPitchClasses(MAJOR, shape({ extent: 7, quality: 'add9' })))
+      .toEqual([0, 4, 7, 14]);
+  });
+
+  // Cm6 is C-Eb-G-A and Cm(add9) is C-Eb-G-D.
+  it('builds the minor pair', () => {
+    expect(chordPitchClasses(MAJOR, shape({ extent: 7, quality: 'minor6' })))
+      .toEqual([0, 3, 7, 9]);
+    expect(chordPitchClasses(MAJOR, shape({ extent: 7, quality: 'minorAdd9' })))
+      .toEqual([0, 3, 7, 14]);
+  });
+
+  /**
+   * The truncation invariant, on the four entries it was widened for: a
+   * four-note shape asked for at a triad's height leaves that shape's own
+   * triad, because every entry opens with it.
+   */
+  it('cuts an added-tone shape back to its own triad', () => {
+    expect(chordPitchClasses(MAJOR, shape({ quality: 'major6' }))).toEqual([0, 4, 7]);
+    expect(chordPitchClasses(MAJOR, shape({ quality: 'add9' }))).toEqual([0, 4, 7]);
+    expect(chordPitchClasses(MAJOR, shape({ quality: 'minor6' }))).toEqual([0, 3, 7]);
+    expect(chordPitchClasses(MAJOR, shape({ quality: 'minorAdd9' }))).toEqual([0, 3, 7]);
+  });
+
+  /** And each reads back as itself, which is what the reverse reading needs. */
+  it('reads each added-tone shape back as itself', () => {
+    for (const quality of ['major6', 'minor6', 'add9', 'minorAdd9'] as NamedQuality[]) {
+      expect(qualityOfIntervals(chordPitchClasses(MAJOR, shape({ extent: 7, quality }))))
+        .withContext(quality)
+        .toBe(quality);
+    }
+  });
+});
+
+/**
  * The one function on the naming path with no coverage at all, which is how
  * both the bugs below survived: deleting its override branch outright - making
  * it `return degreeQuality(...)` - left the whole suite green, and under that
@@ -557,10 +824,10 @@ describe('effectiveQuality', () => {
 
   /** A null quality means "as the key gives it", which is `degreeQuality`. */
   it('names a slot with no override from the key', () => {
-    expect(effectiveQuality(MAJOR, 0, 3, 0, null)).toBe('major');
-    expect(effectiveQuality(MAJOR, 6, 3, 0, null)).toBe('diminished');
-    expect(effectiveQuality(MAJOR, 4, 7, 0, null)).toBe('dominant7');
-    expect(effectiveQuality(HARMONIC_MINOR, 2, 3, 0, null)).toBe('augmented');
+    expect(effectiveQuality(MAJOR, shape())).toBe('major');
+    expect(effectiveQuality(MAJOR, shape({ degree: 6 }))).toBe('diminished');
+    expect(effectiveQuality(MAJOR, shape({ degree: 4, extent: 7 }))).toBe('dominant7');
+    expect(effectiveQuality(HARMONIC_MINOR, shape({ degree: 2 }))).toBe('augmented');
   });
 
   /**
@@ -569,12 +836,16 @@ describe('effectiveQuality', () => {
    * than the `vii°` the key would have given.
    */
   it('names an overridden slot from the override, not from the key', () => {
-    expect(effectiveQuality(MAJOR, 6, 3, -1, 'major')).toBe('major');
-    expect(effectiveQuality(MAJOR, 5, 3, -1, 'major')).toBe('major');
-    expect(effectiveQuality(MAJOR, 1, 7, 0, 'dominant7')).toBe('dominant7');
+    expect(effectiveQuality(MAJOR, shape({ degree: 6, alter: -1, quality: 'major' })))
+      .toBe('major');
+    expect(effectiveQuality(MAJOR, shape({ degree: 5, alter: -1, quality: 'major' })))
+      .toBe('major');
+    expect(effectiveQuality(MAJOR, shape({ degree: 1, extent: 7, quality: 'dominant7' })))
+      .toBe('dominant7');
     // And on a degree the key already names the same way, so the branch is
     // pinned by a case where the two answers differ *and* one where they agree.
-    expect(effectiveQuality(MAJOR, 1, 3, 0, 'diminished')).toBe('diminished');
+    expect(effectiveQuality(MAJOR, shape({ degree: 1, quality: 'diminished' })))
+      .toBe('diminished');
   });
 
   /**
@@ -588,11 +859,12 @@ describe('effectiveQuality', () => {
    * and used to print `B♭ Maj` over four.
    */
   it('names the chord the slot builds, not the override it was asked for', () => {
-    expect(chordPitchClasses(MAJOR, 0, 3, 0, 'major7')).toEqual([0, 4, 7]);
-    expect(effectiveQuality(MAJOR, 0, 3, 0, 'major7')).toBe('major');
+    expect(chordPitchClasses(MAJOR, shape({ quality: 'major7' }))).toEqual([0, 4, 7]);
+    expect(effectiveQuality(MAJOR, shape({ quality: 'major7' }))).toBe('major');
 
-    expect(chordPitchClasses(MAJOR, 6, 7, -1, 'major')).toEqual([10, 14, 17, 21]);
-    expect(effectiveQuality(MAJOR, 6, 7, -1, 'major')).toBe('major7');
+    const flatSeven = shape({ degree: 6, extent: 7, alter: -1, quality: 'major' });
+    expect(chordPitchClasses(MAJOR, flatSeven)).toEqual([10, 14, 17, 21]);
+    expect(effectiveQuality(MAJOR, flatSeven)).toBe('major7');
   });
 
   /**
@@ -613,7 +885,7 @@ describe('effectiveQuality', () => {
             const extent: ChordExtent = QUALITY_INTERVALS[quality].length === 3 ? 3 : 7;
             checked++;
 
-            expect(effectiveQuality(intervals, degree, extent, alter, quality))
+            expect(effectiveQuality(intervals, shape({ degree, extent, alter, quality })))
               .withContext(`${quality} on degree ${degree} altered by ${alter}`)
               .toBe(quality);
           }
@@ -621,7 +893,7 @@ describe('effectiveQuality', () => {
       }
     }
 
-    expect(checked).toBe(APP_SCALES.length * 7 * 5 * 12);
+    expect(checked).toBe(APP_SCALES.length * 7 * 5 * NAMED_QUALITY_COUNT);
   });
 
   /**
@@ -635,8 +907,9 @@ describe('effectiveQuality', () => {
    * on: unlabelled rather than mislabelled.
    */
   it('refuses to name a stack the override leaves unnameable', () => {
-    expect(chordPitchClasses(MAJOR, 0, 7, -2, 'major')).toEqual([-2, 2, 5, 11]);
-    expect(effectiveQuality(MAJOR, 0, 7, -2, 'major')).toBe('other');
+    const wide = shape({ extent: 7, alter: -2, quality: 'major' });
+    expect(chordPitchClasses(MAJOR, wide)).toEqual([-2, 2, 5, 11]);
+    expect(effectiveQuality(MAJOR, wide)).toBe('other');
   });
 
   /**
@@ -648,8 +921,8 @@ describe('effectiveQuality', () => {
    * `'other'`.
    */
   it('hands an unnameable stored quality straight back', () => {
-    expect(effectiveQuality(MAJOR, 0, 3, 0, 'other')).toBe('other');
-    expect(() => effectiveQuality(MAJOR, 0, 3, 0, 'other')).not.toThrow();
+    expect(effectiveQuality(MAJOR, shape({ quality: 'other' }))).toBe('other');
+    expect(() => effectiveQuality(MAJOR, shape({ quality: 'other' }))).not.toThrow();
   });
 
   /**
@@ -659,14 +932,15 @@ describe('effectiveQuality', () => {
    * not the place to discover that a document carried it anyway.
    */
   it('names a chromatic root under a null quality rather than throwing', () => {
-    expect(() => chordPitchClasses(MAJOR, 6, 3, -1, null)).toThrowError(/quality/i);
-    expect(effectiveQuality(MAJOR, 6, 3, -1, null)).toBe('diminished');
+    expect(() => chordPitchClasses(MAJOR, shape({ degree: 6, alter: -1 })))
+      .toThrowError(/quality/i);
+    expect(effectiveQuality(MAJOR, shape({ degree: 6, alter: -1 }))).toBe('diminished');
   });
 
   /** The guards below it still reach the caller. */
   it('refuses a scale that cannot stack thirds, and a degree off the scale', () => {
-    expect(() => effectiveQuality([0, 2, 4, 7, 9], 0, 3, 0, 'major'))
+    expect(() => effectiveQuality([0, 2, 4, 7, 9], shape({ quality: 'major' })))
       .toThrowError(/heptatonic/i);
-    expect(() => effectiveQuality(MAJOR, 7, 3, 0, null)).toThrowError(/degree/i);
+    expect(() => effectiveQuality(MAJOR, shape({ degree: 7 }))).toThrowError(/degree/i);
   });
 });

@@ -1,6 +1,6 @@
 import { NgZone, provideZoneChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { createOwnership } from '../models/progression-normalize';
+import { createExtensions, createOwnership } from '../models/progression-normalize';
 import { ChordSlot, ProgressionDoc, RollNote } from '../models/progression.model';
 import {
   PROGRESSION_AUDIO,
@@ -309,6 +309,7 @@ function degreeSlot(
         quality: 'major',
         inversion: 0,
         suspension: 'none',
+        extensions: createExtensions(),
         octave: 0
       }
     },

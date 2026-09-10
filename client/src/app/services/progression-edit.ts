@@ -10,6 +10,7 @@ import {
 import {
   ChordDegree,
   ChordSlot,
+  ExtensionAlterations,
   ProgressionDoc,
   ProgressionKey,
   RollNote,
@@ -227,7 +228,24 @@ export function sameDegree(a: ChordDegree, b: ChordDegree): boolean {
     quality: a.quality === b.quality,
     inversion: a.inversion === b.inversion,
     suspension: a.suspension === b.suspension,
+    // A record, so it is compared member by member rather than by reference -
+    // two degrees that pin nothing hold two different all-null objects, and by
+    // reference every one of them would differ from every other. The three
+    // members are named rather than looped for `sameNote`'s reason one level
+    // down: an extension added to `ExtensionAlterations` is a compile error
+    // here rather than an edit this quietly stops noticing.
+    extensions: sameExtensions(a.extensions, b.extensions),
     octave: a.octave === b.octave
+  };
+  return Object.values(matches).every(match => match);
+}
+
+/** Whether two degrees pin the same alteration on each extension. */
+function sameExtensions(a: ExtensionAlterations, b: ExtensionAlterations): boolean {
+  const matches: Record<keyof ExtensionAlterations, boolean> = {
+    ninth: a.ninth === b.ninth,
+    eleventh: a.eleventh === b.eleventh,
+    thirteenth: a.thirteenth === b.thirteenth
   };
   return Object.values(matches).every(match => match);
 }

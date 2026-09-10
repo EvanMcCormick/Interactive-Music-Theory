@@ -400,7 +400,14 @@ describe('ChordPaletteComponent', () => {
 
       const intervals = currentState().keyScale?.intervals ?? [];
       // Degree 4 of a major scale, extended: the dominant seventh.
-      expect(effectiveQuality(intervals, 4, 7, 0, null)).toBe('dominant7');
+      expect(effectiveQuality(intervals, {
+        degree: 4,
+        alter: 0,
+        extent: 7,
+        quality: null,
+        suspension: 'none',
+        extensions: { ninth: null, eleventh: null, thirteenth: null }
+      })).toBe('dominant7');
     });
 
     /**
@@ -611,8 +618,12 @@ describe('ChordPaletteComponent', () => {
       component.addChord(component.chords[4]);
       settle();
 
-      expect(component.alternates.length).toBe(12);
+      // Sixteen since M3 Task 4: the twelve triads and sevenths, plus the four
+      // added-tone shapes. The row maps `NAMED_QUALITIES`, which is derived from
+      // `QUALITY_INTERVALS`, so a shape added to that table joins the row.
+      expect(component.alternates.length).toBe(16);
       expect(component.alternates.map(chord => chord.name)).toContain('G Maj');
+      expect(component.alternates.map(chord => chord.name)).toContain('G6');
     });
 
     /**
@@ -899,7 +910,7 @@ describe('ChordPaletteComponent', () => {
 
   /**
    * The alternates row is the other verb: it re-shapes the chord that is
-   * selected rather than adding one, which is the only thing twelve shapes on a
+   * selected rather than adding one, which is the only thing sixteen shapes on a
    * root the user is already sitting on could usefully mean.
    */
   describe('clicking an alternate', () => {
@@ -984,9 +995,9 @@ describe('ChordPaletteComponent', () => {
     });
 
     /**
-     * On a ninth, every one of the twelve is shorter - the triads by two rungs
-     * and the sevenths by one - so all twelve are marked and the row says which
-     * height is at stake.
+     * On a ninth, every one of the sixteen is shorter - the triads by two rungs
+     * and the four-note shapes by one - so all sixteen are marked and the row
+     * says which height is at stake.
      */
     it('marks every button that would shorten it, and names what is at stake', () => {
       component.stepComplexity(1);
@@ -1011,7 +1022,7 @@ describe('ChordPaletteComponent', () => {
      * The warning is about something that really happens, and it reaches the
      * marked button too: a ninth is named after its seventh, so `dominant7` is
      * what is marked here, it stands a rung below the slot, and clicking it
-     * takes a note away. Every one of the twelve does, which is what the
+     * takes a note away. Every one of the sixteen does, which is what the
      * sentence under the row says.
      */
     it('takes the ninth away when one of them is clicked', () => {
@@ -1173,7 +1184,7 @@ describe('ChordPaletteComponent', () => {
      *
      * The button is captured before the click rather than looked up again
      * after: `trackByKey` keeps the same DOM node, and asking for `♭VII` a
-     * second time would find the alternates row's own `♭VII` - twelve shapes on
+     * second time would find the alternates row's own `♭VII` - sixteen shapes on
      * that root include the major triad - which is a different button.
      *
      * Measured from the panel and not from the viewport. `click()` focuses the
@@ -1194,7 +1205,7 @@ describe('ChordPaletteComponent', () => {
       button.click();
       settle();
 
-      expect(component.alternates.length).toBe(12);
+      expect(component.alternates.length).toBe(16);
       expect(fixture.nativeElement.contains(button)).toBeTrue();
       expect(fromPanelTop(button)).toBe(before);
     });

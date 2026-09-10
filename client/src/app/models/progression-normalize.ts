@@ -6,10 +6,15 @@ import { NAMED_QUALITIES, noteCount } from '../services/progression-harmony';
 import type {
   ChordDegree,
   ChordSlot,
+  EleventhAlteration,
+  ExtensionAlterations,
+  NinthAlteration,
   ProgressionDoc,
   ProgressionKey,
   RollNote,
-  SlotOwnership
+  SlotOwnership,
+  SuspensionKind,
+  ThirteenthAlteration
 } from './progression.model';
 
 /**
@@ -67,16 +72,20 @@ import type {
  *  - **A cyclic control past its limit wraps** - `inversion`, and the key's
  *    `tonic`. The inversion above the last is root position again; the pitch
  *    class above B is C. Storing them wrapped keeps them nameable.
- *  - **A value outside an enumerated set throws** - `extent` and `quality`. Both
- *    are unions rather than ranges, so a value that is not in one is a type
- *    violation rather than a control at its limit, and there is no end to clamp
+ *  - **A value outside an enumerated set throws** - `extent`, `quality`,
+ *    `suspension`, and each member of `extensions`. All are unions rather than
+ *    ranges, so a value that is not in one is a type violation rather than a
+ *    control at its limit, and there is no end to clamp
  *    to: the set is a ladder, not an interval. Keeping the +/- complexity
  *    buttons inside `CHORD_EXTENTS` is therefore the *stepper's* job - stepping
  *    off either end should fail loudly here rather than be rounded back onto the
  *    last rung. `quality` also carries the one *cross-field* rule in this file:
  *    a chromatic root needs a quality that names a shape, which is design
  *    decision 1 and falls under the first clause, neither field being wrong on
- *    its own.
+ *    its own. `suspension` joined this clause at M3 having been stored
+ *    unchecked since M1, on the honest ground that nothing read it: it reaches
+ *    `chordPitchClasses` now, where an unlisted value would silently sound the
+ *    diatonic third and leave a card reading `sus4` over a chord that is not.
  *  - **A field that reaches no audio path and has a defined safe default is
  *    filled when it is absent, rather than thrown on** - `owned`. The clauses
  *    above are about values that arrive somewhere unlooked-at, where "I cannot
@@ -85,7 +94,11 @@ import type {
  *    The clause is about *absence* only, and absence is a migration - a field
  *    added to a document type is missing from every document written before it.
  *    A member that is present and of the wrong kind is corruption rather than
- *    migration, and falls back under the first clause and throws.
+ *    migration, and falls back under the first clause and throws. `extensions`
+ *    is the second field under this clause and the first one for which the
+ *    migration is not hypothetical: it was added to `ChordDegree` at M3, so
+ *    every slot written before it has none, and the fill is the value a fresh
+ *    slot carries - all three `null`, "as the key gives it".
  *
  * `normalizeProgressionDoc` is what makes the rule a mechanism rather than a
  * convention: `ProgressionService.commit` calls it on every mutation, so the
@@ -123,9 +136,16 @@ export const VOICING_BASE_MIDI = 60;
  * the pipeline `generateSlotNotes` actually runs - all 33 heptatonic scales the
  * app offers, every degree, extent, inversion and tonic, and every `(alter,
  * quality)` pair a stored slot may carry - the highest note a chord can reach is
- * **45** semitones above the base. The witness is Hungarian minor's degree 5 at
- * extent 13, altered down a tone and overridden to `augmented7`, third
- * inversion, in G.
+ * **46** semitones above the base. The witness is the enigmatic scale's degree 0
+ * at extent 13, altered down a tone and overridden to `add9`, fourth inversion,
+ * in B flat.
+ *
+ * It was 45, on Hungarian minor's degree 5 overridden to `augmented7`, and it
+ * moved when M3 Task 4 put four added-tone shapes in `QUALITY_INTERVALS`:
+ * `add9` puts its fourth note a *ninth* above the root where every seventh puts
+ * one at 10 or 11, so a displaced root reaches a semitone further under the
+ * diatonic notes the override leaves alone. The sweep found it without being
+ * widened, because it derives its shapes from that table.
  *
  * `alter` and `tonic` belong in that measurement rather than being factored out
  * of it, because the reach is not transposition-invariant: `voiceChord` places
@@ -141,8 +161,8 @@ export const VOICING_BASE_MIDI = 60;
  * `alter` 0, 45 once `alter` moves. A plain alternates row with no chromatic
  * root at all already passes the old figure.
  *
- * `OCTAVE_MAX` of 1 puts the base at C5 and that ceiling at 117, ten short of
- * 127; 2 would put it at 129, off the end of MIDI. The spec proves both halves,
+ * `OCTAVE_MAX` of 1 puts the base at C5 and that ceiling at 118, nine short of
+ * 127; 2 would put it at 130, off the end of MIDI. The spec proves both halves,
  * so a new scale that widened the stack would fail rather than clip.
  *
  * **It was 2, and dropping it costs the user the top octave of the control.**
@@ -154,6 +174,33 @@ export const VOICING_BASE_MIDI = 60;
  * here exists to avoid. See M2 Task 3 in the piano roll plan for the option that
  * keeps the range - a per-slot ceiling derived from the chord itself - and what
  * that costs instead.
+ *
+ * ## Open at M3 Task 4: the widened chord model does not fit under it
+ *
+ * Everything above measures a chord's `(alter, quality)` and nothing else,
+ * because until M3 that was the whole of what a stored slot could vary.
+ * `suspension` is now sounded and `extensions` now pins the ninth, eleventh and
+ * thirteenth, and the same sweep run with both axes added - all 236 million
+ * chords of it - reaches **58** semitones above the base, not 46.
+ *
+ * 58 puts the ceiling at 130 with `OCTAVE_MAX` at 1: three semitones off the
+ * end of MIDI, on a chord `voiceChord` will hand to `Tone.PolySynth`
+ * unclamped. The witness is C major's degree 3 - the IV - at extent 13, altered
+ * down a tone and overridden to `diminished`, suspended at the fourth with a
+ * flattened ninth and a flattened thirteenth, second inversion, in D - where
+ * two replacements land on the note below them and the lift adds an octave
+ * twice. It is pinned by hand in the spec.
+ *
+ * **The constant is deliberately not changed here.** Dropping it to 0 is the
+ * fix that fits the argument above, and it costs the user a second octave of a
+ * control that has already paid one for this bound - which M2 Task 3 records as
+ * the project owner's trade-off to make, beside the alternative that keeps the
+ * range: a per-slot ceiling derived from the chord itself.
+ *
+ * Nothing reaches it today. No control writes `suspension` or `extensions`, and
+ * `replaceDocument` has no production caller, so the storable set is wider than
+ * the *buildable* one until M3 Task 6 adds the palette controls. That task is
+ * the deadline: it must not land until this is settled.
  *
  * The bottom is taste, and the spec pins it as taste rather than deriving it:
  * `voiceChord` never voices below its base, so the MIDI floor would permit
@@ -374,6 +421,111 @@ function requireQuality(quality: NamedQuality | null): NamedQuality | null {
     );
   }
   return quality;
+}
+
+/**
+ * A chord with nothing pinned above the seventh: the value a fresh slot
+ * carries, and the fifth clause's fill for an absent record.
+ *
+ * A function rather than a shared constant, for `createOwnership`'s reason:
+ * `structuredClone` undo is only safe while no two documents point at the same
+ * object, and a shared record would be handed to every slot the factory makes.
+ * It lives here rather than beside `ExtensionAlterations` for `createOwnership`'s
+ * other reason - left in the model it would be the one value these guards
+ * needed from there, and so the one thing that would make that type-only cycle
+ * real.
+ */
+export function createExtensions(): ExtensionAlterations {
+  return { ninth: null, eleventh: null, thirteenth: null };
+}
+
+/**
+ * The runtime twins of the three alteration unions and of `SuspensionKind`.
+ *
+ * Written out rather than derived, because unlike `NAMED_QUALITIES` there is no
+ * table keyed on these types for a list to fall out of. That makes each one a
+ * second statement of its union, so the spec pins them against it: a member
+ * added to a union and not to the list here would be storable in the type and
+ * refused at the door.
+ */
+const NINTH_ALTERATIONS: readonly NinthAlteration[] = [-1, 0, 1];
+const ELEVENTH_ALTERATIONS: readonly EleventhAlteration[] = [0, 1];
+const THIRTEENTH_ALTERATIONS: readonly ThirteenthAlteration[] = [-1, 0];
+export const SUSPENSIONS: readonly SuspensionKind[] = ['none', 'sus2', 'sus4'];
+
+/**
+ * The enumerated-set clause on a field that has been stored unchecked since M1.
+ *
+ * It was defensible while nothing read it - `generateSlotNotes` said in as many
+ * words that a suspension was stored and not sounded - and it stops being
+ * defensible the moment `chordPitchClasses` reads it. An unlisted value there
+ * falls through the `!== 'none'` test into the diatonic third, so a document
+ * carrying `'sus9'` would sound a plain triad under a card that says it is
+ * suspended: a wrong chord dressed as a right one, which is what every guard in
+ * this file exists to turn into a failure.
+ *
+ * Absence throws rather than filling, and the distinction is the fifth clause's:
+ * this field is as old as `ChordDegree`, so no document was ever written
+ * without it and a missing one is corruption rather than migration.
+ */
+function requireSuspension(suspension: SuspensionKind): SuspensionKind {
+  if (!SUSPENSIONS.includes(suspension)) {
+    throw new Error(
+      `ChordDegree suspension must be one of ${SUSPENSIONS.join(', ')}; got ${suspension}`
+    );
+  }
+  return suspension;
+}
+
+/**
+ * Fills in a degree's extension alterations when the record is absent, and
+ * checks each member when it is not.
+ *
+ * The two clauses meet here, and the split is `normalizeOwnership`'s exactly.
+ * The **record** absent is the fifth clause: `extensions` was added to
+ * `ChordDegree` at M3, so a document written before it has none at all, and the
+ * safe default is the value a fresh slot carries. A **member** present and
+ * outside its union is the fourth clause: each is a union rather than a range,
+ * so there is no nearest legal value to clamp to, and a `2` on the ninth would
+ * reach `chordPitchClasses` as a real displacement and build a chord no name
+ * fits. `undefined` on one member is caught by the same test - a record present
+ * but missing a member is half-written rather than old.
+ *
+ * `null` is legal on every member and is not a missing value: it is what a
+ * fresh slot carries and it means "as the key gives it".
+ *
+ * Rebuilt rather than passed through, so a document already on the
+ * `structuredClone` undo stack is not left sharing a record with the one that
+ * replaced it - the promise `normalizeOwnership` and `normalizeChordSlot` make.
+ */
+function normalizeExtensions(
+  extensions: ExtensionAlterations | undefined
+): ExtensionAlterations {
+  if (extensions === undefined) return createExtensions();
+  return {
+    ninth: requireAlteration(extensions.ninth, NINTH_ALTERATIONS, 'ninth'),
+    eleventh: requireAlteration(extensions.eleventh, ELEVENTH_ALTERATIONS, 'eleventh'),
+    thirteenth: requireAlteration(
+      extensions.thirteenth,
+      THIRTEENTH_ALTERATIONS,
+      'thirteenth'
+    )
+  };
+}
+
+function requireAlteration<T extends number>(
+  value: T | null,
+  allowed: readonly T[],
+  extension: string
+): T | null {
+  if (value === null) return null;
+  if (!allowed.includes(value)) {
+    throw new Error(
+      `ChordDegree extensions ${extension} must be null or one of ` +
+        `${allowed.join(', ')}; got ${value}`
+    );
+  }
+  return value;
 }
 
 /**
@@ -644,6 +796,8 @@ function normalizeChordDegree(degree: ChordDegree): ChordDegree {
     alter,
     extent,
     quality,
+    suspension: requireSuspension(degree.suspension),
+    extensions: normalizeExtensions(degree.extensions),
     inversion: normalizeInversion(requireInteger(degree.inversion, 'inversion'), extent),
     octave: clamp(requireInteger(degree.octave, 'octave'), OCTAVE_MIN, OCTAVE_MAX)
   };

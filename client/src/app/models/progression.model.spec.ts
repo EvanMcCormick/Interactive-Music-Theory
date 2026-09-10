@@ -46,8 +46,12 @@ describe('createDegreeSlot', () => {
       kind: 'degree',
       // `quality` starts null - "as the key gives it" - rather than guessing a
       // shape the scale has not been consulted about.
+      // `extensions` starts all-null for the same reason `quality` starts
+      // null: the key decides until the user says otherwise.
       degree: { degree: 0, alter: 0, extent: 3, quality: null,
-                inversion: 0, suspension: 'none', octave: 0 }
+                inversion: 0, suspension: 'none',
+                extensions: { ninth: null, eleventh: null, thirteenth: null },
+                octave: 0 }
     });
     expect(slot.owned).toEqual(createOwnership());
     expect(slot.lengthBeats).toBe(BEATS_PER_SLOT_DEFAULT);

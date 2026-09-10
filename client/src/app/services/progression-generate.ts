@@ -142,11 +142,11 @@ export function generateSlotNotes(
 
   const degree = slot.harmony.degree;
 
-  // Relative to the tonic, as `degreePitchClasses` returns it, with `alter` and
-  // any override applied while still in that frame. `suspension` would be
-  // honoured here too, replacing the third with the second or the fourth - it is
-  // stored on the model but deliberately not sounded until M2, and
-  // half-implementing it would make slots that look suspended and play major.
+  // Relative to the tonic, as `degreePitchClasses` returns it, with `alter`,
+  // any override, the suspension and any pinned extension applied while still
+  // in that frame. The whole degree goes over as one object - it satisfies
+  // `ChordShape` by structure - which is what stopped this call growing a sixth
+  // and seventh positional argument at M3.
   //
   // The field is handed over as it is stored. It used to be mapped on the way
   // in - a stored `'other'` read as no override - because `regenerateSlot` wrote
@@ -156,13 +156,7 @@ export function generateSlotNotes(
   // `NamedQuality | null` with it, and `normalizeChordDegree` turns `'other'`
   // away at the door - so there is nothing left to launder, and a refusal that
   // does reach here is a real one rather than an artefact.
-  const relative = chordPitchClasses(
-    scaleIntervals,
-    degree.degree,
-    degree.extent,
-    degree.alter,
-    degree.quality
-  );
+  const relative = chordPitchClasses(scaleIntervals, degree);
 
   const absolute = relative.map(pitchClass => pitchClass + key.tonic);
   const base = VOICING_BASE_MIDI + degree.octave * 12;

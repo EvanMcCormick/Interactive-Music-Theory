@@ -3,7 +3,10 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ProgressionStripComponent } from './progression-strip.component';
 import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
-import { createOwnership } from '../../../../models/progression-normalize';
+import {
+  createExtensions,
+  createOwnership
+} from '../../../../models/progression-normalize';
 import {
   ChordDegree,
   ChordSlot,
@@ -113,6 +116,7 @@ describe('ProgressionStripComponent', () => {
           quality: 'major',
           inversion: 0,
           suspension: 'none',
+          extensions: createExtensions(),
           octave: 0,
           ...overrides
         }

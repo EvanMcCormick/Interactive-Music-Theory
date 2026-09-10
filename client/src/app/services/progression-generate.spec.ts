@@ -160,27 +160,58 @@ describe('generateSlotNotes', () => {
   });
 
   /**
-   * A characterization spec: this pins what the code does today, not what it
-   * ought to do.
+   * The characterization spec that used to stand here asserted the opposite,
+   * and it was written to be deleted on purpose rather than to be right.
    *
-   * `suspension` is stored on the model and deliberately not sounded until M2,
-   * and until now that decision lived only in a comment. A comment is not a
-   * gate. Written down as a spec, M2 has to delete this one on purpose to make
-   * sus4 sound suspended, which is the point - the alternative is a
-   * half-implementation arriving silently, or M2's real one looking like a
-   * no-op against a suite that never noticed either way.
+   * `suspension` was stored on the model from M1 and deliberately not sounded,
+   * because a half-implementation would have made slots that look suspended and
+   * play major. That decision lived only in a comment until the spec pinned it,
+   * and M3 Task 4 is the task that had to come and delete it: the alternative
+   * was the real implementation looking like a no-op against a suite that never
+   * noticed either way. This is that deletion, with the assertion turned round.
+   *
+   * Csus4 is C-F-G and Csus2 is C-D-G. The suspension is applied to the pitch
+   * classes before voicing, like `alter`, so what changes is which note is
+   * stacked rather than where the chord sits.
    */
-  it('does not yet sound a suspension', () => {
+  it('sounds a suspension in place of the third', () => {
     const plain = generateSlotNotes(
       slotWithDegree(0, { suspension: 'none' }), C_MAJOR_KEY, MAJOR
     );
-    const suspended = generateSlotNotes(
-      slotWithDegree(0, { suspension: 'sus4' }), C_MAJOR_KEY, MAJOR
-    );
-    expect(suspended.map(n => n.midi)).toEqual(plain.map(n => n.midi));
-    // Spelled out as well as compared, so the spec still means something if
-    // both branches break together.
-    expect(suspended.map(n => n.midi)).toEqual([60, 64, 67]);
+    expect(plain.map(n => n.midi)).toEqual([60, 64, 67]);
+
+    expect(
+      generateSlotNotes(slotWithDegree(0, { suspension: 'sus4' }), C_MAJOR_KEY, MAJOR)
+        .map(n => n.midi)
+    ).toEqual([60, 65, 67]);
+    expect(
+      generateSlotNotes(slotWithDegree(0, { suspension: 'sus2' }), C_MAJOR_KEY, MAJOR)
+        .map(n => n.midi)
+    ).toEqual([60, 62, 67]);
+  });
+
+  /**
+   * The other half of what the generator now hands over: a pinned extension.
+   *
+   * V9 in C major takes its ninth from the key, which gives an A - MIDI 81 over
+   * a chord voiced from middle C. `ninth: -1` asks for the A flat a semitone
+   * below it, and that is a G7♭9 the app could not build at all before M3.
+   */
+  it('sounds an altered extension', () => {
+    expect(
+      generateSlotNotes(slotWithDegree(4, { extent: 9 }), C_MAJOR_KEY, MAJOR)
+        .map(n => n.midi)
+    ).toEqual([67, 71, 74, 77, 81]);
+    expect(
+      generateSlotNotes(
+        slotWithDegree(4, {
+          extent: 9,
+          extensions: { ninth: -1, eleventh: null, thirteenth: null }
+        }),
+        C_MAJOR_KEY,
+        MAJOR
+      ).map(n => n.midi)
+    ).toEqual([67, 71, 74, 77, 80]);
   });
 
   // The guard belongs to `degreePitchClasses` and is deliberately not repeated

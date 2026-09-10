@@ -20,7 +20,7 @@ import {
   createDegreeSlot
 } from '../models/progression.model';
 import { keyTransposeInterval, regenerateSlot } from './progression-edit';
-import { ChordExtent, effectiveQuality } from './progression-harmony';
+import { ChordExtent, ChordShape, effectiveQuality } from './progression-harmony';
 
 /**
  * The progression document's owner: every mutation, the contiguity invariant,
@@ -43,6 +43,21 @@ describe('ProgressionService', () => {
     TestBed.configureTestingModule({});
     service = TestBed.inject(ProgressionService);
   });
+
+  /**
+   * A chord shape with nothing pinned: what an untouched slot on `degree`
+   * carries, for the assertions that ask what the key names it.
+   */
+  function plainShape(degree: number, extent: ChordExtent): ChordShape {
+    return {
+      degree,
+      alter: 0,
+      extent,
+      quality: null,
+      suspension: 'none',
+      extensions: { ninth: null, eleventh: null, thirteenth: null }
+    };
+  }
 
   /**
    * The state as it stands now.
@@ -190,7 +205,7 @@ describe('ProgressionService', () => {
 
       // ii in C major is D-F-A, and it is a minor triad however it is stored.
       expect(slots()[0].notes.map(note => note.midi)).toEqual([62, 65, 69]);
-      expect(effectiveQuality(keyIntervals(), 1, 3, 0, null)).toBe('minor');
+      expect(effectiveQuality(keyIntervals(), plainShape(1, 3))).toBe('minor');
     });
 
     it('keeps slots contiguous as they are appended', () => {
@@ -296,8 +311,10 @@ describe('ProgressionService', () => {
       const harmony = slots()[0].harmony;
       if (harmony.kind !== 'degree') throw new Error('appendChord built no degree');
 
-      expect(Object.keys(harmony.degree).sort())
-        .toEqual(['alter', 'degree', 'extent', 'inversion', 'octave', 'quality', 'suspension']);
+      expect(Object.keys(harmony.degree).sort()).toEqual([
+        'alter', 'degree', 'extensions', 'extent', 'inversion', 'octave',
+        'quality', 'suspension'
+      ]);
     });
   });
 
@@ -734,7 +751,7 @@ describe('ProgressionService', () => {
       // off the chord that was built, which is now a major seventh.
       const harmony = slots()[0].harmony;
       expect(harmony.kind === 'degree' && harmony.degree.quality).toBeNull();
-      expect(effectiveQuality(keyIntervals(), 0, 7, 0, null)).toBe('major7');
+      expect(effectiveQuality(keyIntervals(), plainShape(0, 7))).toBe('major7');
     });
 
     // What a stepper actually computes at the top of the ladder:
@@ -925,7 +942,7 @@ describe('ProgressionService', () => {
       service.setKey(9, 'aeolian');
       const harmony = slots()[0].harmony;
       expect(harmony.kind === 'degree' && harmony.degree.quality).toBeNull();
-      expect(effectiveQuality(keyIntervals(), 0, 3, 0, null)).toBe('minor');
+      expect(effectiveQuality(keyIntervals(), plainShape(0, 3))).toBe('minor');
     });
 
     /**
@@ -2677,6 +2694,113 @@ describe('ProgressionService', () => {
 
         it('still records nothing on a slot that was never pinned', () => {
           expect(degree().quality).toBeNull();
+          expectNoCommit(() => service.resetSlotToChord(id));
+        });
+      });
+
+      /**
+       * The two fields M3 adds, dropped on the same argument the shape is.
+       *
+       * A suspension and a pinned extension are user intent in exactly the
+       * sense `ChordDegree.quality` is: `regenerateSlot` carries all three
+       * through every regeneration untouched, so each is a dimension the
+       * ownership record does not cover and each is a one-way door without a
+       * way back. Reset to chord hands the *whole* slot back, so a button that
+       * dropped the shape and left a ♭9 pinned would be the one path out of a
+       * hand-made chord that does not quite lead out.
+       *
+       * Neither has a pairing that makes dropping it illegal - there is no
+       * suspension a displaced root needs to stay buildable - so unlike the
+       * shape they are dropped unconditionally.
+       *
+       * Nothing in the UI writes either yet; Task 6 adds the controls, and
+       * `replaceDocument` is the door until then, on the licence that spec's
+       * own note records.
+       */
+      describe('the suspension and the pinned extensions', () => {
+        /** Installs a G7♭9sus4 on the slot, through the only door there is. */
+        function pinned(): void {
+          const doc = service.doc;
+          const slot = doc.slots[0];
+          if (slot.harmony.kind !== 'degree') throw new Error('unreachable');
+          service.replaceDocument({
+            ...doc,
+            slots: [{
+              ...slot,
+              harmony: {
+                kind: 'degree',
+                degree: {
+                  ...slot.harmony.degree,
+                  degree: 4,
+                  extent: 9,
+                  suspension: 'sus4',
+                  extensions: { ninth: -1, eleventh: null, thirteenth: null }
+                }
+              }
+            }]
+          });
+          // `replaceDocument` settles rather than regenerating, so the pins
+          // reach the notes on the first regeneration after it.
+          service.setKey(0, 'ionian');
+        }
+
+        it('drops both, and puts the notes back under the generator', () => {
+          pinned();
+          // G C D F Ab: the suspended fourth in place of the third, and the
+          // flattened ninth in place of the key's own A.
+          expect(notes().map(note => note.midi)).toEqual([67, 72, 74, 77, 80]);
+
+          service.resetSlotToChord(id);
+
+          expect(degree().suspension).toBe('none');
+          expect(degree().extensions).toEqual({
+            ninth: null,
+            eleventh: null,
+            thirteenth: null
+          });
+          // A plain V9 in C major again.
+          expect(notes().map(note => note.midi)).toEqual([67, 71, 74, 77, 81]);
+        });
+
+        /**
+         * An extension pinned on its own, which is what pins the *comparison*
+         * rather than the drop. `sameDegree` collects its answers into a
+         * `Record<keyof ChordDegree, boolean>` so a new field is a compile
+         * error there, and `extensions` is a record rather than a scalar: two
+         * degrees that pin nothing hold two different all-null objects, so
+         * comparing it by reference would call every reset a change and
+         * comparing it not at all would call this one a no-op.
+         */
+        it('drops an extension pinned with nothing else', () => {
+          const doc = service.doc;
+          const slot = doc.slots[0];
+          if (slot.harmony.kind !== 'degree') throw new Error('unreachable');
+          service.replaceDocument({
+            ...doc,
+            slots: [{
+              ...slot,
+              harmony: {
+                kind: 'degree',
+                degree: {
+                  ...slot.harmony.degree,
+                  extent: 9,
+                  extensions: { ninth: 1, eleventh: null, thirteenth: null }
+                }
+              }
+            }]
+          });
+          service.setKey(0, 'ionian');
+          // I9♯9 in C: the raised ninth, 0 + 14 + 1, in place of the key's D.
+          expect(notes().map(note => note.midi)).toEqual([60, 64, 67, 71, 75]);
+
+          service.resetSlotToChord(id);
+
+          expect(degree().extensions.ninth).toBeNull();
+          expect(notes().map(note => note.midi)).toEqual([60, 64, 67, 71, 74]);
+        });
+
+        it('still records nothing on a slot that pinned neither', () => {
+          expect(degree().suspension).toBe('none');
           expectNoCommit(() => service.resetSlotToChord(id));
         });
       });

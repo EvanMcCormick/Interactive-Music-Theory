@@ -289,6 +289,33 @@ describe('spokenChordName', () => {
   });
 
   /**
+   * A row each in the three tables for the four added-tone shapes, checked in
+   * all three conventions at once because that is what having three tables is
+   * for: the numeral spells the third in its case, the chord symbol is what a
+   * chart prints, and the spoken form is words.
+   *
+   * `C6` closes up and `C add9` takes a space, which is `chordName`'s separator
+   * rule reading the first character of the suffix rather than a column in the
+   * table: a figure begins with a digit or a symbol, a word with a letter.
+   */
+  it('writes the four added-tone shapes in all three conventions', () => {
+    expect(romanNumeral(0, 0, 'major6')).toBe('I6');
+    expect(romanNumeral(0, 0, 'minor6')).toBe('i6');
+    expect(romanNumeral(0, 0, 'add9')).toBe('Iadd9');
+    expect(romanNumeral(0, 0, 'minorAdd9')).toBe('iadd9');
+
+    expect(chordName('C', 'major6')).toBe('C6');
+    expect(chordName('C', 'minor6')).toBe('C min6');
+    expect(chordName('C', 'add9')).toBe('C add9');
+    expect(chordName('C', 'minorAdd9')).toBe('C minadd9');
+
+    expect(spokenChordName('C', 'major6')).toBe('C sixth');
+    expect(spokenChordName('C', 'minor6')).toBe('C minor sixth');
+    expect(spokenChordName('C', 'add9')).toBe('C added ninth');
+    expect(spokenChordName('C', 'minorAdd9')).toBe('C minor added ninth');
+  });
+
+  /**
    * Nothing here may come back as punctuation or as `undefined`. The table is
    * keyed exhaustively on `ChordQuality`, so this is a check that every entry
    * is a phrase rather than a copy of the printed figure.
@@ -298,6 +325,7 @@ describe('spokenChordName', () => {
       'major', 'minor', 'diminished', 'augmented',
       'major7', 'minor7', 'dominant7', 'minorMajor7',
       'halfDiminished7', 'diminished7', 'augmented7', 'augmentedMajor7',
+      'major6', 'minor6', 'add9', 'minorAdd9',
       'other'
     ];
 

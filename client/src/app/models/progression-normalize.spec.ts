@@ -239,6 +239,105 @@ describe('normalizeChordSlot', () => {
   });
 
   /**
+   * `suspension` under the fourth clause, and it arrives there late.
+   *
+   * It has been storable since M1 and unchecked for exactly as long, on the
+   * honest ground that nothing read it: `generateSlotNotes` said in as many
+   * words that a suspension was stored and not sounded. M3 Task 4 sounds it, so
+   * an unlisted value now falls through `chordPitchClasses`' `!== 'none'` test
+   * into the diatonic third and produces a plain triad under a card that says
+   * the chord is suspended. A wrong chord dressed as a right one is what every
+   * guard in this file exists to turn into a failure.
+   */
+  it('refuses a suspension that is not one of the three', () => {
+    expect(() => normalizeChordSlot(slotWithDegree({ suspension: 'sus9' })))
+      .toThrowError(/suspension/i);
+    expect(() => normalizeChordSlot(slotWithDegree({ suspension: 'SUS4' })))
+      .toThrowError(/suspension/i);
+    // As old as `ChordDegree`, so a missing one is corruption rather than a
+    // document written before the field existed.
+    expect(() => normalizeChordSlot(slotWithDegree({ suspension: undefined })))
+      .toThrowError(/suspension/i);
+  });
+
+  it('accepts every suspension the model names', () => {
+    for (const suspension of ['none', 'sus2', 'sus4'] as const) {
+      expect(degreeOf(normalizeChordSlot(slotWithDegree({ suspension }))).suspension)
+        .toBe(suspension);
+    }
+  });
+
+  /**
+   * `extensions` is the second field under the fifth clause and the first one
+   * whose migration is not hypothetical: it was added to `ChordDegree` at M3,
+   * so every document written before it has no record at all. The fill is the
+   * value a fresh slot carries - all three `null`, "as the key gives it" - and
+   * a slot filled that way builds exactly what it built before the field
+   * existed, which is what makes this a migration with nothing to migrate.
+   */
+  it('fills in an absent extensions record', () => {
+    expect(degreeOf(normalizeChordSlot(slotWithDegree({ extensions: undefined }))).extensions)
+      .toEqual({ ninth: null, eleventh: null, thirteenth: null });
+  });
+
+  /**
+   * And the other half of that split, which is `normalizeOwnership`'s exactly:
+   * the record absent is old, a *member* outside its union is corruption. Each
+   * member is a union rather than a range - a ninth may be flattened, natural
+   * or raised and nothing else - so there is no nearest legal value to clamp
+   * to, and a `2` would reach `chordPitchClasses` as a real displacement and
+   * build a chord no name fits.
+   */
+  it('refuses an alteration outside its own union', () => {
+    const bad = (extensions: unknown) =>
+      () => normalizeChordSlot(slotWithDegree({ extensions }));
+
+    expect(bad({ ninth: 2, eleventh: null, thirteenth: null })).toThrowError(/ninth/i);
+    // An eleventh may only be raised and a thirteenth only flattened, so the
+    // sign each refuses is the interesting case rather than the magnitude.
+    expect(bad({ ninth: null, eleventh: -1, thirteenth: null })).toThrowError(/eleventh/i);
+    expect(bad({ ninth: null, eleventh: null, thirteenth: 1 })).toThrowError(/thirteenth/i);
+    expect(bad({ ninth: '0', eleventh: null, thirteenth: null })).toThrowError(/ninth/i);
+    // A record present but missing a member is half-written, not old.
+    expect(bad({ eleventh: null, thirteenth: null })).toThrowError(/ninth/i);
+  });
+
+  it('accepts every alteration the model names', () => {
+    for (const ninth of [-1, 0, 1] as const) {
+      expect(
+        degreeOf(normalizeChordSlot(slotWithDegree({
+          extensions: { ninth, eleventh: null, thirteenth: null }
+        }))).extensions.ninth
+      ).toBe(ninth);
+    }
+    for (const eleventh of [0, 1] as const) {
+      expect(
+        degreeOf(normalizeChordSlot(slotWithDegree({
+          extensions: { ninth: null, eleventh, thirteenth: null }
+        }))).extensions.eleventh
+      ).toBe(eleventh);
+    }
+    for (const thirteenth of [-1, 0] as const) {
+      expect(
+        degreeOf(normalizeChordSlot(slotWithDegree({
+          extensions: { ninth: null, eleventh: null, thirteenth }
+        }))).extensions.thirteenth
+      ).toBe(thirteenth);
+    }
+  });
+
+  /**
+   * Rebuilt rather than passed through, so a document already on the
+   * `structuredClone` undo stack is not left sharing a record with the one that
+   * replaced it - the promise `normalizeOwnership` makes one field over.
+   */
+  it('rebuilds the extensions record rather than sharing it', () => {
+    const extensions = { ninth: -1 as const, eleventh: null, thirteenth: null };
+    expect(degreeOf(normalizeChordSlot(slotWithDegree({ extensions }))).extensions)
+      .not.toBe(extensions);
+  });
+
+  /**
    * `quality` under the same rule as `extent`, and for the same reason.
    *
    * It used to be the one field on a `ChordDegree` the normaliser let through
@@ -637,9 +736,47 @@ describe('the octave bound', () => {
    * maximal. Note that even the middle row overflows nothing but is already
    * past 33: a plain alternates row with no chromatic root at all reaches 34.
    *
-   * So both are swept here. The cost is one full pass of roughly four million
-   * chords per octave, which is the price of measuring the pipeline rather than
-   * a model of it.
+   * So both are swept here. The cost is one full pass of roughly five and a
+   * half million chords per octave, which is the price of measuring the
+   * pipeline rather than a model of it.
+   *
+   * ## What this sweep does NOT cover, measured and left uncovered on purpose
+   *
+   * M3 Task 4 gave a chord two more axes - `suspension`, and an alteration on
+   * each of the three extensions - and **this sweep varies neither**. Every
+   * slot it builds carries the template's `'none'` and its three nulls. That is
+   * a narrowing of the reachable set relative to what the model can now store,
+   * and it is written here rather than left to be discovered.
+   *
+   * Both halves of the reason are measurements rather than opinions, taken over
+   * this same `generateSlotNotes` pipeline with the axes added:
+   *
+   * | swept set | chords per octave | seconds | reach |
+   * |---|---|---|---|
+   * | as below, 16 qualities | 5.6M | 3.7 | **46** |
+   * | + the three suspensions | 16.8M | 13.8 | 46 |
+   * | + every extension alteration | 236.4M | 199 | **58** |
+   *
+   * The full set is 200 seconds *per octave* and this describe measures four of
+   * them, so shipping it would put thirteen minutes into a suite that runs in
+   * under a minute. That is the first reason, and on its own it would argue for
+   * a sampled axis with a comment saying so.
+   *
+   * The second reason is why it is left out entirely instead. **The reach of
+   * the full model is 58, and 58 does not fit.** `OCTAVE_MAX` of 1 puts the
+   * base at C5 and that ceiling at 130 - three semitones off the end of MIDI -
+   * so a widened sweep here would not be a slower spec, it would be a *failing*
+   * one. The witness is pinned two specs below, by hand, so the figure can be
+   * checked without running 236 million chords.
+   *
+   * Nothing a user can do reaches it today: no control writes `suspension` or
+   * `extensions`, and `replaceDocument` has no production caller. **M3 Task 6
+   * is the task that adds those controls, and it is the task that must not land
+   * until `OCTAVE_MAX` has been decided.** Dropping it to 0 costs the user
+   * another octave of a control that has already paid one for this bound, which
+   * M2 Task 3 records as a trade-off for the project owner to make; the
+   * alternative it names - a per-slot ceiling derived from the chord itself -
+   * keeps the range and costs something else.
    */
   function extremesAt(octave: number): { lowest: number; highest: number } {
     const cached = sweeps.get(octave);
@@ -683,31 +820,62 @@ describe('the octave bound', () => {
   /**
    * The figure the whole bound rests on, asserted rather than left in prose.
    *
-   * The witness is Hungarian minor, degree 5 at extent 13, altered down a tone
-   * and overridden to `augmented7`, third inversion, in the key of G. The
-   * override displaces the root to a shape the scale does not give that degree
-   * and the four diatonic notes above it stay where they were, so the stack is
-   * [6, 10, 14, 16, 23, 26, 30] - strictly ascending, so no artefact of the
-   * lift - which carries the tonic to [13, 17, 21, 23, 30, 33, 37], rotates to
-   * put 23 in the bass and voices from 60 to 71, 78, 81, 85, 97, 101, 105.
+   * **It was 45 until M3 Task 4 added the four added-tone shapes**, and it moved
+   * to 46 without anyone widening this sweep: `SHAPES` is derived from
+   * `QUALITY_INTERVALS`, so a quality added to that table is a quality this
+   * measurement picks up. That is the property the derivation was for.
+   *
+   * The witness is the enigmatic scale, degree 0 at extent 13, altered down a
+   * tone and overridden to `add9`, fourth inversion, in the key of B flat.
+   * `add9` puts its fourth note a ninth above the root rather than a seventh,
+   * so a root displaced down two semitones still reaches 12 while the four
+   * diatonic notes above it stay where the scale left them: the stack is
+   * [-2, 2, 5, 12, 13, 18, 22] - strictly ascending, so no artefact of the lift
+   * - which carries the tonic to [8, 12, 15, 22, 23, 28, 32], rotates to put 23
+   * in the bass and voices from 60 to 71, 76, 80, 92, 96, 99, 106.
    *
    * The reach is spelled out here as well as asserted, because a bound derived
    * from a sweep is only auditable if the case that produced it is written down.
    */
-  it('reaches 45 semitones above the base at its widest', () => {
+  it('reaches 46 semitones above the base at its widest', () => {
     const base = VOICING_BASE_MIDI;
     const { lowest, highest } = extremesAt(0);
     // `voiceChord` never places a note below its base, so the base is the floor
     // exactly, and the reach is measured from it.
     expect(lowest).toBe(base);
-    expect(highest - base).toBe(45);
+    expect(highest - base).toBe(46);
   });
 
   /**
    * The witness itself, built by hand, so the sweep's answer has a case behind
-   * it that a reader can check without running four million chords.
+   * it that a reader can check without running five million chords.
    */
   it('voices its widest chord where the sweep says it does', () => {
+    const slot = sweepSlot({
+      degree: 0,
+      extent: 13,
+      alter: -2,
+      quality: 'add9',
+      inversion: 4,
+      octave: 0
+    });
+    const key: ProgressionKey = { tonic: 10, scaleId: 'enigmatic', preferSharps: true };
+    const enigmatic = [0, 1, 4, 6, 8, 10, 11];
+
+    expect(generateSlotNotes(slot, key, enigmatic).map(note => note.midi))
+      .toEqual([71, 76, 80, 92, 96, 99, 106]);
+  });
+
+  /**
+   * The witness the sweep gave before the added-tone shapes existed, kept
+   * because it is the case the *displacement* argument was written from - a
+   * quality override reaching chords no tonic reaches - and because a spec that
+   * only ever holds one witness cannot show that the reach moved.
+   *
+   * Hungarian minor, degree 5 at extent 13, altered down a tone and overridden
+   * to `augmented7`, third inversion, in the key of G: 45 semitones.
+   */
+  it('still voices the widest chord the twelve original shapes reached', () => {
     const slot = sweepSlot({
       degree: 5,
       extent: 13,
@@ -723,9 +891,85 @@ describe('the octave bound', () => {
       .toEqual([71, 78, 81, 85, 97, 101, 105]);
   });
 
+  /**
+   * The widest chord the *whole* M3 model can build, pinned by hand because the
+   * sweep above does not reach it and cannot afford to.
+   *
+   * C major, degree 3 - the IV - at extent 13, altered down a tone and
+   * overridden to `diminished`, suspended at the fourth, with a flattened ninth
+   * and a flattened thirteenth, second inversion, in D. Two of the three replacements
+   * land on the note below them, so the lift adds an octave twice: the stack is
+   * [3, 8, 9, 16, 16, 23, 23] before it and [3, 8, 9, 16, 28, 35, 47] after,
+   * which carries the tonic to [5, 10, 11, 18, 30, 37, 49] and voices from 60
+   * to 71, 78, 90, 97, 109, 113, 118.
+   *
+   * 58 semitones above the base, twelve past what the swept set reaches. The
+   * stacked lift is the mechanism and it is the arithmetic working rather than
+   * failing - a duplicated voice is lifted, never dropped, for the reason
+   * `chordPitchClasses` gives at length.
+   */
+  it('voices the widest chord a suspension and two alterations reach', () => {
+    const slot = sweepSlot({
+      degree: 3,
+      extent: 13,
+      alter: -2,
+      quality: 'diminished',
+      suspension: 'sus4',
+      extensions: { ninth: -1, eleventh: null, thirteenth: -1 },
+      inversion: 2,
+      octave: 0
+    });
+    const key: ProgressionKey = { tonic: 2, scaleId: 'ionian', preferSharps: true };
+    const major = [0, 2, 4, 5, 7, 9, 11];
+
+    const midi = generateSlotNotes(slot, key, major).map(note => note.midi);
+    expect(midi).toEqual([71, 78, 90, 97, 109, 113, 118]);
+    expect(midi[midi.length - 1] - VOICING_BASE_MIDI).toBe(58);
+  });
+
+  /**
+   * A characterization spec: this pins what the code does today, not what it
+   * ought to do, and it is the one place in this file that asserts a bound
+   * failing rather than holding.
+   *
+   * The same chord one octave up is MIDI 130, which `voiceChord` will hand to
+   * `Tone.PolySynth` unclamped. `OCTAVE_MAX` is 1, so the octave control can
+   * ask for that base - which means the bound this whole describe exists to
+   * prove does **not** hold across everything M3 Task 4 made storable.
+   *
+   * It is unreachable through the UI today: nothing writes `suspension` or
+   * `extensions`, and `replaceDocument` has no production caller. M3 Task 6
+   * adds the controls that change that, and the constant has to be settled
+   * before it lands - by the project owner, because every fix costs the user
+   * something. See `OCTAVE_MAX`'s own note and M2 Task 3 for the options.
+   *
+   * When it is settled, this spec is the one to delete on purpose.
+   */
+  it('overflows MIDI on a chord the widened model can store', () => {
+    const slot = sweepSlot({
+      degree: 3,
+      extent: 13,
+      alter: -2,
+      quality: 'diminished',
+      suspension: 'sus4',
+      extensions: { ninth: -1, eleventh: null, thirteenth: -1 },
+      inversion: 2,
+      octave: OCTAVE_MAX
+    });
+    const key: ProgressionKey = { tonic: 2, scaleId: 'ionian', preferSharps: true };
+
+    const midi = generateSlotNotes(slot, key, [0, 2, 4, 5, 7, 9, 11]).map(note => note.midi);
+    expect(midi[midi.length - 1]).toBe(130);
+    expect(midi[midi.length - 1]).toBeGreaterThan(127);
+  });
+
   // `voiceChord` has no MIDI clamp, so nothing below this stops an out-of-range
   // note reaching Tone.PolySynth. The bound is only defensible if it holds for
   // every scale the app offers, not just the two the plan works through.
+  //
+  // "Every chord the app can build" is the *swept* set, which since M3 Task 4
+  // is narrower than the storable one - see the section on what this sweep does
+  // not cover, and the two specs above.
   it('keeps every chord the app can build inside the MIDI range', () => {
     expect(extremesAt(OCTAVE_MIN).lowest).toBeGreaterThanOrEqual(0);
     expect(extremesAt(OCTAVE_MAX).highest).toBeLessThanOrEqual(127);

@@ -10,6 +10,7 @@ import {
 import { Subject, takeUntil } from 'rxjs';
 
 import { Scale } from '../../../../models/music-theory.model';
+import { createExtensions } from '../../../../models/progression-normalize';
 import {
   ChordDegree,
   ProgressionKey,
@@ -201,7 +202,7 @@ const ALTERNATES_UNNAMED = 'Other shapes on the selected chord';
  *    would mean a borrowed chord could only ever *replace* one, which is the
  *    limit that row exists to lift.
  *  - **Alternates retune the selected slot.** The row is defined by the
- *    selection - twelve shapes on the root the selected chord already sits on -
+ *    selection - every named shape on the root the selected chord already sits on -
  *    and it disappears without one. Appending from it would put a second chord
  *    on the same root at the end of the progression, which is not what "other
  *    shapes on this chord" can mean.
@@ -235,7 +236,7 @@ const ALTERNATES_UNNAMED = 'Other shapes on the selected chord';
  *
  * That is not only tidiness. The alternates row appears and disappears with the
  * selection, so drawn above the append rows it moved them: clicking Borrowed
- * `♭VII` on an empty progression appends *and selects*, twelve buttons and a
+ * `♭VII` on an empty progression appends *and selects*, a row of buttons and a
  * heading materialise above the row that was just clicked, and the second click
  * of a pair aimed at the same place lands on a different chord. Below the
  * steppers it appears in the space the "pick a chord in the strip" hint gives
@@ -297,7 +298,7 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
    * `Other shapes on V (G Maj)`. The row is the one part of this panel that
    * changes a chord rather than adding one, and every append re-points it at
    * whatever was just appended - so a heading that did not name its subject
-   * left the twelve buttons standing still while their meaning moved.
+   * left the row's buttons standing still while their meaning moved.
    */
   alternatesTitle = ALTERNATES_UNNAMED;
 
@@ -321,8 +322,8 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
    * What choosing an alternate would cost, or null when it would cost nothing.
    *
    * The one thing about this panel a user could not otherwise find out before
-   * clicking: every shape is offered at its own height, so on a ninth all
-   * twelve of them shorten the chord - including the one marked as the shape it
+   * clicking: every shape is offered at its own height, so on a ninth every
+   * one of them shortens the chord - including the one marked as the shape it
    * already is. The per-button `heightLabel` states where each lands and this
    * states what is at stake, because a row of heights does not by itself say
    * that the current one is going.
@@ -647,6 +648,7 @@ function paletteDegree(degree: number): ChordDegree {
     quality: null,
     inversion: 0,
     suspension: 'none',
+    extensions: createExtensions(),
     octave: 0
   };
 }
@@ -683,7 +685,7 @@ function warnAboutHeight(
 /**
  * What clicking an alternate does, said in the two cases where it differs.
  *
- * Every button on this row stores a shape, and on eleven of the twelve that is
+ * Every button on this row stores a shape, and on all but one of them that is
  * plainly a change - the chord was one thing and is now another. On the marked
  * one it is not: the chord is already that shape, so the click writes no new
  * notes and the whole of its effect is the *pin* - `ChordDegree.quality` stops
@@ -746,7 +748,7 @@ function buildOption(option: ChordOption, label: string): PaletteOption {
  * A button's identity for `trackBy`: the chord it puts in a slot.
  *
  * The numeral would do for the two append rows and not for the alternates,
- * where all twelve shapes sit on one degree and one accidental - `V` and `V7`
+ * where every named shape sits on one degree and one accidental - `V` and `V7`
  * differ, but the numeral is the *rendering* and the shape is the thing. The
  * quality would do for the alternates and not for the others, where every
  * secondary dominant is a `dominant7`. The triple is what all three rows vary,

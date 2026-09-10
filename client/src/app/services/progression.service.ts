@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   CHORD_EXTENTS,
+  createExtensions,
   createOwnership,
   normalizeChordSlot,
   normalizeProgressionKey
@@ -826,8 +827,15 @@ export class ProgressionService {
 }
 
 /**
- * A degree with the four fields a choice names written over it, and the three
- * it does not name - inversion, suspension, octave - left where they were.
+ * A degree with the four fields a choice names written over it, and the four
+ * it does not name - inversion, suspension, extensions, octave - left where
+ * they were.
+ *
+ * Leaving them is the same rule as ever and it is worth restating now that two
+ * of them sound: a palette button re-shapes the chord it is pressed on, so a
+ * slot that was suspended stays suspended and a pinned ♭9 stays pinned.
+ * `unpinned`, below, is the one that takes all of it back, and the note under
+ * the alternates row already names Reset to chord as the way there.
  *
  * Copied one at a time rather than spread, and that is a guard rather than a
  * style. `ChordChoice` is satisfied structurally, so what actually arrives is a
@@ -839,24 +847,41 @@ export class ProgressionService {
  * because nothing regenerates it.
  */
 /**
- * A degree with the shape override dropped, where there is one to drop and a
- * diatonic answer to fall back to.
+ * A degree with everything the user pinned above the key dropped: the shape
+ * override where there is one to drop and a diatonic answer to fall back to,
+ * the suspension, and every pinned extension.
  *
- * The two guards are one rule read from both ends. `quality: null` means "as
- * the key gives it", and the key only gives an answer on a degree of its own
- * scale - so `normalizeChordDegree` refuses a null quality over a displaced
- * root, and a borrowed chord's shape is the whole of what that chord is rather
- * than an override on top of something else. Written here rather than at the
- * one call site so that the next caller who wants to un-pin a slot gets the
- * refusal instead of the throw.
+ * The two guards on the *quality* are one rule read from both ends.
+ * `quality: null` means "as the key gives it", and the key only gives an answer
+ * on a degree of its own scale - so `normalizeChordDegree` refuses a null
+ * quality over a displaced root, and a borrowed chord's shape is the whole of
+ * what that chord is rather than an override on top of something else. Written
+ * here rather than at the one call site so that the next caller who wants to
+ * un-pin a slot gets the refusal instead of the throw.
+ *
+ * **The suspension and the extensions are dropped unconditionally**, and they
+ * belong here on the same argument the quality does rather than as an extra.
+ * All three are the user saying something the key did not: `'none'` and three
+ * nulls are what a fresh slot carries and what "as the key gives it" means one
+ * field over. Neither has a pairing that makes dropping it illegal - there is
+ * no suspension a displaced root needs to stay buildable - so neither needs a
+ * guard. And Reset to chord hands the *whole* slot back: a button that took
+ * back the shape and left a ♭9 pinned would be the one path out of a hand-made
+ * chord that does not quite lead out.
  *
  * Returns the degree itself when there is nothing to drop, so the comparison in
- * `resetSlotToChord` reads "the shape did not move" rather than needing a
- * second copy of these two conditions to know whether it could have.
+ * `resetSlotToChord` reads "the chord did not move" rather than needing a
+ * second copy of these conditions to know whether it could have.
  */
 function unpinned(degree: ChordDegree): ChordDegree {
-  if (degree.quality === null || degree.alter !== 0) return degree;
-  return { ...degree, quality: null };
+  const quality = degree.quality !== null && degree.alter === 0 ? null : degree.quality;
+  const dropped: ChordDegree = {
+    ...degree,
+    quality,
+    suspension: 'none',
+    extensions: createExtensions()
+  };
+  return sameDegree(dropped, degree) ? degree : dropped;
 }
 
 function chosen(degree: ChordDegree, choice: ChordChoice): ChordDegree {
