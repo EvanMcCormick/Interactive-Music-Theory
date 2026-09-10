@@ -5,6 +5,11 @@ import {
   PaletteAlternate,
   PaletteOption
 } from './chord-palette.component';
+import {
+  SuspensionChoice,
+  TensionChoice,
+  TensionRow
+} from './chord-palette-controls-view';
 import { ProgressionService } from '../../../../services/progression.service';
 import { OCTAVE_MAX } from '../../../../models/progression-normalize';
 import {
@@ -26,44 +31,37 @@ import { NamedQuality, effectiveChord } from '../../../../services/progression-h
  * ## Where the seam is, and why it is not "the rows"
  *
  * The obvious cut is by row, and it is the wrong one. The component's own
- * docstring argues at length that the alternates row belongs with the steppers
- * rather than with the two rows above it: all three act on the chord that is
+ * docstring argues that the alternates row belongs with the steppers rather
+ * than with the two rows above it: all three act on the chord that is
  * *selected*, none of them adds one, and that shared verb is why the row is
- * drawn below the steppers rather than beside its two siblings. So the cut is
- * by verb. Over there the subject is what the palette offers - which chords are
- * in this key, which are borrowed, what each button says, and what appending one
- * does. Here it is what happens to the chord already in the strip.
- *
- * The complexity stepper and the alternates row are the pair that most needs to
- * be read together: every shape is offered at its own height, so choosing one
- * moves the stepper, and `heightWarning` is the panel saying so before the
- * click. Splitting those two apart would have put a claim and its cost in
- * different files.
+ * drawn below the steppers. So the cut is by verb - over there, which chords
+ * this key offers and what appending one does; here, what happens to the chord
+ * already in the strip. It also keeps the complexity stepper beside the
+ * alternates row, which is the pair that most needs reading together: every
+ * shape is offered at its own height, so choosing one moves the stepper, and
+ * `heightWarning` is the panel saying so before the click.
  *
  * ## The fixtures are copied, and that was a decision rather than a default
  *
  * This is the third pair of specs in the project to duplicate a fixture block -
  * after `score-doc-mapper.ghost-voice.spec.ts` and
  * `progression-vocabulary.spelling.spec.ts` - and three is where a rule of
- * thumb would say to extract a shared helper. It is still not extracted, and
- * the reason is that the count is of *pairs* and not of *callers*.
+ * thumb would say to extract a shared helper. It is still not extracted,
+ * because the count is of *pairs* rather than of *callers*: the three blocks
+ * have nothing in common with each other - one builds score documents, one
+ * builds keys and vocabularies, this one stands up a TestBed - so extracting
+ * them would make three modules serving two files each and would remove not one
+ * duplicated line from any other pair. What recurs is the *pattern* of splitting
+ * a spec, not a fixture.
  *
- * The three fixture blocks have nothing in common with each other: one builds
- * score documents, one builds keys and vocabularies, this one stands up an
- * Angular TestBed. A shared helper turns on how many callers read one set of
- * fixtures, and each of these sets has exactly two. Extracting them would make
- * three new modules, each serving two files, and would not remove a single
- * duplicated line from any other pair. What recurs here is the *pattern* of
- * splitting a spec, not a fixture.
- *
- * The second half of the argument is local and is the one that would change the
- * answer if it stopped holding: the two halves of this pair do not want the same
- * helpers. That file keeps `secondary()`, which nothing here asks for; this one
- * grows readouts for the sus, tension and octave controls that nothing there
- * asks for. A shared module frozen at the intersection would hold `settle` and
- * two three-line lookups, and every later test would have to decide whether its
- * helper was general enough to go in it - which is a decision per test, where
- * copying is a decision once.
+ * The local half of the argument is the one that would change the answer if it
+ * stopped holding: the two halves of this pair do not want the same helpers.
+ * That file keeps `secondary()`, which nothing here asks for; this one grows
+ * readouts for the sus, tension and octave controls that nothing there asks
+ * for. A shared module frozen at the intersection would hold `settle` and two
+ * three-line lookups, and every later test would have to decide whether its
+ * helper was general enough to go in it - a decision per test, where copying is
+ * a decision once.
  */
 describe('ChordPaletteComponent controls', () => {
   let fixture: ComponentFixture<ChordPaletteComponent>;
@@ -135,6 +133,45 @@ describe('ChordPaletteComponent controls', () => {
     const found = component.alternates.find(candidate => candidate.quality === quality);
     if (found === undefined) throw new Error(`no ${quality} on the alternates row`);
     return found;
+  }
+
+  /** What the selected slot actually sounds, as MIDI numbers in order. */
+  function selectedMidi(): number[] {
+    return selectedSlot().notes.map(note => note.midi);
+  }
+
+  /** The Sus button with this face, or a failure that says what is on the row. */
+  function suspension(label: string): SuspensionChoice {
+    const found = component.suspensions.find(candidate => candidate.label === label);
+    if (found === undefined) {
+      throw new Error(
+        `no ${label} among [${component.suspensions.map(one => one.label).join(', ')}]`
+      );
+    }
+    return found;
+  }
+
+  /** The one Tensions row for this extension, or a failure that says what is there. */
+  function tensionRow(extension: string): TensionRow {
+    const found = component.tensions.find(candidate => candidate.extension === extension);
+    if (found === undefined) {
+      throw new Error(
+        `no ${extension} row among [${component.tensions.map(one => one.extension).join(', ')}]`
+      );
+    }
+    return found;
+  }
+
+  /** The button with this figure on that row. */
+  function tension(extension: string, label: string): TensionChoice {
+    const found = tensionRow(extension).choices.find(candidate => candidate.label === label);
+    if (found === undefined) throw new Error(`no ${label} on the ${extension} row`);
+    return found;
+  }
+
+  /** Whichever figure on a row is marked, or null when none is. */
+  function markedTension(extension: string): string | null {
+    return tensionRow(extension).choices.find(choice => choice.current)?.label ?? null;
   }
 
   describe('the complexity control', () => {
@@ -237,15 +274,6 @@ describe('ChordPaletteComponent controls', () => {
       component.stepOctave(-1);
       settle();
       expect(selectedDegree().octave).toBe(0);
-    });
-
-    it('rests at the top of the playable range', () => {
-      for (let press = 0; press < 6; press++) {
-        component.stepOctave(1);
-        settle();
-      }
-
-      expect(selectedDegree().octave).toBe(OCTAVE_MAX);
     });
 
     /**
@@ -492,6 +520,21 @@ describe('ChordPaletteComponent controls', () => {
       expect(progression.setSlotChord).not.toHaveBeenCalled();
     });
 
+    /**
+     * The four added-tone shapes M3 Task 4 put in `QUALITY_INTERVALS`. That the
+     * row *offers* them at a seventh's height is pinned in
+     * `chord-palette.component.spec.ts`; this is what clicking one does, which
+     * is four notes rather than a truncated triad.
+     */
+    it('builds a sixth chord from the added-tone shape', () => {
+      component.chooseAlternate(alternate('major6'));
+      settle();
+
+      expect(selectedDegree().quality).toBe('major6');
+      expect(selectedDegree().extent).toBe(7);
+      // G B D E.
+      expect(selectedPitchClasses()).toEqual([2, 4, 7, 11]);
+    });
   });
 
   /**
@@ -574,6 +617,383 @@ describe('ChordPaletteComponent controls', () => {
 
     it('says nothing of the kind on a shape that stands taller', () => {
       expect(alternate('dominant7').label).not.toContain('down from');
+    });
+  });
+  /**
+   * The Sus control: the third replaced by the second or the fourth, at
+   * whatever height the chord is standing on.
+   *
+   * Nothing in the UI wrote `ChordDegree.suspension` before M3 Task 6 - the
+   * field had been stored, normalised and, since Task 4, *sounded*, and was
+   * reachable only by dragging a note in the roll. These are the buttons that
+   * make the design's "any combination can be built" true from the palette.
+   */
+  describe('the sus control', () => {
+    beforeEach(() => {
+      component.addChord(component.chords[0]);
+      settle();
+    });
+
+    it('offers none, sus2 and sus4, with the current one pressed', () => {
+      expect(component.suspensions.map(choice => choice.label))
+        .toEqual(['None', 'sus2', 'sus4']);
+      expect(component.suspensions.map(choice => choice.current))
+        .toEqual([true, false, false]);
+    });
+
+    /** C E G becomes C F G: the third replaced, the fifth left alone. */
+    it('suspends the fourth over the third', () => {
+      component.setSuspension(suspension('sus4'));
+      settle();
+
+      expect(selectedDegree().suspension).toBe('sus4');
+      expect(selectedMidi()).toEqual([60, 65, 67]);
+      expect(component.suspensions.map(choice => choice.current))
+        .toEqual([false, false, true]);
+    });
+
+    /** And C D G for the second. */
+    it('suspends the second over the third', () => {
+      component.setSuspension(suspension('sus2'));
+      settle();
+
+      expect(selectedMidi()).toEqual([60, 62, 67]);
+    });
+
+    it('takes the suspension off again', () => {
+      component.setSuspension(suspension('sus4'));
+      settle();
+      component.setSuspension(suspension('None'));
+      settle();
+
+      expect(selectedDegree().suspension).toBe('none');
+      expect(selectedMidi()).toEqual([60, 64, 67]);
+    });
+
+    /**
+     * The suspension replaces the third at every height, which is what makes
+     * `7sus4` fall out of the model with no rule of its own - and what the
+     * control has to be able to reach. G7 is G B D F, so G7sus4 is G C D F.
+     */
+    it('suspends a seventh chord without lowering it', () => {
+      component.addChord(component.chords[4]);
+      component.stepComplexity(1);
+      settle();
+
+      component.setSuspension(suspension('sus4'));
+      settle();
+
+      expect(selectedDegree().extent).toBe(7);
+      expect(selectedPitchClasses()).toEqual([0, 2, 5, 7]);
+    });
+
+    /** A glyph-free label, because "sus4" read aloud is three letters and a four. */
+    it('says each button aloud', () => {
+      expect(component.suspensions.map(choice => choice.ariaLabel))
+        .toEqual(['no suspension', 'suspended second', 'suspended fourth']);
+    });
+
+    it('dispatches nothing with nothing selected', () => {
+      const choice = suspension('sus4');
+      progression.selectSlot(null);
+      settle();
+      spyOn(progression, 'setSlotSuspension');
+
+      component.setSuspension(choice);
+
+      expect(progression.setSlotSuspension).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Greyed rather than gone with nothing selected, as the two steppers beside
+     * it are: a group three buttons wide that came and went would move the rows
+     * under it every time a selection was cleared.
+     */
+    it('is greyed rather than removed with nothing selected', () => {
+      progression.selectSlot(null);
+      settle();
+
+      expect(component.canAdjust).toBeFalse();
+      expect(component.suspensions.length).toBe(3);
+      expect(component.suspensions.some(choice => choice.current)).toBeFalse();
+    });
+
+    it('has no buttons at all in a key that can build no chords', () => {
+      progression.setKey(0, 'majorPentatonic');
+      settle();
+
+      expect(component.suspensions).toEqual([]);
+    });
+  });
+
+  /**
+   * The Tensions control: one row per extension the chord actually has, with
+   * the alteration it is *sounding* marked.
+   *
+   * The marked value is read off `effectiveChord` and never off the stored
+   * field, for the reason `ChordOption.current` gives one row up: a fresh slot
+   * stores `null` in all three, meaning "as the key gives it", so a row that
+   * compared the stored field would mark nothing at all on the chord a user has
+   * just raised to a ninth - even though one of the three buttons is the note
+   * that is playing.
+   */
+  describe('the tensions control', () => {
+    beforeEach(() => {
+      component.addChord(component.chords[4]);
+      settle();
+    });
+
+    /** `extent` is the single height control, so a triad has no tension to alter. */
+    it('offers nothing on a triad or a seventh', () => {
+      expect(component.tensions).toEqual([]);
+
+      component.stepComplexity(1);
+      settle();
+      expect(component.tensions).toEqual([]);
+    });
+
+    /**
+     * The V of C major raised to a ninth builds G B D F A: a *natural* ninth,
+     * which is what the row marks though the slot stores `null`.
+     */
+    it('marks the alteration the key gave, not the stored null', () => {
+      component.stepComplexity(1);
+      component.stepComplexity(1);
+      settle();
+
+      expect(selectedDegree().extensions.ninth).toBeNull();
+      expect(component.tensions.map(row => row.extension)).toEqual(['ninth']);
+      expect(tensionRow('ninth').choices.map(choice => choice.label))
+        .toEqual(['♭9', '♮9', '♯9']);
+      expect(markedTension('ninth')).toBe('♮9');
+    });
+
+    /** G B D F A flat, and the row follows it. */
+    it('flattens the ninth and pins it', () => {
+      component.stepComplexity(1);
+      component.stepComplexity(1);
+      settle();
+
+      component.setTension(tension('ninth', '♭9'));
+      settle();
+
+      expect(selectedDegree().extensions)
+        .toEqual({ ninth: -1, eleventh: null, thirteenth: null });
+      expect(selectedPitchClasses()).toEqual([2, 5, 7, 8, 11]);
+      expect(markedTension('ninth')).toBe('♭9');
+    });
+
+    /** One row per extension present, and each opens as the extent reaches it. */
+    it('adds a row for each extension the chord reaches', () => {
+      component.stepComplexity(1);
+      component.stepComplexity(1);
+      component.stepComplexity(1);
+      settle();
+      expect(component.tensions.map(row => row.extension)).toEqual(['ninth', 'eleventh']);
+      expect(tensionRow('eleventh').choices.map(choice => choice.label))
+        .toEqual(['♮11', '♯11']);
+
+      component.stepComplexity(1);
+      settle();
+      expect(component.tensions.map(row => row.extension))
+        .toEqual(['ninth', 'eleventh', 'thirteenth']);
+      expect(tensionRow('thirteenth').choices.map(choice => choice.label))
+        .toEqual(['♭13', '♮13']);
+    });
+
+    /** Imaj13#11 in C major: C E G B D F# A. Only the eleventh moves. */
+    it('sharpens the eleventh of a thirteenth chord', () => {
+      component.addChord(component.chords[0]);
+      for (let press = 0; press < 4; press++) component.stepComplexity(1);
+      settle();
+
+      component.setTension(tension('eleventh', '♯11'));
+      settle();
+
+      expect(selectedPitchClasses()).toEqual([0, 2, 4, 6, 7, 9, 11]);
+      expect(markedTension('eleventh')).toBe('♯11');
+      // The other two are still the key's own, and still marked as such.
+      expect(markedTension('ninth')).toBe('♮9');
+      expect(markedTension('thirteenth')).toBe('♮13');
+    });
+
+    /**
+     * The one the design doc records as unbuildable before `extensions` existed.
+     *
+     * `V/vi` in C major is an E7, and the key's own ninth above E is an F - a
+     * flat ninth nobody asked for. The row marks the flat ninth the chord really
+     * has, and pressing the natural one builds the F sharp that makes it a real
+     * E9: E G# B D F#.
+     */
+    it('marks a flat ninth the key put there, and lets it be raised', () => {
+      component.addOption(option(component.secondary, 'V/vi'));
+      component.stepComplexity(1);
+      settle();
+
+      expect(selectedDegree().extent).toBe(9);
+      expect(selectedDegree().extensions.ninth).toBeNull();
+      expect(markedTension('ninth')).toBe('♭9');
+
+      component.setTension(tension('ninth', '♮9'));
+      settle();
+
+      expect(selectedPitchClasses()).toEqual([2, 4, 6, 8, 11]);
+      expect(markedTension('ninth')).toBe('♮9');
+    });
+
+    /** A glyph announces as nothing useful, so the label is the word. */
+    it('says each figure aloud', () => {
+      component.stepComplexity(1);
+      component.stepComplexity(1);
+      settle();
+
+      expect(tensionRow('ninth').choices.map(choice => choice.ariaLabel))
+        .toEqual(['flat ninth', 'natural ninth', 'sharp ninth']);
+    });
+
+    it('dispatches nothing with nothing selected', () => {
+      component.stepComplexity(1);
+      component.stepComplexity(1);
+      settle();
+      const choice = tension('ninth', '♭9');
+      progression.selectSlot(null);
+      settle();
+      spyOn(progression, 'setSlotExtension');
+
+      component.setTension(choice);
+
+      expect(progression.setSlotExtension).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The other half of "the octave ceiling is the chord's, not the model's":
+   * the readout says what is *sounding*, and the `+` stepper is disabled with a
+   * reason when the chord cannot go higher. A control that silently does nothing
+   * is the failure this panel has been fixed for twice, and a per-chord ceiling
+   * is exactly the shape that produces one: the document stores 2, the chord
+   * sounds at 0, and a `-` stepping from the stored value would write 1 and move
+   * nothing.
+   */
+  describe('the octave a chord is really sounding at', () => {
+    /**
+     * A chord too wide for the top of the control, built through the palette
+     * and the two setters this task adds: degree 3 of C major at a thirteenth,
+     * altered down a tone, overridden to `diminished`, suspended, with a flat
+     * ninth and a flat thirteenth. Two of those replacements land below the note
+     * beneath them, so the ascent lift adds an octave twice.
+     *
+     * It tops out at MIDI 107 where it sits, 47 semitones above the voicing
+     * base, so it fits at octave 1 and would end on 131 at octave 2. Its ceiling
+     * is therefore **1** against a control that goes to 2 - the case the two
+     * messages have to tell apart. It is the design doc's witness minus the
+     * inversion and the key that take it to 58, and those eleven semitones would
+     * only move the ceiling to 0.
+     */
+    function buildTheWidestChord(): string {
+      component.addChord(component.chords[3]);
+      settle();
+      const id = currentState().selectedSlotId ?? '';
+      progression.setSlotChord(id, { degree: 3, alter: -2, quality: 'diminished', extent: 13 });
+      progression.setSlotSuspension(id, 'sus4');
+      progression.setSlotExtension(id, 'ninth', -1);
+      progression.setSlotExtension(id, 'thirteenth', -1);
+      settle();
+      return id;
+    }
+
+    it('reports the ordinary octave when the chord fits', () => {
+      component.addChord(component.chords[0]);
+      settle();
+
+      expect(component.octaveLabel).toBe('0');
+      expect(component.octaveCeilingReached).toBeFalse();
+      expect(component.octaveLimit).toBeNull();
+    });
+
+    /** And the stepper rests there rather than running off the ladder. */
+    it('disables the up stepper at the top of the range, and says so', () => {
+      component.addChord(component.chords[0]);
+      settle();
+      for (let press = 0; press < 6; press++) {
+        component.stepOctave(1);
+        settle();
+      }
+
+      expect(selectedDegree().octave).toBe(OCTAVE_MAX);
+      expect(component.octaveLabel).toBe(`+${OCTAVE_MAX}`);
+      expect(component.octaveCeilingReached).toBeTrue();
+      expect(component.octaveLimit).toContain('top of the range');
+    });
+
+    /**
+     * A wide chord has room below its own ceiling like any other, so the panel
+     * says nothing while it is under one. This is the case Task 4b's note warns
+     * that folding the two predicates together would lose.
+     */
+    it('says nothing while a wide chord is still under its ceiling', () => {
+      const id = buildTheWidestChord();
+
+      expect(progression.slotOctave(id)?.ceiling).toBeLessThan(OCTAVE_MAX);
+      expect(component.octaveCeilingReached).toBeFalse();
+      expect(component.octaveLimit).toBeNull();
+    });
+
+    /**
+     * The chord's own limit is a different sentence: the control has room and
+     * this chord does not. Task 4b wrote the predicate as `requested > ceiling`,
+     * which is false here - the slot is asking for exactly the octave it got -
+     * so that version would have told a user one press into a two-octave control
+     * that they were at the top of the range.
+     */
+    it('says the chord is too wide when the chord is the limit', () => {
+      const id = buildTheWidestChord();
+
+      component.stepOctave(1);
+      settle();
+
+      const octave = progression.slotOctave(id);
+      expect(octave?.requested).toBe(1);
+      expect(octave?.sounding).toBe(octave?.ceiling ?? -99);
+      expect(octave?.ceiling).toBeLessThan(OCTAVE_MAX);
+      expect(component.octaveCeilingReached).toBeTrue();
+      expect(component.octaveLimit).toContain('too wide');
+    });
+
+    /** And the stepper refuses rather than storing a request that sounds nothing. */
+    it('records nothing when the up stepper is pressed against that ceiling', () => {
+      const id = buildTheWidestChord();
+      component.stepOctave(1);
+      settle();
+      const before = currentState().doc;
+
+      component.stepOctave(1);
+      settle();
+
+      expect(currentState().doc).toBe(before);
+      expect(progression.slotOctave(id)?.requested).toBe(1);
+    });
+
+    /**
+     * The readout follows what is sounding rather than what is stored, which is
+     * the number the `-` stepper has to work from: stepping down from a stored 2
+     * that sounds at 0 would write 1 and change no note.
+     */
+    it('reports the sounding octave and steps down from it', () => {
+      const id = buildTheWidestChord();
+      progression.setSlotOctave(id, OCTAVE_MAX);
+      settle();
+
+      const octave = progression.slotOctave(id);
+      const sounding = octave?.sounding ?? 0;
+      expect(octave?.requested).toBe(OCTAVE_MAX);
+      expect(sounding).toBeLessThan(OCTAVE_MAX);
+      expect(component.octaveLabel).toBe(sounding > 0 ? `+${sounding}` : `${sounding}`);
+
+      component.stepOctave(-1);
+      settle();
+
+      expect(selectedDegree().octave).toBe(sounding - 1);
     });
   });
 });

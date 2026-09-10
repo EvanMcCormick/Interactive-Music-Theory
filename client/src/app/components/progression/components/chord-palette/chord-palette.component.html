@@ -99,6 +99,25 @@
         (click)="stepComplexity(1)">+</button>
     </div>
 
+    <!-- The Sus control. Three toggles rather than a stepper: a suspension has
+         three values with no order between them, so there is no direction for
+         a +/- pair to move in. Greyed with nothing selected, as the two
+         steppers above are, rather than disappearing - a group three buttons
+         wide coming and going beside two that only grey would move the rows
+         under it. -->
+    <div class="control wide" role="group" aria-label="Suspension">
+      <span class="control-label">Sus</span>
+      <button
+        type="button"
+        class="toggle"
+        *ngFor="let choice of suspensions; trackBy: trackBySuspension"
+        [class.current]="choice.current"
+        [attr.aria-pressed]="choice.current"
+        [attr.aria-label]="choice.ariaLabel"
+        [disabled]="!canAdjust"
+        (click)="setSuspension(choice)">{{ choice.label }}</button>
+    </div>
+
     <div class="control" role="group" aria-label="Chord octave">
       <span class="control-label">Octave</span>
       <button
@@ -107,15 +126,64 @@
         aria-label="Octave down"
         [disabled]="!canAdjust"
         (click)="stepOctave(-1)">&minus;</button>
+      <!-- What the chord is *sounding* at, which is not always what the
+           document stores: a chord too wide for the octave it was given is
+           clamped on use. See `slotOctave`. -->
       <span class="control-value">{{ octaveLabel }}</span>
       <button
         type="button"
         class="step"
         aria-label="Octave up"
-        [disabled]="!canAdjust"
+        [disabled]="!canAdjust || octaveCeilingReached"
         (click)="stepOctave(1)">+</button>
     </div>
   </div>
+
+  <!-- Why the octave `+` is dead, in the words that say which of two limits it
+       is. A disabled control with no reason beside it is the failure this panel
+       has been fixed for twice.
+
+       The region is the wrapper and not the paragraph, on the argument the
+       refusal above makes: a region announces changes to itself rather than its
+       own arrival, so one that is created along with its text says nothing. -->
+  <div class="limit-region" aria-live="polite" *ngIf="unavailable === null">
+    <p class="hint" *ngIf="octaveLimit">{{ octaveLimit }}</p>
+  </div>
+
+  <!-- The Tensions control: one row per extension the chord actually has, so
+       it opens a row at a time as the complexity stepper climbs past 7, 9 and
+       11. Below a ninth there is nothing to alter and the whole section is off
+       the page rather than greyed - `extent` is the single height control, and
+       a row of dead buttons would suggest otherwise.
+
+       The marked button is what the chord is *sounding*, read off the built
+       chord rather than off the stored field: a fresh slot pins nothing, and
+       the key's own ninth is a flat one on a secondary dominant. Clicking pins,
+       exactly as the alternates row does, and the note under that row already
+       names Reset to chord as the way back. -->
+  <section
+    class="group tensions"
+    *ngIf="tensions.length > 0"
+    role="group"
+    aria-label="Chord tensions">
+    <h4 class="group-title">Tensions</h4>
+    <div
+      class="control wide"
+      *ngFor="let row of tensions; trackBy: trackByExtension"
+      role="group"
+      [attr.aria-label]="row.label">
+      <span class="control-label">{{ row.label }}</span>
+      <button
+        type="button"
+        class="toggle"
+        *ngFor="let choice of row.choices; trackBy: trackByTension"
+        [class.current]="choice.current"
+        [attr.aria-pressed]="choice.current"
+        [attr.aria-label]="choice.ariaLabel"
+        [disabled]="!canAdjust"
+        (click)="setTension(choice)">{{ choice.label }}</button>
+    </div>
+  </section>
 
   <!-- The third row, here rather than above the two append rows: it changes the
        chord that is selected, which is what the two steppers directly above it

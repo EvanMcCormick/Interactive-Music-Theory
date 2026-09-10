@@ -18,12 +18,21 @@ import {
 } from '../../../../models/progression.model';
 import { ChordChoice, ProgressionService } from '../../../../services/progression.service';
 import {
+  SuspensionChoice,
+  TensionChoice,
+  TensionRow,
+  buildOctaveView,
+  buildSuspensions,
+  buildTensions
+} from './chord-palette-controls-view';
+import {
   chordName,
   romanNumeral,
   spokenChordName
 } from '../../../../services/progression-chord-names';
 import {
   ChordExtent,
+  ChordIdentity,
   effectiveChord
 } from '../../../../services/progression-harmony';
 import { chordRootName } from '../../../../services/progression-spelling';
@@ -336,10 +345,38 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   /** Whether the +/- controls have a chord to act on. */
   canAdjust = false;
   extentLabel = NOTHING_SELECTED;
+
+  /**
+   * The octave the chord is **sounding** at, signed.
+   *
+   * `SlotOctave.sounding` and not `ChordDegree.octave`: a chord too wide for
+   * the octave it was given is clamped on use, so the stored number describes a
+   * document and this one describes a sound. `slotOctave`'s docstring argues it
+   * at length, and the stepper below reads the same field for the same reason.
+   */
   octaveLabel = NOTHING_SELECTED;
 
+  /** Whether the octave `+` is at its limit, of either kind. */
+  octaveCeilingReached = false;
+
+  /**
+   * Which limit that is, in words, or null while there is none.
+   *
+   * A disabled button with no reason beside it is the failure this panel has
+   * been fixed for twice. The two sentences are genuinely different facts - the
+   * control has no more range, or this chord cannot use the range that is left
+   * - and only the second is about the chord the user is looking at.
+   */
+  octaveLimit: string | null = null;
+
+  /** None / sus2 / sus4. Empty when there is no key to build chords in. */
+  suspensions: readonly SuspensionChoice[] = [];
+
+  /** One row per extension the selected chord actually has. Empty below a ninth. */
+  tensions: readonly TensionRow[] = [];
+
   private selectedSlotId: string | null = null;
-  private selectedOctave = 0;
+  private soundingOctave = 0;
 
   private readonly progression = inject(ProgressionService);
   private readonly changes = inject(ChangeDetectorRef);
@@ -416,10 +453,70 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     this.progression.stepSlotExtent(this.selectedSlotId, delta);
   }
 
-  /** The +/- octave buttons. Clamped to the playable range by the service. */
+  /**
+   * The +/- octave buttons.
+   *
+   * **It steps from what is sounding**, not from what the document stores. The
+   * two differ exactly when a chord is too wide for the octave it was given, and
+   * stepping from the stored number there would write a value that changes no
+   * note - a control that visibly does nothing, and an undo entry for nothing.
+   * `slotOctave` makes the argument in full.
+   *
+   * The upward refusal is the same failure from the other end. At the ceiling,
+   * `setSlotOctave(sounding + 1)` would store a *larger* request that still
+   * sounds where it already does: a commit, an undo step, and no change. The
+   * button is disabled as well; this guard is what catches the click that raced
+   * a re-render, as `chooseAlternate`'s does.
+   */
   stepOctave(delta: number): void {
     if (!this.canAdjust || this.selectedSlotId === null) return;
-    this.progression.setSlotOctave(this.selectedSlotId, this.selectedOctave + delta);
+    if (delta > 0 && this.octaveCeilingReached) return;
+    this.progression.setSlotOctave(this.selectedSlotId, this.soundingOctave + delta);
+  }
+
+  /**
+   * The Sus buttons: replace the third with the second or the fourth, or put it
+   * back.
+   *
+   * The whole choice is handed back rather than a string, on the alternates
+   * row's rule: the object the template holds is the object the service takes,
+   * so a button cannot print one thing and dispatch another.
+   */
+  setSuspension(choice: SuspensionChoice): void {
+    if (!this.canAdjust || this.selectedSlotId === null) return;
+    this.progression.setSlotSuspension(this.selectedSlotId, choice.value);
+  }
+
+  /**
+   * The Tensions buttons: pin one extension to the figure that was clicked.
+   *
+   * Three arms rather than one call, and the switch is what pays for the
+   * discriminated union above: `setSlotExtension` pairs each extension with the
+   * alterations it takes, and narrowing on `choice.extension` is how that
+   * pairing survives the trip through a template. One call with the alteration
+   * widened to a number would compile and would push the check down into the
+   * normalisation, where it becomes a throw rather than a compile error.
+   *
+   * **Clicking pins**, exactly as the alternates row does, including on the
+   * button that is already marked - the note does not move and the slot stops
+   * following the key. The note under that row already names Reset to chord as
+   * the way back, and it takes all three of these with it.
+   */
+  setTension(choice: TensionChoice): void {
+    if (!this.canAdjust || this.selectedSlotId === null) return;
+    const id = this.selectedSlotId;
+
+    switch (choice.extension) {
+      case 'ninth':
+        this.progression.setSlotExtension(id, 'ninth', choice.alteration);
+        return;
+      case 'eleventh':
+        this.progression.setSlotExtension(id, 'eleventh', choice.alteration);
+        return;
+      case 'thirteenth':
+        this.progression.setSlotExtension(id, 'thirteenth', choice.alteration);
+        return;
+    }
   }
 
   /** The degree is the identity of a button: the key changes, the seven do not. */
@@ -430,6 +527,21 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   /** An option's identity is the chord it stores. See `optionKey`. */
   trackByKey(_index: number, option: PaletteOption): string {
     return option.key;
+  }
+
+  /** A suspension's identity is the value it stores; there are three, always. */
+  trackBySuspension(_index: number, choice: SuspensionChoice): string {
+    return choice.value;
+  }
+
+  /** A row's identity is the extension it alters. */
+  trackByExtension(_index: number, row: TensionRow): string {
+    return row.extension;
+  }
+
+  /** A tension button's identity is its extension and its figure. */
+  trackByTension(_index: number, choice: TensionChoice): string {
+    return choice.key;
   }
 
   // -------------------------------------------------------------------------
@@ -455,13 +567,52 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     }
 
     this.selectedSlotId = state.selectedSlotId;
-    this.selectedOctave = degree?.octave ?? 0;
     // A key that can build no chords can adjust none either: `editDegree`
     // refuses every one of these edits, so offering them would be a control
     // that does nothing with no explanation for why.
     this.canAdjust = state.canBuildChords && degree !== null;
     this.extentLabel = degree ? EXTENT_LABELS[degree.extent] : NOTHING_SELECTED;
-    this.octaveLabel = degree ? formatOctave(degree.octave) : NOTHING_SELECTED;
+
+    // The chord this slot actually builds, asked for once and read by both
+    // controls below. It is the same identity the strip card and the fretboard
+    // read, which is what stops the panel disagreeing with the card about the
+    // chord it is pointed at - and it is the whole of why the Tensions row can
+    // mark a ♭9 the user never pinned.
+    // `canAdjust` is the guard rather than `degree !== null`: a five-note scale
+    // resolves to a real `Scale`, and `degreePitchClasses` throws on one. The
+    // panel is already refusing in that state, so the chord is simply not asked
+    // for - the same "ask first rather than call and catch" the service opens
+    // `editDegree` with.
+    const chord = this.canAdjust && degree && scale ? effectiveChord(scale.intervals, degree) : null;
+    this.suspensions = state.canBuildChords ? buildSuspensions(chord) : [];
+    this.tensions = chord ? buildTensions(chord) : [];
+    this.renderOctave(state.selectedSlotId, this.canAdjust);
+  }
+
+  /**
+   * The octave readout and the two facts the `+` button needs.
+   *
+   * Asked of the service rather than read off `ChordDegree.octave`, which is
+   * the change M3 Task 4b's other half made necessary: the ceiling is per-chord
+   * and applied on use, so the document's number and the sounding one come
+   * apart and only the service can say by how much. See `SlotOctave`, where the
+   * two predicates `buildOctaveView` applies are argued - and where the one
+   * Task 4b wrote down is recorded as the wrong one.
+   *
+   * `soundingOctave` is kept here rather than on the view, because it is not
+   * drawn: it is what the stepper adds to, and a number a button reads is the
+   * component's business rather than the template's.
+   */
+  private renderOctave(selectedSlotId: string | null, canAdjust: boolean): void {
+    const octave = canAdjust && selectedSlotId !== null
+      ? this.progression.slotOctave(selectedSlotId)
+      : null;
+    const view = buildOctaveView(octave, NOTHING_SELECTED);
+
+    this.soundingOctave = octave?.sounding ?? 0;
+    this.octaveLabel = view.label;
+    this.octaveCeilingReached = view.ceilingReached;
+    this.octaveLimit = view.limit;
   }
 
   private buildChords(key: ProgressionKey, intervals: readonly number[]): PaletteChord[] {
@@ -764,7 +915,3 @@ function optionKey(option: ChordOption): string {
   return `${option.degree}:${option.alter}:${option.quality}`;
 }
 
-/** `+1`, `0`, `-2` - signed, so the readout says which way it has been moved. */
-function formatOctave(octave: number): string {
-  return octave > 0 ? `+${octave}` : `${octave}`;
-}

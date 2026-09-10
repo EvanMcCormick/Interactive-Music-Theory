@@ -9,10 +9,12 @@ import {
 import {
   ChordDegree,
   ChordSlot,
+  ExtensionAlterations,
   ProgressionDoc,
   ProgressionKey,
   ProgressionState,
   RollNote,
+  SuspensionKind,
   createDefaultProgression,
   createDegreeSlot
 } from '../models/progression.model';
@@ -26,6 +28,7 @@ import {
 import { ChordExtent } from './progression-harmony';
 import {
   ChordChoice,
+  ExtensionName,
   ProgressionDegreeEditor,
   SlotOctave,
   chosen
@@ -46,7 +49,7 @@ import { MusicTheoryService } from './music-theory.service';
  * name them from it. Both are declared beside the methods that read them, in
  * `progression-degree-editor.ts`.
  */
-export type { ChordChoice, EditOptions, SlotOctave };
+export type { ChordChoice, EditOptions, ExtensionName, SlotOctave };
 
 /**
  * The harmony of a progression: what a chord means in a key, and what the app
@@ -503,6 +506,20 @@ export class ProgressionService {
   /** See `ProgressionDegreeEditor.setSlotOctave`. */
   setSlotOctave(id: string, octave: number): void {
     this.degrees.setSlotOctave(id, octave);
+  }
+
+  /** See `ProgressionDegreeEditor.setSlotSuspension`. */
+  setSlotSuspension(id: string, suspension: SuspensionKind): void {
+    this.degrees.setSlotSuspension(id, suspension);
+  }
+
+  /** See `ProgressionDegreeEditor.setSlotExtension`. */
+  setSlotExtension<K extends ExtensionName>(
+    id: string,
+    extension: K,
+    alteration: ExtensionAlterations[K]
+  ): void {
+    this.degrees.setSlotExtension(id, extension, alteration);
   }
 
   /** See `ProgressionDegreeEditor.slotOctave`. */

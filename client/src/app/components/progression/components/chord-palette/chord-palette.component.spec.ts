@@ -498,6 +498,27 @@ describe('ChordPaletteComponent', () => {
     });
 
     /**
+     * The four added-tone shapes, at the height each of them names.
+     *
+     * `naturalExtent` reads a shape's height off its own interval count, so a
+     * four-note shape is offered at a seventh's - and `G6` is four notes that
+     * are not a seventh. A row that had listed its shapes instead of mapping
+     * `NAMED_QUALITIES` would have gone on offering twelve; what clicking one
+     * does is in `chord-palette.component.controls.spec.ts`.
+     */
+    it('offers the added-tone shapes at a seventh`s height', () => {
+      component.addChord(component.chords[4]);
+      settle();
+
+      for (const quality of ['major6', 'minor6', 'add9', 'minorAdd9'] as const) {
+        expect(alternate(quality).extent).toBe(7);
+      }
+
+      expect(alternate('major6').name).toBe('G6');
+      expect(alternate('add9').name).toBe('G add9');
+    });
+
+    /**
      * The whole panel refuses together. Borrowed chords are exactly as
      * meaningless in a pentatonic key as diatonic ones, and offering three rows
      * of them beside a paragraph explaining that there are no chords would be

@@ -1,5 +1,11 @@
 import { CHORD_EXTENTS, normalizeChordSlot } from '../models/progression-normalize';
-import { ChordDegree, ChordSlot, ProgressionKey } from '../models/progression.model';
+import {
+  ChordDegree,
+  ChordSlot,
+  ExtensionAlterations,
+  ProgressionKey,
+  SuspensionKind
+} from '../models/progression.model';
 import { nearestExtent, reclaimPitches, regenerateSlot, sameDegree } from './progression-edit';
 import { chordOctaveCeiling } from './progression-generate';
 import { ChordExtent, NamedQuality } from './progression-harmony';
@@ -54,15 +60,29 @@ export interface ChordChoice {
  *    running out of room without distinguishing them, which is right for a
  *    button: at the top of the control and too wide to go higher are the same
  *    fact about what the next press would do, namely nothing.
- *  - **`requested > ceiling` chooses the message**, and only then. It is true
- *    exactly when the chord itself is the limit - the document is asking for an
- *    octave this chord cannot take - so it selects "this chord is too wide to go
- *    higher" over the ordinary "this is the top of the range".
+ *  - **`ceiling < OCTAVE_MAX` chooses the message.** The ceiling is already
+ *    `min(OCTAVE_MAX, headroom)`, so this is true exactly when the *chord* is
+ *    what stopped it rather than the control's own top - which selects "this
+ *    chord is too wide to go higher" over the ordinary "this is the top of the
+ *    range".
  *
  * They are different tests and folding them into one loses a case: a chord whose
  * `ceiling` is below `OCTAVE_MAX` but which is sitting *under* that ceiling has
  * `requested === sounding < ceiling`, is limited by nothing yet, and should show
  * an enabled stepper and no message at all.
+ *
+ * **Task 4b wrote the second predicate as `requested > ceiling`, and that is
+ * wrong.** It is *sufficient* - a document asking for more than the chord can
+ * take is certainly a chord at its own limit - and it is not *necessary*, which
+ * is what a message has to be chosen by. It is true only when the slot was
+ * already up at a higher octave and something widened the chord underneath it;
+ * it is false in the commoner case by far, which is a wide chord built where it
+ * sits. The design doc's own witness reaches 58 semitones and so has a ceiling
+ * of 0 at the default octave: `requested > ceiling` is `0 > 0`, and the panel
+ * would have told a user pressing `+` at octave 0 of a two-octave control that
+ * they were at the top of the range. `requested` is kept because it is the
+ * honest record of what the document asked for, not because a message turns on
+ * it.
  */
 export interface SlotOctave {
   /** What `ChordDegree.octave` stores: what the user asked for. */
@@ -75,6 +95,17 @@ export interface SlotOctave {
    */
   ceiling: number;
 }
+
+/**
+ * Which of the three extensions a setter is aiming at.
+ *
+ * `keyof ExtensionAlterations` rather than a union written out again, so the
+ * three names are declared once, in the model, beside the alterations each of
+ * them takes. It is what makes `setSlotExtension` type-safe in both arguments
+ * at once: the name chooses the union the value has to be in, so `'eleventh'`
+ * with a `-1` does not compile.
+ */
+export type ExtensionName = keyof ExtensionAlterations;
 
 /**
  * Everything that changes *which chord* a slot names, and rebuilds what it
@@ -205,6 +236,60 @@ export class ProgressionDegreeEditor {
   }
 
   /**
+   * Replaces the chord's third with its second or its fourth, or puts the third
+   * back.
+   *
+   * The palette's Sus control. `ChordDegree.suspension` has been stored,
+   * normalised and - since M3 Task 4 - *sounded* for two milestones with
+   * nothing in the UI able to write one: the design's "any combination can be
+   * built" was true of the model and reachable only by dragging a note in the
+   * roll. This is the door.
+   *
+   * It goes through `editDegree` like every other setter here, so it inherits
+   * the whole of that method's behaviour and none of it is restated: a key that
+   * cannot build chords and a literal slot are refused, a suspension the slot
+   * already has records no undo entry, and the pitches are reclaimed because a
+   * suspension restates the chord.
+   *
+   * `SuspensionKind` is an enumerated set, so a value outside it is the third
+   * normalisation clause and throws out of `normalizeChordDegree` rather than
+   * being clamped to something nearby. There is no nearest suspension.
+   */
+  setSlotSuspension(id: string, suspension: SuspensionKind): void {
+    this.editDegree(id, degree => ({ ...degree, suspension }));
+  }
+
+  /**
+   * Pins one extension to an alteration, or hands it back to the key.
+   *
+   * The palette's Tensions control, and the other half of what M3's model can
+   * build and its UI could not reach. `null` is "as the key gives it" - the
+   * convention `quality` already uses - so this is also the only way to
+   * *un*-pin one short of Reset to chord.
+   *
+   * **One extension at a time, and the other two left alone**, which is what
+   * makes the control a row of buttons rather than a form: a user flattening a
+   * ninth has said nothing about the eleventh above it, and writing a whole
+   * `ExtensionAlterations` would say something about all three.
+   *
+   * Pinning an extension the extent does not reach is stored and sounds
+   * nothing, and that is deliberate rather than a gap - `chordPitchClasses`
+   * skips a position the stack does not have, which is what keeps `extent` the
+   * single height control. The palette does not offer the row at all until the
+   * chord reaches it, so the case arrives here only from a document.
+   */
+  setSlotExtension<K extends ExtensionName>(
+    id: string,
+    extension: K,
+    alteration: ExtensionAlterations[K]
+  ): void {
+    this.editDegree(id, degree => ({
+      ...degree,
+      extensions: withAlteration(degree.extensions, extension, alteration)
+    }));
+  }
+
+  /**
    * Where one slot's octave control actually stands: what was asked for, what
    * is sounding, and how high this chord may go.
    *
@@ -320,6 +405,25 @@ export class ProgressionDegreeEditor {
 
     this.store.commitSlot(id, draftKey => this.regenerate(reclaimPitches(edited), draftKey));
   }
+}
+
+/**
+ * One extension's alteration written over a set of three, the other two left.
+ *
+ * A named function rather than a computed key in an object literal, because
+ * `{ ...extensions, [extension]: alteration }` under a generic key widens to an
+ * index signature and stops being an `ExtensionAlterations` - the type would
+ * have to be asserted back, and an assertion is exactly what the pairing this
+ * signature enforces exists to avoid.
+ */
+function withAlteration<K extends ExtensionName>(
+  extensions: ExtensionAlterations,
+  extension: K,
+  alteration: ExtensionAlterations[K]
+): ExtensionAlterations {
+  const changed: ExtensionAlterations = { ...extensions };
+  changed[extension] = alteration;
+  return changed;
 }
 
 /**
