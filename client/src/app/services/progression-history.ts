@@ -25,8 +25,8 @@ import { requireUniqueSlotIds, settle } from './progression-edit';
  *
  * Nothing harmony-shaped came with it. `canBuildChords`, `regenerate`,
  * `editDegree`, `reclaimPitches` and every refusal the service's own docstring
- * argues are still there, because they are rules about chords rather than about
- * documents.
+ * argues are all still on the service's side of this split, because they are
+ * rules about chords rather than about documents.
  *
  * ## Plain, not injectable, and owned rather than provided
  *
@@ -40,13 +40,13 @@ import { requireUniqueSlotIds, settle } from './progression-edit';
  * ## Why it is handed a `derive` rather than given the pieces
  *
  * `ProgressionState` is bigger than a document. It carries `canBuildChords` and
- * `keyScale`, which are answers about *harmony* - `findScale` resolving an id
- * through `MusicTheoryService`, then `isHeptatonic` over what comes back - and
- * a store that could work those out for itself would be a store that had
- * acquired the knowledge this split exists to keep out. So it does not know
- * them and cannot learn them: it is given a function at construction and calls
- * it, and the only thing it contributes is the pair of numbers it alone knows,
- * `HistoryDepth`.
+ * `keyScale`, which are answers about *harmony* - `ProgressionKeyContext`
+ * resolving an id through `MusicTheoryService`, then `isHeptatonic` over what
+ * comes back - and a store that could work those out for itself would be a
+ * store that had acquired the knowledge this split exists to keep out. So it
+ * does not know them and cannot learn them: it is given a function at
+ * construction and calls it, and the only thing it contributes is the pair of
+ * numbers it alone knows, `HistoryDepth`.
  *
  * That is the one place this split can go wrong, and it goes wrong quietly -
  * an `inject()` here would compile, pass every test, and put the resolution of

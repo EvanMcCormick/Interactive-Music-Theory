@@ -41,7 +41,7 @@ rather than trusting a number written here.
 | `services/progression-chord-names.ts` | `romanNumeral`, `chordName`, `spokenChordName`, `rootPrefersSharps` | composed figures; `rootPrefersSharps` deleted |
 | `services/progression-vocabulary.ts` | the palette's alternates, borrowed and secondary rows | spells by degree letter |
 | `services/progression-edit.ts` | `regenerateSlot` (a merge), `sameDegree` | compares `extensions` |
-| `services/progression.service.ts` | every setter; **1110 lines, over the cap** | split in Task 1 |
+| `services/progression.service.ts` | every setter; **1110 lines, over the cap** | split in Tasks 1 and 1b |
 | `services/progression-history.ts` | `ProgressionStore`: document, selection, undo, `CommitRun` | carries the relabel notice |
 | `services/staff-pitch.ts` | `keyAlteration`, `diatonicToPitch`, `STEP_SEMITONES` (private) | exports `STEP_SEMITONES` |
 | `services/music-theory.service.ts` | chromatic tables, `spellNote`, `shouldUseSharps`, fretboard | degree letters; finding 2 fixed |
@@ -141,6 +141,61 @@ A refactor that changes the count has changed behaviour.
 ```
 refactor: Lift the roll's note setters out of the service
 ```
+
+---
+
+## Task 1b: Give the key-to-scale knowledge an owner — **done**
+
+**Files:**
+- Created: `client/src/app/services/progression-key-context.ts` (145 lines)
+- Modified: `client/src/app/services/progression.service.ts` (895 → 864),
+  `client/src/app/services/progression-history.ts` (prose only)
+- Test: the existing specs, unchanged
+
+Task 1 left the service at 895 lines against a 1000-line cap, which is 105 lines
+of headroom for `setSlotSuspension` and `setSlotExtension` (Task 6), a reworked
+`resetSlotToChord` and `setKey` (Task 8), and `settlePitchGesture`,
+`chooseRelabelAlternate`, `revertRelabel` and `keepAsLiteral` (Task 9). In a
+codebase that runs around 60% documentation, four setters and four gesture
+methods do not fit in 105 lines. The cap would have been breached in the middle
+of the milestone, and splitting *then* means proving a refactor
+behaviour-preserving with the recogniser half-landed. So the split is taken
+before Task 2 rather than after Task 9.
+
+The design reason is better than the arithmetic one. `ProgressionStore` already
+borrows the service's `derive` because `ProgressionState` carries `keyScale` and
+`canBuildChords`, and Task 9 Step 3 hands the note editor a scale-resolving
+callback for the same reason. Two arrows into the service asking one question —
+how a key id becomes a scale — is the shape of a thing that has not been named.
+`ProgressionKeyContext` is the name: `findScale`, `chordScale`, `chordScaleFor`,
+`canBuildChords` and `spellingFor`, taking `MusicTheoryService` as a constructor
+argument rather than injecting one, so it stands up in a spec with no injector.
+Plain class, constructed by the service, private, delegated to — the precedent is
+`a84a8bd` and `6f63e0b`.
+
+**Two things did not move, and the reasons are the interesting part.**
+
+`derive` stayed. It builds the whole of `ProgressionState`, and only two of its
+seven fields are key-to-scale knowledge; the selection validated against the
+slots, `isDirty` and the two history flags are not, and would have arrived in the
+new file only because they happened to share a method with the two lines that
+belong there. It asks the context its two questions and stays the seam the store
+borrows, which also leaves `ProgressionStore`'s docstring true.
+
+`regenerate` stayed, and this one is structural. It is a one-line composition of
+`regenerateSlot` with the resolved scale, so on size alone it could have gone —
+but `regenerateSlot` merges notes, ownership and voicing, which is slot knowledge.
+Moving it would have made the key context the place a slot is rebuilt as well as
+the place a scale is found, and it would have put a path to regeneration inside
+the object Task 9 hands the note editor. The seam that kept `resetSlotToChord` in
+the service in Task 1 is that same seam, and it holds only while the thing the
+editor is handed cannot rebuild a chord. `chordScaleFor(key)` is what makes this
+work without leaking: the service's `regenerate` asks for intervals and never
+learns that finding them means resolving an id and testing `isHeptatonic`.
+
+**Verified:** `npx tsc -p tsconfig.spec.json --noEmit` clean, **1855 SUCCESS, 0
+failures**, no spec edited. Every source file touched is under the cap: the
+service 864, the key context 145, `progression-history.ts` 370.
 
 ---
 
@@ -1043,8 +1098,11 @@ it('detaches a slot on keep-as-literal, and never re-reads it', () => {});
   their own undo entry. Keep-as-literal writes `literal` `user-detached` with `from` the
   degree it had.
 - The scale reaches the editor as a callback the service hands it at construction —
-  the store's `derive` is the precedent — so the editor never learns how a scale id
-  resolves.
+  `ProgressionKeyContext.findScale` behind it, the store's `derive` as the precedent —
+  so the editor never learns how a scale id resolves. Hand it a bound method or a
+  closure, **not the context itself** — the editor needs the scale to express a
+  recognised chord in and nothing else, and a whole object hands over four more
+  questions it has no business asking.
 
 **Step 4: The roll.** Move commits pass `deferRecognition: true`. `endGesture` — which
 pointerup and pointercancel both reach — calls `settlePitchGesture(move.slotId, move.notes)`

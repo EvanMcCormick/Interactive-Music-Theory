@@ -26,11 +26,10 @@ import {
   sameNotes,
   sameOwnership
 } from './progression-edit';
-import { ChordExtent, NamedQuality, isHeptatonic } from './progression-harmony';
+import { ChordExtent, NamedQuality } from './progression-harmony';
 import { HistoryDepth, ProgressionStore } from './progression-history';
+import { ProgressionKeyContext } from './progression-key-context';
 import { EditOptions, ProgressionNoteEditor } from './progression-note-editor';
-import { Scale } from '../models/music-theory.model';
-import { keySignatureKind } from './circle-of-fifths.data';
 import { MusicTheoryService } from './music-theory.service';
 
 /**
@@ -84,8 +83,8 @@ export interface ChordChoice {
  * What went is a mechanism whose every rule is enforced by a guard beside it:
  * settle-then-push-then-publish, run coalescing, eviction at `MAX_HISTORY`, and
  * the redo branch dropping when a new step makes it unreachable. What stayed is
- * everything that knows what a chord is - `canBuildChords`, `regenerate`,
- * `editDegree`, `reclaimPitches`, and every refusal argued below.
+ * everything that knows what a chord is - `regenerate`, `editDegree`,
+ * `reclaimPitches`, and every refusal argued below.
  *
  * The seam is `derive`. `ProgressionState` carries `canBuildChords` and
  * `keyScale`, which are `findScale` and `isHeptatonic` - harmony, and the one
@@ -114,13 +113,29 @@ export interface ChordChoice {
  *
  * It is handed the store rather than this service, which is what keeps that
  * seam from being a matter of discipline: there is no path from there to
- * `findScale`.
+ * `ProgressionKeyContext`.
+ *
+ * ## Nor does it resolve a key's scale
+ *
+ * `ProgressionKeyContext` is the third, and it is the answer to the question
+ * both of the others were asking this service. `ProgressionKey.scaleId` is an
+ * id into `MusicTheoryService`'s tables; `findScale`, `chordScale`,
+ * `canBuildChords` and `spellingFor` are the whole of what resolving one and
+ * reading the result comes to, and they are there now. The store still borrows
+ * `derive`, and M3's recogniser will hand the note editor a scale the same way
+ * - two arrows for one kind of knowledge, which is what made it worth a name.
+ *
+ * `derive` and `regenerate` stayed. Neither is key knowledge: the first builds
+ * a whole `ProgressionState`, of which two fields are the key's and five are
+ * not, and the second merges a rebuilt chord into a slot. That file's docstring
+ * argues both, and why the second matters more than it looks.
  *
  * ## What the service refuses
  *
  * Diatonic chords need a seven-note scale, and `degreePitchClasses` throws on
- * anything else - so the service asks `isHeptatonic` first rather than calling
- * and catching, which is what it is exported for.
+ * anything else - so the service asks first, through `canBuildChords`, rather
+ * than calling and catching. `isHeptatonic` is exported for that question;
+ * `ProgressionKeyContext` is where it is now put.
  *
  * The line is drawn between harmony and timeline. Adding a chord or changing
  * one - `appendSlot`, `appendChord`, `setSlotChord`, `setSlotExtent`,
@@ -147,6 +162,14 @@ export class ProgressionService {
   private readonly musicTheory = inject(MusicTheoryService);
 
   /**
+   * How a key id becomes a scale. A field initializer rather than a line in the
+   * constructor, because it needs nothing but `musicTheory` - which the line
+   * above has filled by the time this one runs - and because the callback the
+   * store is handed below reads it on every publish.
+   */
+  private readonly keys = new ProgressionKeyContext(this.musicTheory);
+
+  /**
    * The document, the selection and the history.
    *
    * Constructed rather than injected, and private rather than exposed: "every
@@ -163,10 +186,10 @@ export class ProgressionService {
 
   /**
    * Built in the constructor body rather than as a field initializer, because
-   * the callback it hands over reads `musicTheory` - which is filled by the
-   * field initializer above, and so is in place by the time this line runs. The
-   * arrow keeps `this` this service's, which is the whole of what the store
-   * borrows from it.
+   * the callback it hands over reads `keys` - which is filled by the field
+   * initializer above, and so is in place by the time this line runs. The arrow
+   * keeps `this` this service's, which is the whole of what the store borrows
+   * from it.
    *
    * The editor follows on the next line rather than in a field initializer for
    * a plainer reason: it takes the store, which does not exist until the line
@@ -209,7 +232,7 @@ export class ProgressionService {
    */
   appendSlot(degree: number): void {
     const doc = this.doc;
-    if (!this.canBuildChords(doc.key)) return;
+    if (!this.keys.canBuildChords(doc.key)) return;
 
     this.append(createDegreeSlot(degree, 0), doc.key);
   }
@@ -235,7 +258,7 @@ export class ProgressionService {
    */
   appendChord(choice: ChordChoice): void {
     const doc = this.doc;
-    if (!this.canBuildChords(doc.key)) return;
+    if (!this.keys.canBuildChords(doc.key)) return;
 
     const fresh = createDegreeSlot(choice.degree, 0);
     // `createDegreeSlot` builds a degree slot and nothing else. This is the
@@ -421,7 +444,7 @@ export class ProgressionService {
    */
   resetSlotToChord(id: string): void {
     const doc = this.doc;
-    if (!this.canBuildChords(doc.key)) return;
+    if (!this.keys.canBuildChords(doc.key)) return;
 
     const slot = this.store.slot(id);
     if (!slot || slot.harmony.kind !== 'degree') return;
@@ -550,7 +573,7 @@ export class ProgressionService {
     const doc = this.doc;
     // A slot whose label and notes could not be made to agree is worse than a
     // control that does nothing, so the whole edit is refused.
-    if (!this.canBuildChords(doc.key)) return;
+    if (!this.keys.canBuildChords(doc.key)) return;
 
     const slot = this.store.slot(id);
     // A literal slot has no degree to change - its notes are the truth, and
@@ -616,14 +639,15 @@ export class ProgressionService {
    *
    * ## `preferSharps` is an argument because a pitch class cannot carry it
    *
-   * `spellingFor` below works the spelling out from the tonic and the mode,
-   * and that is the right answer for every caller that has only those two
-   * numbers. It is not always the *available* answer: F sharp major and G flat
-   * major are one pitch class and two keys, and a caller who knows which of
-   * them the user picked knows something this service cannot re-derive. The
-   * circle of fifths is that caller, through `ProgressionComponent.adopt`,
-   * which hands over `MusicTheoryService.shouldUseSharps()` - the app-wide
-   * answer, taken from the key *name* the user clicked.
+   * `ProgressionKeyContext.spellingFor` works the spelling out from the tonic
+   * and the mode, and that is the right answer for every caller that has only
+   * those two numbers. It is not always the *available* answer: F sharp major
+   * and G flat major are one pitch class and two keys, and a caller who knows
+   * which of them the user picked knows something this service cannot
+   * re-derive. The circle of fifths is that caller, through
+   * `ProgressionComponent.adopt`, which hands over
+   * `MusicTheoryService.shouldUseSharps()` - the app-wide answer, taken from
+   * the key *name* the user clicked.
    *
    * Optional rather than required, so that a caller who genuinely has only the
    * numbers - a spec, a future importer - still gets the derived answer instead
@@ -640,7 +664,7 @@ export class ProgressionService {
    * quietly disagree with it.
    */
   setKey(tonic: number, scaleId: string, preferSharps?: boolean): void {
-    const scale = this.findScale(scaleId);
+    const scale = this.keys.findScale(scaleId);
 
     this.store.commit(draft => {
       // Bounded here rather than left to `settle()`, which does not run until
@@ -667,7 +691,7 @@ export class ProgressionService {
         ...bounded,
         preferSharps:
           preferSharps ??
-          this.spellingFor(bounded.tonic, scaleId, scale, draft.key.preferSharps)
+          this.keys.spellingFor(bounded.tonic, scaleId, scale, draft.key.preferSharps)
       };
 
       // No `isHeptatonic` check of its own: `regenerate` asks already, and
@@ -734,11 +758,20 @@ export class ProgressionService {
    *
    * The store calls this on every publish, and the arrow it was handed at
    * construction is the only thing it holds of this service. Two of the fields
-   * below need `findScale` - an id resolved through `MusicTheoryService` - and
-   * `isHeptatonic` over what comes back, which is harmony; the two the store
-   * knows and this method cannot see are the ones it hands over in
-   * `HistoryDepth`. So each side contributes exactly what it is allowed to
-   * know, and neither can compute the other's half.
+   * below need `ProgressionKeyContext.findScale` - an id resolved through
+   * `MusicTheoryService` - and `isHeptatonic` over what comes back, which is
+   * harmony; the two the store knows and this method cannot see are the ones it
+   * hands over in `HistoryDepth`. So each side contributes exactly what it is
+   * allowed to know, and neither can compute the other's half.
+   *
+   * ## Why it stayed here when those two questions went
+   *
+   * Only `keyScale` and `canBuildChords` are the key context's. The selection is
+   * validated against the slots, `isDirty` and the two history flags are the
+   * store's own, and none of that would have gone with a move - it would only
+   * have arrived in that file because it happened to share a method with the
+   * two lines that belong there. So this asks the key its two questions and
+   * stays the seam the store borrows.
    */
   private derive(
     doc: ProgressionDoc,
@@ -746,12 +779,12 @@ export class ProgressionService {
     isDirty: boolean,
     history: HistoryDepth
   ): ProgressionState {
-    const keyScale = this.findScale(doc.key.scaleId);
+    const keyScale = this.keys.findScale(doc.key.scaleId);
 
     return {
       doc,
       selectedSlotId: doc.slots.some(slot => slot.id === selectedSlotId) ? selectedSlotId : null,
-      canBuildChords: this.chordScale(keyScale) !== null,
+      canBuildChords: this.keys.chordScale(keyScale) !== null,
       keyScale,
       isDirty,
       canUndo: history.canUndo,
@@ -776,77 +809,13 @@ export class ProgressionService {
    * the honest value rather than a stand-in for a missing answer: a complexity
    * step, an inversion, an octave shift and an append all move no key, so there
    * is no interval to move claimed pitches by.
+   *
+   * The intervals it builds from are `ProgressionKeyContext`'s answer, and that
+   * is the whole of what this asks the key: a slot is rebuilt here, where the
+   * merge rules are, and the scale is resolved there, where the tables are.
    */
   private regenerate(slot: ChordSlot, key: ProgressionKey, transposeBy = 0): ChordSlot {
-    return regenerateSlot(
-      slot,
-      key,
-      this.chordScale(this.findScale(key.scaleId)),
-      transposeBy
-    );
-  }
-
-  /**
-   * How the new key spells its notes: its own signature, then the scale's
-   * default, then whatever was already in force.
-   *
-   * The first clause is the one that matters and it is `b514027`'s rule, called
-   * rather than restated - E flat ionian carries three flats however the ionian
-   * scale's `preferSharps` is set, and it is set to `true`. Reading that flag
-   * first was how the palette came to print `D♯ Maj` in E flat major.
-   *
-   * The second clause is not a fallback from failure but the honest answer for
-   * a scale with no parent major: a pentatonic has no signature to inherit, so
-   * the only opinion available is the one it declares for itself. The third is
-   * for an id the app cannot resolve at all - there is no scale to ask, and
-   * guessing would be worse than keeping.
-   */
-  private spellingFor(
-    tonic: number,
-    scaleId: string,
-    scale: Scale | null,
-    inForce: boolean
-  ): boolean {
-    const signature = keySignatureKind(scaleId, tonic);
-    if (signature === 'sharp') return true;
-    if (signature === 'flat') return false;
-
-    return scale ? scale.preferSharps : inForce;
-  }
-
-  /**
-   * The scale a key names, or null when the id names nothing the app knows.
-   *
-   * `ProgressionKey.scaleId` is an id from `MusicTheoryService` and this is the
-   * one place that resolves it, so an id that does not resolve produces a page
-   * with no chords to offer rather than an exception somewhere downstream.
-   */
-  private findScale(scaleId: string): Scale | null {
-    for (const category of this.musicTheory.getScaleCategories()) {
-      const scale = category.scales.find(candidate => candidate.id === scaleId);
-      if (scale) return scale;
-    }
-    return null;
-  }
-
-  /**
-   * The intervals a scale can stack thirds through, or null when it cannot.
-   *
-   * Two questions with one answer: whether the palette may offer a chord, and
-   * what `regenerateSlot` builds one from. An unknown id and a scale that is
-   * not heptatonic answer both, asked once so the two cannot drift.
-   *
-   * It takes the resolved scale rather than the key so that `derive` can ask it
-   * about the scale it has already looked up. The heptatonic rule is stated
-   * here and nowhere else, which is the property worth keeping.
-   */
-  private chordScale(scale: Scale | null): readonly number[] | null {
-    return scale && isHeptatonic(scale.intervals) ? scale.intervals : null;
-  }
-
-  /** Whether thirds can be stacked through the key's scale at all. */
-  private canBuildChords(key: ProgressionKey): boolean {
-    return this.chordScale(this.findScale(key.scaleId)) !== null;
+    return regenerateSlot(slot, key, this.keys.chordScaleFor(key), transposeBy);
   }
 }
 
