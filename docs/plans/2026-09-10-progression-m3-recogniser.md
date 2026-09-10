@@ -853,6 +853,16 @@ chord that overflows MIDI reachable, and 4b is the ceiling that catches it.
 up-stepper is disabled with a reason when the chord is against its ceiling — a control that
 silently does nothing is the failure this panel has been fixed for twice.
 
+**Corrected during Task 6, and the correction matters.** An earlier draft of this note, and
+`SlotOctave`'s inherited docstring, said the "this chord is too wide" message is chosen by
+`requested > ceiling`. That is sufficient but not necessary: it is true only when a slot was
+raised and *then* widened underneath, and false for the commoner case of a wide chord built
+where it sits. The design's own 58-reach witness has a ceiling of 0 at the default octave,
+where `0 > 0` would have told a user at the **bottom** of a two-octave control that they
+were at its top. The predicate is **`ceiling < OCTAVE_MAX`**, which says exactly "the chord
+stopped it, not the control". Recorded here as well as in the code, because the plan is
+what the next implementer reads first.
+
 **Check the service's line count before you start.** Task 1b split it at 864 lines on the
 argument that 105 lines of headroom would not hold this task, Task 8 and Task 9; Task 4
 spent 31 of them. If `setSlotSuspension` and `setSlotExtension` take it near 1000, the next
