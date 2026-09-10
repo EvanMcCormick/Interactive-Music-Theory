@@ -725,10 +725,18 @@ checkable on a sample.
 **And it gives the control its top octave back.** `OCTAVE_MAX` returns to 2, the
 value M2 took it down from. That drop was the right call at the time and is the
 wrong one now, for the same reason both ways round: M2 could only bound the
-*input*, so one chord in 236 million overflowing MIDI cost every chord in the app
-an octave. Measured over the shipped set, 99.839% of buildable chords have room for
-that octave and 0.161% do not — and the ceiling holds those 0.161% at 1 by itself,
-which is precisely the case a global constant could not express.
+*input*, so the existence of chords that overflow at 2 cost **every** chord in the
+app an octave. Measured over the shipped set, 99.839% of buildable chords have room
+for that octave and 0.161% do not — and the ceiling holds that 0.161% at 1 by
+itself, which is precisely the case a global constant could not express.
+
+A phrase to retire while we are here: "one chord in 236 million", which appears in
+M3's own commit messages and in `OCTAVE_MAX`'s earlier docstring. It borrows the
+*witness's* uniqueness for a population it does not describe — the witness is the
+widest chord, not the only held-down one. Across the full model 16,045 chords have
+a ceiling of 0 and 1,730,647 more have a ceiling of 1. What is rare is the chord
+that overflows at the *bottom* of the control, not the chord that cannot reach the
+top.
 
 So the constant stops being arithmetic and becomes **taste at both ends**: C2 at
 the bottom because chords voiced below it are mud, two octaves at the top because
