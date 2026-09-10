@@ -29,6 +29,14 @@ export interface MusicTheoryItem {
   intervals: number[];
   preferSharps?: boolean;
   symbol?: string;
+  /**
+   * `Chord.steps`, carried through for chord items only. See it, and
+   * `note-naming.ts`, which is what needs it here: a chord tone is spelled by
+   * its place in the chord, and this unified item is what the fretboard has in
+   * hand when it draws one. A scale has none because a scale's nth degree is
+   * simply n letters above its tonic.
+   */
+  steps?: number[];
   type: 'scale' | 'chord';
 }
 
@@ -96,4 +104,17 @@ export interface MusicTheoryState {
   selectedTuning: string;
   selectedStringCount: number;
   showNashvilleNumbers: boolean;
+
+  /**
+   * How the caller that set the key spells its root, where the twelve names
+   * `selectedKey` is drawn from cannot.
+   *
+   * Absent for every selection the app makes for itself, which is why it is
+   * optional: the key dropdown and `getNoteIndex` compare `selectedKey` against
+   * the chromatic tables, so it stays one of their names. The progression
+   * composer's lit chord is the caller that needs more - its root can be a `C♭`
+   * - and it passes this through `selectKeyAndMode`. Read only by
+   * `note-naming.ts`, and only when it names the same pitch class.
+   */
+  rootSpelling?: string;
 }

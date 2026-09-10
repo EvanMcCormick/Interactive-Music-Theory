@@ -22,6 +22,7 @@ import { PROGRESSION_AUDIO, createToneApi } from '../../services/progression-aud
 import { chordRootPitchClass } from '../../services/progression-generate';
 import { effectiveChord } from '../../services/progression-harmony';
 import { ProgressionPlayerService } from '../../services/progression-player.service';
+import { chordRootName } from '../../services/progression-spelling';
 import { ProgressionService } from '../../services/progression.service';
 
 /** What the app's own selection says, reduced to the part this page reads. */
@@ -29,6 +30,16 @@ interface AppSelection {
   key: string;
   categoryId: string;
   itemId: string;
+
+  /**
+   * How this page spells that key, where a table name cannot.
+   *
+   * Outbound only. `chordFor` fills it because a chord root here can be a `C♭`,
+   * and `key` beside it has to stay one of the twelve names `getNoteIndex`
+   * compares against. Absent on everything captured from the app, which is what
+   * makes `restore` hand back a selection with no spelling attached to it.
+   */
+  rootSpelling?: string;
 }
 
 /**
@@ -405,7 +416,12 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     }
 
     this.capture();
-    this.musicTheory.selectKeyAndMode(chord.key, chord.categoryId, chord.itemId);
+    this.musicTheory.selectKeyAndMode(
+      chord.key,
+      chord.categoryId,
+      chord.itemId,
+      chord.rootSpelling
+    );
   }
 
   /**
@@ -476,7 +492,14 @@ export class ProgressionComponent implements OnInit, OnDestroy {
         key.preferSharps
       ),
       categoryId: found.categoryId,
-      itemId: found.itemId
+      itemId: found.itemId,
+      // And spelled a second time by the letter the numeral names, because the
+      // twelve names above hold no `C♭` and B flat major's `♭II` is one. The
+      // fretboard spells the whole chord off this letter - a third two above
+      // it, a seventh six - so handing over `B` there would have named every
+      // tone of that chord on the wrong letter, under a numeral saying lowered
+      // second. This is the same call the strip card and the palette make.
+      rootSpelling: chordRootName(key, state.keyScale.intervals, degree)
     };
   }
 

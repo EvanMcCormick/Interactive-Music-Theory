@@ -12,7 +12,7 @@ import {
   MusicTheoryItem
 } from '../models/music-theory.model';
 import { CHORD_CATEGORIES } from './chord-catalog';
-import { keySignatureKind } from './circle-of-fifths.data';
+import { SpellingSelection, noteName, preferSharps } from './note-naming';
 
 @Injectable({
   providedIn: 'root'
@@ -33,9 +33,6 @@ export class MusicTheoryService {
   
   // Nashville number system
   private nashvilleNumbers = ['1', 'b2', '2', 'b3', '3', '4', '#4/b5', '5', 'b6', '6', 'b7', '7'];
-  
-  // Keys that traditionally use flats
-  private flatKeys = ['F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb', 'Cb'];
 
   /**
    * The chord table, which left this file when M3 Task 5 added a category to
@@ -380,6 +377,9 @@ export class MusicTheoryService {
           id: chord.id,
           name: chord.name,
           intervals: chord.intervals,
+          // Carried through so a chord tone can be spelled by its place in the
+          // chord rather than by whichever of twelve names shares its pitch.
+          steps: chord.steps,
           symbol: chord.symbol,
           type: 'chord' as const
         }))
@@ -476,7 +476,10 @@ export class MusicTheoryService {
   updateKey(key: string): void {
     this.state.next({
       ...this.state.getValue(),
-      selectedKey: key
+      selectedKey: key,
+      // A spelling belongs to the key it was given with. Carrying it across a
+      // key change would name the new key's notes off the old key's letter.
+      rootSpelling: undefined
     });
   }
 
@@ -511,13 +514,22 @@ export class MusicTheoryService {
    * clicking C sets C ionian, clicking its inner ring sets A aeolian. Nothing
    * else needs it yet, and it stays here rather than in the component because
    * this is where state transitions live.
+   *
+   * `rootSpelling` is for the second caller, the progression composer lighting
+   * its own chord. `key` has to stay one of the twelve table names because the
+   * key dropdown and `getNoteIndex` both compare against them, and the chord
+   * the composer is lighting can be rooted on a `C♭`, which is not one of them.
+   * So the name and the spelling travel separately, and the argument is
+   * optional because every other caller's key spells itself. Omitting it clears
+   * whatever the last caller set: see `MusicTheoryState.rootSpelling`.
    */
-  selectKeyAndMode(key: string, categoryId: string, itemId: string): void {
+  selectKeyAndMode(key: string, categoryId: string, itemId: string, rootSpelling?: string): void {
     this.state.next({
       ...this.state.getValue(),
       selectedKey: key,
       selectedCategory: categoryId,
-      selectedItem: itemId
+      selectedItem: itemId,
+      rootSpelling
     });
   }
 
@@ -643,74 +655,43 @@ export class MusicTheoryService {
   }
 
   // Utility methods
+
+  /**
+   * Whether the app spells this selection with sharps.
+   *
+   * The rule and its six clauses are in `note-naming.ts`, beside the letter
+   * arithmetic that starts from its answer - two questions about one subject,
+   * neither of them a piece of state. This is the app-wide caller of it, and it
+   * stays a method here because that is the call every surface already makes.
+   */
   shouldUseSharps(): boolean {
+    return preferSharps(this.selection());
+  }
+
+  /**
+   * The selection, reduced to what a spelling rule needs. See `note-naming.ts`.
+   */
+  private selection(): SpellingSelection {
     const state = this.state.getValue();
-    const currentItem = this.getCurrentItem();
 
-    if (!currentItem) return true;
+    return {
+      categoryId: state.selectedCategory,
+      itemId: state.selectedItem,
+      keyName: state.selectedKey,
+      keyIndex: this.getNoteIndex(state.selectedKey),
+      item: this.getCurrentItem(),
+      rootSpelling: state.rootSpelling
+    };
+  }
 
-    // For fretboard notes, respect the explicit selection
-    if (state.selectedCategory === 'fretboardNotes') {
-      if (state.selectedItem === 'allNotesSharp' || state.selectedItem === 'sharps') {
-        return true;
-      }
-      if (state.selectedItem === 'allNotesFlat' || state.selectedItem === 'flats') {
-        return false;
-      }
-    }
-
-    // If the key is a flat key, prefer flats
-    if (this.flatKeys.includes(state.selectedKey)) {
-      return false;
-    }
-
-    // For certain keys with accidentals, make specific decisions
-    //
-    // KNOWN DISAGREEMENT with the notation panel, in four keys. The names in
-    // `chromaticScaleWithBoth` carry both spellings - `D#/Eb` - so every one of
-    // them contains a `#`, and testing for `#` first means they all come back
-    // sharp. Selecting `D#/Eb` + ionian therefore spells the fretboard, the
-    // palette and the rail in D sharp, while `ProgressionScore` engraves the
-    // signature this key actually has: `fifths: -3`, E flat major. Same for
-    // `A#/Bb`, `G#/Ab` and `C#/Db`. The seven natural names have no second
-    // spelling to disagree about, and `F#/Gb` - the fifth combined name - does
-    // not disagree either: six o'clock is the one position the circle carries
-    // both halves of, so the staff follows `preferSharps` there and writes the
-    // six sharps this line asked for.
-    //
-    // The staff is the musically right one - D sharp major has nine sharps and
-    // is not on the circle at all - so the fix belongs here, in a rule that
-    // reads a *name* for a spelling the circle already states as data. It is
-    // not made here because this line predates the notation panel and every
-    // surface above reads it: changing which half of `D#/Eb` wins moves note
-    // names on the fretboard, the keyboard and the chord palette at once, and
-    // that is a change with its own tests to write rather than a comment to
-    // fix. Recorded in the progression design doc under the M2 findings.
-    if (state.selectedKey.includes('#') || state.selectedKey.includes('b')) {
-      // If key has a # in it, prefer sharps, if it has a b, prefer flats
-      return state.selectedKey.includes('#');
-    }
-
-    // The key's own signature, for a mode that has one. A signature is a
-    // property of the key rather than of the scale shape: E minor has one sharp
-    // because its relative major is G, and D minor has one flat because its
-    // relative major is F. Reading a per-scale `preferSharps` instead gave every
-    // natural-rooted minor the same answer, which is how E minor ended up
-    // spelled with a G flat in it.
-    //
-    // The rule itself lives in `circle-of-fifths.data.ts`, beside the signature
-    // table it reads, because `ProgressionService` needs the same answer for a
-    // key this service has never been told about.
-    const signature = keySignatureKind(state.selectedItem, this.getNoteIndex(state.selectedKey));
-    if (signature === 'sharp') {
-      return true;
-    }
-    if (signature === 'flat') {
-      return false;
-    }
-
-    // Otherwise use the item's preference (scales have preferSharps, chords default to true)
-    return currentItem.preferSharps !== undefined ? currentItem.preferSharps : true;
+  /**
+   * How the fretboard and the keyboard name a note: by the letter its degree or
+   * its place in the chord gives it, falling back to the chromatic tables where
+   * neither applies. `note-naming.ts` holds the rule and every reason it falls
+   * back.
+   */
+  noteNameFor(noteValue: number): string {
+    return noteName(noteValue, this.selection()) ?? this.getNoteName(noteValue);
   }
 
   getChromatic(): string[] {
@@ -849,7 +830,7 @@ export class MusicTheoryService {
         stringNotes.push({
           fret,
           noteValue,
-          noteName: this.getNoteName(noteValue),
+          noteName: this.noteNameFor(noteValue),
           octave: octave,
           nashvilleNumber: this.getNashvilleNumber(noteValue, rootNoteIndex),
           isRoot: noteValue === rootNoteIndex,
@@ -884,7 +865,7 @@ export class MusicTheoryService {
       keys.push({
         fret: keyIndex, // Using fret property to store key index
         noteValue,
-        noteName: this.getNoteName(noteValue),
+        noteName: this.noteNameFor(noteValue),
         octave: octave,
         nashvilleNumber: this.getNashvilleNumber(noteValue, rootNoteIndex),
         isRoot: noteValue === rootNoteIndex,
@@ -925,14 +906,14 @@ export class MusicTheoryService {
     if (state.showNashvilleNumbers && !this.isKeyDisabled()) {
       const noteNames = intervals.map((interval: number) => {
         const noteIndex = (keyIndex + interval) % 12;
-        return `${this.getNoteName(noteIndex)} (${this.nashvilleNumbers[interval]})`;
+        return `${this.noteNameFor(noteIndex)} (${this.nashvilleNumbers[interval]})`;
       });
       return noteNames.join(' - ');
     }
 
     // Otherwise show just the note names
     return intervals.map((interval: number) => {
-      return this.getNoteName((keyIndex + interval) % 12);
+      return this.noteNameFor((keyIndex + interval) % 12);
     }).join(' - ');
   }
 

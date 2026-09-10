@@ -697,6 +697,53 @@ describe('ProgressionComponent', () => {
     });
 
     /**
+     * And it hands over the *letter* as well as the pitch.
+     *
+     * `key` above has to stay one of the twelve chromatic names, because the
+     * fretboard's key dropdown and `getNoteIndex` both compare against them -
+     * and a `C♭` root is not one. So the numeral's own letter travels beside it,
+     * and the fretboard spells the whole chord off that: the same bVII lights as
+     * B♭ D F rather than as the A♯ D F its table name would have given, under a
+     * card reading `VII`.
+     */
+    it('hands the fretboard the letter the numeral names, not just the pitch', () => {
+      progression.setKey(0, 'ionian');
+      progression.appendSlot(6);
+      const built = progression.doc;
+      progression.replaceDocument({
+        ...built,
+        slots: built.slots.map(slot =>
+          slot.harmony.kind === 'degree'
+            ? {
+                ...slot,
+                harmony: {
+                  kind: 'degree' as const,
+                  degree: { ...slot.harmony.degree, alter: -1, quality: 'major' as const }
+                }
+              }
+            : slot
+        )
+      });
+
+      player.publish(slotId(0));
+
+      expect(musicTheory.getCurrentState().rootSpelling).toBe('Bb');
+      expect(musicTheory.generateModeNotes().map(note => musicTheory.noteNameFor(note)))
+        .toEqual(['Bb', 'D', 'F']);
+    });
+
+    /** And gives it back when the chord stops, so the key spells itself again. */
+    it('takes the spelling away with the chord', () => {
+      progression.setKey(0, 'ionian');
+      progression.appendSlot(6);
+      player.publish(slotId(0));
+
+      player.publish(null);
+
+      expect(musicTheory.getCurrentState().rootSpelling).toBeUndefined();
+    });
+
+    /**
      * A literal slot has no degree, so there is no chord to publish - the same
      * refusal the strip makes when it prints no numeral on such a card. It is
      * unreachable in M1; `replaceDocument` is the one door it can come through,
