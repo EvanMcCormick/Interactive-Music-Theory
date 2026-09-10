@@ -787,7 +787,7 @@ export function effectiveChord(
  * `effectiveChord` reads once it holds the notes.
  *
  * Split out of that function at M3 Task 7 because the recogniser needs the same
- * reading off a stack that no `ChordShape` produced. `progression-recognise.ts`
+ * reading off a stack that no `ChordShape` produced. `progression-parse.ts`
  * parses a set of sounding pitch classes into an ascending stack, and the
  * question it then has to answer - how far each extension is from its natural,
  * whether any of them is outside every figure, and what letter each note is

@@ -1,8 +1,4 @@
-import {
-  CHORD_EXTENTS,
-  MIN_NOTE_BEATS,
-  SUSPENSIONS
-} from '../models/progression-normalize';
+import { CHORD_EXTENTS, SUSPENSIONS } from '../models/progression-normalize';
 import {
   ChordDegree,
   ChordSlot,
@@ -21,15 +17,16 @@ import {
   noteCount
 } from './progression-harmony';
 import { MusicTheoryService } from './music-theory.service';
-import {
-  expressInKey,
-  parseChord,
-  recognise,
-  structuralPitchClasses
-} from './progression-recognise';
+import { parseChord, structuralPitchClasses } from './progression-parse';
+import { expressInKey, recognise } from './progression-recognise';
 
 /**
- * Reading a chord back off the notes a slot is sounding.
+ * Writing a chord back into the key a slot is in.
+ *
+ * The other half is `progression-parse.spec.ts` - which notes are the chord, and
+ * what chord a bare set of semitones makes - and the parse is used here as the
+ * fixture builder it is: a chord is spelled out as pitch classes, parsed, and
+ * then asked what numeral this key gives it.
  *
  * Every expectation below was worked through by hand against the chord tables
  * before it was run - a fixture written from the implementation's output tests
@@ -112,171 +109,6 @@ function relabelOf(slot: ChordSlot, before: readonly RollNote[], key = C_MAJOR, 
   if (result.kind !== 'relabel') throw new Error(`expected a relabel; got ${result.kind}`);
   return result;
 }
-
-// ---------------------------------------------------------------------------
-
-describe('structuralPitchClasses', () => {
-  it('reads a block chord', () => {
-    const chord = [note(60), note(64), note(67)];
-    expect([...structuralPitchClasses(chord, 4)].sort()).toEqual([0, 4, 7]);
-  });
-
-  /**
-   * C E G C E G C E, eighths. Only the first C is on the downbeat; the rest are
-   * kept by their summed time. C sounds at 0, 1.5 and 3 for half a beat each -
-   * 1.5 beats - E at 0.5, 2 and 3.5 for the same, and G at 1 and 2.5 for 1.0,
-   * which is exactly the quarter of a four-beat slot the threshold asks for.
-   */
-  it('keeps every tone of an eighth-note arpeggio', () => {
-    const cycle = [60, 64, 67, 72, 76, 79, 84, 88];
-    const arpeggio = cycle.map((midi, i) => note(midi, i * 0.5, 0.5));
-    expect([...structuralPitchClasses(arpeggio, 4)].sort((a, b) => a - b)).toEqual([0, 4, 7]);
-  });
-
-  /**
-   * C E G E, quarters. The G sounds for exactly one beat of four, which is the
-   * boundary the threshold is chosen to include: tightening it past a quarter
-   * would lose the fifth of a quarter-note arpeggio, and losing a chord tone is
-   * a worse error than keeping a passing one.
-   */
-  it('keeps every tone of a quarter-note arpeggio', () => {
-    const arpeggio = [note(60, 0, 1), note(64, 1, 1), note(67, 2, 1), note(64, 3, 1)];
-    expect([...structuralPitchClasses(arpeggio, 4)].sort((a, b) => a - b)).toEqual([0, 4, 7]);
-  });
-
-  /** A sixteenth is a quarter of a beat, a sixteenth of the slot. Not structural. */
-  it('drops a sixteenth passing tone', () => {
-    const chord = [note(60), note(64), note(67), note(62, 1.5, 0.25)];
-    expect(structuralPitchClasses(chord, 4).has(2)).toBe(false);
-  });
-
-  /**
-   * A D starting on the last half-beat and running four beats long sounds for
-   * 0.5 beats *inside* a four-beat slot and 3.5 beats after it. Counting the
-   * overhang would make it structural at 4.0 beats and let a note that mostly
-   * belongs to the next slot decide this one's chord.
-   */
-  it('counts no time past the end of the slot', () => {
-    const chord = [note(60), note(62, 3.5, 4)];
-    expect([...structuralPitchClasses(chord, 4)]).toEqual([0]);
-    expect([...structuralPitchClasses(chord, 8)].sort((a, b) => a - b)).toEqual([0, 2]);
-  });
-
-  /** A note inside the first grid step is on the downbeat as far as a user is. */
-  it('reads a note nudged by one grid step as sounding at the downbeat', () => {
-    const nudged = [note(62, MIN_NOTE_BEATS / 2, 0.25)];
-    expect([...structuralPitchClasses(nudged, 4)]).toEqual([2]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-
-describe('parseChord', () => {
-  /** The height ladder: an eleventh with no ninth under it is no chord. */
-  it('refuses a rung whose rungs below are missing', () => {
-    // C E G F - the eleventh with no seventh and no ninth.
-    expect(parseChord(new Set([0, 4, 7, 5]), 0)).toBeNull();
-    // C E G B D F - every rung present, so the same F is an eleventh.
-    expect(parseChord(new Set([0, 4, 7, 11, 2, 5]), 0)?.extent).toBe(11);
-  });
-
-  /** No third and no suspension is nothing this model can put in position 1. */
-  it('refuses a chord with no third and no suspension', () => {
-    expect(parseChord(new Set([0, 7]), 0)).toBeNull();
-    expect(parseChord(new Set([0, 7, 10]), 0)).toBeNull();
-  });
-
-  /** The fifth is the one omission accepted, and it is filled in. */
-  it('fills an absent fifth in and says that it did', () => {
-    const parsed = parseChord(new Set([0, 4, 10]), 0);
-    expect(parsed?.intervals).toEqual([0, 4, 7, 10]);
-    expect(parsed?.complete).toBe(false);
-    expect(parseChord(new Set([0, 4, 7, 10]), 0)?.complete).toBe(true);
-  });
-
-  /**
-   * Nine semitones is a diminished seventh over a ♭5 and a minor third and an
-   * added sixth everywhere else, and the shape settles it rather than a branch.
-   */
-  it('reads nine semitones as a seventh or a sixth by the shape under it', () => {
-    expect(parseChord(new Set([0, 3, 6, 9]), 0)?.base).toBe('diminished7');
-    expect(parseChord(new Set([0, 4, 7, 9]), 0)?.base).toBe('major6');
-    expect(parseChord(new Set([0, 3, 7, 9]), 0)?.base).toBe('minor6');
-  });
-
-  /** A ninth with no seventh under it is an added ninth, not a ninth chord. */
-  it('reads a ninth with no seventh as an added ninth', () => {
-    const parsed = parseChord(new Set([0, 4, 7, 2]), 0);
-    expect(parsed?.base).toBe('add9');
-    expect(parsed?.intervals).toEqual([0, 4, 7, 14]);
-    expect(parsed?.extent).toBe(7);
-  });
-
-  /** With a major third present, three semitones is a raised ninth. */
-  it('reads three semitones over a major third as a sharp ninth', () => {
-    const parsed = parseChord(new Set([0, 4, 7, 10, 3]), 0);
-    expect(parsed?.intervals).toEqual([0, 4, 7, 10, 15]);
-    expect(parsed?.ninth).toBe(1);
-  });
-
-  /** The root has to be sounding for the chord to be read from it. */
-  it('refuses a root that is not in the set', () => {
-    expect(parseChord(new Set([0, 4, 7]), 1)).toBeNull();
-  });
-
-  /**
-   * `OPENINGS` backtracking. Harmonic minor's `vi` suspended at extent 9 is
-   * A♭ D♭ E♭ G B♮ - a sus4 with a major seventh and a ♯9, and that ♯9 is three
-   * semitones above the root, which is where a minor third lives. Read as the
-   * third it makes a minor-major seventh and strands the D♭; read as the ♯9 it
-   * is the chord that was built. Preferring the third is only a preference.
-   */
-  it('falls back to a suspension when the third reading strands a note', () => {
-    const parsed = parseChord(new Set([0, 5, 7, 11, 3]), 0);
-    expect(parsed?.suspension).toBe('sus4');
-    expect(parsed?.intervals).toEqual([0, 5, 7, 11, 15]);
-  });
-
-  /**
-   * `FIFTHS` backtracking. An augmented seventh raised to an eleventh sounds a
-   * ♯5 and a ♯11, eight semitones and six, and six is also where a ♭5 lives.
-   * Taking the six for the fifth strands the eight, which is nothing else.
-   */
-  it('falls back to a raised fifth when a flattened one strands a note', () => {
-    const parsed = parseChord(new Set([0, 4, 8, 10, 3, 6]), 0);
-    expect(parsed?.intervals).toEqual([0, 4, 8, 10, 15, 18]);
-    expect(parsed?.base).toBe('augmented7');
-  });
-
-  /**
-   * A sus2 sounds the natural ninth's own pitch class, so a suspended chord
-   * tall enough to reach its eleventh does not sound a separate ninth for the
-   * ladder to see. C major's `IVsus2` at extent 11 is F G C E A B - the G is
-   * both the suspension and the ninth - and the ninth is implied rather than
-   * demanded, so the B is reachable as a ♯11.
-   */
-  it('implies the ninth a suspended second is already sounding', () => {
-    const parsed = parseChord(new Set([0, 2, 7, 11, 6]), 0);
-    expect(parsed?.suspension).toBe('sus2');
-    expect(parsed?.intervals).toEqual([0, 2, 7, 11, 14, 18]);
-    expect(parsed?.extent).toBe(11);
-  });
-
-  /**
-   * And the same chord one rung short does not grow a ninth it has no use for:
-   * the implication only fires where something above it is waiting.
-   */
-  it('does not imply a ninth with nothing above it', () => {
-    expect(parseChord(new Set([0, 2, 7, 11]), 0)?.extent).toBe(7);
-  });
-
-  /** A suspended chord is read as a suspension of the shape above the third. */
-  it('reads the base with a third put back', () => {
-    expect(parseChord(new Set([0, 5, 7]), 0)?.base).toBe('major');
-    expect(parseChord(new Set([0, 5, 7, 10]), 0)?.base).toBe('dominant7');
-    expect(parseChord(new Set([0, 2, 7]), 0)?.suspension).toBe('sus2');
-  });
-});
 
 // ---------------------------------------------------------------------------
 
@@ -617,6 +449,71 @@ describe('recognise', () => {
     expect(recognise(slot.notes, edited, C_MAJOR, [0, 2, 4, 7, 9]).kind).toBe('unchanged');
   });
 
+  /**
+   * The ruling of 2026-09-10: keep the numeral the user picked.
+   *
+   * ♯I and ♭II in C are one root written twice, and `expressInKey` on its own
+   * picks ♭II - {C♯, E♯, G♯} shares its F with the diatonic ii and nothing with
+   * the tonic triad, which is the design doc's own worked example. But this slot
+   * was *already* ♯I, and the user has dragged its fifth away and back: a chord
+   * whose root never moved keeps the numeral it was given.
+   */
+  it('keeps a chromatic numeral when the root has not moved', () => {
+    const slot = degreeSlot(0, { alter: 1, quality: 'major' });
+    expect(slot.notes.map(n => n.midi)).toEqual([61, 65, 68]);
+
+    // The fifth dragged down a semitone and back, so the quiet rule cannot
+    // answer: the structural set really did change and then change back.
+    const dragged = sounding(slot, [61, 65, 67]).notes;
+    expect(recognise(dragged, slot, C_MAJOR, MAJOR).kind).toBe('unchanged');
+  });
+
+  /**
+   * And with no numeral to consult, the ordinary rule decides - which is the
+   * same three notes coming back as ♭II. A `literal` slot has no history, and
+   * `expressInKey` is left to spell the root on the evidence in the notes.
+   */
+  it('writes the same root as flat II when the slot has no numeral to keep', () => {
+    const slot = degreeSlot(0, { alter: 1, quality: 'major' });
+    const detached: ChordSlot = {
+      ...slot,
+      harmony: { kind: 'literal', reason: 'unrecognised' }
+    };
+
+    const { degree } = relabelOf(detached, sounding(slot, [61, 65, 67]).notes);
+    expect(harmonyOf(degree)).toEqual(harmony({ degree: 1, alter: -1, quality: 'major' }));
+  });
+
+  /**
+   * The clause is about the root and nothing above it. ♯I with a B added is a
+   * dominant seventh on the same root, so the numeral stays and the shape is
+   * re-read - and the spelling the clause displaced is exactly what the chip
+   * should offer a user who did mean ♭II.
+   */
+  it('keeps the numeral while re-reading everything above the root', () => {
+    const slot = degreeSlot(0, { alter: 1, quality: 'major' });
+    const { degree, alternates } = relabelOf(sounding(slot, [61, 65, 68, 71]), slot.notes);
+
+    expect(harmonyOf(degree)).toEqual(
+      harmony({ degree: 0, alter: 1, extent: 7, quality: 'dominant7' })
+    );
+    expect(alternates.map(harmonyOf)).toContain(
+      jasmine.objectContaining({ degree: 1, alter: -1, quality: 'dominant7' })
+    );
+  });
+
+  /**
+   * A root that genuinely moved is renumbered, which is what the clause is
+   * narrow enough to allow: ♯I with its root dragged up a semitone is a D major
+   * triad, and no previous numeral names D.
+   */
+  it('renumbers when the root itself moved', () => {
+    const slot = degreeSlot(0, { alter: 1, quality: 'major' });
+    const { degree } = relabelOf(sounding(slot, [62, 66, 69]), slot.notes);
+
+    expect(harmonyOf(degree)).toEqual(harmony({ degree: 1, alter: 0, quality: 'major' }));
+  });
+
   /** The relabel comes with the runners-up the chip offers, best first. */
   it('offers the next three parses as alternates', () => {
     const slot = degreeSlot(0);
@@ -691,15 +588,24 @@ describe('recognise', () => {
  *    the same" rather than "stores the same".
  *  - **A displaced root renumbered.** ♭VII and ♯VI in C major are one chord, and
  *    `alter` is what lets the model say it twice. Notes carry no letters, so the
- *    recogniser cannot know which was meant and writes the one the ranking
- *    prefers.
+ *    recogniser cannot know from them which was meant - and the ruling of
+ *    2026-09-10 is that it should not have to guess: the numeral the slot is
+ *    already carrying decides, so this half of the class is now **empty on a
+ *    root that did not move**, which is every root the sweep sends round. It was
+ *    3,136 of the 5,565 before the clause, and 1,911 of those now come back
+ *    field for field rather than respelt at all.
  *
- * **No chord whose `alter` was 0 is ever renumbered,** and the sweep asserts it.
- * That is what makes the class safe rather than merely explicable: a chord on
- * its own degree comes back on its own degree, so nothing a user reaches through
- * the palette's diatonic rows can change numeral by having a note edited and
- * edited back. Only a root the model has *displaced* has a second numeral to be
- * moved to.
+ * Two assertions hold the class down, and the second is the ruling's:
+ *
+ *  - **No chord whose `alter` was 0 is ever renumbered.** A chord on its own
+ *    degree comes back on its own degree, so nothing a user reaches through the
+ *    palette's diatonic rows can change numeral by having a note edited and
+ *    edited back.
+ *  - **No chord whose root did not move is renumbered at all**, diatonic or
+ *    chromatic, which is the wider statement the clause makes true. The root a
+ *    chord came back on is read with `effectiveChord`, the same way the original
+ *    one is, so the two are compared as pitch classes rather than as spellings -
+ *    which is the whole point: it is the *spelling* that is being preserved.
  *
  * A failure that is neither is a bug in the parse or in `expressInKey`, and the
  * sweep asserts there are none. Five were found this way while this spec was
@@ -731,8 +637,17 @@ describe('the round trip', () => {
     bug: 0
   };
   const bugs: string[] = [];
+  /**
+   * The respelt class split in two: a chord that came back on another numeral,
+   * against one that came back on its own numeral with a field the key already
+   * gives no longer pinned. Since the ruling of 2026-09-10 the first half is
+   * only reachable where the root moved, and the sweep never moves one.
+   */
+  const respelt = { renumbered: 0, sameNumeral: 0 };
   /** A respelling of a chord that was never displaced would be a bug. */
   const respeltDiatonic: string[] = [];
+  /** And so, since the ruling, would any renumbering of an unmoved root. */
+  const respeltInPlace: string[] = [];
 
   /** A stack as the set of pitch classes it sounds, which is all a slot plays. */
   function pitchClassesOf(stack: readonly number[]): Set<number> {
@@ -777,11 +692,25 @@ describe('the round trip', () => {
       counts.respelt++;
       const renumbered =
         result.degree.degree !== original.degree || result.degree.alter !== original.alter;
+      if (renumbered) respelt.renumbered++;
+      else respelt.sameNumeral++;
+
+      const trace =
+        `${JSON.stringify(harmonyOf(original))} on [${scale}] -> ` +
+        JSON.stringify(harmonyOf(result.degree));
+
       if (original.alter === 0 && renumbered && respeltDiatonic.length < 10) {
-        respeltDiatonic.push(
-          `${JSON.stringify(harmonyOf(original))} on [${scale}] -> ` +
-            JSON.stringify(harmonyOf(result.degree))
-        );
+        respeltDiatonic.push(trace);
+      }
+      // The root the chord came back on, read the same way the original's was.
+      // Equal roots mean the numeral moved and the chord did not, which is what
+      // the ruling of 2026-09-10 says may no longer happen.
+      if (
+        renumbered &&
+        effectiveChord(scale, result.degree).root === identity.root &&
+        respeltInPlace.length < 10
+      ) {
+        respeltInPlace.push(trace);
       }
       return;
     }
@@ -847,6 +776,12 @@ describe('the round trip', () => {
     // model displaced has a second numeral for the ranking to move it to.
     expect(respeltDiatonic.join('\n')).withContext('renumbered with alter 0').toBe('');
 
+    // And the ruling's own assertion, which subsumes it: a chord that came back
+    // rooted where it started keeps the numeral it started on, whether or not
+    // that numeral carried an accidental.
+    expect(respeltInPlace.join('\n')).withContext('renumbered with the root unmoved').toBe('');
+    expect(respelt.renumbered).toBe(0);
+
     // Enough chords, and enough of them exact, that a sweep silently reduced to
     // nothing would fail here rather than pass.
     expect(counts.unchanged + counts.overloaded + counts.respelt).toBeGreaterThan(12000);
@@ -855,9 +790,12 @@ describe('the round trip', () => {
     // Printed rather than pinned: the two exception classes are characterised by
     // what they are, not by how many of them there happen to be, and a number
     // here would be a figure to update rather than a rule to check. Measured on
-    // 2026-09-10: 5537 exact, 1866 overloaded, 5565 respelt, 0 outside.
+    // 2026-09-10, before the ruling: 5537 exact, 1866 overloaded, 5565 respelt
+    // (3136 of them renumbered, 2429 respelt on their own numeral), 0 outside.
+    // After it: 7448 exact, 1852 overloaded, 3668 respelt and every one of them
+    // on the numeral it started on, 0 outside.
     // eslint-disable-next-line no-console
-    console.log('round trip:', JSON.stringify(counts));
+    console.log('round trip:', JSON.stringify({ ...counts, respelt }));
   });
 
   /** `EXTENT_BY_LENGTH` in the module is this table read the other way. */
