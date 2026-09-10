@@ -78,29 +78,40 @@ function reduceToOctave(value: number): number {
  *
  * Null rather than a triple accidental, so the caller chooses its fallback.
  *
- * **When the refusal fires, and how far it reaches, is stated here and nowhere
- * else.** `progression-spelling.ts` is the other module that meets it and it
- * points at this paragraph rather than restating it - the same argument
- * `STEP_SEMITONES` is one table read two ways under. Restating it is how the two
- * came to disagree: that module blamed `alter` and a "doubly-flattened" super
- * locrian fourth, and both halves were wrong.
+ * **When the refusal fires is stated here and nowhere else.**
+ * `progression-spelling.ts` is the other module that meets it and it points at
+ * this paragraph rather than restating it - the same argument `STEP_SEMITONES`
+ * is one table read two ways under. Restating it is how the two came to
+ * disagree: that module blamed `alter` and a "doubly-flattened" super locrian
+ * fourth, and both halves were wrong.
  *
- * It is reached with no `alter` at all. The sixth degree of A♯ enigmatic is
- * written on an F and sounds pitch class 8, three semitones above F, so it is an
- * F triple sharp. Displacement reaches more: D♭ super locrian's fourth is a
- * *singly* flattened fourth, which in that key is already a G double flat
- * because the key signature has flattened the G as well, and `alter: -1` on it
- * asks for a G triple flat.
+ * It is reached with no `alter` at all, and one witness is enough to show it.
+ * The sixth degree of A♯ enigmatic is written on an F and sounds pitch class 8,
+ * three semitones above F, so it is an F triple sharp. Displacement reaches
+ * more: D♭ super locrian's fourth is written on a G and sounds pitch class 5,
+ * which is already a G double flat before anything is displaced - the tonic is
+ * itself flat and the mode's fourth is a diminished one, so the two flattenings
+ * add - and `alter: -1` on it asks for a G triple flat.
  *
+ * **How far the refusal reaches is measured next door, not here.**
  * `progression-vocabulary.spelling.spec.ts` sweeps all 33 heptatonic scales in
- * all twelve keys on **every accidental a slot can store**, and pins the reach
- * as chord roots: one at `alter` zero, 1660 over the five. A diatonic mode is
- * reached only at `alter` ±2. That is not luck - two of the seven letters sit a
- * semitone from their neighbour, so a mode's own degree can already be a double
- * accidental from its letter in a remote key, and a second displacement the same
- * way is one step too far. C♯ aeolian's second degree is a D♯; raised twice it
- * asks for a D triple sharp. So a user who has not displaced a chord twice never
- * meets the fallback in a key they are at all likely to be in.
+ * all twelve keys on every accidental a slot can store, and pins how many roots
+ * fall back at each one, which of them lie in a diatonic mode, and the reason
+ * the diatonic ones need a doubly displaced selection to reach. Those figures
+ * move when a scale is added, an `ALTER` bound is widened or a `preferSharps`
+ * changes, and that spec fails loudly when they do. A copy of them in this
+ * docstring would go on stating the old figure in silence, which is the drift
+ * the measurement was written down to stop - one layer up.
+ *
+ * ## What this module does not know
+ *
+ * Letter arithmetic, and nothing else. It is never given a key, a key signature
+ * or a scale, and it has never heard of `chordVocabulary`'s alternates row - so
+ * a count of misspelt *buttons*, which is a count of unspellable roots times
+ * however many shapes that row offers each of them, is not a fact this file
+ * could state even in principle. `from` and `steps` are the whole of the input
+ * and both are the caller's to decide, which is what keeps the same three lines
+ * spelling a chord tone, a scale degree and a borrowed root.
  *
  * Both arguments take unreduced input: `steps` may be negative or past a
  * seventh, and `pitchClass` may be a chord-stack member that crossed the octave

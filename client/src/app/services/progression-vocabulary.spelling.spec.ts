@@ -169,23 +169,7 @@ describe('chordVocabulary spelling', () => {
   // Every option on the letter its numeral names
   // -------------------------------------------------------------------------
 
-  /**
-   * The 55 misspelt buttons the design doc counts, closed as a class rather
-   * than as a list.
-   *
-   * A numeral names a *degree*, and a degree is written on the letter that many
-   * steps above the tonic's whatever accidental it carries. So the assertion is
-   * not "this button prints `Cb`" but "every button prints a letter its own
-   * numeral could have named", which is the property the 55 broke and which no
-   * sharp/flat preference could have restored: the two chromatic tables hold no
-   * `C♭`, `F♭`, `B♯`, `E♯` or double accidental at all, so 35 flat-key
-   * borrowings and 20 sharp-key ones came back on the letter next door.
-   *
-   * The key is built as `ProgressionService.setKey` builds one, through
-   * `spellingFor`, because the tonic's own letter is where every other letter
-   * is counted from - a sweep that guessed the preference would be testing a
-   * key the app never puts a user in.
-   */
+  /** The letter a printed name is written on. */
   function letterOf(name: string): string {
     return name[0];
   }
@@ -236,9 +220,25 @@ describe('chordVocabulary spelling', () => {
    * This is what turns "the button is on the wrong letter" into a *reason* -
    * the sweeps below use it to assert that every remaining wrong letter is a
    * root convention has no spelling for, rather than merely counting them.
+   *
+   * **Searched rather than reduced, deliberately.** This used to be `spellAt`'s
+   * own nearest-representative expression transcribed character for character,
+   * which meant a bug in that reduction would be shared by the test and the
+   * code it checks: `LETTER_SEMITONES` was a genuine second copy of the table
+   * and the arithmetic around it was not a second opinion at all. Trying every
+   * `k` in ±6 and keeping the smallest that lands is the same answer by a
+   * different route, and it cannot inherit the mistake. The tie at a tritone
+   * goes to the flat side, which is the range the reduction produced.
    */
   function accidentalFor(pitchClass: number, letter: number): number {
-    return ((((pitchClass - LETTER_SEMITONES[letter] + 6) % 12) + 12) % 12) - 6;
+    let nearest = 12;
+
+    for (let k = -6; k <= 6; k++) {
+      const lands = ((LETTER_SEMITONES[letter] + k - pitchClass) % 12 + 12) % 12 === 0;
+      if (lands && Math.abs(k) < Math.abs(nearest)) nearest = k;
+    }
+
+    return nearest;
   }
 
   /** One option whose printed root is not on the letter its numeral names. */
@@ -313,6 +313,22 @@ describe('chordVocabulary spelling', () => {
   }
 
   /**
+   * The 55 misspelt buttons the design doc counts, closed as a class rather
+   * than as a list.
+   *
+   * A numeral names a *degree*, and a degree is written on the letter that many
+   * steps above the tonic's whatever accidental it carries. So the assertion is
+   * not "this button prints `Cb`" but "every button prints a letter its own
+   * numeral could have named", which is the property the 55 broke and which no
+   * sharp/flat preference could have restored: the two chromatic tables hold no
+   * `C♭`, `F♭`, `B♯`, `E♯` or double accidental at all, so 35 flat-key
+   * borrowings and 20 sharp-key ones came back on the letter next door.
+   *
+   * The key is built as `ProgressionService.setKey` builds one, through
+   * `spellingFor`, because the tonic's own letter is where every other letter
+   * is counted from - a sweep that guessed the preference would be testing a
+   * key the app never puts a user in.
+   *
    * **Swept at `alter` zero only**, which is the whole of what this test claims.
    *
    * The design doc's 55 are palette buttons in a key a user is plainly in, and
@@ -338,8 +354,9 @@ describe('chordVocabulary spelling', () => {
   });
 
   /**
-   * The whole reach of the fallback: **1660 roots, on every selection the model
-   * can store**, and every one of them a root that needs a triple accidental.
+   * The whole reach of the fallback: **1660 roots, over every scale, key,
+   * degree and accidental a root can have**, and every one of them a root that
+   * needs a triple accidental.
    *
    * `spellAt` refuses past a double accidental and the caller falls back to
    * `spellPitchClass`, which spells by preference and so lands on a letter the
@@ -353,16 +370,31 @@ describe('chordVocabulary spelling', () => {
    * notation; there is nowhere further to go, and the key's own preference is
    * the honest remainder.
    *
-   * ## What is swept, and what the number counts
+   * ## What is swept, and why the axes it fixes cannot move an answer
    *
    * All 33 heptatonic scales, all twelve keys, all seven degrees, and every
-   * `alter` from `ALTER_MIN` to `ALTER_MAX` - which is every selection
-   * `normalizeChordDegree` lets into a slot. The alternates row is the only
+   * `alter` from `ALTER_MIN` to `ALTER_MAX`. The alternates row is the only
    * group that reads the selection, and it is the only group that ever falls
    * back, so sweeping the accidental axis is what takes that row from a fifth
    * of its input to all of it. **This test used to pin 16 at `alter` zero while
    * its docstring called that "the whole reach of the fallback"; it was the
    * whole reach of one fifth of the input.**
+   *
+   * The selection carries five more fields and this sweep holds all five fixed,
+   * which is exhaustive rather than partial - but only because of an argument,
+   * so here is the argument rather than the claim. What falls back is a **root**
+   * and a root is `chordRootPitchClass`, which reads `degree` and `alter` and
+   * nothing else: `extent`, `inversion`, `suspension`, `extensions` and `octave`
+   * decide which notes stand above that root and in what register, and none of
+   * them can move the root itself. `quality` is fixed too and for a different
+   * reason - the alternates row overrides it sixteen ways on every root it
+   * offers, so the selected chord's own shape is not an input to the row's
+   * spelling; `offLetterInKey` passes `major` only where `alter` is non-zero,
+   * because a chromatic root needs some shape to build from.
+   *
+   * Stated because it is the same defect one layer over: an unstated
+   * exhaustiveness claim reads as a swept one, and the next reader has no way to
+   * tell which it was.
    *
    * A **root** is counted rather than a button, because a root is what falls
    * back: the alternates row offers every shape on the selected chord, so one

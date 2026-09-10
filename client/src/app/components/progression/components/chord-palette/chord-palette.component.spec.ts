@@ -202,7 +202,8 @@ describe('ChordPaletteComponent', () => {
      * The mode this row and the borrowed row beside it used to disagree about.
      *
      * F locrian inherits F♯ major's six sharps - locrian is the seventh degree,
-     * so `keySignatureKind` walks back six semitones to the parent - and a
+     * so `MODE_OFFSETS.locrian` is 11 and `keySignatureKind` reads the parent as
+     * `(5 - 11 + 12) % 12`, which is pitch *class* 6, a semitone above F - and a
      * six-sharp key spelled from the tables prints F F♯ G♯ A♯ B C♯ D♯: six of
      * seven degrees on the wrong letter, and a `II` and a `iii` a semitone
      * apart. The scale is F G♭ A♭ B♭ C♭ D♭ E♭, and the fifth degree is the C
