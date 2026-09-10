@@ -669,6 +669,11 @@ feat: Sound suspensions, and let each extension be altered
 make the overflowing chord reachable at all. Until then nothing can build one — nothing
 writes `suspension` or `extensions`, and `replaceDocument` has no production caller.
 
+**Scope: the model, the generator, the service and the script.** The palette's *display* of
+the ceiling — the effective octave, and the up-stepper disabled with a reason — moves to
+Task 6, which is already the task that builds palette controls and already owns that
+component's spec.
+
 **The shape, and the one thing that makes it awkward.** A per-slot ceiling needs the chord,
 and the chord needs the scale — which `normalizeChordDegree` does not have. So the ceiling
 cannot be a normalisation clamp. It belongs where the scale is already known.
@@ -840,6 +845,20 @@ feat: Name a chord from what it is, and light the fretboard by its intervals
 Nothing in the UI sets `suspension` today, and the design's "any combination can be
 built" is only true with a control for it. The recogniser can reach both through the roll,
 but the palette should not require dragging a note to get a sus4.
+
+**Do not start this until Task 4b has landed.** These two controls are what make the
+chord that overflows MIDI reachable, and 4b is the ceiling that catches it.
+
+**It also carries 4b's UI half:** the octave readout shows the *effective* octave, and the
+up-stepper is disabled with a reason when the chord is against its ceiling — a control that
+silently does nothing is the failure this panel has been fixed for twice.
+
+**Check the service's line count before you start.** Task 1b split it at 864 lines on the
+argument that 105 lines of headroom would not hold this task, Task 8 and Task 9; Task 4
+spent 31 of them. If `setSlotSuspension` and `setSlotExtension` take it near 1000, the next
+seam is the palette-facing degree setters — `setSlotExtent`, `stepSlotExtent`,
+`setSlotChord`, `setSlotInversion`, `setSlotOctave`, `editDegree` — and taking it is
+cheaper before Tasks 8 and 9 add to the same file than after.
 
 **Step 1: Failing service tests.** Both setters go through `editDegree`, so they inherit
 its refusals, its no-op comparison and its pitch reclaim:
