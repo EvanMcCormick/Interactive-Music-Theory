@@ -860,6 +860,14 @@ seam is the palette-facing degree setters — `setSlotExtent`, `stepSlotExtent`,
 `setSlotChord`, `setSlotInversion`, `setSlotOctave`, `editDegree` — and taking it is
 cheaper before Tasks 8 and 9 add to the same file than after.
 
+**`chord-palette.component.spec.ts` needs splitting first.** It is already 1306 lines
+against the 1000-line cap, and this task adds the sus control, the tensions control and
+the effective-octave readout to it. Split it before you add, on the precedent Task 3's
+fixes set for `progression-vocabulary.spec.ts`: a second topic-named spec with its own
+local fixtures and no shared helper module, the two files cross-referencing. The controls
+are the natural seam — the rows describe what the palette *offers*, the controls what it
+*changes*.
+
 **Step 1: Failing service tests.** Both setters go through `editDegree`, so they inherit
 its refusals, its no-op comparison and its pitch reclaim:
 
