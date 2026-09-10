@@ -722,6 +722,20 @@ only defensible by measuring every chord the model can build — 236 million of
 them, thirteen minutes — where a per-chord ceiling is correct by construction and
 checkable on a sample.
 
+**And it gives the control its top octave back.** `OCTAVE_MAX` returns to 2, the
+value M2 took it down from. That drop was the right call at the time and is the
+wrong one now, for the same reason both ways round: M2 could only bound the
+*input*, so one chord in 236 million overflowing MIDI cost every chord in the app
+an octave. Measured over the shipped set, 99.839% of buildable chords have room for
+that octave and 0.161% do not — and the ceiling holds those 0.161% at 1 by itself,
+which is precisely the case a global constant could not express.
+
+So the constant stops being arithmetic and becomes **taste at both ends**: C2 at
+the bottom because chords voiced below it are mud, two octaves at the top because
+that is as far as the control usefully goes. What keeps a note inside MIDI is
+`chordOctaveCeiling`, and every docstring that used to credit `OCTAVE_MAX` with it
+now says so.
+
 ### Names are composed, and still read off the chord
 
 `effectiveQuality` becomes `effectiveChord` and returns an identity rather than a
