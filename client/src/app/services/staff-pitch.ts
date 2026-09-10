@@ -15,8 +15,16 @@ import { ClefKind, KeySignature, NotePitch, OttaviaKind } from '../models/compos
 /** The pitched half of NotePitch, narrowed so callers get noteValue/octave. */
 export type PitchedNote = Extract<NotePitch, { kind: 'pitched' }>;
 
-/** Semitone of each natural letter, C through B. */
-const STEP_SEMITONES = [0, 2, 4, 5, 7, 9, 11];
+/**
+ * Semitone of each natural letter, C through B.
+ *
+ * Exported for `note-spelling.ts`, which reads the same table in the other
+ * direction - from a letter to the accidental that lands it on a pitch. One
+ * table read two ways rather than two tables, on the argument
+ * `QUALITY_INTERVALS` is built on: two writings of one table is the arrangement
+ * that drifts.
+ */
+export const STEP_SEMITONES: readonly number[] = [0, 2, 4, 5, 7, 9, 11];
 
 /** Letters sharpened as the key signature gains sharps: F C G D A E B. */
 const SHARP_ORDER = [3, 0, 4, 1, 5, 2, 6];
