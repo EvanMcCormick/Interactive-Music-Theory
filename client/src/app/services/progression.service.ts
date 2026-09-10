@@ -1,7 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
-  CHORD_EXTENTS,
   createExtensions,
   createOwnership,
   normalizeChordSlot,
@@ -19,16 +18,18 @@ import {
 } from '../models/progression.model';
 import {
   keyTransposeInterval,
-  nearestExtent,
-  reclaimPitches,
-  regenerateSlot,
   retimeNotes,
   sameDegree,
   sameNotes,
   sameOwnership
 } from './progression-edit';
-import { chordOctaveCeiling } from './progression-generate';
-import { ChordExtent, NamedQuality } from './progression-harmony';
+import { ChordExtent } from './progression-harmony';
+import {
+  ChordChoice,
+  ProgressionDegreeEditor,
+  SlotOctave,
+  chosen
+} from './progression-degree-editor';
 import { HistoryDepth, ProgressionStore } from './progression-history';
 import { ProgressionKeyContext } from './progression-key-context';
 import { EditOptions, ProgressionNoteEditor } from './progression-note-editor';
@@ -38,78 +39,14 @@ import { MusicTheoryService } from './music-theory.service';
  * Re-exported so that a caller naming the option type names it where it names
  * the setters that take it. `EditOptions` is shared by `setSlotLength`, which
  * is still here, and by all four of the roll's setters, which are not.
+ *
+ * `ChordChoice` and `SlotOctave` are re-exported on the same terms and for the
+ * same reason: they are the argument and the answer of two of the setters
+ * below, and a palette that dispatches through this service should be able to
+ * name them from it. Both are declared beside the methods that read them, in
+ * `progression-degree-editor.ts`.
  */
-export type { EditOptions };
-
-/**
- * A chord to put in a slot: the four fields that decide what it sounds.
- *
- * `appendChord` and `setSlotChord` take one. It is a `ChordDegree` minus the
- * three fields a *voicing* owns - inversion, suspension and octave - because a
- * caller naming a chord is not thereby choosing how it is laid out: an appended
- * chord takes the factory's voicing and a retuned one keeps the voicing it had.
- *
- * `ChordOption` from `progression-vocabulary.ts` satisfies this structurally,
- * so the palette hands one of its own options straight over and the service
- * stays ignorant of that module. Only the four fields below are read;
- * `chosen()` copies them one at a time and says why that matters.
- */
-export interface ChordChoice {
-  /** 0-6, as `ChordDegree.degree`. Outside it `createDegreeSlot` throws. */
-  degree: number;
-  /** Semitones the root is displaced by. Clamped by the normalisation. */
-  alter: number;
-  /**
-   * The shape, or `null` for "as the key gives it".
-   *
-   * `null` with a non-zero `alter` is the one pair `normalizeChordDegree`
-   * refuses outright: a displaced root has no diatonic stack to fall back on.
-   */
-  quality: NamedQuality | null;
-  /** How high the shape stands. A quality names one; see `setSlotChord`. */
-  extent: ChordExtent;
-}
-
-/**
- * Where a slot's octave control stands, as `ProgressionService.slotOctave`
- * reports it.
- *
- * Three numbers rather than one because the clamp is applied on use: the
- * document holds the request, the synth hears the sounding value, and the
- * control has to disable itself against the ceiling. Collapsing them would put
- * the palette back to guessing which it had.
- *
- * ## The two predicates a control reads off these
- *
- * The stepper steps from `sounding` and the readout shows it, for the reason
- * `slotOctave` gives at length. What that method does not spell out, and Task
- * 6's palette needs, is which comparison answers which question:
- *
- *  - **`sounding >= ceiling` disables the `+` stepper.** It covers both ways of
- *    running out of room without distinguishing them, which is right for a
- *    button: at the top of the control and too wide to go higher are the same
- *    fact about what the next press would do, namely nothing.
- *  - **`requested > ceiling` chooses the message**, and only then. It is true
- *    exactly when the chord itself is the limit - the document is asking for an
- *    octave this chord cannot take - so it selects "this chord is too wide to go
- *    higher" over the ordinary "this is the top of the range".
- *
- * They are different tests and folding them into one loses a case: a chord whose
- * `ceiling` is below `OCTAVE_MAX` but which is sitting *under* that ceiling has
- * `requested === sounding < ceiling`, is limited by nothing yet, and should show
- * an enabled stepper and no message at all.
- */
-export interface SlotOctave {
-  /** What `ChordDegree.octave` stores: what the user asked for. */
-  requested: number;
-  /** What the chord is voiced at, which is `min(requested, ceiling)`. */
-  sounding: number;
-  /**
-   * The highest octave this chord fits in, bounded by `OCTAVE_MAX`. Below it,
-   * the chord is too wide to sound where it was asked to.
-   */
-  ceiling: number;
-}
+export type { ChordChoice, EditOptions, SlotOctave };
 
 /**
  * The harmony of a progression: what a chord means in a key, and what the app
@@ -125,9 +62,10 @@ export interface SlotOctave {
  *
  * What went is a mechanism whose every rule is enforced by a guard beside it:
  * settle-then-push-then-publish, run coalescing, eviction at `MAX_HISTORY`, and
- * the redo branch dropping when a new step makes it unreachable. What stayed is
- * everything that knows what a chord is - `regenerate`, `editDegree`,
- * `reclaimPitches`, and every refusal argued below.
+ * the redo branch dropping when a new step makes it unreachable. What stayed
+ * here, through three further splits, is the door: the appends, the timeline,
+ * the key and the tempo, `resetSlotToChord`, `derive`, and every refusal argued
+ * below.
  *
  * The seam is `derive`. `ProgressionState` carries `canBuildChords` and
  * `keyScale`, which are `ProgressionKeyContext` resolving a scale id and
@@ -176,6 +114,24 @@ export interface SlotOctave {
  * a whole `ProgressionState`, of which two fields are the key's and five are
  * not, and the second merges a rebuilt chord into a slot. That file's docstring
  * argues both, and why the second matters more than it looks.
+ *
+ * ## Nor does it retune a chord
+ *
+ * `ProgressionDegreeEditor` is the fourth, taken at M3 Task 6 when the two new
+ * setters that task adds would have carried this file past the 1000-line cap.
+ * It holds the palette-facing degree setters - `setSlotExtent`,
+ * `stepSlotExtent`, `setSlotChord`, `setSlotInversion`, `setSlotOctave`,
+ * `setSlotSuspension`, `setSlotExtension` - the `editDegree` funnel they pour
+ * through, and `slotOctave`.
+ *
+ * It is handed the key context, where the note editor is deliberately not, and
+ * that is not the earlier seam being relaxed. That seam is a claim about the
+ * *note* editor - nothing in it resolves a scale, because nothing in it asks
+ * what chord a slot is. This class asks nothing else: every method on it
+ * restates a chord, and a restated chord has to be rebuilt. So `regenerate`
+ * went with it, and the three methods here that also rebuild - `append`,
+ * `resetSlotToChord` and `setKey` - ask it rather than keeping a second copy.
+ * That file's docstring argues both halves.
  *
  * ## What the service refuses
  *
@@ -234,15 +190,24 @@ export class ProgressionService {
   private readonly notes: ProgressionNoteEditor;
 
   /**
+   * The palette's degree setters, and the rebuild under them. Constructed and
+   * kept private for the reason the store is: one door.
+   */
+  private readonly degrees: ProgressionDegreeEditor;
+
+  /**
    * Built in the constructor body rather than as a field initializer, because
    * the callback it hands over reads `keys` - which is filled by the field
    * initializer above, and so is in place by the time this line runs. The arrow
    * keeps `this` this service's, which is the whole of what the store borrows
    * from it.
    *
-   * The editor follows on the next line rather than in a field initializer for
-   * a plainer reason: it takes the store, which does not exist until the line
-   * above has run.
+   * The two editors follow on the next lines rather than in field initializers
+   * for a plainer reason: both take the store, which does not exist until the
+   * line above has run. What they are given differs, and the difference is the
+   * seam: the note editor gets the store alone, so there is no path from it to
+   * a scale; the degree editor gets the key context too, because rebuilding a
+   * chord is the whole of what it does.
    */
   constructor() {
     this.store = new ProgressionStore(
@@ -251,6 +216,7 @@ export class ProgressionService {
         this.derive(doc, selectedSlotId, isDirty, history)
     );
     this.notes = new ProgressionNoteEditor(this.store);
+    this.degrees = new ProgressionDegreeEditor(this.store, this.keys);
   }
 
   getState(): Observable<ProgressionState> {
@@ -514,178 +480,34 @@ export class ProgressionService {
     this.store.commitSlot(id, () => reset);
   }
 
-  /**
-   * Sets how far the thirds are stacked, to an absolute rung.
-   *
-   * `normalizeChordSlot` throws on an extent that is not on the ladder, so
-   * keeping a computed one on it is this method's job rather than that guard's;
-   * see `nearestExtent` for what that means at each end. **The +/- complexity
-   * buttons want `stepSlotExtent`**, which clamps rather than refusing because
-   * it steps the index and not the value.
-   */
+  /** See `ProgressionDegreeEditor.setSlotExtent`. */
   setSlotExtent(id: string, extent: ChordExtent): void {
-    const rung = nearestExtent(extent);
-    if (rung === null) return;
-    this.editDegree(id, degree => ({ ...degree, extent: rung }));
+    this.degrees.setSlotExtent(id, extent);
   }
 
-  /**
-   * The +/- complexity buttons: `delta` rungs further up or down the ladder,
-   * clamped at both ends.
-   *
-   * A stepper that walked the *value* could not clamp: off the top computes
-   * `CHORD_EXTENTS[5]` and off the bottom `CHORD_EXTENTS[-1]`, both `undefined`
-   * at runtime and indistinguishable from each other, so there is no end to
-   * clamp toward. Stepping the *index* has the ends the value lacks - 0 and
-   * `CHORD_EXTENTS.length - 1` are different numbers - so + on a thirteenth
-   * rests on the thirteenth and - on a triad rests on the triad.
-   *
-   * It also puts "which rung is this slot on" in the service rather than in
-   * each of the components that will ask, which is where the project rules put
-   * state that more than one component reads.
-   */
+  /** See `ProgressionDegreeEditor.stepSlotExtent`. */
   stepSlotExtent(id: string, delta: number): void {
-    // A `NaN` from an emptied input is not a direction, and names no rung.
-    if (!Number.isFinite(delta)) return;
-
-    const slot = this.store.slot(id);
-    if (!slot || slot.harmony.kind !== 'degree') return;
-
-    // Always a real index: every slot in the document has been through
-    // `normalizeChordSlot`, which throws on an extent that is not a rung.
-    const index = CHORD_EXTENTS.indexOf(slot.harmony.degree.extent);
-    const stepped = index + Math.trunc(delta);
-    const rung = Math.max(0, Math.min(CHORD_EXTENTS.length - 1, stepped));
-
-    this.setSlotExtent(id, CHORD_EXTENTS[rung]);
+    this.degrees.stepSlotExtent(id, delta);
   }
 
-  /**
-   * Retunes a slot to another chord: its degree, its accidental, its shape and
-   * its height, all in one commit.
-   *
-   * The palette's alternates row, which offers every named shape on the root a
-   * slot already sits on. It goes through `editDegree` for everything that
-   * makes an edit here safe - the no-op comparison, the pitch reclaim, the
-   * regeneration - and so it inherits that method's two refusals with them: a
-   * key that cannot build chords, and a literal slot with no degree to change.
-   *
-   * **It sets the height as well as the shape**, and that is not incidental. A
-   * shape has a height: `major` and `major7` are one chord at two of them, and
-   * a caller that could ask for the seventh's name without its height would be
-   * asking for a name over notes that do not make it. The cost is that a slot
-   * standing on a ninth is stood back down by a triad's name -
-   * `progression-vocabulary.ts` makes the argument for offering every shape at
-   * its own height, and the palette shows the cost on the button rather than
-   * letting a user find it after the click.
-   */
+  /** See `ProgressionDegreeEditor.setSlotChord`. */
   setSlotChord(id: string, choice: ChordChoice): void {
-    this.editDegree(id, degree => chosen(degree, choice));
+    this.degrees.setSlotChord(id, choice);
   }
 
-  /** Rotates the voicing. Wraps, so any number names a real inversion. */
+  /** See `ProgressionDegreeEditor.setSlotInversion`. */
   setSlotInversion(id: string, inversion: number): void {
-    this.editDegree(id, degree => ({ ...degree, inversion }));
+    this.degrees.setSlotInversion(id, inversion);
   }
 
-  /** Shifts the voicing base by whole octaves, clamped to the playable range. */
+  /** See `ProgressionDegreeEditor.setSlotOctave`. */
   setSlotOctave(id: string, octave: number): void {
-    this.editDegree(id, degree => ({ ...degree, octave }));
+    this.degrees.setSlotOctave(id, octave);
   }
 
-  /**
-   * Where one slot's octave control actually stands: what was asked for, what
-   * is sounding, and how high this chord may go.
-   *
-   * The three are usually one number. They come apart when a chord is too wide
-   * for the octave it was given - `chordOctaveCeiling` explains why that is
-   * clamped on use rather than written back - and this is what a control needs
-   * in order to say so rather than to appear broken.
-   *
-   * ## The stepper steps from `sounding`, and the readout shows `sounding`
-   *
-   * That is the answer to "what octave is this slot on", and the other one is a
-   * trap. A slot storing 1 against a ceiling of 0 *is* on 0: that is the chord
-   * the user hears and the notes the roll draws. A readout showing 1 would be
-   * describing a number in a document rather than a sound, and - worse - a
-   * stepper that subtracted from 1 would write 0, change nothing that sounds,
-   * and be a control that visibly does nothing. Stepping down from `sounding`
-   * writes -1 and moves the chord, which is what the button says it does.
-   *
-   * `requested` is not shown, and is here because the palette's `+` needs to
-   * know which of two things to say when it is disabled: the control is at its
-   * limit, or this chord cannot go higher than it already is.
-   *
-   * ## What `null` means
-   *
-   * There is no octave: the slot is gone, it is literal - its notes are the
-   * truth and there is no degree to voice - or the key cannot stack thirds at
-   * all, which is the same refusal `editDegree` opens with. All three are cases
-   * where the palette's controls are already not offered, so the caller has an
-   * empty state to fall into rather than a number to disbelieve.
-   */
+  /** See `ProgressionDegreeEditor.slotOctave`. */
   slotOctave(id: string): SlotOctave | null {
-    const doc = this.doc;
-    const scale = this.keys.chordScaleFor(doc.key);
-    if (scale === null) return null;
-
-    const slot = this.store.slot(id);
-    if (!slot || slot.harmony.kind !== 'degree') return null;
-
-    const degree = slot.harmony.degree;
-    const ceiling = chordOctaveCeiling(doc.key, scale, degree);
-    return {
-      requested: degree.octave,
-      sounding: Math.min(degree.octave, ceiling),
-      ceiling
-    };
-  }
-
-  /**
-   * Changes one slot's harmony and re-derives what it sounds.
-   *
-   * The bounded result is compared with what is already there, and an edit that
-   * changes nothing is not recorded. That is not tidiness: the extent and
-   * octave controls are steppers that clamp, so pressing one at its limit is a
-   * normal thing to do repeatedly, and a hundred of those would empty the undo
-   * stack of everything the user actually did.
-   *
-   * ## It reclaims the pitches, where `setKey` does not
-   *
-   * Every command that reaches here - `setSlotChord`, `setSlotExtent`,
-   * `stepSlotExtent`, `setSlotInversion`, `setSlotOctave` - restates the chord
-   * or its voicing, so the pitches the slot is holding are the ones the user is
-   * asking to replace.
-   * Leaving a claim over them intact would let the label move while the notes
-   * did not: a complexity step on a claimed slot stores `extent: 7`, the card
-   * prints `Imaj7`, and the synth keeps sounding the three pitches that were
-   * there. `reclaimPitches` is that decision, and its docstring carries the
-   * argument.
-   *
-   * The reclaim happens **after** the no-op comparison above, so a stepper
-   * resting on its limit reclaims nothing - there is no commit to reclaim in.
-   * `owned.timing` and `owned.velocity` are not touched by any of the four.
-   */
-  private editDegree(id: string, change: (degree: ChordDegree) => ChordDegree): void {
-    const doc = this.doc;
-    // A slot whose label and notes could not be made to agree is worse than a
-    // control that does nothing, so the whole edit is refused.
-    if (!this.keys.canBuildChords(doc.key)) return;
-
-    const slot = this.store.slot(id);
-    // A literal slot has no degree to change - its notes are the truth, and
-    // there is no label for a stepper to move.
-    if (!slot || slot.harmony.kind !== 'degree') return;
-
-    const current = slot.harmony.degree;
-    const edited = normalizeChordSlot({
-      ...slot,
-      harmony: { kind: 'degree', degree: change(current) }
-    });
-    if (edited.harmony.kind !== 'degree') return;
-    if (sameDegree(edited.harmony.degree, current)) return;
-
-    this.store.commitSlot(id, draftKey => this.regenerate(reclaimPitches(edited), draftKey));
+    return this.degrees.slotOctave(id);
   }
 
   /** Which slot the strip has selected. Not a document change, so not undoable. */
@@ -893,26 +715,9 @@ export class ProgressionService {
   // Harmony
   // -------------------------------------------------------------------------
 
-  /**
-   * Re-derives what a slot sounds, in the key it is in.
-   *
-   * It does **not** re-derive the label. `ChordDegree.quality` is the user's
-   * override and `regenerateSlot` leaves it exactly as it found it; the name on
-   * the card comes from `effectiveQuality`, read off the chord that was
-   * actually built. Writing the derived label into the field here is what M2
-   * Task 4 removed, and this line used to say so.
-   *
-   * `transposeBy` defaults to 0 and only `setKey` passes anything else. That is
-   * the honest value rather than a stand-in for a missing answer: a complexity
-   * step, an inversion, an octave shift and an append all move no key, so there
-   * is no interval to move claimed pitches by.
-   *
-   * The intervals it builds from are `ProgressionKeyContext`'s answer, and that
-   * is the whole of what this asks the key: a slot is rebuilt here, where the
-   * merge rules are, and the scale is resolved there, where the tables are.
-   */
+  /** See `ProgressionDegreeEditor.regenerate`. */
   private regenerate(slot: ChordSlot, key: ProgressionKey, transposeBy = 0): ChordSlot {
-    return regenerateSlot(slot, key, this.keys.chordScaleFor(key), transposeBy);
+    return this.degrees.regenerate(slot, key, transposeBy);
   }
 }
 
@@ -952,34 +757,4 @@ function unpinned(degree: ChordDegree): ChordDegree {
     extensions: createExtensions()
   };
   return sameDegree(dropped, degree) ? degree : dropped;
-}
-
-/**
- * A degree with the four fields a choice names written over it, and the four
- * it does not name - inversion, suspension, extensions, octave - left where
- * they were.
- *
- * Leaving them is the same rule as ever and it is worth restating now that two
- * of them sound: a palette button re-shapes the chord it is pressed on, so a
- * slot that was suspended stays suspended and a pinned ♭9 stays pinned.
- * `unpinned`, above, is the one that takes all of it back, and the note under
- * the alternates row already names Reset to chord as the way there.
- *
- * Copied one at a time rather than spread, and that is a guard rather than a
- * style. `ChordChoice` is satisfied structurally, so what actually arrives is a
- * palette view model carrying a numeral, a printed name and several more fields
- * meant for the screen. A spread would write every one of them into the stored
- * `ChordDegree`, where `normalizeChordDegree` spreads them on again and
- * `structuredClone` copies them into every undo entry the document ever takes -
- * a display string preserved as though it were harmony, and preserved *stale*,
- * because nothing regenerates it.
- */
-function chosen(degree: ChordDegree, choice: ChordChoice): ChordDegree {
-  return {
-    ...degree,
-    degree: choice.degree,
-    alter: choice.alter,
-    quality: choice.quality,
-    extent: choice.extent
-  };
 }
