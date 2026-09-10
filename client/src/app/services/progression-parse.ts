@@ -200,7 +200,13 @@ export function structuralPitchClasses(
     // starts inside one is a note that starts on the beat as far as anything
     // the user can express is concerned. A bare `=== 0` would miss a note
     // nudged by a single grid step and read the chord without it.
-    if (note.startBeat < MIN_NOTE_BEATS) structural.add(pitchClass);
+    //
+    // A length of its own is required as well, because this clause is about
+    // emphasis and a note of no length is not sounding at all. Without it a
+    // zero-length note at beat 0 - a degenerate note the normaliser's floor
+    // keeps out of the store, but which nothing stops a caller handing this
+    // function directly - would decide the slot's chord on its own.
+    if (note.startBeat < MIN_NOTE_BEATS && note.lengthBeats > 0) structural.add(pitchClass);
 
     const end = Math.min(note.startBeat + Math.max(0, note.lengthBeats), lengthBeats);
     const inside = end - note.startBeat;
@@ -393,9 +399,22 @@ function parseAbove(
  * calls a `iisus4` a suspended major where `effectiveChord` calls it a suspended
  * minor. Nothing reads both. `base` here feeds `expressInKey` and only
  * `expressInKey`, which uses it as a *quality override* and checks the notes it
- * produces - and a suspension replaces the third whichever shape supplied it, so
- * both answers build the same chord. Every name the user sees is rendered from
- * `effectiveChord` on the stored degree, after the fact.
+ * produces; every name the user sees is rendered from `effectiveChord` on the
+ * stored degree, after the fact.
+ *
+ * **This used to argue that the disagreement was harmless** - that a suspension
+ * replaces the third whichever shape supplied it, so both answers build the same
+ * chord. That is false, and it was false in the one direction that matters. A
+ * major third substituted into a flattened fifth gives `[0, 4, 6]`, which is in
+ * no table, so this returns `'other'` for exactly the stacks `effectiveChord`
+ * calls `diminished` - and `'other'` is not a name that can be written back.
+ * `augmented` survives only by luck, because `[0, 4, 8]` happens to be named.
+ *
+ * Substituting a minor third instead would move the same hole onto the major and
+ * dominant shapes, so the answer is not here at all: `writeAt` treats this as
+ * the first candidate rather than the only one, and rebuilds the notes to check.
+ * What is written above is a preference, and this note says so instead of
+ * claiming a correctness it does not have.
  */
 function baseOf(stack: readonly number[], suspension: SuspensionKind): ChordQuality {
   if (suspension === 'none') return qualityOfIntervals(stack);

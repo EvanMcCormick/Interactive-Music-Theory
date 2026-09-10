@@ -1,4 +1,3 @@
-import { CHORD_EXTENTS, SUSPENSIONS } from '../models/progression-normalize';
 import {
   ChordDegree,
   ChordSlot,
@@ -7,15 +6,7 @@ import {
   createDegreeSlot
 } from '../models/progression.model';
 import { generateSlotNotes } from './progression-generate';
-import {
-  ChordExtent,
-  NamedQuality,
-  QUALITY_INTERVALS,
-  chordPitchClasses,
-  effectiveChord,
-  isHeptatonic,
-  noteCount
-} from './progression-harmony';
+import { chordPitchClasses, isHeptatonic } from './progression-harmony';
 import { MusicTheoryService } from './music-theory.service';
 import { parseChord, structuralPitchClasses } from './progression-parse';
 import { expressInKey, recognise } from './progression-recognise';
@@ -37,6 +28,12 @@ import { expressInKey, recognise } from './progression-recognise';
  * and `generateSlotNotes` for the notes, then edited. So a fixture that says "I
  * with its E dragged to F" really is the chord the app would have generated with
  * one note moved, and not a hand-written list that happens to look like one.
+ *
+ * The round-trip sweep over every chord the model builds was here until this
+ * file reached the 1000-line cap and is now
+ * `progression-recognise.roundtrip.spec.ts`. The seam is the one the fixtures
+ * already had: everything here is a chord and an edit written out in MIDI notes,
+ * and nothing here sweeps.
  */
 
 const MAJOR = [0, 2, 4, 5, 7, 9, 11];
@@ -172,12 +169,49 @@ describe('expressInKey', () => {
     expect(expressInKey(identity, MAJOR, 0, 7)?.inversion).toBe(2);
   });
 
-  /** A root more than a whole tone from every degree cannot be written here. */
-  it('refuses a root no degree can reach', () => {
-    // A whole-tone scale has no root more than a tone from a degree, so the
-    // refusal is shown on the guard that does bite: a scale of the wrong size.
+  /**
+   * A key that cannot stack thirds at all cannot write anything.
+   *
+   * This was called `refuses a root no degree can reach` and admitted in its own
+   * comment that it tested the size guard instead, because no root it could
+   * build was out of reach. That is not a gap in the fixture: it is a fact about
+   * the scales, checked below rather than asserted from the armchair, and the
+   * note now sits on `degreeCandidates`' own filter.
+   */
+  it('refuses a key that cannot stack thirds', () => {
     const identity = parseChord(new Set([0, 4, 7]), 0)!;
     expect(expressInKey(identity, [0, 2, 4, 7, 9], 0, 0)).toBeNull();
+  });
+
+  /**
+   * Why the test above is the only refusal there is to show.
+   *
+   * `degreeCandidates` drops a degree more than `ALTER_MAX` from the root, and
+   * the list it returns can only be *empty* if every degree is dropped. The
+   * widest step in any heptatonic scale the app offers is an augmented second -
+   * three semitones - so every pitch class has a degree within one semitone of
+   * it, and the filter can never take the last candidate away. It still drops
+   * the far degrees, which is what it is there for; it just cannot refuse.
+   */
+  it('leaves every pitch class within one semitone of a degree, in every scale', () => {
+    const scales = new MusicTheoryService()
+      .getScaleCategories()
+      .flatMap(category => category.scales)
+      .map(scale => scale.intervals)
+      .filter(intervals => isHeptatonic(intervals));
+    expect(scales.length).toBeGreaterThan(20);
+
+    for (const scale of scales) {
+      for (let pitchClass = 0; pitchClass < 12; pitchClass++) {
+        const nearest = Math.min(
+          ...scale.map(degree => {
+            const up = (((pitchClass - degree) % 12) + 12) % 12;
+            return Math.min(up, 12 - up);
+          })
+        );
+        expect(nearest).withContext(`pitch class ${pitchClass} of [${scale}]`).toBeLessThanOrEqual(1);
+      }
+    }
   });
 });
 
@@ -208,6 +242,38 @@ describe('recognise', () => {
     expect(harmonyOf(degree)).toEqual(harmony({ suspension: 'sus4' }));
     expect(alternates.map(harmonyOf)).toContain(
       jasmine.objectContaining({ degree: 3, suspension: 'sus2' })
+    );
+  });
+
+  /**
+   * The fix of 2026-09-10, from the user's end.
+   *
+   * C E G with the E dragged to D and the G to G♭ is `{C, D, G♭}` - a diminished
+   * triad with its third suspended, which `setSlotSuspension` builds from the
+   * palette in two clicks. Every note of it is a note of `Isus2` on a diminished
+   * shape, and that is what comes back.
+   *
+   * It did not. `baseOf` substitutes a *major* third to read the shape a
+   * suspension replaced, and `[0, 4, 6]` is in no table - so the parse called
+   * the shape `'other'`, `writeAt` was left with `quality: null`, which builds a
+   * perfect fifth, and the only reading anything could write was the one from
+   * the D: a `II7` sounding an A the slot has never played. Both the numeral and
+   * the note were wrong, and nothing on screen said so.
+   */
+  it('reads a suspension on a diminished shape without inventing a note', () => {
+    const slot = degreeSlot(0);
+    const edited = sounding(slot, [60, 62, 66]);
+    const { degree, alternates } = relabelOf(edited, slot.notes);
+
+    expect(harmonyOf(degree)).toEqual(
+      harmony({ quality: 'diminished', suspension: 'sus2' })
+    );
+    expect(chordPitchClasses(MAJOR, degree).map(pitch => pitch % 12)).toEqual([0, 2, 6]);
+
+    // The old answer is still a reading of the notes and still on the chip -
+    // it is only no longer the best one, because its fifth was never sounding.
+    expect(alternates.map(harmonyOf)).toContain(
+      jasmine.objectContaining({ degree: 1, extent: 7, quality: 'dominant7' })
     );
   });
 
@@ -520,301 +586,6 @@ describe('recognise', () => {
     const { alternates } = relabelOf(sounding(slot, [60, 65, 67]), slot.notes);
     expect(alternates.length).toBeLessThanOrEqual(3);
     expect(alternates.length).toBeGreaterThan(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The round trip
-// ---------------------------------------------------------------------------
-
-/**
- * Generate a chord's notes, read them back, and get the same chord.
- *
- * This is the property the whole module is for: every chord the model can build
- * must survive the trip through `RollNote.midi` and back to a `ChordDegree` with
- * the same fields still `null`. `recognise` is asked with an empty set of
- * "before" notes so the quiet rule cannot answer for it, and against the slot's
- * own harmony so the current root is its own - which is the situation a user is
- * in when they edit one note of a chord and edit it back.
- *
- * ## What is swept, and what is sampled
- *
- * - **Every heptatonic scale the app offers**, at every degree, every extent and
- *   every suspension, with nothing overridden and nothing pinned.
- * - **The seven diatonic modes**, at every degree, with every named quality and
- *   every `alter` in -1..1.
- * - **The extension axis, sampled**: the seven diatonic modes at every degree,
- *   with one extension pinned at a time to each alteration a `ChordDegree` can
- *   store, at each extent that reaches it. Combinations of two and three pinned
- *   extensions at once are *not* swept, and neither is the extension axis
- *   crossed with the quality axis - the full product is 1.27 million chords and
- *   several minutes, where this spec has a five-second budget.
- *
- * ## Chords with no identity to preserve
- *
- * A chord whose own `effectiveChord` reads `base: 'other'` is skipped. It has no
- * name to come back with - the card prints `?` and the fretboard lights nothing
- * - so there is no round trip to make. There are between 21 and 52 of them per
- * extent across the 33 scales, pinned next door in
- * `progression-harmony.identity.spec.ts`.
- *
- * ## The two exception classes
- *
- * **Overloaded** - the class the plan named, and one clause wider than it was
- * written. A stack in which two notes fill one *role*: the same letter-step, or
- * the same pitch class. The plan listed the four the model reaches on purpose -
- * a sus4 at extent 11 and above, a sus2 at 9 and above, an `add9` above 7, an
- * added sixth under a thirteenth - and named the exotic-scale case where a
- * diatonic extension lands on a chord tone the chord already has. Reading starts
- * from a set of pitch classes, so the second copy is not there to be read, and
- * the chord comes back at the height of its distinct notes or not at all.
- *
- * The clause the plan did not have is the *letter-step* half. `add9` at extent 9
- * on a displaced root sounds two different ninths - the shape's own, a major
- * ninth above the moved root, and the key's, which the extent added above it -
- * and they are two distinct pitch classes filling one position in the stack. A
- * parse has one ninth to give. Same failure, one axis over: the model built a
- * chord with two notes in one role, and a reading has one slot for it.
- *
- * **Respelt.** One chord, two ways for the model to write it down. Two things
- * fall in here, and the sweep tells them apart from a bug by building both the
- * original and what came back and checking they sound exactly the same notes.
- *
- *  - **A redundant override dropped.** A `I` carrying `quality: 'major'` in a
- *    major key comes back with `quality: null`, because "as the key gives it" is
- *    the reading `expressInKey` prefers and the ranking counts. That is the
- *    feature rather than the exception - it is what makes a recognised chord
- *    re-voice on a key change - and it is why the sweep's own test is "sounds
- *    the same" rather than "stores the same".
- *  - **A displaced root renumbered.** ♭VII and ♯VI in C major are one chord, and
- *    `alter` is what lets the model say it twice. Notes carry no letters, so the
- *    recogniser cannot know from them which was meant - and the ruling of
- *    2026-09-10 is that it should not have to guess: the numeral the slot is
- *    already carrying decides, so this half of the class is now **empty on a
- *    root that did not move**, which is every root the sweep sends round. It was
- *    3,136 of the 5,565 before the clause, and 1,911 of those now come back
- *    field for field rather than respelt at all.
- *
- * Two assertions hold the class down, and the second is the ruling's:
- *
- *  - **No chord whose `alter` was 0 is ever renumbered.** A chord on its own
- *    degree comes back on its own degree, so nothing a user reaches through the
- *    palette's diatonic rows can change numeral by having a note edited and
- *    edited back.
- *  - **No chord whose root did not move is renumbered at all**, diatonic or
- *    chromatic, which is the wider statement the clause makes true. The root a
- *    chord came back on is read with `effectiveChord`, the same way the original
- *    one is, so the two are compared as pitch classes rather than as spellings -
- *    which is the whole point: it is the *spelling* that is being preserved.
- *
- * A failure that is neither is a bug in the parse or in `expressInKey`, and the
- * sweep asserts there are none. Five were found this way while this spec was
- * being written, and every one is fixed in the module rather than exempted here:
- * the two rungs that needed backtracking (`OPENINGS` and `FIFTHS`), the eleventh
- * that a sus2 does not spend, the extension a suspension implies, and the order
- * `degreeCandidates` ranks a root's degrees in.
- */
-describe('the round trip', () => {
-  const APP_SCALES: readonly (readonly number[])[] = new MusicTheoryService()
-    .getScaleCategories()
-    .flatMap(category => category.scales)
-    .map(scale => scale.intervals)
-    .filter(intervals => isHeptatonic(intervals));
-
-  /** The seven modes of the major scale, which is the sweep's dense axis. */
-  const DIATONIC_MODES: readonly (readonly number[])[] = [0, 1, 2, 3, 4, 5, 6].map(mode =>
-    [0, 1, 2, 3, 4, 5, 6].map(step => (MAJOR[(mode + step) % 7] - MAJOR[mode] + 12) % 12)
-  );
-
-  const KEY: ProgressionKey = { tonic: 0, scaleId: 'swept', preferSharps: true };
-
-  type Outcome = 'unchanged' | 'overloaded' | 'respelt' | 'bug';
-
-  const counts: Record<Outcome, number> = {
-    unchanged: 0,
-    overloaded: 0,
-    respelt: 0,
-    bug: 0
-  };
-  const bugs: string[] = [];
-  /**
-   * The respelt class split in two: a chord that came back on another numeral,
-   * against one that came back on its own numeral with a field the key already
-   * gives no longer pinned. Since the ruling of 2026-09-10 the first half is
-   * only reachable where the root moved, and the sweep never moves one.
-   */
-  const respelt = { renumbered: 0, sameNumeral: 0 };
-  /** A respelling of a chord that was never displaced would be a bug. */
-  const respeltDiatonic: string[] = [];
-  /** And so, since the ruling, would any renumbering of an unmoved root. */
-  const respeltInPlace: string[] = [];
-
-  /** A stack as the set of pitch classes it sounds, which is all a slot plays. */
-  function pitchClassesOf(stack: readonly number[]): Set<number> {
-    return new Set(stack.map(pitch => ((pitch % 12) + 12) % 12));
-  }
-
-  function sameNotes(left: ReadonlySet<number>, right: ReadonlySet<number>): boolean {
-    return left.size === right.size && [...left].every(member => right.has(member));
-  }
-
-  /** One chord: build it, read it back, and say which of the four it was. */
-  function roundTrip(scale: readonly number[], overrides: Partial<ChordDegree>): void {
-    const slot = degreeSlot(overrides.degree ?? 0, overrides, KEY, scale);
-    if (slot.harmony.kind !== 'degree') throw new Error('unreachable');
-
-    const original = slot.harmony.degree;
-    const identity = effectiveChord(scale, original);
-    if (identity.base === 'other') return;
-
-    const result = recognise([], slot, KEY, scale);
-    if (result.kind === 'unchanged') {
-      counts.unchanged++;
-      return;
-    }
-
-    const stack = chordPitchClasses(scale, original);
-    const sounded = pitchClassesOf(stack);
-
-    // Two notes of the stack in one *role* - one letter-step, or one pitch
-    // class. Nothing downstream can recover the second, because the reading
-    // starts from a set.
-    const roles = new Set(identity.steps.map(step => step % 7));
-    if (roles.size < identity.steps.length || sounded.size < stack.length) {
-      counts.overloaded++;
-      return;
-    }
-
-    if (
-      result.kind === 'relabel' &&
-      sameNotes(sounded, pitchClassesOf(chordPitchClasses(scale, result.degree)))
-    ) {
-      counts.respelt++;
-      const renumbered =
-        result.degree.degree !== original.degree || result.degree.alter !== original.alter;
-      if (renumbered) respelt.renumbered++;
-      else respelt.sameNumeral++;
-
-      const trace =
-        `${JSON.stringify(harmonyOf(original))} on [${scale}] -> ` +
-        JSON.stringify(harmonyOf(result.degree));
-
-      if (original.alter === 0 && renumbered && respeltDiatonic.length < 10) {
-        respeltDiatonic.push(trace);
-      }
-      // The root the chord came back on, read the same way the original's was.
-      // Equal roots mean the numeral moved and the chord did not, which is what
-      // the ruling of 2026-09-10 says may no longer happen.
-      if (
-        renumbered &&
-        effectiveChord(scale, result.degree).root === identity.root &&
-        respeltInPlace.length < 10
-      ) {
-        respeltInPlace.push(trace);
-      }
-      return;
-    }
-
-    counts.bug++;
-    if (bugs.length < 10) {
-      bugs.push(
-        `${JSON.stringify(harmonyOf(original))} on [${scale}] -> ` +
-          (result.kind === 'relabel' ? JSON.stringify(harmonyOf(result.degree)) : 'literal')
-      );
-    }
-  }
-
-  it('reads every chord the model builds back as the chord it built', () => {
-    for (const scale of APP_SCALES) {
-      for (let degree = 0; degree <= 6; degree++) {
-        for (const extent of CHORD_EXTENTS) {
-          for (const suspension of SUSPENSIONS) {
-            roundTrip(scale, { degree, extent, suspension });
-          }
-        }
-      }
-    }
-
-    for (const scale of DIATONIC_MODES) {
-      for (let degree = 0; degree <= 6; degree++) {
-        for (const quality of Object.keys(QUALITY_INTERVALS) as NamedQuality[]) {
-          for (const alter of [-1, 0, 1]) {
-            for (const extent of CHORD_EXTENTS) {
-              roundTrip(scale, { degree, extent, alter, quality });
-            }
-          }
-        }
-      }
-    }
-
-    // The extension axis, one pin at a time. `extent` is the single height
-    // control, so each alteration is only swept at the extents that reach it.
-    const pins: readonly { extensions: Partial<Record<string, number>>; from: ChordExtent }[] = [
-      ...[-1, 0, 1].map(ninth => ({ extensions: { ninth }, from: 9 as ChordExtent })),
-      ...[0, 1].map(eleventh => ({ extensions: { eleventh }, from: 11 as ChordExtent })),
-      ...[-1, 0].map(thirteenth => ({ extensions: { thirteenth }, from: 13 as ChordExtent }))
-    ];
-
-    for (const scale of DIATONIC_MODES) {
-      for (let degree = 0; degree <= 6; degree++) {
-        for (const pin of pins) {
-          for (const extent of CHORD_EXTENTS.filter(candidate => candidate >= pin.from)) {
-            roundTrip(scale, {
-              degree,
-              extent,
-              extensions: { ...NO_EXTENSIONS, ...pin.extensions }
-            });
-          }
-        }
-      }
-    }
-
-    expect(bugs.join('\n')).withContext('outside both exception classes').toBe('');
-    expect(counts.bug).toBe(0);
-
-    // A chord on its own degree comes back on its own degree. Only a root the
-    // model displaced has a second numeral for the ranking to move it to.
-    expect(respeltDiatonic.join('\n')).withContext('renumbered with alter 0').toBe('');
-
-    // And the ruling's own assertion, which subsumes it: a chord that came back
-    // rooted where it started keeps the numeral it started on, whether or not
-    // that numeral carried an accidental.
-    expect(respeltInPlace.join('\n')).withContext('renumbered with the root unmoved').toBe('');
-    expect(respelt.renumbered).toBe(0);
-
-    // Enough chords, and enough of them exact, that a sweep silently reduced to
-    // nothing would fail here rather than pass.
-    expect(counts.unchanged + counts.overloaded + counts.respelt).toBeGreaterThan(12000);
-    expect(counts.unchanged).toBeGreaterThan(4000);
-
-    // Printed rather than pinned: the two exception classes are characterised by
-    // what they are, not by how many of them there happen to be, and a number
-    // here would be a figure to update rather than a rule to check. Measured on
-    // 2026-09-10, before the ruling: 5537 exact, 1866 overloaded, 5565 respelt
-    // (3136 of them renumbered, 2429 respelt on their own numeral), 0 outside.
-    // After it: 7448 exact, 1852 overloaded, 3668 respelt and every one of them
-    // on the numeral it started on, 0 outside.
-    // eslint-disable-next-line no-console
-    console.log('round trip:', JSON.stringify({ ...counts, respelt }));
-  });
-
-  /** `EXTENT_BY_LENGTH` in the module is this table read the other way. */
-  it('maps every stack height back to the extent that produced it', () => {
-    for (const extent of CHORD_EXTENTS) {
-      const parsed = parseChord(
-        new Set(chordPitchClasses(MAJOR, {
-          degree: 0,
-          alter: 0,
-          extent,
-          quality: null,
-          suspension: 'none',
-          extensions: NO_EXTENSIONS
-        }).map(pitch => ((pitch % 12) + 12) % 12)),
-        0
-      );
-      expect(parsed?.intervals.length).toBe(noteCount(extent));
-      expect(parsed?.extent).toBe(extent);
-    }
   });
 });
 

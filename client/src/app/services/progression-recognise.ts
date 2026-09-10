@@ -19,6 +19,7 @@ import type {
 import {
   ChordIdentity,
   ChordShape,
+  NAMED_QUALITIES,
   NamedQuality,
   chordPitchClasses,
   degreePitchClasses,
@@ -85,21 +86,26 @@ import {
  * Measured on 2026-09-10, Chrome headless, on a `Imaj13♯11` - the widest chord
  * the model builds, seven notes and so seven roots to try, each backtracking
  * over four openings and four fifths: **tens of microseconds per call**, over
- * runs of 2000 - 17 when the figure was first taken on a quiet machine, 23 to 25
- * re-measured after the kept-numeral clause with two other suites running beside
- * it. The clause costs one extra spelling attempt on the one root the slot's own
- * numeral names - a single `writeAt`, not a second parse - and the two figures
- * are not clean enough to separate that from the load. Neither needs separating:
- * `recognise` happens once per pitch gesture, so the budget it has is a
- * pointerup, and either figure is three orders of magnitude inside it. The whole
- * round-trip sweep in the spec - some 13,000 chords generated, recognised and
- * compared - runs in a quarter of a second, which is the same figure from the
- * other end.
+ * runs of 2000.
  *
- * The figure is re-measured by `progression-recognise.spec.ts`, which asserts
- * only a loose ceiling: a tight one would be a flaky test on a shared machine,
- * and what the number is for is to say that no caller needs to think about when
- * this runs.
+ * **The order of magnitude is the claim; the digits are hardware.** Figures from
+ * 17 to 34 microseconds have been taken on different machines for the same code,
+ * which is a wider spread than any change made to this module has produced - so
+ * a number written here is a number about the machine that ran it, and reading
+ * one as a baseline to compare against would find a regression in a busy laptop.
+ * `progression-recognise.spec.ts` prints its own measurement on every run, and
+ * that printout is the figure to read.
+ *
+ * What the order of magnitude buys is that no caller needs to think about when
+ * this runs: `recognise` happens once per pitch gesture, so the budget it has is
+ * a pointerup, and tens of microseconds is three orders of magnitude inside it.
+ * The whole round-trip sweep in the spec - some 22,000 chords generated,
+ * recognised and compared - runs in well under a second, which is the same
+ * figure from the other end.
+ *
+ * The spec asserts only a loose ceiling on the per-call figure, for the reason
+ * above: a tight one would be a flaky test on a shared machine rather than a
+ * guarantee.
  *
  * ## The frame everything here is in
  *
@@ -276,6 +282,13 @@ function degreeCandidates(
 
   for (let degree = 0; degree <= 6; degree++) {
     const alter = nearest(identity.root - scaleIntervals[degree]);
+    // Drops the far degrees; it cannot drop them all. The widest step in any
+    // heptatonic scale the app offers is an augmented second, so every pitch
+    // class has a degree within one semitone of it and at least one candidate
+    // always survives - which is why there is no "no degree can reach this
+    // root" fixture in the spec, only the one for a key that cannot stack
+    // thirds at all. `progression-recognise.spec.ts` checks that property over
+    // the real scale table rather than leaving this comment to be believed.
     if (alter < ALTER_MIN || alter > ALTER_MAX) continue;
 
     const triad = degreePitchClasses(scaleIntervals, degree, 3);
@@ -300,6 +313,28 @@ function degreeCandidates(
  * a diatonic root - `chordPitchClasses` refuses a displaced root with no shape
  * under it, and `normalizeChordDegree` refuses to store the pair - so a borrowed
  * chord always carries its quality, exactly as the numeral's accidental implies.
+ *
+ * ## Why every quality is tried and not only the parse's own
+ *
+ * `identity.base` is a *preference*, not the answer, and the fix of 2026-09-10
+ * is that the list no longer ends there. A parse has no third to read a shape
+ * off - that is what a suspension is - so `baseOf` substitutes one, and the
+ * shape it substitutes into is not always a shape that has a name. A diminished
+ * triad suspended by a second sounds `[0, 2, 6]`; put a major third back in and
+ * `[0, 4, 6]` is in no table, so `base` came back `'other'` and the only
+ * candidate left was `null`, which builds a perfect fifth and cannot match.
+ * Every suspended chord on a diminished shape was therefore unwritable, and the
+ * ranking fell through to whatever else the notes admitted - which for
+ * `{C, D, G♭}` in C major was a `II7` sounding an A that the slot never played.
+ * That is the silent mislabel the design says the app must never produce.
+ *
+ * Substituting a minor third in `baseOf` instead would only move the hole onto
+ * the major and dominant shapes. What closes it is that this function *rebuilds
+ * and compares* already: a quality that builds the wrong notes is rejected on
+ * the notes, so offering more of them costs correctness nothing. The preference
+ * stays at the head of the list, so a chord that could always be written keeps
+ * the exact spelling it had, and the widening is only ever reached where the
+ * answer used to be `null`.
  */
 function writeAt(
   identity: ChordIdentity,
@@ -307,11 +342,7 @@ function writeAt(
   degree: number,
   alter: number
 ): Omit<ChordDegree, 'inversion' | 'octave'> | null {
-  const qualities: (NamedQuality | null)[] = [];
-  if (alter === 0) qualities.push(null);
-  if (identity.base !== 'other') qualities.push(identity.base);
-
-  for (const quality of qualities) {
+  for (const quality of qualityCandidates(identity, alter)) {
     const shape: ChordShape = {
       degree,
       alter,
@@ -328,6 +359,29 @@ function writeAt(
   }
 
   return null;
+}
+
+/**
+ * Which qualities `writeAt` tries, in order: the two the parse itself argues
+ * for, and then every other name there is.
+ *
+ * The head of the list is the whole of the old behaviour and decides every
+ * chord that could already be written - `null` where the key gives the shape
+ * outright, then the shape the parse read. The tail is only ever reached after
+ * both have been rebuilt and rejected, so it can add answers and cannot change
+ * one.
+ *
+ * The tail is not as wasteful as its length suggests, either. At extent 3 a
+ * four-note quality is cut to its own triad, so several entries build the same
+ * three notes and the first of them settles it; and a candidate is only tried
+ * at all on a degree the preference has already failed on.
+ */
+function qualityCandidates(identity: ChordIdentity, alter: number): (NamedQuality | null)[] {
+  const preferred: (NamedQuality | null)[] = [];
+  if (alter === 0) preferred.push(null);
+  if (identity.base !== 'other') preferred.push(identity.base);
+
+  return [...preferred, ...NAMED_QUALITIES.filter(quality => !preferred.includes(quality))];
 }
 
 /**

@@ -75,6 +75,21 @@ describe('structuralPitchClasses', () => {
     const nudged = [note(62, MIN_NOTE_BEATS / 2, 0.25)];
     expect([...structuralPitchClasses(nudged, 4)]).toEqual([2]);
   });
+
+  /**
+   * A note of no length is not sounding, wherever it starts.
+   *
+   * The downbeat rule is about emphasis and it used to take the start beat on
+   * its own, so a zero-length D at beat 0 decided the chord of a slot playing a
+   * C major triad. `normalizeRollNote`'s floor keeps one out of the store, which
+   * is what made this a latent bug rather than a visible one - but this function
+   * is pure and takes the notes it is handed, and a rule that reads a note
+   * nobody can hear is wrong on its own terms.
+   */
+  it('ignores a note with no length, even on the downbeat', () => {
+    const chord = [note(60), note(64), note(67), note(62, 0, 0)];
+    expect([...structuralPitchClasses(chord, 4)].sort((a, b) => a - b)).toEqual([0, 4, 7]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -183,5 +198,25 @@ describe('parseChord', () => {
     expect(parseChord(new Set([0, 5, 7]), 0)?.base).toBe('major');
     expect(parseChord(new Set([0, 5, 7, 10]), 0)?.base).toBe('dominant7');
     expect(parseChord(new Set([0, 2, 7]), 0)?.suspension).toBe('sus2');
+  });
+
+  /**
+   * And the shape a third put back does not name.
+   *
+   * `baseOf` substitutes a *major* third, so a suspension over a flattened fifth
+   * reads back as `[0, 4, 6]` - which is in no table. Its docstring used to argue
+   * that this could not matter, on the grounds that a suspension replaces the
+   * third whichever shape supplied it; the retraction of 2026-09-10 is that a
+   * substituted third can land on a shape that has no name, and `'other'` is not
+   * a name anything can write back. `writeAt` treats `base` as a preference for
+   * exactly this reason, and the augmented shape below shows how narrowly the
+   * old claim held: it survives only because `[0, 4, 8]` happens to be named.
+   */
+  it('reads no base for a suspension over a flattened fifth', () => {
+    const flattened = parseChord(new Set([0, 2, 6]), 0);
+    expect(flattened?.intervals).toEqual([0, 2, 6]);
+    expect(flattened?.base).toBe('other');
+
+    expect(parseChord(new Set([0, 2, 8]), 0)?.base).toBe('augmented');
   });
 });
