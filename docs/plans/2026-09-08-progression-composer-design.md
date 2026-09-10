@@ -569,7 +569,14 @@ the index.
    a fretboard and a palette reading "D#", and an engraved signature of
    `fifths: -3`, which is E flat major. Same for `A#/Bb`, `G#/Ab` and `C#/Db`;
    `F#/Gb` is exempt because six o'clock is the one position the circle carries
-   both halves of, so the staff follows `preferSharps` there. The notation
+   both halves of, so the staff follows `preferSharps` there. **Amended in M3:
+   that exemption is narrower than it reads.** It holds for the *ionian* position,
+   which is what this finding was about; measured across the app's whole menu,
+   `F#/Gb` moves for 19 of 71 items once the signature decides — lydian among
+   them, and correctly, since `keySignatureKind('lydian', 6)` inherits from D flat
+   major and answers flat. A claim of the form "this key never moves" was always
+   going to be false somewhere; the true one is that the circle's answer wins
+   wherever the circle has one. The notation
    surface is the musically right one — D sharp major has nine sharps and is not
    on the circle at all — and the root cause is upstream in a rule that reads a
    *name* for a spelling the circle already states as data. It predates M2; what
