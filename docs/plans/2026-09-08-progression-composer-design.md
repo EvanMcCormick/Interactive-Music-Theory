@@ -952,3 +952,19 @@ than as a change of its own.
 - **A thirteenth without its eleventh**, above.
 - **Recognition on a key change.** Not needed once the label is re-expressed rather
   than kept.
+- **A parse ranked by whether it can be written.** `parseChord` returns the first
+  opening that consumes every note, even when that reading turns out to have no
+  name — so a handful of chords lose their numeral to a reading that was never
+  going to work while a nameable one sat behind it. Two are reachable in three
+  palette clicks: Hungarian minor's `III` and double harmonic's `vi`, each at a
+  ninth with a sus2. They degrade to `literal`, which is the honest fallback
+  rather than a wrong label, and Reset to chord brings them back.
+
+  The fix is not a patch. The parser deliberately knows nothing about keys — that
+  separation is what lets `expressInKey` be reused by a key change that never
+  parses anything — so "prefer a reading that can be written" cannot be asked
+  inside `parseChord`. It means returning every opening's parse and ranking them
+  where the key is known, which is a change to the shape of the arrow between the
+  two modules. `progression-recognise.roundtrip.spec.ts` holds the count as a
+  ratchet and pins both cases by name with the diagnosis, so the day someone takes
+  it on, the evidence is already written down.
