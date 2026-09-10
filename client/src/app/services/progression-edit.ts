@@ -141,8 +141,8 @@ export function boundVelocity(velocity: number): number {
  * What is left is the honest reason, and it is enough on its own: where a pitch
  * drag stops on screen is the roll's geometry to decide, and a clamp here would
  * rewrite a voicing the caller meant - collapsing it onto the ceiling one note
- * at a time, which is exactly the failure `OCTAVE_MAX` refuses to accept for
- * the generator.
+ * at a time, which is exactly the failure `chordOctaveCeiling` refuses to accept
+ * for the generator, where it moves the whole chord down an octave instead.
  */
 export function boundNote(note: RollNote): RollNote {
   return {
@@ -631,9 +631,9 @@ function mergeNotes(
  * construction, three-key laps included, and the *octave*
  * `keyTransposeInterval` picked stops being observable at all. It is bounded as
  * well as closed, which is what makes this a fix rather than a rearrangement:
- * `OCTAVE_MAX` bounds the generated chord, the anchor holds the voicing within
- * a tritone of that, and the span of the voicing is whatever the user drew and
- * never grows.
+ * `chordOctaveCeiling` bounds the generated chord inside MIDI, the anchor holds
+ * the voicing within a tritone of that, and the span of the voicing is whatever
+ * the user drew and never grows.
  *
  * ## What it costs, and why the cost is not avoidable
  *

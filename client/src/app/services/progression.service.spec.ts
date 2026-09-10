@@ -2601,9 +2601,10 @@ describe('ProgressionService', () => {
        * rather than an omission. `regenerateSlot` adds an unbounded
        * `transposeBy` to it afterwards, so a bound here would be half a guard -
        * `normalizeRollNote` makes exactly that argument for not bounding it
-       * either. `OCTAVE_MAX` is the bound that holds, and it holds by bounding
-       * the generator's input; where a pitch drag stops on screen is the roll's
-       * geometry to decide.
+       * either. `chordOctaveCeiling` is the bound that holds, and it holds by
+       * bounding the generator's input - the octave the whole chord is voiced
+       * from - rather than by clamping notes one at a time; where a pitch drag
+       * stops on screen is the roll's geometry to decide.
        *
        * Velocity is clamped and pitch is not, and the asymmetry has a reason:
        * `gainOf` already clamps velocity into 0-1 on the way to Tone, so an

@@ -113,6 +113,13 @@ export function voiceChord(
  * chord by exactly twelve**, and nothing about the voicing's shape can change
  * under it.
  *
+ * The first note is not the exception it looks like. It is the one note placed
+ * against the base rather than against a note below it, but `voiceChord` writes
+ * that as `previous = baseMidi - 1` and then runs the same step - so the base is
+ * a term of the same subtraction, moves by twelve with everything else, and
+ * leaves `(pitchClass - previous) mod 12` where it was. There is no clause to
+ * check separately, which is the point of writing the placement rule that way.
+ *
  * That is what makes this a division rather than a search, and what makes the
  * result *maximal* rather than merely safe. A ceiling that fits but is not the
  * highest that fits costs the user range without ever saying so, which is the

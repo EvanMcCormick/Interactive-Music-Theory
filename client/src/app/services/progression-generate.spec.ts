@@ -1,9 +1,10 @@
 import { chordOctaveCeiling, generateSlotNotes } from './progression-generate';
 import { ChordExtent, NamedQuality, chordPitchClasses, noteCount } from './progression-harmony';
 import { MusicTheoryService } from './music-theory.service';
-import { voiceChord } from './progression-voicing';
+import { headroomOctaves, voiceChord } from './progression-voicing';
 import {
   DEFAULT_VELOCITY,
+  MIDI_MAX,
   OCTAVE_MAX,
   OCTAVE_MIN,
   VOICING_BASE_MIDI
@@ -398,12 +399,26 @@ describe('chordOctaveCeiling', () => {
                 checked++;
                 const where = `${scale.id} degree ${degree} tonic ${tonic} ` +
                   `${JSON.stringify(overrides)} ceiling ${ceiling}`;
+                const absolute = chordPitchClasses(scale.intervals, stored)
+                  .map(pitchClass => pitchClass + tonic);
 
-                // The bottom clamp never fires. It is there so the answer is
-                // always a legal octave, and this records that it is never the
-                // reason the answer is what it is - which is what keeps the MIDI
-                // half unconditional rather than traded against the floor.
-                if (ceiling < OCTAVE_MIN || ceiling > OCTAVE_MAX) illegal.push(where);
+                // The bottom clamp never fires, asserted of the **unclamped**
+                // headroom - which is the claim `chordOctaveCeiling` makes, and
+                // the only form of it that can fail.
+                //
+                // Comparing `ceiling` against `OCTAVE_MIN` and `OCTAVE_MAX`
+                // instead is a tautology: `ceilingFor` clamps into exactly that
+                // range, so neither half is reachable and the check records
+                // nothing. It read that way until this was noticed, which is how
+                // an assertion comes to stand behind a documented guarantee
+                // while proving none of it.
+                //
+                // Strictly above the floor rather than not below it, so the
+                // margin is pinned too: a chord whose headroom landed *on*
+                // `OCTAVE_MIN` would still get an unclamped answer, but the
+                // floor would be one semitone of reach from mattering.
+                const raw = headroomOctaves(absolute, inversion, VOICING_BASE_MIDI, MIDI_MAX);
+                if (raw <= OCTAVE_MIN) illegal.push(`${where} headroom ${raw}`);
 
                 const top = topAt(degree, { ...overrides, octave: ceiling }, key, scale.intervals);
                 if (top > 127) overflowing.push(`${where} top ${top}`);
@@ -415,8 +430,7 @@ describe('chordOctaveCeiling', () => {
                   // chord *would* have done, and only the unclamped pipeline
                   // answers it.
                   const raised = voiceChord(
-                    chordPitchClasses(scale.intervals, stored)
-                      .map(pitchClass => pitchClass + tonic),
+                    absolute,
                     inversion,
                     VOICING_BASE_MIDI + (ceiling + 1) * 12
                   );
@@ -430,8 +444,8 @@ describe('chordOctaveCeiling', () => {
       }
     }
 
-    // The ceiling is always a legal octave, no chord voiced at its ceiling
-    // passes 127, and no ceiling is lower than it had to be.
+    // The floor is never within reach of the answer, no chord voiced at its
+    // ceiling passes 127, and no ceiling is lower than it had to be.
     expect(illegal.slice(0, 3)).toEqual([]);
     expect(overflowing.slice(0, 3)).toEqual([]);
     expect(timid.slice(0, 3)).toEqual([]);

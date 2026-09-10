@@ -755,10 +755,11 @@ function requireOwnershipFlag(value: boolean, dimension: string): boolean {
  *
  *    What is left is the reason a range check here would be wrong rather than
  *    merely incomplete: a clamp applied note by note collapses a voicing onto
- *    its ceiling, silently turning a chord into a cluster. `OCTAVE_MAX` refuses
- *    that for the generator and bounds the generator's *input* instead - the
- *    choice its own note argues at length - and the anchor is the same choice
- *    made for a claimed voicing. Where a pitch drag stops on screen is the
+ *    its ceiling, silently turning a chord into a cluster. `chordOctaveCeiling`
+ *    refuses that for the generator and bounds the generator's *input* instead,
+ *    by choosing the octave the whole chord is voiced from - the choice
+ *    `OCTAVE_MAX`'s own note records the history of - and the anchor is the same
+ *    choice made for a claimed voicing. Where a pitch drag stops on screen is the
  *    roll's geometry to decide; see `boundNote` in `progression-edit.ts`.
  *  - **`lengthBeats` and `velocity` are not clamped** for the reason
  *    `MIN_SLOT_BEATS` is a slot's floor and not a note's: the ends a drag

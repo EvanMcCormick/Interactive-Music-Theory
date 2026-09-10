@@ -54,27 +54,6 @@ export type { EditOptions };
  * stays ignorant of that module. Only the four fields below are read;
  * `chosen()` copies them one at a time and says why that matters.
  */
-/**
- * Where a slot's octave control stands, as `ProgressionService.slotOctave`
- * reports it.
- *
- * Three numbers rather than one because the clamp is applied on use: the
- * document holds the request, the synth hears the sounding value, and the
- * control has to disable itself against the ceiling. Collapsing them would put
- * the palette back to guessing which it had.
- */
-export interface SlotOctave {
-  /** What `ChordDegree.octave` stores: what the user asked for. */
-  requested: number;
-  /** What the chord is voiced at, which is `min(requested, ceiling)`. */
-  sounding: number;
-  /**
-   * The highest octave this chord fits in, bounded by `OCTAVE_MAX`. Below it,
-   * the chord is too wide to sound where it was asked to.
-   */
-  ceiling: number;
-}
-
 export interface ChordChoice {
   /** 0-6, as `ChordDegree.degree`. Outside it `createDegreeSlot` throws. */
   degree: number;
@@ -89,6 +68,47 @@ export interface ChordChoice {
   quality: NamedQuality | null;
   /** How high the shape stands. A quality names one; see `setSlotChord`. */
   extent: ChordExtent;
+}
+
+/**
+ * Where a slot's octave control stands, as `ProgressionService.slotOctave`
+ * reports it.
+ *
+ * Three numbers rather than one because the clamp is applied on use: the
+ * document holds the request, the synth hears the sounding value, and the
+ * control has to disable itself against the ceiling. Collapsing them would put
+ * the palette back to guessing which it had.
+ *
+ * ## The two predicates a control reads off these
+ *
+ * The stepper steps from `sounding` and the readout shows it, for the reason
+ * `slotOctave` gives at length. What that method does not spell out, and Task
+ * 6's palette needs, is which comparison answers which question:
+ *
+ *  - **`sounding >= ceiling` disables the `+` stepper.** It covers both ways of
+ *    running out of room without distinguishing them, which is right for a
+ *    button: at the top of the control and too wide to go higher are the same
+ *    fact about what the next press would do, namely nothing.
+ *  - **`requested > ceiling` chooses the message**, and only then. It is true
+ *    exactly when the chord itself is the limit - the document is asking for an
+ *    octave this chord cannot take - so it selects "this chord is too wide to go
+ *    higher" over the ordinary "this is the top of the range".
+ *
+ * They are different tests and folding them into one loses a case: a chord whose
+ * `ceiling` is below `OCTAVE_MAX` but which is sitting *under* that ceiling has
+ * `requested === sounding < ceiling`, is limited by nothing yet, and should show
+ * an enabled stepper and no message at all.
+ */
+export interface SlotOctave {
+  /** What `ChordDegree.octave` stores: what the user asked for. */
+  requested: number;
+  /** What the chord is voiced at, which is `min(requested, ceiling)`. */
+  sounding: number;
+  /**
+   * The highest octave this chord fits in, bounded by `OCTAVE_MAX`. Below it,
+   * the chord is too wide to sound where it was asked to.
+   */
+  ceiling: number;
 }
 
 /**

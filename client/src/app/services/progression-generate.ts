@@ -48,10 +48,18 @@ import { headroomOctaves, voiceChord } from './progression-voicing';
  * it is stacked from the B *above* the base, an octave clear of where sliding
  * the already-voiced chord down would have put it.
  *
- * `OCTAVE_MAX` in the model was measured over exactly this pipeline, with
+ * `chordOctaveCeiling` derives its answer over exactly this pipeline, with
  * `alter` and `tonic` applied before voicing, precisely because the reach is
- * not transposition-invariant. Reordering these three lines would move chords
- * *and* invalidate the bound that keeps them inside MIDI.
+ * not transposition-invariant.
+ *
+ * Reordering these three lines would therefore be worse than it looks, and in
+ * an unobvious direction. It would not invalidate a bound: the ceiling is
+ * computed from the same pitch classes in the same order, so it would move with
+ * the chords and go on keeping every note inside MIDI. Every chord in the app
+ * would change, and nothing anywhere would fail. That is the reason to be
+ * careful here now, and it is not the reason it used to be - while the guard
+ * was `OCTAVE_MAX`, a global constant measured over one ordering, reordering
+ * these lines left a bound behind that no longer described the pipeline.
  *
  * ## Why the return is `readonly`
  *
@@ -162,13 +170,18 @@ export function chordRootPitchClass(
  *
  * The result is always a legal octave, so a caller can use it as one without
  * checking. `OCTAVE_MAX` is the real bound above - an ordinary chord has
- * headroom for four or five octaves and may not have them. `OCTAVE_MIN` below is
- * defensive and provably inert: it would only bind on a chord reaching more than
- * 91 semitones above its base, where the widest the model can build reaches 58,
- * and `progression-generate.spec.ts` asserts over its sample that the floor is
- * never the reason for an answer. Left off, a chord that did somehow exceed 91
- * would be voiced below C2 rather than out of MIDI - a quieter wrong answer, and
- * one with no control that could reach back up to it.
+ * headroom for three, four or five octaves and may only have two.
+ *
+ * `OCTAVE_MIN` below is defensive and provably inert: it would only bind on a
+ * chord reaching more than 91 semitones above its base, where the widest the
+ * model can build reaches 58. `progression-generate.spec.ts` asserts that over
+ * its sample, and it asserts it of the **unclamped** `headroomOctaves` rather
+ * than of what this function returns. The distinction is the whole of the
+ * evidence: a check that the returned ceiling is inside `OCTAVE_MIN`..`OCTAVE_MAX`
+ * cannot fail, because the line below clamps it into exactly that range, and an
+ * assertion that cannot fail records nothing. Left off, a chord that did somehow
+ * exceed 91 would be voiced below C2 rather than out of MIDI - a quieter wrong
+ * answer, and one with no control that could reach back up to it.
  *
  * The refusals below belong to `chordPitchClasses` and are allowed through
  * rather than repeated: a ceiling for a chord that cannot be built is a question
@@ -192,7 +205,26 @@ function absolutePitchClasses(
   return chordPitchClasses(scaleIntervals, degree).map(pitchClass => pitchClass + key.tonic);
 }
 
-/** The ceiling for an already-built chord, so the generator builds one once. */
+/**
+ * The ceiling for an already-built chord, so the generator builds one once.
+ *
+ * `voiceChord` runs twice per generation as a result - once inside
+ * `headroomOctaves` to measure the reach, and once in `generateSlotNotes` to
+ * produce the notes - and the invariance would license one. Voice at the
+ * requested base, read the headroom there, and if it is negative add
+ * `12 * headroom` to every note: exact, by the same argument the ceiling rests
+ * on, and it would make the code demonstrate that argument rather than cite it.
+ *
+ * It is deliberately not done. The single-call form gives the generator its own
+ * arithmetic for the octave a chord sounds at, where `ProgressionService`'s
+ * `slotOctave` reports that octave from this function - two copies of one answer
+ * that would have to agree for ever with nothing checking that they do, which is
+ * the failure every note in this pipeline is written against. It would also have
+ * to re-derive the `OCTAVE_MIN`/`OCTAVE_MAX` clamp below in a second form, since
+ * a slot may store an octave outside the control's range. What it saves is one
+ * voicing of at most seven notes per regeneration, and regeneration happens on
+ * an edit rather than on a frame.
+ */
 function ceilingFor(absolute: readonly number[], inversion: number): number {
   const headroom = headroomOctaves(absolute, inversion, VOICING_BASE_MIDI, MIDI_MAX);
   return Math.min(OCTAVE_MAX, Math.max(OCTAVE_MIN, headroom));
