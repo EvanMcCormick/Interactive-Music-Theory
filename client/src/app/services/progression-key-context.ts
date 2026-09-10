@@ -46,8 +46,11 @@ import { isHeptatonic } from './progression-harmony';
  *
  * `MusicTheoryService` arrives as a constructor argument rather than through an
  * `inject()` of its own, which is what keeps this constructible from a spec
- * with no injector standing up around it. It is also the whole of what this
- * class can see: there is no path from here back to the document.
+ * with no injector standing up around it - `progression-key-context.spec.ts`
+ * builds one with a bare `new` and no `TestBed` around it, so the claim is held
+ * rather than merely made. It is also the whole of what this class can see, and
+ * it is not even kept: the constructor reads the scale tables into `scalesById`
+ * and lets go. There is no path from here back to the document.
  *
  * ## What stayed in the service
  *
@@ -68,7 +71,34 @@ import { isHeptatonic } from './progression-harmony';
  * chord.
  */
 export class ProgressionKeyContext {
-  constructor(private readonly musicTheory: MusicTheoryService) {}
+  /**
+   * Every scale the app offers, by id, flattened out of the categories once.
+   *
+   * `findScale` was a scan of every category and every scale in it, and `derive`
+   * calls it on **every publish** - every commit, every selection change, every
+   * undo - which was as true before this class existed as after. What changed is
+   * that the tables are now one file's business, so the fix is local: build the
+   * index here and the scan is gone from the whole feature.
+   *
+   * Building it once is only safe because `MusicTheoryService`'s scale
+   * categories are reference data - a field initializer, never appended to,
+   * never replaced, and `getScaleCategories` is the only way in. If a scale ever
+   * becomes addable at runtime this map goes stale silently, and the honest
+   * repair is to drop it rather than to invalidate it.
+   *
+   * First id wins, which is what the scan did. No id is currently repeated
+   * across the categories, so nothing depends on the tie-break; keeping it means
+   * a future repeat cannot change which scale resolves.
+   */
+  private readonly scalesById = new Map<string, Scale>();
+
+  constructor(musicTheory: MusicTheoryService) {
+    for (const category of musicTheory.getScaleCategories()) {
+      for (const scale of category.scales) {
+        if (!this.scalesById.has(scale.id)) this.scalesById.set(scale.id, scale);
+      }
+    }
+  }
 
   /**
    * The scale a key names, or null when the id names nothing the app knows.
@@ -78,11 +108,7 @@ export class ProgressionKeyContext {
    * with no chords to offer rather than an exception somewhere downstream.
    */
   findScale(scaleId: string): Scale | null {
-    for (const category of this.musicTheory.getScaleCategories()) {
-      const scale = category.scales.find(candidate => candidate.id === scaleId);
-      if (scale) return scale;
-    }
-    return null;
+    return this.scalesById.get(scaleId) ?? null;
   }
 
   /**
