@@ -493,10 +493,16 @@ export function createExtensions(): ExtensionAlterations {
  * second statement of its union, so the spec pins them against it: a member
  * added to a union and not to the list here would be storable in the type and
  * refused at the door.
+ *
+ * The three alteration lists are exported for `progression-recognise.ts`, which
+ * asks the opposite question of them: it holds an alteration it read off a set
+ * of notes and has to decide whether that alteration is one a `ChordDegree` can
+ * *store*. A third copy of these three lists over there would be exactly the
+ * second statement this note warns about, one file further out.
  */
-const NINTH_ALTERATIONS: readonly NinthAlteration[] = [-1, 0, 1];
-const ELEVENTH_ALTERATIONS: readonly EleventhAlteration[] = [0, 1];
-const THIRTEENTH_ALTERATIONS: readonly ThirteenthAlteration[] = [-1, 0];
+export const NINTH_ALTERATIONS: readonly NinthAlteration[] = [-1, 0, 1];
+export const ELEVENTH_ALTERATIONS: readonly EleventhAlteration[] = [0, 1];
+export const THIRTEENTH_ALTERATIONS: readonly ThirteenthAlteration[] = [-1, 0];
 export const SUSPENSIONS: readonly SuspensionKind[] = ['none', 'sus2', 'sus4'];
 
 /**
