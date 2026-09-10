@@ -886,13 +886,19 @@ tables it falls back to.
 accidental, and notation has two. A root three semitones from its letter has no
 spelling at all: A♯ enigmatic's sixth degree is an F triple sharp, and it gets
 there with no `alter` involved. The **alternates row** reaches many more of them,
-because it offers twelve shapes on whatever root the selected slot holds — so a
-slot already on a doubly-displaced root pushes all twelve a further two semitones
-out. Those buttons fall back to the chromatic tables, which is a wrong letter
-under a right numeral: the same failure in miniature, and the honest floor rather
-than a bug, because a triple accidental is not something the model can write. The
-counts are pinned per `alter` in `progression-vocabulary.spec.ts` rather than
-described here, since they move whenever the alternates row does.
+because it offers every named shape on whatever root the selected slot holds — so
+a slot already on a doubly-displaced root pushes all of them a further two
+semitones out. Those buttons fall back to the chromatic tables, which is a wrong
+letter under a right numeral: the same failure in miniature, and the honest floor
+rather than a bug, because a triple accidental is not something the model can
+write.
+
+The counts are pinned per `alter` in `progression-vocabulary.spelling.spec.ts`
+rather than described here, and pinned as **roots** rather than buttons: a root is
+what falls back, and the alternates row merely repeats it across every shape. That
+distinction is not pedantry — the count was once pinned as buttons, and it drifted
+from 12 to 16 the day Task 4 added four qualities, without one new root having
+failed.
 
 It is adopted app-wide. The fretboard and keyboard spell in-scale notes by degree
 for a heptatonic scale and chord tones by step for a chord, including the chord the
