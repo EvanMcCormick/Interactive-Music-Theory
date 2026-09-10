@@ -486,12 +486,15 @@ describe('normalizeChordSlot', () => {
     expect(() => normalizeChordSlot({ ...slot, startBeat: -1 })).toThrowError(/startBeat/);
   });
 
-  // A literal slot has no degree to check, but it still has timing, and the
-  // union branch is the easiest place for a guard to be skipped by accident.
+  // A literal slot has no degree of its own to check, but it still has timing
+  // - and, since M3 Task 8, the degree it can go back to. The union branch is
+  // the easiest place for a guard to be skipped by accident; `from` is checked
+  // in `progression-normalize.literal.spec.ts`, which is why it is only written
+  // out here so that the comparison below stays exact.
   it('checks the timing of a literal slot, which has no degree', () => {
     const literal: ChordSlot = {
       ...createDegreeSlot(0, 0),
-      harmony: { kind: 'literal', reason: 'unrecognised' }
+      harmony: { kind: 'literal', reason: 'unrecognised', from: null }
     };
     expect(normalizeChordSlot(literal)).toEqual(literal);
     expect(() => normalizeChordSlot({ ...literal, lengthBeats: NaN }))

@@ -169,10 +169,68 @@ export interface SlotOwnership {
  * `literal` is the honest failure. A slot whose notes no longer match any chord
  * in the neighbourhood of its degree keeps its notes and loses its label,
  * rather than being given a Roman numeral the app is not sure of.
+ *
+ * ## It is no longer a one-way door
+ *
+ * Every command on this page refuses a literal slot - `editDegree` opens with
+ * that refusal and `resetSlotToChord` used to - so a recogniser that could
+ * degrade a slot would be opening a door with no way out but undo, and undo is
+ * gone the moment the user does anything else. `from` is the way back: the
+ * degree the slot carried at the moment it lost its label, kept so that Reset
+ * to chord can build a block chord from it again, in whatever key the page is
+ * in by then.
+ *
+ * `null` means there is no way back, and it is honest rather than lazy: a
+ * document from elsewhere may hold a literal slot that was never a degree at
+ * all, and inventing one for it would be the app guessing at a numeral, which
+ * is the one thing this variant exists to refuse.
  */
 export type SlotHarmony =
   | { kind: 'degree'; degree: ChordDegree }
-  | { kind: 'literal'; reason: 'unrecognised' | 'user-detached' };
+  | {
+      kind: 'literal';
+      reason: LiteralReason;
+      /**
+       * The degree this slot degraded from, or `null` when it had none.
+       *
+       * **Optional in the type, guaranteed in a document.** The field was added
+       * at M3 Task 8, so every slot written before it arrives without one - the
+       * fifth clause of the normalisation rule, and an optional property is how
+       * a type says exactly that. `normalizeChordSlot` fills the absence with
+       * `null` and normalises a degree that is there, so anything that has been
+       * through the funnel - which is every slot in the store, on every commit -
+       * holds the field. Readers still write `?? null` rather than trusting
+       * that, because a caller may hold a slot it has just built.
+       *
+       * `literalHarmony` is the door for code that *writes* one: it takes the
+       * degree as a required argument, so a writer that has one to keep cannot
+       * quietly drop it.
+       */
+      from?: ChordDegree | null;
+    };
+
+/**
+ * Why a slot has no numeral: the recogniser could not name its notes, or the
+ * user said it is notes rather than a chord.
+ *
+ * Named rather than written inline because three files now narrow on it - the
+ * strip's card, the recogniser's quiet clause, and the factory below.
+ */
+export type LiteralReason = 'unrecognised' | 'user-detached';
+
+/**
+ * A slot's harmony as `literal`, keeping the degree it degraded from.
+ *
+ * The argument is required where the field is optional, and that asymmetry is
+ * the point. Absence is a *migration* - a document written before M3 Task 8 -
+ * and nothing in this app writes one of those; a caller here always knows
+ * whether it has a degree to keep, and passing `null` should be a decision
+ * rather than a line nobody wrote. `setKey`'s degradation and Task 9's
+ * keep-as-literal both have one, and both would compile without this.
+ */
+export function literalHarmony(reason: LiteralReason, from: ChordDegree | null): SlotHarmony {
+  return { kind: 'literal', reason, from };
+}
 
 /**
  * Which note stands in for the third.

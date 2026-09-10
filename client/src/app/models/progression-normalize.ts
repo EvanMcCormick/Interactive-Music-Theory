@@ -12,6 +12,7 @@ import type {
   ProgressionDoc,
   ProgressionKey,
   RollNote,
+  SlotHarmony,
   SlotOwnership,
   SuspensionKind,
   ThirteenthAlteration
@@ -834,6 +835,37 @@ function normalizeNotes(notes: RollNote[]): RollNote[] {
   return notes.map((note, index) => normalizeRollNote(note, index));
 }
 
+/**
+ * A literal slot's harmony, with the degree it can return to filled in.
+ *
+ * `from` is the fifth clause's third field. It was added at M3 Task 8, so a
+ * slot written before it arrives without one and the absence is a migration
+ * rather than corruption - the safe default is `null`, which is what a literal
+ * slot with nothing to go back to already means, and which keeps
+ * `resetSlotToChord`'s refusal exactly where it was for such a document.
+ *
+ * A degree that *is* there goes through `normalizeChordDegree`, because it is
+ * stored harmony like any other and is built from as soon as Reset to chord is
+ * pressed: a `from` carrying a `NaN` octave would sit in the document unread
+ * until the one press that turns it into notes, which is the failure the first
+ * clause exists to move upstream.
+ *
+ * `reason` is left alone. It has been stored unchecked since M1 and nothing in
+ * this task changes what reads it; narrowing it would be a guard this task did
+ * not come to write, and the strip's card already treats anything that is not
+ * `'unrecognised'` as the detached case.
+ */
+function normalizeLiteralHarmony(
+  harmony: Extract<SlotHarmony, { kind: 'literal' }>
+): SlotHarmony {
+  const from = harmony.from;
+  return {
+    kind: 'literal',
+    reason: harmony.reason,
+    from: from === undefined || from === null ? null : normalizeChordDegree(from)
+  };
+}
+
 function normalizeChordDegree(degree: ChordDegree): ChordDegree {
   const extent = requireExtent(degree.extent);
   const alter = clamp(requireInteger(degree.alter, 'alter'), ALTER_MIN, ALTER_MAX);
@@ -862,9 +894,10 @@ function normalizeChordDegree(degree: ChordDegree): ChordDegree {
  * Builds a new slot rather than editing in place, so a document already on the
  * `structuredClone` undo stack is not quietly amended behind it.
  *
- * The copy is shallow in one place only: a literal slot's `harmony` is the same
- * object it arrived as, where the degree branch, `owned` and `notes` all build
- * fresh ones. Enough for the undo stack, which deep-clones on the way in.
+ * Nothing is shared with what arrived: both branches of `harmony` build a fresh
+ * object, as `owned` and `notes` do. The literal branch used to be the one
+ * exception - it handed its harmony straight back - and it stopped being one
+ * when `from` gave that branch a field of its own to fill.
  *
  * `notes` used to be shared and unchecked, and this docstring used to argue
  * that both were safe because M1 regenerated every note wholesale from the
@@ -887,8 +920,11 @@ export function normalizeChordSlot(slot: ChordSlot): ChordSlot {
     owned: normalizeOwnership(slot.owned)
   };
 
-  // A literal slot has no degree to check. Its timing still matters.
-  if (timed.harmony.kind !== 'degree') return timed;
+  // A literal slot has no degree of its own to check, but it may be carrying
+  // the one it can go back to. Its timing still matters either way.
+  if (timed.harmony.kind !== 'degree') {
+    return { ...timed, harmony: normalizeLiteralHarmony(timed.harmony) };
+  }
 
   return {
     ...timed,

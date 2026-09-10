@@ -4,11 +4,13 @@ import {
   ChordSlot,
   ExtensionAlterations,
   ProgressionKey,
-  SuspensionKind
+  SuspensionKind,
+  literalHarmony
 } from '../models/progression.model';
 import { nearestExtent, reclaimPitches, regenerateSlot, sameDegree } from './progression-edit';
 import { chordOctaveCeiling } from './progression-generate';
-import { ChordExtent, NamedQuality } from './progression-harmony';
+import { ChordExtent, NamedQuality, effectiveChord } from './progression-harmony';
+import { expressInKey } from './progression-recognise';
 import { ProgressionStore } from './progression-history';
 import { ProgressionKeyContext } from './progression-key-context';
 
@@ -117,8 +119,15 @@ export type ExtensionName = keyof ExtensionAlterations;
  * is `a84a8bd` and `6f63e0b`; what is here is what the plan calls the
  * palette-facing degree setters - `setSlotExtent`, `stepSlotExtent`,
  * `setSlotChord`, `setSlotInversion`, `setSlotOctave` - the `editDegree` funnel
- * they all pour through, the `slotOctave` readout the octave control needs, and
- * `regenerate`.
+ * they all pour through, the `slotOctave` readout the octave control needs,
+ * `regenerate`, and `rekey`.
+ *
+ * `rekey` is the odd one out and belongs here for the same reason the rest do.
+ * It is not a command - the user pressed the circle of fifths, not a chord
+ * button - but what it does is re-*spell* one slot's chord for a new key, which
+ * is a question about what a degree names and needs the scale on both sides of
+ * the change. `ProgressionService.setKey` maps it over the document and never
+ * learns how a chord is re-expressed.
  *
  * ## Why this one is handed the key context when the note editor is not
  *
@@ -357,6 +366,95 @@ export class ProgressionDegreeEditor {
    */
   regenerate(slot: ChordSlot, key: ProgressionKey, transposeBy = 0): ChordSlot {
     return regenerateSlot(slot, key, this.keys.chordScaleFor(key), transposeBy);
+  }
+
+  /**
+   * Moves one slot into a new key: the notes as `regenerate` has always moved
+   * them, and - for a slot that owns its pitches - the *label* re-spelled so it
+   * still names the chord those notes make.
+   *
+   * ## The bug this closes, which shipped in M2
+   *
+   * `regenerateSlot` transposes an owned voicing by the tonic interval and
+   * leaves `harmony` exactly as it found it. That is right while only the tonic
+   * moves - a hand-voiced `I` in C is a hand-voiced `I` in D - and it is wrong
+   * the moment the **mode** moves with it. Click the relative minor on the
+   * circle and a hand-edited `I` in C major transposes to A, C♯, E and keeps a
+   * card reading `i`: a major triad under a minor numeral, sounded by the synth
+   * and printed on the strip, with nothing to tell the user the two disagree.
+   * A silent mislabel is the one thing this page is built not to do.
+   *
+   * ## The rule: a key change never changes what an owned chord is
+   *
+   * So the identity is taken in the key being **left** - `effectiveChord` over
+   * the degree as it stood - and written back through `expressInKey` in the key
+   * being entered. Nothing is recognised and no notice is raised, because
+   * nothing about the chord changed: `I` in C major and `I` in A minor are the
+   * same three pitch classes relative to their tonics, and all that moved is
+   * which numeral and which pins the new key needs to write them down.
+   *
+   * That is the same last step the recogniser ends with, called with an
+   * identity that was never parsed - which is what `expressInKey` takes an
+   * identity rather than a `ParsedChord` for. Nothing here reads a note.
+   *
+   * **Only a slot that owns its pitches.** One that does not is re-voiced from
+   * its degree and so already sounds whatever the new key makes of that degree,
+   * which is the behaviour the whole merge exists to give it; re-spelling it
+   * would pin a quality onto a slot that was happily leaving the answer to the
+   * key. A literal slot is left alone: it has no degree to re-express, and its
+   * notes are the truth in every key.
+   *
+   * ## Two registers are kept rather than re-derived
+   *
+   * `expressInKey` reads the inversion off a bass note and takes an octave,
+   * because the recogniser learns both from where the user's notes happen to
+   * sit. Here they are already known and neither is part of the identity: the
+   * stored octave goes in, and the stored inversion is written back over the
+   * one the call computes. A key change moves the spelling, not the register -
+   * and reading the inversion off the transposed voicing instead would let a
+   * chord the user left in root position come back as a second inversion
+   * because the anchor put a different note at the bottom.
+   *
+   * ## When the new key cannot write it
+   *
+   * `expressInKey` returns null for a chord no degree of the new scale can
+   * spell - a root more than a whole tone from every degree, or a stack with no
+   * shape name to override with, which an exotic scale reaches easily. The slot
+   * degrades to `literal` `unrecognised` **keeping the degree it had**, so the
+   * card loses its numeral and says so and Reset to chord is the way back. That
+   * is the honest answer and it is visible; carrying the old numeral into a key
+   * that cannot write it is the mislabel this method exists to remove.
+   *
+   * Either scale being unresolvable - the key left or the key entered cannot
+   * stack thirds at all - is not that case. There is no identity to read or
+   * nowhere to write it, so the slot keeps its degree untouched and the strip
+   * says "this key cannot name it" for as long as the page stays there, exactly
+   * as it did before. Degrading would be punishing a slot for the key it is in,
+   * and it would not be undone by moving back to a key that can name it.
+   */
+  rekey(
+    slot: ChordSlot,
+    leaving: readonly number[] | null,
+    key: ProgressionKey,
+    transposeBy: number
+  ): ChordSlot {
+    const moved = this.regenerate(slot, key, transposeBy);
+    if (moved.harmony.kind !== 'degree' || !moved.owned.pitches) return moved;
+
+    const entering = this.keys.chordScaleFor(key);
+    if (leaving === null || entering === null) return moved;
+
+    const degree = moved.harmony.degree;
+    const identity = effectiveChord(leaving, degree);
+    // The root as the bass, so the position `expressInKey` computes is the one
+    // overwritten below. What the chord is does not depend on it either way.
+    const written = expressInKey(identity, entering, degree.octave, identity.root);
+    if (written === null) return { ...moved, harmony: literalHarmony('unrecognised', degree) };
+
+    return {
+      ...moved,
+      harmony: { kind: 'degree', degree: { ...written, inversion: degree.inversion } }
+    };
   }
 
   /**

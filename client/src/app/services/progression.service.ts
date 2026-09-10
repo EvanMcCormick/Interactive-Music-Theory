@@ -538,13 +538,23 @@ export class ProgressionService {
 
   /**
    * Moves the whole progression to a new key, re-deriving what every slot
-   * sounds. The labels move with the key on their own - `effectiveQuality`
-   * reads them off the chord that was built, and no field here holds one.
+   * sounds. A slot that leaves its shape to the key is relabelled by the key on
+   * its own - `effectiveChord` reads the name off the chord that was built, and
+   * no field here holds one.
    *
-   * Every slot is passed through `regenerateSlot`, which is a merge and not a
-   * replace: it re-derives only the dimensions the user has not claimed, and
-   * hands a `literal` slot's notes straight back. So running it over everything
-   * is the right thing rather than merely a safe one.
+   * Every slot is passed through `ProgressionDegreeEditor.rekey`, which
+   * regenerates - a merge and not a replace: it re-derives only the dimensions
+   * the user has not claimed, and hands a `literal` slot's notes straight back.
+   * So running it over everything is the right thing rather than merely a safe
+   * one.
+   *
+   * **A slot that owns its pitches is re-spelled as well as moved**, and that
+   * is the half a key change used to get wrong. Its notes transpose and keep
+   * sounding the chord the user built, so the numeral has to follow them: a
+   * hand-edited `I` in C major is still a major triad in A minor, and the card
+   * must read `I` rather than the `i` the stored degree would have printed over
+   * it. `rekey` carries that argument and the case it closes; nothing is
+   * recognised and no notice is raised, because the chord did not change.
    *
    * **It does not reclaim anything.** A key change restates no chord - it moves
    * every chord at once - so a claimed voicing is meant to survive it, which is
@@ -622,6 +632,10 @@ export class ProgressionService {
       // than off the argument: `draft.key.tonic` is the tonic the progression
       // was actually in, already wrapped by the commit that stored it.
       const transposeBy = keyTransposeInterval(draft.key.tonic, bounded.tonic);
+      // And the scale being left, for the same reason and one line sooner than
+      // it is needed: `rekey` reads an owned chord's identity in it, and a
+      // moment later there is no key here to resolve it from.
+      const leaving = this.keys.chordScaleFor(draft.key);
 
       draft.key = {
         ...bounded,
@@ -630,10 +644,12 @@ export class ProgressionService {
           this.keys.spellingFor(bounded.tonic, scaleId, scale, draft.key.preferSharps)
       };
 
-      // No `isHeptatonic` check of its own: `regenerate` asks already, and
-      // hands a slot back unchanged when the answer is no - which is what
-      // returning early here did, in a second copy of the rule.
-      draft.slots = draft.slots.map(slot => this.regenerate(slot, draft.key, transposeBy));
+      // No `isHeptatonic` check of its own: `rekey` regenerates, which asks
+      // already and hands a slot back unchanged when the answer is no - which
+      // is what returning early here did, in a second copy of the rule.
+      draft.slots = draft.slots.map(slot =>
+        this.degrees.rekey(slot, leaving, draft.key, transposeBy)
+      );
     });
   }
 
