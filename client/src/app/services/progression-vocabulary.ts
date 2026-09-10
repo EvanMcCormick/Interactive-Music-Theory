@@ -2,13 +2,11 @@ import { ALTER_MAX, ALTER_MIN } from '../models/progression-normalize';
 import { ChordDegree, ProgressionKey } from '../models/progression.model';
 import {
   RomanTarget,
-  SpellNote,
   chordName,
   romanNumeral,
-  rootPrefersSharps,
   spokenChordName
 } from './progression-chord-names';
-import { chordRootPitchClass } from './progression-generate';
+import { chordRootName } from './progression-spelling';
 import {
   ChordExtent,
   ChordQuality,
@@ -335,16 +333,17 @@ const BORROWINGS: readonly Borrowing[] = [
  * depend on the selection and are offered either way, which is what lets the
  * palette append a borrowed chord to an empty progression.
  *
- * `spell` is `MusicTheoryService.spellNote`, handed in for the reason every
- * other view model on this page hands it in: how a pitch class is written is an
- * app-wide decision this module is not party to. What this module *does* decide
- * is which way a displaced root leans - see `rootPrefersSharps`.
+ * Nothing is handed in to spell a root with any more. It used to take a
+ * `SpellNote` and choose a preference for it, because how a pitch class is
+ * written was an app-wide decision this module was not party to; a root is now
+ * spelled by the letter its own numeral names, which is a fact about the option
+ * being built and belongs where the option is built. See
+ * `progression-spelling.ts` for why no preference could have reached it.
  */
 export function chordVocabulary(
   key: ProgressionKey,
   scaleIntervals: readonly number[],
-  selected: ChordDegree | null,
-  spell: SpellNote
+  selected: ChordDegree | null
 ): ChordVocabulary {
   if (!isHeptatonic(scaleIntervals)) {
     return { alternates: [], borrowed: [], secondary: [] };
@@ -353,7 +352,6 @@ export function chordVocabulary(
   const context: OptionContext = {
     key,
     scaleIntervals,
-    spell,
     current: currentChord(scaleIntervals, selected)
   };
 
@@ -366,17 +364,16 @@ export function chordVocabulary(
 
 /**
  * What every option in one call needs and none of them decides: the key, its
- * scale, how to spell a pitch class, and what the slot already holds.
+ * scale, and what the slot already holds.
  *
- * Bundled rather than threaded through four functions as four arguments, which
- * is what they were until `current` made it five. The three groups differ in
- * *which chords they offer* and in nothing else, so the shared half is worth a
- * name - and `buildOption` reads all four of them.
+ * Bundled rather than threaded through four functions as separate arguments,
+ * which is what they were until `current` made it five. The three groups differ
+ * in *which chords they offer* and in nothing else, so the shared half is worth
+ * a name - and `buildOption` reads all three of them.
  */
 interface OptionContext {
   key: ProgressionKey;
   scaleIntervals: readonly number[];
-  spell: SpellNote;
   current: CurrentChord | null;
 }
 
@@ -559,12 +556,18 @@ function buildOption(
   quality: NamedQuality,
   of?: RomanTarget
 ): ChordOption {
-  const { key, scaleIntervals, spell, current } = context;
+  const { key, scaleIntervals, current } = context;
   const extent = naturalExtent(quality);
   const built = effectiveQuality(scaleIntervals, degree, extent, alter, quality);
-  const root = spell(
-    chordRootPitchClass(key, scaleIntervals, optionDegree(degree, alter, quality, extent)),
-    rootPrefersSharps(key.preferSharps, alter)
+  // On the letter the numeral names, whatever `alter` does to the pitch: a
+  // `♭II` button and a `II` button are written on the same letter, and the
+  // accidental in the name is the one the numeral is already showing. That is
+  // what makes a borrowed root print `Cb` in B flat major rather than the `B`
+  // the chromatic tables could only give.
+  const root = chordRootName(
+    key,
+    scaleIntervals,
+    optionDegree(degree, alter, quality, extent)
   );
 
   return {
@@ -608,14 +611,15 @@ function naturalExtent(quality: NamedQuality): ChordExtent {
 }
 
 /**
- * The `ChordDegree` an option stands for, as `chordRootPitchClass` wants it.
+ * The `ChordDegree` an option stands for, as `chordRootName` wants it.
  *
  * The shared arithmetic rather than a local `(tonic + interval + alter) % 12`,
  * on the argument the palette's own `paletteDegree` makes: the strip card, the
- * fretboard highlight and the generator all root a chord through this one
- * function, and a fifth caller doing its own sum is the label that stops
- * agreeing with the sound. It also folds a negative sum back into range, which
- * a displaced root in a flat key reaches.
+ * fretboard highlight and the generator all root a chord through
+ * `chordRootPitchClass`, which is what `chordRootName` spells, and a caller
+ * doing its own sum is the label that stops agreeing with the sound. It also
+ * folds a negative sum back into range, which a displaced root in a flat key
+ * reaches.
  *
  * Only `degree` and `alter` are read. The other three are what a fresh slot
  * carries, and they are here because the function takes a whole `ChordDegree`

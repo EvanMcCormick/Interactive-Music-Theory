@@ -187,13 +187,19 @@ describe('ProgressionStripComponent', () => {
      * front of it. Nothing in M1 moves `alter`; `replaceDocument` can bring in
      * a document that already has.
      *
-     * A doubly lowered root, so it is spelled flat: see `rootPrefersSharps`.
+     * `♭♭I` in C major is a **C double flat**, and it was `Bb Maj` here until
+     * M3. The pitch is the same one either way - pitch class 10 - and the
+     * letter is not: the first degree of any key is written on the tonic's own
+     * letter whatever the numeral does to it, so `♭♭I` is a C twice lowered.
+     * `♭♭I` over `Bb Maj` read as a lowered *seventh*, which is the failure the
+     * whole class of 55 shared. See `progression-spelling.ts`.
      */
     it('names a chord whose alteration takes its root below the tonic', () => {
       progression.replaceDocument(docOf(degreeSlot('altered', -2, 4)));
       settle();
 
-      expect(component.cards[0].name).toBe('Bb Maj');
+      expect(component.cards[0].numeral).toBe('♭♭I');
+      expect(component.cards[0].name).toBe('Cbb Maj');
     });
 
     /**

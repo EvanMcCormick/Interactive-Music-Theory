@@ -268,6 +268,21 @@ describe('spokenChordName', () => {
     expect(spokenChordName('C', 'major')).toBe('C major');
   });
 
+  /**
+   * A double accidental is said, not counted.
+   *
+   * Reachable on a root only since spelling came from the degree's letter: D♭
+   * major's `♭II` is an E double flat and G♯ minor's `♯vii°` an F double sharp,
+   * where the two chromatic tables could offer neither and printed the letter
+   * next door. Left to the single-accidental rule these announce as "E flat"
+   * with a stray character, or as "E b b" - a chord on the wrong note either
+   * way.
+   */
+  it('says a double accidental as a double', () => {
+    expect(spokenChordName('Ebb', 'major')).toBe('E double flat major');
+    expect(spokenChordName('F##', 'diminished')).toBe('F double sharp diminished');
+  });
+
   /** The chord is real; only its name is missing, and the label says so. */
   it('still identifies a stack that is not a named chord', () => {
     expect(spokenChordName('B', 'other')).toBe('B unnamed chord');

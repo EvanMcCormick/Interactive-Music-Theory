@@ -12,6 +12,7 @@ import {
   degreeQuality,
   isHeptatonic
 } from './progression-harmony';
+import { ProgressionKeyContext } from './progression-key-context';
 import { ChordOption, chordVocabulary } from './progression-vocabulary';
 
 /**
@@ -25,17 +26,23 @@ import { ChordOption, chordVocabulary } from './progression-vocabulary';
  * follow check that the *rules* behind them hold in every seven-note scale the
  * app offers rather than only in the two keys anyone would test by hand.
  *
- * `MusicTheoryService` is injected for two things and neither is convenience.
- * `spellNote` is the app's own spelling, so the names asserted here are the
- * names a user reads; and the scale table is what the borrowed group's two
- * source modes are checked against, so the copy of aeolian and phrygian this
- * module keeps cannot drift from the app's.
+ * `MusicTheoryService` is injected for the scale table, which is what the
+ * borrowed group's two source modes are checked against - so the copy of
+ * aeolian and phrygian this module keeps cannot drift from the app's. It used
+ * to be injected for `spellNote` as well; a root is now spelled by its degree's
+ * letter, which needs no service at all.
  */
 describe('chordVocabulary', () => {
   let service: MusicTheoryService;
 
-  /** The app's own spelling, so a name asserted here is a name on screen. */
-  let spell: (pitchClass: number, preferSharps: boolean) => string;
+  /**
+   * The key-to-scale knowledge, constructed rather than injected.
+   *
+   * It is what `ProgressionService` builds its keys through, so the spelling
+   * sweep below builds them the same way - and it takes its service as a
+   * constructor argument precisely so a spec can stand one up.
+   */
+  let keys: ProgressionKeyContext;
 
   const IONIAN = [0, 2, 4, 5, 7, 9, 11];
   const AEOLIAN = [0, 2, 3, 5, 7, 8, 10];
@@ -50,7 +57,7 @@ describe('chordVocabulary', () => {
   beforeEach(() => {
     TestBed.configureTestingModule({});
     service = TestBed.inject(MusicTheoryService);
-    spell = (pitchClass, preferSharps) => service.spellNote(pitchClass, preferSharps);
+    keys = new ProgressionKeyContext(service);
   });
 
   /** A selected slot on `degree`, which is all the alternates group reads. */
@@ -81,12 +88,21 @@ describe('chordVocabulary', () => {
     return found;
   }
 
-  /** Every seven-note scale the app offers, which is what the sweeps walk. */
-  function heptatonicScales(): { name: string; intervals: readonly number[] }[] {
-    const found: { name: string; intervals: readonly number[] }[] = [];
+  /**
+   * Every seven-note scale the app offers, which is what the sweeps walk.
+   *
+   * The **id** comes with the name because a key carries one and
+   * `ProgressionKeyContext.spellingFor` reads it - the spelling sweep below
+   * builds each key the way `setKey` does, and a key built with a made-up id
+   * would have no signature and would test the fallback instead of the rule.
+   */
+  function heptatonicScales(): { id: string; name: string; intervals: readonly number[] }[] {
+    const found: { id: string; name: string; intervals: readonly number[] }[] = [];
     for (const category of service.getScaleCategories()) {
       for (const scale of category.scales) {
-        if (isHeptatonic(scale.intervals)) found.push({ name: scale.name, intervals: scale.intervals });
+        if (isHeptatonic(scale.intervals)) {
+          found.push({ id: scale.id, name: scale.name, intervals: scale.intervals });
+        }
       }
     }
     return found;
@@ -120,7 +136,7 @@ describe('chordVocabulary', () => {
     key: ProgressionKey,
     selected: ChordDegree
   ): ChordOption[] {
-    const vocabulary = chordVocabulary(key, intervals, selected, spell);
+    const vocabulary = chordVocabulary(key, intervals, selected);
     return [...vocabulary.alternates, ...vocabulary.borrowed, ...vocabulary.secondary];
   }
 
@@ -140,7 +156,7 @@ describe('chordVocabulary', () => {
      * diminished for ♭VII, A♭ minor for ♭VI.
      */
     it('offers the parallel minor and the Neapolitan in a major key', () => {
-      const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null, spell);
+      const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null);
 
       expect(numerals(borrowed)).toEqual(['♭II', '♭III', 'iv', '♭VI', '♭VII']);
       expect(names(borrowed)).toEqual(['Db Maj', 'Eb Maj', 'F min', 'Ab Maj', 'Bb Maj']);
@@ -155,7 +171,7 @@ describe('chordVocabulary', () => {
      * doc's correction gives - rather than the degree-6 stack shifted down.
      */
     it('spells a borrowed chord as a displaced root under an explicit shape', () => {
-      const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null, spell);
+      const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null);
       const flatSeven = withNumeral(borrowed, '♭VII');
 
       expect(flatSeven.degree).toBe(6);
@@ -180,7 +196,7 @@ describe('chordVocabulary', () => {
      * row, which can only re-shape a slot that already exists.
      */
     it('offers a minor key the Neapolitan and harmonic minor’s dominant pair', () => {
-      const { borrowed } = chordVocabulary(C_MINOR, AEOLIAN, null, spell);
+      const { borrowed } = chordVocabulary(C_MINOR, AEOLIAN, null);
 
       expect(numerals(borrowed)).toEqual(['♭II', 'V', '♯vii°']);
       expect(names(borrowed)).toEqual(['Db Maj', 'G Maj', 'B°']);
@@ -197,7 +213,7 @@ describe('chordVocabulary', () => {
      * rather than a silent one.
      */
     it('leaves the Picardy third to the alternates row', () => {
-      const { borrowed, alternates } = chordVocabulary(C_MINOR, AEOLIAN, selection(0), spell);
+      const { borrowed, alternates } = chordVocabulary(C_MINOR, AEOLIAN, selection(0));
 
       expect(numerals(borrowed)).not.toContain('I');
       expect(numerals(alternates)).toContain('I');
@@ -218,7 +234,6 @@ describe('chordVocabulary', () => {
         { tonic: 0, scaleId: 'dorian', preferSharps: false },
         dorian,
         null,
-        spell
       );
 
       expect(numerals(borrowed)).toEqual(['♭II', 'iv', 'V', '♭VI', '♯vii°']);
@@ -234,7 +249,7 @@ describe('chordVocabulary', () => {
      * addition safe.
      */
     it('adds nothing to a major key', () => {
-      const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null, spell);
+      const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null);
 
       expect(numerals(borrowed)).toEqual(['♭II', '♭III', 'iv', '♭VI', '♭VII']);
     });
@@ -257,7 +272,7 @@ describe('chordVocabulary', () => {
      */
     it('never offers a chord the key already has', () => {
       for (const scale of heptatonicScales()) {
-        const { borrowed } = chordVocabulary(C_MAJOR, scale.intervals, null, spell);
+        const { borrowed } = chordVocabulary(C_MAJOR, scale.intervals, null);
 
         const diatonic = new Set<string>();
         for (let degree = 0; degree <= 6; degree++) {
@@ -301,7 +316,7 @@ describe('chordVocabulary', () => {
         chordRootPitchClass(key, intervals, selection(option.degree, option.alter, option.quality));
 
       // C aeolian gives E♭, Fm, A♭ and B♭; C phrygian gives the D♭.
-      const major = chordVocabulary(C_MAJOR, IONIAN, null, spell).borrowed;
+      const major = chordVocabulary(C_MAJOR, IONIAN, null).borrowed;
       const roots = major.map(option => rootOf(option, C_MAJOR, IONIAN));
 
       expect(roots.slice(1)).toEqual([byId('aeolian')[2], byId('aeolian')[3], byId('aeolian')[5], byId('aeolian')[6]]);
@@ -309,7 +324,7 @@ describe('chordVocabulary', () => {
 
       // C harmonic minor gives the G and the B - its fifth degree and its
       // raised seventh, which is the whole reason it is a source at all.
-      const minor = chordVocabulary(C_MINOR, AEOLIAN, null, spell).borrowed;
+      const minor = chordVocabulary(C_MINOR, AEOLIAN, null).borrowed;
       const harmonic = byId('harmonicMinor');
 
       expect(rootOf(withNumeral(minor, 'V'), C_MINOR, AEOLIAN)).toBe(harmonic[4]);
@@ -325,7 +340,7 @@ describe('chordVocabulary', () => {
      */
     it('never offers two borrowed chords with the same numeral', () => {
       for (const scale of heptatonicScales()) {
-        const { borrowed } = chordVocabulary(C_MAJOR, scale.intervals, null, spell);
+        const { borrowed } = chordVocabulary(C_MAJOR, scale.intervals, null);
 
         expect(new Set(numerals(borrowed)).size)
           .withContext(`${scale.name}: ${numerals(borrowed).join(' ')}`)
@@ -349,7 +364,7 @@ describe('chordVocabulary', () => {
      * diatonic row already offers.
      */
     it('offers a dominant seventh a fifth above every tonicisable degree', () => {
-      const { secondary } = chordVocabulary(C_MAJOR, IONIAN, null, spell);
+      const { secondary } = chordVocabulary(C_MAJOR, IONIAN, null);
 
       expect(numerals(secondary)).toEqual(['V/ii', 'V/iii', 'V/IV', 'V/V', 'V/vi']);
       expect(names(secondary)).toEqual(['A7', 'B7', 'C7', 'D7', 'E7']);
@@ -364,7 +379,7 @@ describe('chordVocabulary', () => {
      * B♭, which are the five triads of C natural minor that a key could be in.
      */
     it('names its targets with the key’s own numerals', () => {
-      const { secondary } = chordVocabulary(C_MINOR, AEOLIAN, null, spell);
+      const { secondary } = chordVocabulary(C_MINOR, AEOLIAN, null);
 
       expect(numerals(secondary)).toEqual(['V/III', 'V/iv', 'V/v', 'V/VI', 'V/VII']);
       expect(names(secondary)).toEqual(['Bb7', 'C7', 'D7', 'Eb7', 'F7']);
@@ -372,7 +387,7 @@ describe('chordVocabulary', () => {
 
     /** Every one of them is stored as a dominant seventh, which is the rule. */
     it('stores every secondary as a dominant seventh', () => {
-      const { secondary } = chordVocabulary(C_MAJOR, IONIAN, null, spell);
+      const { secondary } = chordVocabulary(C_MAJOR, IONIAN, null);
 
       for (const option of secondary) {
         expect(option.quality).withContext(option.numeral).toBe('dominant7');
@@ -392,7 +407,7 @@ describe('chordVocabulary', () => {
      */
     it('roots every secondary a perfect fifth above its target', () => {
       for (const scale of heptatonicScales()) {
-        const { secondary } = chordVocabulary(C_MAJOR, scale.intervals, null, spell);
+        const { secondary } = chordVocabulary(C_MAJOR, scale.intervals, null);
 
         // Every one of them names the degree it tonicises.
         for (const option of secondary) {
@@ -434,7 +449,7 @@ describe('chordVocabulary', () => {
      */
     it('tonicises no diminished or augmented degree', () => {
       for (const scale of heptatonicScales()) {
-        const { secondary } = chordVocabulary(C_MAJOR, scale.intervals, null, spell);
+        const { secondary } = chordVocabulary(C_MAJOR, scale.intervals, null);
 
         for (let degree = 0; degree < 7; degree++) {
           const quality = degreeQuality(scale.intervals, degree, 3);
@@ -462,7 +477,7 @@ describe('chordVocabulary', () => {
      */
     it('never puts an accidental on the left of the slash', () => {
       for (const scale of heptatonicScales()) {
-        const { secondary } = chordVocabulary(C_MAJOR, scale.intervals, null, spell);
+        const { secondary } = chordVocabulary(C_MAJOR, scale.intervals, null);
 
         for (const option of secondary) {
           expect(option.numeral)
@@ -483,7 +498,7 @@ describe('chordVocabulary', () => {
      * Captain Chords shows - and the one that turns V into V7.
      */
     it('offers every named quality on the selected root', () => {
-      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(0), spell);
+      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(0));
 
       expect(alternates.length).toBe(NAMED_QUALITIES.length);
       expect(alternates.map(option => option.quality)).toEqual([...NAMED_QUALITIES]);
@@ -512,7 +527,7 @@ describe('chordVocabulary', () => {
      * counts.
      */
     it('offers each quality at its own height', () => {
-      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(4), spell);
+      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(4));
       const heights = new Map<NamedQuality, ChordExtent>(
         alternates.map(option => [option.quality, option.extent])
       );
@@ -524,7 +539,7 @@ describe('chordVocabulary', () => {
 
     /** They follow the selected chord's own root, accidental and all. */
     it('follows a borrowed slot onto its chromatic root', () => {
-      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(6, -1, 'major'), spell);
+      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(6, -1, 'major'));
 
       expect(numerals(alternates).slice(0, 4)).toEqual(['♭VII', '♭vii', '♭vii°', '♭VII+']);
       expect(names(alternates).slice(0, 4)).toEqual(['Bb Maj', 'Bb min', 'Bb°', 'Bb+']);
@@ -532,7 +547,7 @@ describe('chordVocabulary', () => {
 
     /** With nothing selected there is no root to offer alternates on. */
     it('offers none when nothing is selected', () => {
-      const vocabulary = chordVocabulary(C_MAJOR, IONIAN, null, spell);
+      const vocabulary = chordVocabulary(C_MAJOR, IONIAN, null);
 
       expect(vocabulary.alternates).toEqual([]);
       expect(vocabulary.borrowed.length).toBeGreaterThan(0);
@@ -554,7 +569,7 @@ describe('chordVocabulary', () => {
      * at a triad's height is a G major triad, and `major` is the button.
      */
     it('marks the key’s own quality for a slot with no override', () => {
-      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(4), spell);
+      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(4));
 
       expect(alternates.filter(option => option.current).map(option => option.quality))
         .toEqual(['major']);
@@ -570,7 +585,7 @@ describe('chordVocabulary', () => {
      */
     it('follows the slot’s height when the key supplies the quality', () => {
       const seventh: ChordDegree = { ...selection(4), extent: 7 };
-      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, seventh, spell);
+      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, seventh);
 
       expect(alternates.filter(option => option.current).map(option => option.quality))
         .toEqual(['dominant7']);
@@ -578,7 +593,7 @@ describe('chordVocabulary', () => {
 
     /** An override is its own answer, and marks the button that names it. */
     it('marks the override a slot carries', () => {
-      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(4, 0, 'minor'), spell);
+      const { alternates } = chordVocabulary(C_MAJOR, IONIAN, selection(4, 0, 'minor'));
 
       expect(withNumeral(alternates, 'v').current).toBeTrue();
       expect(withNumeral(alternates, 'V').current).toBeFalse();
@@ -596,7 +611,7 @@ describe('chordVocabulary', () => {
     it('marks a borrowed slot’s own button at any height', () => {
       for (const extent of [3, 7, 9] as ChordExtent[]) {
         const slot: ChordDegree = { ...selection(6, -1, 'major'), extent };
-        const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, slot, spell);
+        const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, slot);
 
         expect(withNumeral(borrowed, '♭VII').current)
           .withContext(`extent ${extent}`)
@@ -606,7 +621,7 @@ describe('chordVocabulary', () => {
 
     /** With nothing selected there is nothing to mark, in any group. */
     it('marks nothing when nothing is selected', () => {
-      const vocabulary = chordVocabulary(C_MAJOR, IONIAN, null, spell);
+      const vocabulary = chordVocabulary(C_MAJOR, IONIAN, null);
 
       expect([...vocabulary.borrowed, ...vocabulary.secondary].some(option => option.current))
         .toBeFalse();
@@ -624,7 +639,7 @@ describe('chordVocabulary', () => {
     it('marks at most one option per row, in every scale and every selection', () => {
       for (const scale of heptatonicScales()) {
         for (const selected of everySelection()) {
-          const vocabulary = chordVocabulary(C_MAJOR, scale.intervals, selected, spell);
+          const vocabulary = chordVocabulary(C_MAJOR, scale.intervals, selected);
           const rows = [vocabulary.alternates, vocabulary.borrowed, vocabulary.secondary];
 
           for (const row of rows) {
@@ -659,7 +674,6 @@ describe('chordVocabulary', () => {
         key,
         lydianSharp2,
         selection(5, -1, 'major'),
-        spell
       );
 
       expect(withNumeral(borrowed, '♭VI').current).toBeTrue();
@@ -672,18 +686,23 @@ describe('chordVocabulary', () => {
   // -------------------------------------------------------------------------
 
   /**
-   * A lowered root is spelled flat and a raised one sharp, whatever the key
-   * prefers.
+   * A displaced root keeps its degree's letter and takes the accidental that
+   * lands it on the pitch - which in a diatonic mode is the numeral's own.
    *
    * C major's `preferSharps` is `true` - its signature is empty, so the ionian
-   * scale's own default decides - and following it here would print `A♯ Maj`
-   * under a button labelled `♭VII`. The accidental in the numeral and the
-   * accidental in the name are the same accidental, so the displacement decides
-   * both. An undisplaced root has no opinion of its own and follows the key,
-   * which is what every other label on this page does.
+   * scale's own default decides - and spelling by that preference would print
+   * `A♯ Maj` under a button labelled `♭VII`. The seventh degree of C major is
+   * written on a B, so the lowered one is a B flat, and the accidental in the
+   * numeral and the accidental in the name come out the same because they are
+   * the same accidental.
+   *
+   * The rule this replaced read the *sign* of the displacement instead, which
+   * agrees here and in every diatonic mode and disagrees in 112 places
+   * elsewhere. The letter sweep at the bottom of this file is the general
+   * statement; this is the one a reader can check by eye.
    */
-  it('spells a displaced root in the direction it was displaced', () => {
-    const { borrowed, secondary } = chordVocabulary(C_MAJOR, IONIAN, null, spell);
+  it('spells a displaced root on its degree letter', () => {
+    const { borrowed, secondary } = chordVocabulary(C_MAJOR, IONIAN, null);
 
     expect(names(borrowed)).toContain('Bb Maj');
     expect(names(borrowed)).not.toContain('A# Maj');
@@ -692,30 +711,32 @@ describe('chordVocabulary', () => {
   });
 
   /**
-   * An undisplaced root has no accidental of its own, so it follows the key -
-   * and the key is the *progression's*, either way it leans.
+   * An undisplaced root is the key's own note, and in a diatonic mode its
+   * degree letter is the letter the key signature already writes it on.
    *
    * C major is no test of this: every root it offers with `alter` at zero is a
    * white key, and sharps and flats spell those the same. B major's dominant is
    * F sharp and E flat major's subdominant is A flat, and the two would be
-   * printed `Gb` and `G#` by a rule that had stopped reading the key.
+   * printed `Gb` and `G#` by anything that had stopped reading the key - which
+   * is exactly what a degree letter counted from the tonic's own spelling
+   * cannot do.
    */
-  it('spells an unaltered root the way the key does', () => {
+  it('spells an unaltered root on its degree letter, which is the key\'s', () => {
     const bMajor: ProgressionKey = { tonic: 11, scaleId: 'ionian', preferSharps: true };
-    const sharps = chordVocabulary(bMajor, IONIAN, selection(4), spell);
+    const sharps = chordVocabulary(bMajor, IONIAN, selection(4));
 
     expect(names(sharps.alternates)[0]).toBe('F# Maj');
     expect(names(sharps.secondary)).toContain('C#7');
 
     const eFlatMajor: ProgressionKey = { tonic: 3, scaleId: 'ionian', preferSharps: false };
-    const flats = chordVocabulary(eFlatMajor, IONIAN, selection(3), spell);
+    const flats = chordVocabulary(eFlatMajor, IONIAN, selection(3));
 
     expect(names(flats.alternates)[0]).toBe('Ab Maj');
   });
 
   /** The spoken label says the accidental and the shape rather than printing them. */
   it('says a borrowed chord aloud rather than spelling its symbols', () => {
-    const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null, spell);
+    const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null);
 
     expect(withNumeral(borrowed, '♭VII').spoken).toBe('B flat major');
   });
@@ -735,8 +756,7 @@ describe('chordVocabulary', () => {
     const vocabulary = chordVocabulary(
       { tonic: 0, scaleId: 'majorPentatonic', preferSharps: true },
       MAJOR_PENTATONIC,
-      selection(0),
-      spell
+      selection(0)
     );
 
     expect(vocabulary.alternates).toEqual([]);
@@ -803,9 +823,140 @@ describe('chordVocabulary', () => {
     }
   });
 
+  // -------------------------------------------------------------------------
+  // Every option on the letter its numeral names
+  // -------------------------------------------------------------------------
+
+  /**
+   * The 55 misspelt buttons the design doc counts, closed as a class rather
+   * than as a list.
+   *
+   * A numeral names a *degree*, and a degree is written on the letter that many
+   * steps above the tonic's whatever accidental it carries. So the assertion is
+   * not "this button prints `Cb`" but "every button prints a letter its own
+   * numeral could have named", which is the property the 55 broke and which no
+   * sharp/flat preference could have restored: the two chromatic tables hold no
+   * `C♭`, `F♭`, `B♯`, `E♯` or double accidental at all, so 35 flat-key
+   * borrowings and 20 sharp-key ones came back on the letter next door.
+   *
+   * The key is built as `ProgressionService.setKey` builds one, through
+   * `spellingFor`, because the tonic's own letter is where every other letter
+   * is counted from - a sweep that guessed the preference would be testing a
+   * key the app never puts a user in.
+   */
+  function letterOf(name: string): string {
+    return name[0];
+  }
+
+  /** Letters in step order, so the index is the letter. */
+  const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+
+  /** The seven diatonic modes, whose ids the spelling sweep needs. */
+  const DIATONIC_MODES: readonly string[] = [
+    'ionian',
+    'dorian',
+    'phrygian',
+    'lydian',
+    'mixolydian',
+    'aeolian',
+    'locrian'
+  ];
+
+  /** A key exactly as `setKey` would store it, signature and all. */
+  function keyFor(tonic: number, scaleId: string): ProgressionKey {
+    const scale = keys.findScale(scaleId);
+    return {
+      tonic,
+      scaleId,
+      preferSharps: keys.spellingFor(tonic, scaleId, scale, true)
+    };
+  }
+
+  /** Every option of every group, in one key, with each degree selected once. */
+  function everyOptionInKey(key: ProgressionKey, intervals: readonly number[]): ChordOption[] {
+    const options: ChordOption[] = [];
+    for (let degree = 0; degree <= 6; degree++) {
+      options.push(...everyOption(intervals, key, selection(degree)));
+    }
+    return options;
+  }
+
+  /** The options whose printed root is not on the letter its numeral names. */
+  function offLetter(key: ProgressionKey, intervals: readonly number[]): string[] {
+    const tonicLetter = LETTERS.indexOf(letterOf(service.spellNote(key.tonic, key.preferSharps)));
+    const wrong: string[] = [];
+
+    for (const option of everyOptionInKey(key, intervals)) {
+      const expected = LETTERS[(tonicLetter + option.degree) % 7];
+      if (letterOf(option.name) !== expected) {
+        wrong.push(`${key.scaleId} on ${key.tonic}: ${option.numeral} printed ${option.name}, wanted ${expected}`);
+      }
+    }
+
+    return wrong;
+  }
+
+  it('names every option on the letter its numeral names', () => {
+    const wrong: string[] = [];
+
+    for (const mode of DIATONIC_MODES) {
+      const scale = keys.findScale(mode);
+      if (!scale) throw new Error(`no scale ${mode}`);
+
+      for (let tonic = 0; tonic < 12; tonic++) {
+        wrong.push(...offLetter(keyFor(tonic, mode), scale.intervals));
+      }
+    }
+
+    expect(wrong).toEqual([]);
+  });
+
+  /**
+   * The whole reach of the fallback, across all 33 heptatonic scales in all
+   * twelve keys: **twelve buttons, on one root.**
+   *
+   * `spellAt` refuses past a double accidental and the caller falls back to
+   * `spellPitchClass`, which spells by preference and so lands on a letter the
+   * numeral did not name. That is the only way a button here can still be on
+   * the wrong letter, and it is worth a number rather than a hand-wave.
+   *
+   * All twelve are the **sixth degree of A♯ enigmatic**, which needs an F triple
+   * sharp. Enigmatic is `[0, 1, 4, 6, 8, 10, 11]` and inherits no key signature,
+   * so its own `preferSharps` decides and pitch class 10 is spelled `A♯`; from
+   * an A the sixth degree is written on an F, and ten semitones above A♯ is
+   * pitch class 8 - three semitones above F. There is nowhere further to go,
+   * because a triple sharp is not notation. The twelve are one root printed
+   * twelve times: the alternates row offers all twelve shapes on the selected
+   * chord, so every quality repeats it.
+   *
+   * **No borrowed or secondary option is ever affected, in any scale**, and no
+   * diatonic mode is affected at all - the test above pins that half at zero.
+   *
+   * `TRIPLE_ACCIDENTAL_OPTIONS` is pinned rather than merely bounded so that a
+   * new scale, a widened `ALTER_MIN`, or a change to a scale's `preferSharps`
+   * cannot enlarge the set silently. If this number moves, the new members are
+   * printed in the failure and each is a ruling to make, not a count to update.
+   */
+  const TRIPLE_ACCIDENTAL_OPTIONS = 12;
+
+  it('falls back to the tables only past a double accidental', () => {
+    const wrong: string[] = [];
+
+    for (const scale of heptatonicScales()) {
+      for (let tonic = 0; tonic < 12; tonic++) {
+        wrong.push(...offLetter(keyFor(tonic, scale.id), scale.intervals));
+      }
+    }
+
+    expect(wrong.length).withContext(wrong.join('\n')).toBe(TRIPLE_ACCIDENTAL_OPTIONS);
+    expect(wrong.every(entry => entry.startsWith('enigmatic on 10:')))
+      .withContext(wrong.join('\n'))
+      .toBeTrue();
+  });
+
   /** Each option knows which row it came from, so a click need not be told. */
   it('marks every option with its group', () => {
-    const vocabulary = chordVocabulary(C_MAJOR, IONIAN, selection(0), spell);
+    const vocabulary = chordVocabulary(C_MAJOR, IONIAN, selection(0));
 
     expect(vocabulary.alternates.every(option => option.group === 'alternate')).toBeTrue();
     expect(vocabulary.borrowed.every(option => option.group === 'borrowed')).toBeTrue();

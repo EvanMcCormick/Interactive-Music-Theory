@@ -20,96 +20,29 @@ import type { ChordQuality } from './progression-harmony';
  */
 
 /**
- * How a pitch class is written: `MusicTheoryService.spellNote`, passed in.
+ * How the root arrives, and who decides it.
  *
- * It lives here because this is the module about how a chord is written, and
- * because it was written out three times before it lived anywhere - once in
- * `progression-strip-cards.ts`, once in `piano-roll-view.ts`, and `Task 8`
- * would have been the third. Three declarations of one function type is the
- * duplicate the project rules forbid outright, and the type belongs beside
- * `chordName`, whose whole argument is that the *spelling* is somebody else's
- * decision arriving as an argument.
+ * A root reaches `chordName` and `spokenChordName` already spelled, as text,
+ * and that has not changed - what changed is who spells it. Until M3 this
+ * module also owned `rootPrefersSharps`, a rule that chose between a sharp
+ * preference and a flat one by the sign of the chord's `alter`, and the two
+ * functions below took whichever of twelve names that preference gave.
  *
- * A spelling is asked for with an explicit preference rather than asked to
- * decide one: `getNoteName` answers for the fretboard's key, the progression
- * carries a key of its own, and asking the app-wide rule is how the palette
- * came to print `D♯ Maj` as the tonic chord of E flat major.
+ * `progression-spelling.ts` replaces it, and the reason is that the failure was
+ * never about a preference. A preference chooses between two names for one
+ * pitch class; it cannot choose a **letter**, and 55 buttons across the seven
+ * diatonic modes in all twelve keys needed a letter the two chromatic tables do
+ * not hold - B♭ major's `♭II` is a C flat and printed `B Maj`, which reads as a
+ * raised seventh under a numeral that says lowered second. The old rule also
+ * got 112 displaced roots wrong that following the key would have got right,
+ * seven of them in keys a user might really be in. Both counts, and the whole
+ * argument, are on `progression-spelling.ts`.
+ *
+ * What stays true here is the separation: this module writes chords and does
+ * not spell notes. It now receives a spelling made by degree letter rather than
+ * by preference, and the only consequence it has to know about is that a root
+ * may carry a double accidental - see `spokenRoot`.
  */
-export type SpellNote = (pitchClass: number, preferSharps: boolean) => string;
-
-/**
- * Which way a chord's root leans, which is not always the way its key does.
- *
- * C major's `preferSharps` is `true` - its signature is empty, so the ionian
- * scale's own default decides it - so spelling a borrowed ♭VII the way that key
- * spells everything else prints `A♯ Maj` under a numeral that reads `♭VII`. The
- * numeral's accidental and the name's accidental are the same accidental, and a
- * card disagreeing with itself about one chord is the failure this page has
- * been fixed for twice already.
- *
- * So a **displaced** root is spelled in the direction it was displaced, and an
- * **undisplaced** one has no opinion of its own and follows the key - which is
- * what every other label on this page does, and what keeps a secondary
- * dominant's `D7` spelled by the progression's own signature.
- *
- * It lives here rather than in either caller because the palette's borrowed
- * button and the strip card it becomes have to reach the same answer: a button
- * reading `Bb Maj` that turns into a card reading `A# Maj` is one chord with two
- * names, one click apart.
- *
- * ## Where the rule itself is wrong
- *
- * It is right when the displaced note's correct accidental has the *sign* of the
- * displacement, and that is not a theorem. Over every seven-note scale the app
- * offers, in all twelve keys, it gets 996 displaced roots right, gets 112 wrong
- * where following the key would have been right, and gets 176 wrong that the key
- * would also have got wrong.
- *
- * Most of that 112 is in keys whose own tonic is already spelled enharmonically,
- * where nothing downstream can help. **Seven are not**, and they are worth naming
- * because they are keys a user might really be in: F super locrian's `♯iv` and F
- * ultra locrian's `♯iv` are B flats printed `A♯`, C ultra locrian's `♯VII` is a B
- * flat printed `A♯` and F ultra locrian's is an E flat printed `D♯`, and the
- * `♭V` that B enigmatic, B lydian augmented and B ionian augmented each borrow is
- * an F sharp printed `G♭`. In every one the sign of the displacement and the sign
- * of the correct accidental disagree. **No diatonic mode is affected**, in any
- * key.
- *
- * ## And the limit underneath it, which no preference can reach
- *
- * The app spells from two twelve-name chromatic tables, and between them those
- * tables have no `C♭`, `F♭`, `B♯`, `E♯` or double accidental at all. A root whose
- * correct spelling is one of those comes back as the wrong *letter* however the
- * preference is set, and the numeral above it then contradicts the name beside
- * it. Across the seven diatonic modes in all twelve keys that is **55 buttons**:
- *
- *  - **35 in the flat keys**, every one of them in the borrowed group, wherever
- *    a lowered root lands on a C flat, an F flat or a double flat. B♭ major's
- *    `♭II` is a C flat and prints `B Maj`; E♭ major's `♭VI` is a C flat and
- *    prints `B Maj`; D♭ major's `♭II` is an E double flat and prints `D Maj`.
- *    `♭II` over `B Maj` reads as a raised seventh, which is the opposite of what
- *    the numeral says.
- *  - **20 in the sharp keys**, nineteen of them the `♯vii°` borrowed from
- *    harmonic minor. C♯ aeolian's is a B sharp and prints `C°`; G♯ aeolian's is
- *    an F double sharp and prints `G°`.
- *
- * A further 13 are unaltered roots that the *key's* own spelling gets wrong - F
- * locrian is treated as a six-sharp key and prints `G♯` for its A flat - and
- * those are not this rule's to fix, because the diatonic row prints them the
- * same way.
- *
- * Fixing any of it needs a spelling model that carries a letter and an accidental
- * separately, so a note can *be* a C flat rather than being whichever of twelve
- * names shares its pitch. That is a change to `MusicTheoryService`'s two tables
- * and to every caller of `spellNote`, not to this function; it is recorded in the
- * design doc under "The two chromatic tables cannot spell every borrowed root".
- * Until then this rule is what there is, and it is still the difference between
- * right and wrong on the great majority of displaced roots - including all four
- * borrowed chords of every sharp-preferring diatonic key.
- */
-export function rootPrefersSharps(keyPrefersSharps: boolean, alter: number): boolean {
-  return alter === 0 ? keyPrefersSharps : alter > 0;
-}
 
 /**
  * How a quality is written, in the three places a chord is written at all.
@@ -437,8 +370,21 @@ export function spokenChordName(root: string, quality: ChordQuality): string {
   return `${spokenRoot(root)} ${SPOKEN_QUALITIES[quality]}`;
 }
 
-/** `Eb` -> `E flat`, `A#` -> `A sharp`, `C` -> `C`. */
+/**
+ * `Eb` -> `E flat`, `A#` -> `A sharp`, `Ebb` -> `E double flat`, `C` -> `C`.
+ *
+ * The doubles are not decoration. Degree-letter spelling makes them reachable
+ * on a root for the first time - D♭ major's `♭II` is an E double flat, G♯
+ * minor's `♯vii°` an F double sharp - and read as a bare accidental *count* a
+ * screen reader gets `E b b`, which is worse than the single case it already
+ * mishandled. Said as "double flat" it is what a musician would call it.
+ *
+ * The accidental is read off the second character and the count off the length,
+ * because `formatNote` writes one sign repeated and never mixes them.
+ */
 function spokenRoot(root: string): string {
   if (root.length < 2) return root;
-  return root[0] + (root[1] === '#' ? ' sharp' : ' flat');
+
+  const sign = root[1] === '#' ? 'sharp' : 'flat';
+  return `${root[0]} ${root.length > 2 ? 'double ' : ''}${sign}`;
 }

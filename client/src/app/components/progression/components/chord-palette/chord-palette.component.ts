@@ -15,8 +15,6 @@ import {
   ProgressionKey,
   ProgressionState
 } from '../../../../models/progression.model';
-import { MusicTheoryService } from '../../../../services/music-theory.service';
-import { chordRootPitchClass } from '../../../../services/progression-generate';
 import { ChordChoice, ProgressionService } from '../../../../services/progression.service';
 import {
   chordName,
@@ -27,6 +25,7 @@ import {
   ChordExtent,
   degreeQuality
 } from '../../../../services/progression-harmony';
+import { chordRootName } from '../../../../services/progression-spelling';
 import { ChordOption, chordVocabulary } from '../../../../services/progression-vocabulary';
 
 /** One button: where the chord sits in the key, and what it is called there. */
@@ -163,9 +162,11 @@ const ALTERNATES_UNNAMED = 'Other shapes on the selected chord';
  * `D♯ Maj` as the tonic chord of E flat major. `key.preferSharps` is the key's
  * own answer and is derived from its signature - see `ProgressionService`'s
  * `spellingFor` - so this page is right on its own terms rather than only while
- * two services happen to agree. `MusicTheoryService` is still injected, for
- * `spellNote`, but it is asked to spell a note with a given preference rather
- * than asked what the preference is.
+ * two services happen to agree. `MusicTheoryService` was still injected after
+ * that, for `spellNote`; M3 took the injection out altogether. A root is now
+ * spelled on the letter its own degree names, by `progression-spelling.ts`,
+ * which needs the key and the degree and nothing app-wide at all - so the last
+ * reason this component had to know the app's spelling rule existed is gone.
  *
  * ## The guard, and the scale behind it
  *
@@ -340,7 +341,6 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   private selectedOctave = 0;
 
   private readonly progression = inject(ProgressionService);
-  private readonly musicTheory = inject(MusicTheoryService);
   private readonly changes = inject(ChangeDetectorRef);
   private readonly destroy$ = new Subject<void>();
 
@@ -473,12 +473,12 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
       // not follow when M2 lets a degree be altered - and it would also not
       // fold a negative sum back into range.
       //
-      // Spelled from `key.preferSharps` and not from `getNoteName`, which
-      // answers for the *fretboard's* key. See the note at the top of the file.
-      const root = this.musicTheory.spellNote(
-        chordRootPitchClass(key, intervals, paletteDegree(degree)),
-        key.preferSharps
-      );
+      // Spelled on this degree's own letter rather than from the two chromatic
+      // tables, which is what makes F locrian's third degree an `Ab` here
+      // instead of the `G♯` a six-sharp signature gave it - and what keeps this
+      // row agreeing with the borrowed row beside it, where a lowered root now
+      // has a letter no preference could have chosen.
+      const root = chordRootName(key, intervals, paletteDegree(degree));
 
       return {
         degree,
@@ -497,20 +497,18 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   /**
    * The three rows, from the vocabulary and the selection.
    *
-   * `spellNote` is handed over rather than the preference asked for, which is
-   * the same separation `buildChords` keeps one method up: how a pitch class is
-   * written is `MusicTheoryService`'s decision, but *which* preference applies
-   * is the progression key's - and for a displaced root it is neither's, which
-   * is why `chordVocabulary` decides that one itself.
+   * Nothing is handed over to spell with any more. `chordVocabulary` names each
+   * root on the letter its own numeral names, which is the same rule
+   * `buildChords` follows one method up - one spelling for the whole panel, so
+   * a borrowed button and the diatonic button beside it cannot disagree about
+   * which note a chord is on.
    */
   private buildOptions(
     key: ProgressionKey,
     intervals: readonly number[],
     selected: ChordDegree | null
   ): void {
-    const vocabulary = chordVocabulary(key, intervals, selected, (pitchClass, preferSharps) =>
-      this.musicTheory.spellNote(pitchClass, preferSharps)
-    );
+    const vocabulary = chordVocabulary(key, intervals, selected);
 
     const alternates = vocabulary.alternates.map(option => this.buildAlternate(option, selected));
 
@@ -626,7 +624,7 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
 }
 
 /**
- * The degree a palette button stands for, as `chordRootPitchClass` wants it.
+ * The degree a palette button stands for, as `chordRootName` wants it.
  *
  * It is `createDegreeSlot`'s degree at the palette's own extent - the slot the
  * button appends - so building it here rather than passing the index alone is
@@ -638,7 +636,7 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
  * `quality: null` is copied from it for the same reason, and it used to be the
  * *derived* label instead - which was the palette writing a name into a field
  * that means "override", one call site over from the `regenerateSlot` that did
- * the same thing everywhere else. `chordRootPitchClass` reads neither, so
+ * the same thing everywhere else. The root arithmetic reads neither, so
  * nothing moved; what changed is that the two descriptions now match.
  */
 function paletteDegree(degree: number): ChordDegree {

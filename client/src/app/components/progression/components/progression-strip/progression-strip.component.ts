@@ -15,7 +15,6 @@ import { Subject, takeUntil } from 'rxjs';
 
 import { MIN_SLOT_BEATS } from '../../../../models/progression-normalize';
 import { ProgressionState } from '../../../../models/progression.model';
-import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
 import { StripCard, buildStripView } from './progression-strip-cards';
 import {
@@ -58,11 +57,12 @@ import {
  *
  * Everything printed here is a property of the *progression's* key, so
  * `ProgressionService` is the only thing this component subscribes to.
- * `MusicTheoryService` is injected for `spellNote` alone, and `render` hands
- * that one method to `buildStripView` rather than the service - which is what
- * keeps "what a card says" a pure function of a published document, and it
- * lives in `progression-strip-cards.ts` along with the argument for what a card
- * prints and what it deliberately does not.
+ * `MusicTheoryService` used to be injected
+ * beside it, for `spellNote`; M3 spells a root by its degree's letter, which
+ * needs the key and nothing app-wide, so the injection is gone. "What a card
+ * says" stays a pure function of a published document, in
+ * `progression-strip-cards.ts`, along with the argument for what a card prints
+ * and what it deliberately does not.
  */
 @Component({
   selector: 'app-progression-strip',
@@ -102,7 +102,6 @@ export class ProgressionStripComponent implements OnInit, OnDestroy {
   private unlisten: (() => void)[] = [];
 
   private readonly progression = inject(ProgressionService);
-  private readonly musicTheory = inject(MusicTheoryService);
   private readonly renderer = inject(Renderer2);
   private readonly changes = inject(ChangeDetectorRef);
   private readonly destroy$ = new Subject<void>();
@@ -349,9 +348,7 @@ export class ProgressionStripComponent implements OnInit, OnDestroy {
 
   /** Rebuilds every card from one published state. */
   private render(state: ProgressionState): void {
-    const view = buildStripView(state, (pitchClass, preferSharps) =>
-      this.musicTheory.spellNote(pitchClass, preferSharps)
-    );
+    const view = buildStripView(state);
 
     this.cards = view.cards;
     this.unlabelledHint = view.unlabelledHint;

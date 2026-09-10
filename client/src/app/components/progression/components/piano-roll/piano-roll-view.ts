@@ -1,6 +1,7 @@
 import { VELOCITY_MAX, VELOCITY_MIN } from '../../../../models/progression-normalize';
 import { ChordSlot, ProgressionState, RollNote } from '../../../../models/progression.model';
-import type { SpellNote } from '../../../../services/progression-chord-names';
+import { SpelledNote, formatNote, scientificOctave } from '../../../../services/note-spelling';
+import { scaleNoteSpelling } from '../../../../services/progression-spelling';
 import { MAX_BEAT_DIVISION, MidiRange, midiToY, rowCount, visibleMidiRange } from './piano-roll-geometry';
 
 /**
@@ -13,12 +14,17 @@ import { MAX_BEAT_DIVISION, MidiRange, midiToY, rowCount, visibleMidiRange } fro
  * component put that file back under the project's line cap, which is the same
  * seam and the same argument as the strip's.
  *
- * The one thing it is *given* rather than deciding is the spelling. How a pitch
- * class is written is `MusicTheoryService`'s app-wide decision, so it arrives as
- * a function, and is asked to spell a note with a given preference rather than
- * asked what the preference is: `getNoteName` answers for the fretboard's key,
- * the two are allowed to differ, and asking the app-wide rule is how the palette
- * came to print `D♯ Maj` as the tonic chord of E flat major.
+ * The spelling used to be *given* rather than decided - a `SpellNote` handed in,
+ * because how a pitch class is written was `MusicTheoryService`'s app-wide
+ * decision. It is now asked of `progression-spelling.ts` with the progression's
+ * own key and scale, so a note the scale contains is written on its degree's
+ * letter: F locrian's pitch class 8 is an `Ab` here, where the chromatic tables
+ * called it `G♯`. A note outside the scale still falls back to the key's
+ * preference, which is what those tables were doing all along.
+ *
+ * Task 5 upgrades a note that is a chord tone of the selected slot to be
+ * spelled from the chord's root instead. The scale's answer is the right one
+ * for every other note either way.
  *
  * ## Everything the component needs from one call
  *
@@ -45,22 +51,8 @@ import { MAX_BEAT_DIVISION, MidiRange, midiToY, rowCount, visibleMidiRange } fro
  * chord in two components. `positionText` says only *which* slot is open.
  */
 
-/**
- * How a pitch class is written, re-exported from the module that owns the type.
- *
- * It was declared here and in `progression-strip-cards.ts`, character for
- * character, which is one concept with two definitions - and Task 8 would have
- * made three. It now lives beside `chordName`, whose whole argument is that
- * spelling arrives as an argument, and is re-exported here so the component
- * beside this file still reads it off its own view model.
- */
-export type { SpellNote };
-
 /** The pitch classes drawn as black keys. */
 const BLACK_PITCH_CLASSES: ReadonlySet<number> = new Set([1, 3, 6, 8, 10]);
-
-/** MIDI 60 is C4, so the raw division by twelve is one octave too high. */
-const MIDI_OCTAVE_OFFSET = 1;
 
 /**
  * The width of the whole MIDI velocity range.
@@ -149,11 +141,16 @@ export interface RollView {
 }
 
 /** Builds everything the roll draws from one published state. */
-export function buildRollView(state: ProgressionState, spell: SpellNote): RollView {
+export function buildRollView(state: ProgressionState): RollView {
   const slot = findSelected(state);
   const slotNotes = slot ? slot.notes : [];
   const range = visibleMidiRange(slotNotes);
-  const spellHere = (pitchClass: number) => spell(pitchClass, state.doc.key.preferSharps);
+  // The scale as the key resolves it, or nothing when the id does not resolve -
+  // in which case every note falls back to the key's own preference, which is
+  // what `scaleNoteSpelling` does with a scale it cannot read degrees from.
+  const intervals = state.keyScale ? state.keyScale.intervals : [];
+  const spellHere = (pitchClass: number) =>
+    scaleNoteSpelling(state.doc.key, intervals, pitchClass);
   const columns = buildLaneColumns(slotNotes);
 
   return {
@@ -196,8 +193,8 @@ export function buildDivisions(): DivisionOption[] {
   ];
 }
 
-/** How a pitch class is written, with the key's preference already applied. */
-type SpellPitchClass = (pitchClass: number) => string;
+/** How a pitch class is written, with the key and its scale already applied. */
+type SpellPitchClass = (pitchClass: number) => SpelledNote;
 
 /** Where one velocity bar sits along the lane. See `buildLaneColumns`. */
 interface LaneColumn {
@@ -323,7 +320,7 @@ function buildRows(range: MidiRange, spell: SpellPitchClass): RollRow[] {
     const pitchClass = pitchClassOf(midi);
     rows.push({
       midi,
-      name: spell(pitchClass),
+      name: formatNote(spell(pitchClass)),
       isBlack: BLACK_PITCH_CLASSES.has(pitchClass),
       // Only the Cs carry a label. Twenty-five stacked note names is not a
       // keyboard, and a C every octave is how one is read.
@@ -372,9 +369,20 @@ function buildNoteView(
   };
 }
 
-/** `C4`. The octave is MIDI's: 60 is C4, so the raw division is one too high. */
+/**
+ * `C4`. The octave is numbered by the note's **letter** and not by its pitch.
+ *
+ * It used to be `Math.floor(midi / 12) - 1`, which is MIDI's own numbering and
+ * which agreed with the letter's for as long as every name came out of a
+ * twelve-name table. Degree-letter spelling breaks that at an octave boundary:
+ * a C flat sounds a semitone below its C, so C♭5 is MIDI 71 and the MIDI sum
+ * would print it `Cb4` - a C below the C it is a flattened form of. B♯3 is the
+ * mirror case, MIDI 60. `scientificOctave` undoes the accidental first, which
+ * is why it takes the spelling rather than only the number.
+ */
 function noteName(midi: number, spell: SpellPitchClass): string {
-  return `${spell(pitchClassOf(midi))}${Math.floor(midi / 12) - MIDI_OCTAVE_OFFSET}`;
+  const spelled = spell(pitchClassOf(midi));
+  return `${formatNote(spelled)}${scientificOctave(midi, spelled)}`;
 }
 
 /** A pitch class in 0-11, for a `midi` the model deliberately does not clamp. */

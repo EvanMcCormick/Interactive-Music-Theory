@@ -17,7 +17,6 @@ import { Subject, takeUntil } from 'rxjs';
 
 import { DEFAULT_VELOCITY, MIN_NOTE_BEATS } from '../../../../models/progression-normalize';
 import { ProgressionState, RollNote } from '../../../../models/progression.model';
-import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
 import { MAX_BEAT_DIVISION, floorBeat, xToBeat, yToMidi } from './piano-roll-geometry';
 import { draggedVelocity, heldRows, heldSnap } from './piano-roll-gestures';
@@ -303,7 +302,6 @@ export class PianoRollComponent implements OnInit, AfterViewChecked, OnDestroy {
   private unlisten: (() => void)[] = [];
 
   private readonly progression = inject(ProgressionService);
-  private readonly musicTheory = inject(MusicTheoryService);
   private readonly renderer = inject(Renderer2);
   private readonly changes = inject(ChangeDetectorRef);
   private readonly destroy$ = new Subject<void>();
@@ -892,16 +890,15 @@ export class PianoRollComponent implements OnInit, AfterViewChecked, OnDestroy {
   /**
    * Rebuilds everything on screen from one published state.
    *
-   * One call, and the spelling handed over as a function rather than the service
-   * that owns it - `buildRollView` takes a published document and answers with a
-   * view model, which is what keeps "what the roll draws" a pure function of
-   * what the service published. The strip's `render` is the same three lines for
-   * the same reason.
+   * One call and nothing else - `buildRollView` takes a published document and
+   * answers with a view model, which is what keeps "what the roll draws" a pure
+   * function of what the service published. The spelling used to be handed over
+   * as a function beside it; it now comes from the key and scale the state
+   * already carries. The strip's `render` is the same two lines for the same
+   * reason.
    */
   private render(state: ProgressionState): void {
-    const view = buildRollView(state, (pitchClass, preferSharps) =>
-      this.musicTheory.spellNote(pitchClass, preferSharps)
-    );
+    const view = buildRollView(state);
 
     this.slotId = view.slotId;
     this.slotNotes = view.slotNotes;

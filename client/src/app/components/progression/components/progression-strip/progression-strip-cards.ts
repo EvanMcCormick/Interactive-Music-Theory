@@ -4,15 +4,13 @@ import {
   ProgressionState,
   SlotHarmony
 } from '../../../../models/progression.model';
-import { chordRootPitchClass } from '../../../../services/progression-generate';
 import {
-  SpellNote,
   chordName,
   romanNumeral,
-  rootPrefersSharps,
   spokenChordName
 } from '../../../../services/progression-chord-names';
 import { effectiveQuality } from '../../../../services/progression-harmony';
+import { chordRootName } from '../../../../services/progression-spelling';
 
 /**
  * What the strip says about a progression: one card per slot, and the sentence
@@ -24,12 +22,12 @@ import { effectiveQuality } from '../../../../services/progression-harmony';
  * out of the component put that file back under the project's 500-line cap,
  * which the gesture split had done once already.
  *
- * The one thing it is *given* rather than deciding is the spelling. How a pitch
- * class is written is `MusicTheoryService`'s app-wide decision, so it arrives as
- * a function, and is asked to spell a note with a given preference rather than
- * asked what the preference is: `getNoteName` answers for the fretboard's key,
- * the two are allowed to differ, and asking the app-wide rule is how the palette
- * came to print `D♯ Maj` as the tonic chord of E flat major.
+ * The spelling used to be *given* rather than decided - a `SpellNote` handed in,
+ * because how a pitch class is written was `MusicTheoryService`'s app-wide
+ * decision. It is now asked of `progression-spelling.ts`, which needs the key
+ * and the degree and nothing else. That is not a loss of the separation but the
+ * same separation drawn where it holds: this file still does not decide how a
+ * note is written, it names the chord whose letter decides it.
  *
  * ## What a card prints, and what it deliberately does not
  *
@@ -137,14 +135,14 @@ const UNLABELLED_HINT =
 const ANNOUNCED_MAX_BEATS = 64;
 
 /** Builds every card from one published state. */
-export function buildStripView(state: ProgressionState, spell: SpellNote): StripView {
+export function buildStripView(state: ProgressionState): StripView {
   // The palette's gate, read rather than recomputed. `canBuildChords` is
   // `isHeptatonic` already applied to `keyScale`, so the strip refuses to name
   // a chord in exactly the keys the palette refuses to offer one - two halves
   // of one screen giving one answer about what the key can say.
   const intervals = state.canBuildChords && state.keyScale ? state.keyScale.intervals : null;
 
-  const cards = state.doc.slots.map(slot => buildCard(slot, state, intervals, spell));
+  const cards = state.doc.slots.map(slot => buildCard(slot, state, intervals));
 
   return {
     cards,
@@ -155,10 +153,9 @@ export function buildStripView(state: ProgressionState, spell: SpellNote): Strip
 function buildCard(
   slot: ChordSlot,
   state: ProgressionState,
-  intervals: readonly number[] | null,
-  spell: SpellNote
+  intervals: readonly number[] | null
 ): StripCard {
-  const described = describeSlot(slot.harmony, state.doc.key, intervals, spell);
+  const described = describeSlot(slot.harmony, state.doc.key, intervals);
   const beats = formatBeats(slot.lengthBeats);
 
   return {
@@ -189,8 +186,7 @@ function buildCard(
 function describeSlot(
   harmony: SlotHarmony,
   key: ProgressionKey,
-  intervals: readonly number[] | null,
-  spell: SpellNote
+  intervals: readonly number[] | null
 ): CardDescription {
   if (harmony.kind === 'literal') {
     return unlabelled(
@@ -203,14 +199,12 @@ function describeSlot(
   if (!intervals) return unlabelled('this key cannot name it');
 
   const degree = harmony.degree;
-  // Spelled by the *displacement* where there is one and by the key where there
-  // is not. A borrowed chord's numeral prints a flat, so its name has to as
-  // well - and the palette button this card came from spells it through the
-  // same rule. See `rootPrefersSharps`.
-  const root = spell(
-    chordRootPitchClass(key, intervals, degree),
-    rootPrefersSharps(key.preferSharps, degree.alter)
-  );
+  // Spelled on the letter the numeral names, so the card's two lines cannot
+  // disagree about which note the chord is on: a `♭II` prints `Cb Maj` in B
+  // flat major, where the chromatic tables could only offer `B Maj` and read as
+  // a raised seventh. The palette button this card came from spells it through
+  // the same function. See `progression-spelling.ts`.
+  const root = chordRootName(key, intervals, degree);
   // `quality` is nullable and `null` means "as the key gives it", so the card
   // prints the key's own answer for a slot the user has not overridden. Asked
   // through `effectiveQuality` rather than resolved here, so that the strip and

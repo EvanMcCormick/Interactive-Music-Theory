@@ -7,8 +7,8 @@ import { RollNoteView, buildRollView } from './piano-roll-view';
 /**
  * The view model the roll draws from, called directly.
  *
- * `buildRollView` is pure - a published state and a spelling go in, a view model
- * comes out - so it needs no component and no fixture, which is the whole reason
+ * `buildRollView` is pure - a published state goes in, a view model comes out -
+ * so it needs no component and no fixture, which is the whole reason
  * it was taken out of the component in the first place. What it draws for a slot
  * is asserted here; that the browser then *puts* it where this says is next door
  * in `piano-roll-pointer.spec.ts`, through a real hit test.
@@ -26,16 +26,11 @@ describe('buildRollView', () => {
     progression = TestBed.inject(ProgressionService);
   });
 
-  /** The spelling is the component's to supply, so a stub is the whole of it. */
-  function spell(pitchClass: number): string {
-    return `pc${pitchClass}`;
-  }
-
   function notes(): readonly RollNoteView[] {
     let built: readonly RollNoteView[] = [];
     progression
       .getState()
-      .subscribe(state => (built = buildRollView(state, spell).notes))
+      .subscribe(state => (built = buildRollView(state).notes))
       .unsubscribe();
     return built;
   }
@@ -138,6 +133,41 @@ describe('buildRollView', () => {
       const id = build();
       place(id, []);
       expect(notes()).toEqual([]);
+    });
+  });
+
+  /**
+   * A note is named by its degree's letter, and numbered by that letter's
+   * octave rather than by its pitch's.
+   *
+   * F locrian is the key where the two part company. It is F G♭ A♭ B♭ C♭ D♭ E♭,
+   * so its fifth degree is a **C flat** - the letter four steps above F - which
+   * sounds a semitone below C. MIDI 71 is therefore `Cb5`, not the `B4` the
+   * chromatic tables printed, and not the `Cb4` that numbering the octave by
+   * the pitch would give: a C flat written a whole octave below the C it is a
+   * flattened form of. `scientificOctave` undoes the accidental first, which is
+   * why it takes the spelling and not just the number.
+   *
+   * The key leans **sharp** here - `keySignatureKind` reads F locrian off the
+   * six-sharp wedge - which is the point. The letter is the degree's and not
+   * the preference's, so even a sharp-preferring key writes this note flat.
+   */
+  describe('the letters a note is named by', () => {
+    it('names a C flat in F locrian, in the octave its letter is in', () => {
+      progression.setKey(5, 'locrian');
+      const id = build();
+      place(id, [{ midi: 71, startBeat: 0, lengthBeats: 4, velocity: 80 }]);
+
+      expect(notes()[0].name).toBe('Cb5');
+    });
+
+    /** A note the scale does not contain has no degree, so the key answers. */
+    it('leaves a note outside the scale to the key', () => {
+      progression.setKey(5, 'locrian');
+      const id = build();
+      place(id, [{ midi: 60, startBeat: 0, lengthBeats: 4, velocity: 80 }]);
+
+      expect(notes()[0].name).toBe('C4');
     });
   });
 });
