@@ -915,6 +915,111 @@ describe('ProgressionService', () => {
     });
   });
 
+  /**
+   * Where the octave control stands, once the ceiling can differ from the
+   * request.
+   *
+   * The three numbers come apart only for a chord too wide for the octave it was
+   * given, which nothing in the UI can build until Task 6 adds the suspension
+   * and tension controls. They are built here through `replaceDocument`, which
+   * is what that route is for.
+   */
+  describe('slotOctave', () => {
+    /**
+     * The widest chord the model can build: degree 3 at extent 13, altered down
+     * a tone and overridden to `diminished`, suspended at the fourth with a
+     * flattened ninth and a flattened thirteenth, second inversion. In D it
+     * reaches 58 semitones above its base, so its ceiling is 0.
+     */
+    const WIDEST: Partial<ChordDegree> = {
+      extent: 13,
+      alter: -2,
+      quality: 'diminished',
+      suspension: 'sus4',
+      extensions: { ninth: -1, eleventh: null, thirteenth: -1 },
+      inversion: 2
+    };
+
+    /** One slot on degree 3 in D major, with these degree fields written over it. */
+    function slotInD(overrides: Partial<ChordDegree>): string {
+      service.setKey(2, 'ionian');
+      service.appendSlot(3);
+      const slot = slots()[0];
+      if (slot.harmony.kind !== 'degree') throw new Error('expected a degree slot');
+      const degree: ChordDegree = { ...slot.harmony.degree, ...overrides };
+      service.replaceDocument({
+        ...currentState().doc,
+        slots: [{ ...slot, harmony: { kind: 'degree', degree } }]
+      });
+      return slot.id;
+    }
+
+    it('reports one number three times for a chord that fits', () => {
+      const id = slotInD({ octave: OCTAVE_MAX });
+      expect(service.slotOctave(id))
+        .toEqual({ requested: OCTAVE_MAX, sounding: OCTAVE_MAX, ceiling: OCTAVE_MAX });
+    });
+
+    /**
+     * The case the three numbers exist for. The document holds 1, the synth
+     * hears 0, and the ceiling says which of those is the reason.
+     */
+    it('separates the request from the sound for a chord that does not fit', () => {
+      const id = slotInD({ ...WIDEST, octave: OCTAVE_MAX });
+      expect(service.slotOctave(id)).toEqual({ requested: OCTAVE_MAX, sounding: 0, ceiling: 0 });
+    });
+
+    /**
+     * The whole argument for clamping on use rather than writing back, asserted
+     * as behaviour: the slot is never edited, the chord narrows, and the octave
+     * the user asked for comes back on its own.
+     *
+     * Reset to chord is the narrowing here because it is the one control that
+     * exists today - it drops the suspension and both pinned alterations, which
+     * is exactly what widened the chord. Had the clamp been stored, this slot
+     * would sound at 0 for ever after, and nothing would tell the user why.
+     */
+    it('returns the slot to the octave it asked for when the chord narrows', () => {
+      const id = slotInD({ ...WIDEST, octave: OCTAVE_MAX });
+      expect(service.slotOctave(id)?.sounding).toBe(0);
+
+      service.resetSlotToChord(id);
+
+      expect(service.slotOctave(id))
+        .toEqual({ requested: OCTAVE_MAX, sounding: OCTAVE_MAX, ceiling: OCTAVE_MAX });
+    });
+
+    /** A slot below its ceiling is reported where it is, not raised to it. */
+    it('does not raise a slot voiced below its ceiling', () => {
+      const id = slotInD({ ...WIDEST, octave: -1 });
+      expect(service.slotOctave(id)).toEqual({ requested: -1, sounding: -1, ceiling: 0 });
+    });
+
+    // Three ways there is no octave to report, all of them cases where the
+    // palette's controls are already not offered, so the caller has an empty
+    // state to fall into rather than a number to disbelieve.
+    it('has no answer for a slot that is not there', () => {
+      slotInD({});
+      expect(service.slotOctave('no-such-slot')).toBeNull();
+    });
+
+    it('has no answer for a literal slot, whose notes are the truth', () => {
+      const id = slotInD({});
+      const slot = slots()[0];
+      service.replaceDocument({
+        ...currentState().doc,
+        slots: [{ ...slot, harmony: { kind: 'literal', reason: 'user-detached' } }]
+      });
+      expect(service.slotOctave(id)).toBeNull();
+    });
+
+    it('has no answer in a key that cannot stack thirds', () => {
+      const id = slotInD({});
+      service.setKey(0, 'majorPentatonic');
+      expect(service.slotOctave(id)).toBeNull();
+    });
+  });
+
   describe('setKey', () => {
     it('regenerates every degree slot when the key changes', () => {
       service.appendSlot(0);

@@ -1,4 +1,4 @@
-import { voiceChord } from './progression-voicing';
+import { headroomOctaves, voiceChord } from './progression-voicing';
 
 // Middle C is MIDI 60 throughout.
 describe('voiceChord', () => {
@@ -86,5 +86,78 @@ describe('voiceChord', () => {
 
   it('voices an empty chord as no notes at all', () => {
     expect(voiceChord([], 0, 60)).toEqual([]);
+  });
+});
+
+describe('headroomOctaves', () => {
+  // Middle C to 127. A C major triad from middle C tops out on G4 = 67, and
+  // 127 - 67 is 60 - five whole octaves, with nothing left over.
+  it('counts whole octaves between a voicing and the ceiling', () => {
+    expect(headroomOctaves([0, 4, 7], 0, 60, 127)).toBe(5);
+  });
+
+  // The remainder is discarded downward rather than rounded, because half an
+  // octave of headroom is no headroom at all: this control moves in twelves.
+  it('discards a part-octave of headroom rather than rounding it up', () => {
+    // Tops out on 67. 68 leaves one semitone; 78 leaves eleven; 79 leaves
+    // twelve, which is the first that buys an octave.
+    expect(headroomOctaves([0, 4, 7], 0, 60, 68)).toBe(0);
+    expect(headroomOctaves([0, 4, 7], 0, 60, 78)).toBe(0);
+    expect(headroomOctaves([0, 4, 7], 0, 60, 79)).toBe(1);
+  });
+
+  // A chord already over the ceiling where it stands has *negative* headroom,
+  // and saying so is the whole point: the answer is how far it must move, and
+  // the direction is part of the answer. Rounding it up to 0 would report a
+  // chord that does not fit as one that just fits.
+  it('reports negative headroom for a voicing already past the ceiling', () => {
+    expect(headroomOctaves([0, 4, 7], 0, 60, 66)).toBe(-1);
+    expect(headroomOctaves([0, 4, 7], 0, 60, 55)).toBe(-1);
+    expect(headroomOctaves([0, 4, 7], 0, 60, 54)).toBe(-2);
+  });
+
+  /**
+   * The property the whole ceiling rests on, and the reason a single voicing is
+   * enough to derive it: shifting the base by whole octaves shifts every note by
+   * exactly the same amount.
+   *
+   * `voiceChord` places each note from the one below it modulo 12, and adding
+   * twelve to the base leaves every one of those steps unchanged. So the
+   * headroom answer is the *maximal* one rather than merely a safe one, and it
+   * can be read off one voicing instead of searched for.
+   */
+  it('is the highest shift that fits, because an octave shift is exact', () => {
+    const chord = [3, 8, 9, 16, 28, 35, 47];
+    const headroom = headroomOctaves(chord, 2, 60, 127);
+
+    const topAt = (base: number): number => {
+      const notes = voiceChord(chord, 2, base);
+      return notes[notes.length - 1];
+    };
+    expect(topAt(60 + headroom * 12)).toBeLessThanOrEqual(127);
+    expect(topAt(60 + (headroom + 1) * 12)).toBeGreaterThan(127);
+  });
+
+  // The inversion is part of the question, because a rotation moves the top
+  // note: a first-inversion C major reaches 72 where root position reaches 67.
+  it('answers for the inversion it is asked about', () => {
+    expect(headroomOctaves([0, 4, 7], 0, 60, 127)).toBe(5);
+    expect(headroomOctaves([0, 4, 7], 1, 60, 127)).toBe(4);
+  });
+
+  /**
+   * A chord with no notes cannot pass a ceiling, so there is no octave at which
+   * it stops fitting. `Infinity` is that answer written down; the caller's own
+   * maximum is what stops it. Zero would be a lie in the other direction - a
+   * chord pinned to its base for no reason.
+   */
+  it('gives an empty chord unbounded headroom', () => {
+    expect(headroomOctaves([], 0, 60, 127)).toBe(Infinity);
+  });
+
+  it('leaves the caller\'s pitch classes untouched', () => {
+    const pitchClasses: readonly number[] = Object.freeze([0, 4, 7]);
+    expect(headroomOctaves(pitchClasses, 1, 60, 127)).toBe(4);
+    expect(pitchClasses).toEqual([0, 4, 7]);
   });
 });

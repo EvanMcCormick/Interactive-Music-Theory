@@ -1,9 +1,11 @@
 import {
   NamedQuality,
   QUALITY_INTERVALS,
+  chordPitchClasses,
   noteCount
 } from '../services/progression-harmony';
 import { generateSlotNotes } from '../services/progression-generate';
+import { voiceChord } from '../services/progression-voicing';
 import { MusicTheoryService } from '../services/music-theory.service';
 import {
   ALTER_MAX,
@@ -749,34 +751,38 @@ describe('the octave bound', () => {
    * and it is written here rather than left to be discovered.
    *
    * Both halves of the reason are measurements rather than opinions, taken over
-   * this same `generateSlotNotes` pipeline with the axes added:
+   * this same `generateSlotNotes` pipeline with the axes added. They are
+   * reproducible: `client/tools/measure-chord-reach.cjs` is that sweep, moved
+   * out of here and runnable on demand.
    *
    * | swept set | chords per octave | seconds | reach |
    * |---|---|---|---|
-   * | as below, 16 qualities | 5.6M | 3.7 | **46** |
-   * | + the three suspensions | 16.8M | 13.8 | 46 |
-   * | + every extension alteration | 236.4M | 199 | **58** |
+   * | as below, 16 qualities (`--set=shipped`) | 5.6M | 3.7 | **46** |
+   * | + the three suspensions (`--set=suspended`) | 16.8M | 13.8 | 46 |
+   * | + every extension alteration (`--set=full`) | 236.4M | 199 | **58** |
    *
    * The full set is 200 seconds *per octave* and this describe measures four of
    * them, so shipping it would put thirteen minutes into a suite that runs in
-   * under a minute. That is the first reason, and on its own it would argue for
-   * a sampled axis with a comment saying so.
+   * under a minute. That was the first reason to leave it out, and on its own it
+   * would have argued for a sampled axis with a comment saying so.
    *
-   * The second reason is why it is left out entirely instead. **The reach of
-   * the full model is 58, and 58 does not fit.** `OCTAVE_MAX` of 1 puts the
-   * base at C5 and that ceiling at 130 - three semitones off the end of MIDI -
-   * so a widened sweep here would not be a slower spec, it would be a *failing*
-   * one. The witness is pinned two specs below, by hand, so the figure can be
-   * checked without running 236 million chords.
+   * The second reason was that **the reach of the full model is 58, and 58 did
+   * not fit**: `OCTAVE_MAX` of 1 put that chord's top note at MIDI 130, so a
+   * widened sweep here would not have been a slower spec but a *failing* one.
    *
-   * Nothing a user can do reaches it today: no control writes `suspension` or
-   * `extensions`, and `replaceDocument` has no production caller. **M3 Task 6
-   * is the task that adds those controls, and it is the task that must not land
-   * until `OCTAVE_MAX` has been decided.** Dropping it to 0 costs the user
-   * another octave of a control that has already paid one for this bound, which
-   * M2 Task 3 records as a trade-off for the project owner to make; the
-   * alternative it names - a per-slot ceiling derived from the chord itself -
-   * keeps the range and costs something else.
+   * **Task 4b settled that, and it is why this sweep is not widened even now
+   * that it could be.** The ceiling is each chord's own -
+   * `chordOctaveCeiling` derives it in `progression-generate.ts` - so the
+   * property worth proving is local and constructive, and it is proved there on
+   * a sample in milliseconds rather than here over a universe in minutes. A
+   * global figure is no longer what keeps notes inside MIDI. What it is still
+   * good for is knowing how wide the model can get, which is why the tool
+   * exists and why the table above is quoted rather than deleted.
+   *
+   * One consequence for the numbers below: `generateSlotNotes` now clamps, so
+   * this measures the *sounding* extremes rather than the arithmetic ones. That
+   * is the right thing for a MIDI bound to measure, and the specs that want the
+   * unclamped answer say so and voice by hand.
    */
   function extremesAt(octave: number): { lowest: number; highest: number } {
     const cached = sweeps.get(octave);
@@ -895,6 +901,16 @@ describe('the octave bound', () => {
    * The widest chord the *whole* M3 model can build, pinned by hand because the
    * sweep above does not reach it and cannot afford to.
    *
+   * **This is the characterization spec the ceiling rests on.** `OCTAVE_MAX` is
+   * no longer what keeps this chord inside MIDI - `chordOctaveCeiling` is, and
+   * it derives the ceiling from exactly this reach - so a change to
+   * `liftIntoAscent` or to `voiceChord` that moved the figure would move every
+   * ceiling in the app with it. It fails here, loudly, on one chord a reader can
+   * check, rather than in a sweep nobody runs.
+   *
+   * It voices at octave 0, which is this chord's ceiling, so the clamp is inert
+   * and what is asserted is the arithmetic rather than the guard.
+   *
    * C major, degree 3 - the IV - at extent 13, altered down a tone and
    * overridden to `diminished`, suspended at the fourth, with a flattened ninth
    * and a flattened thirteenth, second inversion, in D. Two of the three replacements
@@ -928,39 +944,48 @@ describe('the octave bound', () => {
   });
 
   /**
-   * A characterization spec: this pins what the code does today, not what it
-   * ought to do, and it is the one place in this file that asserts a bound
-   * failing rather than holding.
+   * The overflow the widened model opened, and the ceiling closing it.
    *
-   * The same chord one octave up is MIDI 130, which `voiceChord` will hand to
-   * `Tone.PolySynth` unclamped. `OCTAVE_MAX` is 1, so the octave control can
-   * ask for that base - which means the bound this whole describe exists to
-   * prove does **not** hold across everything M3 Task 4 made storable.
+   * This spec used to assert the failure, and was marked as the one to delete
+   * once the constant was settled. Task 4b settled it the other way: the
+   * constant stays where it is and the ceiling becomes the chord's own, so what
+   * was a characterization of a bug is now a characterization of the guard.
    *
-   * It is unreachable through the UI today: nothing writes `suspension` or
-   * `extensions`, and `replaceDocument` has no production caller. M3 Task 6
-   * adds the controls that change that, and the constant has to be settled
-   * before it lands - by the project owner, because every fix costs the user
-   * something. See `OCTAVE_MAX`'s own note and M2 Task 3 for the options.
-   *
-   * When it is settled, this spec is the one to delete on purpose.
+   * Both halves are asserted, because only the pair says what happened. The
+   * chord *still* reaches 130 - nothing about its arithmetic changed, and
+   * `voiceChord` will still put it there when asked directly - and
+   * `generateSlotNotes` declines to ask. A spec pinning only the second half
+   * would pass just as well if the reach had quietly shrunk instead.
    */
-  it('overflows MIDI on a chord the widened model can store', () => {
-    const slot = sweepSlot({
+  it('holds a chord that would overflow at its own ceiling instead', () => {
+    const widest: Partial<ChordDegree> = {
       degree: 3,
       extent: 13,
       alter: -2,
       quality: 'diminished',
       suspension: 'sus4',
       extensions: { ninth: -1, eleventh: null, thirteenth: -1 },
-      inversion: 2,
-      octave: OCTAVE_MAX
-    });
+      inversion: 2
+    };
     const key: ProgressionKey = { tonic: 2, scaleId: 'ionian', preferSharps: true };
+    const major = [0, 2, 4, 5, 7, 9, 11];
 
-    const midi = generateSlotNotes(slot, key, [0, 2, 4, 5, 7, 9, 11]).map(note => note.midi);
-    expect(midi[midi.length - 1]).toBe(130);
-    expect(midi[midi.length - 1]).toBeGreaterThan(127);
+    // Voiced by hand at the base `OCTAVE_MAX` names, which is what the
+    // generator would have done and no longer does.
+    const relative = chordPitchClasses(major, { ...degreeOf(SWEEP_TEMPLATE), ...widest });
+    const unclamped = voiceChord(
+      relative.map(pitchClass => pitchClass + key.tonic),
+      2,
+      VOICING_BASE_MIDI + OCTAVE_MAX * 12
+    );
+    expect(unclamped[unclamped.length - 1]).toBe(130);
+
+    // And what the generator does instead: the same chord an octave lower, on
+    // the last note that fits.
+    const midi = generateSlotNotes(sweepSlot({ ...widest, octave: OCTAVE_MAX }), key, major)
+      .map(note => note.midi);
+    expect(midi[midi.length - 1]).toBe(118);
+    expect(midi[midi.length - 1]).toBeLessThanOrEqual(127);
   });
 
   // `voiceChord` has no MIDI clamp, so nothing below this stops an out-of-range
@@ -975,9 +1000,25 @@ describe('the octave bound', () => {
     expect(extremesAt(OCTAVE_MAX).highest).toBeLessThanOrEqual(127);
   });
 
-  // And the top of the range is not arbitrary: it is the last octave that fits.
-  it('stops at the highest octave that still fits inside MIDI 127', () => {
-    expect(extremesAt(OCTAVE_MAX + 1).highest).toBeGreaterThan(127);
+  /**
+   * The top of the range costs the shipped set nothing, which is the half of
+   * Task 4b worth measuring here.
+   *
+   * It used to read `extremesAt(OCTAVE_MAX + 1).highest > 127` - the constant
+   * proved maximal by showing the next octave off the end. That is no longer
+   * what stops a chord: `chordOctaveCeiling` does, and it is proved maximal
+   * per chord in `progression-generate.spec.ts`.
+   *
+   * What this describe can still say is that the ceiling never bites on
+   * anything the palette can build today. Every chord in the swept set reaches
+   * at most 46, and 46 fits under `OCTAVE_MAX`, so the sweep at `OCTAVE_MAX` is
+   * exactly twelve semitones above the sweep at 0 - no chord in it was held
+   * down - and a sweep an octave higher than the control allows is held to the
+   * same notes as `OCTAVE_MAX` rather than climbing past 127.
+   */
+  it('costs the shipped set nothing, and stops it going higher', () => {
+    expect(extremesAt(OCTAVE_MAX).highest - extremesAt(0).highest).toBe(12);
+    expect(extremesAt(OCTAVE_MAX + 1).highest).toBe(extremesAt(OCTAVE_MAX).highest);
   });
 
   // Middle C, asserted as a number. Every voicing spec in the project stacks

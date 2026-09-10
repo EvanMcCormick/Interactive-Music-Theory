@@ -1,4 +1,10 @@
-import { DEFAULT_VELOCITY, VOICING_BASE_MIDI } from '../models/progression-normalize';
+import {
+  DEFAULT_VELOCITY,
+  MIDI_MAX,
+  OCTAVE_MAX,
+  OCTAVE_MIN,
+  VOICING_BASE_MIDI
+} from '../models/progression-normalize';
 import {
   ChordDegree,
   ChordSlot,
@@ -6,7 +12,7 @@ import {
   RollNote
 } from '../models/progression.model';
 import { chordPitchClasses } from './progression-harmony';
-import { voiceChord } from './progression-voicing';
+import { headroomOctaves, voiceChord } from './progression-voicing';
 
 /**
  * The `harmony -> notes` arrow: what a chord slot's label makes it sound.
@@ -119,6 +125,77 @@ export function chordRootPitchClass(
   return ((raw % 12) + 12) % 12;
 }
 
+/**
+ * The highest octave this chord may be voiced at without leaving MIDI.
+ *
+ * `OCTAVE_MIN` and `OCTAVE_MAX` bound the octave *control*, one pair of numbers
+ * for every chord in the app. That held while the widest chord the model could
+ * build reached 46 semitones above its base - `OCTAVE_MAX` of 1 puts that at
+ * MIDI 118 - and M3 Task 4 widened the model to 58, which is 130. A global bound
+ * can only answer that by moving down for everyone, costing every chord the top
+ * octave to accommodate one almost nobody will build.
+ *
+ * So the ceiling is derived per chord instead, and this is where. The pieces
+ * were always in three places - the shape is `chordPitchClasses`', the reach is
+ * `headroomOctaves`', and the key is only ever here - and this function is the
+ * one place all three are in hand at once. `chordRootPitchClass` above is the
+ * same argument one note wide.
+ *
+ * ## What it does *not* do
+ *
+ * **It does not write anything back.** `ChordDegree.octave` keeps storing what
+ * the user asked for, and `normalizeChordDegree` keeps bounding it to the
+ * control's own range and nothing narrower. Storing a clamped value would make
+ * the clamp outlive its cause: a slot pushed down because a pinned ♭13 widened
+ * it would stay down after the ♭13 came off. Clamping on use means the chord
+ * returns to the octave it was given the moment it narrows again - after an
+ * extension is unpinned, after a key change into a scale that stacks tighter,
+ * after an inversion that puts a lower note on top.
+ *
+ * That is also why this cannot be a normalisation clamp even in principle: the
+ * ceiling needs the chord, the chord needs the scale, and `normalizeChordDegree`
+ * has neither. It guards a slot, not a slot in a key.
+ *
+ * ## Why it is bounded at both ends
+ *
+ * The result is always a legal octave, so a caller can use it as one without
+ * checking. `OCTAVE_MAX` is the real bound above - an ordinary chord has
+ * headroom for four or five octaves and may not have them. `OCTAVE_MIN` below is
+ * defensive and provably inert: it would only bind on a chord reaching more than
+ * 91 semitones above its base, where the widest the model can build reaches 58,
+ * and `progression-generate.spec.ts` asserts over its sample that the floor is
+ * never the reason for an answer. Left off, a chord that did somehow exceed 91
+ * would be voiced below C2 rather than out of MIDI - a quieter wrong answer, and
+ * one with no control that could reach back up to it.
+ *
+ * The refusals below belong to `chordPitchClasses` and are allowed through
+ * rather than repeated: a ceiling for a chord that cannot be built is a question
+ * with no answer, and `ProgressionState.canBuildChords` is the check a caller
+ * that would rather explain than fail asks first.
+ */
+export function chordOctaveCeiling(
+  key: ProgressionKey,
+  scaleIntervals: readonly number[],
+  degree: ChordDegree
+): number {
+  return ceilingFor(absolutePitchClasses(key, scaleIntervals, degree), degree.inversion);
+}
+
+/** The chord a degree names, in the key it is in: `alter`, then the tonic. */
+function absolutePitchClasses(
+  key: ProgressionKey,
+  scaleIntervals: readonly number[],
+  degree: ChordDegree
+): number[] {
+  return chordPitchClasses(scaleIntervals, degree).map(pitchClass => pitchClass + key.tonic);
+}
+
+/** The ceiling for an already-built chord, so the generator builds one once. */
+function ceilingFor(absolute: readonly number[], inversion: number): number {
+  const headroom = headroomOctaves(absolute, inversion, VOICING_BASE_MIDI, MIDI_MAX);
+  return Math.min(OCTAVE_MAX, Math.max(OCTAVE_MIN, headroom));
+}
+
 export function generateSlotNotes(
   slot: ChordSlot,
   key: ProgressionKey,
@@ -156,10 +233,16 @@ export function generateSlotNotes(
   // `NamedQuality | null` with it, and `normalizeChordDegree` turns `'other'`
   // away at the door - so there is nothing left to launder, and a refusal that
   // does reach here is a real one rather than an artefact.
-  const relative = chordPitchClasses(scaleIntervals, degree);
+  const absolute = absolutePitchClasses(key, scaleIntervals, degree);
 
-  const absolute = relative.map(pitchClass => pitchClass + key.tonic);
-  const base = VOICING_BASE_MIDI + degree.octave * 12;
+  // The stored octave is what the user asked for; the ceiling is what this
+  // chord can take. `Math.min` is the whole rule - a chord below its ceiling is
+  // left exactly where it was put, including below the base - and it is applied
+  // here rather than written back, so a slot held down by a chord too wide for
+  // its octave rises again by itself when the chord narrows. See
+  // `chordOctaveCeiling`.
+  const octave = Math.min(degree.octave, ceilingFor(absolute, degree.inversion));
+  const base = VOICING_BASE_MIDI + octave * 12;
 
   return voiceChord(absolute, degree.inversion, base).map(midi => ({
     midi,

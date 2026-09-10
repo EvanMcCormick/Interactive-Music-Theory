@@ -129,6 +129,22 @@ export const MIN_SLOT_BEATS = 1;
 export const VOICING_BASE_MIDI = 60;
 
 /**
+ * The last note MIDI has, and so the last note the app may sound.
+ *
+ * A number this well known does not obviously need a name, and it earns one
+ * here because it is an *argument*: `chordOctaveCeiling` passes it to
+ * `headroomOctaves`, which takes a ceiling rather than assuming one so that the
+ * arithmetic can be checked against ceilings other than this. A bare 127 at that
+ * call site would read as an implementation detail of the helper rather than as
+ * the fact about MIDI that it is.
+ *
+ * It sits beside `VOICING_BASE_MIDI` because the two are read together - the
+ * base is where a chord starts and this is where it must stop - and apart from
+ * `VELOCITY_MAX`, which is the same number about a different byte.
+ */
+export const MIDI_MAX = 127;
+
+/**
  * How far the octave control may shift the voicing base, in octaves.
  *
  * The top is arithmetic rather than taste. `voiceChord` has no MIDI clamp, so
@@ -162,45 +178,58 @@ export const VOICING_BASE_MIDI = 60;
  * root at all already passes the old figure.
  *
  * `OCTAVE_MAX` of 1 puts the base at C5 and that ceiling at 118, nine short of
- * 127; 2 would put it at 130, off the end of MIDI. The spec proves both halves,
- * so a new scale that widened the stack would fail rather than clip.
+ * 127; 2 would put it at 130, off the end of MIDI.
  *
- * **It was 2, and dropping it costs the user the top octave of the control.**
- * That is the price of bounding the *input*, and it is paid deliberately: the
+ * **It was 2, and dropping it cost the user the top octave of the control.**
+ * That was the price of bounding the *input*, and it was paid deliberately: the
  * alternatives all bound the output instead, and every one of them rewrites the
  * chord without saying so - clamping notes individually collapses a voicing onto
  * its ceiling, and transposing an overflowing chord back down makes the control
  * non-monotonic. A wrong chord rather than a crash is the failure every guard
- * here exists to avoid. See M2 Task 3 in the piano roll plan for the option that
- * keeps the range - a per-slot ceiling derived from the chord itself - and what
- * that costs instead.
+ * here exists to avoid.
  *
- * ## Open at M3 Task 4: the widened chord model does not fit under it
+ * ## What this bound is now, after M3 Task 4b
  *
- * Everything above measures a chord's `(alter, quality)` and nothing else,
- * because until M3 that was the whole of what a stored slot could vary.
- * `suspension` is now sounded and `extensions` now pins the ninth, eleventh and
- * thirteenth, and the same sweep run with both axes added - all 236 million
- * chords of it - reaches **58** semitones above the base, not 46.
+ * **It is the control's nominal range, and it is no longer what keeps a note
+ * inside MIDI.** Everything above measures a chord's `(alter, quality)` and
+ * nothing else, because until M3 that was the whole of what a stored slot could
+ * vary. `suspension` is now sounded and `extensions` now pins the ninth,
+ * eleventh and thirteenth, and the same sweep with both axes added - all 236
+ * million chords of it - reaches **58** semitones above the base, not 46. At
+ * `OCTAVE_MAX` of 1 that chord ends on MIDI 130, three notes past the end.
  *
- * 58 puts the ceiling at 130 with `OCTAVE_MAX` at 1: three semitones off the
- * end of MIDI, on a chord `voiceChord` will hand to `Tone.PolySynth`
- * unclamped. The witness is C major's degree 3 - the IV - at extent 13, altered
- * down a tone and overridden to `diminished`, suspended at the fourth with a
- * flattened ninth and a flattened thirteenth, second inversion, in D - where
- * two replacements land on the note below them and the lift adds an octave
- * twice. It is pinned by hand in the spec.
+ * The witness is C major's degree 3 - the IV - at extent 13, altered down a tone
+ * and overridden to `diminished`, suspended at the fourth with a flattened ninth
+ * and a flattened thirteenth, second inversion, in D, where two replacements
+ * land on the note below them and the lift adds an octave twice. It is pinned by
+ * hand in the spec.
  *
- * **The constant is deliberately not changed here.** Dropping it to 0 is the
- * fix that fits the argument above, and it costs the user a second octave of a
- * control that has already paid one for this bound - which M2 Task 3 records as
- * the project owner's trade-off to make, beside the alternative that keeps the
- * range: a per-slot ceiling derived from the chord itself.
+ * The fix keeps this constant and makes **the ceiling each chord's own**.
+ * `chordOctaveCeiling` in `progression-generate.ts` derives from the chord it is
+ * about to build the highest octave that still fits, and `generateSlotNotes`
+ * voices no higher. That is the option M2 Task 3 named as the one that keeps the
+ * range, and it is taken here rather than dropping this constant to 0, which
+ * would have cost every chord in the app the top octave to accommodate one
+ * almost nobody will build.
  *
- * Nothing reaches it today. No control writes `suspension` or `extensions`, and
- * `replaceDocument` has no production caller, so the storable set is wider than
- * the *buildable* one until M3 Task 6 adds the palette controls. That task is
- * the deadline: it must not land until this is settled.
+ * `ChordDegree.octave` still stores what the user asked for, bounded by these
+ * two. Storing the clamped value would make the clamp outlive its cause: a slot
+ * pushed down because a pinned ♭13 widened it must return to its octave when the
+ * ♭13 comes off. The clamp is applied on use and nowhere else, and
+ * `ProgressionService.slotOctave` is what the palette reads to show the
+ * difference.
+ *
+ * So the figure above is no longer load-bearing, and the sweep that produced it
+ * is no longer a spec: 236 million chords is thirteen minutes, and a per-chord
+ * ceiling is correct by construction and checkable on a sample in milliseconds.
+ * `progression-generate.spec.ts` is where that property is proved.
+ *
+ * The figures above are reproducible with `client/tools/measure-chord-reach.cjs`,
+ * which last ran on **2026-09-10** and measured, over 236,432,196 chords in 203
+ * seconds, a reach of **58** and a lowest per-chord ceiling of **octave 0**. The
+ * shipped set - 5,613,300 chords, 4 seconds - reaches 46 and is never held below
+ * `OCTAVE_MAX` at all: exactly one chord in the whole model loses an octave to
+ * this, which is the trade the per-chord ceiling was taken for.
  *
  * The bottom is taste, and the spec pins it as taste rather than deriving it:
  * `voiceChord` never voices below its base, so the MIDI floor would permit

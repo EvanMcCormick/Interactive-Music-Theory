@@ -27,6 +27,7 @@ import {
   sameNotes,
   sameOwnership
 } from './progression-edit';
+import { chordOctaveCeiling } from './progression-generate';
 import { ChordExtent, NamedQuality } from './progression-harmony';
 import { HistoryDepth, ProgressionStore } from './progression-history';
 import { ProgressionKeyContext } from './progression-key-context';
@@ -53,6 +54,27 @@ export type { EditOptions };
  * stays ignorant of that module. Only the four fields below are read;
  * `chosen()` copies them one at a time and says why that matters.
  */
+/**
+ * Where a slot's octave control stands, as `ProgressionService.slotOctave`
+ * reports it.
+ *
+ * Three numbers rather than one because the clamp is applied on use: the
+ * document holds the request, the synth hears the sounding value, and the
+ * control has to disable itself against the ceiling. Collapsing them would put
+ * the palette back to guessing which it had.
+ */
+export interface SlotOctave {
+  /** What `ChordDegree.octave` stores: what the user asked for. */
+  requested: number;
+  /** What the chord is voiced at, which is `min(requested, ceiling)`. */
+  sounding: number;
+  /**
+   * The highest octave this chord fits in, bounded by `OCTAVE_MAX`. Below it,
+   * the chord is too wide to sound where it was asked to.
+   */
+  ceiling: number;
+}
+
 export interface ChordChoice {
   /** 0-6, as `ChordDegree.degree`. Outside it `createDegreeSlot` throws. */
   degree: number;
@@ -549,6 +571,54 @@ export class ProgressionService {
   /** Shifts the voicing base by whole octaves, clamped to the playable range. */
   setSlotOctave(id: string, octave: number): void {
     this.editDegree(id, degree => ({ ...degree, octave }));
+  }
+
+  /**
+   * Where one slot's octave control actually stands: what was asked for, what
+   * is sounding, and how high this chord may go.
+   *
+   * The three are usually one number. They come apart when a chord is too wide
+   * for the octave it was given - `chordOctaveCeiling` explains why that is
+   * clamped on use rather than written back - and this is what a control needs
+   * in order to say so rather than to appear broken.
+   *
+   * ## The stepper steps from `sounding`, and the readout shows `sounding`
+   *
+   * That is the answer to "what octave is this slot on", and the other one is a
+   * trap. A slot storing 1 against a ceiling of 0 *is* on 0: that is the chord
+   * the user hears and the notes the roll draws. A readout showing 1 would be
+   * describing a number in a document rather than a sound, and - worse - a
+   * stepper that subtracted from 1 would write 0, change nothing that sounds,
+   * and be a control that visibly does nothing. Stepping down from `sounding`
+   * writes -1 and moves the chord, which is what the button says it does.
+   *
+   * `requested` is not shown, and is here because the palette's `+` needs to
+   * know which of two things to say when it is disabled: the control is at its
+   * limit, or this chord cannot go higher than it already is.
+   *
+   * ## What `null` means
+   *
+   * There is no octave: the slot is gone, it is literal - its notes are the
+   * truth and there is no degree to voice - or the key cannot stack thirds at
+   * all, which is the same refusal `editDegree` opens with. All three are cases
+   * where the palette's controls are already not offered, so the caller has an
+   * empty state to fall into rather than a number to disbelieve.
+   */
+  slotOctave(id: string): SlotOctave | null {
+    const doc = this.doc;
+    const scale = this.keys.chordScaleFor(doc.key);
+    if (scale === null) return null;
+
+    const slot = this.store.slot(id);
+    if (!slot || slot.harmony.kind !== 'degree') return null;
+
+    const degree = slot.harmony.degree;
+    const ceiling = chordOctaveCeiling(doc.key, scale, degree);
+    return {
+      requested: degree.octave,
+      sounding: Math.min(degree.octave, ceiling),
+      ceiling
+    };
   }
 
   /**

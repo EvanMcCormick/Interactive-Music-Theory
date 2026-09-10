@@ -1,6 +1,13 @@
-import { generateSlotNotes } from './progression-generate';
-import { NamedQuality } from './progression-harmony';
-import { DEFAULT_VELOCITY } from '../models/progression-normalize';
+import { chordOctaveCeiling, generateSlotNotes } from './progression-generate';
+import { ChordExtent, NamedQuality, chordPitchClasses, noteCount } from './progression-harmony';
+import { MusicTheoryService } from './music-theory.service';
+import { voiceChord } from './progression-voicing';
+import {
+  DEFAULT_VELOCITY,
+  OCTAVE_MAX,
+  OCTAVE_MIN,
+  VOICING_BASE_MIDI
+} from '../models/progression-normalize';
 import {
   ChordDegree,
   ChordSlot,
@@ -114,17 +121,31 @@ describe('generateSlotNotes', () => {
   });
 
   /**
-   * Octave 2 rather than 1, because 1 proves almost nothing.
+   * This asserted octave 2 rather than 1, because 1 proves almost nothing.
    *
    * The voicing base is a floor, so a C major triad voiced from *any* base
    * between 61 and 72 comes out 72-76-79. At octave 1 the base is 72 and the
    * whole family `VOICING_BASE_MIDI + octave * n` for n from 1 to 12 lands
    * inside that window, so `* 6` and `* 1` both pass. At octave 2 the base is
-   * 84, which no smaller multiplier reaches.
+   * 84, which no smaller multiplier reaches - so 84-88-91 was the assertion.
+   *
+   * **Task 4b took octave 2 away.** `chordOctaveCeiling` holds every chord at
+   * `OCTAVE_MAX` or below, so 2 and 1 now sound the same and no positive octave
+   * separates the multipliers any more. That is asserted here rather than left
+   * as a spec that quietly stopped testing the thing its own note says it tests.
+   *
+   * The multiplier is pinned below instead, on the negative side, which is where
+   * the ceiling does not reach: octave -2 puts the base at 36, where `* 6` would
+   * put it at 48 and voice a different chord.
    */
-  it('shifts the voicing base by the octave', () => {
-    const notes = generateSlotNotes(slotWithDegree(0, { octave: 2 }), C_MAJOR_KEY, MAJOR);
-    expect(notes.map(n => n.midi)).toEqual([84, 88, 91]);
+  it('shifts the voicing base by the octave, and no higher than the ceiling', () => {
+    expect(
+      generateSlotNotes(slotWithDegree(0, { octave: OCTAVE_MAX }), C_MAJOR_KEY, MAJOR)
+        .map(n => n.midi)
+    ).toEqual([72, 76, 79]);
+    expect(
+      generateSlotNotes(slotWithDegree(0, { octave: 2 }), C_MAJOR_KEY, MAJOR).map(n => n.midi)
+    ).toEqual([72, 76, 79]);
   });
 
   // The other direction, which nothing here tested: a multiplier is only
@@ -244,5 +265,257 @@ describe('generateSlotNotes', () => {
     expect(() => generateSlotNotes(
       slotWithDegree(1, { quality: 'other' as NamedQuality }), key, hungarianMinor
     )).toThrowError(/other/i);
+  });
+});
+
+/**
+ * The ceiling is the chord's own, and this is where that is proved.
+ *
+ * `OCTAVE_MAX` is a bound on the *control*, and it is one number for every
+ * chord. That was defensible while the widest chord the model could build
+ * reached 46 semitones above its base: `OCTAVE_MAX` of 1 puts that at MIDI 118,
+ * nine short of the end. M3 Task 4 widened the model to 58, which is 130, and
+ * three notes past the end of MIDI is a chord `Tone.PolySynth` is handed
+ * unclamped.
+ *
+ * The fix is not a smaller constant - that costs every chord the top octave to
+ * accommodate one almost nobody will build - it is a ceiling derived per chord,
+ * here, where the key and the scale are already in hand.
+ *
+ * **The property is now local, which is what makes it cheap.** The old bound
+ * could only be shown maximal by sweeping the whole reachable universe: 236
+ * million chords, thirteen minutes, and that sweep is now
+ * `tools/measure-chord-reach.cjs` rather than a spec. What replaces it is two
+ * halves checked on a sample:
+ *
+ *  - a chord voiced at its ceiling never passes MIDI 127, and
+ *  - the ceiling is the *highest* octave for which that is true.
+ *
+ * Both halves matter. A ceiling that is merely safe rather than maximal costs
+ * the user range without saying so, and would pass the first half alone.
+ */
+describe('chordOctaveCeiling', () => {
+  /**
+   * The sample: every heptatonic scale the app offers, every degree, every
+   * extent, every inversion and every tonic, over a handful of shapes chosen to
+   * include the exotics and the widest chord the model can build.
+   *
+   * Read from `MusicTheoryService.getScaleCategories()` for the reason the
+   * octave describe in `progression-normalize.spec.ts` gives: that is where the
+   * chord palette reads its scales from, so a scale reachable there is a scale
+   * this property has to survive. Enigmatic, Hungarian minor, super locrian and
+   * double harmonic are the ones that produce the widest stacks, and they are in
+   * that list rather than beside it.
+   */
+  const APP_SCALES: readonly { id: string; intervals: readonly number[] }[] =
+    new MusicTheoryService()
+      .getScaleCategories()
+      .flatMap(category => category.scales)
+      .map(scale => ({ id: scale.id, intervals: scale.intervals }))
+      .filter(scale => scale.intervals.length === 7);
+
+  /**
+   * The shape combinations swept, rather than their product.
+   *
+   * The full product is what the tool measures and what takes thirteen minutes.
+   * These six are picked to span the mechanisms that make a chord wide: a
+   * diatonic stack, an override that displaces the root, an added ninth in the
+   * fourth position, a suspension that can land under the note above it, and the
+   * two alterations that make the ascent lift stack. The last row is the
+   * 58-semitone witness's own shape.
+   */
+  const SHAPES: readonly Partial<ChordDegree>[] = [
+    { alter: 0, quality: null },
+    { alter: -2, quality: 'diminished' },
+    { alter: -2, quality: 'add9' },
+    { alter: 2, quality: 'augmented7' },
+    { alter: -2, quality: 'augmented7', suspension: 'sus2' },
+    {
+      alter: -2,
+      quality: 'diminished',
+      suspension: 'sus4',
+      extensions: { ninth: -1, eleventh: null, thirteenth: -1 }
+    }
+  ];
+
+  const EXTENTS: readonly ChordExtent[] = [3, 7, 9, 11, 13];
+
+  /** The degree a slot built from these overrides actually stores. */
+  function degreeFor(degree: number, overrides: Partial<ChordDegree>): ChordDegree {
+    const slot = slotWithDegree(degree, overrides);
+    if (slot.harmony.kind !== 'degree') throw new Error('expected a degree slot');
+    return slot.harmony.degree;
+  }
+
+  /** The top note of a slot's chord, voiced at a given stored octave. */
+  function topAt(
+    degree: number,
+    overrides: Partial<ChordDegree>,
+    key: ProgressionKey,
+    intervals: readonly number[]
+  ): number {
+    const notes = generateSlotNotes(slotWithDegree(degree, overrides), key, intervals);
+    return notes[notes.length - 1].midi;
+  }
+
+  /**
+   * Both halves of the property, over the sample.
+   *
+   * The maximality half is only asked where the ceiling is below `OCTAVE_MAX`.
+   * At `OCTAVE_MAX` the ceiling is the control's bound rather than MIDI's, and
+   * there is nothing for the arithmetic to be maximal about - the chord would
+   * fit an octave higher and is not allowed to go there.
+   */
+  it('is the highest octave at which the chord still fits inside MIDI', () => {
+    let checked = 0;
+    let clamped = 0;
+    // Violations are collected and asserted once rather than expected inside
+    // the loop. Four expectations over four hundred thousand chords is one and
+    // a half million Jasmine results for a spec that should report one line,
+    // and the line it should report is *which chord* - which an expectation
+    // inside the loop cannot say.
+    const illegal: string[] = [];
+    const overflowing: string[] = [];
+    const timid: string[] = [];
+
+    for (const scale of APP_SCALES) {
+      for (let degree = 0; degree <= 6; degree++) {
+        for (const extent of EXTENTS) {
+          for (const shape of SHAPES) {
+            for (let inversion = 0; inversion < noteCount(extent); inversion++) {
+              for (let tonic = 0; tonic < 12; tonic++) {
+                const key: ProgressionKey = { tonic, scaleId: scale.id, preferSharps: true };
+                const overrides = { ...shape, extent, inversion };
+                const stored = degreeFor(degree, overrides);
+
+                const ceiling = chordOctaveCeiling(key, scale.intervals, stored);
+                checked++;
+                const where = `${scale.id} degree ${degree} tonic ${tonic} ` +
+                  `${JSON.stringify(overrides)} ceiling ${ceiling}`;
+
+                // The bottom clamp never fires. It is there so the answer is
+                // always a legal octave, and this records that it is never the
+                // reason the answer is what it is - which is what keeps the MIDI
+                // half unconditional rather than traded against the floor.
+                if (ceiling < OCTAVE_MIN || ceiling > OCTAVE_MAX) illegal.push(where);
+
+                const top = topAt(degree, { ...overrides, octave: ceiling }, key, scale.intervals);
+                if (top > 127) overflowing.push(`${where} top ${top}`);
+
+                if (ceiling < OCTAVE_MAX) {
+                  clamped++;
+                  // Voiced directly rather than through `generateSlotNotes`,
+                  // which now declines to go there: the question is what the
+                  // chord *would* have done, and only the unclamped pipeline
+                  // answers it.
+                  const raised = voiceChord(
+                    chordPitchClasses(scale.intervals, stored)
+                      .map(pitchClass => pitchClass + tonic),
+                    inversion,
+                    VOICING_BASE_MIDI + (ceiling + 1) * 12
+                  );
+                  const raisedTop = raised[raised.length - 1];
+                  if (raisedTop <= 127) timid.push(`${where} would reach only ${raisedTop}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // The ceiling is always a legal octave, no chord voiced at its ceiling
+    // passes 127, and no ceiling is lower than it had to be.
+    expect(illegal.slice(0, 3)).toEqual([]);
+    expect(overflowing.slice(0, 3)).toEqual([]);
+    expect(timid.slice(0, 3)).toEqual([]);
+
+    // The sweep ran, and it found chords on both sides of the question. A
+    // sample that never reached a ceiling below `OCTAVE_MAX` would prove the
+    // safe half and nothing at all about the maximal one. 25 is the inversion
+    // count summed over the five extents: 3 + 4 + 5 + 6 + 7.
+    expect(checked).toBe(APP_SCALES.length * 7 * 25 * SHAPES.length * 12);
+    expect(clamped).toBeGreaterThan(0);
+  });
+
+  /**
+   * The witness, by hand.
+   *
+   * C major's degree 3 at extent 13, altered down a tone and overridden to
+   * `diminished`, suspended at the fourth with a flattened ninth and a flattened
+   * thirteenth, second inversion, in D. It reaches 58 semitones above its base -
+   * the widest the M3 model can build - so its ceiling is 0 where an ordinary
+   * chord's is 1: 60 + 58 is 118, and one octave higher is 130.
+   */
+  const WITNESS: Partial<ChordDegree> = {
+    extent: 13,
+    alter: -2,
+    quality: 'diminished',
+    suspension: 'sus4',
+    extensions: { ninth: -1, eleventh: null, thirteenth: -1 },
+    inversion: 2
+  };
+  const D_MAJOR_KEY: ProgressionKey = { tonic: 2, scaleId: 'ionian', preferSharps: true };
+
+  it('gives the widest chord in the model a ceiling of 0', () => {
+    expect(chordOctaveCeiling(D_MAJOR_KEY, MAJOR, degreeFor(3, WITNESS))).toBe(0);
+  });
+
+  it('gives an ordinary chord the whole of the control', () => {
+    expect(chordOctaveCeiling(C_MAJOR_KEY, MAJOR, degreeFor(0, {}))).toBe(OCTAVE_MAX);
+  });
+
+  /**
+   * What the clamp is for, end to end: the slot stores `OCTAVE_MAX` and sounds
+   * at 0, rather than sounding three notes off the end of MIDI.
+   *
+   * Both stored octaves produce the same notes, which is the clamp doing its one
+   * job. What is *not* here is a rewrite of the stored value - see
+   * `ProgressionService.slotOctave` for why the request survives being clamped.
+   */
+  it('voices a chord that would overflow an octave lower instead', () => {
+    const atZero = generateSlotNotes(
+      slotWithDegree(3, { ...WITNESS, octave: 0 }), D_MAJOR_KEY, MAJOR
+    ).map(note => note.midi);
+    const atMax = generateSlotNotes(
+      slotWithDegree(3, { ...WITNESS, octave: OCTAVE_MAX }), D_MAJOR_KEY, MAJOR
+    ).map(note => note.midi);
+
+    expect(atZero).toEqual([71, 78, 90, 97, 109, 113, 118]);
+    expect(atMax).toEqual(atZero);
+  });
+
+  /**
+   * And the clamp is not a blanket octave down. An ordinary chord at
+   * `OCTAVE_MAX` still sounds at `OCTAVE_MAX`, which is exactly the half that
+   * dropping the constant to 0 would have taken from every chord in the app.
+   */
+  it('leaves a chord that fits exactly where it was asked for', () => {
+    expect(
+      generateSlotNotes(
+        slotWithDegree(0, { octave: OCTAVE_MAX }), C_MAJOR_KEY, MAJOR
+      ).map(note => note.midi)
+    ).toEqual([72, 76, 79]);
+  });
+
+  /**
+   * A slot below its ceiling is untouched, including the widest chord there is.
+   * The ceiling is a maximum and not a target, so `Math.min` is the whole rule.
+   */
+  it('does not raise a chord voiced below its ceiling', () => {
+    expect(
+      generateSlotNotes(
+        slotWithDegree(3, { ...WITNESS, octave: OCTAVE_MIN }), D_MAJOR_KEY, MAJOR
+      ).map(note => note.midi)
+    ).toEqual([47, 54, 66, 73, 85, 89, 94]);
+  });
+
+  // The guards below it still reach the caller: the ceiling for a chord that
+  // cannot be built is not a number, it is a question with no answer.
+  it('refuses a scale and a shape the chord builder refuses', () => {
+    expect(() => chordOctaveCeiling(C_MAJOR_KEY, PENTATONIC, degreeFor(0, {})))
+      .toThrowError(/heptatonic/);
+    expect(() => chordOctaveCeiling(C_MAJOR_KEY, MAJOR, { ...degreeFor(0, {}), alter: 1 }))
+      .toThrowError(/quality/i);
   });
 });
