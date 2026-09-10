@@ -2882,10 +2882,10 @@ describe('ProgressionService', () => {
     /**
      * Ids are how every other method finds a slot, and a document that repeats
      * one is not a document this service can edit: `removeSlot` filters by id
-     * and would drop both twins, and `replaceSlot` would only ever find the
-     * first. It arrives here from a file rather than from a user, so it is a
-     * corrupt document rather than a control at its limit - the wrong-kind
-     * clause of the normalisation rule, which throws.
+     * and would drop both twins, and `ProgressionStore.commitSlot` would only
+     * ever find the first. It arrives here from a file rather than from a user,
+     * so it is a corrupt document rather than a control at its limit - the
+     * wrong-kind clause of the normalisation rule, which throws.
      */
     it('refuses a document whose slots share an id', () => {
       service.appendSlot(0);

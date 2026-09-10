@@ -16,9 +16,9 @@ import { ProgressionStore } from './progression-history';
  * `CommitRun` in `progression-history.ts` for what a run is.
  *
  * Shared by every setter a drag drives - the strip's resize and all three of
- * the roll's - because they all have the same problem: the card, or the note,
- * has to be where it is being dragged to, so the setter commits on every
- * threshold the pointer crosses.
+ * the roll's gestures - because they all have the same problem: the card, or
+ * the note, has to be where it is being dragged to, so the setter commits on
+ * every threshold the pointer crosses.
  */
 export interface EditOptions {
   /**
@@ -209,7 +209,7 @@ export class ProgressionNoteEditor {
   }
 
   /**
-   * The shape all three of the roll's setters share: work out the new notes,
+   * The shape all four of the roll's setters share: work out the new notes,
    * add the claim the gesture makes, and record the pair as one step of
    * whatever drag is under way.
    *
@@ -232,9 +232,10 @@ export class ProgressionNoteEditor {
    * The consequence is a discipline rather than a guarantee, and Task 7 has to
    * keep it: two pitch drags on two different notes of the same slot fold into
    * one undo entry unless each pointerdown passes `coalesce: false`. That is
-   * the same rule `setSlotLength` states for two consecutive resizes of one
-   * card - the service cannot see where one gesture ends and the next begins -
-   * but it is easy to read the keying as covering it, and it does not.
+   * the same rule `ProgressionService.setSlotLength` states for two consecutive
+   * resizes of one card - nothing below the pointer, here or there, can see
+   * where one gesture ends and the next begins - but it is easy to read the
+   * keying as covering it, and it does not.
    *
    * ## Why it answers, and what the answer is for
    *

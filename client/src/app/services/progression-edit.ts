@@ -715,10 +715,10 @@ function noteAt(notes: readonly RollNote[], index: number): RollNote | null {
  *
  * Ids are how every method on the service finds a slot, and a repeated one
  * breaks them in different directions: `removeSlot` filters by id and drops
- * both twins, while `replaceSlot` finds the first and edits it twice over. A
- * document like that arrives from a file rather than from a user, so it is a
- * corrupt document rather than a control at its limit - the wrong-kind clause
- * of the model's normalisation rule, which throws.
+ * both twins, while `ProgressionStore.commitSlot` finds the first and edits it
+ * twice over. A document like that arrives from a file rather than from a
+ * user, so it is a corrupt document rather than a control at its limit - the
+ * wrong-kind clause of the model's normalisation rule, which throws.
  *
  * It is checked at `replaceDocument` rather than inside `settle()`, because
  * that is the only door a document the service did not build comes through.
