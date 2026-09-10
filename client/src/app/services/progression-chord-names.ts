@@ -10,9 +10,13 @@ import type { ChordExtent, ChordIdentity, ChordQuality } from './progression-har
  * against how the figures are printed. `romanNumeral` knows that a diminished
  * triad takes a `°`; it does not know what a diminished triad is.
  *
- * They were one file until it passed the project's 500-line cap, and M2 Task 8
- * widens exactly this half - a numeral needs its accidental, a chord name its
- * slash bass - so the cut is where the growth is.
+ * They were one file until it passed the project's file-length cap, which stood
+ * at 500 lines then and stands at 1000 now - `fda93c1`, which argues that a cap
+ * counting prose was measuring the wrong thing in a codebase this documented.
+ * The raise does not un-split them, because the seam is the one above rather
+ * than a line count, and both halves have grown into it since: M2 Task 8 widened
+ * this one with the numeral's accidental, and M3 Task 5 widened it again with
+ * every composed figure below.
  *
  * `ChordQuality` comes back the other way as a type-only import, so nothing
  * here is on the arithmetic module's runtime graph and the dependency runs one
@@ -194,6 +198,37 @@ const SHARP_SIGN = '♯';
  *
  * A triad has no height to write, so its entry is empty and the substitution is
  * skipped: nothing in a triad's figure is a seventh to replace.
+ *
+ * ## Which bases take a height, and the answer is every one that names a seventh
+ *
+ * Including the four whose figure carries a sign: `°7` becomes `°13`, `ø7`
+ * becomes `ø11`, `+7` becomes `+13` and `+Maj7` becomes `+Maj9`, on exactly the
+ * substitution `maj7` and `min7` get. That is the *opposite* answer
+ * `SUSPENDED_FIGURES` gives the same signs twenty lines below, and the two are
+ * different questions rather than one question answered twice:
+ *
+ *  - A **suspension** asks the symbol to describe a *changed third*, and `°`,
+ *    `ø` and `+` describe the fifth as well as the third. Dropping the sign
+ *    would lose the fifth and keeping it would print `C°sus4`, a symbol no chart
+ *    uses - so there is nothing to print and the figure refuses.
+ *  - A **height** changes no note the sign describes. It stacks further thirds
+ *    *above* a shape the sign already names, so the sign goes on saying exactly
+ *    what it said and only the topmost figure moves.
+ *
+ * The reach was measured rather than assumed, and it is not a corner. Over the
+ * app's 33 heptatonic scales, with nothing pinned and no override at all, **130
+ * chords print one of these raised** - and among them is C major's own `vii`,
+ * three steps of the complexity control from a fresh slot, which prints
+ * `viiø11♭9` beside `Bø11b9`. That is the one a reader meets first: the default
+ * key, no borrowing, no pinning. Refusing it would put a `?` there, and `ø11♭9`
+ * is a symbol a reader can decode where `?` is nothing to decode. It is also
+ * more honest than what this module printed before M3 Task 5, which was `ø7`
+ * over six sounding notes.
+ *
+ * With overrides it reaches `C+13`, `C°13` and `Cø13#9#11`, which are stranger
+ * and are named on the same terms: this module names what was actually built,
+ * and refuses only where no symbol exists at all. `progression-chord-names.spec.ts`
+ * counts the 130 so the ruling stays visible whether or not it is ever revisited.
  */
 const SEVENTH_FIGURE = '7';
 const SPOKEN_SEVENTH = 'seventh';
@@ -247,6 +282,10 @@ const SUSPENSION_FIGURES: Readonly<Record<'sus2' | 'sus4', { figure: string; spo
  * `Cadd9sus4` is not, and a rule that named half of them would be choosing which
  * unconventional symbol to invent. `?` says the chord is real and its name is
  * not, which is what this module does everywhere else.
+ *
+ * Three of those four bases take a *height* rather than refusing it, and the
+ * ruling for why the same signs answer the two questions differently is on
+ * `SEVENTH_FIGURE` above.
  *
  * The numeral keeps the base's own **case** even though the third it describes
  * is gone. A numeral says where in the key a chord sits, and `V7sus4` is the

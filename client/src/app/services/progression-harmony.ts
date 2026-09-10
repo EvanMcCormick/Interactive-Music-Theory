@@ -595,7 +595,24 @@ function nearestAlteration(displacement: number): number {
  * notes themselves.
  */
 export interface ChordIdentity {
-  /** The root, relative to the tonic, 0-11. */
+  /**
+   * The root the intervals below are measured from, relative to the tonic,
+   * 0-11: `root + intervals[i]` is a pitch class this chord sounds.
+   *
+   * That is one rule, and it is deliberately not "the root of the slot" - the
+   * two part company wherever a displacement has no shape to land on. `alter`
+   * moves the root only inside `chordPitchClasses`' override branch, so both of
+   * the refusals leave it where the key put it: a null quality over a displaced
+   * root, which is built with `alter` forced to 0, and `'other'`, which is not
+   * built at all. Neither displaces a note, so neither displaces the root.
+   *
+   * A reader wanting the *slot's* own chromatic root wants `chordRootPitchClass`
+   * instead, which keeps `alter` unconditionally. That is a different question -
+   * where in the key the chord sits, rather than what its notes are counted from
+   * - and it is the one the strip card, the palette and the fretboard ask when
+   * they spell a label. The consumers of this field are the two that hold
+   * `intervals` beside it: the roll's chord-tone spelling, and the recogniser.
+   */
   root: number;
   /** The triad, seventh or added-tone shape; `'other'` when no name fits. */
   base: ChordQuality;
@@ -687,10 +704,18 @@ const NAMEABLE_ALTERATIONS: readonly (readonly number[])[] = [
  * **The alterations are measured against the chord's own naturals**, 14, 17 and
  * 21, not against the key's - `EXTENSION_NATURALS` argues that - and only where
  * the extent reaches the position. An extension whose alteration is outside the
- * set a figure exists for makes `base` `'other'`, which prints `?` and lights
- * nothing: unlabelled rather than mislabelled, as everywhere else. That is
- * reachable with nothing pinned at all, in a scale whose own ninth lands an
- * octave above the root.
+ * set a figure exists for makes `base` `'other'`, which prints `?`: unlabelled
+ * rather than mislabelled, as everywhere else. That is reachable with nothing
+ * pinned at all, in a scale whose own ninth lands an octave above the root.
+ *
+ * It does **not** put the fretboard out. `intervals` stays populated - the notes
+ * are known even where the name is not - and the fretboard is lit from that set
+ * rather than from `base`, so the card can print `?` while a row of the chord
+ * table lights behind it. Today no entry holds a shape with an extension no
+ * figure names, so in practice these light nothing; that is the table's contents
+ * and not a guarantee, and `progression.component.ts`' `chordFor` states the
+ * same thing from the other end. The two disagreeing in that direction is the
+ * right way round.
  *
  * **`steps` is what chord tones are spelled by.** See `STACK_STEPS`: nine
  * semitones is a sixth in one shape and a seventh in another, so the interval
@@ -706,11 +731,14 @@ const NAMEABLE_ALTERATIONS: readonly (readonly number[])[] = [
  * answer rather than a fallback; an empty interval list lights nothing, which is
  * the same answer the numeral's `?` gives.
  *
- * **A null quality over a displaced root is answered from the key**, without
- * building anything, because that pair is the one `chordPitchClasses` throws
- * on: a chromatic root with no shape under it. The pair is refused at the door
- * by `normalizeChordDegree`, so a stored slot cannot carry it, and naming is
- * not the place to discover that it did.
+ * **A null quality over a displaced root is answered from the key**, built with
+ * the displacement dropped, because that pair is the one `chordPitchClasses`
+ * throws on: a chromatic root with no shape under it. The pair is refused at the
+ * door by `normalizeChordDegree`, so a stored slot cannot carry it, and naming
+ * is not the place to discover that it did. It is still *built* - `alter` is
+ * forced to 0 and the branch below goes on through `chordPitchClasses` like any
+ * other - because `null` also has to carry a suspension and a pinned extension,
+ * which only building can read back.
  *
  * A null quality on a *diatonic* root is built and read back, where it used to
  * be answered straight from `degreeQuality`. The two agree by construction on
@@ -751,6 +779,42 @@ export function effectiveChord(
           chordPitchClasses(scaleIntervals, { ...built, suspension: 'none' })
         );
 
+  return identityOfStack(root, intervals, built.suspension, base, built.extent);
+}
+
+/**
+ * The identity of a stack that has already been built: everything
+ * `effectiveChord` reads once it holds the notes.
+ *
+ * Split out of that function at M3 Task 7 because the recogniser needs the same
+ * reading off a stack that no `ChordShape` produced. `progression-recognise.ts`
+ * parses a set of sounding pitch classes into an ascending stack, and the
+ * question it then has to answer - how far each extension is from its natural,
+ * whether any of them is outside every figure, and what letter each note is
+ * written on - is this question, word for word. Two copies of it would be two
+ * readings of one arithmetic, which is the arrangement `QUALITY_INTERVALS`'
+ * note argues against at length: the recogniser is the one caller that runs the
+ * naming in both directions within a single edit, so a disagreement here would
+ * surface as a chord that will not read back as the chord it was built from.
+ *
+ * `root` is taken unreduced and reduced here, because both callers hold a stack
+ * whose first note may sit anywhere - `chordPitchClasses` returns a vii chord as
+ * [11, 14, 17] and the parse works from an interval of 0 above a root that is
+ * already a pitch class.
+ *
+ * `base` is the caller's, and deliberately so: it is read from the stack *with
+ * the suspension taken out*, and only the caller knows what was there before the
+ * suspension replaced it. `effectiveChord` rebuilds the unsuspended stack from
+ * the key; the recogniser has no third to restore and substitutes a major one.
+ * It is passed in rather than derived so neither has to pretend to be the other.
+ */
+export function identityOfStack(
+  root: number,
+  intervals: readonly number[],
+  suspension: SuspensionKind,
+  base: ChordQuality,
+  extent: ChordExtent
+): ChordIdentity {
   const alterations = EXTENSION_NATURALS.map((natural, i) => {
     const position = FIRST_EXTENSION_POSITION + i;
     if (position >= intervals.length) return null;
@@ -768,13 +832,13 @@ export function effectiveChord(
   return {
     root: reduceToOctave(root),
     base: nameable ? base : 'other',
-    suspension: built.suspension,
-    extent: built.extent,
+    suspension,
+    extent,
     intervals,
     ninth: alterations[0],
     eleventh: alterations[1],
     thirteenth: alterations[2],
-    steps: stepsOf(intervals.length, built.suspension, base)
+    steps: stepsOf(intervals.length, suspension, base)
   };
 }
 
@@ -782,15 +846,29 @@ export function effectiveChord(
  * The identity of a chord there is nothing to build: `'other'` as a stored
  * quality, which names no interval set.
  *
- * The root is still the degree's own, because the degree is a fact whatever the
- * shape is - the strip prints the numeral from it, and a numeral with no figure
- * still says where in the key the chord sits. Everything else is the refusal.
+ * The root is the degree's own **without `alter`**, which is the rule the
+ * null-quality branch above follows and holds here for the same reason: a
+ * displacement lands on a root only where there is a shape to build it with, and
+ * `'other'` names no shape any more than `null` does. `ChordIdentity.root` says
+ * what the intervals are counted from and there are no intervals here, so the
+ * degree the key gives is the honest answer and a chromatic root nothing was
+ * built on is not.
+ *
+ * It kept `alter` until M3 Task 5's review, which is where the second definition
+ * came from: this branch measured the root one way and the main path the other,
+ * and nothing told them apart because the branch is chosen by the quality rather
+ * than by the displacement. Two rules for one field, kept apart by which refusal
+ * a shape happens to trip, is a trap whatever it currently returns. Anything
+ * wanting the slot's chromatic root has `chordRootPitchClass`, which keeps
+ * `alter` unconditionally and is what every label in the app is spelled from.
+ *
+ * Everything else is the refusal.
  */
 function unnameable(scaleIntervals: readonly number[], shape: ChordShape): ChordIdentity {
   const diatonic = degreePitchClasses(scaleIntervals, shape.degree, shape.extent);
 
   return {
-    root: reduceToOctave(diatonic[0] + shape.alter),
+    root: reduceToOctave(diatonic[0]),
     base: 'other',
     suspension: shape.suspension,
     extent: shape.extent,

@@ -200,6 +200,29 @@ describe('effectiveChord', () => {
   });
 
   /**
+   * One rule for `root`, across both of the refusals.
+   *
+   * `alter` moves a root only inside `chordPitchClasses`' override branch - only
+   * where there is a shape to build it with - so a displacement under `'other'`
+   * leaves the root where the key put it, which is the same answer the
+   * null-quality branch gives by forcing `alter` to 0 and building.
+   *
+   * `unnameable` kept the displacement until M3 Task 5's review, and that was two
+   * definitions of one field with nothing to tell them apart: the branch is
+   * chosen by the quality and never by the displacement, so the disagreement
+   * could not surface as a failure. A reader wanting the *slot's* own chromatic
+   * root wants `chordRootPitchClass`, which keeps `alter` unconditionally and is
+   * what every label in the app is spelled from. The two are pinned apart here
+   * because they are different questions.
+   */
+  it('leaves the root where the key put it under either refusal', () => {
+    // Degree 6 of C major is B, which is 11. Neither refusal moves it to B flat.
+    expect(effectiveChord(MAJOR, shape({ degree: 6, alter: -1, quality: 'other' })).root)
+      .toBe(11);
+    expect(effectiveChord(MAJOR, shape({ degree: 6, alter: -1 })).root).toBe(11);
+  });
+
+  /**
    * A null quality is answered from the key without the displacement, which is
    * also what keeps it clear of the one pair `chordPitchClasses` refuses. The
    * pair is refused at the door by `normalizeChordDegree`, and naming is not

@@ -1,4 +1,5 @@
-import { createExtensions } from '../models/progression-normalize';
+import { CHORD_EXTENTS, createExtensions } from '../models/progression-normalize';
+import { MusicTheoryService } from './music-theory.service';
 import {
   ChordExtent,
   ChordIdentity,
@@ -7,7 +8,8 @@ import {
   NamedQuality,
   QUALITY_INTERVALS,
   degreeQuality,
-  effectiveChord
+  effectiveChord,
+  isHeptatonic
 } from './progression-harmony';
 import { chordName, romanNumeral, spokenChordName } from './progression-chord-names';
 
@@ -660,5 +662,140 @@ describe('composed figures', () => {
     });
 
     expect(chordName('G', both)).toBe('G7b9sus4');
+  });
+});
+
+/**
+ * The height rule applied to the four bases whose figure carries a sign, and how
+ * far it reaches.
+ *
+ * `°`, `ø` and `+` describe the fifth as well as the third, and that is why
+ * `SUSPENDED_FIGURES` refuses to suspend them. A *height* gets the opposite
+ * answer - it stacks thirds above a shape the sign already names and changes no
+ * note the sign describes - so `°7` becomes `°13` and `ø7` becomes `ø11` like
+ * any other seventh figure. `SEVENTH_FIGURE`'s note is where that ruling is
+ * argued; this is the census that keeps it visible.
+ *
+ * The count matters because the ruling is not a corner case. It is measured over
+ * the app's own scales with **nothing pinned and no override at all**, which is
+ * to say what a user reaches by pressing the complexity control on a plain
+ * palette button, and it lands on the default key: C major's `vii` at extent 11
+ * is a `Bø11b9`, pinned separately below.
+ *
+ * If a number moves, it is a ruling to make and not a count to update. Either a
+ * scale has been added, or `NAMEABLE_ALTERATIONS` has changed which alterations
+ * have a figure, or the substitution has stopped reaching one of these bases.
+ */
+describe('the signed bases at a height', () => {
+  const APP_SCALES: readonly (readonly number[])[] = new MusicTheoryService()
+    .getScaleCategories()
+    .flatMap(category => category.scales)
+    .map(scale => scale.intervals)
+    .filter(intervals => isHeptatonic(intervals));
+
+  /** All three renderings of one chord, as the sibling describe builds them. */
+  function names(degree: number, root: string, identity: ChordIdentity): string[] {
+    return [
+      romanNumeral(degree, 0, identity),
+      chordName(root, identity),
+      spokenChordName(root, identity)
+    ];
+  }
+
+  /** The four bases whose figure carries a sign describing the fifth. */
+  const SIGNED_BASES: readonly ChordQuality[] = [
+    'diminished7',
+    'halfDiminished7',
+    'augmented7',
+    'augmentedMajor7'
+  ];
+
+  /**
+   * Whether a chord printed one of those figures with its seventh replaced.
+   *
+   * Read off the printed symbol rather than recomputed from the identity,
+   * because the printed symbol is what the ruling is about. Each of the four
+   * figures names its seventh exactly once and holds no other `7`, and no
+   * alteration or height figure is a `7` either - so a `7` left in the suffix is
+   * a figure the substitution did not touch.
+   */
+  function raised(identity: ChordIdentity): boolean {
+    return (
+      SIGNED_BASES.includes(identity.base) && !chordName('C', identity).includes('7')
+    );
+  }
+
+  /**
+   * 130 in total, and none of them below a ninth - a triad has no seventh to
+   * raise and a seventh's own height is the identity substitution.
+   *
+   * The review that asked for this census counted 71, which is these four bases
+   * less `augmentedMajor7`. That base belongs here: `+Maj7` carries the same `+`
+   * and takes the same height, so leaving it out would be pinning three quarters
+   * of one ruling. `diminished7` contributes none of the 130 - no diatonic
+   * diminished-seventh stack in these scales carries an unaltered extension - so
+   * `°13` is reachable only through an override, which is exactly what the
+   * ruling's own examples say.
+   */
+  const RAISED_BY_EXTENT: ReadonlyMap<number, number> = new Map([
+    [3, 0],
+    [7, 0],
+    [9, 32],
+    [11, 50],
+    [13, 48]
+  ]);
+
+  it('raises a sign figure on 130 chords reachable with nothing pinned', () => {
+    const measured = new Map<number, number>();
+
+    for (const extent of CHORD_EXTENTS) {
+      let count = 0;
+
+      for (const intervals of APP_SCALES) {
+        for (let degree = 0; degree <= 6; degree++) {
+          if (raised(built(intervals, { degree, extent }))) count++;
+        }
+      }
+
+      measured.set(extent, count);
+    }
+
+    expect([...measured]).toEqual([...RAISED_BY_EXTENT]);
+    expect([...measured.values()].reduce((sum, count) => sum + count, 0)).toBe(130);
+  });
+
+  /**
+   * The one a reader meets first, in all three conventions.
+   *
+   * C major, no borrowing, nothing pinned: three steps of the complexity control
+   * from a fresh slot and the seventh degree is a half-diminished eleventh with
+   * the key's own flat ninth in it. Refusing the height here would print `?` on
+   * the default key's own `vii`, and `ø11♭9` is a symbol a reader can decode
+   * where `?` is nothing to decode.
+   */
+  it('names C major own vii at an eleventh rather than refusing it', () => {
+    const vii11 = built(MAJOR, { degree: 6, extent: 11 });
+
+    expect(vii11.intervals).toEqual([0, 3, 6, 10, 13, 17]);
+    expect(vii11.base).toBe('halfDiminished7');
+    expect(names(6, 'B', vii11)).toEqual([
+      'viiø11♭9',
+      'Bø11b9',
+      'B half diminished eleventh flat nine'
+    ]);
+  });
+
+  /**
+   * And the extremes an override reaches, which are stranger and are named on
+   * the same terms: what was built, rather than what a chart happens to print
+   * often. The refusal is kept for where no symbol exists at all - a suspension
+   * over these same signs, which is the neighbouring ruling.
+   */
+  it('names the tallest sign figures an override reaches', () => {
+    const augmented13 = built(MAJOR, { extent: 13, quality: 'augmented7' });
+    const diminished13 = built(MAJOR, { extent: 13, quality: 'diminished7' });
+
+    expect(chordName('C', augmented13)).toBe('C+13');
+    expect(chordName('C', diminished13)).toBe('C°13');
   });
 });
