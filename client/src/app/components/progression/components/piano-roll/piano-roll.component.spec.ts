@@ -655,7 +655,7 @@ describe('PianoRollComponent', () => {
   /**
    * `committed` decides `coalesce`, so it has to mean "this gesture has an undo
    * entry open" and not "a setter was called". The setters answer whether they
-   * recorded anything - `ProgressionService.writeNotes` argues why - and these
+   * recorded anything - `ProgressionNoteEditor.writeNotes` argues why - and these
    * drive the two answers straight at the gesture.
    */
   describe('what a gesture counts as having committed', () => {

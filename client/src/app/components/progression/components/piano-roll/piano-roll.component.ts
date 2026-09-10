@@ -107,7 +107,7 @@ import {
  * has to be done per *gesture* and not per note: `setSlotNotes` and `placeNotes`
  * write the whole list, so their run keys can only name the slot, and two drags
  * on two different notes of one slot would otherwise fold into a single entry.
- * `ProgressionService.writeNotes` states the discipline; this is where it is
+ * `ProgressionNoteEditor.writeNotes` states the discipline; this is where it is
  * kept, in `beginMove`, `beginResize` and `beginVelocity`, each of which starts
  * its gesture uncommitted - and `committed` becomes true only when a setter
  * says it recorded something, which `onPointerMove` argues at length.
@@ -154,7 +154,7 @@ const DEFAULT_BEAT_DIVISION = 4;
  * It is what decides `coalesce`, so it has to be true exactly when this gesture
  * has an undo entry of its own to fold into - which is why it is set from what
  * the setter *answers* rather than from the fact that it was called.
- * `ProgressionService.writeNotes` carries the argument.
+ * `ProgressionNoteEditor.writeNotes` carries the argument.
  */
 interface Gesture {
   /** The slot this gesture started on, and the only one it will ever write to. */

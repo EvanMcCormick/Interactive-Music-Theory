@@ -1,5 +1,10 @@
 import { BehaviorSubject, Observable } from 'rxjs';
-import { ProgressionDoc, ProgressionState } from '../models/progression.model';
+import {
+  ChordSlot,
+  ProgressionDoc,
+  ProgressionKey,
+  ProgressionState
+} from '../models/progression.model';
 import { requireUniqueSlotIds, settle } from './progression-edit';
 
 /**
@@ -155,6 +160,11 @@ export class ProgressionStore {
     return this.stateSubject.getValue().doc;
   }
 
+  /** The slot with this id, or null when the document does not hold one. */
+  slot(id: string): ChordSlot | null {
+    return this.doc.slots.find(candidate => candidate.id === id) ?? null;
+  }
+
   /** Which slot the strip has selected. Not a document change, so not undoable. */
   selectSlot(id: string | null): void {
     const state = this.stateSubject.getValue();
@@ -209,6 +219,32 @@ export class ProgressionStore {
     this.currentRun = run?.key ?? null;
 
     this.publish(settled, select ?? state.selectedSlotId, true);
+  }
+
+  /**
+   * Swaps one slot for what `build` makes of it, by id, in one commit.
+   *
+   * Addressing a slot by id rather than by index is what makes this safe to
+   * hand a `build` that was computed before the commit began: the index a slot
+   * sits at is a fact about the document at a moment, and `settle()` re-flows
+   * the timeline on the way out of every commit. An id that is no longer in the
+   * document is a no-op inside the mutation - the entry is still pushed, which
+   * is the same answer `commit` gives any mutation that changes nothing.
+   *
+   * It lives here rather than on either caller because both of them need it:
+   * the service's own harmony edits and `ProgressionNoteEditor`'s note writes
+   * are the same document operation with different things to put in the slot.
+   */
+  commitSlot(id: string, build: (key: ProgressionKey) => ChordSlot, run?: CommitRun): void {
+    this.commit(
+      draft => {
+        const index = draft.slots.findIndex(slot => slot.id === id);
+        if (index < 0) return;
+        draft.slots[index] = build(draft.key);
+      },
+      undefined,
+      run
+    );
   }
 
   /**
