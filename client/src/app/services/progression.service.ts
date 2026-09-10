@@ -827,26 +827,6 @@ export class ProgressionService {
 }
 
 /**
- * A degree with the four fields a choice names written over it, and the four
- * it does not name - inversion, suspension, extensions, octave - left where
- * they were.
- *
- * Leaving them is the same rule as ever and it is worth restating now that two
- * of them sound: a palette button re-shapes the chord it is pressed on, so a
- * slot that was suspended stays suspended and a pinned ♭9 stays pinned.
- * `unpinned`, below, is the one that takes all of it back, and the note under
- * the alternates row already names Reset to chord as the way there.
- *
- * Copied one at a time rather than spread, and that is a guard rather than a
- * style. `ChordChoice` is satisfied structurally, so what actually arrives is a
- * palette view model carrying a numeral, a printed name and several more fields
- * meant for the screen. A spread would write every one of them into the stored
- * `ChordDegree`, where `normalizeChordDegree` spreads them on again and
- * `structuredClone` copies them into every undo entry the document ever takes -
- * a display string preserved as though it were harmony, and preserved *stale*,
- * because nothing regenerates it.
- */
-/**
  * A degree with everything the user pinned above the key dropped: the shape
  * override where there is one to drop and a diatonic answer to fall back to,
  * the suspension, and every pinned extension.
@@ -884,6 +864,26 @@ function unpinned(degree: ChordDegree): ChordDegree {
   return sameDegree(dropped, degree) ? degree : dropped;
 }
 
+/**
+ * A degree with the four fields a choice names written over it, and the four
+ * it does not name - inversion, suspension, extensions, octave - left where
+ * they were.
+ *
+ * Leaving them is the same rule as ever and it is worth restating now that two
+ * of them sound: a palette button re-shapes the chord it is pressed on, so a
+ * slot that was suspended stays suspended and a pinned ♭9 stays pinned.
+ * `unpinned`, above, is the one that takes all of it back, and the note under
+ * the alternates row already names Reset to chord as the way there.
+ *
+ * Copied one at a time rather than spread, and that is a guard rather than a
+ * style. `ChordChoice` is satisfied structurally, so what actually arrives is a
+ * palette view model carrying a numeral, a printed name and several more fields
+ * meant for the screen. A spread would write every one of them into the stored
+ * `ChordDegree`, where `normalizeChordDegree` spreads them on again and
+ * `structuredClone` copies them into every undo entry the document ever takes -
+ * a display string preserved as though it were harmony, and preserved *stale*,
+ * because nothing regenerates it.
+ */
 function chosen(degree: ChordDegree, choice: ChordChoice): ChordDegree {
   return {
     ...degree,

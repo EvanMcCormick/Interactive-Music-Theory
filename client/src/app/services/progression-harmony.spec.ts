@@ -937,6 +937,68 @@ describe('effectiveQuality', () => {
     expect(effectiveQuality(MAJOR, shape({ degree: 6, alter: -1 }))).toBe('diminished');
   });
 
+  /**
+   * The first of two intermediate states this function's docstring argues for
+   * and nothing asserted. **M3 Task 5 deletes this when `effectiveChord`
+   * replaces `effectiveQuality`.**
+   *
+   * The promise is that the name comes off the chord, and what that promise
+   * cannot do is name a chord `QUALITY_INTERVALS` has no entry for. A
+   * suspension is exactly that: `[0, 5, 7]` is no entry there, so a sus chord
+   * comes back `'other'` and the card prints `?`. Unlabelled rather than
+   * mislabelled, on the same terms as everywhere else - and unreachable through
+   * the UI until Task 6, because nothing writes `suspension` today.
+   *
+   * `effectiveChord` reads the base shape with the suspension *removed* and
+   * composes the figure, so the G7sus4 below becomes `dominant7` plus `sus4`
+   * rather than nothing at all. Pinned here so that the day it changes, the
+   * change is a failing spec rather than a docstring nobody re-read.
+   */
+  it('cannot yet name a suspended chord, and says so rather than guessing', () => {
+    expect(chordPitchClasses(MAJOR, shape({ suspension: 'sus4' }))).toEqual([0, 5, 7]);
+    expect(effectiveQuality(MAJOR, shape({ suspension: 'sus4' }))).toBe('other');
+    expect(effectiveQuality(MAJOR, shape({ suspension: 'sus2' }))).toBe('other');
+
+    // The one that shows what is actually lost: a G7sus4 is a chord with a
+    // name, and this function has no way to reach it.
+    const g7sus4 = shape({ degree: 4, extent: 7, suspension: 'sus4' });
+    expect(chordPitchClasses(MAJOR, g7sus4)).toEqual([7, 12, 14, 17]);
+    expect(effectiveQuality(MAJOR, g7sus4)).toBe('other');
+  });
+
+  /**
+   * The second, and the opposite failure to the first. **M3 Task 5 deletes this
+   * when `effectiveChord` replaces `effectiveQuality`.**
+   *
+   * `qualityOfIntervals` names a stack from its first four notes, which is the
+   * convention `ChordDegree.quality` stores a ninth under and is right for the
+   * *base* shape. It means a pinned alteration above the seventh cannot move
+   * the answer: a V9 and a V7♭9 are one `dominant7` here, and the card prints
+   * the same numeral over two different chords.
+   *
+   * Where the suspension above is unlabelled, this is *under*-labelled - the
+   * name is not wrong, it is silent about the note the user pinned. Both are
+   * the same missing layer: a quality is one word and this chord needs a
+   * composed figure. `effectiveChord` returns the alteration alongside the base
+   * and the renderers compose `V7♭9` from the pair.
+   */
+  it('cannot yet see a pinned alteration above the seventh', () => {
+    const plain = shape({ degree: 4, extent: 9 });
+    const flatNine = shape({
+      degree: 4,
+      extent: 9,
+      extensions: { ninth: -1, eleventh: null, thirteenth: null }
+    });
+
+    // Two different chords - the ninth is a semitone lower in the second.
+    expect(chordPitchClasses(MAJOR, plain)).toEqual([7, 11, 14, 17, 21]);
+    expect(chordPitchClasses(MAJOR, flatNine)).toEqual([7, 11, 14, 17, 20]);
+
+    // One name, because the fifth note is never read.
+    expect(effectiveQuality(MAJOR, plain)).toBe('dominant7');
+    expect(effectiveQuality(MAJOR, flatNine)).toBe('dominant7');
+  });
+
   /** The guards below it still reach the caller. */
   it('refuses a scale that cannot stack thirds, and a degree off the scale', () => {
     expect(() => effectiveQuality([0, 2, 4, 7, 9], shape({ quality: 'major' })))
