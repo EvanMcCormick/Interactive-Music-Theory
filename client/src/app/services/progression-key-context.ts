@@ -10,11 +10,15 @@ import { isHeptatonic } from './progression-harmony';
  * are built from, and how the key spells its notes.
  *
  * `ProgressionKey.scaleId` is an id into `MusicTheoryService`'s tables, and the
- * loop below is the whole progression's only reader of them - nothing else in
- * this feature calls `getScaleCategories`. Everything above takes a
- * `Scale | null` or a `readonly number[] | null` back and never asks where it
- * came from, so the shape of those tables is a fact about one file rather than
- * about the service, the store and the editor together.
+ * loop below is the only place this feature's source reads them - the other
+ * callers of `getScaleCategories` are all specs, and they are doing the
+ * opposite thing. They enumerate the tables to sweep an invariant over every
+ * scale the app offers, or reach into them for three named ones to check the
+ * borrowed chords still track them: assertions *about* the tables, not a key
+ * being resolved. Everything above takes a `Scale | null` or a
+ * `readonly number[] | null` back and never asks where it came from, so the
+ * shape of those tables is a fact about one file rather than about the service,
+ * the store and the editor together.
  *
  * ## Why it is a thing with a name rather than five private methods
  *

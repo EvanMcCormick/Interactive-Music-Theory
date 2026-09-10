@@ -87,11 +87,12 @@ export interface ChordChoice {
  * `reclaimPitches`, and every refusal argued below.
  *
  * The seam is `derive`. `ProgressionState` carries `canBuildChords` and
- * `keyScale`, which are `findScale` and `isHeptatonic` - harmony, and the one
- * thing the store must not learn. So the store is handed this service's own
- * `derive` at construction and calls it, contributing only the `HistoryDepth`
- * it alone knows. An `inject()` in that file instead would compile and pass,
- * and would put the resolution of a scale id inside the undo stack.
+ * `keyScale`, which are `ProgressionKeyContext` resolving a scale id and
+ * `isHeptatonic` over what comes back - harmony, and the one thing the store
+ * must not learn. So the store is handed this service's own `derive` at
+ * construction and calls it, contributing only the `HistoryDepth` it alone
+ * knows. An `inject()` in that file instead would compile and pass, and would
+ * put the resolution of a scale id inside the undo stack.
  *
  * The shape is still `ComposerService`'s, for the reason that service gives:
  * every mutation goes through one `commit()`, which snapshots the previous
@@ -108,8 +109,11 @@ export interface ChordChoice {
  * `setNoteTiming`, `setNoteVelocity` and the `writeNotes` funnel under them
  * work out notes and claims and commit the pair, and never ask what chord a
  * slot is. `resetSlotToChord` reads like a fifth one and stayed here, because
- * it rebuilds the block chord from the degree and so needs `regenerate` and
- * `canBuildChords`.
+ * it rebuilds the block chord from the degree and so needs `regenerate`. That
+ * is the whole of what pins it: `canBuildChords` is `this.keys.canBuildChords`
+ * now, on an object a collaborator can simply be handed. See
+ * `progression-key-context.ts`, which puts the same seam sharply - it holds
+ * only while what the editor is handed cannot rebuild a chord.
  *
  * It is handed the store rather than this service, which is what keeps that
  * seam from being a matter of discipline: there is no path from there to
@@ -164,8 +168,10 @@ export class ProgressionService {
   /**
    * How a key id becomes a scale. A field initializer rather than a line in the
    * constructor, because it needs nothing but `musicTheory` - which the line
-   * above has filled by the time this one runs - and because the callback the
-   * store is handed below reads it on every publish.
+   * above has filled by the time this one runs - and it has to be in place this
+   * early because `ProgressionStore`'s constructor calls `derive`
+   * *synchronously* to build its first state: the first publish happens inside
+   * the line below that constructs the store, not at the first edit.
    */
   private readonly keys = new ProgressionKeyContext(this.musicTheory);
 
