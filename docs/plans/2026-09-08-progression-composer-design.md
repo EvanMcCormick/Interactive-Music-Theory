@@ -1,10 +1,16 @@
 # Progression Composer — Design
 
 **Date:** 2026-09-08
-**Status:** M1 implemented and merged. See `2026-09-08-progression-m1-core.md` for
-the plan it was built from, and "Correction: `alter` cannot express a borrowed
-chord" at the end of this document for what implementation disproved. M2 (the
-piano roll) and M3 (the recogniser) are designed here but not built.
+**Status:** M1 and M2 implemented and merged. See `2026-09-08-progression-m1-core.md`
+and `2026-09-08-progression-m2-piano-roll.md` for the plans they were built from,
+and "Correction: `alter` cannot express a borrowed chord" for what implementation
+disproved. M3 (the recogniser) is settled under "M3 decisions" at the end of this
+document and planned in `2026-09-10-progression-m3-recogniser.md`; it is not
+built. M4 is designed here only.
+
+**Read the sections in reverse order.** "M3 decisions" wins over "M2 decisions",
+which wins over the original design above it — each records what the milestone
+before it disproved.
 
 ## Goal
 
@@ -628,3 +634,245 @@ the table overrule the choice the user made by picking it.
 `MINOR_MODES` grew with the offsets and only with them. A scale the table cannot
 place keeps the major label, because a signature this module could not find is
 not one it may then call minor either.
+
+---
+
+## M3 decisions
+
+Settled 2026-09-10, before planning M3. The plan is
+`2026-09-10-progression-m3-recogniser.md`. Where these conflict with anything
+above — "Two-way sync" in particular, which M3 is the first milestone to build —
+these win.
+
+### Scope
+
+The recogniser, `literal` degradation and the chip, **and** the three items this
+document filed as "M3" beside them: suspensions sounded, a chord model that can
+build and name extended and altered chords ("A real ninth chord is unreachable"),
+and a spelling model that can write a C flat ("The two chromatic tables cannot
+spell every borrowed root").
+
+The last two are not separable from the first in practice. Without extended
+chords, every altered extension a user drags into place has nothing to match and
+goes literal. And a recogniser that labels chromatic roots makes the misspellings
+it cannot fix more common.
+
+### The chord model grows three ways, all through `null`
+
+```ts
+interface ChordDegree {
+  degree; alter; extent; inversion; octave;   // unchanged
+  quality: NamedQuality | null;               // gains four added-tone shapes
+  suspension: 'none' | 'sus2' | 'sus4';       // now sounded
+  extensions: {                               // new
+    ninth: -1 | 0 | 1 | null;                 // ♭9 / 9 / ♯9
+    eleventh: 0 | 1 | null;                   // 11 / ♯11
+    thirteenth: -1 | 0 | null;                // ♭13 / 13
+  };
+}
+```
+
+`extensions` carries one alteration per extension, and `null` means "as the key
+gives it" — the convention `quality` already uses. That makes it a migration with
+nothing to migrate: every existing slot is all-null and builds exactly what it
+builds today. A number overrides that one extension relative to the root, and is
+read only once `extent` reaches its height, so `extent` stays the single height
+control.
+
+Rejected: widening `ChordQuality` into a flat list of named extended chords. It is
+simpler to look up and cannot build a combination nobody listed, and it stores the
+height twice — in the name and in `extent` — which multiplies the disagreements
+`effectiveQuality` already spends two sections on.
+
+Four added-tone shapes join `QUALITY_INTERVALS` as four-note qualities: `major6`,
+`minor6`, `add9`, `minorAdd9`. Each opens with the triad of its own name, so the
+invariant `chordPitchClasses` rests on holds, and a `major6` at extent 9 builds a
+6/9 with no rule of its own.
+
+`suspension` replaces the third with the second or the fourth at every height, so
+7sus4 and 9sus4 fall out. Where the suspended note is also an extension — sus4 at
+extent 11, sus2 at 9 and above — the chord sounds that pitch class twice, an
+octave apart, rather than dropping a note the count depends on.
+
+### Names are composed, and still read off the chord
+
+`effectiveQuality` becomes `effectiveChord` and returns an identity rather than a
+quality: the base shape, the suspension, the height, and the extensions that are
+altered. Three renderers compose from the existing tables plus one rule: the
+height is the highest *unaltered* extension, altered ones follow it, and the
+suspension goes last. So `V9`, `V7♭9`, `Imaj13♯11`, `V7sus4`.
+
+`QUALITY_INTERVALS` still holds base shapes only, which is what keeps "no two
+entries share a shape" true: the combinations live in the composed layer, where no
+table has to list them.
+
+This settles the strip's argument against printing the height, which was that
+`V9` over `G7` would be worse than `V7` over `G7`. Both lines now come from one
+identity and agree at every height.
+
+### The fretboard is lit by interval set
+
+A built chord finds its `MusicTheoryService` id by matching intervals against the
+chord table. That the twelve quality names were also chord ids was a coincidence
+the code leaned on. Matching intervals makes it a lookup, and lights the ninth,
+eleventh and thirteenth entries the table already had. The common altered
+dominants and the suspended sevenths are added as new entries — added, not
+changed, per the guardrail on reference data. A chord the table does not hold
+lights nothing.
+
+### The recogniser
+
+A pure module, `progression-recognise.ts`.
+
+**What it reads.** The slot's *structural* pitch classes: those sounding at the
+downbeat, plus any whose summed sounding time within the slot is at least a
+quarter of the slot. An eighth-note arpeggio keeps every chord tone; a sixteenth
+passing tone drops out. A quarter-note passing tone in a four-beat slot is on the
+line and counts — the alternative threshold loses the tones of a quarter-note
+arpeggio, which is the worse error.
+
+**When it is quiet.** When the structural set is the same before and after the
+edit. This replaces "compare the new pitch-class set against what `harmony`
+currently generates" above, which is wrong once timing edits exist. They never run
+the recogniser, so they can change which notes are structural without anything
+re-reading the slot — and a comparison against the label would then relabel a slot
+the next time a passing tone was added.
+
+**It parses; it does not search.** Each structural pitch class is tried as a
+root — seven at most — and the intervals above it are parsed into an identity: a
+third or a suspension, a fifth that may be absent, a seventh or an added sixth or
+ninth, and the extensions. An interval left over means no parse from that root.
+
+This replaces "vary one attribute at a time". The locality that section wanted
+survives, because an edit is one note and the ranking prefers the current root.
+What the parse adds is that it cannot miss a natural edit that happens to change
+two fields: adding a flat seventh to `I` moves both `extent` and `quality`, and it
+is the most common way there is to make a secondary dominant.
+
+Each parse is expressed in the key. The root takes the degree whose diatonic chord
+shares the most notes with it, then the flat side, within `ALTER_MIN..ALTER_MAX`.
+Every field is `null` wherever the key's own note agrees, so a recognised `ii`
+stores `quality: null` and re-voices on a key change exactly as a palette `ii`
+does. The inversion is read from the bass.
+
+**Ranking**, best first:
+
+1. complete (fifth present) over fifth omitted;
+2. keeps the current root;
+3. its root is the bass;
+4. most fields `null`;
+5. lowest extent.
+
+This reverses the order under "Ties" above, which broke on the bass first.
+Proximity has to come first because of the fixture this document asks for itself:
+the four inversions of a diminished seventh are the same chord, so re-voicing a
+`vii°7` must not relabel it four ways. C6 against Am7 still comes out the way that
+section wanted — `I` plus an A is `I6`, `vi` plus a G is `vi7` — because each keeps
+its own root.
+
+**Outcomes.** The best parse equals the current harmony, ignoring inversion:
+nothing changes. It differs: the slot is relabelled, and the next parses become the
+chip's alternates. No parse: `literal`, reason `unrecognised`. A `user-detached`
+slot is never re-read.
+
+The only omission it accepts is the fifth, so a thirteenth voiced without its
+eleventh goes literal. Accepting it is a one-line widening of the parse and more
+ambiguity in the ranking, and is left until a user misses it.
+
+### When it runs, and undo
+
+Once per pitch gesture, inside that gesture's undo entry. A drag defers it to
+pointerup, from the roll's `endGesture`, and commits the relabel under the drag's
+own run key, so one undo takes back the notes and the label together. A one-shot
+edit — double-click add, delete, an arrow-key nudge — recognises inside its own
+commit.
+
+### The chip
+
+In the roll's toolbar beside Reset to chord rather than on the card: the roll is
+where the edit happened, and a card can be one beat wide. The card is highlighted
+to match. The chip reads `V7♭9 ▾ (was V9)` and offers the alternates, *Back to
+V9* — the old label restored, the notes kept — and *Keep as literal*. A polite live
+region says the same thing aloud, because "never silent" is owed to a screen
+reader too.
+
+Its state is `ProgressionState.relabel`, beside `selectedSlotId` and off the undo
+stack for the reason that one is: it is where the user is, not what they wrote.
+Any document change, a selection change, and undo or redo clear it — an undo can
+take away the relabel it describes.
+
+### `literal` is no longer a one-way door
+
+Every command refused a literal slot, so the recogniser would have opened a door
+with no way back but undo. Literal harmony now keeps the degree it degraded from:
+
+```ts
+| { kind: 'literal'; reason: 'unrecognised' | 'user-detached'; from: ChordDegree | null }
+```
+
+Reset to chord rebuilds the block chord from `from`, in whatever key the page is
+in by then. Notes edited back into something that parses bring an `unrecognised`
+slot back on their own, with the chip. `from` is `null` only for a document from
+elsewhere, which keeps today's refusal.
+
+### A key change re-expresses an owned chord
+
+Found by reading `mergeNotes`, and reachable in M2. A slot that owns its pitches
+keeps its degree while its notes move by the tonic interval, and when the *mode*
+changes with the tonic the two drift apart: click the relative minor on the circle
+and a hand-edited `I` in C major plays A–C♯–E under a card reading `i`. That is a
+silent mislabel, the one thing this design says the app must never do.
+
+The rule now is that a key change never changes what an owned chord *is*. Its
+identity — `effectiveChord` in the old key — is re-expressed in the new key through
+the step the recogniser ends with, and the card reads `I`. Nothing is recognised
+and no chip appears, because the chord did not change; its spelling in the new key
+did.
+
+The key-change table under "Two-way sync" is amended: *degree, hand-edited*
+transposes the notes **and re-expresses the label**. Slots that do not own their
+pitches re-voice from the degree as before, and literal slots are left alone.
+
+### Spelling comes from the degree's letter
+
+Supersedes "a change to those two arrays and to every caller of `spellNote`"
+above. A letter-and-accidental type is necessary and not sufficient: a pitch class
+does not say which letter it is, so no preference can choose C♭ over B. The degree
+can. `note-spelling.ts` writes a note as the letter some number of steps above a
+known one, with whatever accidental lands it on the pitch:
+
+- a scale degree `d` is `d` steps from the tonic;
+- a chord root on degree `d` is `d` steps from the tonic whatever its `alter` — so
+  ♭II of B♭ is a C, and pitch class 11 there is C♭;
+- a chord tone is spelled from its root by its place in the identity: third 2,
+  fifth 4, seventh 6, ninth 1, eleventh 3, thirteenth 5, sus2 1, sus4 3, added
+  sixth 5.
+
+That fixes the 55 borrowed roots, and retires `rootPrefersSharps` with its 112
+wrong displaced roots. Past a double accidental — a few exotic scales under
+`alter` — it falls back to the tables. Output stays ASCII (`Cb`, `Ebb`, `F##`) to
+match them.
+
+It is adopted app-wide. The fretboard and keyboard spell in-scale notes by degree
+for a heptatonic scale and chord tones by step for a chord, including the chord the
+progression lights. Notes outside either keep the tables, and so do scales with no
+one-letter-per-degree reading. Chord entries gain a `steps` array beside
+`intervals`, because semitones alone cannot settle it: 9 is a sixth in `6` and a
+seventh in `diminished7`.
+
+**This forces finding 2 under "M2 decisions".** Degree letters are only as right as
+the tonic's letter, and `shouldUseSharps` spells `D#/Eb` sharp. On top of degree
+letters that would print E♭ major as D♯–E♯–F##, which is worse than today. So the
+fretboard's tonic takes its spelling from the circle's own data, the rule
+`keySignatureKind` already states, and finding 2 is fixed as part of this rather
+than as a change of its own.
+
+### Not in M3
+
+- **Notation spelling.** `NotePitch` carries no letter, so alphaTab spells the
+  preview from the key signature and a ♭II chord still engraves on B. The fix is a
+  spelling field on `NotePitch`, and it belongs with M4, where the generated track
+  becomes a composer track.
+- **A thirteenth without its eleventh**, above.
+- **Recognition on a key change.** Not needed once the label is re-expressed rather
+  than kept.
