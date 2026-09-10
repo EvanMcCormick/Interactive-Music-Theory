@@ -24,7 +24,7 @@ import {
 } from '../../../../services/progression-chord-names';
 import {
   ChordExtent,
-  degreeQuality
+  effectiveChord
 } from '../../../../services/progression-harmony';
 import { chordRootName } from '../../../../services/progression-spelling';
 import { ChordOption, chordVocabulary } from '../../../../services/progression-vocabulary';
@@ -466,7 +466,13 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
 
   private buildChords(key: ProgressionKey, intervals: readonly number[]): PaletteChord[] {
     return [0, 1, 2, 3, 4, 5, 6].map(degree => {
-      const quality = degreeQuality(intervals, degree, PALETTE_EXTENT);
+      // The whole identity rather than a bare quality, which is what the three
+      // renderers take since M3 Task 5 - and it is the same identity the strip
+      // card and the fretboard read, so a diatonic button here cannot come to a
+      // different conclusion about a chord from the card it will make. At this
+      // row's extent nothing composes: a triad with no suspension and no pinned
+      // extension renders exactly what `degreeQuality` rendered before.
+      const chord = effectiveChord(intervals, paletteDegree(degree));
       // The shared arithmetic rather than a local `(tonic + interval) % 12`,
       // which is what this was and which agrees with it only while `alter` is
       // pinned at zero. The strip card and the fretboard highlight both call
@@ -483,13 +489,13 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
 
       return {
         degree,
-        numeral: romanNumeral(degree, PALETTE_ALTER, quality),
-        name: chordName(root, quality),
+        numeral: romanNumeral(degree, PALETTE_ALTER, chord),
+        name: chordName(root, chord),
         // The numeral is dropped from the spoken label rather than translated:
         // read aloud it is a string of letters ("vee eye eye") and the one fact
         // it carries beyond the position - the quality - is already in the
         // spoken name. The position is given as the degree instead.
-        label: `Add ${spokenChordName(root, quality)}, degree ${degree + 1}`,
+        label: `Add ${spokenChordName(root, chord)}, degree ${degree + 1}`,
         isTonic: degree === 0
       };
     });

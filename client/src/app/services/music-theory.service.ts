@@ -1,4 +1,3 @@
-import { keySignatureKind } from './circle-of-fifths.data';
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import {
@@ -8,11 +7,12 @@ import {
   Tunings,
   Instrument,
   MusicTheoryState,
-  Chord,
   ChordCategory,
   MusicTheoryCategory,
   MusicTheoryItem
 } from '../models/music-theory.model';
+import { CHORD_CATEGORIES } from './chord-catalog';
+import { keySignatureKind } from './circle-of-fifths.data';
 
 @Injectable({
   providedIn: 'root'
@@ -37,64 +37,14 @@ export class MusicTheoryService {
   // Keys that traditionally use flats
   private flatKeys = ['F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb', 'Cb'];
 
-  // Chord categories
-  private chordCategories: ChordCategory[] = [
-    {
-      id: 'triads',
-      name: 'Triads',
-      chords: [
-        { id: 'major', name: 'Major', intervals: [0, 4, 7], symbol: '' },
-        { id: 'minor', name: 'Minor', intervals: [0, 3, 7], symbol: 'm' },
-        { id: 'diminished', name: 'Diminished', intervals: [0, 3, 6], symbol: 'dim' },
-        { id: 'augmented', name: 'Augmented', intervals: [0, 4, 8], symbol: 'aug' },
-        { id: 'sus2', name: 'Suspended 2nd', intervals: [0, 2, 7], symbol: 'sus2' },
-        { id: 'sus4', name: 'Suspended 4th', intervals: [0, 5, 7], symbol: 'sus4' }
-      ]
-    },
-    {
-      id: 'seventh',
-      name: 'Seventh Chords',
-      chords: [
-        { id: 'major7', name: 'Major 7th', intervals: [0, 4, 7, 11], symbol: 'maj7' },
-        { id: 'dominant7', name: 'Dominant 7th', intervals: [0, 4, 7, 10], symbol: '7' },
-        { id: 'minor7', name: 'Minor 7th', intervals: [0, 3, 7, 10], symbol: 'm7' },
-        { id: 'minorMajor7', name: 'Minor Major 7th', intervals: [0, 3, 7, 11], symbol: 'mMaj7' },
-        { id: 'diminished7', name: 'Diminished 7th', intervals: [0, 3, 6, 9], symbol: 'dim7' },
-        { id: 'halfDiminished7', name: 'Half Diminished 7th', intervals: [0, 3, 6, 10], symbol: 'm7b5' },
-        { id: 'augmented7', name: 'Augmented 7th', intervals: [0, 4, 8, 10], symbol: '7#5' },
-        { id: 'augmentedMajor7', name: 'Augmented Major 7th', intervals: [0, 4, 8, 11], symbol: 'maj7#5' }
-      ]
-    },
-    {
-      id: 'extended',
-      name: 'Extended Chords',
-      chords: [
-        { id: 'major9', name: 'Major 9th', intervals: [0, 4, 7, 11, 14], symbol: 'maj9' },
-        { id: 'dominant9', name: 'Dominant 9th', intervals: [0, 4, 7, 10, 14], symbol: '9' },
-        { id: 'minor9', name: 'Minor 9th', intervals: [0, 3, 7, 10, 14], symbol: 'm9' },
-        { id: 'major11', name: 'Major 11th', intervals: [0, 4, 7, 11, 14, 17], symbol: 'maj11' },
-        { id: 'dominant11', name: 'Dominant 11th', intervals: [0, 4, 7, 10, 14, 17], symbol: '11' },
-        { id: 'minor11', name: 'Minor 11th', intervals: [0, 3, 7, 10, 14, 17], symbol: 'm11' },
-        { id: 'major13', name: 'Major 13th', intervals: [0, 4, 7, 11, 14, 17, 21], symbol: 'maj13' },
-        { id: 'dominant13', name: 'Dominant 13th', intervals: [0, 4, 7, 10, 14, 17, 21], symbol: '13' },
-        { id: 'minor13', name: 'Minor 13th', intervals: [0, 3, 7, 10, 14, 17, 21], symbol: 'm13' }
-      ]
-    },
-    {
-      id: 'alterations',
-      name: 'Altered Chords',
-      chords: [
-        { id: '7b9', name: '7th flat 9', intervals: [0, 4, 7, 10, 13], symbol: '7b9' },
-        { id: '7sharp9', name: '7th sharp 9', intervals: [0, 4, 7, 10, 15], symbol: '7#9' },
-        { id: '7b5', name: '7th flat 5', intervals: [0, 4, 6, 10], symbol: '7b5' },
-        { id: '7sharp5', name: '7th sharp 5', intervals: [0, 4, 8, 10], symbol: '7#5' },
-        { id: 'add9', name: 'Add 9', intervals: [0, 4, 7, 14], symbol: 'add9' },
-        { id: 'minor_add9', name: 'Minor Add 9', intervals: [0, 3, 7, 14], symbol: 'madd9' },
-        { id: '6', name: '6th', intervals: [0, 4, 7, 9], symbol: '6' },
-        { id: 'minor6', name: 'Minor 6th', intervals: [0, 3, 7, 9], symbol: 'm6' }
-      ]
-    }
-  ];
+  /**
+   * The chord table, which left this file when M3 Task 5 added a category to
+   * it: reference data with no state around it is the part of a service that is
+   * not a service, and `circle-of-fifths.data.ts` had gone the same way before
+   * it. `chord-catalog.ts` argues the move, and holds the guardrail that no
+   * interval array moved in it.
+   */
+  private chordCategories: ChordCategory[] = CHORD_CATEGORIES;
 
   // Unified categories (scales and chords combined)
   private unifiedCategories: MusicTheoryCategory[] = [];
@@ -1026,24 +976,10 @@ export class MusicTheoryService {
     return this.chordCategories;
   }
 
-  getCurrentChords(): Chord[] {
-    const items = this.getCurrentItems();
-    return items.map(item => ({
-      id: item.id,
-      name: item.name,
-      intervals: item.intervals,
-      symbol: item.symbol || ''
-    }));
-  }
-
-  getCurrentChordObject(): Chord | undefined {
-    const item = this.getCurrentItem();
-    if (!item || item.type !== 'chord') return undefined;
-    return {
-      id: item.id,
-      name: item.name,
-      intervals: item.intervals,
-      symbol: item.symbol || ''
-    };
-  }
+  // `getCurrentChords` and `getCurrentChordObject` stood here and had no caller
+  // in the app or in a spec. They rebuilt a `Chord` out of a `MusicTheoryItem`,
+  // which since M3 Task 5 cannot be done at all - `steps` is a fact about a
+  // chord that the unified item does not carry, and the two would have had to
+  // invent an empty one. Removed rather than filled with a value that breaks the
+  // field's own invariant.
 }

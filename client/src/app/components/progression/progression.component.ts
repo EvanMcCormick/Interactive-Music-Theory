@@ -16,10 +16,11 @@ import { ProgressionNotationComponent } from './components/progression-notation/
 import { ProgressionStripComponent } from './components/progression-strip/progression-strip.component';
 import { ProgressionTransportComponent } from './components/progression-transport/progression-transport.component';
 import { ProgressionState } from '../../models/progression.model';
+import { findChordByIntervals } from '../../services/chord-catalog';
 import { MusicTheoryService } from '../../services/music-theory.service';
 import { PROGRESSION_AUDIO, createToneApi } from '../../services/progression-audio';
 import { chordRootPitchClass } from '../../services/progression-generate';
-import { effectiveQuality } from '../../services/progression-harmony';
+import { effectiveChord } from '../../services/progression-harmony';
 import { ProgressionPlayerService } from '../../services/progression-player.service';
 import { ProgressionService } from '../../services/progression.service';
 
@@ -427,20 +428,27 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    *    under a diminished fifth - and there is simply no chord in
    *    `MusicTheoryService` to point at.
    *
-   * `ChordQuality`'s twelve named values are chord ids in `MusicTheoryService`,
-   * which is what lets the quality be handed straight to `findChordCategory`
-   * and used as the item id, with no translation table in between. That
-   * correspondence is written down at both ends - `progression-harmony.ts` says
-   * so where the type is declared - and `findChordCategory` is also what
-   * happens if it ever stops being true: an id no category holds lights
-   * nothing, rather than selecting a category that does not contain it.
+   * **It is lit by the interval set, not by the name.** Until M3 Task 5 the
+   * quality was handed straight to `findChordCategory` and used as the item id,
+   * on the coincidence that twelve `ChordQuality` names were also chord ids -
+   * and that coincidence could not survive a composed name, because `V7♭9` is a
+   * name no single quality holds. `findChordByIntervals` matches
+   * `ChordIdentity.intervals` against the table instead, which makes it a lookup
+   * rather than a correspondence: every entry the table holds can light, and a
+   * set it does not hold lights nothing.
    *
-   * The quality comes from `effectiveQuality`, which is the function the strip
-   * card asks too, so the fretboard lights what the card beside it is called
-   * rather than reaching its own conclusion about the same slot. That has one
-   * visible consequence: a ninth is named after its seventh, so a chord raised
-   * to a ninth lights the seventh - a subset of what is sounding, and the same
-   * chord the card prints.
+   * That is strictly more than before. A ninth used to be named after its
+   * seventh and lit the seventh - a subset of what was sounding - where the
+   * table's own `dominant9` row now matches exactly. The suspended sevenths,
+   * the sharp elevenths and the 6/9 are new rows added for the same reason.
+   *
+   * The identity comes from `effectiveChord`, which is the function the strip
+   * card asks too, so the fretboard lights the chord the card beside it names
+   * rather than reaching its own conclusion about the same slot. The two can
+   * still differ in *detail* - a `7♭5` stack has no `ChordQuality` and prints
+   * `?` on the card while the table's `7b5` row lights behind it - and that is
+   * the right way round: the notes are known even where the name is not, and
+   * showing them is not a claim about what the chord is called.
    */
   private chordFor(slotId: string): AppSelection | null {
     const state = this.latest;
@@ -451,14 +459,12 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     if (!state.canBuildChords || !state.keyScale) return null;
 
     const degree = slot.harmony.degree;
-    // `null` means "as the key gives it", and the fretboard wants the name
+    // `null` means "as the key gives it", and the fretboard wants the chord
     // rather than the override - the same resolution the strip's card makes,
     // through the same function so the two cannot disagree.
-    const quality = effectiveQuality(state.keyScale.intervals, degree);
-    if (quality === 'other') return null;
-
-    const category = this.musicTheory.findChordCategory(quality);
-    if (!category) return null;
+    const chord = effectiveChord(state.keyScale.intervals, degree);
+    const found = findChordByIntervals(chord.intervals);
+    if (!found) return null;
 
     const key = state.doc.key;
     return {
@@ -469,8 +475,8 @@ export class ProgressionComponent implements OnInit, OnDestroy {
         chordRootPitchClass(key, state.keyScale.intervals, degree),
         key.preferSharps
       ),
-      categoryId: category.id,
-      itemId: quality
+      categoryId: found.categoryId,
+      itemId: found.itemId
     };
   }
 

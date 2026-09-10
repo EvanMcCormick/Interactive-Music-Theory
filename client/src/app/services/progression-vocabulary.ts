@@ -14,7 +14,7 @@ import {
   NamedQuality,
   QUALITY_INTERVALS,
   degreeQuality,
-  effectiveQuality,
+  effectiveChord,
   isHeptatonic
 } from './progression-harmony';
 
@@ -56,7 +56,7 @@ import {
  *
  *  1. **"Turns V into V7" is a change of height**, and the design doc gives
  *     that as the alternates row's own example. A shape has a height.
- *  2. **The name is never a surprise.** `effectiveQuality` reads a chord's name
+ *  2. **The name is never a surprise.** `effectiveChord` reads a chord's name
  *     off the stack it builds, and at the height a quality itself names the
  *     answer is always that quality - swept over every scale, degree and
  *     `alter` the app can reach. So no button here can print `?`, and no two
@@ -549,7 +549,7 @@ function secondary(context: OptionContext): ChordOption[] {
 /**
  * One option: the triple to store, and the three ways of writing it.
  *
- * The name comes from `effectiveQuality` rather than from the override, which
+ * The name comes from `effectiveChord` rather than from the override, which
  * is the rule the strip card and the fretboard selection already share - a
  * chord is named after what it builds. At the height chosen here that is always
  * the override itself, so the two are the same answer; asking the shared
@@ -567,7 +567,7 @@ function buildOption(
   const { key, scaleIntervals, current } = context;
   const extent = naturalExtent(quality);
   const option = optionDegree(degree, alter, quality, extent);
-  const built = effectiveQuality(scaleIntervals, option);
+  const built = effectiveChord(scaleIntervals, option);
   // On the letter the numeral names, whatever `alter` does to the pitch: a
   // `♭II` button and a `II` button are written on the same letter, and the
   // accidental in the name is the one the numeral is already showing. That is
@@ -626,7 +626,7 @@ function naturalExtent(quality: NamedQuality): ChordExtent {
  * folds a negative sum back into range, which a displaced root in a flat key
  * reaches.
  *
- * `chordRootName` reads only `degree` and `alter`; `effectiveQuality`, the
+ * `chordRootName` reads only `degree` and `alter`; `effectiveChord`, the
  * other caller, reads everything but `inversion` and `octave`. The fields a
  * palette button does not choose are what a fresh slot carries - no
  * suspension, no pinned extension - which is also what makes the name it

@@ -13,7 +13,7 @@ import {
   ChordSlot,
   ProgressionState
 } from '../../../../models/progression.model';
-import { NamedQuality, effectiveQuality } from '../../../../services/progression-harmony';
+import { NamedQuality, effectiveChord } from '../../../../services/progression-harmony';
 
 /**
  * What the palette offers, what it refuses, and what it dispatches.
@@ -448,14 +448,14 @@ describe('ChordPaletteComponent', () => {
 
       const intervals = currentState().keyScale?.intervals ?? [];
       // Degree 4 of a major scale, extended: the dominant seventh.
-      expect(effectiveQuality(intervals, {
+      expect(effectiveChord(intervals, {
         degree: 4,
         alter: 0,
         extent: 7,
         quality: null,
         suspension: 'none',
         extensions: { ninth: null, eleventh: null, thirteenth: null }
-      })).toBe('dominant7');
+      }).base).toBe('dominant7');
     });
 
     /**

@@ -29,28 +29,27 @@
  * device `progression-normalize.ts` documents against the same file.
  */
 
-import type { ChordDegree } from '../models/progression.model';
+import type { ChordDegree, SuspensionKind } from '../models/progression.model';
 
 /**
  * The rules in `degreeQuality` produce no name that is not in this list, and
  * `'other'` is the honest answer for a stack of thirds that is not a named
  * chord at all.
  *
- * ## Twelve of these are also chord ids, and four are not
+ * ## Twelve of these used to be chord ids, and nothing leans on that now
  *
- * Every name here used to be a chord id in `music-theory.service.ts`, and the
- * fretboard leaned on that: it is lit by handing the quality straight to
- * `selectKeyAndMode` as a chord id. The four added-tone shapes break the
- * correspondence in two places - `minor6` and `add9` happen to match ids, while
- * `major6` is `'6'` there and `minorAdd9` is `'minor_add9'` - so a slot holding
- * either lights nothing until M3 Task 5 replaces lighting *by name* with
- * `findChordByIntervals`, lighting by the interval set the chord was actually
- * built from.
+ * Every name here except the four added-tone shapes is also a chord id in
+ * `music-theory.service.ts`, and the fretboard used to lean on the coincidence:
+ * it was lit by handing the quality straight to `selectKeyAndMode` as an id.
+ * The four added-tone shapes broke it in two places - `major6` is `'6'` there
+ * and `minorAdd9` is `'minor_add9'` - and a composed name breaks it altogether,
+ * because `V7♭9` is a name no single quality holds.
  *
- * That is an intermediate state and it is the honest one: the correspondence
- * was a coincidence the code leaned on, and the fix is to stop leaning rather
- * than to bend four names into ids. Nothing is mislit in the meantime - an
- * unmatched id lights nothing, which is the same answer `'other'` already gets.
+ * M3 Task 5 stopped leaning rather than bending four names into ids. The
+ * fretboard is lit by `findChordByIntervals` from `ChordIdentity.intervals`, so
+ * what is lit is the interval set the chord was actually built from - which
+ * lights every entry the chord table holds rather than the twelve whose names
+ * happened to match, and lights nothing at all for a set it does not hold.
  */
 export type ChordQuality =
   | 'major' | 'minor' | 'diminished' | 'augmented'
@@ -524,12 +523,117 @@ function liftIntoAscent(notes: readonly number[]): number[] {
 }
 
 /**
- * The quality a slot is *named* by: the name of the chord it actually builds.
+ * Where each note of a stack of thirds sits as a *letter*, counted from the
+ * root: a third is two letters up, a seventh six, a ninth one.
+ *
+ * Indexed by position in the stack, which is why it runs 0 2 4 6 1 3 5 rather
+ * than 0 1 2 3 4 5 6 - the extensions are the same three letters as the ninth,
+ * eleventh and thirteenth's own second, fourth and sixth, an octave higher, and
+ * `spellAt` reduces the count mod 7 anyway. Two positions read a different
+ * letter and both are named below: position 1 under a suspension, and position 3
+ * under an added-tone shape.
+ *
+ * Semitones cannot settle this and that is the whole reason it is written down.
+ * Nine semitones above the root is a *sixth* in a `major6` and a *seventh* in a
+ * `diminished7`, and the two are spelled on different letters - A against B♭♭ on
+ * a C root - so a chord tone spelled from its interval alone is spelled wrong
+ * about a third of the time in the shapes M3 added.
+ */
+const STACK_STEPS: readonly number[] = [0, 2, 4, 6, 1, 3, 5];
+
+/**
+ * What position 1 is a letter-wise, once a suspension has replaced it: a second
+ * under `sus2` and a fourth under `sus4`, where a third would be a third.
+ */
+const SUSPENSION_STEPS: Readonly<Record<SuspensionKind, number>> = {
+  none: 2,
+  sus2: 1,
+  sus4: 3
+};
+
+/**
+ * The four shapes whose fourth note is not a seventh, and the letter it is
+ * instead: a sixth for the two sixth chords, a ninth for the two added ninths.
+ *
+ * Keyed on the *base*, which is read off the built stack, so a shape truncated
+ * back to its triad never reaches here - there is no fourth note to name.
+ */
+const ADDED_TONE_STEPS: Readonly<Partial<Record<ChordQuality, number>>> = {
+  major6: 5,
+  minor6: 5,
+  add9: 1,
+  minorAdd9: 1
+};
+
+/** Reduces to 0-11, for a stack that was deliberately never reduced. */
+function reduceToOctave(value: number): number {
+  return ((value % 12) + 12) % 12;
+}
+
+/**
+ * A displacement read as the nearer of its two representatives, -6..5.
+ *
+ * The same reading `spellAt` gives an accidental, and here for the same kind of
+ * reason: `liftIntoAscent` may have raised an extension by an octave to keep the
+ * stack ascending, and an octave is a register rather than a pitch. A ♭13 that
+ * was lifted over the eleventh below it is still a ♭13, and reading the raw
+ * difference would call it an alteration of +11 and refuse to name the chord.
+ */
+function nearestAlteration(displacement: number): number {
+  return ((((displacement + 6) % 12) + 12) % 12) - 6;
+}
+
+/**
+ * What a chord is, independent of the key it is written in: the thing both the
+ * name and the fretboard are read off, so the two cannot disagree.
+ *
+ * It carries the *built* chord rather than the stored one, for the reason
+ * `effectiveChord` argues at length. Nothing here is a `ChordDegree` field
+ * repeated: `base` is what the stack turned out to be and not what was asked
+ * for, the three alterations are measured against the chord's own naturals
+ * rather than read out of `extensions`, and `intervals` and `steps` are the
+ * notes themselves.
+ */
+export interface ChordIdentity {
+  /** The root, relative to the tonic, 0-11. */
+  root: number;
+  /** The triad, seventh or added-tone shape; `'other'` when no name fits. */
+  base: ChordQuality;
+  suspension: SuspensionKind;
+  extent: ChordExtent;
+  /** Semitones above the root, ascending, as built. What the fretboard is lit by. */
+  intervals: readonly number[];
+  /** Alteration from natural of each extension present; null when absent. */
+  ninth: number | null;
+  eleventh: number | null;
+  thirteenth: number | null;
+  /** Letter steps above the root, per interval. What chord tones are spelled by. */
+  steps: readonly number[];
+}
+
+/**
+ * The alterations a name exists for, per extension.
+ *
+ * The unions in `progression.model.ts` say what a user may *pin*; this says what
+ * can be *read back*, and the two are not the same list because an extension is
+ * also whatever the key put there. An exotic scale can stack a ninth an octave
+ * above its own root, which is neither a ♭9 nor a ♯9 nor a 9 - there is no
+ * figure for it, so the chord has no composed name and comes back `'other'`.
+ */
+const NAMEABLE_ALTERATIONS: readonly (readonly number[])[] = [
+  [-1, 0, 1],
+  [0, 1],
+  [-1, 0]
+];
+
+/**
+ * The identity of the chord a slot builds: what it is, rather than what it was
+ * asked for.
  *
  * `null` means "as the key gives it", so every reader wanting a name rather
  * than an override has this same line to write - and writing it twice is how
- * two parts of one screen come to disagree about one chord. The strip's card
- * and the fretboard selection are the two that want it today.
+ * two parts of one screen come to disagree about one chord. The strip's card,
+ * the palette's buttons and the fretboard selection are the three that want it.
  *
  * ## Why it names the chord rather than repeating the override
  *
@@ -557,12 +661,50 @@ function liftIntoAscent(notes: readonly number[]): number[] {
  * contradicted; only the notes the override deliberately left to the key can
  * move the name.
  *
+ * ## Why it returns a chord rather than a quality
+ *
+ * A quality is one word, and by M3 the model can build chords no single word
+ * describes. `effectiveQuality` returned `'other'` for a `Csus4` - `[0, 5, 7]`
+ * is no `QUALITY_INTERVALS` shape - and returned `dominant7` for both a V9 and a
+ * V7♭9, which is the opposite failure: unlabelled in the first case,
+ * *under*-labelled in the second, and the card printing one numeral over two
+ * different chords.
+ *
+ * Both are the same missing layer. The base shape, the suspension, the height
+ * and the alterations are four facts about one chord, and a name is composed
+ * from all four; squeezing them into a `ChordQuality` loses three of them.
+ * `progression-chord-names.ts` does the composing and this function does the
+ * reading, which keeps the split the two modules were separated on: the
+ * arithmetic here can be checked against a chord table, the typography there
+ * against how a chart is printed.
+ *
+ * **`base` is read with the suspension removed.** A G7sus4's base is
+ * `dominant7`, because the chord being suspended is what the figure `7sus4` is
+ * built on - and because `[0, 5, 7, 10]` is not a `QUALITY_INTERVALS` entry and
+ * never will be: that table holds base shapes only, which is what keeps "no two
+ * entries share a shape" true while the combinations live in the composed layer.
+ *
+ * **The alterations are measured against the chord's own naturals**, 14, 17 and
+ * 21, not against the key's - `EXTENSION_NATURALS` argues that - and only where
+ * the extent reaches the position. An extension whose alteration is outside the
+ * set a figure exists for makes `base` `'other'`, which prints `?` and lights
+ * nothing: unlabelled rather than mislabelled, as everywhere else. That is
+ * reachable with nothing pinned at all, in a scale whose own ninth lands an
+ * octave above the root.
+ *
+ * **`steps` is what chord tones are spelled by.** See `STACK_STEPS`: nine
+ * semitones is a sixth in one shape and a seventh in another, so the interval
+ * alone cannot say which letter to write.
+ *
  * ## The two qualities it will not build
  *
- * **`'other'` is answered with itself.** It names no interval set, so there is
- * no chord to build and read back - `chordPitchClasses` refuses it outright.
- * `'other'` *is* the honest name for a stack that is no named chord, so handing
- * it straight back is the answer rather than a fallback.
+ * **`'other'` is answered with an identity that names nothing.** It names no
+ * interval set, so there is no chord to build and read back -
+ * `chordPitchClasses` refuses it outright - and the identity comes back with the
+ * degree's own root, an empty interval list and `base` `'other'`. `'other'` *is*
+ * the honest name for a stack that is no named chord, so handing it back is the
+ * answer rather than a fallback; an empty interval list lights nothing, which is
+ * the same answer the numeral's `?` gives.
  *
  * **A null quality over a displaced root is answered from the key**, without
  * building anything, because that pair is the one `chordPitchClasses` throws
@@ -578,32 +720,109 @@ function liftIntoAscent(notes: readonly number[]): number[] {
  * therefore the branch that keeps this function's one promise, which is that
  * the name comes off the chord.
  *
- * What that promise cannot do is name a chord the table has no entry for, and a
- * suspension is exactly that: `[0, 5, 7]` is no `QUALITY_INTERVALS` shape, so a
- * sus chord comes back `'other'` and prints `?` until M3 Task 5 replaces this
- * function with `effectiveChord`, which reads the base shape with the
- * suspension removed and composes the figure. Unlabelled rather than
- * mislabelled, on the same terms as everywhere else, and nothing in the UI can
- * set a suspension before that task lands.
- *
- * A stack that no name fits comes back as `'other'` even though an override
- * asked for something else, and that is the intended answer rather than a gap:
- * the numeral prints `?` and the fretboard lights nothing, which is what both
- * already do for a diatonic stack with no name. Unlabelled rather than
- * mislabelled is the rule the strip is built on.
+ * A stack that no name fits comes back with `base` as `'other'` even though an
+ * override asked for something else, and that is the intended answer rather
+ * than a gap: the numeral prints `?`, which is what it already does for a
+ * diatonic stack with no name. Unlabelled rather than mislabelled is the rule
+ * the strip is built on.
  */
-export function effectiveQuality(
+export function effectiveChord(
   scaleIntervals: readonly number[],
   shape: ChordShape
-): ChordQuality {
-  if (shape.quality === 'other') return 'other';
+): ChordIdentity {
+  if (shape.quality === 'other') return unnameable(scaleIntervals, shape);
+
   // A null quality over a displaced root is the one pair `chordPitchClasses`
   // refuses, and naming is not the place to discover that a document carried it
-  // anyway. Answered from the key without building, which is what `null` means.
-  if (shape.quality === null && shape.alter !== 0) {
-    return degreeQuality(scaleIntervals, shape.degree, shape.extent);
-  }
+  // anyway. Built as the key gives it, without the displacement, which is what
+  // `null` means - and which is the answer `effectiveQuality` reached through
+  // `degreeQuality`, on the same stack.
+  const built: ChordShape =
+    shape.quality === null && shape.alter !== 0 ? { ...shape, alter: 0 } : shape;
 
-  return qualityOfIntervals(chordPitchClasses(scaleIntervals, shape));
+  const stack = chordPitchClasses(scaleIntervals, built);
+  const root = stack[0];
+  const intervals = stack.map(note => note - root);
+
+  const base =
+    built.suspension === 'none'
+      ? qualityOfIntervals(stack)
+      : qualityOfIntervals(
+          chordPitchClasses(scaleIntervals, { ...built, suspension: 'none' })
+        );
+
+  const alterations = EXTENSION_NATURALS.map((natural, i) => {
+    const position = FIRST_EXTENSION_POSITION + i;
+    if (position >= intervals.length) return null;
+    return nearestAlteration(intervals[position] - natural);
+  });
+
+  // An extension no figure exists for is a chord no figure exists for. Checked
+  // here rather than in the renderer because it is a fact about the notes: the
+  // stack really does hold an interval convention has no name for, and three
+  // renderers discovering that separately is three chances to disagree.
+  const nameable = alterations.every(
+    (alteration, i) => alteration === null || NAMEABLE_ALTERATIONS[i].includes(alteration)
+  );
+
+  return {
+    root: reduceToOctave(root),
+    base: nameable ? base : 'other',
+    suspension: built.suspension,
+    extent: built.extent,
+    intervals,
+    ninth: alterations[0],
+    eleventh: alterations[1],
+    thirteenth: alterations[2],
+    steps: stepsOf(intervals.length, built.suspension, base)
+  };
+}
+
+/**
+ * The identity of a chord there is nothing to build: `'other'` as a stored
+ * quality, which names no interval set.
+ *
+ * The root is still the degree's own, because the degree is a fact whatever the
+ * shape is - the strip prints the numeral from it, and a numeral with no figure
+ * still says where in the key the chord sits. Everything else is the refusal.
+ */
+function unnameable(scaleIntervals: readonly number[], shape: ChordShape): ChordIdentity {
+  const diatonic = degreePitchClasses(scaleIntervals, shape.degree, shape.extent);
+
+  return {
+    root: reduceToOctave(diatonic[0] + shape.alter),
+    base: 'other',
+    suspension: shape.suspension,
+    extent: shape.extent,
+    intervals: [],
+    ninth: null,
+    eleventh: null,
+    thirteenth: null,
+    steps: []
+  };
+}
+
+/**
+ * The letter step of each position in a stack this tall: `STACK_STEPS`, with
+ * position 1 moved by a suspension and position 3 by an added-tone base.
+ *
+ * The base decides position 3 and the base is read off the built stack, so a
+ * `major6` cut back to its own triad never gets a sixth here - there is no
+ * fourth note to spell. A stack with no name at all keeps the plain stack of
+ * thirds, which is what its positions are whatever they add up to.
+ */
+function stepsOf(
+  length: number,
+  suspension: SuspensionKind,
+  base: ChordQuality
+): readonly number[] {
+  const steps = STACK_STEPS.slice(0, length);
+
+  if (steps.length > 1) steps[1] = SUSPENSION_STEPS[suspension];
+
+  const added = ADDED_TONE_STEPS[base];
+  if (added !== undefined && steps.length > 3) steps[3] = added;
+
+  return steps;
 }
 

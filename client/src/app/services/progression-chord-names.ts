@@ -1,4 +1,4 @@
-import type { ChordQuality } from './progression-harmony';
+import type { ChordExtent, ChordIdentity, ChordQuality } from './progression-harmony';
 
 /**
  * How a chord is written, in the three places this app writes one.
@@ -175,6 +175,312 @@ const FLAT_SIGN = '♭';
 const SHARP_SIGN = '♯';
 
 /**
+ * How a chord's *height* is written, once a name can carry one.
+ *
+ * The three tables above hold **base shapes**, exactly as `QUALITY_INTERVALS`
+ * does, and a composed figure is a base plus three small rules: the height, the
+ * altered extensions, and the suspension. That split is what stops the tables
+ * multiplying - a flat list of named extended chords would need a row per
+ * combination in each of the three conventions, and the combinations are what a
+ * user makes up as they go.
+ *
+ * The height is written into the base's own figure by **replacing its seventh**,
+ * which is why there is no fourth table: `maj7` becomes `maj13`, `min7` becomes
+ * `min11`, `minMaj7` becomes `minMaj9`, and `major seventh` becomes `major
+ * thirteenth`. Every seventh figure this module writes names its seventh exactly
+ * once, so the substitution is total rather than a best effort - and at height 7
+ * it is the identity, which is what keeps every existing figure exactly as it
+ * was.
+ *
+ * A triad has no height to write, so its entry is empty and the substitution is
+ * skipped: nothing in a triad's figure is a seventh to replace.
+ */
+const SEVENTH_FIGURE = '7';
+const SPOKEN_SEVENTH = 'seventh';
+
+const HEIGHT_FIGURES: Readonly<Record<ChordExtent, string>> = {
+  3: '',
+  7: '7',
+  9: '9',
+  11: '11',
+  13: '13'
+};
+
+const SPOKEN_HEIGHTS: Readonly<Record<ChordExtent, string>> = {
+  3: '',
+  7: 'seventh',
+  9: 'ninth',
+  11: 'eleventh',
+  13: 'thirteenth'
+};
+
+/** The three extensions, as the figure and the word each is written with. */
+const EXTENSION_FIGURES: readonly string[] = ['9', '11', '13'];
+const SPOKEN_EXTENSIONS: readonly string[] = ['nine', 'eleven', 'thirteen'];
+
+/**
+ * What a suspension adds, and it goes **last** in all three conventions.
+ *
+ * `V7♭9sus4` rather than `V7sus4♭9`: the suffix is read as a chord's shape
+ * followed by what was done to it, and the suspension is the one alteration
+ * that changes which chord tone is missing rather than where one sits.
+ */
+const SUSPENSION_FIGURES: Readonly<Record<'sus2' | 'sus4', { figure: string; spoken: string }>> = {
+  sus2: { figure: 'sus2', spoken: 'suspended second' },
+  sus4: { figure: 'sus4', spoken: 'suspended fourth' }
+};
+
+/**
+ * What a base is written as **once its third has been suspended away**, for the
+ * six bases where that is a chord anyone writes a symbol for.
+ *
+ * A suspension replaces the third, so the part of a figure describing the third
+ * goes with it and the height stays. That is why `dominant7` and `minor7` share
+ * a row: with no third there is no difference between them, and `C7sus4` is what
+ * both are printed as. `major7` and `minorMajor7` share one for the same reason.
+ *
+ * **The four bases not here refuse, and the refusal is the point.** `°` and `+`
+ * describe the *fifth* as well as the third, and a suspension leaves the fifth
+ * where it is - so dropping the sign would lose the flat fifth, and keeping it
+ * would print `C°sus4`, which is not a symbol any chart uses. The added-tone
+ * shapes refuse on the same terms: `C6sus4` is occasionally written but
+ * `Cadd9sus4` is not, and a rule that named half of them would be choosing which
+ * unconventional symbol to invent. `?` says the chord is real and its name is
+ * not, which is what this module does everywhere else.
+ *
+ * The numeral keeps the base's own **case** even though the third it describes
+ * is gone. A numeral says where in the key a chord sits, and `V7sus4` is the
+ * dominant suspended - it is the chord being suspended that the case names, and
+ * the `sus` figure beside it already says the third is displaced.
+ */
+interface SuspendedFigure {
+  numeral: string;
+  symbol: string;
+  spoken: string;
+}
+
+const SUSPENDED_FIGURES: Readonly<Partial<Record<ChordQuality, SuspendedFigure>>> = {
+  major: { numeral: '', symbol: '', spoken: '' },
+  minor: { numeral: '', symbol: '', spoken: '' },
+  dominant7: { numeral: '7', symbol: '7', spoken: 'dominant seventh' },
+  minor7: { numeral: '7', symbol: '7', spoken: 'dominant seventh' },
+  major7: { numeral: 'maj7', symbol: 'Maj7', spoken: 'major seventh' },
+  minorMajor7: { numeral: 'maj7', symbol: 'Maj7', spoken: 'major seventh' }
+};
+
+/**
+ * A sixth chord with an unaltered ninth over it, which is written `6/9` and not
+ * as any composition of a `6` with a `9`.
+ *
+ * The one combination in this module that is a name in its own right rather than
+ * a base plus a rule, and it earns the exception by being what a chart prints:
+ * `C6/9` is a standard symbol and `C6add9` is not.
+ */
+const SIX_NINE_FIGURES: Readonly<Partial<Record<ChordQuality, SuspendedFigure>>> = {
+  major6: { numeral: '6/9', symbol: '6/9', spoken: 'six nine' },
+  minor6: { numeral: '6/9', symbol: 'min6/9', spoken: 'minor six nine' }
+};
+
+/** The four shapes whose fourth note is a sixth or a ninth rather than a seventh. */
+const ADDED_TONE_BASES: readonly ChordQuality[] = ['major6', 'minor6', 'add9', 'minorAdd9'];
+
+/** A base figure resolved at the height it stands, in all three conventions. */
+interface ComposedFigure {
+  lowerCase: boolean;
+  /** The numeral's suffix: `maj13♯11`, `7sus4`, `6/9`. */
+  numeral: string;
+  /** The chord symbol's suffix: `Maj13#11`, `7sus4`, `6/9`. */
+  symbol: string;
+  /** Whether that suffix is a word and takes a space. See `chordName`. */
+  spaced: boolean;
+  /** The whole quality as words: `major thirteenth sharp eleven`. */
+  spoken: string;
+}
+
+/** The refusal, in all three conventions at once. */
+const UNNAMEABLE: ComposedFigure = {
+  lowerCase: NUMERAL_FIGURES.other.lowerCase,
+  numeral: NUMERAL_FIGURES.other.suffix,
+  symbol: CHORD_SUFFIXES.other,
+  spaced: false,
+  spoken: SPOKEN_QUALITIES.other
+};
+
+/**
+ * The whole of a chord's figure, composed from what it is.
+ *
+ * One function for all three renderers, so a numeral, a printed name and a
+ * spoken label can differ in convention and never in *content*: the three
+ * strings below are made in one pass off one identity, which is the property
+ * `effectiveChord` exists to give them.
+ *
+ * Three rules, in this order, and the order is the convention:
+ *
+ *  1. **The height is the highest unaltered extension present**, or the base's
+ *     own height when none is. So a V with a natural ninth is `V9`, and a V with
+ *     a flattened one is `V7♭9` - the flat nine cannot be the height, because
+ *     `V9` would say it was natural.
+ *  2. **The altered extensions follow it, ascending.** `V7♭9♯11` rather than
+ *     `V7♯11♭9`, which is how a chart lists them.
+ *  3. **The suspension goes last.** See `SUSPENSION_FIGURES`.
+ *
+ * And one refusal, which is `?` in all three: a base of `'other'`, a suspension
+ * over a base no suspended symbol exists for, or an added-tone shape carried
+ * past the heights it has a name at. Each is argued where its table is.
+ */
+function composeFigure(chord: ChordIdentity): ComposedFigure {
+  const base = baseFigure(chord);
+  if (base === null) return UNNAMEABLE;
+
+  const altered = alteredExtensions(chord);
+  const suspension =
+    chord.suspension === 'none' ? null : SUSPENSION_FIGURES[chord.suspension];
+
+  return {
+    lowerCase: base.lowerCase,
+    numeral:
+      base.numeral + altered.map(one => one.numeral).join('') + (suspension?.figure ?? ''),
+    symbol:
+      base.symbol + altered.map(one => one.symbol).join('') + (suspension?.figure ?? ''),
+    // Read off the *base*, not off the whole suffix, which is the same rule as
+    // before at one remove: a suffix is spaced because it opens with a word, and
+    // an alteration or a `sus` is never the opening. A suspended triad has no
+    // base figure at all and closes up, which is what gives `Csus2` rather than
+    // the `C sus2` a test of the first character would have produced.
+    spaced: /^[A-Za-z]/.test(base.symbol),
+    spoken: [base.spoken, ...altered.map(one => one.spoken), suspension?.spoken]
+      .filter(part => part !== undefined && part !== '')
+      .join(' ')
+  };
+}
+
+/**
+ * The height a chord's figure names: the highest extension present whose
+ * alteration is nothing.
+ *
+ * An altered extension cannot be the height because the height figure asserts it
+ * is natural, and a lower unaltered one still can be - `Imaj13♯11` names a
+ * thirteenth over a sharpened eleventh, because the thirteenth itself is where
+ * the key put it.
+ */
+function heightOf(chord: ChordIdentity): ChordExtent {
+  if (chord.thirteenth === 0) return 13;
+  if (chord.eleventh === 0) return 11;
+  if (chord.ninth === 0) return 9;
+  // Four notes is a seventh or an added tone; three is a triad, which has no
+  // height figure to write.
+  return chord.intervals.length >= 4 ? 7 : 3;
+}
+
+/** The base's own figure at the height it stands, or null when it has none. */
+function baseFigure(chord: ChordIdentity): ComposedFigure | null {
+  if (chord.base === 'other') return null;
+
+  const numeral = NUMERAL_FIGURES[chord.base];
+  const height = heightOf(chord);
+
+  if (chord.suspension !== 'none') {
+    const suspended = SUSPENDED_FIGURES[chord.base];
+    if (suspended === undefined) return null;
+    return figureAt(numeral.lowerCase, suspended, height);
+  }
+
+  if (ADDED_TONE_BASES.includes(chord.base)) return addedToneFigure(chord);
+
+  return figureAt(
+    numeral.lowerCase,
+    {
+      numeral: numeral.suffix,
+      symbol: CHORD_SUFFIXES[chord.base],
+      spoken: SPOKEN_QUALITIES[chord.base]
+    },
+    height
+  );
+}
+
+/**
+ * An added-tone shape's figure, which exists at two heights and no others.
+ *
+ * `C6` and `Cadd9` at their own height; `C6/9` where a sixth carries an
+ * unaltered ninth. `Cadd9` keeps its own figure at a ninth's height too, because
+ * the stack's ninth is the added ninth an octave up - the same pitch class, so
+ * the chord is the one the figure already names.
+ *
+ * Everything else refuses. A sixth with an eleventh or a thirteenth over it, or
+ * with a flattened ninth, is a real chord with no conventional symbol: `C6/9/11`
+ * and `C6♭9` are not written, and truncating to `C6/9` would be silent about a
+ * note that is sounding - which is the mislabelling this whole layer exists to
+ * stop. `?` says the chord is real and unnamed.
+ */
+function addedToneFigure(chord: ChordIdentity): ComposedFigure | null {
+  if (chord.eleventh !== null || chord.thirteenth !== null) return null;
+  if (chord.ninth !== null && chord.ninth !== 0) return null;
+
+  const numeral = NUMERAL_FIGURES[chord.base];
+  const sixNine = chord.ninth === 0 ? SIX_NINE_FIGURES[chord.base] : undefined;
+
+  return figureAt(
+    numeral.lowerCase,
+    sixNine ?? {
+      numeral: numeral.suffix,
+      symbol: CHORD_SUFFIXES[chord.base],
+      spoken: SPOKEN_QUALITIES[chord.base]
+    },
+    // An added-tone figure never takes a height: its own note is the fourth one,
+    // and the only extension it admits is folded into `6/9` above.
+    7
+  );
+}
+
+/** One base figure with its seventh raised to the chord's height. */
+function figureAt(
+  lowerCase: boolean,
+  figure: SuspendedFigure,
+  height: ChordExtent
+): ComposedFigure {
+  return {
+    lowerCase,
+    numeral: raise(figure.numeral, SEVENTH_FIGURE, HEIGHT_FIGURES[height]),
+    symbol: raise(figure.symbol, SEVENTH_FIGURE, HEIGHT_FIGURES[height]),
+    spaced: false,
+    spoken: raise(figure.spoken, SPOKEN_SEVENTH, SPOKEN_HEIGHTS[height])
+  };
+}
+
+/**
+ * Replaces the last `seventh` in a figure with the chord's own height.
+ *
+ * The last rather than the first, for `minMaj7`, where the `7` is the last
+ * character but not the last token; and a no-op at a triad's height and a
+ * seventh's, where there is nothing to raise and a substitution would strip a
+ * figure that never named a height at all.
+ */
+function raise(figure: string, seventh: string, height: string): string {
+  if (height === '' || height === seventh) return figure;
+
+  const at = figure.lastIndexOf(seventh);
+  return at < 0 ? figure : figure.slice(0, at) + height + figure.slice(at + seventh.length);
+}
+
+/** Each altered extension present, ascending, in all three conventions. */
+function alteredExtensions(chord: ChordIdentity): SuspendedFigure[] {
+  const figures: SuspendedFigure[] = [];
+
+  [chord.ninth, chord.eleventh, chord.thirteenth].forEach((alteration, i) => {
+    if (alteration === null || alteration === 0) return;
+
+    const raised = alteration > 0;
+    figures.push({
+      numeral: (raised ? SHARP_SIGN : FLAT_SIGN) + EXTENSION_FIGURES[i],
+      symbol: (raised ? '#' : 'b') + EXTENSION_FIGURES[i],
+      spoken: `${raised ? 'sharp' : 'flat'} ${SPOKEN_EXTENSIONS[i]}`
+    });
+  });
+
+  return figures;
+}
+
+/**
  * The degree a slash numeral points at: `V/vi` tonicises the sixth.
  *
  * It carries no accidental of its own, because a secondary dominant tonicises a
@@ -255,61 +561,30 @@ export interface RomanTarget {
  * chords. `vii°7/V` needs its figure, and dropping it would turn a diminished
  * seventh into a numeral that reads as a dominant.
  *
- * ## What it does not know: how tall the chord is
+ * ## How tall the chord is, which it used to have no way of knowing
  *
- * It takes a quality and not an extent, and `degreeQuality` names a ninth,
- * eleventh and thirteenth after their seventh. So a V9 arrives here as
- * `dominant7` and prints `V7`: the figure describes the quality, not the height
- * of the stack, and the + complexity button changes what a slot sounds without
- * changing what it is called.
+ * It took a `ChordQuality` until M3 Task 5, and a quality names a ninth,
+ * eleventh and thirteenth after their seventh - so a V9 arrived here as
+ * `dominant7` and printed `V7`. That was recorded as deliberate, and it was: the
+ * alternative on the table at M2 was to give `ChordQuality` ninth, eleventh and
+ * thirteenth members, and the invariant `QUALITY_INTERVALS` is read in both
+ * directions under would have had to hold across every altered variant of each -
+ * `[0,4,7,10,14]`, `[0,4,7,10,13]` and `[0,4,7,10,15]` are all ninths, and the
+ * app's own chord table lists all three.
  *
- * That is deliberate and it is the model's existing convention rather than a
- * new one - `ChordDegree.quality` stores `dominant7` for a ninth too - so the
- * numeral agrees with the field it was computed from.
+ * It takes a `ChordIdentity` now, and the widening that was rejected is still
+ * rejected: the table stays base shapes only and the height is a *rule* applied
+ * to a base figure rather than a row of its own. So `V9`, `V7♭9`, `Imaj13♯11`
+ * and `V7sus4` are all written without one new entry in any of the three tables,
+ * and "no two entries share a shape" is as true as it was.
  *
- * **Note for the chord palette, settled.** Its complexity readout prints
- * the extent in words, so a user who presses `+` twice reads "Complexity: 9th"
- * in that panel while the strip card beside it reads `V7`. The strip decided
- * not to print the height: its two lines are the numeral and the chord name,
- * and the panel that says "9th" is labelled "Complexity", a different question.
- *
- * **Settled at M2 Task 8: the height stays unnamed.** The alternative was to
- * give `ChordQuality` ninth, eleventh and thirteenth members, and two things
- * make that a much larger change than the `V9` label it buys:
- *
- *  - `QUALITY_INTERVALS` is read in both directions and rests on no two
- *    entries sharing a shape. A ninth admits `[0,4,7,10,14]`, `[0,4,7,10,13]`
- *    and `[0,4,7,10,15]` - the app's own chord table lists all three - and the
- *    invariant would have to hold across the eleventh and thirteenth variants
- *    of each.
- *  - The three tables here are keyed exhaustively on `ChordQuality`, so every
- *    new member needs a numeral figure, a printed suffix and a spoken phrase:
- *    typographic decisions, made to serve an arithmetic problem.
- *
- * **And a third consideration cuts the other way, so it is stated as a cost of
- * deferring rather than a reason for it.** An earlier version of this note
- * claimed a `dominant9` override at extent 9 would build the same five notes a
- * `dominant7` override does, "because the ninth is diatonic either way". It does
- * not. `ChordDegree.quality` overrides the chord tones from the bottom up and
- * everything above the override stays diatonic, so the ninth comes from the
- * *key*: `V/vi` in C major raised to a ninth builds `E G♯ B D F` - a flat ninth
- * - where a real `dominant9` would build `E G♯ B D F♯`. The two disagree in
- * **812 of the 1015** (scale, degree, alter) combinations the app can reach.
- *
- * So the widening would buy genuinely unreachable chords rather than a
- * relabelling: a plain dominant ninth cannot be built at all today, on a chord
- * this feature offers. That makes it an M3 feature, recorded in the design doc
- * under "A real ninth chord is unreachable", and not a naming preference that
- * was dismissed.
- *
- * What deferring costs is therefore two things. One is a truncation, and a
- * truncation rather than a falsehood: a borrowed `♭VII` on a slot raised to a
- * ninth prints `♭VIImaj7` over a stack that really is a B flat major seventh
- * with the key's own ninth on top, and the palette's "Complexity: 9th" readout
- * states the height beside it. Truncated rather than wrong is the same rule as
- * unlabelled rather than mislabelled. The other is the harmony above: the
- * extensions a user gets are the key's, and there is no way to ask for any
- * others.
+ * **The strip's argument against printing the height is settled by the same
+ * change.** That argument was that `V9` over a chord name reading `G7` would be
+ * worse than `V7` over `G7`: two conventions on one card, disagreeing. Both
+ * lines now come from one identity through one `composeFigure`, so they agree at
+ * every height by construction, and the card can print the height because there
+ * is nothing left for it to disagree with. `progression-strip-cards.ts` carries
+ * the same note from the other end.
  *
  * ## And the two things it refuses
  *
@@ -325,7 +600,7 @@ export interface RomanTarget {
 export function romanNumeral(
   degree: number,
   alter: number,
-  quality: ChordQuality,
+  chord: ChordIdentity,
   of?: RomanTarget
 ): string {
   if (!Number.isInteger(degree) || degree < 0 || degree > 6) {
@@ -337,16 +612,35 @@ export function romanNumeral(
     );
   }
 
-  const figure = NUMERAL_FIGURES[quality];
+  const figure = composeFigure(chord);
   const roman = ROMAN_NUMERALS[degree];
   const numeral =
     accidental(alter) + (figure.lowerCase ? roman.toLowerCase() : roman);
 
   // The figure is the target's rather than this chord's once there is a slash.
   // See the note above for why the left-hand one is dropped.
-  return of === undefined
-    ? numeral + figure.suffix
-    : `${numeral}/${romanNumeral(of.degree, 0, of.quality)}`;
+  return of === undefined ? numeral + figure.numeral : `${numeral}/${targetNumeral(of)}`;
+}
+
+/**
+ * The numeral on the right of a slash, which is a plain triad by construction.
+ *
+ * Written from `NUMERAL_FIGURES` directly rather than by recursing with an
+ * identity built for the target: a `RomanTarget` is a *degree of the key* and
+ * the key's degrees are diatonic, so `secondary()` filters them to major and
+ * minor triads before ever getting here. Building a whole identity to render
+ * three characters would mean this module could ask for a chord to be built,
+ * which is the dependency direction its header rules out.
+ */
+function targetNumeral(of: RomanTarget): string {
+  if (!Number.isInteger(of.degree) || of.degree < 0 || of.degree > 6) {
+    throw new Error(`A Roman numeral needs a scale degree from 0 to 6; got ${of.degree}`);
+  }
+
+  const figure = NUMERAL_FIGURES[of.quality];
+  const roman = ROMAN_NUMERALS[of.degree];
+
+  return (figure.lowerCase ? roman.toLowerCase() : roman) + figure.suffix;
 }
 
 /** `-1` -> `♭`, `2` -> `♯♯`, `0` -> nothing at all. */
@@ -366,10 +660,12 @@ function accidental(alter: number): string {
  * begins with a letter is a word and takes a space, and one that begins with a
  * symbol or a digit is a figure and closes up. That gives `C Maj7` and `G7`,
  * which is how each is written, from one line instead of thirteen decisions.
+ * The rule is now read off the *base* of a composed suffix rather than off its
+ * first character - see `composeFigure`, which is where the two part company.
  */
-export function chordName(root: string, quality: ChordQuality): string {
-  const suffix = CHORD_SUFFIXES[quality];
-  return /^[A-Za-z]/.test(suffix) ? `${root} ${suffix}` : `${root}${suffix}`;
+export function chordName(root: string, chord: ChordIdentity): string {
+  const figure = composeFigure(chord);
+  return figure.spaced ? `${root} ${figure.symbol}` : `${root}${figure.symbol}`;
 }
 
 /**
@@ -385,8 +681,8 @@ export function chordName(root: string, quality: ChordQuality): string {
  * The root arrives spelled, as `chordName`'s does and for the same reason: how
  * a pitch class is spelled is a decision this module is never party to.
  */
-export function spokenChordName(root: string, quality: ChordQuality): string {
-  return `${spokenRoot(root)} ${SPOKEN_QUALITIES[quality]}`;
+export function spokenChordName(root: string, chord: ChordIdentity): string {
+  return `${spokenRoot(root)} ${composeFigure(chord).spoken}`;
 }
 
 /**

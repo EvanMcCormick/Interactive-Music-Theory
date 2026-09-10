@@ -20,7 +20,7 @@ import {
   createDegreeSlot
 } from '../models/progression.model';
 import { keyTransposeInterval, regenerateSlot } from './progression-edit';
-import { ChordExtent, ChordShape, effectiveQuality } from './progression-harmony';
+import { ChordExtent, ChordShape, effectiveChord } from './progression-harmony';
 
 /**
  * The progression document's owner: every mutation, the contiguity invariant,
@@ -192,7 +192,7 @@ describe('ProgressionService', () => {
      *
      * It used to hold the *derived* label, written by `regenerateSlot` on every
      * regeneration, and that is what erased an override on the next key change,
-     * complexity step or resize. The label itself did not move: `effectiveQuality`
+     * complexity step or resize. The label itself did not move: `effectiveChord`
      * reads it off the chord that was actually built, which is where the strip
      * card and the fretboard highlight already got it.
      */
@@ -205,7 +205,7 @@ describe('ProgressionService', () => {
 
       // ii in C major is D-F-A, and it is a minor triad however it is stored.
       expect(slots()[0].notes.map(note => note.midi)).toEqual([62, 65, 69]);
-      expect(effectiveQuality(keyIntervals(), plainShape(1, 3))).toBe('minor');
+      expect(effectiveChord(keyIntervals(), plainShape(1, 3)).base).toBe('minor');
     });
 
     it('keeps slots contiguous as they are appended', () => {
@@ -751,7 +751,7 @@ describe('ProgressionService', () => {
       // off the chord that was built, which is now a major seventh.
       const harmony = slots()[0].harmony;
       expect(harmony.kind === 'degree' && harmony.degree.quality).toBeNull();
-      expect(effectiveQuality(keyIntervals(), plainShape(0, 7))).toBe('major7');
+      expect(effectiveChord(keyIntervals(), plainShape(0, 7)).base).toBe('major7');
     });
 
     // What a stepper actually computes at the top of the ladder:
@@ -1047,7 +1047,7 @@ describe('ProgressionService', () => {
       service.setKey(9, 'aeolian');
       const harmony = slots()[0].harmony;
       expect(harmony.kind === 'degree' && harmony.degree.quality).toBeNull();
-      expect(effectiveQuality(keyIntervals(), plainShape(0, 3))).toBe('minor');
+      expect(effectiveChord(keyIntervals(), plainShape(0, 3)).base).toBe('minor');
     });
 
     /**

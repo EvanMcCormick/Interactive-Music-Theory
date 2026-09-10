@@ -169,5 +169,35 @@ describe('buildRollView', () => {
 
       expect(notes()[0].name).toBe('C4');
     });
+
+    /**
+     * A chord tone is written on the letter its place in the *chord* names,
+     * which is a finer answer than the scale's and sometimes a different one.
+     *
+     * `♭VI` in C major is A♭ C E♭. Neither the A♭ nor the E♭ is in C major, so
+     * the scale has no degree for either and would fall back to the key's
+     * preference - which for C major is sharps, giving `G♯` and `D♯` under a
+     * numeral that says flat six. Read off the chord they are a root, a third
+     * and a fifth: A, C and E, one letter apart in the usual way, flattened to
+     * land on the pitches.
+     */
+    it('spells a chord tone from the chord rather than from the scale', () => {
+      const id = build();
+      progression.setSlotChord(id, { degree: 5, alter: -1, quality: 'major', extent: 3 });
+
+      expect(notes().map(note => note.name.slice(0, -1))).toEqual(['Ab', 'C', 'Eb']);
+    });
+
+    /**
+     * And a note that is not a chord tone still falls through to the scale, so
+     * the upgrade is an addition rather than a replacement.
+     */
+    it('leaves a note that is not a chord tone to the scale', () => {
+      const id = build();
+      progression.setSlotChord(id, { degree: 5, alter: -1, quality: 'major', extent: 3 });
+      place(id, [{ midi: 62, startBeat: 0, lengthBeats: 4, velocity: 80 }]);
+
+      expect(notes()[0].name).toBe('D4');
+    });
   });
 });

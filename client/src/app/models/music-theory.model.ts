@@ -9,6 +9,16 @@ export interface Chord {
   id: string;
   name: string;
   intervals: number[];
+  /**
+   * The letter step each interval is written on, counted from the root: 0 for
+   * the root, 2 for a third, 6 for a seventh, 1 for a ninth.
+   *
+   * One per interval, in the same order. Stored rather than derived because
+   * semitones cannot settle it: nine semitones above the root is a sixth in `6`
+   * and a seventh in `diminished7`, which are different letters on the same
+   * pitch. See `chord-catalog.ts`, which argues it and holds the table.
+   */
+  steps: number[];
   symbol: string;
 }
 

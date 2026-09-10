@@ -10,6 +10,7 @@ import {
   NAMED_QUALITIES,
   NamedQuality,
   degreeQuality,
+  effectiveChord,
   isHeptatonic
 } from './progression-harmony';
 import { ChordOption, chordVocabulary } from './progression-vocabulary';
@@ -459,7 +460,17 @@ describe('chordVocabulary', () => {
           const quality = degreeQuality(scale.intervals, degree, 3);
           if (quality === 'major' || quality === 'minor') continue;
 
-          const target = romanNumeral(degree, 0, quality);
+          // The target's own numeral, built through the identity of the
+          // diatonic triad on that degree - which is what `secondary` puts on
+          // the right of its slash.
+          const target = romanNumeral(degree, 0, effectiveChord(scale.intervals, {
+            degree,
+            alter: 0,
+            extent: 3,
+            quality: null,
+            suspension: 'none',
+            extensions: createExtensions()
+          }));
 
           expect(secondary.some(option => option.numeral.endsWith(`/${target}`)))
             .withContext(`${scale.name} tonicises ${target}, which is ${quality}`)

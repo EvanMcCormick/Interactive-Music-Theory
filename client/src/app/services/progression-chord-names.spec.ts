@@ -1,12 +1,76 @@
+import { createExtensions } from '../models/progression-normalize';
 import {
   ChordExtent,
+  ChordIdentity,
   ChordQuality,
-  degreeQuality
+  ChordShape,
+  NamedQuality,
+  QUALITY_INTERVALS,
+  degreeQuality,
+  effectiveChord
 } from './progression-harmony';
 import { chordName, romanNumeral, spokenChordName } from './progression-chord-names';
 
 const MAJOR = [0, 2, 4, 5, 7, 9, 11];
 const NATURAL_MINOR = [0, 2, 3, 5, 7, 8, 10];
+const HARMONIC_MINOR = [0, 2, 3, 5, 7, 8, 11];
+
+/** The four four-note shapes whose fourth note is not a seventh. */
+const ADDED_TONE_SHAPES: readonly NamedQuality[] = ['major6', 'minor6', 'add9', 'minorAdd9'];
+
+/**
+ * The identity of a chord that is only a quality: nothing suspended, nothing
+ * pinned, standing at the height its own shape reaches.
+ *
+ * The three renderers take a `ChordIdentity` since M3 Task 5, and every
+ * expectation below about a triad or a seventh is unchanged by that - which is
+ * the claim this helper exists to make checkable. An identity built this way
+ * renders exactly what the three tables rendered when they were handed a bare
+ * quality, because with no height above the base, no alteration and no
+ * suspension there is nothing for `composeFigure` to compose.
+ *
+ * `intervals` is the shape's own, so its *length* is right, which is what
+ * decides a triad from a four-note chord when no extension is present. The rest
+ * of the composed cases are built through `effectiveChord` from real shapes
+ * further down, because a hand-written identity could assert a chord the
+ * arithmetic cannot build.
+ */
+function chord(base: ChordQuality): ChordIdentity {
+  const intervals = base === 'other' ? [] : QUALITY_INTERVALS[base];
+
+  return {
+    root: 0,
+    base,
+    suspension: 'none',
+    extent: intervals.length >= 4 ? 7 : 3,
+    intervals,
+    ninth: null,
+    eleventh: null,
+    thirteenth: null,
+    steps: []
+  };
+}
+
+/** A shape to build an identity from, with C major's defaults. */
+function shape(overrides: Partial<ChordShape> = {}): ChordShape {
+  return {
+    degree: 0,
+    alter: 0,
+    extent: 3,
+    quality: null,
+    suspension: 'none',
+    extensions: createExtensions(),
+    ...overrides
+  };
+}
+
+/** The identity of a chord built in a scale, which is what the renderers take. */
+function built(
+  scale: readonly number[],
+  overrides: Partial<ChordShape> = {}
+): ChordIdentity {
+  return effectiveChord(scale, shape(overrides));
+}
 
 /**
  * The three ways this app writes a chord, checked against the conventions they
@@ -27,7 +91,7 @@ const NATURAL_MINOR = [0, 2, 3, 5, 7, 8, 10];
 describe('romanNumeral', () => {
   /** The numeral for each degree of `scale`, as the palette would print them. */
   function figures(scale: readonly number[], extent: ChordExtent = 3): string[] {
-    return [0, 1, 2, 3, 4, 5, 6].map(d => romanNumeral(d, 0, degreeQuality(scale, d, extent)));
+    return [0, 1, 2, 3, 4, 5, 6].map(d => romanNumeral(d, 0, chord(degreeQuality(scale, d, extent))));
   }
 
   // The first of the two tables this module is checked against, and the one
@@ -46,20 +110,20 @@ describe('romanNumeral', () => {
   // a plus rather than lower case: III+ in harmonic minor is a major third
   // with a sharpened fifth, not a minor chord.
   it('marks the augmented triad with a plus and keeps it upper case', () => {
-    expect(romanNumeral(2, 0, 'augmented')).toBe('III+');
+    expect(romanNumeral(2, 0, chord('augmented'))).toBe('III+');
   });
 
   // The seventh figures, each against the shape it is conventionally written
   // as: Imaj7, V7, ii7, viiø7, vii°7.
   it('writes the seventh chords with their usual figures', () => {
-    expect(romanNumeral(0, 0, 'major7')).toBe('Imaj7');
-    expect(romanNumeral(4, 0, 'dominant7')).toBe('V7');
-    expect(romanNumeral(1, 0, 'minor7')).toBe('ii7');
-    expect(romanNumeral(0, 0, 'minorMajor7')).toBe('i(maj7)');
-    expect(romanNumeral(6, 0, 'halfDiminished7')).toBe('viiø7');
-    expect(romanNumeral(6, 0, 'diminished7')).toBe('vii°7');
-    expect(romanNumeral(2, 0, 'augmented7')).toBe('III+7');
-    expect(romanNumeral(2, 0, 'augmentedMajor7')).toBe('III+maj7');
+    expect(romanNumeral(0, 0, chord('major7'))).toBe('Imaj7');
+    expect(romanNumeral(4, 0, chord('dominant7'))).toBe('V7');
+    expect(romanNumeral(1, 0, chord('minor7'))).toBe('ii7');
+    expect(romanNumeral(0, 0, chord('minorMajor7'))).toBe('i(maj7)');
+    expect(romanNumeral(6, 0, chord('halfDiminished7'))).toBe('viiø7');
+    expect(romanNumeral(6, 0, chord('diminished7'))).toBe('vii°7');
+    expect(romanNumeral(2, 0, chord('augmented7'))).toBe('III+7');
+    expect(romanNumeral(2, 0, chord('augmentedMajor7'))).toBe('III+maj7');
   });
 
   /**
@@ -73,27 +137,31 @@ describe('romanNumeral', () => {
    * the convention brackets the minor-major.
    */
   it('does not distinguish two seventh figures by letter case alone', () => {
-    const major = romanNumeral(0, 0, 'major7');
-    const minorMajor = romanNumeral(0, 0, 'minorMajor7');
+    const major = romanNumeral(0, 0, chord('major7'));
+    const minorMajor = romanNumeral(0, 0, chord('minorMajor7'));
 
     expect(minorMajor).not.toBe(major);
     expect(minorMajor.toLowerCase()).not.toBe(major.toLowerCase());
   });
 
   /**
-   * The documented consequence of taking a quality rather than an extent.
+   * **This expectation is the one M3 Task 5 deliberately reversed.** It read
+   * `V7` at all three heights, on the argument that the figure described the
+   * quality rather than the stack - which was true while a `ChordQuality` was
+   * all this function was given, and which the + complexity button made visible
+   * as a slot that sounded taller without being called anything different.
    *
-   * `degreeQuality` names a ninth after its seventh, so a V9 arrives here as
-   * `dominant7` and is printed `V7`. The figure is therefore the *quality's*
-   * figure, not the stack's height: raising a slot with the + complexity
-   * button changes what it sounds without changing what it is called. That is
-   * the same convention the model already keeps - `ChordDegree.quality` holds
-   * `dominant7` for a ninth too - rather than a second, contradictory one.
+   * A `ChordIdentity` carries the height, so the figure now states it. The
+   * chord name beside it states the same height in its own convention, because
+   * both are composed from the one identity by the one function - which is what
+   * removed the reason for printing `V7` over five notes.
    */
-  it('prints an extended chord with its seventh figure', () => {
-    for (const extent of [9, 11, 13] as ChordExtent[]) {
-      expect(romanNumeral(4, 0, degreeQuality(MAJOR, 4, extent))).toBe('V7');
-    }
+  it('prints an extended chord at the height it reaches', () => {
+    const figures = ([9, 11, 13] as ChordExtent[]).map(extent =>
+      romanNumeral(4, 0, built(MAJOR, { degree: 4, extent }))
+    );
+
+    expect(figures).toEqual(['V9', 'V11', 'V13']);
   });
 
   /**
@@ -106,17 +174,17 @@ describe('romanNumeral', () => {
    * here rather than letting it lie.
    */
   it('marks a stack that is not a named chord', () => {
-    expect(romanNumeral(6, 0, 'other')).toBe('VII?');
+    expect(romanNumeral(6, 0, chord('other'))).toBe('VII?');
   });
 
   // The same domain `degreePitchClasses` enforces, and for the same reason: a
   // degree off the end of the table would otherwise read `undefined` and print
   // the string "undefined" into a button.
   it('refuses a degree that is not one of the seven', () => {
-    expect(() => romanNumeral(-1, 0, 'major')).toThrowError(/degree/i);
-    expect(() => romanNumeral(7, 0, 'major')).toThrowError(/degree/i);
-    expect(() => romanNumeral(1.5, 0, 'major')).toThrowError(/degree/i);
-    expect(() => romanNumeral(NaN, 0, 'major')).toThrowError(/degree/i);
+    expect(() => romanNumeral(-1, 0, chord('major'))).toThrowError(/degree/i);
+    expect(() => romanNumeral(7, 0, chord('major'))).toThrowError(/degree/i);
+    expect(() => romanNumeral(1.5, 0, chord('major'))).toThrowError(/degree/i);
+    expect(() => romanNumeral(NaN, 0, chord('major'))).toThrowError(/degree/i);
   });
 
   /**
@@ -129,37 +197,37 @@ describe('romanNumeral', () => {
    * not the B diminished a whole-stack transposition produced.
    */
   it('writes a lowered root with a flat and keeps the case for the third', () => {
-    expect(romanNumeral(6, -1, 'major')).toBe('♭VII');
-    expect(romanNumeral(5, -1, 'major')).toBe('♭VI');
-    expect(romanNumeral(2, -1, 'major')).toBe('♭III');
-    expect(romanNumeral(1, -1, 'major')).toBe('♭II');
+    expect(romanNumeral(6, -1, chord('major'))).toBe('♭VII');
+    expect(romanNumeral(5, -1, chord('major'))).toBe('♭VI');
+    expect(romanNumeral(2, -1, chord('major'))).toBe('♭III');
+    expect(romanNumeral(1, -1, chord('major'))).toBe('♭II');
   });
 
   // The fifth row of that table, and the one that goes the other way: a raised
   // root takes a sharp, and the figure still follows the shape.
   it('writes a raised root with a sharp', () => {
-    expect(romanNumeral(3, 1, 'diminished')).toBe('♯iv°');
-    expect(romanNumeral(4, 2, 'major')).toBe('♯♯V');
+    expect(romanNumeral(3, 1, chord('diminished'))).toBe('♯iv°');
+    expect(romanNumeral(4, 2, chord('major'))).toBe('♯♯V');
   });
 
   // A double flat is two glyphs rather than a different sign, which is what
   // `ALTER_MIN` of -2 makes reachable.
   it('repeats the glyph for a double accidental', () => {
-    expect(romanNumeral(1, -2, 'major')).toBe('♭♭II');
+    expect(romanNumeral(1, -2, chord('major'))).toBe('♭♭II');
   });
 
   // An unaltered degree prints no accidental at all - the M1 numeral, unchanged
   // by widening the signature.
   it('prints nothing for an unaltered root', () => {
-    expect(romanNumeral(3, 0, 'minor')).toBe('iv');
+    expect(romanNumeral(3, 0, chord('minor'))).toBe('iv');
   });
 
   // Wrong kind throws, on the same rule as the degree beside it: a fractional
   // accidental would render as an empty string through `repeat`, which is a
   // silently missing flat rather than a failure.
   it('refuses an accidental that is not a whole number of semitones', () => {
-    expect(() => romanNumeral(6, -0.5, 'major')).toThrowError(/accidental/i);
-    expect(() => romanNumeral(6, NaN, 'major')).toThrowError(/accidental/i);
+    expect(() => romanNumeral(6, -0.5, chord('major'))).toThrowError(/accidental/i);
+    expect(() => romanNumeral(6, NaN, chord('major'))).toThrowError(/accidental/i);
   });
 
   /**
@@ -170,9 +238,9 @@ describe('romanNumeral', () => {
    * degree argument reads 4 for all five secondary dominants a major key has.
    */
   it('names a chord after the degree it tonicises', () => {
-    expect(romanNumeral(4, 0, 'dominant7', { degree: 5, quality: 'minor' })).toBe('V/vi');
-    expect(romanNumeral(4, 0, 'dominant7', { degree: 4, quality: 'major' })).toBe('V/V');
-    expect(romanNumeral(4, 0, 'dominant7', { degree: 3, quality: 'major' })).toBe('V/IV');
+    expect(romanNumeral(4, 0, chord('dominant7'), { degree: 5, quality: 'minor' })).toBe('V/vi');
+    expect(romanNumeral(4, 0, chord('dominant7'), { degree: 4, quality: 'major' })).toBe('V/V');
+    expect(romanNumeral(4, 0, chord('dominant7'), { degree: 3, quality: 'major' })).toBe('V/IV');
   });
 
   /**
@@ -185,8 +253,8 @@ describe('romanNumeral', () => {
    * tonicised.
    */
   it('drops the dominant seventh figure and keeps the target one', () => {
-    expect(romanNumeral(4, 0, 'dominant7', { degree: 5, quality: 'minor' })).not.toContain('7/');
-    expect(romanNumeral(4, 0, 'dominant7', { degree: 6, quality: 'diminished' })).toBe('V/vii°');
+    expect(romanNumeral(4, 0, chord('dominant7'), { degree: 5, quality: 'minor' })).not.toContain('7/');
+    expect(romanNumeral(4, 0, chord('dominant7'), { degree: 6, quality: 'diminished' })).toBe('V/vii°');
   });
 
   /**
@@ -204,13 +272,13 @@ describe('romanNumeral', () => {
    * would print `♯V/vii°` for a plain `V/vii°`. See `ALTER_AGAINST_TARGET`.
    */
   it('puts an accidental on the chord and not on its target', () => {
-    expect(romanNumeral(1, -1, 'major', { degree: 4, quality: 'major' })).toBe('♭II/V');
+    expect(romanNumeral(1, -1, chord('major'), { degree: 4, quality: 'major' })).toBe('♭II/V');
   });
 
   // A bad target degree is refused on the same terms as a bad degree, because
   // it is read out of the same table.
   it('refuses a target degree that is not one of the seven', () => {
-    expect(() => romanNumeral(4, 0, 'dominant7', { degree: 7, quality: 'major' }))
+    expect(() => romanNumeral(4, 0, chord('dominant7'), { degree: 7, quality: 'major' }))
       .toThrowError(/degree/i);
   });
 });
@@ -218,10 +286,10 @@ describe('romanNumeral', () => {
 describe('chordName', () => {
   // The concrete names beside the numerals, in the reference UI's spelling.
   it('names the triads', () => {
-    expect(chordName('C', 'major')).toBe('C Maj');
-    expect(chordName('A', 'minor')).toBe('A min');
-    expect(chordName('B', 'diminished')).toBe('B°');
-    expect(chordName('C', 'augmented')).toBe('C+');
+    expect(chordName('C', chord('major'))).toBe('C Maj');
+    expect(chordName('A', chord('minor'))).toBe('A min');
+    expect(chordName('B', chord('diminished'))).toBe('B°');
+    expect(chordName('C', chord('augmented'))).toBe('C+');
   });
 
   /**
@@ -231,18 +299,18 @@ describe('chordName', () => {
    * which is how both are written.
    */
   it('spaces a worded suffix and closes up a figured one', () => {
-    expect(chordName('C', 'major7')).toBe('C Maj7');
-    expect(chordName('A', 'minor7')).toBe('A min7');
-    expect(chordName('A', 'minorMajor7')).toBe('A minMaj7');
-    expect(chordName('G', 'dominant7')).toBe('G7');
-    expect(chordName('B', 'halfDiminished7')).toBe('Bø7');
-    expect(chordName('B', 'diminished7')).toBe('B°7');
-    expect(chordName('C', 'augmented7')).toBe('C+7');
-    expect(chordName('C', 'augmentedMajor7')).toBe('C+Maj7');
+    expect(chordName('C', chord('major7'))).toBe('C Maj7');
+    expect(chordName('A', chord('minor7'))).toBe('A min7');
+    expect(chordName('A', chord('minorMajor7'))).toBe('A minMaj7');
+    expect(chordName('G', chord('dominant7'))).toBe('G7');
+    expect(chordName('B', chord('halfDiminished7'))).toBe('Bø7');
+    expect(chordName('B', chord('diminished7'))).toBe('B°7');
+    expect(chordName('C', chord('augmented7'))).toBe('C+7');
+    expect(chordName('C', chord('augmentedMajor7'))).toBe('C+Maj7');
   });
 
   it('marks a stack that is not a named chord', () => {
-    expect(chordName('B', 'other')).toBe('B?');
+    expect(chordName('B', chord('other'))).toBe('B?');
   });
 });
 
@@ -256,16 +324,16 @@ describe('chordName', () => {
  */
 describe('spokenChordName', () => {
   it('says the suffix instead of printing it', () => {
-    expect(spokenChordName('B', 'diminished')).toBe('B diminished');
-    expect(spokenChordName('C', 'augmented')).toBe('C augmented');
-    expect(spokenChordName('B', 'halfDiminished7')).toBe('B half diminished seventh');
-    expect(spokenChordName('G', 'dominant7')).toBe('G dominant seventh');
+    expect(spokenChordName('B', chord('diminished'))).toBe('B diminished');
+    expect(spokenChordName('C', chord('augmented'))).toBe('C augmented');
+    expect(spokenChordName('B', chord('halfDiminished7'))).toBe('B half diminished seventh');
+    expect(spokenChordName('G', chord('dominant7'))).toBe('G dominant seventh');
   });
 
   it('says the accidental instead of spelling it', () => {
-    expect(spokenChordName('Eb', 'major')).toBe('E flat major');
-    expect(spokenChordName('A#', 'minor')).toBe('A sharp minor');
-    expect(spokenChordName('C', 'major')).toBe('C major');
+    expect(spokenChordName('Eb', chord('major'))).toBe('E flat major');
+    expect(spokenChordName('A#', chord('minor'))).toBe('A sharp minor');
+    expect(spokenChordName('C', chord('major'))).toBe('C major');
   });
 
   /**
@@ -279,13 +347,13 @@ describe('spokenChordName', () => {
    * way.
    */
   it('says a double accidental as a double', () => {
-    expect(spokenChordName('Ebb', 'major')).toBe('E double flat major');
-    expect(spokenChordName('F##', 'diminished')).toBe('F double sharp diminished');
+    expect(spokenChordName('Ebb', chord('major'))).toBe('E double flat major');
+    expect(spokenChordName('F##', chord('diminished'))).toBe('F double sharp diminished');
   });
 
   /** The chord is real; only its name is missing, and the label says so. */
   it('still identifies a stack that is not a named chord', () => {
-    expect(spokenChordName('B', 'other')).toBe('B unnamed chord');
+    expect(spokenChordName('B', chord('other'))).toBe('B unnamed chord');
   });
 
   /**
@@ -299,20 +367,20 @@ describe('spokenChordName', () => {
    * table: a figure begins with a digit or a symbol, a word with a letter.
    */
   it('writes the four added-tone shapes in all three conventions', () => {
-    expect(romanNumeral(0, 0, 'major6')).toBe('I6');
-    expect(romanNumeral(0, 0, 'minor6')).toBe('i6');
-    expect(romanNumeral(0, 0, 'add9')).toBe('Iadd9');
-    expect(romanNumeral(0, 0, 'minorAdd9')).toBe('iadd9');
+    expect(romanNumeral(0, 0, chord('major6'))).toBe('I6');
+    expect(romanNumeral(0, 0, chord('minor6'))).toBe('i6');
+    expect(romanNumeral(0, 0, chord('add9'))).toBe('Iadd9');
+    expect(romanNumeral(0, 0, chord('minorAdd9'))).toBe('iadd9');
 
-    expect(chordName('C', 'major6')).toBe('C6');
-    expect(chordName('C', 'minor6')).toBe('C min6');
-    expect(chordName('C', 'add9')).toBe('C add9');
-    expect(chordName('C', 'minorAdd9')).toBe('C minadd9');
+    expect(chordName('C', chord('major6'))).toBe('C6');
+    expect(chordName('C', chord('minor6'))).toBe('C min6');
+    expect(chordName('C', chord('add9'))).toBe('C add9');
+    expect(chordName('C', chord('minorAdd9'))).toBe('C minadd9');
 
-    expect(spokenChordName('C', 'major6')).toBe('C sixth');
-    expect(spokenChordName('C', 'minor6')).toBe('C minor sixth');
-    expect(spokenChordName('C', 'add9')).toBe('C added ninth');
-    expect(spokenChordName('C', 'minorAdd9')).toBe('C minor added ninth');
+    expect(spokenChordName('C', chord('major6'))).toBe('C sixth');
+    expect(spokenChordName('C', chord('minor6'))).toBe('C minor sixth');
+    expect(spokenChordName('C', chord('add9'))).toBe('C added ninth');
+    expect(spokenChordName('C', chord('minorAdd9'))).toBe('C minor added ninth');
   });
 
   /**
@@ -330,7 +398,7 @@ describe('spokenChordName', () => {
     ];
 
     for (const quality of qualities) {
-      const spoken = spokenChordName('C', quality);
+      const spoken = spokenChordName('C', chord(quality));
       expect(spoken)
         .withContext(`${quality} is not spoken as words`)
         .toMatch(/^C [a-z ]+$/);
@@ -338,3 +406,259 @@ describe('spokenChordName', () => {
   });
 });
 
+/**
+ * The composed figures, checked in all three conventions at once.
+ *
+ * Every chord here is built by `effectiveChord` from a real shape rather than
+ * hand-written as an identity, so an expectation cannot assert a chord the
+ * arithmetic does not produce - which is the failure a naming test is most
+ * exposed to, being a claim about typography sitting one step from a claim about
+ * notes. The intervals are asserted alongside the names for the same reason: if
+ * the stack is not what this file thinks it is, the name it checks is a name for
+ * something else.
+ *
+ * The rule under test is three lines long. The height is the highest *unaltered*
+ * extension present; the altered ones follow it in ascending order; the
+ * suspension goes last.
+ */
+describe('composed figures', () => {
+  /** All three renderings of one chord, which is what the strip card prints. */
+  function names(degree: number, root: string, identity: ChordIdentity): string[] {
+    return [
+      romanNumeral(degree, 0, identity),
+      chordName(root, identity),
+      spokenChordName(root, identity)
+    ];
+  }
+
+  // G B D F A. The ninth is the key's own and is a major ninth above G, so it
+  // is unaltered and it is the height.
+  it('names a ninth after its ninth', () => {
+    const v9 = built(MAJOR, { degree: 4, extent: 9 });
+
+    expect(v9.intervals).toEqual([0, 4, 7, 10, 14]);
+    expect(names(4, 'G', v9)).toEqual(['V9', 'G9', 'G dominant ninth']);
+  });
+
+  // G B D F A flat. An altered extension cannot be the height, because `V9`
+  // would be saying the ninth was natural - so the figure falls back to the
+  // seventh and the flat nine is written after it.
+  it('drops to the seventh when the ninth is flattened', () => {
+    const flatNine = built(MAJOR, {
+      degree: 4,
+      extent: 9,
+      extensions: { ninth: -1, eleventh: null, thirteenth: null }
+    });
+
+    expect(flatNine.intervals).toEqual([0, 4, 7, 10, 13]);
+    expect(names(4, 'G', flatNine)).toEqual([
+      'V7♭9',
+      'G7b9',
+      'G dominant seventh flat nine'
+    ]);
+  });
+
+  // C E G B D F sharp A. The thirteenth is where the key put it, so it is still
+  // the height even though the eleventh below it is raised.
+  it('keeps a thirteenth as the height over a sharpened eleventh', () => {
+    const maj13 = built(MAJOR, {
+      extent: 13,
+      extensions: { ninth: null, eleventh: 1, thirteenth: null }
+    });
+
+    expect(maj13.intervals).toEqual([0, 4, 7, 11, 14, 18, 21]);
+    expect(names(0, 'C', maj13)).toEqual([
+      'Imaj13♯11',
+      'C Maj13#11',
+      'C major thirteenth sharp eleven'
+    ]);
+  });
+
+  // D F A C E G, every rung diatonic.
+  it('names a minor eleventh', () => {
+    const ii11 = built(MAJOR, { degree: 1, extent: 11 });
+
+    expect(ii11.intervals).toEqual([0, 3, 7, 10, 14, 17]);
+    expect(names(1, 'D', ii11)).toEqual(['ii11', 'D min11', 'D minor eleventh']);
+  });
+
+  // G C D F. The base is read with the suspension removed, so it is the
+  // dominant seventh that is being suspended - which is what `7sus4` says.
+  it('names a suspended seventh', () => {
+    const v7sus4 = built(MAJOR, { degree: 4, extent: 7, suspension: 'sus4' });
+
+    expect(v7sus4.intervals).toEqual([0, 5, 7, 10]);
+    expect(v7sus4.base).toBe('dominant7');
+    expect(names(4, 'G', v7sus4)).toEqual([
+      'V7sus4',
+      'G7sus4',
+      'G dominant seventh suspended fourth'
+    ]);
+  });
+
+  // C D G. A suspended triad has no third, so the word that described one goes
+  // - which is also what closes the printed name up: `Csus2`, never `C Majsus2`.
+  it('drops the quality word from a suspended triad', () => {
+    const sus2 = built(MAJOR, { suspension: 'sus2' });
+
+    expect(sus2.intervals).toEqual([0, 2, 7]);
+    expect(names(0, 'C', sus2)).toEqual(['Isus2', 'Csus2', 'C suspended second']);
+  });
+
+  // C E G A D, which is written `6/9` and not as any composition of a 6 with
+  // a 9. The one combination in the module that is a name in its own right.
+  it('names a sixth with a ninth over it as a six nine', () => {
+    const sixNine = built(MAJOR, { extent: 9, quality: 'major6' });
+
+    expect(sixNine.intervals).toEqual([0, 4, 7, 9, 14]);
+    expect(names(0, 'C', sixNine)).toEqual(['I6/9', 'C6/9', 'C six nine']);
+  });
+
+  // B D F A flat in C harmonic minor, and the figure it has always had. A
+  // seventh with nothing above it composes to exactly what the tables held.
+  it('leaves a plain seventh exactly as the tables wrote it', () => {
+    const dim7 = built(HARMONIC_MINOR, { degree: 6, extent: 7 });
+
+    expect(dim7.intervals).toEqual([0, 3, 6, 9]);
+    expect(names(6, 'B', dim7)).toEqual(['vii°7', 'B°7', 'B diminished seventh']);
+  });
+
+  /**
+   * Two alterations at once, which the rule covers and the plan's table did
+   * not: they follow the height in ascending order, which is the order a chart
+   * lists them in. The bracketed form a chart often uses puts the same two
+   * figures in the same order.
+   */
+  it('lists two altered extensions in ascending order', () => {
+    const both = built(MAJOR, {
+      degree: 4,
+      extent: 11,
+      extensions: { ninth: -1, eleventh: 1, thirteenth: null }
+    });
+
+    expect(both.intervals).toEqual([0, 4, 7, 10, 13, 18]);
+    expect(names(4, 'G', both)).toEqual([
+      'V7♭9♯11',
+      'G7b9#11',
+      'G dominant seventh flat nine sharp eleven'
+    ]);
+  });
+
+  /**
+   * An added-tone shape carried above the height it has a name at.
+   *
+   * A `major6` at extent 11 sounds C E G A D F - a 6/9 with an eleventh over
+   * it. There is no conventional symbol for that, and truncating to `C6/9`
+   * would be silent about a note that is sounding. So the refusal, which is the
+   * same one a nameless stack of thirds gets.
+   */
+  it('refuses a sixth chord carried past a ninth', () => {
+    const wide = built(MAJOR, { extent: 11, quality: 'major6' });
+
+    expect(wide.intervals).toEqual([0, 4, 7, 9, 14, 17]);
+    expect(names(0, 'C', wide)).toEqual(['I?', 'C?', 'C unnamed chord']);
+  });
+
+  /**
+   * And a suspension over a base whose figure describes the fifth as well as
+   * the third.
+   *
+   * A suspended diminished triad is B E F: the third is gone and the diminished
+   * fifth is not, so dropping the degree sign would lose it and keeping it would
+   * print a symbol no chart uses. Unlabelled rather than mislabelled, and the
+   * numeral goes upper case with the rest of the refusal because its case would
+   * be asserting a third that is not there either.
+   */
+  it('refuses a suspension over a diminished triad', () => {
+    const diminishedSus = built(MAJOR, { degree: 6, suspension: 'sus4' });
+
+    expect(diminishedSus.intervals).toEqual([0, 5, 6]);
+    expect(names(6, 'B', diminishedSus)).toEqual(['VII?', 'B?', 'B unnamed chord']);
+  });
+
+  /**
+   * A seventh chosen at a triad's height, then suspended.
+   *
+   * The extent decides the note count, so the seventh is never built - and the
+   * base is read off the stack that *was* built, which is a plain major triad.
+   * A chord sounding C F G is a `Csus4` whatever was asked for, and reading the
+   * base off the stored quality instead would have printed `C7sus4` over three
+   * notes.
+   */
+  it('names a truncated seventh under a suspension by what it built', () => {
+    const truncated = built(MAJOR, { quality: 'dominant7', suspension: 'sus4' });
+
+    expect(truncated.intervals).toEqual([0, 5, 7]);
+    expect(truncated.base).toBe('major');
+    expect(names(0, 'C', truncated)).toEqual(['Isus4', 'Csus4', 'C suspended fourth']);
+  });
+
+  /**
+   * A stack no name fits at all, which is the fourth way to reach the refusal.
+   *
+   * A major triad two semitones flat under a seventh the key kept where it was
+   * spans thirteen semitones root to top. `qualityOfIntervals` refuses it, and
+   * the refusal reaches all three renderings unchanged.
+   */
+  it('refuses a stack that is no named chord', () => {
+    const unnameable = built(MAJOR, { extent: 7, alter: -2, quality: 'major' });
+
+    expect(unnameable.base).toBe('other');
+    expect(names(0, 'C', unnameable)).toEqual(['I?', 'C?', 'C unnamed chord']);
+  });
+
+  /**
+   * Every four-note base at every height, which is what makes the height a rule
+   * rather than a table.
+   *
+   * The substitution replaces the base figure's own seventh, so a figure naming
+   * its seventh twice, or not at all, would come out wrong here rather than in
+   * whichever key first reached it. The four added-tone shapes are excluded
+   * because they name no seventh to raise - their own test is above.
+   */
+  it('raises every seventh figure to every height', () => {
+    const wrong: string[] = [];
+
+    for (const quality of Object.keys(QUALITY_INTERVALS) as NamedQuality[]) {
+      if (QUALITY_INTERVALS[quality].length < 4) continue;
+      if (ADDED_TONE_SHAPES.includes(quality)) continue;
+
+      const base = chordName('C', chord(quality));
+
+      for (const extent of [9, 11, 13] as ChordExtent[]) {
+        const printed = chordName('C', {
+          ...chord(quality),
+          extent,
+          ninth: 0,
+          eleventh: extent >= 11 ? 0 : null,
+          thirteenth: extent >= 13 ? 0 : null
+        });
+        const expected = base.replace(/7(?![^7]*7)/, String(extent));
+
+        if (printed !== expected) {
+          wrong.push(`${quality} at ${extent}: ${base} became ${printed}, wanted ${expected}`);
+        }
+      }
+    }
+
+    expect(wrong).withContext(wrong.join('\n')).toEqual([]);
+  });
+
+  /**
+   * The suspension goes last, after any alteration.
+   *
+   * The suffix reads as a shape followed by what was done to it, and a
+   * suspension is what is *missing* from the shape rather than where one of its
+   * notes sits.
+   */
+  it('puts the suspension after the alterations', () => {
+    const both = built(MAJOR, {
+      degree: 4,
+      extent: 9,
+      suspension: 'sus4',
+      extensions: { ninth: -1, eleventh: null, thirteenth: null }
+    });
+
+    expect(chordName('G', both)).toBe('G7b9sus4');
+  });
+});

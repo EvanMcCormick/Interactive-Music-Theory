@@ -9,7 +9,7 @@ import {
   romanNumeral,
   spokenChordName
 } from '../../../../services/progression-chord-names';
-import { effectiveQuality } from '../../../../services/progression-harmony';
+import { effectiveChord } from '../../../../services/progression-harmony';
 import { chordRootName } from '../../../../services/progression-spelling';
 
 /**
@@ -31,35 +31,32 @@ import { chordRootName } from '../../../../services/progression-spelling';
  *
  * ## What a card prints, and what it deliberately does not
  *
- * The numeral and the name both come from `effectiveQuality`, which is the
- * name of the chord the slot actually builds: the key's own answer for a slot
- * the user has not overridden, and the *built* chord's name for one they have.
- * They used to come from `ChordDegree.quality` directly, which is the label the
- * model happens to store, and the two part company the moment an override does
- * not fill the extent it was chosen at - see `effectiveQuality`'s own note.
+ * The numeral and the name both come from `effectiveChord`, which is the
+ * identity of the chord the slot actually builds: the key's own answer for a
+ * slot the user has not overridden, and the *built* chord's identity for one
+ * they have. They used to come from `ChordDegree.quality` directly, which is the
+ * label the model happens to store, and the two part company the moment an
+ * override does not fill the extent it was chosen at - see `effectiveChord`'s
+ * own note.
  *
  * Asking one function for it is what keeps this card and the fretboard
  * selection agreeing about one chord; resolving it here would be the second
- * writing of a rule that has two readers. That source of truth is chosen rather
- * than fallen into, because a second one is available and the two disagree:
- * `degreeQuality` names a ninth after its seventh, so a slot raised to a ninth
- * reports `dominant7` and prints `V7` while the palette's complexity readout
- * beside it says "9th".
+ * writing of a rule that has two readers.
  *
- * **The card does not show the height.** Numeral and name are both figured from
- * the one stored quality, so a card's two lines can never disagree with each
- * other, and the panel that says "9th" is labelled "Complexity" - a different
- * question about the same chord. Printing `V9` here would put a second
- * convention in a component, derived from the extent while the chord name beside
- * it still read `G7`: the disagreement would move onto the card rather than off
- * it.
+ * **The card shows the height now, and the argument against it is what
+ * changed.** Until M3 Task 5 both lines were figured from a single
+ * `ChordQuality`, which names a ninth after its seventh - so a slot raised to a
+ * ninth reported `dominant7`, printed `V7`, and read `G7` beside it while the
+ * palette's complexity readout said "9th". Printing `V9` on the numeral alone
+ * would have put a second convention in a component and moved the disagreement
+ * *onto* the card: `V9` over `G7`, two lines about one chord.
  *
- * `romanNumeral`'s own note offers "widen the signature to take the extent" as
- * the M2 fix, and on its own that is exactly the `V9` over `G7` card this
- * paragraph argues against - `chordName` reads the same `quality` field and is
- * blind to the height in the same way. The disagreement starts lower down, in
- * `ChordQuality`, which has no ninth, eleventh or thirteenth member for either
- * function to name. M2 has to widen the type, or widen both functions together.
+ * `effectiveChord` removes the choice rather than settling it. Both lines are
+ * composed from one identity by one function - `composeFigure` in
+ * `progression-chord-names.ts` - so they carry the same height in the two
+ * conventions they are each written in, and `V9` sits over `G9`. There is
+ * nothing left for the card to disagree with, which is why the height can be
+ * printed at all.
  *
  * ## Unlabelled rather than mislabelled
  *
@@ -207,18 +204,18 @@ function describeSlot(
   const root = chordRootName(key, intervals, degree);
   // `quality` is nullable and `null` means "as the key gives it", so the card
   // prints the key's own answer for a slot the user has not overridden. Asked
-  // through `effectiveQuality` rather than resolved here, so that the strip and
+  // through `effectiveChord` rather than resolved here, so that the strip and
   // the fretboard cannot come to different answers about one chord - and given
   // the whole degree, because an override built on a displaced root, or under a
   // suspension, or over a pinned extension, is a different chord from the one
   // the override is called, and the card names what sounds.
-  const quality = effectiveQuality(intervals, degree);
+  const chord = effectiveChord(intervals, degree);
 
   return {
     isUnlabelled: false,
-    numeral: romanNumeral(degree.degree, degree.alter, quality),
-    name: chordName(root, quality),
-    subject: spokenChordName(root, quality),
+    numeral: romanNumeral(degree.degree, degree.alter, chord),
+    name: chordName(root, chord),
+    subject: spokenChordName(root, chord),
     // The numeral is dropped from the spoken label and the position given as a
     // degree instead, exactly as the palette does it: read aloud a numeral is a
     // string of letters, and the quality it carries is already in the spoken
