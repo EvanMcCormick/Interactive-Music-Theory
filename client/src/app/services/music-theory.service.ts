@@ -473,18 +473,26 @@ export class MusicTheoryService {
   }
 
   // State setters
+  /**
+   * A `rootSpelling` is valid only with the selection it arrived with, and each
+   * of the three setters below drops it for that reason.
+   *
+   * The guard in `note-naming.ts` tests the *pitch class*, which is why it is
+   * not enough on its own: a spelling survives any change that leaves the key
+   * where it was, and the item is half of what a spelling is for. B ionian under
+   * a `Cb` left behind by a B flat major ♭II printed `Cb Db Eb Fb Gb Ab Bb` -
+   * every letter in flats, an `F♭` among them, under a key field reading `B`.
+   */
   updateKey(key: string): void {
     this.state.next({
       ...this.state.getValue(),
       selectedKey: key,
-      // A spelling belongs to the key it was given with. Carrying it across a
-      // key change would name the new key's notes off the old key's letter.
       rootSpelling: undefined
     });
   }
 
   updateCategory(category: string): void {
-    const newState = { ...this.state.getValue(), selectedCategory: category };
+    const newState = { ...this.state.getValue(), selectedCategory: category, rootSpelling: undefined };
 
     // Set first item of the new category as selected
     const selectedCategory = this.unifiedCategories.find(cat => cat.id === category);
@@ -497,7 +505,8 @@ export class MusicTheoryService {
   updateItem(itemId: string): void {
     this.state.next({
       ...this.state.getValue(),
-      selectedItem: itemId
+      selectedItem: itemId,
+      rootSpelling: undefined
     });
   }
 
@@ -691,7 +700,20 @@ export class MusicTheoryService {
    * back.
    */
   noteNameFor(noteValue: number): string {
-    return noteName(noteValue, this.selection()) ?? this.getNoteName(noteValue);
+    return this.nameNote(noteValue, this.selection());
+  }
+
+  /**
+   * The same answer for a caller that already has the selection in hand.
+   *
+   * `noteNameFor` rebuilt the selection two to four times for every note it
+   * named - once itself and once more inside `getNoteName`, each of those
+   * reading the subject, resolving the category and searching it for the item -
+   * and `generateKeyboard` names 88 notes on every emission. The surfaces below
+   * build it once per render and pass it down.
+   */
+  private nameNote(noteValue: number, selection: SpellingSelection): string {
+    return noteName(noteValue, selection) ?? this.spellNote(noteValue, preferSharps(selection));
   }
 
   getChromatic(): string[] {
@@ -811,11 +833,12 @@ export class MusicTheoryService {
     const modeNotes = this.generateModeNotes();
     const rootNoteIndex = this.getNoteIndex(state.selectedKey);
     const currentTuning = this.tunings[state.selectedTuning].strings[state.selectedStringCount.toString()];
-    
+
     if (!currentTuning) {
       return [];
     }
-    
+
+    const selection = this.selection();
     const fretboard: FretNote[][] = [];
     
     for (let stringIndex = 0; stringIndex < strings; stringIndex++) {
@@ -830,7 +853,7 @@ export class MusicTheoryService {
         stringNotes.push({
           fret,
           noteValue,
-          noteName: this.noteNameFor(noteValue),
+          noteName: this.nameNote(noteValue, selection),
           octave: octave,
           nashvilleNumber: this.getNashvilleNumber(noteValue, rootNoteIndex),
           isRoot: noteValue === rootNoteIndex,
@@ -855,9 +878,10 @@ export class MusicTheoryService {
     if (!currentTuning) {
       return [];
     }
-    
+
+    const selection = this.selection();
     const keys: FretNote[] = [];
-    
+
     for (let keyIndex = 0; keyIndex < keyCount; keyIndex++) {
       const noteValue = currentTuning.notes[keyIndex];
       const octave = (currentTuning as any).octaves ? (currentTuning as any).octaves[keyIndex] : 4;
@@ -865,7 +889,7 @@ export class MusicTheoryService {
       keys.push({
         fret: keyIndex, // Using fret property to store key index
         noteValue,
-        noteName: this.noteNameFor(noteValue),
+        noteName: this.nameNote(noteValue, selection),
         octave: octave,
         nashvilleNumber: this.getNashvilleNumber(noteValue, rootNoteIndex),
         isRoot: noteValue === rootNoteIndex,

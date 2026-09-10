@@ -1,5 +1,5 @@
 import { MusicTheoryItem } from '../models/music-theory.model';
-import { keySignatureKind } from './circle-of-fifths.data';
+import { KeySignatureKind, keySignatureKind } from './circle-of-fifths.data';
 import {
   SpelledNote,
   formatNote,
@@ -109,13 +109,14 @@ const FLAT_KEYS = ['F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb', 'Cb'];
  *    `'F#'` says sharp and `'Gb'` says flat, so those answer for themselves.
  *    `'D#/Eb'` names one pitch class twice and says *both*, so it says nothing,
  *    and the key signature below decides instead.
- * 5. **The key's own signature**, for a mode that has one. A signature is a
- *    property of the key rather than of the scale shape: E minor has one sharp
- *    because its relative major is G. The rule lives in
+ * 5. **The key's own signature**, for a mode that has one - and for a chord,
+ *    the signature its root's own key carries. See `signatureKind` below. A
+ *    signature is a property of the key rather than of the scale shape: E minor
+ *    has one sharp because its relative major is G. The rule lives in
  *    `circle-of-fifths.data.ts`, beside the table it reads, because
  *    `ProgressionService` needs the same answer for a key this app has never
  *    been told about.
- * 6. Otherwise the item's own preference; a chord, which has none, is sharp.
+ * 6. Otherwise the item's own preference; sharp where it declares none.
  *
  * ## What rule 4 used to be, and what it cost
  *
@@ -135,9 +136,19 @@ const FLAT_KEYS = ['F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb', 'Cb'];
  * A rule reading the name could not have told those two apart in either
  * direction.
  *
- * `F#/Gb` is the one combined name whose answer does not move, and that is also
- * data rather than luck: six o'clock is the single position the circle carries
- * both halves of, and its own `accidentalKind` is sharp.
+ * **`F#/Gb` ionian is the one that does not move**, and the exemption is that
+ * narrow. Six o'clock is the single position the circle carries both halves of
+ * and its own `accidentalKind` is sharp, so the *ionian* answer is the same one
+ * the old name-reading rule gave - which is the whole of what finding 2 claimed,
+ * because finding 2 was about the four majors the staff and the palette
+ * disagreed on. Read as "F♯/G♭ never moves" it is simply false: 19 items in the
+ * app's menu answer differently under `F#/Gb` than under `F#`, and `lydian` is
+ * the instructive one and is not a bug - `keySignatureKind('lydian', 6)`
+ * inherits from D♭ major and says flat, so `Gb Ab Bb C Db Eb F` is the circle's
+ * own answer for it. The true statement is that the circle's answer wins
+ * wherever the circle has one, and the sharp/flat halves of a split wedge are
+ * not one answer between them. `music-theory.service.spec.ts` pins the whole set
+ * of 19 rather than the one case that agrees.
  *
  * Recorded as finding 2 of the M2 review in the progression design doc, and
  * forced by the degree letters below - a wrong tonic letter propagates through
@@ -161,11 +172,38 @@ export function preferSharps(selection: SpellingSelection): boolean {
     return keyName.includes('#');
   }
 
-  const signature = keySignatureKind(itemId, selection.keyIndex);
+  const signature = signatureKind(selection);
   if (signature === 'sharp') return true;
   if (signature === 'flat') return false;
 
   return item.preferSharps ?? true;
+}
+
+/**
+ * The signature the selected key carries, or null where convention states none.
+ *
+ * `keySignatureKind` answers for a scale id it knows. A **chord** id is not one
+ * of those and never will be - a chord is a shape rather than a tonality, so
+ * there is no mode to work back to a parent major from - and the `null` it
+ * returned for one was reaching rule 6, where a chord has no `preferSharps` at
+ * all and every chord came back sharp. That is finding 2 one level down: with a
+ * combined name selected, `D#/Eb` ionian printed `E♭ F G A♭ B♭ C D` and `D#/Eb`
+ * major printed `D♯ F𝄪 A♯`, from one dropdown, in one key. `A#/Bb`'s `7#9`
+ * reached a `B𝄪` and a `C𝄪`.
+ *
+ * So a chord takes its accidental from where the scale beside it takes one:
+ * **the circle position for its root's pitch class**. A chord is not in a key,
+ * but its root names one, and asking for the ionian signature at that pitch
+ * class is asking the circle exactly that question - `MODE_OFFSETS.ionian` is
+ * zero, so the parent major is the root itself. No second table, and no new
+ * spelling rule: the same data the scale read, read at the same position.
+ */
+function signatureKind(selection: SpellingSelection): KeySignatureKind | null {
+  if (selection.item?.type === 'chord') {
+    return keySignatureKind('ionian', selection.keyIndex);
+  }
+
+  return keySignatureKind(selection.itemId, selection.keyIndex);
 }
 
 /**
@@ -211,14 +249,105 @@ export function noteName(noteValue: number, selection: SpellingSelection): strin
 /**
  * The letter every other letter here is counted from.
  *
- * The caller's spelling when it gave one and it still names the key's pitch
- * class; the key's own otherwise. The pitch-class check is what keeps a
- * spelling left behind by a chord that has stopped sounding from renaming a key
- * it has nothing to do with.
+ * Three answers in order.
+ *
+ * 1. **The caller's spelling**, when it gave one and it still names the key's
+ *    pitch class. The pitch-class check is what keeps a spelling left behind by
+ *    a chord that has stopped sounding from renaming a key it has nothing to do
+ *    with.
+ * 2. **The key's own**, wherever `signatureKind` answers - which is every
+ *    diatonic mode, every scale `MODE_OFFSETS` places, and every chord. The
+ *    signature wins there and this rule does not get a vote.
+ * 3. Otherwise **whichever of the two names writes this scale most simply**, by
+ *    `simplestRoot` below.
+ *
+ * ## Why the third rule exists
+ *
+ * Rules 3 and 4 of `preferSharps` read the key *name*, and a name is not always
+ * an answer: `F#/Gb` says both things at once and `Gb` says flat because
+ * `FLAT_KEYS` holds it. For the ~33 scales `MODE_OFFSETS` deliberately has no
+ * entry for, neither the name nor a signature settles the tonic - and before
+ * this rule the fall-through reached the *scale shape's* own `preferSharps`,
+ * which is the very thing `b514027` was written to stop spelling keys by. One
+ * wrong tonic letter then propagates through all seven degrees: `F#/Gb` ultra
+ * locrian printed `Gb Abb Bbb Cbb Dbb Ebb Fbb`, six of its seven degrees on a
+ * double flat, while the same key through the circle - which publishes the
+ * single name `F#` - printed `F# G A Bb C D Eb`. One key, two spellings,
+ * decided by which control the user happened to touch.
+ *
+ * The rule this replaces it with is worth having on its own terms: **where
+ * convention has no answer, prefer the spelling that writes the scale most
+ * simply.** It is name-blind, so `F#/Gb`, bare `Gb` and bare `F#` reach the same
+ * seven letters, which is what makes the two controls agree.
+ *
+ * ## What it does not reach
+ *
+ * `preferSharps` is unchanged and stays the app-wide answer for every note with
+ * no degree to be spelled from - a note outside the scale, a pentatonic, the
+ * display overlays. Those cannot be simplified, because there is no letter under
+ * contest: `spellPitchClass` gives a black key one accidental either way. So a
+ * no-signature scale in a black key can show degrees on one accidental and
+ * out-of-scale notes on the other, and that is the honest split rather than an
+ * oversight - the degrees have a convention to satisfy and the rest of the neck
+ * only has the preference the user's own key control published.
  */
 function rootSpelling(selection: SpellingSelection): SpelledNote {
   const given = selection.rootSpelling ? parseNoteName(selection.rootSpelling) : null;
   if (given && pitchClassOf(given) === selection.keyIndex) return given;
 
-  return spellPitchClass(selection.keyIndex, preferSharps(selection));
+  if (signatureKind(selection) !== null) {
+    return spellPitchClass(selection.keyIndex, preferSharps(selection));
+  }
+
+  return simplestRoot(selection);
+}
+
+/**
+ * The accidentals a degree needs that convention has no spelling for.
+ *
+ * `spellAt` refuses past a double and states why on itself. A refusal is not
+ * merely an expensive spelling - it is the caller dropping to a chromatic table
+ * and printing a letter the degree did not name - so it costs more than any
+ * spelling that exists, which is what three is here.
+ */
+const UNSPELLABLE_COST = 3;
+
+/**
+ * Of the two names for this pitch class, the one that writes the item's own
+ * degrees with the fewest accidental marks. Sharp on a tie.
+ *
+ * The marks are counted rather than weighted, so a double flat costs two and a
+ * degree nothing can spell costs `UNSPELLABLE_COST`. That is the whole of the
+ * measure, and it is deliberately not a music-theoretic one - it does not know
+ * about key signatures or about how far round the circle a key sits, because
+ * those are exactly the questions `signatureKind` has already declined to
+ * answer. What is left is the page: fewer accidentals is fewer marks to read.
+ *
+ * The two spellings are equal for the seven natural pitch classes, so the
+ * contest is only ever between a sharp and a flat name of one black key, and the
+ * tie-break only ever settles a scale that writes both equally - `F#/Gb` whole
+ * tone would be one if `MODE_OFFSETS` did not already exclude it for having six
+ * notes. Sharp on a tie, which is this file's standing default.
+ */
+function simplestRoot(selection: SpellingSelection): SpelledNote {
+  const sharp = spellPitchClass(selection.keyIndex, true);
+  const item = selection.item;
+  if (!item) return sharp;
+
+  const flat = spellPitchClass(selection.keyIndex, false);
+  return spellingCost(item, flat) < spellingCost(item, sharp) ? flat : sharp;
+}
+
+/** Accidental marks the whole item takes when written from this root. */
+function spellingCost(item: MusicTheoryItem, root: SpelledNote): number {
+  const rootPitch = pitchClassOf(root);
+  let cost = 0;
+
+  for (let position = 0; position < item.intervals.length; position++) {
+    const step = item.steps ? item.steps[position] : position;
+    const spelled = spellAt(rootPitch + item.intervals[position], root, step);
+    cost += spelled ? Math.abs(spelled.accidental) : UNSPELLABLE_COST;
+  }
+
+  return cost;
 }

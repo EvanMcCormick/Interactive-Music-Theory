@@ -1,6 +1,8 @@
 import { TestBed } from '@angular/core/testing';
 
+import { MusicTheoryItem } from '../models/music-theory.model';
 import { MusicTheoryService } from './music-theory.service';
+import { isHeptatonic } from './progression-harmony';
 
 /**
  * How the app decides to spell notes, in the two questions it takes.
@@ -149,11 +151,60 @@ describe('MusicTheoryService spelling', () => {
       expect(combined('C#/Db', 'ionian')).toBeFalse();
     });
 
-    it('leaves F#/Gb major sharp, which is that circle position\'s own answer', () => {
-      // Six o'clock is the one position the circle carries both halves of, and
-      // its `accidentalKind` is sharp. The only combined name whose answer does
-      // not move, and it does not move because of data rather than luck.
+    /**
+     * The exemption, at the width it actually holds.
+     *
+     * It used to read "`F#/Gb` is the one combined name whose answer does not
+     * move", and the spec under it tested ionian and passed while the sentence
+     * above it was false. Six o'clock is the one position the circle carries
+     * both halves of and its own `accidentalKind` is sharp, so the *ionian*
+     * position does not move — which is the whole of what finding 2 claimed,
+     * because finding 2 was about four majors the staff and the palette
+     * disagreed on. Nineteen other items move, and the list is pinned rather
+     * than the one case that agrees.
+     *
+     * **`lydian` is the instructive member and is not a defect.** The fourth
+     * degree of D♭ major is a G♭, so `keySignatureKind('lydian', 6)` inherits
+     * from D♭ and answers flat, and `Gb Ab Bb C Db Eb F` is the circle's own
+     * reading of that key. Every other member is a scale `MODE_OFFSETS` does not
+     * place, which falls through to its own `preferSharps` — so what the list
+     * really enumerates is where the app has a flat-leaning default at this
+     * pitch class, and the honest statement is not "F♯/G♭ never moves" but *the
+     * circle's answer wins wherever the circle has one*.
+     */
+    it('leaves F#/Gb ionian sharp, and pins the nineteen items that do move', () => {
+      const moved: string[] = [];
+
+      for (const category of service.getUnifiedCategories()) {
+        if (category.id === 'fretboardNotes') continue;
+        for (const item of category.items) {
+          service.selectKeyAndMode('F#/Gb', category.id, item.id);
+          if (!service.shouldUseSharps()) moved.push(`${category.id}/${item.id}`);
+        }
+      }
+
       expect(combined('F#/Gb', 'ionian')).toBeTrue();
+      expect(moved).withContext(moved.join('\n')).toEqual([
+        'diatonicModes/lydian',
+        'pentatonicScales/minorPentatonic',
+        'bluesScales/minorBlues',
+        'otherScales/diminished',
+        'exoticScales/doubleHarmonic',
+        'exoticScales/neapolitanMinor',
+        'exoticScales/neapolitanMajor',
+        'exoticScales/persian',
+        'exoticScales/arabic',
+        'exoticScales/japanese',
+        'exoticScales/inSen',
+        'exoticScales/iwato',
+        'melodicMinorModes/dorianB2',
+        'melodicMinorModes/locrianNat2',
+        'melodicMinorModes/superLocrian',
+        'harmonicMinorModes/lydianSharp2',
+        'harmonicMinorModes/ultraLocrian',
+        'bebopScales/bebopMinor',
+        'bebopScales/bebopDorian'
+      ]);
     });
 
     it('splits the same four the other way in aeolian, where the counts differ', () => {
@@ -275,13 +326,33 @@ describe('MusicTheoryService spelling', () => {
       expect(service.noteNameFor(3)).toBe('Eb');
     });
 
-    it('falls back for the one degree a double accidental cannot reach', () => {
-      // A♯ enigmatic's sixth degree is written on an F and sounds pitch class
-      // 8 — an F triple sharp, which is not notation. It is reached with no
-      // alteration at all, which is why `spellAt` refuses rather than clamping.
-      // The other six degrees are spelled, doubles and all.
-      service.selectKeyAndMode('A#', 'exoticScales', 'enigmatic');
-      expect(namesInMode()).toEqual(['A#', 'B', 'C##', 'D##', 'E##', 'G#', 'G##']);
+    /**
+     * The fallback, on a spelling the app cannot choose for itself.
+     *
+     * **This spec used to be A♯ enigmatic**, whose sixth degree is written on an
+     * F and sounds pitch class 8 — an F triple sharp, reached with no alteration
+     * at all. Enigmatic inherits no signature, so the tonic came from the
+     * scale's own `preferSharps`, which is `true`, and the scale printed
+     * `A♯ B C𝄪 D𝄪 E𝄪 G♯ G𝄪` with the sixth degree dropping to the tables.
+     *
+     * It no longer does, and the change is deliberate: with no signature to
+     * follow, the tonic is now whichever of the two names writes the scale most
+     * simply, and B♭ writes it `Bb Cb D E F# G# A` — four accidental marks
+     * against twelve, and not one degree convention cannot spell. The scale that
+     * was the app's own witness for the refusal is now the clearest case for the
+     * new rule, which is why the sweep below can assert that *nothing* the two
+     * dropdowns can select reaches the fallback.
+     *
+     * So the refusal is witnessed where it is still reachable: on a root the
+     * caller hands over. The ♭II of B flat major is a C♭ and a diminished
+     * seventh on it stacks three minor thirds — C♭ E𝄫 G𝄫 and then a B triple
+     * flat, which is not notation. The first three are spelled and the fourth
+     * takes the key's own preference, which for a chord is the circle's answer
+     * at B: sharp.
+     */
+    it('falls back for the one note a double accidental cannot reach', () => {
+      service.selectKeyAndMode('B', 'seventh', 'diminished7', 'Cb');
+      expect(namesInMode()).toEqual(['Cb', 'Ebb', 'Gbb', 'G#']);
     });
 
     it('ignores a root spelling that does not name the key it arrived with', () => {
@@ -301,6 +372,273 @@ describe('MusicTheoryService spelling', () => {
       service.selectKeyAndMode('B', 'triads', 'major', 'Cb');
       service.selectKeyAndMode('B', 'triads', 'major');
       expect(namesInMode()).toEqual(['B', 'D#', 'F#']);
+    });
+  });
+
+  /**
+   * The third rule for a tonic, and the one this change adds.
+   *
+   * Task 11 settled the first two: a single name is its own answer, a combined
+   * name takes `keySignatureKind`, and neither takes the item's `preferSharps`.
+   * The old name test went, but the fall-through to `preferSharps` stayed
+   * reachable — and for the scales `MODE_OFFSETS` deliberately has no entry for,
+   * a combined name landed on it, which is the rule `b514027` was written to
+   * stop spelling keys by. The tonic letter is then wrong and the degree rule
+   * compounds it across all seven letters:
+   *
+   * | selection | before | after |
+   * |---|---|---|
+   * | `F#/Gb` ultra locrian | `Gb Abb Bbb Cbb Dbb Ebb Fbb` | `F# G A Bb C D Eb` |
+   * | `C#/Db` ultra locrian | `Db Ebb Fb Gbb Abb Bbb Cbb` | `C# D E F G A Bb` |
+   * | `F#/Gb` persian | `Gb Abb Bb Cb Dbb Ebb F` | `F# G A# B C D E#` |
+   *
+   * The rule that replaces it is not a name test either: **where convention has
+   * no answer, prefer the spelling that writes the scale most simply.** Both
+   * names for the tonic are run through the scale's own degrees and the one
+   * taking fewer accidental marks wins, sharp on a tie.
+   *
+   * That is why the same three rows fix `Gb` as well as `F#/Gb` without a second
+   * rule. `FLAT_KEYS` holds `Gb`, so a bare `Gb` was the second way into the
+   * same wrong tonic, and a measure that never reads the name cannot be fooled
+   * by either.
+   */
+  describe('a key with no signature takes the spelling that writes it simplest', () => {
+    /** Where the key's own name is the only thing that differs. */
+    function inKey(key: string, categoryId: string, itemId: string): string[] {
+      service.selectKeyAndMode(key, categoryId, itemId);
+      return namesInMode();
+    }
+
+    it('spells the three reported selections on letters their degrees name', () => {
+      expect(inKey('F#/Gb', 'harmonicMinorModes', 'ultraLocrian'))
+        .toEqual(['F#', 'G', 'A', 'Bb', 'C', 'D', 'Eb']);
+      expect(inKey('C#/Db', 'harmonicMinorModes', 'ultraLocrian'))
+        .toEqual(['C#', 'D', 'E', 'F', 'G', 'A', 'Bb']);
+      expect(inKey('F#/Gb', 'exoticScales', 'persian'))
+        .toEqual(['F#', 'G', 'A#', 'B', 'C', 'D', 'E#']);
+    });
+
+    it('gives one key one spelling whichever control the user touched', () => {
+      // The circle publishes `F#`, the fretboard's key dropdown publishes
+      // `F#/Gb`, and `FLAT_KEYS` used to make a bare `Gb` a third answer. A
+      // measure that reads the degrees rather than the name cannot tell the
+      // three apart, which is the point of it.
+      const throughTheCircle = inKey('F#', 'harmonicMinorModes', 'ultraLocrian');
+
+      expect(inKey('F#/Gb', 'harmonicMinorModes', 'ultraLocrian')).toEqual(throughTheCircle);
+      expect(inKey('Gb', 'harmonicMinorModes', 'ultraLocrian')).toEqual(throughTheCircle);
+    });
+
+    it('does not get a vote wherever the circle has an answer', () => {
+      // F♯ lydian would be the simpler *count* — it is the sharp reading of a
+      // key whose signature the circle states as flat, inherited from D♭ major.
+      // The signature wins, and this is the case that says the new rule sits
+      // under `keySignatureKind` rather than beside it.
+      expect(inKey('F#/Gb', 'diatonicModes', 'lydian'))
+        .toEqual(['Gb', 'Ab', 'Bb', 'C', 'Db', 'Eb', 'F']);
+      expect(inKey('F#/Gb', 'diatonicModes', 'ionian'))
+        .toEqual(['F#', 'G#', 'A#', 'B', 'C#', 'D#', 'E#']);
+      expect(inKey('D#/Eb', 'diatonicModes', 'ionian'))
+        .toEqual(['Eb', 'F', 'G', 'Ab', 'Bb', 'C', 'D']);
+      expect(inKey('G#/Ab', 'exoticScales', 'hungarianMinor'))
+        .toEqual(['G#', 'A#', 'B', 'C##', 'D#', 'E', 'F##']);
+    });
+
+    it('settles a genuine tie on sharp', () => {
+      // D♯ persian writes `D# E F## G# A B C##` and E♭ persian writes
+      // `Eb Fb G Ab Bbb Cb D` — six accidental marks each, and nothing in the
+      // measure to separate them. Sharp is this file's standing default and is
+      // the answer rather than an accident of iteration order.
+      expect(inKey('D#/Eb', 'exoticScales', 'persian'))
+        .toEqual(['D#', 'E', 'F##', 'G#', 'A', 'B', 'C##']);
+    });
+  });
+
+  /**
+   * And a chord takes the signature its own root names.
+   *
+   * `keySignatureKind` answers `null` for a chord id — a chord is a shape rather
+   * than a tonality, so there is no mode to work back to a parent major from —
+   * and that `null` was reaching the last rule, where a chord has no
+   * `preferSharps` at all and every chord came back sharp. One dropdown, one
+   * key, two answers:
+   *
+   * | key | Ionian, before and after | Major triad, before | after |
+   * |---|---|---|---|
+   * | `D#/Eb` | `Eb F G Ab Bb C D` | `D# F## A#` | `Eb G Bb` |
+   * | `A#/Bb` | `Bb C D Eb F G A` | `A# C## E#` | `Bb D F` |
+   *
+   * A chord is not in a key, but its root names one, so the accidental comes
+   * from the circle position for that pitch class — which is what asking
+   * `keySignatureKind` for the *ionian* signature there is. No second table and
+   * no new rule: the same data the scale beside it read, at the same position.
+   */
+  describe('a chord in a combined key spells from the circle, not from sharp', () => {
+    it('agrees with the scale the same key selects', () => {
+      service.selectKeyAndMode('D#/Eb', 'triads', 'major');
+      expect(namesInMode()).toEqual(['Eb', 'G', 'Bb']);
+
+      service.selectKeyAndMode('A#/Bb', 'triads', 'major');
+      expect(namesInMode()).toEqual(['Bb', 'D', 'F']);
+    });
+
+    it('keeps a raised ninth out of the double sharps', () => {
+      // `A#7#9` reached `B##` and `C##` off a sharp tonic. From B flat the
+      // ninth is a C and the raised ninth a C sharp, which is what the chord
+      // symbol says it is.
+      service.selectKeyAndMode('A#/Bb', 'alterations', '7sharp9');
+      expect(namesInMode()).toEqual(['Bb', 'D', 'F', 'Ab', 'C#']);
+    });
+
+    it('still spells F#/Gb sharp, because that position is sharp', () => {
+      service.selectKeyAndMode('F#/Gb', 'triads', 'major');
+      expect(namesInMode()).toEqual(['F#', 'A#', 'C#']);
+    });
+
+    it('leaves a natural-rooted chord exactly as it was', () => {
+      service.selectKeyAndMode('B', 'seventh', 'diminished7');
+      expect(namesInMode()).toEqual(['B', 'D', 'F', 'Ab']);
+    });
+  });
+
+  /**
+   * A `rootSpelling` is valid only with the item it arrived with.
+   *
+   * The guard in `note-naming.ts` tests the *pitch class*, so a spelling
+   * survives any change that leaves the key where it was — and the item is the
+   * other half of what a spelling is for. `updateKey` already cleared it;
+   * `updateCategory` and `updateItem` enforced nothing, so a `Cb` handed over
+   * for B flat major's ♭II went on renaming whatever was selected next.
+   */
+  describe('every writer of the selection drops the root spelling', () => {
+    beforeEach(() => {
+      service.selectKeyAndMode('B', 'triads', 'major', 'Cb');
+      expect(namesInMode()).toEqual(['Cb', 'Eb', 'Gb']);
+    });
+
+    it('drops it when the category moves', () => {
+      // B ionian, and it printed `Cb Db Eb Fb Gb Ab Bb` — every letter in flats
+      // and an `F♭` among them — under a key field reading `B`.
+      service.updateCategory('diatonicModes');
+      expect(namesInMode()).toEqual(['B', 'C#', 'D#', 'E', 'F#', 'G#', 'A#']);
+    });
+
+    it('drops it when the item moves', () => {
+      service.updateItem('minor');
+      expect(namesInMode()).toEqual(['B', 'D', 'F#']);
+    });
+
+    it('drops it when the key moves', () => {
+      service.updateKey('B');
+      expect(namesInMode()).toEqual(['B', 'D#', 'F#']);
+    });
+  });
+
+  /**
+   * The regression net: every key against every item a degree can name.
+   *
+   * Each finding this sweep was written for was reachable by sweeping — none of
+   * them needed insight, only coverage — so the sweep is the part worth keeping
+   * whatever the numbers do. It is the shape
+   * `progression-vocabulary.spelling.spec.ts` already uses, one layer over: that
+   * one sweeps the palette's roots, this one sweeps the fretboard's degrees.
+   *
+   * **The class first.** Every name is on the letter its own position names: a
+   * scale's nth degree n letters above the tonic, a chord tone `steps[n]`. That
+   * is the property a wrong tonic breaks in all seven places at once, and it is
+   * also how a drop to the chromatic tables shows up here, since a table name is
+   * chosen by pitch and lands on the letter next door.
+   *
+   * **Then the size.** Notes written on a double accidental are counted because
+   * that is what a wrong tonic inflates: `F#/Gb` ultra locrian alone carried six
+   * of them before this change, and the whole menu carried **292 across 73
+   * selections, one of them as high as six**, where it now carries **77 across
+   * 8, none above two**. The cap is the assertion that would fail loudest — no
+   * selection either dropdown can make needs more than two.
+   *
+   * The one off-letter name the sweep found before this change was `A♯/B♭`
+   * enigmatic's sixth degree, which is the drop to the tables that the new tonic
+   * rule removes. There are none left.
+   */
+  describe('the whole menu, swept', () => {
+    const KEYS = [
+      'C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F', 'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B'
+    ];
+
+    const LETTERS = 'CDEFGAB';
+
+    /** Items `noteName` can spell at all: seven degrees, or a chord's steps. */
+    function degreeSpelled(item: MusicTheoryItem): boolean {
+      return item.steps ? item.steps.length === item.intervals.length : isHeptatonic(item.intervals);
+    }
+
+    /** One entry per selection: its names, and how many carry a double. */
+    function sweep(): { describe: string; names: string[]; item: MusicTheoryItem }[] {
+      const rows: { describe: string; names: string[]; item: MusicTheoryItem }[] = [];
+
+      for (const category of service.getUnifiedCategories()) {
+        if (category.id === 'fretboardNotes') continue;
+
+        for (const item of category.items) {
+          if (!degreeSpelled(item)) continue;
+
+          for (const key of KEYS) {
+            service.selectKeyAndMode(key, category.id, item.id);
+            rows.push({ describe: `${key} ${item.id}`, names: namesInMode(), item });
+          }
+        }
+      }
+
+      return rows;
+    }
+
+    it('names every note on the letter its own position names', () => {
+      const wrong: string[] = [];
+
+      for (const row of sweep()) {
+        const tonic = LETTERS.indexOf(row.names[0].charAt(0));
+
+        row.names.forEach((name, position) => {
+          const step = row.item.steps ? row.item.steps[position] : position;
+          const expected = LETTERS.charAt((tonic + step) % 7);
+          if (name.charAt(0) !== expected) {
+            wrong.push(`${row.describe}: ${name} at ${step} steps, expected ${expected}`);
+          }
+        });
+      }
+
+      expect(wrong).withContext(wrong.join('\n')).toEqual([]);
+    });
+
+    it('writes 77 notes on a double accidental, and never more than two at once', () => {
+      const doubles: string[] = [];
+      let marks = 0;
+
+      for (const row of sweep()) {
+        const needed = row.names.filter(name => name.length === 3);
+        marks += needed.length;
+        if (needed.length >= 2) doubles.push(`${row.describe}: ${row.names.join(' ')}`);
+      }
+
+      expect(marks).toBe(77);
+
+      // The worst the menu holds, disclosed rather than merely bounded, because
+      // pinning only the best case is how "nobody looked" passes for "somebody
+      // decided". Every one of the eight is a selection whose tonic had no
+      // second spelling worth taking: the two hungarian minors and the three
+      // diminished sevenths are the circle's own answer for their key, `D#/Eb`
+      // persian is a tie, and `B` enigmatic and `F` ultra locrian are rooted on
+      // a natural, which has one spelling and not two.
+      expect(doubles).withContext(doubles.join('\n')).toEqual([
+        'D#/Eb hungarianMinor: D# E# F# G## A# B C##',
+        'G#/Ab hungarianMinor: G# A# B C## D# E F##',
+        'B enigmatic: B C D# E# F## G## A#',
+        'D#/Eb persian: D# E F## G# A B C##',
+        'F ultraLocrian: F Gb Ab Bbb Cb Db Ebb',
+        'C#/Db diminished7: Db Fb Abb Cbb',
+        'D#/Eb diminished7: Eb Gb Bbb Dbb',
+        'G#/Ab diminished7: Ab Cb Ebb Gbb'
+      ]);
     });
   });
 
