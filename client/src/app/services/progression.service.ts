@@ -447,10 +447,34 @@ export class ProgressionService {
    * only answer there is. `unpinned` is where that is written down. A borrowed
    * chord therefore stays borrowed through this, as it always did.
    *
+   * ## It is also the way back from `literal`
+   *
+   * Every other command on this page refuses a slot with no numeral -
+   * `editDegree` opens with that refusal - so without this one a slot that lost
+   * its label would have no way back but undo, and undo is gone the moment the
+   * user does anything else. That was tolerable while nothing but a hand-written
+   * document could produce a literal slot; M3's recogniser can, so the escape
+   * hatch has to lead out of that too, and for the reason the paragraph above
+   * gives about ownership: a door with no way back is not a door.
+   *
+   * A literal slot resets from `SlotHarmony.from` - the degree it was carrying
+   * when it lost its label - and lands where every other reset lands: the key's
+   * own chord on that degree, at that height, as a block, with every claim
+   * dropped. **The suspension and the pins do not come back with it.** That is
+   * `unpinned` doing exactly what it does to a slot that never degraded, and it
+   * is the behaviour to want: Reset to chord hands the whole slot back, so a
+   * `V7sus4` that was dragged into a cluster resets to the key's own `V7` and
+   * not to the suspension the user is trying to get out of. The degree, the
+   * accidental and the height are what `from` is for, and they survive.
+   *
+   * The rebuilt slot is committed without the no-op comparison below, because a
+   * slot changing kind has changed by definition.
+   *
    * It refuses where there is no chord to reset to - a key that cannot stack
-   * thirds, or a literal slot. Clearing the claims without regenerating would
-   * be the worst of both: the hand edits would stay, now unclaimed, and the
-   * next key change would quietly throw them away.
+   * thirds, or a literal slot with no `from`, which is a document from
+   * elsewhere rather than anything this app wrote. Clearing the claims without
+   * regenerating would be the worst of both: the hand edits would stay, now
+   * unclaimed, and the next key change would quietly throw them away.
    *
    * Nothing is recorded when the slot owns nothing, is pinned to nothing, and
    * already sounds what the generator would write, so pressing the button twice
@@ -465,14 +489,21 @@ export class ProgressionService {
     if (!this.keys.canBuildChords(doc.key)) return;
 
     const slot = this.store.slot(id);
-    if (!slot || slot.harmony.kind !== 'degree') return;
+    if (!slot) return;
 
-    const degree = unpinned(slot.harmony.degree);
+    // The slot's own degree, or the one a literal slot kept. Both are a chord
+    // to go back to and the rebuild below does not care which it was handed;
+    // only the no-op comparison does, and it asks separately.
+    const held = slot.harmony.kind === 'degree' ? slot.harmony.degree : slot.harmony.from ?? null;
+    if (held === null) return;
+
+    const degree = unpinned(held);
     const reset = this.regenerate(
       { ...slot, harmony: { kind: 'degree', degree }, owned: createOwnership() },
       doc.key
     );
     if (
+      slot.harmony.kind === 'degree' &&
       sameDegree(degree, slot.harmony.degree) &&
       sameOwnership(reset.owned, slot.owned) &&
       sameNotes(reset.notes, slot.notes)

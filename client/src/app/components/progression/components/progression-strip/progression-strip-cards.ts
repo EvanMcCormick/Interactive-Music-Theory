@@ -121,9 +121,18 @@ const UNLABELLED_NAME = 'Unlabelled';
 /** How such a card refers to itself in the labels that are read aloud. */
 const UNLABELLED_SUBJECT = 'unlabelled chord';
 
-/** Said once below the strip rather than on each card, which has no room. */
+/**
+ * Said once below the strip rather than on each card, which has no room.
+ *
+ * The second sentence is the way back, and it is owed to the user rather than
+ * merely useful: every command on this page refuses a slot with no numeral, so
+ * a card that loses one is a card whose whole panel of controls stops
+ * answering. Naming the one button that still works is the difference between
+ * a slot the user can recover and a slot they can only delete.
+ */
 const UNLABELLED_HINT =
-  'A card with no numeral is a chord this key cannot name. Its notes are kept exactly as they are.';
+  'A card with no numeral is a chord this key cannot name. Its notes are kept exactly ' +
+  'as they are. Reset to chord, in the roll, turns it back into one.';
 
 /**
  * The announced ceiling before it is widened. Sixteen bars of four - well past
