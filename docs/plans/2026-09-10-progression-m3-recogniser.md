@@ -627,19 +627,86 @@ Until Task 5, `major6` and `minorAdd9` light nothing on the fretboard: their nam
 not chord ids (`'6'`, `'minor_add9'`). That is the intermediate state and it is the
 honest one; Task 5 replaces lighting by name with lighting by interval set.
 
-**Step 5: Re-derive `OCTAVE_MAX`.** The sweep in `progression-normalize.spec.ts` measures
-the highest note any storable slot can reach. It must now also sweep the four added-tone
-qualities, the three suspensions, and the extension alterations. **Measure first:** time
-the widened sweep. If it runs past ~30 s, do not ship a slow spec and do not narrow it
-silently — stop, and report the timing and the reach found to the user. If the reach puts
-`OCTAVE_MAX`'s ceiling over MIDI 127, **stop and report** as well; changing that constant
-changes what the octave control offers, and M2 Task 3 records that trade-off as the
-user's to make.
+**Step 5: Re-derive `OCTAVE_MAX` — done, and both checkpoints fired.**
+
+| swept set | chords | seconds | reach |
+|---|---|---|---|
+| 16 qualities (what is shipped) | 5.6M | 3.7 | **46** |
+| + three suspensions | 16.8M | 13.8 | 46 |
+| + every extension alteration | 236.4M | **199** | **58** |
+
+1. **The widened sweep is unshippable at ~200 s per octave** — thirteen minutes over the
+   four the describe measures. It was not shipped and not quietly narrowed: `extremesAt`'s
+   docstring names the two axes it omits and carries this table.
+2. **The reach of 58 puts the ceiling at MIDI 130**, three notes past the end. `OCTAVE_MAX`
+   was left alone. The witness: C major, degree 3, extent 13, `alter -2`, `diminished`,
+   `sus4`, ♭9 + ♭13, inversion 2, in D — two replacements land below the note beneath them,
+   so the ascent lift adds an octave twice.
+3. A side effect the plan did not anticipate: the four added-tone shapes alone moved the
+   *shipped* reach from 45 to 46, because `add9` puts its fourth note a ninth above the root.
+
+**Settled: the ceiling becomes the chord's own, not the model's.** Task 4b, below. The
+alternative — dropping `OCTAVE_MAX` to 0 — would cost every chord the top octave to
+accommodate one almost nobody will build.
 
 **Step 6:** Run tests. **Step 7:** Commit.
 ```
 feat: Sound suspensions, and let each extension be altered
 ```
+
+---
+
+## Task 4b: The octave ceiling is the chord's, not the model's
+
+**Files:**
+- Modify: `models/progression-normalize.ts` (`OCTAVE_MAX` keeps its meaning; the sweep changes)
+- Modify: `services/progression-voicing.ts` or `progression-generate.ts` (where the ceiling is applied)
+- Modify: `services/progression.service.ts` (the octave stepper), `chord-palette.component.*` (what it shows)
+- Create: a measurement script for the full sweep
+- Test: `progression-normalize.spec.ts`, `progression-generate.spec.ts`, `progression.service.spec.ts`
+
+**This must land before Task 6.** Task 6 adds the sus and tensions controls, which are what
+make the overflowing chord reachable at all. Until then nothing can build one — nothing
+writes `suspension` or `extensions`, and `replaceDocument` has no production caller.
+
+**The shape, and the one thing that makes it awkward.** A per-slot ceiling needs the chord,
+and the chord needs the scale — which `normalizeChordDegree` does not have. So the ceiling
+cannot be a normalisation clamp. It belongs where the scale is already known.
+
+The design that avoids silently losing the user's intent:
+
+- **`ChordDegree.octave` keeps storing what the user asked for**, bounded as today by
+  `OCTAVE_MIN`/`OCTAVE_MAX`, which stay what they are — the control's nominal range.
+- **The generator clamps on use.** `generateSlotNotes` already has the key and the scale;
+  it derives the ceiling from the chord it is about to build and voices no higher. So a
+  slot at octave 1 that becomes too wide — a key change into a scale that widens it, a
+  tension pinned onto it — sounds an octave lower and **returns to octave 1 by itself** when
+  the chord narrows again. Storing the clamped value instead would destroy that.
+- **The palette shows the effective octave**, and disables the up-stepper with a reason when
+  the chord is against its ceiling. A control that silently does nothing is the failure this
+  page has been fixed for twice.
+
+**Correctness becomes constructive, which is what makes the spec cheap.** Today's spec sweeps
+the universe to prove one global constant is maximal. With the ceiling derived per chord, the
+property to prove is local: *the chord voiced at its derived ceiling never exceeds MIDI 127,
+and the ceiling is the highest octave for which that is true.* That is checkable on a sample
+in milliseconds — all 33 scales × degrees × extents, with a handful of shape combinations
+including the 130 witness — instead of 236 million chords.
+
+Keep a **characterization spec pinning the witness chord's reach at 58**, so a future change
+to the lift or to `voiceChord` that moved it fails loudly.
+
+**The full sweep becomes a script**, not a spec: it is a measurement, it takes thirteen
+minutes, and nothing in CI should wait on it. Put it where a reader will find it from the
+constant's docstring, and record in that docstring what it last measured and when.
+
+**Judgement calls, to be reported rather than assumed:**
+- Whether the ceiling is derived inside `generateSlotNotes` or by a helper beside
+  `voiceChord`. The second is more testable; the first has the key already in hand.
+- Whether the palette's octave readout shows the requested value, the effective one, or
+  both. "Octave 1 (sounding 0)" is honest but wordy; think about what a user needs.
+
+**Commit:** `fix: Give each chord its own octave ceiling`
 
 ---
 

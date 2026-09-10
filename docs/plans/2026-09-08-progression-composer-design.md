@@ -694,6 +694,34 @@ invariant `chordPitchClasses` rests on holds, and a `major6` at extent 9 builds 
 extent 11, sus2 at 9 and above — the chord sounds that pitch class twice, an
 octave apart, rather than dropping a note the count depends on.
 
+### The octave ceiling is the chord's, not the model's
+
+Widening the model widened what it can reach. The tallest chord it can now build
+reaches **58 semitones** above its voicing base, where the shipped set reached 45:
+degree 3 of C major at extent 13, altered down a tone, overridden to `diminished`,
+suspended, with a ♭9 and a ♭13. Two of those replacements land below the note
+beneath them, so the ascent lift adds an octave twice. At `OCTAVE_MAX` of 1 that
+chord ends on MIDI **130**, three notes past the end.
+
+`OCTAVE_MAX` stays 1. The ceiling becomes **each chord's own**: the generator knows
+the key and the scale, so it derives from the chord it is about to build the
+highest octave that still fits, and voices no higher. M2's own note on the
+constant recorded this as the thing to reach for if the top octave were ever
+missed, and this is that day — the alternative, dropping the constant to 0, costs
+every chord the top octave to accommodate one almost nobody will build.
+
+**`ChordDegree.octave` still stores what the user asked for**, and that is the
+half worth arguing. Storing the clamped value instead would make the clamp
+permanent: a slot pushed down because a pinned ♭13 widened it would stay down
+after the ♭13 came off. Clamping on use means the chord returns to the octave it
+was given the moment it narrows again, and the palette shows the effective value
+with its up-stepper disabled rather than doing nothing when pressed.
+
+The bound also stops being something a sweep has to prove. A global constant is
+only defensible by measuring every chord the model can build — 236 million of
+them, thirteen minutes — where a per-chord ceiling is correct by construction and
+checkable on a sample.
+
 ### Names are composed, and still read off the chord
 
 `effectiveQuality` becomes `effectiveChord` and returns an identity rather than a
@@ -848,10 +876,23 @@ known one, with whatever accidental lands it on the pitch:
   fifth 4, seventh 6, ninth 1, eleventh 3, thirteenth 5, sus2 1, sus4 3, added
   sixth 5.
 
-That fixes the 55 borrowed roots, and retires `rootPrefersSharps` with its 112
-wrong displaced roots. Past a double accidental — a few exotic scales under
-`alter` — it falls back to the tables. Output stays ASCII (`Cb`, `Ebb`, `F##`) to
-match them.
+That fixes the 55 borrowed roots and retires `rootPrefersSharps` with its 112
+wrong displaced roots. Measured over all 33 heptatonic scales × 12 tonics × 7
+degrees × 5 alters — 13,860 roots — **5,800 go from the wrong letter to the right
+one and not one regresses**. Output stays ASCII (`Cb`, `Ebb`, `F##`) to match the
+tables it falls back to.
+
+**Where it still cannot spell, and why no preference could.** A letter takes an
+accidental, and notation has two. A root three semitones from its letter has no
+spelling at all: A♯ enigmatic's sixth degree is an F triple sharp, and it gets
+there with no `alter` involved. The **alternates row** reaches many more of them,
+because it offers twelve shapes on whatever root the selected slot holds — so a
+slot already on a doubly-displaced root pushes all twelve a further two semitones
+out. Those buttons fall back to the chromatic tables, which is a wrong letter
+under a right numeral: the same failure in miniature, and the honest floor rather
+than a bug, because a triple accidental is not something the model can write. The
+counts are pinned per `alter` in `progression-vocabulary.spec.ts` rather than
+described here, since they move whenever the alternates row does.
 
 It is adopted app-wide. The fretboard and keyboard spell in-scale notes by degree
 for a heptatonic scale and chord tones by step for a chord, including the chord the
