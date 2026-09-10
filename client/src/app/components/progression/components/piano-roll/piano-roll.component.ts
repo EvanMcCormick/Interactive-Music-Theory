@@ -111,6 +111,16 @@ import {
  * its gesture uncommitted - and `committed` becomes true only when a setter
  * says it recorded something, which `onPointerMove` argues at length.
  *
+ * ## A pitch drag is read back as a chord once, at its end
+ *
+ * Every commit a *move* makes passes `deferRecognition`, so the recogniser does
+ * not see the note travelling; `endGesture` calls `settlePitchGesture` on
+ * pointerup and pointercancel, under the drag's own run key, so the label the
+ * notes turned out to mean lands in the same undo entry as the notes. A one-shot
+ * pitch edit - a double-click add, a delete, an arrow-key nudge - defers
+ * nothing and recognises inside its own commit, because it has no later moment
+ * to defer to. The resize and velocity gestures never reach it at all.
+ *
  * ## Every control has a keyboard as well as a pointer
  *
  * Not a courtesy: a roll a keyboard cannot reach is an editor a keyboard user
@@ -736,7 +746,11 @@ export class PianoRollComponent implements OnInit, AfterViewChecked, OnDestroy {
             ? { ...note, startBeat: beat, midi: move.startMidi + semitones }
             : note
         ),
-        { coalesce: move.committed }
+        // The drag defers recognition to its own end. A chord read on every
+        // threshold the pointer crosses would relabel the card once per grid
+        // line the note travels over, and the user is only passing through
+        // those. `endGesture` is where the reading happens instead.
+        { coalesce: move.committed, deferRecognition: true }
       );
       move.committed = move.committed || placed;
       return;
@@ -815,11 +829,41 @@ export class PianoRollComponent implements OnInit, AfterViewChecked, OnDestroy {
     ];
   }
 
-  /** Ends whatever gesture is under way, committing nothing more. */
+  /**
+   * Ends whatever gesture is under way, and reads a finished pitch drag back as
+   * a chord.
+   *
+   * The one thing a gesture *does* defer to its end. Every threshold crossing
+   * has already been committed - the note has to be where it is being dragged to
+   * - but each of those passed `deferRecognition`, so the slot is still carrying
+   * the label it had when the drag began. This is the moment the notes have
+   * stopped moving, and `settlePitchGesture` folds the reading into the drag's
+   * own undo entry so that one undo takes back the notes and the label together.
+   *
+   * **Only when the drag committed**, which is the discipline `onPointerMove`
+   * argues and `ProgressionNoteEditor.writeNotes` states: the settle commits
+   * under the drag's run key with `continues: true`, and a continuation of a run
+   * that never opened folds into the entry the *previous* gesture left. So the
+   * flag that gates it has to be the one set from what the setter answered.
+   *
+   * The other two gestures do not call it, and that is the M1 rule rather than
+   * an omission: a resize is a timing edit and a velocity drag a dynamics one,
+   * and neither may change what a slot is called however much it changes which
+   * notes are sounding at the downbeat.
+   *
+   * The gesture is cleared *before* the settle rather than after. The commit
+   * publishes synchronously and the subscription re-renders inside it, so
+   * clearing first means nothing downstream can observe a gesture that is over,
+   * and a re-entrant call - a destroy triggered by that render - finds nothing
+   * left to settle rather than settling twice.
+   */
   private endGesture(): void {
+    const move = this.move;
     this.move = null;
     this.resize = null;
     this.velocity = null;
+
+    if (move?.committed) this.progression.settlePitchGesture(move.slotId, move.notes);
 
     for (const off of this.unlisten) off();
     this.unlisten = [];

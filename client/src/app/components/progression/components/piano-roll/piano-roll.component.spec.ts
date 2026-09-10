@@ -88,6 +88,11 @@ describe('PianoRollComponent', () => {
   const ROW_HEIGHT = 12;
   const PX_PER_VELOCITY = 0.5;
 
+  // What a move passes: an entry opened or joined, the reading deferred either
+  // way - `piano-roll.relabel.spec.ts` pins the deferral itself.
+  const OPENS = { coalesce: false, deferRecognition: true };
+  const FOLDS = { coalesce: true, deferRecognition: true };
+
   // ---------------------------------------------------------------------------
   // What it renders
   // ---------------------------------------------------------------------------
@@ -218,7 +223,7 @@ describe('PianoRollComponent', () => {
       expect(progression.placeNotes).toHaveBeenCalledWith(
         id,
         [{ ...before[0], startBeat: 2, midi: before[0].midi + 3 }, ...before.slice(1)],
-        { coalesce: false }
+        OPENS
       );
     });
 
@@ -272,7 +277,7 @@ describe('PianoRollComponent', () => {
 
       expect(
         (progression.placeNotes as jasmine.Spy).calls.allArgs().map(args => args[2])
-      ).toEqual([{ coalesce: false }, { coalesce: true }, { coalesce: true }]);
+      ).toEqual([OPENS, FOLDS, FOLDS]);
     });
 
     it('leaves one undo step behind, and it goes back to before the drag', () => {
@@ -310,7 +315,7 @@ describe('PianoRollComponent', () => {
 
       expect(
         (progression.placeNotes as jasmine.Spy).calls.allArgs().map(args => args[2])
-      ).toEqual([{ coalesce: false }, { coalesce: false }]);
+      ).toEqual([OPENS, OPENS]);
     });
 
     /** And for real: undoing the second drag leaves the first one standing. */
@@ -674,10 +679,7 @@ describe('PianoRollComponent', () => {
       component.onPointerMove(pointerAt(140, 100));
       component.onPointerMove(pointerAt(180, 100));
 
-      expect(placeNotes.calls.allArgs().map(args => args[2])).toEqual([
-        { coalesce: false },
-        { coalesce: false }
-      ]);
+      expect(placeNotes.calls.allArgs().map(args => args[2])).toEqual([OPENS, OPENS]);
     });
 
     /** And once an entry really is open it stays open, refusals and all. */
@@ -690,11 +692,7 @@ describe('PianoRollComponent', () => {
       component.onPointerMove(pointerAt(180, 100));
       component.onPointerMove(pointerAt(220, 100));
 
-      expect(placeNotes.calls.allArgs().map(args => args[2])).toEqual([
-        { coalesce: false },
-        { coalesce: true },
-        { coalesce: true }
-      ]);
+      expect(placeNotes.calls.allArgs().map(args => args[2])).toEqual([OPENS, FOLDS, FOLDS]);
     });
 
     it('does the same for a refused resize', () => {
@@ -921,7 +919,9 @@ describe('PianoRollComponent', () => {
       component.resetToChord();
       settle();
 
-      expect(storedNotes().map(note => note.midi)).toEqual(generated);
+      // M3 Task 9: deleting the root leaves E and G, read back as `iii`. Reset
+      // still regenerates and drops every claim; it rebuilds what the slot is.
+      expect(storedNotes().map(note => note.midi)).toEqual([64, 67, 71]);
       expect(currentState().doc.slots[0].owned).toEqual({
         pitches: false,
         timing: false,

@@ -349,7 +349,14 @@ describe('ProgressionService', () => {
 
     it('reclaims the pitches, as every other harmony command does', () => {
       const id = slots()[0].id;
-      service.setSlotNotes(id, [{ midi: 61, startBeat: 0, lengthBeats: 4, velocity: 80 }]);
+      // The notes it already has, which claims the pitches and moves nothing.
+      // M3 Task 9 made a pitch edit run the recogniser, so a hand-written note
+      // list that is not a chord degrades the slot to `literal` - and every
+      // harmony command, this one included, refuses a slot with no numeral.
+      // What is under test here is the reclaim, so the claim is made the one
+      // way that says nothing else; `progression.service.relabel.spec.ts` is
+      // where the reading is pinned.
+      service.setSlotNotes(id, slots()[0].notes);
       expect(slots()[0].owned.pitches).toBeTrue();
 
       service.setSlotChord(id, { degree: 4, alter: 0, quality: 'minor', extent: 3 });
@@ -2216,11 +2223,21 @@ describe('ProgressionService', () => {
         expect(notes()[0].midi).toBe(62);
       });
 
-      it('leaves the slot`s harmony and length alone', () => {
-        const before = slots()[0].harmony;
+      /**
+       * The length, and the *kind* of the harmony.
+       *
+       * It used to be the whole harmony, and M3 Task 9 made that false on
+       * purpose: a setter that claims the pitches now reads the slot back and
+       * relabels it, so `DRAWN` - a fourth over the tonic - comes away a
+       * suspension rather than a `I`. What this still holds is the half the
+       * roll depends on: writing notes does not resize a slot and does not take
+       * its numeral away. The reading itself is
+       * `progression.service.relabel.spec.ts`.
+       */
+      it('leaves the slot`s length alone, and leaves it a chord', () => {
         service.setSlotNotes(id, DRAWN);
 
-        expect(slots()[0].harmony).toEqual(before);
+        expect(slots()[0].harmony.kind).toBe('degree');
         expect(slots()[0].lengthBeats).toBe(4);
       });
 

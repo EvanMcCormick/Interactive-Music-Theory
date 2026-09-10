@@ -13,6 +13,7 @@ import {
   ProgressionDoc,
   ProgressionKey,
   ProgressionState,
+  RelabelNotice,
   RollNote,
   SuspensionKind,
   createDefaultProgression,
@@ -89,19 +90,22 @@ export type { ChordChoice, EditOptions, ExtensionName, SlotOctave };
  *
  * `ProgressionNoteEditor` is the second collaborator, on the same terms: owned,
  * private, and reached only through one-line delegations. Its seam is that
- * **nothing in it resolves a scale** - `setSlotNotes`, `placeNotes`,
- * `setNoteTiming`, `setNoteVelocity` and the `writeNotes` funnel under them
- * work out notes and claims and commit the pair, and never ask what chord a
- * slot is. `resetSlotToChord` reads like a fifth one and stayed here, because
- * it rebuilds the block chord from the degree and so needs `regenerate`. That
- * is the whole of what pins it: `canBuildChords` is `this.keys.canBuildChords`
- * now, on an object a collaborator can simply be handed. See
- * `progression-key-context.ts`, which puts the same seam sharply - it holds
- * only while what the editor is handed cannot rebuild a chord.
+ * **nothing in it resolves a scale, and nothing in it rebuilds a chord** -
+ * `setSlotNotes`, `placeNotes`, `setNoteTiming`, `setNoteVelocity` and the
+ * `writeNotes` funnel under them work out notes and claims and commit the pair,
+ * and M3's recogniser adds a *label* over notes the user played rather than
+ * notes derived from a label. `resetSlotToChord` reads like a fifth setter and
+ * stayed here, because it rebuilds the block chord from the degree and so needs
+ * `regenerate`. That is the whole of what pins it: `canBuildChords` is
+ * `this.keys.canBuildChords` now, on an object a collaborator can simply be
+ * handed. See `progression-key-context.ts`, which puts the same seam sharply -
+ * it holds only while what the editor is handed cannot rebuild a chord.
  *
- * It is handed the store rather than this service, which is what keeps that
- * seam from being a matter of discipline: there is no path from there to
- * `ProgressionKeyContext`.
+ * It is handed the store and one bound method - the scale of a key, for
+ * recognition to express a chord in - rather than this service or the key
+ * context, which is what keeps that seam from being a matter of discipline:
+ * there is no path from there to `spellingFor`, to `findScale`, or to anything
+ * that could regenerate a slot.
  *
  * ## Nor does it resolve a key's scale
  *
@@ -215,10 +219,15 @@ export class ProgressionService {
   constructor() {
     this.store = new ProgressionStore(
       createDefaultProgression(),
-      (doc, selectedSlotId, isDirty, history) =>
-        this.derive(doc, selectedSlotId, isDirty, history)
+      (doc, selectedSlotId, isDirty, history, relabel) =>
+        this.derive(doc, selectedSlotId, isDirty, history, relabel)
     );
-    this.notes = new ProgressionNoteEditor(this.store);
+    // The scale as a bound method and not the context itself. The editor needs
+    // one thing - the scale a recognised chord is expressed in - and handing it
+    // `ProgressionKeyContext` would hand it four more questions it has no
+    // business asking, `spellingFor` among them. See that file's own note on
+    // this, and `ProgressionNoteEditor`'s constructor.
+    this.notes = new ProgressionNoteEditor(this.store, key => this.keys.chordScaleFor(key));
     this.degrees = new ProgressionDegreeEditor(this.store, this.keys);
   }
 
@@ -408,6 +417,26 @@ export class ProgressionService {
     options: EditOptions = {}
   ): boolean {
     return this.notes.setNoteVelocity(id, noteIndex, velocity, options);
+  }
+
+  /** See `ProgressionNoteEditor.settlePitchGesture`. */
+  settlePitchGesture(id: string, before: readonly RollNote[]): boolean {
+    return this.notes.settlePitchGesture(id, before);
+  }
+
+  /** See `ProgressionNoteEditor.chooseRelabelAlternate`. */
+  chooseRelabelAlternate(id: string, degree: ChordDegree): boolean {
+    return this.notes.chooseRelabelAlternate(id, degree);
+  }
+
+  /** See `ProgressionNoteEditor.revertRelabel`. */
+  revertRelabel(id: string): boolean {
+    return this.notes.revertRelabel(id);
+  }
+
+  /** See `ProgressionNoteEditor.keepAsLiteral`. */
+  keepAsLiteral(id: string): boolean {
+    return this.notes.keepAsLiteral(id);
   }
 
   /**
@@ -760,13 +789,19 @@ export class ProgressionService {
     doc: ProgressionDoc,
     selectedSlotId: string | null,
     isDirty: boolean,
-    history: HistoryDepth
+    history: HistoryDepth,
+    relabel: RelabelNotice | null
   ): ProgressionState {
     const keyScale = this.keys.findScale(doc.key.scaleId);
 
     return {
       doc,
       selectedSlotId: doc.slots.some(slot => slot.id === selectedSlotId) ? selectedSlotId : null,
+      // Passed through rather than validated against the slots as the selection
+      // is. A notice only ever arrives with the commit that raised it, and the
+      // next publish clears it, so there is no window in which it can name a
+      // slot the document has lost.
+      relabel,
       canBuildChords: this.keys.chordScale(keyScale) !== null,
       keyScale,
       isDirty,

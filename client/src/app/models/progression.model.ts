@@ -404,10 +404,39 @@ export interface ChordDegree {
  * document with a name and an id is a document something means to save, and the
  * composer's library is the shape that saving will take.
  */
+/**
+ * The last relabel the recogniser made, for the chip to show.
+ *
+ * Page state, not document state - beside `selectedSlotId` and off the undo
+ * stack for the same reason that one is: it is where the user is, not what they
+ * wrote. Any document change, a selection change, and undo or redo clear it,
+ * which is not merely tidiness - **an undo can take away the relabel this
+ * describes**, and a chip still offering *Back to `V9`* over a slot that is
+ * `V9` again would be offering to undo something that has already been undone.
+ *
+ * `previous` and `current` are whole `SlotHarmony` values rather than degrees,
+ * because either end can be `literal`: a slot dragged into a cluster degrades,
+ * and the chip has to say `No chord matches` and name what it was. `alternates`
+ * is empty in that case - nothing parsed, so there are no runners-up.
+ */
+export interface RelabelNotice {
+  slotId: string;
+  previous: SlotHarmony;
+  current: SlotHarmony;
+  alternates: readonly ChordDegree[];
+}
+
 export interface ProgressionState {
   doc: ProgressionDoc;
   /** The slot the strip has selected, or null. Never an id the doc has lost. */
   selectedSlotId: string | null;
+  /**
+   * The relabel the last edit made, or null.
+   *
+   * Cleared by every publish that is not the one raising it, which is what puts
+   * it beside the selection rather than in the document. See `RelabelNotice`.
+   */
+  relabel: RelabelNotice | null;
   /** Whether the key's scale can produce diatonic chords at all. */
   canBuildChords: boolean;
   /**

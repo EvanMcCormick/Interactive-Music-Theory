@@ -1,4 +1,13 @@
-import { ChordSlot, RollNote, SlotOwnership } from '../models/progression.model';
+import {
+  ChordDegree,
+  ChordSlot,
+  ProgressionKey,
+  RelabelNotice,
+  RollNote,
+  SlotHarmony,
+  SlotOwnership,
+  literalHarmony
+} from '../models/progression.model';
 import {
   boundNote,
   boundNoteLength,
@@ -9,6 +18,24 @@ import {
   sameOwnership
 } from './progression-edit';
 import { ProgressionStore } from './progression-history';
+import { recognise } from './progression-recognise';
+
+/**
+ * The scale a recognised chord is expressed in, for the key the document is in.
+ *
+ * A callback rather than `ProgressionKeyContext` itself, and the difference is
+ * the whole of what keeps this file's seam. The editor needs one answer - the
+ * intervals to write a degree against - and the context answers four more
+ * questions besides, `spellingFor` and `findScale` among them, none of which a
+ * note setter has any business asking. `ProgressionDegreeEditor` takes the whole
+ * context deliberately and its docstring argues why that is different: every
+ * method on it restates a chord, and a restated chord has to be rebuilt.
+ *
+ * Null where the key cannot stack thirds, which is `chordScaleFor`'s own answer
+ * carried through: there is no degree to express anything as, so recognition
+ * does not run at all.
+ */
+export type ChordScaleFor = (key: ProgressionKey) => readonly number[] | null;
 
 /**
  * How a pointer-driven edit should be recorded. See
@@ -27,6 +54,23 @@ export interface EditOptions {
    * is one undo step however many thresholds it crosses.
    */
   coalesce?: boolean;
+
+  /**
+   * Whether to leave the recogniser for the end of the gesture.
+   *
+   * Set by every commit a *drag* makes, and by nothing else. A drag commits on
+   * every threshold the pointer crosses, so recognising on each of them would
+   * relabel the slot once per grid line the note passes over - `I`, `Isus4`,
+   * `I`, `♭II`, `Isus4` - which is a card flickering through chords the user is
+   * only travelling through. The roll calls `settlePitchGesture` on pointerup
+   * instead, and that commit folds into the drag's own undo entry, so the notes
+   * and the label they turned out to mean are one step back together.
+   *
+   * A one-shot edit - a double-click add, a delete, an arrow-key nudge - passes
+   * nothing and recognises inside its own commit, because there is no later
+   * moment to defer to.
+   */
+  deferRecognition?: boolean;
 }
 
 /**
@@ -34,18 +78,37 @@ export interface EditOptions {
  * aspect of it they thereby claim.
  *
  * This was the middle of `ProgressionService`, and like `ProgressionStore` it
- * comes out on a seam rather than at a line count. The seam is that **none of
- * it resolves a scale.** Every method below works out a list of notes, adds the
- * claim the gesture makes, and hands the pair to `commitSlot`; not one of them
- * asks what chord the slot is, what key the document is in, or whether thirds
- * can be stacked through it. `writeNotes` is the funnel they share and it is
- * here with them, so the run-key discipline and the claim rules its docstring
- * argues are enforced beside the code they are rules about.
+ * comes out on a seam rather than at a line count. Every method below works out
+ * a list of notes, adds the claim the gesture makes, and hands the pair to
+ * `commitSlot`. `writeNotes` is the funnel they share and it is here with them,
+ * so the run-key discipline and the claim rules its docstring argues are
+ * enforced beside the code they are rules about.
  *
  * What did not come with it is `resetSlotToChord`, which reads like a fifth
  * roll setter and is not one: it rebuilds the block chord from the degree, so
  * it needs `regenerate` and `canBuildChords` - harmony, and the one thing this
  * file must not learn.
+ *
+ * ## The seam, restated where M3 Task 9 moved it
+ *
+ * It used to read "none of it resolves a scale", and after this task that is
+ * still true but no longer says enough: recognition is here, and a recognised
+ * chord has to be written as a degree of *something*. The line that holds is
+ * one word narrower and one word sharper - **nothing here resolves a scale, and
+ * nothing here rebuilds a chord.** The scale arrives as a `ChordScaleFor`
+ * callback the service hands over at construction, so this file still does not
+ * know that a key carries a scale id or that resolving one means asking
+ * `MusicTheoryService`; and everything recognition writes is a *label* over
+ * notes the user played, so no method below ever generates a note from a
+ * degree. That second half is what keeps `resetSlotToChord` where it is, and
+ * `ProgressionKeyContext`'s own docstring makes the same point from the other
+ * end: the seam holds only while what this editor is handed cannot rebuild a
+ * chord.
+ *
+ * The three chip actions - `chooseRelabelAlternate`, `revertRelabel`,
+ * `keepAsLiteral` - are here for the same reason rather than on the service:
+ * each one takes back or amends a label recognition wrote, each keeps every note
+ * exactly as it is, and none of them needs a scale at all.
  *
  * ## Plain, not injectable, and owned rather than provided
  *
@@ -57,7 +120,10 @@ export interface EditOptions {
  * needs and can learn nothing else through it.
  */
 export class ProgressionNoteEditor {
-  constructor(private readonly store: ProgressionStore) {}
+  constructor(
+    private readonly store: ProgressionStore,
+    private readonly chordScaleFor: ChordScaleFor
+  ) {}
 
   /**
    * Replaces a slot's notes, and claims its pitches.
@@ -286,10 +352,241 @@ export class ProgressionNoteEditor {
     // mutable field `ChordSlot.notes` is, and it is a type conversion rather
     // than a defence: every callback above already builds a fresh array, and
     // `normalizeChordSlot` rebuilds every note again inside `settle()`.
-    this.store.commitSlot(id, () => ({ ...slot, notes: [...notes], owned }), {
-      key: runKey,
-      continues: options.coalesce === true
-    });
+    const written: ChordSlot = { ...slot, notes: [...notes], owned };
+
+    // **Only a setter that claims the pitches may recognise.** That is the M1
+    // rule the whole milestone rests on, stated here rather than at the two
+    // setters that pass the claim, so that a fifth setter arriving with
+    // `{ timing: true }` inherits the refusal instead of having to remember it.
+    // `setNoteTiming` and `setNoteVelocity` can change *which* notes are
+    // structural - a chord tone dragged off the downbeat - and must still never
+    // change what the slot is called.
+    const read =
+      claims.pitches === true && options.deferRecognition !== true
+        ? this.recognised(written, slot.notes)
+        : null;
+
+    this.store.commitSlot(
+      id,
+      () => (read === null ? written : { ...written, harmony: read.harmony }),
+      { key: runKey, continues: options.coalesce === true },
+      read?.notice ?? null
+    );
     return true;
   }
+
+  // -------------------------------------------------------------------------
+  // Recognition
+  // -------------------------------------------------------------------------
+
+  /**
+   * Reads a drag's finished notes back as a chord, in the drag's own undo entry.
+   *
+   * The other half of `deferRecognition`: the roll's pointerup calls this with
+   * the notes the slot held when the gesture began, so the recogniser compares
+   * the two ends of the whole drag rather than the two ends of one threshold
+   * crossing. `before` is the roll's own `Gesture.notes` snapshot, which is why
+   * this takes it rather than digging the previous document out of the undo
+   * stack: the stack holds the *document* before whatever entry is on top, and
+   * for a coalesced drag that is the document before the drag's first commit
+   * only by an accident of how the run happens to have folded.
+   *
+   * ## The run key, and the discipline it inherits
+   *
+   * It commits under `place:${id}` with `continues: true`, which is what folds
+   * the label into the drag's entry so that **one undo takes back the notes and
+   * the new label together**. That only works while the drag really opened an
+   * entry, and `ProgressionStore.commit` honours a continuation on the run key
+   * alone - so a call made after a gesture that committed nothing would fold
+   * into whatever entry happened to be on top, which is the previous gesture's.
+   * The roll therefore calls this only when `move.committed` is true, and
+   * `move.committed` is set from what `placeNotes` *answered*.
+   *
+   * This answers on the same terms and for the same reason: whether it recorded
+   * anything. A gesture that ended on the notes it started with recognises
+   * nothing and commits nothing, and a caller counting its own calls would be
+   * counting something else.
+   */
+  settlePitchGesture(id: string, before: readonly RollNote[]): boolean {
+    const slot = this.store.slot(id);
+    if (!slot) return false;
+
+    const read = this.recognised(slot, before);
+    if (read === null) return false;
+
+    this.store.commitSlot(
+      id,
+      () => ({ ...slot, harmony: read.harmony }),
+      { key: `place:${id}`, continues: true },
+      read.notice
+    );
+    return true;
+  }
+
+  /**
+   * Takes one of the chip's runners-up instead of the reading that won.
+   *
+   * Its own undo entry, not a continuation of anything: the relabel it replaces
+   * is already committed, and a user who picks `IVsus2` over `Isus4` has made a
+   * second decision that should be separately reversible.
+   *
+   * The notes are untouched, which is the whole point - the alternates are other
+   * *names* for the notes that are there, and picking one is a spelling choice
+   * rather than an edit. Nothing is regenerated for the same reason, and it is
+   * also the reason this can live in a file that cannot rebuild a chord.
+   *
+   * The degree arrives from `RelabelNotice.alternates`, which the recogniser
+   * built and `expressInKey` already vetted; it goes through `settle()` on the
+   * way in like every other value, so a caller that invents one gets the
+   * normalisation's answer rather than a slot the model could not have made.
+   */
+  chooseRelabelAlternate(id: string, degree: ChordDegree): boolean {
+    return this.relabelTo(id, { kind: 'degree', degree });
+  }
+
+  /**
+   * Puts the label the slot had back, and **keeps the notes**.
+   *
+   * *Back to `I`* on the chip. The user played something the recogniser read as
+   * a different chord and is saying it is still the old one - a passing
+   * dissonance, an added colour they do not want named. So the numeral returns
+   * and not one note moves: reverting is not an undo, and offering it as one
+   * would throw away the edit that was the point of the gesture.
+   *
+   * It reads the previous harmony off the notice rather than taking an argument,
+   * because the notice is the only record of it - the document holds the *new*
+   * label by the time the chip is on screen. A notice for some other slot is no
+   * evidence about this one and is refused, which is the same guard
+   * `keepAsLiteral` needs and for the same reason.
+   */
+  revertRelabel(id: string): boolean {
+    const notice = this.store.relabel;
+    if (notice === null || notice.slotId !== id) return false;
+
+    return this.relabelTo(id, notice.previous);
+  }
+
+  /**
+   * Says this slot is notes and not a chord, and means it.
+   *
+   * `user-detached` rather than `unrecognised`, and the difference is the whole
+   * of what this button is for: `recognise` never re-reads a detached slot, so
+   * the next pitch edit leaves the label alone instead of quietly putting a
+   * numeral back on a slot the user has just said should not have one. An
+   * `unrecognised` slot is the app failing to name something; a detached one is
+   * the user declining to have it named.
+   *
+   * It keeps the degree it had as `from`, through `literalHarmony`, so Reset to
+   * chord still leads back out - a door with no way back is not a door, which is
+   * the argument `resetSlotToChord` makes at length. The degree kept is the one
+   * the slot is carrying *now*, which after a relabel is the recogniser's
+   * reading rather than the label before it: that is what the notes actually
+   * sound, and it is the better chord to rebuild from.
+   */
+  keepAsLiteral(id: string): boolean {
+    const slot = this.store.slot(id);
+    if (!slot) return false;
+
+    return this.relabelTo(id, literalHarmony('user-detached', degreeOf(slot.harmony)));
+  }
+
+  /**
+   * Writes one harmony over a slot, keeping every note, as its own undo entry.
+   *
+   * The shape the three chip actions share. No notice goes with it: the chip is
+   * being *answered*, so the commit's default takes it down - which is the
+   * behaviour to want at every one of the three, since after any of them the
+   * slot says what the user asked it to say and there is nothing left to offer.
+   *
+   * A harmony the slot already holds records nothing, on `editDegree`'s
+   * argument: the chip's own *Back to* is reachable twice if a second notice
+   * arrives for the same slot, and an undo entry for a button that changed
+   * nothing is worse than none.
+   */
+  private relabelTo(id: string, harmony: SlotHarmony): boolean {
+    const slot = this.store.slot(id);
+    if (!slot || sameHarmony(slot.harmony, harmony)) return false;
+
+    this.store.commitSlot(id, () => ({ ...slot, harmony }));
+    return true;
+  }
+
+  /**
+   * What the recogniser makes of a written slot, or null when it makes nothing.
+   *
+   * The one place recognition is called from, so the four things a caller must
+   * not get wrong are settled once: the key comes off the document rather than
+   * from a caller, the scale comes through the callback and a key that cannot
+   * stack thirds simply does not recognise, `unchanged` is a null here rather
+   * than a harmony equal to the one already stored - so a caller cannot commit a
+   * no-op believing it recognised something - and the notice is built beside the
+   * harmony it describes rather than by whoever commits it.
+   *
+   * `slot` is the slot **after** the edit, still carrying its old label, which is
+   * what `recognise` needs: `before` says what was sounding and the harmony says
+   * what it was called.
+   */
+  private recognised(
+    slot: ChordSlot,
+    before: readonly RollNote[]
+  ): { harmony: SlotHarmony; notice: RelabelNotice } | null {
+    const key = this.store.doc.key;
+    const scale = this.chordScaleFor(key);
+    if (scale === null) return null;
+
+    const outcome = recognise(before, slot, key, scale);
+    if (outcome.kind === 'unchanged') return null;
+
+    const harmony: SlotHarmony =
+      outcome.kind === 'relabel'
+        ? { kind: 'degree', degree: outcome.degree }
+        : literalHarmony('unrecognised', degreeOf(slot.harmony));
+
+    return {
+      harmony,
+      notice: {
+        slotId: slot.id,
+        previous: slot.harmony,
+        current: harmony,
+        alternates: outcome.kind === 'relabel' ? outcome.alternates : []
+      }
+    };
+  }
+}
+
+/**
+ * The degree a slot is carrying, whichever kind of harmony it is carrying it in.
+ *
+ * A degree slot's own, or the one a literal slot kept when it lost its label.
+ * Both of the writers below want the same thing - a chord to keep as `from` -
+ * and neither cares which branch it came from. `?? null` rather than trusting
+ * the field, on `SlotHarmony.from`'s own terms: everything through the funnel
+ * holds it, and a slot built a line ago may not have been.
+ */
+function degreeOf(harmony: SlotHarmony): ChordDegree | null {
+  return harmony.kind === 'degree' ? harmony.degree : harmony.from ?? null;
+}
+
+/**
+ * Whether two harmonies say the same thing, for the no-op guard above.
+ *
+ * A reference comparison on the degree, deliberately: the only caller compares a
+ * slot's own harmony with one taken off a notice or rebuilt from it, and a
+ * structural comparison would be `sameDegree` - which lives in
+ * `progression-edit.ts` and is about a chord the generator is going to rebuild.
+ * Here the question is narrower and the cheap answer is the honest one: two
+ * degrees that are not the same object may still be equal, and committing that
+ * costs one undo entry and changes nothing, where the alternative is a second
+ * copy of a comparison that already exists.
+ */
+function sameHarmony(left: SlotHarmony, right: SlotHarmony): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'degree' && right.kind === 'degree') return left.degree === right.degree;
+
+  return (
+    left.kind === 'literal' &&
+    right.kind === 'literal' &&
+    left.reason === right.reason &&
+    (left.from ?? null) === (right.from ?? null)
+  );
 }

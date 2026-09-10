@@ -3,7 +3,8 @@ import {
   ChordSlot,
   ProgressionDoc,
   ProgressionKey,
-  ProgressionState
+  ProgressionState,
+  RelabelNotice
 } from '../models/progression.model';
 import { requireUniqueSlotIds, settle } from './progression-edit';
 
@@ -115,7 +116,8 @@ export type DeriveState = (
   doc: ProgressionDoc,
   selectedSlotId: string | null,
   isDirty: boolean,
-  history: HistoryDepth
+  history: HistoryDepth,
+  relabel: RelabelNotice | null
 ) => ProgressionState;
 
 export class ProgressionStore {
@@ -148,7 +150,7 @@ export class ProgressionStore {
   constructor(initial: ProgressionDoc, derive: DeriveState) {
     this.derive = derive;
     this.stateSubject = new BehaviorSubject<ProgressionState>(
-      derive(initial, null, false, this.depth())
+      derive(initial, null, false, this.depth(), null)
     );
   }
 
@@ -165,7 +167,17 @@ export class ProgressionStore {
     return this.doc.slots.find(candidate => candidate.id === id) ?? null;
   }
 
-  /** Which slot the strip has selected. Not a document change, so not undoable. */
+  /** The relabel the last commit raised, or null. See `RelabelNotice`. */
+  get relabel(): RelabelNotice | null {
+    return this.stateSubject.getValue().relabel;
+  }
+
+  /**
+   * Which slot the strip has selected. Not a document change, so not undoable -
+   * and it drops any relabel notice, which is the one thing here that is not
+   * simply "publish the same document again": the chip describes an edit to one
+   * slot, and moving to another slot is the user having finished with it.
+   */
   selectSlot(id: string | null): void {
     const state = this.stateSubject.getValue();
     this.publish(state.doc, id, state.isDirty);
@@ -201,8 +213,26 @@ export class ProgressionStore {
    * component destroyed, an exception - leaves no state behind to be closed:
    * the next commit that does not continue the run simply pushes, as every
    * commit did before.
+   *
+   * ## The relabel notice rides on the commit, and defaults to none
+   *
+   * `notice` is page state and not part of the document, so it is neither
+   * cloned, pushed, nor restored by `undo`. It is a parameter here rather than a
+   * setter of its own for the one property that matters: it is published in the
+   * **same emission** as the document it describes, so nothing can render a chip
+   * naming a chord the published state does not hold yet.
+   *
+   * Defaulting to `null` is what makes "any document change clears it" a
+   * mechanism rather than a convention. Every other commit on the page - a
+   * palette step, an append, a resize, a key change - passes nothing and thereby
+   * takes the chip down, without one of them having to know a chip exists.
    */
-  commit(mutate: (draft: ProgressionDoc) => void, select?: string, run?: CommitRun): void {
+  commit(
+    mutate: (draft: ProgressionDoc) => void,
+    select?: string,
+    run?: CommitRun,
+    notice: RelabelNotice | null = null
+  ): void {
     const state = this.stateSubject.getValue();
     const previous = structuredClone(state.doc);
     const draft = structuredClone(state.doc);
@@ -218,7 +248,7 @@ export class ProgressionStore {
     if (!extendsRun) this.pushHistory(previous);
     this.currentRun = run?.key ?? null;
 
-    this.publish(settled, select ?? state.selectedSlotId, true);
+    this.publish(settled, select ?? state.selectedSlotId, true, notice);
   }
 
   /**
@@ -235,7 +265,12 @@ export class ProgressionStore {
    * the service's own harmony edits and `ProgressionNoteEditor`'s note writes
    * are the same document operation with different things to put in the slot.
    */
-  commitSlot(id: string, build: (key: ProgressionKey) => ChordSlot, run?: CommitRun): void {
+  commitSlot(
+    id: string,
+    build: (key: ProgressionKey) => ChordSlot,
+    run?: CommitRun,
+    notice: RelabelNotice | null = null
+  ): void {
     this.commit(
       draft => {
         const index = draft.slots.findIndex(slot => slot.id === id);
@@ -243,7 +278,8 @@ export class ProgressionStore {
         draft.slots[index] = build(draft.key);
       },
       undefined,
-      run
+      run,
+      notice
     );
   }
 
@@ -257,6 +293,11 @@ export class ProgressionStore {
    * commit can refill it in between, because the *first* commit of a run always
    * pushes and so always clears the redo branch. So by the time `redo` runs,
    * this has already been nulled.
+   *
+   * Both drop the relabel notice, through `publish`'s default. That is not
+   * housekeeping either: the notice describes an edit that undo has just taken
+   * back, so a chip surviving one would offer to revert a label the document no
+   * longer carries.
    */
   undo(): void {
     const state = this.stateSubject.getValue();
@@ -355,9 +396,19 @@ export class ProgressionStore {
     }
   }
 
-  /** Publishes a document and everything the page derives from it. */
-  private publish(doc: ProgressionDoc, selectedSlotId: string | null, isDirty: boolean): void {
-    this.stateSubject.next(this.derive(doc, selectedSlotId, isDirty, this.depth()));
+  /**
+   * Publishes a document and everything the page derives from it.
+   *
+   * `notice` defaults to none, so every publish that does not deliberately raise
+   * one takes down whatever chip was showing. See `commit`.
+   */
+  private publish(
+    doc: ProgressionDoc,
+    selectedSlotId: string | null,
+    isDirty: boolean,
+    notice: RelabelNotice | null = null
+  ): void {
+    this.stateSubject.next(this.derive(doc, selectedSlotId, isDirty, this.depth(), notice));
   }
 
   /** How far the history reaches, read at the moment of publishing. */
