@@ -76,14 +76,31 @@ function reduceToOctave(value: number): number {
  * says *which degree this is* and gets back the spelling convention agrees on,
  * rather than saying which pitch it is and hoping for the letter it wanted.
  *
- * Null rather than a triple accidental, so the caller chooses its fallback. It
- * is reached, and reached with no `alter` at all: the sixth degree of A♯
- * enigmatic is written on an F and sounds pitch class 8, three semitones above
- * F, so it is an F triple sharp. `progression-vocabulary.spec.ts` sweeps all 33
- * heptatonic scales in all twelve keys and pins that as the only root the app
- * offers which gets here. Alteration adds more of them - D♭ super locrian's
- * fourth is already a G double flat, and `alter: -1` on it asks for a G triple
- * flat - but nowhere in a diatonic mode, which the same spec pins at zero.
+ * Null rather than a triple accidental, so the caller chooses its fallback.
+ *
+ * **When the refusal fires, and how far it reaches, is stated here and nowhere
+ * else.** `progression-spelling.ts` is the other module that meets it and it
+ * points at this paragraph rather than restating it - the same argument
+ * `STEP_SEMITONES` is one table read two ways under. Restating it is how the two
+ * came to disagree: that module blamed `alter` and a "doubly-flattened" super
+ * locrian fourth, and both halves were wrong.
+ *
+ * It is reached with no `alter` at all. The sixth degree of A♯ enigmatic is
+ * written on an F and sounds pitch class 8, three semitones above F, so it is an
+ * F triple sharp. Displacement reaches more: D♭ super locrian's fourth is a
+ * *singly* flattened fourth, which in that key is already a G double flat
+ * because the key signature has flattened the G as well, and `alter: -1` on it
+ * asks for a G triple flat.
+ *
+ * `progression-vocabulary.spelling.spec.ts` sweeps all 33 heptatonic scales in
+ * all twelve keys on **every accidental a slot can store**, and pins the reach
+ * as chord roots: one at `alter` zero, 1660 over the five. A diatonic mode is
+ * reached only at `alter` ±2. That is not luck - two of the seven letters sit a
+ * semitone from their neighbour, so a mode's own degree can already be a double
+ * accidental from its letter in a remote key, and a second displacement the same
+ * way is one step too far. C♯ aeolian's second degree is a D♯; raised twice it
+ * asks for a D triple sharp. So a user who has not displaced a chord twice never
+ * meets the fallback in a key they are at all likely to be in.
  *
  * Both arguments take unreduced input: `steps` may be negative or past a
  * seventh, and `pitchClass` may be a chord-stack member that crossed the octave

@@ -177,6 +177,53 @@ describe('ChordPaletteComponent', () => {
     });
 
     /**
+     * The first key here whose seventh degree is not one of the twelve table
+     * names, and the reason every key above it agreed with the old rule.
+     *
+     * C, A minor, G, E flat and B are all keys the two chromatic arrays can
+     * spell every degree of, so this row came out identical whether it was
+     * spelled from the tables or from the degree's letter - which is why M3
+     * could change `buildChords` to `chordRootName` with nothing failing.
+     * F♯ major is F♯ G♯ A♯ B C♯ D♯ E♯, and `E♯` is in neither array: the tables
+     * gave pitch class 5 as `F` and printed `F°` under a numeral reading
+     * `vii°`, a *seventh* degree on the same letter as the tonic.
+     */
+    it('spells a seventh degree the tables have no name for', () => {
+      progression.setKey(6, 'ionian');
+      settle();
+
+      expect(component.chords.map(chord => chord.numeral))
+        .toEqual(['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°']);
+      expect(component.chords.map(chord => chord.name))
+        .toEqual(['F# Maj', 'G# min', 'A# min', 'B Maj', 'C# Maj', 'D# min', 'E#°']);
+    });
+
+    /**
+     * The mode this row and the borrowed row beside it used to disagree about.
+     *
+     * F locrian inherits F♯ major's six sharps - locrian is the seventh degree,
+     * so `keySignatureKind` walks back six semitones to the parent - and a
+     * six-sharp key spelled from the tables prints F F♯ G♯ A♯ B C♯ D♯: six of
+     * seven degrees on the wrong letter, and a `II` and a `iii` a semitone
+     * apart. The scale is F G♭ A♭ B♭ C♭ D♭ E♭, and the fifth degree is the C
+     * flat neither table holds at all.
+     *
+     * The letters do not move with the signature, which is the whole point: they
+     * are counted from the tonic's, one per degree, so a mode whose degrees are
+     * nearly all flattened still gets one letter each and takes flats to land
+     * them. Its triads are diminished, major, minor, minor, major, major, minor.
+     */
+    it('spells a mode whose signature disagrees with its own notes', () => {
+      progression.setKey(5, 'locrian');
+      settle();
+
+      expect(component.chords.map(chord => chord.numeral))
+        .toEqual(['i°', 'II', 'iii', 'iv', 'V', 'VI', 'vii']);
+      expect(component.chords.map(chord => chord.name))
+        .toEqual(['F°', 'Gb Maj', 'Ab min', 'Bb min', 'Cb Maj', 'Db Maj', 'Eb min']);
+    });
+
+    /**
      * `isTonic` is what the template colours the I chord with, and it is a
      * field rather than a style - one button in seven, and it moves with the
      * key rather than with the button's position, because the tonic is degree

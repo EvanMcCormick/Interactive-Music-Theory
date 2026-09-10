@@ -36,13 +36,21 @@ import { isHeptatonic } from './progression-harmony';
  *
  * ## Where it falls back, and why the fallback is not a failure
  *
- * `spellAt` refuses past a double accidental, which `alter` can reach in a
- * handful of exotic scales - super locrian's already doubly-flattened fourth,
- * lowered again. There the key's own preference answers, through
- * `spellPitchClass`, and the printed letter then disagrees with the numeral
- * exactly as it did before. `progression-vocabulary.spec.ts` pins how many
- * options that is across all 33 heptatonic scales; it is a small, named set
- * rather than a silent hole.
+ * `spellAt` refuses past a double accidental. **When that fires and how far it
+ * reaches is stated on `spellAt` itself**, which is the module that owns the
+ * refusal, and this paragraph reads it rather than repeating it - the argument
+ * `STEP_SEMITONES` is already shared under. Repeating it is exactly what went
+ * wrong: this header used to blame `alter` and a "doubly-flattened" super
+ * locrian fourth, and by the time `note-spelling.ts` was corrected the two files
+ * said different things about one rule.
+ *
+ * What belongs here is what *this* module does when the refusal comes back. The
+ * key's own preference answers, through `spellPitchClass`, and the printed
+ * letter then disagrees with the numeral exactly as it did before. That is the
+ * honest remainder rather than a silent hole: a triple accidental is not
+ * notation, so there is no better spelling being passed over, and
+ * `progression-vocabulary.spelling.spec.ts` pins which roots reach it rather
+ * than leaving the size of it to a hand-wave.
  *
  * A scale that is not heptatonic has no degree letters at all - five degrees
  * cannot take seven letters one apart - so `scaleNoteName` leaves those to the

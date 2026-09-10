@@ -12,7 +12,6 @@ import {
   degreeQuality,
   isHeptatonic
 } from './progression-harmony';
-import { ProgressionKeyContext } from './progression-key-context';
 import { ChordOption, chordVocabulary } from './progression-vocabulary';
 
 /**
@@ -31,18 +30,15 @@ import { ChordOption, chordVocabulary } from './progression-vocabulary';
  * aeolian and phrygian this module keeps cannot drift from the app's. It used
  * to be injected for `spellNote` as well; a root is now spelled by its degree's
  * letter, which needs no service at all.
+ *
+ * **How each root is spelled lives in `progression-vocabulary.spelling.spec.ts`**,
+ * which was split off when this file reached the 1000-line cap. The seam is the
+ * one the file already had: which triples the palette offers is one question and
+ * what text goes on the button is another, and only the second needs a key built
+ * the way `setKey` builds one.
  */
 describe('chordVocabulary', () => {
   let service: MusicTheoryService;
-
-  /**
-   * The key-to-scale knowledge, constructed rather than injected.
-   *
-   * It is what `ProgressionService` builds its keys through, so the spelling
-   * sweep below builds them the same way - and it takes its service as a
-   * constructor argument precisely so a spec can stand one up.
-   */
-  let keys: ProgressionKeyContext;
 
   const IONIAN = [0, 2, 4, 5, 7, 9, 11];
   const AEOLIAN = [0, 2, 3, 5, 7, 8, 10];
@@ -57,7 +53,6 @@ describe('chordVocabulary', () => {
   beforeEach(() => {
     TestBed.configureTestingModule({});
     service = TestBed.inject(MusicTheoryService);
-    keys = new ProgressionKeyContext(service);
   });
 
   /** A selected slot on `degree`, which is all the alternates group reads. */
@@ -698,64 +693,8 @@ describe('chordVocabulary', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Spelling, refusals and the storable range
+  // Refusals and the storable range
   // -------------------------------------------------------------------------
-
-  /**
-   * A displaced root keeps its degree's letter and takes the accidental that
-   * lands it on the pitch - which in a diatonic mode is the numeral's own.
-   *
-   * C major's `preferSharps` is `true` - its signature is empty, so the ionian
-   * scale's own default decides - and spelling by that preference would print
-   * `A♯ Maj` under a button labelled `♭VII`. The seventh degree of C major is
-   * written on a B, so the lowered one is a B flat, and the accidental in the
-   * numeral and the accidental in the name come out the same because they are
-   * the same accidental.
-   *
-   * The rule this replaced read the *sign* of the displacement instead, which
-   * agrees here and in every diatonic mode and disagrees in 112 places
-   * elsewhere. The letter sweep at the bottom of this file is the general
-   * statement; this is the one a reader can check by eye.
-   */
-  it('spells a displaced root on its degree letter', () => {
-    const { borrowed, secondary } = chordVocabulary(C_MAJOR, IONIAN, null);
-
-    expect(names(borrowed)).toContain('Bb Maj');
-    expect(names(borrowed)).not.toContain('A# Maj');
-    // The secondary dominants are unaltered, so they take the key's spelling.
-    expect(names(secondary)).toContain('D7');
-  });
-
-  /**
-   * An undisplaced root is the key's own note, and in a diatonic mode its
-   * degree letter is the letter the key signature already writes it on.
-   *
-   * C major is no test of this: every root it offers with `alter` at zero is a
-   * white key, and sharps and flats spell those the same. B major's dominant is
-   * F sharp and E flat major's subdominant is A flat, and the two would be
-   * printed `Gb` and `G#` by anything that had stopped reading the key - which
-   * is exactly what a degree letter counted from the tonic's own spelling
-   * cannot do.
-   */
-  it('spells an unaltered root on its degree letter, which is the key\'s', () => {
-    const bMajor: ProgressionKey = { tonic: 11, scaleId: 'ionian', preferSharps: true };
-    const sharps = chordVocabulary(bMajor, IONIAN, selection(4));
-
-    expect(names(sharps.alternates)[0]).toBe('F# Maj');
-    expect(names(sharps.secondary)).toContain('C#7');
-
-    const eFlatMajor: ProgressionKey = { tonic: 3, scaleId: 'ionian', preferSharps: false };
-    const flats = chordVocabulary(eFlatMajor, IONIAN, selection(3));
-
-    expect(names(flats.alternates)[0]).toBe('Ab Maj');
-  });
-
-  /** The spoken label says the accidental and the shape rather than printing them. */
-  it('says a borrowed chord aloud rather than spelling its symbols', () => {
-    const { borrowed } = chordVocabulary(C_MAJOR, IONIAN, null);
-
-    expect(withNumeral(borrowed, '♭VII').spoken).toBe('B flat major');
-  });
 
   /**
    * A scale that cannot stack thirds has no chords at all, so it has no
@@ -837,144 +776,6 @@ describe('chordVocabulary', () => {
         }
       }
     }
-  });
-
-  // -------------------------------------------------------------------------
-  // Every option on the letter its numeral names
-  // -------------------------------------------------------------------------
-
-  /**
-   * The 55 misspelt buttons the design doc counts, closed as a class rather
-   * than as a list.
-   *
-   * A numeral names a *degree*, and a degree is written on the letter that many
-   * steps above the tonic's whatever accidental it carries. So the assertion is
-   * not "this button prints `Cb`" but "every button prints a letter its own
-   * numeral could have named", which is the property the 55 broke and which no
-   * sharp/flat preference could have restored: the two chromatic tables hold no
-   * `C♭`, `F♭`, `B♯`, `E♯` or double accidental at all, so 35 flat-key
-   * borrowings and 20 sharp-key ones came back on the letter next door.
-   *
-   * The key is built as `ProgressionService.setKey` builds one, through
-   * `spellingFor`, because the tonic's own letter is where every other letter
-   * is counted from - a sweep that guessed the preference would be testing a
-   * key the app never puts a user in.
-   */
-  function letterOf(name: string): string {
-    return name[0];
-  }
-
-  /** Letters in step order, so the index is the letter. */
-  const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
-
-  /** The seven diatonic modes, whose ids the spelling sweep needs. */
-  const DIATONIC_MODES: readonly string[] = [
-    'ionian',
-    'dorian',
-    'phrygian',
-    'lydian',
-    'mixolydian',
-    'aeolian',
-    'locrian'
-  ];
-
-  /** A key exactly as `setKey` would store it, signature and all. */
-  function keyFor(tonic: number, scaleId: string): ProgressionKey {
-    const scale = keys.findScale(scaleId);
-    return {
-      tonic,
-      scaleId,
-      preferSharps: keys.spellingFor(tonic, scaleId, scale, true)
-    };
-  }
-
-  /** Every option of every group, in one key, with each degree selected once. */
-  function everyOptionInKey(key: ProgressionKey, intervals: readonly number[]): ChordOption[] {
-    const options: ChordOption[] = [];
-    for (let degree = 0; degree <= 6; degree++) {
-      options.push(...everyOption(intervals, key, selection(degree)));
-    }
-    return options;
-  }
-
-  /** The options whose printed root is not on the letter its numeral names. */
-  function offLetter(key: ProgressionKey, intervals: readonly number[]): string[] {
-    const tonicLetter = LETTERS.indexOf(letterOf(service.spellNote(key.tonic, key.preferSharps)));
-    const wrong: string[] = [];
-
-    for (const option of everyOptionInKey(key, intervals)) {
-      const expected = LETTERS[(tonicLetter + option.degree) % 7];
-      if (letterOf(option.name) !== expected) {
-        wrong.push(`${key.scaleId} on ${key.tonic}: ${option.numeral} printed ${option.name}, wanted ${expected}`);
-      }
-    }
-
-    return wrong;
-  }
-
-  it('names every option on the letter its numeral names', () => {
-    const wrong: string[] = [];
-
-    for (const mode of DIATONIC_MODES) {
-      const scale = keys.findScale(mode);
-      if (!scale) throw new Error(`no scale ${mode}`);
-
-      for (let tonic = 0; tonic < 12; tonic++) {
-        wrong.push(...offLetter(keyFor(tonic, mode), scale.intervals));
-      }
-    }
-
-    expect(wrong).toEqual([]);
-  });
-
-  /**
-   * The whole reach of the fallback, across all 33 heptatonic scales in all
-   * twelve keys: **sixteen buttons, on one root.**
-   *
-   * `spellAt` refuses past a double accidental and the caller falls back to
-   * `spellPitchClass`, which spells by preference and so lands on a letter the
-   * numeral did not name. That is the only way a button here can still be on
-   * the wrong letter, and it is worth a number rather than a hand-wave.
-   *
-   * All sixteen are the **sixth degree of A♯ enigmatic**, which needs an F
-   * triple sharp. Enigmatic is `[0, 1, 4, 6, 8, 10, 11]` and inherits no key
-   * signature, so its own `preferSharps` decides and pitch class 10 is spelled
-   * `A♯`; from an A the sixth degree is written on an F, and ten semitones above
-   * A♯ is pitch class 8 - three semitones above F. There is nowhere further to
-   * go, because a triple sharp is not notation. The sixteen are one root printed
-   * sixteen times: the alternates row offers every shape on the selected chord,
-   * so every quality repeats it.
-   *
-   * **It was twelve, and it moved at M3 Task 4** when `QUALITY_INTERVALS` gained
-   * `major6`, `minor6`, `add9` and `minorAdd9`. The ruling this docstring asks
-   * for is therefore the mildest one available: no new *root* falls back, the
-   * one that already did is now printed on four more buttons, and the set is
-   * still "the sixth degree of A♯ enigmatic" exactly as it was. The assertion
-   * below that every entry starts `enigmatic on 10:` is what says so.
-   *
-   * **No borrowed or secondary option is ever affected, in any scale**, and no
-   * diatonic mode is affected at all - the test above pins that half at zero.
-   *
-   * `TRIPLE_ACCIDENTAL_OPTIONS` is pinned rather than merely bounded so that a
-   * new scale, a widened `ALTER_MIN`, or a change to a scale's `preferSharps`
-   * cannot enlarge the set silently. If this number moves, the new members are
-   * printed in the failure and each is a ruling to make, not a count to update.
-   */
-  const TRIPLE_ACCIDENTAL_OPTIONS = 16;
-
-  it('falls back to the tables only past a double accidental', () => {
-    const wrong: string[] = [];
-
-    for (const scale of heptatonicScales()) {
-      for (let tonic = 0; tonic < 12; tonic++) {
-        wrong.push(...offLetter(keyFor(tonic, scale.id), scale.intervals));
-      }
-    }
-
-    expect(wrong.length).withContext(wrong.join('\n')).toBe(TRIPLE_ACCIDENTAL_OPTIONS);
-    expect(wrong.every(entry => entry.startsWith('enigmatic on 10:')))
-      .withContext(wrong.join('\n'))
-      .toBeTrue();
   });
 
   /** Each option knows which row it came from, so a click need not be told. */
