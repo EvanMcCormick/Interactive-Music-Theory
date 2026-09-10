@@ -961,8 +961,8 @@ describe('ProgressionService', () => {
     });
 
     /**
-     * The case the three numbers exist for. The document holds 1, the synth
-     * hears 0, and the ceiling says which of those is the reason.
+     * The case the three numbers exist for. The document holds `OCTAVE_MAX`,
+     * the synth hears 0, and the ceiling says which of those is the reason.
      */
     it('separates the request from the sound for a chord that does not fit', () => {
       const id = slotInD({ ...WIDEST, octave: OCTAVE_MAX });

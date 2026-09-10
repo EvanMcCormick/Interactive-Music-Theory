@@ -121,31 +121,35 @@ describe('generateSlotNotes', () => {
   });
 
   /**
-   * This asserted octave 2 rather than 1, because 1 proves almost nothing.
+   * This asserts octave 2 rather than 1, because 1 proves almost nothing.
    *
    * The voicing base is a floor, so a C major triad voiced from *any* base
    * between 61 and 72 comes out 72-76-79. At octave 1 the base is 72 and the
    * whole family `VOICING_BASE_MIDI + octave * n` for n from 1 to 12 lands
    * inside that window, so `* 6` and `* 1` both pass. At octave 2 the base is
-   * 84, which no smaller multiplier reaches - so 84-88-91 was the assertion.
+   * 84, which no smaller multiplier reaches.
    *
-   * **Task 4b took octave 2 away.** `chordOctaveCeiling` holds every chord at
-   * `OCTAVE_MAX` or below, so 2 and 1 now sound the same and no positive octave
-   * separates the multipliers any more. That is asserted here rather than left
-   * as a spec that quietly stopped testing the thing its own note says it tests.
+   * **This spec lost its case twice and has it back.** Task 4b dropped it to
+   * `OCTAVE_MAX`, which was then 1, because the ceiling held every chord at or
+   * below it and 2 and 1 sounded the same; restoring `OCTAVE_MAX` to 2 restores
+   * the assertion that pins the multiplier. The stored octave is `OCTAVE_MAX`
+   * and the notes are written out as numbers, so a constant that moves again
+   * shows up here as a failure rather than as a silently weaker test - which is
+   * what it was between Task 4b and this.
    *
-   * The multiplier is pinned below instead, on the negative side, which is where
-   * the ceiling does not reach: octave -2 puts the base at 36, where `* 6` would
-   * put it at 48 and voice a different chord.
+   * The second expectation is the ceiling, not the multiplier: octave 3 is above
+   * the control and `ceilingFor` clamps it to `OCTAVE_MAX`, so it must sound
+   * exactly where octave 2 does rather than an octave higher.
    */
   it('shifts the voicing base by the octave, and no higher than the ceiling', () => {
     expect(
       generateSlotNotes(slotWithDegree(0, { octave: OCTAVE_MAX }), C_MAJOR_KEY, MAJOR)
         .map(n => n.midi)
-    ).toEqual([72, 76, 79]);
+    ).toEqual([84, 88, 91]);
     expect(
-      generateSlotNotes(slotWithDegree(0, { octave: 2 }), C_MAJOR_KEY, MAJOR).map(n => n.midi)
-    ).toEqual([72, 76, 79]);
+      generateSlotNotes(slotWithDegree(0, { octave: OCTAVE_MAX + 1 }), C_MAJOR_KEY, MAJOR)
+        .map(n => n.midi)
+    ).toEqual([84, 88, 91]);
   });
 
   // The other direction, which nothing here tested: a multiplier is only
@@ -272,15 +276,17 @@ describe('generateSlotNotes', () => {
  * The ceiling is the chord's own, and this is where that is proved.
  *
  * `OCTAVE_MAX` is a bound on the *control*, and it is one number for every
- * chord. That was defensible while the widest chord the model could build
- * reached 46 semitones above its base: `OCTAVE_MAX` of 1 puts that at MIDI 118,
- * nine short of the end. M3 Task 4 widened the model to 58, which is 130, and
- * three notes past the end of MIDI is a chord `Tone.PolySynth` is handed
- * unclamped.
+ * chord. It could double as the MIDI guard only while it was right for the
+ * widest chord in the model, which meant being wrong for all the others: M2 held
+ * it at 1 rather than 2 because the widest chord then reached 46 semitones above
+ * its base, and every chord in the app paid an octave for that one. M3 Task 4
+ * widened the model to 58, which is MIDI 130 even at 1, and three notes past the
+ * end of MIDI is a chord `Tone.PolySynth` is handed unclamped.
  *
- * The fix is not a smaller constant - that costs every chord the top octave to
+ * The fix is not a smaller constant - that costs every chord another octave to
  * accommodate one almost nobody will build - it is a ceiling derived per chord,
- * here, where the key and the scale are already in hand.
+ * here, where the key and the scale are already in hand. With the ceiling local,
+ * `OCTAVE_MAX` went back to 2 and stopped being arithmetic at all.
  *
  * **The property is now local, which is what makes it cheap.** The old bound
  * could only be shown maximal by sweeping the whole reachable universe: 236
@@ -445,7 +451,14 @@ describe('chordOctaveCeiling', () => {
    * `diminished`, suspended at the fourth with a flattened ninth and a flattened
    * thirteenth, second inversion, in D. It reaches 58 semitones above its base -
    * the widest the M3 model can build - so its ceiling is 0 where an ordinary
-   * chord's is 1: 60 + 58 is 118, and one octave higher is 130.
+   * chord's is the whole of the control: 60 + 58 is 118, and one octave higher
+   * is 130.
+   *
+   * It is the *widest* chord in the model rather than the only narrow-ceilinged
+   * one. 16,045 chords in the full sweep - 0.007% of it - reach far enough to be
+   * held at 0, and 1,730,647 more at 1; earlier notes on this called it "the one
+   * chord in 236 million", which was the witness's uniqueness borrowed for a
+   * population it does not describe.
    */
   const WITNESS: Partial<ChordDegree> = {
     extent: 13,
@@ -467,13 +480,18 @@ describe('chordOctaveCeiling', () => {
 
   /**
    * What the clamp is for, end to end: the slot stores `OCTAVE_MAX` and sounds
-   * at 0, rather than sounding three notes off the end of MIDI.
+   * at 0, rather than sounding fifteen notes off the end of MIDI.
+   *
+   * Two octaves down rather than one, since `OCTAVE_MAX` went back to 2. That is
+   * the clamp's range rather than its rule - `Math.min` against a derived
+   * ceiling does not care how far it has to come - and the numbers below are
+   * unchanged by the move, because they were always this chord's own ceiling.
    *
    * Both stored octaves produce the same notes, which is the clamp doing its one
    * job. What is *not* here is a rewrite of the stored value - see
    * `ProgressionService.slotOctave` for why the request survives being clamped.
    */
-  it('voices a chord that would overflow an octave lower instead', () => {
+  it('voices a chord that would overflow at its own ceiling instead', () => {
     const atZero = generateSlotNotes(
       slotWithDegree(3, { ...WITNESS, octave: 0 }), D_MAJOR_KEY, MAJOR
     ).map(note => note.midi);
@@ -486,16 +504,17 @@ describe('chordOctaveCeiling', () => {
   });
 
   /**
-   * And the clamp is not a blanket octave down. An ordinary chord at
-   * `OCTAVE_MAX` still sounds at `OCTAVE_MAX`, which is exactly the half that
-   * dropping the constant to 0 would have taken from every chord in the app.
+   * And the clamp is not a blanket drop. An ordinary chord at `OCTAVE_MAX` still
+   * sounds at `OCTAVE_MAX`, which is exactly the half that a smaller constant
+   * would have taken from every chord in the app - and 99.839% of the shipped
+   * set is in this case rather than the one above.
    */
   it('leaves a chord that fits exactly where it was asked for', () => {
     expect(
       generateSlotNotes(
         slotWithDegree(0, { octave: OCTAVE_MAX }), C_MAJOR_KEY, MAJOR
       ).map(note => note.midi)
-    ).toEqual([72, 76, 79]);
+    ).toEqual([84, 88, 91]);
   });
 
   /**

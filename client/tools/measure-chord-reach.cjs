@@ -24,21 +24,45 @@
  *
  * ## What it last measured
  *
- * On **2026-09-10**, against `VOICING_BASE_MIDI` of 60:
+ * On **2026-09-10**, against `VOICING_BASE_MIDI` of 60 and `OCTAVE_MAX` of 2:
  *
  * | --set      | chords      | seconds | reach | lowest ceiling |
  * |------------|-------------|---------|-------|----------------|
- * | shipped    | 5,613,300   | 4.4     | 46    | octave 1       |
- * | suspended  | 16,839,900  | 13.7    | 46    | octave 1       |
- * | full       | 236,432,196 | 203.4   | 58    | octave 0       |
+ * | shipped    | 5,613,300   | 4.1     | 46    | octave 1       |
+ * | suspended  | 16,839,900  | 14.2    | 46    | octave 1       |
+ * | full       | 236,432,196 | 180.1   | 58    | octave 0       |
+ *
+ * **The lowest-ceiling column reads differently than it did**, and none of its
+ * numbers moved. It was measured with `OCTAVE_MAX` at 1, where a shipped-set
+ * ceiling of 1 *was* the control's own bound and meant nothing was held down.
+ * At 2 the same 1 sits one below the bound and means those chords are.
  *
  * The 58 is C major's degree 3 at extent 13, altered down a tone and overridden
  * to `diminished`, suspended at the fourth with a flattened ninth and a
  * flattened thirteenth, second inversion, in D - two replacements land on the
- * note below them and the ascent lift adds an octave twice. It is the one chord
- * in 236 million whose ceiling is not `OCTAVE_MAX`, and it is pinned by hand in
- * `progression-normalize.spec.ts` so the figure can be checked without running
- * the sweep.
+ * note below them and the ascent lift adds an octave twice. It is pinned by hand
+ * in `progression-normalize.spec.ts` so the figure can be checked without
+ * running the sweep.
+ *
+ * It is the *widest* chord rather than the only held-down one, which earlier
+ * notes got wrong by calling it "the one chord in 236 million". The histogram
+ * below is what says otherwise, and it is what `OCTAVE_MAX` is now chosen
+ * against - a raw headroom of n is a chord that can take n octaves and no more,
+ * whatever the control's bound happens to be:
+ *
+ * | raw headroom | shipped   | share   | full        | share   |
+ * |--------------|-----------|---------|-------------|---------|
+ * | 0            | -         | -       | 16,045      | 0.007%  |
+ * | 1            | 9,041     | 0.161%  | 1,730,647   | 0.732%  |
+ * | 2            | 511,231   | 9.107%  | 36,454,215  | 15.418% |
+ * | 3            | 3,519,644 | 62.702% | 187,164,854 | 79.162% |
+ * | 4            | 1,554,375 | 27.691% | 10,940,750  | 4.627%  |
+ * | 5            | 19,009    | 0.339%  | 125,685     | 0.053%  |
+ *
+ * So `OCTAVE_MAX` of 2 gives 99.839% of the shipped set an octave back and takes
+ * nothing from the 0.161% that cannot use it, because `chordOctaveCeiling` holds
+ * those at 1 by themselves. Over the whole storable set - the `full` row -
+ * 0.739% is held below 2 that way.
  *
  * The reach does not depend on which octave the slots are swept at: a
  * whole-octave shift of the base moves every note in a voicing by exactly twelve
@@ -218,6 +242,7 @@ function sweep(setName, octave) {
   let floorGap = Infinity;
   let minCeiling = Infinity;
   let witness = null;
+  const headroom = new Map();
 
   for (const scale of SCALES) {
     for (let degree = 0; degree <= 6; degree++) {
@@ -251,13 +276,26 @@ function sweep(setName, octave) {
                   if (ceiling < minCeiling) minCeiling = ceiling;
 
                   const base = VOICING_BASE_MIDI + Math.min(octave, ceiling) * 12;
+                  let top = -Infinity;
                   for (const note of generateSlotNotes(slot, key, scale.intervals)) {
                     if (note.midi - base < floorGap) floorGap = note.midi - base;
-                    if (note.midi - base > reach) {
-                      reach = note.midi - base;
-                      witness = { scale: scale.name, key: tonic, degree: degreeValue };
-                    }
+                    if (note.midi - base > top) top = note.midi - base;
                   }
+                  if (top > reach) {
+                    reach = top;
+                    witness = { scale: scale.name, key: tonic, degree: degreeValue };
+                  }
+
+                  // The *unclamped* headroom, which is what says how much of the
+                  // control this chord could use if the control let it. It is
+                  // derived from the chord's own reach rather than asked of
+                  // `headroomOctaves` again, and the two agree by the same
+                  // invariance the ceiling rests on: a whole-octave shift of the
+                  // base moves every note by exactly twelve, so `top` measured
+                  // from the sounding base is this chord's reach whatever octave
+                  // it sounded at.
+                  const raw = Math.floor((MIDI_MAX - VOICING_BASE_MIDI - top) / 12);
+                  headroom.set(raw, (headroom.get(raw) ?? 0) + 1);
                 }
               }
             }
@@ -267,7 +305,7 @@ function sweep(setName, octave) {
     }
   }
 
-  return { chords, reach, floorGap, minCeiling, witness };
+  return { chords, reach, floorGap, minCeiling, witness, headroom };
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +334,7 @@ console.log(`Sweeping --set=${setName}, slots at octave ${octave}`);
 console.log(`${SCALES.length} heptatonic scales, ${SHAPES.length} (alter, quality) pairs\n`);
 
 const started = Date.now();
-const { chords, reach, floorGap, minCeiling, witness } = sweep(setName, octave);
+const { chords, reach, floorGap, minCeiling, witness, headroom } = sweep(setName, octave);
 const seconds = (Date.now() - started) / 1000;
 
 console.log(`chords       ${chords.toLocaleString('en-US')}`);
@@ -304,6 +342,17 @@ console.log(`seconds      ${seconds.toFixed(1)}`);
 console.log(`reach        ${reach} semitones above the sounding base`);
 console.log(`floor gap    ${floorGap} (voiceChord never voices below its base, so 0)`);
 console.log(`min ceiling  octave ${minCeiling} (the top of the control for the worst chord)`);
+
+// What each octave of the control costs, which is the figure `OCTAVE_MAX` is
+// chosen against: a raw headroom of n is a chord that can take n octaves and no
+// more, whatever the control's own bound happens to be.
+console.log('\nraw headroom (unclamped by OCTAVE_MIN/OCTAVE_MAX)');
+for (const raw of [...headroom.keys()].sort((a, b) => a - b)) {
+  const count = headroom.get(raw);
+  const share = ((count / chords) * 100).toFixed(3);
+  console.log(`  ${String(raw).padStart(3)}  ${count.toLocaleString('en-US').padStart(13)}  ${share.padStart(7)}%`);
+}
+
 console.log(`\nwidest       ${witness.scale}, key ${witness.key}`);
 console.log(`             ${JSON.stringify(witness.degree)}`);
 console.log(

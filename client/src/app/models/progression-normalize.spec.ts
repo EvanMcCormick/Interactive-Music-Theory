@@ -4,7 +4,7 @@ import {
   chordPitchClasses,
   noteCount
 } from '../services/progression-harmony';
-import { generateSlotNotes } from '../services/progression-generate';
+import { chordOctaveCeiling, generateSlotNotes } from '../services/progression-generate';
 import { voiceChord } from '../services/progression-voicing';
 import { MusicTheoryService } from '../services/music-theory.service';
 import {
@@ -683,8 +683,10 @@ describe('the octave bound', () => {
    * One sweep slot, spread from the factory's defaults rather than normalised.
    *
    * Normalising would clamp `octave` back inside the bound, and the spec below
-   * that proves `OCTAVE_MAX + 1` overflows MIDI deliberately asks for an octave
-   * outside it - normalising here would turn that spec into a tautology.
+   * that sweeps at `OCTAVE_MAX + 1` deliberately asks for an octave outside it:
+   * what it checks is that `generateSlotNotes` holds such a slot to the control's
+   * own bound, and a normalisation here would make that true before the
+   * generator was reached.
    */
   const SWEEP_TEMPLATE = createDegreeSlot(0, 0);
   function sweepSlot(overrides: Partial<ChordDegree>): ChordSlot {
@@ -767,8 +769,9 @@ describe('the octave bound', () => {
    * would have argued for a sampled axis with a comment saying so.
    *
    * The second reason was that **the reach of the full model is 58, and 58 did
-   * not fit**: `OCTAVE_MAX` of 1 put that chord's top note at MIDI 130, so a
-   * widened sweep here would not have been a slower spec but a *failing* one.
+   * not fit**: `OCTAVE_MAX` was 1 at the time and there was no other guard, so
+   * that chord's top note landed on MIDI 130 and a widened sweep here would not
+   * have been a slower spec but a *failing* one.
    *
    * **Task 4b settled that, and it is why this sweep is not widened even now
    * that it could be.** The ceiling is each chord's own -
@@ -956,6 +959,14 @@ describe('the octave bound', () => {
    * `voiceChord` will still put it there when asked directly - and
    * `generateSlotNotes` declines to ask. A spec pinning only the second half
    * would pass just as well if the reach had quietly shrunk instead.
+   *
+   * **The by-hand base is one octave above this chord's own ceiling, not
+   * `OCTAVE_MAX`.** It was `OCTAVE_MAX` while that constant was 1, which is the
+   * same base by coincidence - this chord's ceiling is 0 - and the coincidence
+   * ended when `OCTAVE_MAX` went back to 2. Naming the ceiling says what the
+   * 130 is: the first octave this chord does not fit in. Naming the control's
+   * bound would make the number move whenever the control's range did, which is
+   * exactly the thing this spec exists to be independent of.
    */
   it('holds a chord that would overflow at its own ceiling instead', () => {
     const widest: Partial<ChordDegree> = {
@@ -970,13 +981,17 @@ describe('the octave bound', () => {
     const key: ProgressionKey = { tonic: 2, scaleId: 'ionian', preferSharps: true };
     const major = [0, 2, 4, 5, 7, 9, 11];
 
-    // Voiced by hand at the base `OCTAVE_MAX` names, which is what the
-    // generator would have done and no longer does.
-    const relative = chordPitchClasses(major, { ...degreeOf(SWEEP_TEMPLATE), ...widest });
+    // Voiced by hand one octave above this chord's ceiling, which is where the
+    // generator would have put it before Task 4b and no longer will.
+    const stored = { ...degreeOf(SWEEP_TEMPLATE), ...widest };
+    const ceiling = chordOctaveCeiling(key, major, stored);
+    expect(ceiling).toBe(0);
+
+    const relative = chordPitchClasses(major, stored);
     const unclamped = voiceChord(
       relative.map(pitchClass => pitchClass + key.tonic),
       2,
-      VOICING_BASE_MIDI + OCTAVE_MAX * 12
+      VOICING_BASE_MIDI + (ceiling + 1) * 12
     );
     expect(unclamped[unclamped.length - 1]).toBe(130);
 
@@ -1001,23 +1016,35 @@ describe('the octave bound', () => {
   });
 
   /**
-   * The top of the range costs the shipped set nothing, which is the half of
-   * Task 4b worth measuring here.
+   * What the top of the control does to the shipped set, which has now been
+   * three different claims.
    *
-   * It used to read `extremesAt(OCTAVE_MAX + 1).highest > 127` - the constant
-   * proved maximal by showing the next octave off the end. That is no longer
-   * what stops a chord: `chordOctaveCeiling` does, and it is proved maximal
-   * per chord in `progression-generate.spec.ts`.
+   * It first read `extremesAt(OCTAVE_MAX + 1).highest > 127` - the constant
+   * proved maximal by showing the next octave off the end. Task 4b took that
+   * away, because `chordOctaveCeiling` is what stops a chord now and it is
+   * proved maximal per chord in `progression-generate.spec.ts`. What went in its
+   * place was `extremesAt(OCTAVE_MAX).highest - extremesAt(0).highest === 12`:
+   * the whole sweep shifting rigidly by one octave, which held because at an
+   * `OCTAVE_MAX` of 1 no chord in the shipped set was held down at all.
    *
-   * What this describe can still say is that the ceiling never bites on
-   * anything the palette can build today. Every chord in the swept set reaches
-   * at most 46, and 46 fits under `OCTAVE_MAX`, so the sweep at `OCTAVE_MAX` is
-   * exactly twelve semitones above the sweep at 0 - no chord in it was held
-   * down - and a sweep an octave higher than the control allows is held to the
-   * same notes as `OCTAVE_MAX` rather than climbing past 127.
+   * **That second expectation was tied to the old value and does not survive
+   * the new one.** At 2 the sweep stops moving rigidly: the chords that reach 46
+   * have room for one more octave and not two, so they stop at 118 while the
+   * rest of the set goes on up. The difference is 21 rather than 24, and 21 is
+   * an artefact of which chord happens to be widest rather than a fact worth
+   * pinning.
+   *
+   * What is worth pinning is below. Some chord in the set has exactly two
+   * octaves of headroom and spends the last of it, so at the top of the control
+   * the set lands on **127 exactly** - the last note MIDI has, neither short of
+   * it nor past it. That is `chordOctaveCeiling`'s maximality visible as a
+   * single number: a ceiling that were merely safe would leave the set short,
+   * and one that were wrong would carry it past. And a stored octave above the
+   * control's own bound is held to the same notes rather than climbing further,
+   * which is the half `OCTAVE_MAX` itself still does.
    */
-  it('costs the shipped set nothing, and stops it going higher', () => {
-    expect(extremesAt(OCTAVE_MAX).highest - extremesAt(0).highest).toBe(12);
+  it('reaches the last note MIDI has at the top of the control, and no further', () => {
+    expect(extremesAt(OCTAVE_MAX).highest).toBe(127);
     expect(extremesAt(OCTAVE_MAX + 1).highest).toBe(extremesAt(OCTAVE_MAX).highest);
   });
 
@@ -1028,15 +1055,27 @@ describe('the octave bound', () => {
     expect(VOICING_BASE_MIDI).toBe(60);
   });
 
-  // The floor is taste, and is pinned as taste. `voiceChord` never voices below
-  // its base, so the MIDI floor alone would permit any OCTAVE_MIN down to -5 -
-  // the arithmetic that fixes the ceiling says nothing at all about the bottom.
-  // C2 is where the musical argument stops: below the low E of a guitar in
-  // standard tuning, and chords voiced under it are mud rather than music.
-  it('floors the octave control at C2 by taste, not by arithmetic', () => {
+  // Both ends are taste, and both are pinned as taste. `voiceChord` never voices
+  // below its base, so the MIDI floor alone would permit any OCTAVE_MIN down to
+  // -5, and since Task 4b the MIDI ceiling permits any OCTAVE_MAX at all -
+  // `chordOctaveCeiling` holds each chord where it fits whatever this pair says.
+  // So neither number is derived, and a number chosen by ear is only auditable
+  // if the spec says that is what it is.
+  //
+  // C2 is where the musical argument stops at the bottom: below the low E of a
+  // guitar in standard tuning, and chords voiced under it are mud. C6 is where
+  // it stops at the top: the highest note on the app's own 49- and 37-key
+  // keyboards, one octave below its 61-key one.
+  //
+  // **`OCTAVE_MAX` was 1 here until the restoration**, and the assertion below
+  // is the one place in the suite that fails on the value alone rather than on
+  // something derived from it. That is deliberate: this is the spec whose job is
+  // to notice.
+  it('bounds the octave control by taste at both ends, not by arithmetic', () => {
     expect(OCTAVE_MIN).toBe(-2);
     expect(VOICING_BASE_MIDI + OCTAVE_MIN * 12).toBe(36);
-    expect(OCTAVE_MAX).toBe(1);
+    expect(OCTAVE_MAX).toBe(2);
+    expect(VOICING_BASE_MIDI + OCTAVE_MAX * 12).toBe(84);
   });
 });
 

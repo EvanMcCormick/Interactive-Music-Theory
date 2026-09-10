@@ -129,11 +129,13 @@ export function chordRootPitchClass(
  * The highest octave this chord may be voiced at without leaving MIDI.
  *
  * `OCTAVE_MIN` and `OCTAVE_MAX` bound the octave *control*, one pair of numbers
- * for every chord in the app. That held while the widest chord the model could
- * build reached 46 semitones above its base - `OCTAVE_MAX` of 1 puts that at
- * MIDI 118 - and M3 Task 4 widened the model to 58, which is 130. A global bound
- * can only answer that by moving down for everyone, costing every chord the top
- * octave to accommodate one almost nobody will build.
+ * for every chord in the app, and that is now the whole of what they do. A
+ * single pair could double as the MIDI guard only by being right for the widest
+ * chord in the model, which means being wrong for every other one. M2 paid that
+ * price knowingly - the constant sat at 1 rather than 2 for the whole of M2, and
+ * every chord in the app lost an octave to the one that reached 46 semitones
+ * above its base. M3 Task 4 widened that chord to 58, which is MIDI 130, and a
+ * global bound could only have answered by coming down again for everyone.
  *
  * So the ceiling is derived per chord instead, and this is where. The pieces
  * were always in three places - the shape is `chordPitchClasses`', the reach is

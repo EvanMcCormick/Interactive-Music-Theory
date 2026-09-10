@@ -300,12 +300,20 @@ export const MIN_VISIBLE_SEMITONES = 24;
  * inside this window, so the grid does not jump the moment it arrives.
  *
  * It is deliberately *not* the reachable pitch space, which the octave control
- * opens up: `OCTAVE_MIN` of -2 and `OCTAVE_MAX` of 1 put the voicing base
- * anywhere from 36 to 72, and the widest chord reaches 45 semitones above its
- * base, so everything a slot can hold spans 36 to 117. Drawing 82 rows to be
- * ready for a chord that is not there yet is a page of empty grid, and the
- * moment one real note exists the window is derived from it instead. The empty
- * case is a canvas, not a promise.
+ * opens up: `OCTAVE_MIN` of -2 and `OCTAVE_MAX` of 2 put the voicing base
+ * anywhere from 36 to 84, `voiceChord` never places a note below its base, and
+ * `chordOctaveCeiling` holds every generated chord's top note at 127 or under -
+ * so everything a slot can hold spans **36 to 127**. Drawing 92 rows to be ready
+ * for a chord that is not there yet is a page of empty grid, and the moment one
+ * real note exists the window is derived from it instead. The empty case is a
+ * canvas, not a promise.
+ *
+ * The top of that range is now read off the guard rather than off the widest
+ * chord. This said "the widest chord reaches 45 semitones above its base, so
+ * everything a slot can hold spans 36 to 117", which was true of M2's model and
+ * went stale twice without anything noticing - 46 at M3 Task 4, 58 at Task 4b.
+ * A per-chord ceiling makes the figure derivable instead of measured: whatever
+ * the widest chord reaches, the generator will not voice it past 127.
  *
  * The slot's own `octave` is not consulted, and could not be: the signature
  * takes notes. An empty slot at `octave` -2 is an empty slot, and the first
