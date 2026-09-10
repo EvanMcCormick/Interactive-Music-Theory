@@ -40,8 +40,13 @@ export class MusicTheoryService {
    * not a service, and `circle-of-fifths.data.ts` had gone the same way before
    * it. `chord-catalog.ts` argues the move, and holds the guardrail that no
    * interval array moved in it.
+   *
+   * This is the module-level array itself and not a copy of it, so every
+   * instance of this service shares one and `getChordCategories` hands that one
+   * out. `readonly` on both is what makes the guardrail a compiler's business
+   * rather than a docstring's.
    */
-  private chordCategories: ChordCategory[] = CHORD_CATEGORIES;
+  private readonly chordCategories: readonly ChordCategory[] = CHORD_CATEGORIES;
 
   // Unified categories (scales and chords combined)
   private unifiedCategories: MusicTheoryCategory[] = [];
@@ -608,28 +613,16 @@ export class MusicTheoryService {
     return this.unifiedCategories.find(cat => cat.id === state.selectedCategory);
   }
 
-  /**
-   * The category holding a chord, so a caller with a chord id can select it.
-   *
-   * `selectKeyAndMode` takes a category and an item, and a caller that knows
-   * only which chord it wants has no way to name the category: the chords are
-   * split across `triads`, `seventh` and `extended`, and which one holds a
-   * given id is this service's data rather than a fact a component may assume.
-   * The progression composer is that caller - it lights the fretboard with the
-   * sounding chord, whose quality is a chord id here - and hardcoding `triads`
-   * would light nothing for every chord above a triad.
-   *
-   * **Chord categories only, and that is not a tidiness.** Item ids are unique
-   * within a category and not across them: `diminished` and `augmented` are
-   * each both a triad and a scale in this service. Searching every category for
-   * a chord id would answer `otherScales` for two of the twelve diatonic
-   * qualities and select a scale where a chord was asked for.
-   */
-  findChordCategory(chordId: string): MusicTheoryCategory | undefined {
-    return this.unifiedCategories.find(
-      cat => cat.type === 'chord' && cat.items.some(item => item.id === chordId)
-    );
-  }
+  // `findChordCategory` stood here and had no caller in the app or in a spec.
+  // It answered which category holds a chord id, for a caller that knew only
+  // which chord it wanted; the progression was that caller until M3 Task 5
+  // rewrote `chordFor` to look a chord up by its intervals instead, which
+  // answers the category and the id together. The same commit removed two other
+  // methods on exactly this ground and left this one behind. Its argument
+  // survives where it is still load-bearing: `findChordByIntervals` searches
+  // chord categories only, and says why - `diminished` and `augmented` are each
+  // both a triad and a scale here, so an id is unique within a category and not
+  // across them.
 
   getCurrentItems(): MusicTheoryItem[] {
     const category = this.getCurrentCategory();
@@ -977,7 +970,7 @@ export class MusicTheoryService {
   }
 
   // Legacy methods for backward compatibility (kept for component)
-  getChordCategories(): ChordCategory[] {
+  getChordCategories(): readonly ChordCategory[] {
     return this.chordCategories;
   }
 

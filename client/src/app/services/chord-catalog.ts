@@ -52,8 +52,17 @@ export const STEP_INTERVALS: readonly number[] = [0, 2, 4, 5, 7, 9, 11];
  * holds what the progression's chord model can now build and this table lacked -
  * see the design doc's "The fretboard is lit by interval set". Added, never
  * changed, per the guardrail above.
+ *
+ * **Readonly and frozen, so the compiler enforces the sentence above.** This was
+ * exported mutable and then *aliased* rather than copied - `MusicTheoryService`
+ * holds `CHORD_CATEGORIES` itself and `getChordCategories()` hands it out, so
+ * every instance of that service shares one module-level array and anything with
+ * the getter's result could have sorted or spliced it for all of them. Nothing
+ * does. `circle-of-fifths.data.ts` is the precedent and states the argument a
+ * second time: a `readonly` type alone would not stop a stray `sort`, so the
+ * array is frozen as well, and each category and its chord list with it.
  */
-export const CHORD_CATEGORIES: ChordCategory[] = [
+export const CHORD_CATEGORIES: readonly ChordCategory[] = Object.freeze([
   {
     id: 'triads',
     name: 'Triads',
@@ -136,7 +145,10 @@ export const CHORD_CATEGORIES: ChordCategory[] = [
       { id: 'sixNine', name: '6/9', intervals: [0, 4, 7, 9, 14], steps: [0, 2, 4, 5, 1], symbol: '6/9' }
     ]
   }
-];
+].map(category => {
+  Object.freeze(category.chords);
+  return Object.freeze(category);
+})) as readonly ChordCategory[];
 
 /**
  * The chord category and id whose intervals are exactly these, or null.
@@ -151,9 +163,13 @@ export const CHORD_CATEGORIES: ChordCategory[] = [
  * function's. `ChordIdentity.intervals` arrives ascending from root position for
  * exactly that reason.
  *
- * Chord categories only, on `findChordCategory`'s argument: a scale is not a
- * chord, and `[0, 4, 7]` matching some scale's first three degrees would light a
- * scale where a chord was asked for.
+ * **Chord categories only, and that is not a tidiness.** A scale is not a chord,
+ * and `[0, 4, 7]` matching some scale's first three degrees would light a scale
+ * where a chord was asked for. Item ids are unique within a category and not
+ * across them either: `diminished` and `augmented` are each both a triad and a
+ * scale in `MusicTheoryService`. The argument arrived here from
+ * `findChordCategory`, which this function replaced and which has since been
+ * removed.
  *
  * **The first match wins, and one collision is pre-existing.** `augmented7` in
  * `seventh` and `7sharp5` in `alterations` are both `[0, 4, 8, 10]` with the
