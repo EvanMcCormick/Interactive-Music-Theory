@@ -59,7 +59,7 @@ const LETTER_NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
 /** A double accidental is the furthest conventional notation goes. */
 const MAX_ACCIDENTAL = 2;
 
-/** Letters, ascending, for a name that has one accidental sign repeated. */
+/** One upper-case letter, then up to two of a single accidental sign. */
 const NOTE_NAME_PATTERN = /^([A-G])(#{1,2}|b{1,2})?$/;
 
 /** Reduces to 0-11, for callers holding a stack that was never reduced. */
@@ -76,9 +76,14 @@ function reduceToOctave(value: number): number {
  * says *which degree this is* and gets back the spelling convention agrees on,
  * rather than saying which pitch it is and hoping for the letter it wanted.
  *
- * Null rather than a triple flat, so the caller chooses its fallback. It is
- * reached by a few exotic scales under `alter` - super locrian's already
- * doubly-flattened fourth, flattened again - and nowhere in a diatonic mode.
+ * Null rather than a triple accidental, so the caller chooses its fallback. It
+ * is reached, and reached with no `alter` at all: the sixth degree of A♯
+ * enigmatic is written on an F and sounds pitch class 8, three semitones above
+ * F, so it is an F triple sharp. `progression-vocabulary.spec.ts` sweeps all 33
+ * heptatonic scales in all twelve keys and pins that as the only root the app
+ * offers which gets here. Alteration adds more of them - D♭ super locrian's
+ * fourth is already a G double flat, and `alter: -1` on it asks for a G triple
+ * flat - but nowhere in a diatonic mode, which the same spec pins at zero.
  *
  * Both arguments take unreduced input: `steps` may be negative or past a
  * seventh, and `pitchClass` may be a chord-stack member that crossed the octave

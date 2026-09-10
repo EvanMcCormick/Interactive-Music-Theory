@@ -44,6 +44,21 @@ describe('spellAt', () => {
     // Pitch class 1 on the letter E needs three flats.
     expect(spellAt(1, C, 2)).toBeNull();
   });
+
+  // The docstring promises both arguments take unreduced input, and Task 5
+  // feeds exactly that. A seventh chord's stack crosses the octave without
+  // being reduced - `degreePitchClasses` really does return `[11, 14, 17, 21]`
+  // for a B half-diminished seventh - so the seventh arrives as 21, not 9.
+  it('takes a chord-stack member that was never reduced', () => {
+    const B: SpelledNote = { letter: 6, accidental: 0 };
+    expect(spellAt(21, B, 6)).toEqual({ letter: 5, accidental: 0 });
+  });
+
+  // A negative step, the other half of that promise: one letter *below* the
+  // tonic is the letter above it at the far end of the octave, so C's is a B.
+  it('takes a step downward', () => {
+    expect(spellAt(11, C, -1)).toEqual({ letter: 6, accidental: 0 });
+  });
 });
 
 describe('formatNote and parseNoteName', () => {
@@ -60,9 +75,15 @@ describe('formatNote and parseNoteName', () => {
     }
   });
 
+  // Strictly the inverse of `formatNote`, which is a decision rather than an
+  // accident: each of these has an obvious reading, and guessing it would be
+  // choosing a spelling on the caller's behalf.
   it('refuses a name that is not one', () => {
     expect(parseNoteName('H')).toBeNull();
     expect(parseNoteName('C#/Db')).toBeNull();
+    expect(parseNoteName('c')).toBeNull();     // lower case
+    expect(parseNoteName('Cb#')).toBeNull();   // two signs at once
+    expect(parseNoteName('C###')).toBeNull();  // past a double accidental
   });
 });
 

@@ -328,9 +328,11 @@ const MAX_ACCIDENTAL = 2;
  * The note `steps` letters above `from` that sounds `pitchClass`, or null when
  * that letter would need more than a double accidental.
  *
- * Null rather than a triple flat, so the caller chooses its fallback. It is
- * reached by a few exotic scales under `alter` - super locrian's already
- * doubly-flattened fourth, flattened again - and nowhere in a diatonic mode.
+ * Null rather than a triple accidental, so the caller chooses its fallback. It
+ * is reached with no `alter` at all - the sixth degree of A♯ enigmatic is
+ * written on an F and sounds pitch class 8, an F triple sharp - and alteration
+ * adds more: D♭ super locrian's fourth is already a G double flat, and
+ * `alter: -1` on it asks for a G triple flat. Nowhere in a diatonic mode.
  */
 export function spellAt(pitchClass: number, from: SpelledNote, steps: number): SpelledNote | null {
   const letter = (((from.letter + steps) % 7) + 7) % 7;
