@@ -410,8 +410,15 @@ export function settle(doc: ProgressionDoc): ProgressionDoc {
  *
  * The one thing a command may do to ownership that the user did not do
  * directly, and it is narrow on purpose: it is for a command that **restates
- * the chord or its voicing** - `setSlotExtent`, `stepSlotExtent`,
- * `setSlotInversion`, `setSlotOctave`. Without it those four collide with a
+ * the chord or its voicing** - which is every command reaching
+ * `ProgressionDegreeEditor.editDegree`, and there are **seven**:
+ * `setSlotExtent`, `stepSlotExtent`, `setSlotChord`, `setSlotInversion`,
+ * `setSlotOctave`, and the pair M3 Task 6 added, `setSlotSuspension` and
+ * `setSlotExtension`. The list read `setSlotExtent`, `stepSlotExtent`,
+ * `setSlotInversion`, `setSlotOctave` until that task's review, and the two it
+ * missed are the ones the argument below fits best - a suspension and a pinned
+ * ♭9 each move a chord tone, so a slot keeping the notes it had would sound
+ * neither. Without the reclaim all seven collide with a
  * claim over `pitches`, and the collision is not a near miss. A complexity step
  * on such a slot writes `extent: 7`, so `effectiveChord` names it `Imaj7` on
  * the card, while `mergeNotes` hands back the three pitches the user was
@@ -429,7 +436,7 @@ export function settle(doc: ProgressionDoc): ProgressionDoc {
  * transposition is the entire point of the merge, and a key change restates no
  * chord - it moves every chord at once, which is what `transposeBy` is for.
  *
- * `timing` and `velocity` are left alone by all four, because none of them
+ * `timing` and `velocity` are left alone by all seven, because none of them
  * restates a rhythm or a dynamic: a complexity step should keep your groove.
  */
 export function reclaimPitches(slot: ChordSlot): ChordSlot {

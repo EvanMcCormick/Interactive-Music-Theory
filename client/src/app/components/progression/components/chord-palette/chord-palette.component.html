@@ -272,12 +272,23 @@
     </div>
     <p class="hint" *ngIf="heightWarning">{{ heightWarning }}</p>
     <!-- The other half of what a click here costs, and the half no button has
-         room for: the shape becomes the user's rather than the key's, so this
-         chord alone stops re-voicing when the key moves. Said once under the
-         row rather than twelve times on it, and it names the way back. -->
+         room for. Two things, both invisible on the button itself:
+
+         The shape becomes the user's rather than the key's, so this chord alone
+         stops re-voicing when the key moves.
+
+         And the row *replaces* the chord rather than re-shaping it, so a sus
+         and any pinned tension go with the shape they were applied to. That is
+         `chosen()`'s rule since M3's final review - it used to keep them, which
+         is what let a button reading `Bb°` build a stack with no name and a
+         pinned ♭9 sit through every shape in the row and come back at the next
+         complexity step. The height is on each button and this is the rest,
+         said once under the row rather than sixteen times on it. It names the
+         way back for the pin, which the other half cannot undo. -->
     <p class="hint">
-      Picking a shape pins it, so this chord keeps it when the key changes.
-      Reset to chord, in the roll, hands it back to the key.
+      Picking a shape replaces the chord: a sus or a pinned tension goes with the
+      shape it was on. The new shape is pinned, so this chord keeps it when the
+      key changes — Reset to chord, in the roll, hands it back to the key.
     </p>
   </section>
 

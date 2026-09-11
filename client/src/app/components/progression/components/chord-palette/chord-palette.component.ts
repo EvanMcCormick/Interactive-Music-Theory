@@ -10,7 +10,6 @@ import {
 import { Subject, takeUntil } from 'rxjs';
 
 import { Scale } from '../../../../models/music-theory.model';
-import { createExtensions } from '../../../../models/progression-normalize';
 import {
   ChordDegree,
   ProgressionKey,
@@ -26,15 +25,20 @@ import {
   buildTensions
 } from './chord-palette-controls-view';
 import {
+  EXTENT_LABELS,
+  PALETTE_ALTER,
+  addVerb,
+  buildOption,
+  paletteDegree,
+  shapeVerb,
+  warnAboutHeight
+} from './chord-palette-options-view';
+import {
   chordName,
   romanNumeral,
   spokenChordName
 } from '../../../../services/progression-chord-names';
-import {
-  ChordExtent,
-  ChordIdentity,
-  effectiveChord
-} from '../../../../services/progression-harmony';
+import { effectiveChord } from '../../../../services/progression-harmony';
 import { chordRootName } from '../../../../services/progression-spelling';
 import { ChordOption, chordVocabulary } from '../../../../services/progression-vocabulary';
 
@@ -107,35 +111,6 @@ export interface PaletteAlternate extends PaletteOption {
   lowersHeight: boolean;
 }
 
-/**
- * The palette offers triads, because that is what `createDegreeSlot` builds.
- *
- * A palette that printed seventh figures and appended triads would be a label
- * disagreeing with the thing it labelled before the user had touched anything.
- * The complexity control below is how a chord gets taller, after it is placed.
- */
-const PALETTE_EXTENT: ChordExtent = 3;
-
-/**
- * The diatonic row is unaltered, which is what makes it the diatonic row.
- *
- * Named rather than written as a bare `0` at the `romanNumeral` call, because
- * the argument it fills is the one Task 8 added for borrowed chords: the seven
- * buttons here are the key's own degrees and the accidental is what the
- * borrowed group below them carries. It is `createDegreeSlot`'s `alter` and
- * `paletteDegree`'s, for the same reason both of those write it down.
- */
-const PALETTE_ALTER = 0;
-
-/** What each rung of the ladder is called, for the complexity readout. */
-const EXTENT_LABELS: Record<ChordExtent, string> = {
-  3: 'Triad',
-  7: '7th',
-  9: '9th',
-  11: '11th',
-  13: '13th'
-};
-
 /** The readout when there is nothing selected for the controls to describe. */
 const NOTHING_SELECTED = '—';
 
@@ -165,6 +140,17 @@ const ALTERNATES_UNNAMED = 'Other shapes on the selected chord';
 
 /**
  * The diatonic chords of the current key, as seven buttons.
+ *
+ * ## Two sibling modules hold the parts that are not about state
+ *
+ * `chord-palette-controls-view.ts` builds the octave, sus and tension controls;
+ * `chord-palette-options-view.ts` builds a chord button - the degree one stands
+ * for, the verb and label it says aloud, its `trackBy` identity, and the
+ * sentence under the alternates row. Both are pure, both were free functions
+ * below this class first, and each split is what put this file back under the
+ * project's file-length cap. Their headers argue the seam; what is left here is
+ * everything that needs the *state*, which is the subscription, the fields it
+ * writes and the dispatch back.
  *
  * ## It holds no state of its own
  *
@@ -315,12 +301,16 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   alternates: readonly PaletteAlternate[] = [];
 
   /**
-   * The alternates row's heading, which names the chord the row acts on.
+   * The alternates row's heading, which names the shape the row acts on.
    *
    * `Other shapes on V (G Maj)`. The row is the one part of this panel that
    * changes a chord rather than adding one, and every append re-points it at
    * whatever was just appended - so a heading that did not name its subject
    * left the row's buttons standing still while their meaning moved.
+   *
+   * The *shape* rather than the whole chord, which are the same thing until a
+   * slot carries a suspension or a pinned tension and differ by exactly what a
+   * click here discards. `nameAlternates` argues it.
    */
   alternatesTitle = ALTERNATES_UNNAMED;
 
@@ -476,6 +466,14 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
    * `quality` at all. A row that pins with no way out is a one-way door, and
    * that is the failure the plan's own hand-check catches: a pinned slot stops
    * re-voicing when the key moves, alone among the chords beside it.
+   *
+   * **The marked button is no longer a no-op on a suspended slot**, and that is
+   * the other half of M3's final review. `chosen()` clears the suspension and
+   * the pinned extensions now, so pressing `major` on a `Bbsus4` slot genuinely
+   * returns the chord to `Bb Maj` - which is what every button here prints and
+   * what none of them used to do. `shapeVerb` says "Change to" there rather
+   * than "Pin as" for exactly that reason, and the note under the row carries
+   * the cost in words beside the height each button carries on itself.
    */
   chooseAlternate(option: PaletteAlternate): void {
     if (this.selectedSlotId === null) return;
@@ -759,6 +757,24 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
    * It is given the vocabulary's options and not this component's, because the
    * three writings of a chord it needs include `spoken` - the one field
    * `PaletteOption` deliberately drops, being neither drawn nor dispatched.
+   *
+   * ## What it names is the *shape*, which is not always what the card names
+   *
+   * "The same composition the strip card performs" is exact for a slot with no
+   * suspension and nothing pinned, which was every slot the palette could reach
+   * until M3 Task 6. It is not exact for one that carries either: the card names
+   * the whole chord and this names the marked option, and since `chosen()`
+   * clears both on the way in, the marked option names the chord that pressing
+   * it *builds*. So a `Bbsus4` slot reads `Isus4` / `Bbsus4` on the card under a
+   * heading saying `Other shapes on I (Bb Maj)`.
+   *
+   * The two differ by exactly what a click here discards, and that is the
+   * arrangement rather than a leak in it: every button on the row means "this is
+   * what you would have instead", including the marked one, so the heading has
+   * to be read in the row's terms and not the card's. The note under the row is
+   * where that is said in words. Naming the slot instead - `describeSlot` of the
+   * selected harmony - would put a chord in the heading that no button on the
+   * row can produce, which is the worse of the two mismatches.
    */
   private nameAlternates(alternates: readonly ChordOption[]): void {
     const marked = alternates.find(option => option.current);
@@ -801,7 +817,7 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     return {
       ...buildOption(
         option,
-        `${shapeVerb(option)} ${option.spoken}, ${heightLabel.toLowerCase()}${cost}`
+        `${shapeVerb(option, selected)} ${option.spoken}, ${heightLabel.toLowerCase()}${cost}`
       ),
       heightLabel,
       lowersHeight
@@ -838,138 +854,3 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     return slot.harmony.degree;
   }
 }
-
-/**
- * The degree a palette button stands for, as `chordRootName` wants it.
- *
- * It is `createDegreeSlot`'s degree at the palette's own extent - the slot the
- * button appends - so building it here rather than passing the index alone is
- * what makes the label and the appended chord one description. `alter: 0` is
- * copied from that factory rather than assumed: it is the field M2's borrowed
- * chords move, and the day it moves the palette follows through the shared
- * function instead of standing still.
- *
- * `quality: null` is copied from it for the same reason, and it used to be the
- * *derived* label instead - which was the palette writing a name into a field
- * that means "override", one call site over from the `regenerateSlot` that did
- * the same thing everywhere else. The root arithmetic reads neither, so
- * nothing moved; what changed is that the two descriptions now match.
- */
-function paletteDegree(degree: number): ChordDegree {
-  return {
-    degree,
-    alter: 0,
-    extent: PALETTE_EXTENT,
-    quality: null,
-    inversion: 0,
-    suspension: 'none',
-    extensions: createExtensions(),
-    octave: 0
-  };
-}
-
-/**
- * The sentence under the alternates row, or null when there is nothing to warn
- * about.
- *
- * Asked of the buttons rather than of the extent, so the sentence cannot appear
- * over a row where nothing is marked or fail to appear over one where something
- * is. It names the height at stake because "these will shorten it" without
- * saying from what reads as a caution about nothing in particular.
- *
- * **The buttons are an argument and not a field**, and that is the whole of why
- * this is a free function. It read `this.alternates` and was correct because
- * `buildOptions` happened to assign that field first; the claim being made is
- * that the warning cannot disagree with the row it sits under, and a claim that
- * rests on the order of two lines in one method is a coincidence rather than an
- * invariant. Outside the class there is no field to reach for.
- */
-function warnAboutHeight(
-  alternates: readonly PaletteAlternate[],
-  selected: ChordDegree | null
-): string | null {
-  if (selected === null) return null;
-  if (!alternates.some(option => option.lowersHeight)) return null;
-
-  return (
-    `Every shape has a height of its own, marked on each button. Choosing one ` +
-    `sets that height, so this ${EXTENT_LABELS[selected.extent]} will not stay one.`
-  );
-}
-
-/**
- * What clicking an alternate does, said in the two cases where it differs.
- *
- * Every button on this row stores a shape, and on all but one of them that is
- * plainly a change - the chord was one thing and is now another. On the marked
- * one it is not: the chord is already that shape, so the click writes no new
- * notes and the whole of its effect is the *pin* - `ChordDegree.quality` stops
- * being `null` and becomes an override the next key change will honour.
- *
- * That is the half of this row a user could not otherwise find out. The height
- * is on the button and `warnAboutHeight` says what it costs; the pin was
- * invisible, and the marked button announced itself as "Change to G major,
- * triad" - a promise of a change, on the one button that changes no note. The
- * verb is what carries it, in the only channel a button has room for.
- *
- * It stays "Pin as" on a second click, which does nothing at all because the
- * shape is already stored. That is the right reading of a no-op rather than an
- * apology for one: the button says what state it puts the chord in, `aria-current`
- * says the chord is in it, and a command already satisfied is a command that
- * does nothing. `resetSlotToChord` is the way back out, and the row says so.
- */
-function shapeVerb(option: ChordOption): string {
-  return option.current ? 'Pin as' : 'Change to';
-}
-
-/**
- * `Add another` on an append-row button whose chord the selection already is.
- *
- * The mark on these two rows is a fact about the selection - the chord you are
- * on is this borrowed one - and the button still appends, so the label is where
- * the two are told apart. It is also what lets the `aria-current` come off
- * these rows without the mark going silent for a user who cannot see the ring:
- * "add another" says both halves in words, and says the half that matters.
- */
-function addVerb(option: ChordOption): string {
-  return option.current ? 'Add another' : 'Add';
-}
-
-/**
- * A vocabulary option as a button, with the label its row decided on.
- *
- * The four `ChordChoice` fields are copied one at a time rather than spread,
- * for the reason the service's `chosen()` gives from the other end: what is
- * being built is the object a click hands to the service, and `spoken` and
- * `group` have no business in a document. `current` is copied and never
- * recomputed - see `ChordOption.current`, where the comparison it stands for is
- * argued at length and is not the obvious one.
- */
-function buildOption(option: ChordOption, label: string): PaletteOption {
-  return {
-    degree: option.degree,
-    alter: option.alter,
-    quality: option.quality,
-    extent: option.extent,
-    numeral: option.numeral,
-    name: option.name,
-    label,
-    current: option.current,
-    key: optionKey(option)
-  };
-}
-
-/**
- * A button's identity for `trackBy`: the chord it puts in a slot.
- *
- * The numeral would do for the two append rows and not for the alternates,
- * where every named shape sits on one degree and one accidental - `V` and `V7`
- * differ, but the numeral is the *rendering* and the shape is the thing. The
- * quality would do for the alternates and not for the others, where every
- * secondary dominant is a `dominant7`. The triple is what all three rows vary,
- * and it is unique within each of them.
- */
-function optionKey(option: ChordOption): string {
-  return `${option.degree}:${option.alter}:${option.quality}`;
-}
-

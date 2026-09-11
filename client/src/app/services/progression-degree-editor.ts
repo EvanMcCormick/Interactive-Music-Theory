@@ -1,4 +1,8 @@
-import { CHORD_EXTENTS, normalizeChordSlot } from '../models/progression-normalize';
+import {
+  CHORD_EXTENTS,
+  createExtensions,
+  normalizeChordSlot
+} from '../models/progression-normalize';
 import {
   ChordDegree,
   ChordSlot,
@@ -118,9 +122,10 @@ export type ExtensionName = keyof ExtensionAlterations;
  * seam that is a kind of knowledge rather than a slice of an API. The precedent
  * is `a84a8bd` and `6f63e0b`; what is here is what the plan calls the
  * palette-facing degree setters - `setSlotExtent`, `stepSlotExtent`,
- * `setSlotChord`, `setSlotInversion`, `setSlotOctave` - the `editDegree` funnel
- * they all pour through, the `slotOctave` readout the octave control needs,
- * `regenerate`, and `rekey`.
+ * `setSlotChord`, `setSlotInversion`, `setSlotOctave`, and the two M3 Task 6
+ * added beside them, `setSlotSuspension` and `setSlotExtension` - the
+ * `editDegree` funnel all seven pour through, the `slotOctave` readout the
+ * octave control needs, `regenerate`, and `rekey`.
  *
  * `rekey` is the odd one out and belongs here for the same reason the rest do.
  * It is not a command - the user pressed the circle of fifths, not a chord
@@ -229,6 +234,15 @@ export class ProgressionDegreeEditor {
    * `progression-vocabulary.ts` makes the argument for offering every shape at
    * its own height, and the palette shows the cost on the button rather than
    * letting a user find it after the click.
+   *
+   * **And it clears the suspension and the pinned extensions**, which is the
+   * same argument one field over: the row replaces the chord, and an alteration
+   * of the shape that was there is not an alteration of the shape that arrives.
+   * Keeping them is what let a button reading `i°` / `Bb°` build a stack with no
+   * name at all in a suspended slot, and what let a pinned ♭9 sit through every
+   * shape in the row and come back at the next complexity step. `chosen()`
+   * carries the whole argument, and the note under the row states the cost the
+   * way the buttons state the height.
    */
   setSlotChord(id: string, choice: ChordChoice): void {
     this.editDegree(id, degree => chosen(degree, choice));
@@ -562,10 +576,13 @@ export class ProgressionDegreeEditor {
    *
    * ## It reclaims the pitches, where `setKey` does not
    *
-   * Every command that reaches here - `setSlotChord`, `setSlotExtent`,
-   * `stepSlotExtent`, `setSlotInversion`, `setSlotOctave` - restates the chord
-   * or its voicing, so the pitches the slot is holding are the ones the user is
-   * asking to replace.
+   * Every command that reaches here - all **seven** of them: `setSlotChord`,
+   * `setSlotExtent`, `stepSlotExtent`, `setSlotInversion`, `setSlotOctave`, and
+   * since M3 Task 6 `setSlotSuspension` and `setSlotExtension` - restates the
+   * chord or its voicing, so the pitches the slot is holding are the ones the
+   * user is asking to replace. The two Task 6 added are the clearest case of
+   * all: a suspension moves a chord tone and a pinned ♭9 moves another, so a
+   * slot still holding the notes it had would sound neither.
    * Leaving a claim over them intact would let the label move while the notes
    * did not: a complexity step on a claimed slot stores `extent: 7`, the card
    * prints `Imaj7`, and the synth keeps sounding the three pitches that were
@@ -574,7 +591,7 @@ export class ProgressionDegreeEditor {
    *
    * The reclaim happens **after** the no-op comparison above, so a stepper
    * resting on its limit reclaims nothing - there is no commit to reclaim in.
-   * `owned.timing` and `owned.velocity` are not touched by any of the four.
+   * `owned.timing` and `owned.velocity` are not touched by any of the seven.
    */
   private editDegree(id: string, change: (degree: ChordDegree) => ChordDegree): void {
     const doc = this.store.doc;
@@ -619,25 +636,65 @@ function withAlteration<K extends ExtensionName>(
 }
 
 /**
- * A degree with the four fields a choice names written over it, and the four
- * it does not name - inversion, suspension, extensions, octave - left where
- * they were.
+ * A degree with the four fields a choice names written over it, the two that
+ * alter a chord - suspension and pinned extensions - **cleared**, and the two
+ * that place it - inversion and octave - left where they were.
  *
- * Leaving them is the same rule as ever and it is worth restating now that two
- * of them sound: a palette button re-shapes the chord it is pressed on, so a
- * slot that was suspended stays suspended and a pinned ♭9 stays pinned.
- * `unpinned`, in `progression.service.ts`, is the one that takes all of it
- * back, and the note under the alternates row already names Reset to chord as
- * the way there.
+ * ## Why the alterations go, which is the M3 review's answer and not M2's
  *
- * Copied one at a time rather than spread, and that is a guard rather than a
- * style. `ChordChoice` is satisfied structurally, so what actually arrives is a
- * palette view model carrying a numeral, a printed name and several more fields
- * meant for the screen. A spread would write every one of them into the stored
- * `ChordDegree`, where `normalizeChordDegree` spreads them on again and
- * `structuredClone` copies them into every undo entry the document ever takes -
- * a display string preserved as though it were harmony, and preserved *stale*,
- * because nothing regenerates it.
+ * They used to stay, on the rule that "a palette button re-shapes the chord it
+ * is pressed on, so a slot that was suspended stays suspended and a pinned ♭9
+ * stays pinned". That rule was written while `appendChord` was the only caller
+ * that could meet a slot with either of them set - which is to say while it was
+ * never exercised - and `setSlotChord` made it visible and wrong in the same
+ * press:
+ *
+ *  - **The button printed a name it did not build.** `progression-vocabulary.ts`
+ *    names every option over `optionDegree`, which carries no suspension and no
+ *    pin, so in a `Bbsus4` slot the button reading `i°` / `Bb°` and announcing
+ *    *Change to B flat diminished* stored `diminished` under the surviving
+ *    `sus4` and built B♭-E♭-F♭ - a stack no figure names, so the card came back
+ *    `I?` / `Bb?`. A name the app refuses to give, produced by a button that
+ *    promised one.
+ *  - **A pin survived where nothing could show it.** Every shape is offered at
+ *    its natural height - a triad or a seventh - and `chordPitchClasses` skips
+ *    an extension the stack does not reach, so a pinned ♭9 changed no note and
+ *    no name here and came back the next time the complexity control stepped up
+ *    to a ninth. Invisible on the button, invisible on the card, and waiting.
+ *
+ * Two honest fixes existed and this is the second: name each option over the
+ * selected slot's suspension and pins, or clear them. Naming over them keeps the
+ * old rule and costs the row its legibility - `SUSPENDED_FIGURES` holds six
+ * bases, so ten of the sixteen shapes have no suspended symbol and a suspended
+ * slot would be offered ten buttons all printing `Bb?` and all announcing
+ * *Change to B flat unnamed chord* - and it leaves the pin above exactly where
+ * it was, since the name it does not appear in cannot expose it.
+ *
+ * Clearing costs the old rule and nothing else, and it is the same argument the
+ * row already makes one field over: **a shape has a height**, so choosing one
+ * sets the height and stands a ninth back down to a triad - `setSlotChord` and
+ * `progression-vocabulary.ts` both argue it at length. A suspension and a pin
+ * are alterations *of a shape*; carried onto a different shape they are
+ * alterations of a chord that is gone. So the row means replace this chord, the
+ * buttons' own "Change to" is true, and the note under the row says so.
+ *
+ * `appendChord`, the other caller, is unmoved: it runs this over a fresh
+ * `createDegreeSlot`, which carries `'none'` and three nulls already.
+ *
+ * ## Still copied one at a time rather than spread
+ *
+ * That is a guard rather than a style. `ChordChoice` is satisfied structurally,
+ * so what actually arrives is a palette view model carrying a numeral, a printed
+ * name and several more fields meant for the screen. A spread would write every
+ * one of them into the stored `ChordDegree`, where `normalizeChordDegree`
+ * spreads them on again and `structuredClone` copies them into every undo entry
+ * the document ever takes - a display string preserved as though it were
+ * harmony, and preserved *stale*, because nothing regenerates it.
+ *
+ * `inversion` and `octave` stay because they are **register**: a chord's
+ * rotation and the octave it sits in say nothing about which chord it is, which
+ * is the same split `ChordShape` draws in `progression-harmony.ts` and the same
+ * one `ChordChoice` is missing three fields on.
  */
 export function chosen(degree: ChordDegree, choice: ChordChoice): ChordDegree {
   return {
@@ -645,6 +702,8 @@ export function chosen(degree: ChordDegree, choice: ChordChoice): ChordDegree {
     degree: choice.degree,
     alter: choice.alter,
     quality: choice.quality,
-    extent: choice.extent
+    extent: choice.extent,
+    suspension: 'none',
+    extensions: createExtensions()
   };
 }

@@ -629,8 +629,35 @@ function naturalExtent(quality: NamedQuality): ChordExtent {
  * `chordRootName` reads only `degree` and `alter`; `effectiveChord`, the
  * other caller, reads everything but `inversion` and `octave`. The fields a
  * palette button does not choose are what a fresh slot carries - no
- * suspension, no pinned extension - which is also what makes the name it
- * prints the name of the chord the button will actually build.
+ * suspension, no pinned extension.
+ *
+ * ## And that is what the name is true over, because the click clears them too
+ *
+ * These four lines print the name; `chosen()`, in `progression-degree-editor.ts`,
+ * stores the chord. The two agree only while they write the same `suspension`
+ * and the same `extensions`, and until M3's final review they did not: `chosen`
+ * kept whatever the slot already held, so this docstring's claim that the name
+ * printed "is the name of the chord the button will actually build" was true of
+ * the two rows that **append** onto a fresh slot and false of the one that
+ * **retunes** a selected one. In a `Bbsus4` slot the alternates row's `i°` /
+ * `Bb°` button stored `diminished` under the surviving `sus4`, built
+ * B♭-E♭-F♭ and left the card reading `I?` / `Bb?` - the app's refusal to name,
+ * printed by a button that had promised a name.
+ *
+ * `chosen` now clears both, on the argument written out there, so the fresh
+ * slot's values above are what every route stores and the claim holds for all
+ * three rows. The invariant is pinned rather than asserted:
+ * `chord-palette.roundtrip.spec.ts`, beside the component that draws the
+ * buttons, walks every option of every group over every heptatonic scale and
+ * every degree - including slots carrying each suspension and each pinned
+ * alteration - and checks that `describeSlot` of what `chosen` builds prints
+ * exactly what the button printed. A fixture for the one sus4 case would have
+ * let the next field added to `ChordDegree` drift the same way.
+ *
+ * The one field exempt there is the **secondary row's numeral**, which is a
+ * slash numeral by design and is measured against its target rather than
+ * against the key - see `ALTER_AGAINST_TARGET` above, and `romanNumeral`. Its
+ * name and its spoken form are swept like every other button's.
  */
 function optionDegree(
   degree: number,
