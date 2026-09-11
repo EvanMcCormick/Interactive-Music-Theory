@@ -1,0 +1,78 @@
+<!-- The live region is the wrapper and not the sentence inside it, and it is
+     outside every `*ngIf` here: a relabel *creates* the chip, and a region
+     announces changes to itself rather than its own arrival, so an `aria-live`
+     on an element that did not exist a moment ago says nothing at all. The
+     palette's `unavailable-region` carries the same comment, and the roll places
+     this component unconditionally so that this element is always on the page.
+
+     `polite` rather than `assertive`: a relabel is the app reporting what it did
+     with an edit the user just made, not an interruption. -->
+<div class="relabel-region" aria-live="polite">
+  <p class="relabel-announcement" *ngIf="announcement">{{ announcement }}</p>
+</div>
+
+<div class="relabel-chip" *ngIf="view as chip" (keydown.escape)="closeOnEscape($event)">
+  <!-- A menu button rather than a `<select>`: the items are commands - go back,
+       call it this instead, stop calling it anything - and not values of one
+       setting. The visible text is the numeral because that is what the user is
+       comparing against the card; the spoken label says the chord in words,
+       because read aloud `V7♭9` is a run of letters and punctuation.
+
+       `aria-describedby` points at the sentence below rather than leaving the
+       explanation to the live region alone: a region announces once, and a user
+       who arrives here afterwards must still be able to ask what this is. -->
+  <button
+    type="button"
+    class="chip-button"
+    #chipButton
+    aria-haspopup="menu"
+    [attr.aria-expanded]="isOpen"
+    [attr.aria-label]="chip.buttonLabel"
+    [attr.aria-describedby]="hintId"
+    [attr.title]="chip.hint"
+    (click)="toggle()">
+    <span class="headline">{{ chip.headline }}</span>
+    <span class="caret" aria-hidden="true">&#9662;</span>
+    <span class="was">{{ chip.previousText }}</span>
+  </button>
+
+  <!-- Every item acts. There is no disabled entry here and no placeholder: where
+       the view builder finds an action that would refuse, it draws no chip. -->
+  <div class="menu" role="menu" *ngIf="isOpen" [attr.aria-label]="chip.menuLabel">
+    <!-- First, because it is the way back and the way back is what the chip is
+         owed for: the app changed a label the user did not ask it to change. -->
+    <button
+      type="button"
+      role="menuitem"
+      class="item back"
+      [attr.aria-label]="chip.revertAriaLabel"
+      (click)="revert()">{{ chip.revertLabel }}</button>
+
+    <button
+      type="button"
+      role="menuitem"
+      class="item alternate"
+      *ngFor="let alternate of chip.alternates; trackBy: trackByKey"
+      [attr.aria-label]="alternate.label"
+      (click)="choose(alternate)">
+      <span class="numeral">{{ alternate.numeral }}</span>
+      <span class="name">{{ alternate.name }}</span>
+    </button>
+
+    <button
+      type="button"
+      role="menuitem"
+      class="item keep"
+      [attr.aria-label]="chip.keepAriaLabel"
+      (click)="keepAsLiteral()">{{ chip.keepLabel }}</button>
+  </div>
+
+  <!-- The button's reason. Outside the menu, so that `aria-describedby` still
+       resolves while the menu is closed, and clipped rather than hidden because
+       `display: none` is not reliably announced through it. The same words are
+       on the button's `title` for a pointer - the toolbar is one row and has no
+       room for two lines of prose, and laid out above the chip the sentence ran
+       off the top of the panel. Reset to chord beside it says its own reason the
+       same way. -->
+  <p class="hint" [id]="hintId">{{ chip.hint }}</p>
+</div>

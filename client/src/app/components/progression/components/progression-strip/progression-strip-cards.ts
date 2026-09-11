@@ -89,6 +89,17 @@ export interface StripCard {
   /** Whether this card has no numeral to show. See `describeSlot`. */
   isUnlabelled: boolean;
   /**
+   * Whether this is the card the last edit relabelled - `state.relabel.slotId`.
+   *
+   * The chip in the roll's toolbar says *what* changed; this says *where*, which
+   * the chip cannot: the roll is one slot's notes and the strip is the whole
+   * progression, and a user who drags a note is looking at the roll rather than
+   * counting cards. The card carries a mark as well as a colour, for the reason
+   * the palette's alternates row gives about its `↓`: a colour alone is not a
+   * carrier, and this one is spoken as well - see `label`.
+   */
+  isRelabelled: boolean;
+  /**
    * What the card says aloud, built here rather than in the template, for the
    * palette's two reasons: a concatenation in an `[attr.aria-label]` binding is
    * re-evaluated on every change-detection pass, and `V7` over `G7` announces
@@ -163,6 +174,7 @@ function buildCard(
 ): StripCard {
   const described = describeSlot(slot.harmony, state.doc.key, intervals);
   const beats = formatBeats(slot.lengthBeats);
+  const isRelabelled = slot.id === state.relabel?.slotId;
 
   return {
     id: slot.id,
@@ -173,7 +185,14 @@ function buildCard(
     maxBeats: Math.max(ANNOUNCED_MAX_BEATS, slot.lengthBeats),
     isSelected: slot.id === state.selectedSlotId,
     isUnlabelled: described.isUnlabelled,
-    label: `${described.subject}, ${described.detail}, ${beats}`,
+    isRelabelled,
+    // The relabel is said as well as drawn and marked. The mark is
+    // `aria-hidden` - it is the sighted half of a fact the colour cannot carry
+    // alone - so without this clause a screen reader would have the card's new
+    // name and no word about the app having chosen it.
+    label: `${described.subject}, ${described.detail}, ${beats}${
+      isRelabelled ? ', relabelled by your edit' : ''
+    }`,
     removeLabel: `Remove ${described.subject}`,
     resizeLabel: `Length of ${described.subject}`
   };
@@ -188,8 +207,15 @@ function buildCard(
  * has no name for it. The last is reachable today - build in C major and switch
  * to a pentatonic - and it is a refusal rather than a stale label because the
  * stored quality came from a scale no longer selected.
+ *
+ * **Exported for the relabel chip**, which names the two ends of a relabel and
+ * each of its alternates, and has to name them the way the card does: a chip
+ * reading `Isus4` over a card reading something else would be two answers about
+ * one slot. It is the same argument `effectiveChord` makes one level down, and
+ * it is why this is exported rather than copied - a second naming of a slot is
+ * a second set of rules for when a slot has no name.
  */
-function describeSlot(
+export function describeSlot(
   harmony: SlotHarmony,
   key: ProgressionKey,
   intervals: readonly number[] | null
@@ -234,7 +260,7 @@ function describeSlot(
 }
 
 /** What a card prints, and the two phrases its labels are built from. */
-interface CardDescription {
+export interface CardDescription {
   /**
    * Whether this is a card with no numeral.
    *

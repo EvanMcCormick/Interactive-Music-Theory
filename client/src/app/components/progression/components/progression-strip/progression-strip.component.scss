@@ -19,6 +19,9 @@
   // 4.8:1 on --strip-card, 5.7:1 on --strip-surface.
   --strip-text-dim: #adbcc8;
   --strip-unlabelled: #adbcc8;
+  // 8.9:1 on --strip-card. The chip in the roll uses the same amber, because the
+  // two are halves of one statement about one slot.
+  --strip-relabelled: #f0b429;
 
   // One beat of the progression, in pixels. The whole of what the strip says
   // about time, and the scale a resize drag is measured in - see `beginResize`.
@@ -95,6 +98,13 @@
     opacity: 0.6;
   }
 
+  // The card the app just renamed. Amber because the palette's alternates row
+  // already means "something here changed that you did not name", and the pencil
+  // in the corner is what carries it where the colour cannot. 8.9:1 on a card.
+  &.relabelled {
+    border-color: var(--strip-relabelled);
+  }
+
   &.unlabelled {
     // Dashed rather than greyed out: the chord is real and playing, and only
     // its name is missing.
@@ -133,6 +143,21 @@
     outline: 2px solid var(--strip-text);
     outline-offset: -3px;
   }
+}
+
+// In the card's top corner rather than in the line of text: the numeral is the
+// teaching content and a glyph in front of it would be read as part of the
+// chord's name. Absolute, so a card one beat wide does not lose a character of
+// its numeral to it.
+.relabel-mark {
+  position: absolute;
+  top: 0.15rem;
+  // The left corner: the right one is the remove button's, and the resize handle
+  // owns the edge beyond it.
+  left: 0.3rem;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--strip-relabelled);
 }
 
 .numeral {

@@ -20,6 +20,7 @@ import { ProgressionState, RollNote } from '../../../../models/progression.model
 import { ProgressionService } from '../../../../services/progression.service';
 import { MAX_BEAT_DIVISION, floorBeat, xToBeat, yToMidi } from './piano-roll-geometry';
 import { draggedVelocity, heldRows, heldSnap } from './piano-roll-gestures';
+import { RelabelChipComponent } from '../relabel-chip/relabel-chip.component';
 import {
   DivisionOption,
   RollNoteView,
@@ -217,7 +218,7 @@ interface VelocityGesture extends Gesture {
 @Component({
   selector: 'app-piano-roll',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, RelabelChipComponent],
   templateUrl: './piano-roll.component.html',
   styleUrls: ['./piano-roll.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -246,6 +247,9 @@ export class PianoRollComponent implements OnInit, AfterViewChecked, OnDestroy {
 
   /** Whether there is a chord to hand the slot back to. */
   canReset = false;
+
+  /** Why there is not, or null when there is. See `RollView.resetReason`. */
+  resetReason: string | null = null;
 
   /** Steps per beat, or 0 for free timing. See the class docstring. */
   division = DEFAULT_BEAT_DIVISION;
@@ -289,6 +293,7 @@ export class PianoRollComponent implements OnInit, AfterViewChecked, OnDestroy {
   @ViewChild('grid') private gridElement?: ElementRef<HTMLElement>;
   @ViewChild('lane') private laneElement?: ElementRef<HTMLElement>;
   @ViewChild('addButton') private addButton?: ElementRef<HTMLElement>;
+  @ViewChild('resetButton') private resetButton?: ElementRef<HTMLElement>;
   @ViewChildren('noteBody') private noteBodies?: QueryList<ElementRef<HTMLElement>>;
 
   /**
@@ -395,10 +400,28 @@ export class PianoRollComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.changes.markForCheck();
   }
 
-  /** Hands the slot back to the generator: every claim dropped, the chord rebuilt. */
+  /**
+   * Hands the slot back to the generator: every claim dropped, the chord
+   * rebuilt.
+   *
+   * The unavailable case returns early here rather than being held off by
+   * `[disabled]`, because the button stays focusable so that it can name its own
+   * reason - see `RollView.resetReason`.
+   */
   resetToChord(): void {
-    if (!this.slotId) return;
+    if (!this.slotId || !this.canReset) return;
     this.progression.resetSlotToChord(this.slotId);
+  }
+
+  /**
+   * Takes the focus once the relabel chip has been answered and removed, which
+   * would otherwise drop it to `<body>` - the loss of place
+   * `ngAfterViewChecked` guards against one gesture over. Reset to chord is the
+   * neighbour, is always focusable now, and is the likeliest next thing after
+   * *Keep as literal*.
+   */
+  focusAfterRelabel(): void {
+    this.resetButton?.nativeElement.focus();
   }
 
   /**
@@ -948,6 +971,7 @@ export class PianoRollComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.slotNotes = view.slotNotes;
     this.hasSlot = view.slotId !== null;
     this.canReset = view.canReset;
+    this.resetReason = view.resetReason;
     this.positionText = view.positionText;
     this.topMidi = view.topMidi;
     this.gridRows = view.gridRows;

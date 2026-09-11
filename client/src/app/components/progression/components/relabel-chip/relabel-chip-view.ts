@@ -1,0 +1,208 @@
+import {
+  ChordDegree,
+  ProgressionState,
+  RelabelNotice
+} from '../../../../models/progression.model';
+import { CardDescription, describeSlot } from '../progression-strip/progression-strip-cards';
+
+/**
+ * What the chip says about the relabel the last edit made.
+ *
+ * Pure, beside the component, on the `progression-strip-cards.ts` and
+ * `piano-roll-view.ts` precedent and for their reason: a published state goes in
+ * and a view model comes out, with no Angular, no DOM and no injector, so what
+ * the chip says can be checked against the recogniser's own output rather than
+ * against a rendered template.
+ *
+ * ## The rule it exists to keep
+ *
+ * The design's containment rule is that a relabel is **never silent**: the app
+ * may change a label, but not without saying so and not without a way back. This
+ * is the saying-so. Every field below is one of three things - what the label is
+ * now, what it was, or a way back to it - and there is nothing else here.
+ *
+ * ## It names a slot the way the card names it
+ *
+ * Both ends of a notice and every alternate go through `describeSlot`, the
+ * strip's own. That is not reuse for its own sake: the chip sits under a strip
+ * that is naming the same slot at the same moment, and a chip reading `Isus4`
+ * over a card reading `IV` would be two answers about one chord. One function
+ * gives one answer, including about the case where there is no answer - a key
+ * that cannot stack thirds names neither the card nor the chip, and says so in
+ * the same words.
+ *
+ * ## Why `null` is an answer, and not only for "nothing happened"
+ *
+ * There are two of them, and the second is the one worth writing down.
+ *
+ *  - **No notice.** Nothing was relabelled, so there is nothing to say. Silence
+ *    here is not the silence the rule forbids: the rule is about a label the app
+ *    changed, and it changed none.
+ *  - **A notice for a slot other than the selected one.** The chip is in the
+ *    roll, the roll shows the selected slot, and *Back to* on a chip over some
+ *    other slot's notice is a control that does nothing - `revertRelabel`
+ *    refuses outright when `RelabelNotice.slotId` is not the id it was given,
+ *    because a notice for another slot is no evidence about this one. A button
+ *    that cannot act is worse than no button, so the chip is not drawn.
+ *
+ * The second is close to unreachable and is written down rather than assumed: a
+ * pitch gesture can only edit the slot the roll is showing, and the strip cannot
+ * be clicked while a pointer is held down over the roll. It is a guard against
+ * the page growing a second way to change the selection, which is the kind of
+ * change that would otherwise leave a dead control behind it.
+ */
+
+/** What the chip says in place of a numeral when nothing matched. */
+const NO_MATCH = 'No chord matches';
+
+/** How the chip refers to a label that is not there - either end of a notice. */
+const UNLABELLED = 'unlabelled';
+
+/**
+ * What the chip's controls promise, and the reason the button names for itself.
+ *
+ * On the chip's own button through `aria-describedby`, rather than in the live
+ * region alone: a region announces once, to whoever was listening at the time,
+ * and a user who arrives at the chip afterwards - by tab, or by moving a screen
+ * reader's cursor - has no way to ask what it is for. A control that carries its
+ * own reason can always be asked. The same argument is what makes the roll's
+ * Reset to chord button focusable while it is unavailable.
+ */
+const CHIP_HINT =
+  'Your edit changed what this chord is called. The notes are kept whichever ' +
+  'name you choose, and going back changes the label only.';
+
+/** One runner-up from the recogniser: another name for the notes that are there. */
+export interface RelabelAlternate {
+  /**
+   * The degree to dispatch. Carried whole rather than rebuilt from the numeral,
+   * because it is the recogniser's own reading and `chooseRelabelAlternate`
+   * takes exactly that.
+   */
+  degree: ChordDegree;
+  /** Identity for `trackBy`. The numeral and the name, which no two share. */
+  key: string;
+  numeral: string;
+  name: string;
+  /** The chord as a phrase: `G dominant seventh`. Used in the spoken label. */
+  spoken: string;
+  /** What the menu item says aloud. See `StripCard.label`, which argues it. */
+  label: string;
+}
+
+/** The whole of what the chip draws from one published state. */
+export interface RelabelChipView {
+  /** The slot the notice names, which is also the selected one. */
+  slotId: string;
+  /** `V7♭9`, or `No chord matches`. */
+  headline: string;
+  /** `(was V9)`. */
+  previousText: string;
+  /** What the chip's button says aloud, announcement and affordance together. */
+  buttonLabel: string;
+  /** The menu's own name, for the `role="menu"` container. */
+  menuLabel: string;
+  /** "Relabelled G dominant seventh flat nine, was G dominant ninth". */
+  announcement: string;
+  alternates: readonly RelabelAlternate[];
+  /** `Back to V9`. */
+  revertLabel: string;
+  revertAriaLabel: string;
+  /** What the live region says once *Back to* has been taken. */
+  revertedAnnouncement: string;
+  keepLabel: string;
+  keepAriaLabel: string;
+  /** What the live region says once the slot has been kept as notes. */
+  keptAnnouncement: string;
+  /** The sentence the button points `aria-describedby` at. See `CHIP_HINT`. */
+  hint: string;
+}
+
+/**
+ * The chip for a published state, or null when there is nothing to show.
+ *
+ * See the module note for the two roads to null; neither of them is a failure.
+ */
+export function buildRelabelChipView(state: ProgressionState): RelabelChipView | null {
+  const notice = state.relabel;
+  if (notice === null) return null;
+  if (notice.slotId !== state.selectedSlotId) return null;
+
+  // The strip's gate, read exactly as `buildStripView` reads it, so that the
+  // chip and the cards under it refuse to name a chord in the same keys.
+  const intervals = state.canBuildChords && state.keyScale ? state.keyScale.intervals : null;
+  const key = state.doc.key;
+
+  const current = describeSlot(notice.current, key, intervals);
+  const previous = describeSlot(notice.previous, key, intervals);
+
+  const headline = current.isUnlabelled ? NO_MATCH : current.numeral;
+  const wasNumeral = previous.isUnlabelled ? UNLABELLED : previous.numeral;
+  const announcement = announce(current, previous);
+
+  return {
+    slotId: notice.slotId,
+    headline,
+    previousText: `(was ${wasNumeral})`,
+    // The numeral is dropped from the spoken form and the chord said in words,
+    // exactly as the strip and the palette do it: read aloud, `V7♭9` is a run of
+    // letters and punctuation, and the height it carries is already in the name.
+    buttonLabel: `${announcement}. Other names for these notes.`,
+    menuLabel: 'Other names for these notes',
+    announcement,
+    alternates: buildAlternates(notice, state, intervals),
+    revertLabel: `Back to ${wasNumeral}`,
+    revertAriaLabel: `Back to ${previous.subject}, keeping the notes`,
+    revertedAnnouncement: `Back to ${previous.subject}. The notes are unchanged.`,
+    keepLabel: 'Keep as literal',
+    keepAriaLabel: 'Keep as notes rather than a chord',
+    keptAnnouncement: 'Kept as notes. This chord has no numeral now.',
+    hint: CHIP_HINT
+  };
+}
+
+/**
+ * What the region says when the chip appears.
+ *
+ * Two sentences rather than one, because the two cases are different facts: the
+ * app found another name for these notes, or it found none. The second is the
+ * one the rule was written for - a slot losing its numeral is the largest thing
+ * an edit can do to it, and it is exactly the change a sighted user sees as a
+ * dashed border and a screen reader would otherwise see as nothing.
+ */
+function announce(current: CardDescription, previous: CardDescription): string {
+  const was = previous.isUnlabelled ? UNLABELLED : previous.subject;
+  return current.isUnlabelled
+    ? `No chord matches these notes, was ${was}`
+    : `Relabelled ${current.subject}, was ${was}`;
+}
+
+/**
+ * The runners-up, named.
+ *
+ * Empty for a literal notice, and that is the recogniser's answer rather than
+ * this function's: nothing parsed, so there are no other readings to offer. It
+ * is also empty when the key cannot name a chord at all, because a numeral built
+ * from a scale that cannot stack thirds is the mislabel this whole design
+ * refuses - `describeSlot` would answer with the unlabelled card's em dash, and
+ * a menu of em dashes is not a choice.
+ */
+function buildAlternates(
+  notice: RelabelNotice,
+  state: ProgressionState,
+  intervals: readonly number[] | null
+): readonly RelabelAlternate[] {
+  if (intervals === null) return [];
+
+  return notice.alternates.map(degree => {
+    const described = describeSlot({ kind: 'degree', degree }, state.doc.key, intervals);
+    return {
+      degree,
+      key: `${described.numeral}:${described.name}`,
+      numeral: described.numeral,
+      name: described.name,
+      spoken: described.subject,
+      label: `Label as ${described.subject}`
+    };
+  });
+}

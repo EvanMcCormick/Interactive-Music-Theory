@@ -140,6 +140,17 @@ export interface RollView {
   positionText: string;
   /** Whether there is a chord to hand the slot back to. */
   canReset: boolean;
+  /**
+   * Why there is not, or null when there is.
+   *
+   * The button stays focusable while it is unavailable and points
+   * `aria-describedby` at this, rather than going `[disabled]` and out of the
+   * tab order with its reason announced once somewhere else. That is the pattern
+   * a sibling review arrived at for the palette's `+`, and this is the control a
+   * user most needs it on: Reset to chord is the way out of a slot that has lost
+   * its numeral, so "why can I not press it" is a question that gets asked.
+   */
+  resetReason: string | null;
 }
 
 /** Builds everything the roll draws from one published state. */
@@ -167,12 +178,50 @@ export function buildRollView(state: ProgressionState): RollView {
     gridRows: rowCount(range),
     topMidi: range.high,
     positionText: describePosition(state, slot),
-    // The service refuses on both counts - a key that cannot stack thirds, and a
-    // literal slot with no degree to rebuild from - so this is the same question
-    // asked where a button can grey itself out rather than a second rule. See
-    // `ProgressionService.resetSlotToChord`.
-    canReset: slot !== null && state.canBuildChords && slot.harmony.kind === 'degree'
+    ...describeReset(state, slot)
   };
+}
+
+/**
+ * Whether the slot can be handed back to the generator, and why not when it
+ * cannot.
+ *
+ * The same two refusals `ProgressionService.resetSlotToChord` makes - a key that
+ * cannot stack thirds, and a slot with no degree to rebuild from - asked where a
+ * button can say so rather than written out a second time.
+ *
+ * **A literal slot is no longer refused outright**, and that was a real bug
+ * rather than a tightening: M3 Task 8 gave literal harmony the degree it
+ * degraded from and taught the service to rebuild from it, so that a slot
+ * dragged into a cluster has a way back. This predicate was left asking
+ * `kind === 'degree'`, which greyed the button out on exactly the slots the
+ * whole escape hatch was reopened for - the one path out of `No chord matches`,
+ * closed. `from` is null only for a document written elsewhere, and that slot is
+ * still refused, now in words.
+ */
+function describeReset(
+  state: ProgressionState,
+  slot: ChordSlot | null
+): { canReset: boolean; resetReason: string | null } {
+  if (slot === null) {
+    return { canReset: false, resetReason: 'Pick a chord on the strip first.' };
+  }
+  if (!state.canBuildChords) {
+    return {
+      canReset: false,
+      resetReason: 'This key cannot build chords, so there is no chord to go back to.'
+    };
+  }
+
+  const held = slot.harmony.kind === 'degree' ? slot.harmony.degree : slot.harmony.from ?? null;
+  if (held === null) {
+    return {
+      canReset: false,
+      resetReason: 'These notes were never a chord in this app, so there is none to go back to.'
+    };
+  }
+
+  return { canReset: true, resetReason: null };
 }
 
 /**

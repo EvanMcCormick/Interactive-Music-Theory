@@ -36,10 +36,36 @@
 
     <!-- The escape hatch. Per-aspect ownership is only safe while there is a way
          back: without this, dragging one note opts the slot out of re-voicing
-         for good. See `ProgressionService.resetSlotToChord`. -->
-    <button type="button" class="reset" [disabled]="!canReset" (click)="resetToChord()">
+         for good. It is also the way out of a slot that has lost its numeral,
+         which is what the chip beside it may be reporting.
+
+         `aria-disabled` and not `[disabled]`, with the handler returning early:
+         a `[disabled]` button is out of the tab order, so a user who wants to
+         know why the one way back is unavailable has no way to ask. Focusable,
+         it answers for itself through `aria-describedby`. That is the pattern a
+         sibling review arrived at for the palette's `+`, applied here first
+         because this is the control the question gets asked about. -->
+    <button
+      type="button"
+      class="reset"
+      #resetButton
+      [class.unavailable]="!canReset"
+      [attr.aria-disabled]="!canReset"
+      [attr.aria-describedby]="canReset ? null : 'roll-reset-reason'"
+      [attr.title]="resetReason"
+      (click)="resetToChord()">
       Reset to chord
     </button>
+    <!-- Clipped rather than laid out: the toolbar is a single row beside a grid
+         control and a chip, and the sentence is long. It is on the page for
+         `aria-describedby` to resolve, and the same words are on the button's
+         `title` for a pointer. -->
+    <p class="reset-reason" id="roll-reset-reason" *ngIf="resetReason">{{ resetReason }}</p>
+
+    <!-- What the app did to this slot's label, and the way back from it.
+         Unconditional: the chip's live region only announces a relabel if it was
+         on the page before the relabel happened. See the component. -->
+    <app-relabel-chip (dismissed)="focusAfterRelabel()"></app-relabel-chip>
   </div>
 
   <div class="body" *ngIf="hasSlot; else noSlot"

@@ -13,6 +13,7 @@
       [style.--card-beats]="card.lengthBeats"
       [class.selected]="card.isSelected"
       [class.unlabelled]="card.isUnlabelled"
+      [class.relabelled]="card.isRelabelled"
       [class.dragging]="card.id === draggingId">
       <!-- The card body is the select control and the drag handle at once, which
            is what makes a press-and-move a reorder and a press-and-release a
@@ -24,6 +25,12 @@
         [attr.aria-pressed]="card.isSelected"
         (click)="select(card)"
         (pointerdown)="startReorder(card, $event)">
+        <!-- The card the last edit relabelled. The mark rather than the amber
+             alone is the part a user who cannot see the colour gets, which is
+             the argument the palette's alternates row makes about its `↓`; the
+             card's own label carries the same fact in words, so this is
+             `aria-hidden` and not read twice. -->
+        <span class="relabel-mark" *ngIf="card.isRelabelled" aria-hidden="true">&#9998;</span>
         <span class="numeral">{{ card.numeral }}</span>
         <!-- A card narrow enough to truncate its name leaves a sighted user
              reading `C M…` with nowhere to go; the label already covers a
