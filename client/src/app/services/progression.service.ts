@@ -37,6 +37,7 @@ import {
 import { HistoryDepth, ProgressionStore } from './progression-history';
 import { ProgressionKeyContext } from './progression-key-context';
 import { EditOptions, ProgressionNoteEditor } from './progression-note-editor';
+import { resetOutcome } from './progression-reset';
 import { MusicTheoryService } from './music-theory.service';
 
 /**
@@ -505,6 +506,11 @@ export class ProgressionService {
    * regenerating would be the worst of both: the hand edits would stay, now
    * unclaimed, and the next key change would quietly throw them away.
    *
+   * **Both refusals are asked through `resetOutcome`**, which is the same
+   * function the roll's button and the strip's sentence explain themselves from.
+   * They were three writings of one rule and the strip's had already drifted off
+   * it - see `progression-reset.ts`, which carries that account.
+   *
    * Nothing is recorded when the slot owns nothing, is pinned to nothing, and
    * already sounds what the generator would write, so pressing the button twice
    * costs one undo step rather than two. The shape is part of that comparison
@@ -515,18 +521,16 @@ export class ProgressionService {
    */
   resetSlotToChord(id: string): void {
     const doc = this.doc;
-    if (!this.keys.canBuildChords(doc.key)) return;
-
     const slot = this.store.slot(id);
     if (!slot) return;
 
     // The slot's own degree, or the one a literal slot kept. Both are a chord
     // to go back to and the rebuild below does not care which it was handed;
     // only the no-op comparison does, and it asks separately.
-    const held = slot.harmony.kind === 'degree' ? slot.harmony.degree : slot.harmony.from ?? null;
-    if (held === null) return;
+    const outcome = resetOutcome(this.keys.canBuildChords(doc.key), slot.harmony);
+    if (!outcome.canReset) return;
 
-    const degree = unpinned(held);
+    const degree = unpinned(outcome.held);
     const reset = this.regenerate(
       { ...slot, harmony: { kind: 'degree', degree }, owned: createOwnership() },
       doc.key

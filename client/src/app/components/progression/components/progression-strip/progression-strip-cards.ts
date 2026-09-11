@@ -1,5 +1,6 @@
 import {
   ChordSlot,
+  LiteralReason,
   ProgressionKey,
   ProgressionState,
   SlotHarmony
@@ -11,6 +12,7 @@ import {
   spokenChordName
 } from '../../../../services/progression-chord-names';
 import { effectiveChord } from '../../../../services/progression-harmony';
+import { RESET_REFUSAL_TEXT, resetOutcome } from '../../../../services/progression-reset';
 import { chordRootName } from '../../../../services/progression-spelling';
 
 /**
@@ -20,8 +22,9 @@ import { chordRootName } from '../../../../services/progression-spelling';
  * Pure, on the `progression-strip-gestures.ts` precedent and for its two
  * reasons. None of this is about a component - a published state goes in and a
  * view model comes out, with no Angular, no DOM and no injector - and taking it
- * out of the component put that file back under the project's 500-line cap,
- * which the gesture split had done once already.
+ * out of the component put that file back under the project's file-length cap -
+ * 500 lines when this was split and 1000 now, `fda93c1` - which the gesture
+ * split had done once already.
  *
  * The spelling used to be *given* rather than decided - a `SpellNote` handed in,
  * because how a pitch class is written was `MusicTheoryService`'s app-wide
@@ -66,6 +69,13 @@ import { chordRootName } from '../../../../services/progression-spelling';
  * unreachable in M1 - the recogniser that degrades a slot to literal is M3's -
  * but the rule becomes visible to a user on the card, so it is written now
  * rather than discovered then.
+ *
+ * **The sentence under the strip is chosen per road, and its way back is asked
+ * of the service's own predicate.** It used to be one fixed string ending
+ * "Reset to chord, in the roll, turns it back into one", shown whenever any card
+ * was bare - which is a promise `resetSlotToChord` refuses to keep on the third
+ * road, and the third road is the one that bares every card at once. See
+ * `buildHint` and `progression-reset.ts`.
  */
 
 /** One chord card: what it is called, how long it is, and what it says aloud. */
@@ -134,17 +144,53 @@ const UNLABELLED_NAME = 'Unlabelled';
 const UNLABELLED_SUBJECT = 'unlabelled chord';
 
 /**
- * Said once below the strip rather than on each card, which has no room.
+ * How the sentence under the strip opens, per road to an unlabelled card.
  *
- * The second sentence is the way back, and it is owed to the user rather than
- * merely useful: every command on this page refuses a slot with no numeral, so
- * a card that loses one is a card whose whole panel of controls stops
- * answering. Naming the one button that still works is the difference between
- * a slot the user can recover and a slot they can only delete.
+ * One opening per road because the roads are different facts and a user reading
+ * this is trying to find out which one happened to them. The third is the state
+ * that unlabels the whole strip at once, so its opening is the one about the key
+ * rather than about any card's notes.
+ *
+ * The fourth entry is for a strip carrying both literal roads, where naming
+ * either would be naming the wrong one for half the cards.
  */
-const UNLABELLED_HINT =
-  'A card with no numeral is a chord this key cannot name. Its notes are kept exactly ' +
-  'as they are. Reset to chord, in the roll, turns it back into one.';
+const UNLABELLED_LEAD: Record<UnlabelledRoad | 'mixed', string> = {
+  unrecognised:
+    'A card with no numeral is notes this app could not name as a chord in this key. ' +
+    'They are kept exactly as they are.',
+  'user-detached':
+    'A card with no numeral is notes you detached from the key by hand. They are kept ' +
+    'exactly as they are.',
+  'unnameable-key':
+    'A card with no numeral is a chord this key cannot name. Its notes are kept exactly ' +
+    'as they are.',
+  mixed:
+    'A card with no numeral is notes this key has no name for. They are kept exactly as ' +
+    'they are.'
+};
+
+/**
+ * How it closes when there is a way back, and when there is one for some of the
+ * cards only.
+ *
+ * This half is owed to the user rather than merely useful: every command on this
+ * page refuses a slot with no numeral, so a card that loses one is a card whose
+ * whole panel of controls stops answering. Naming the one button that still
+ * works is the difference between a slot the user can recover and a slot they
+ * can only delete.
+ *
+ * Which is exactly why it may not be said when the button will not work. It used
+ * to be the fixed tail of one fixed sentence, promised whenever *any* card was
+ * unlabelled - so in a key that cannot stack thirds it promised a button that
+ * was greyed out one panel over, reading the opposite. When there is no way back
+ * the closing sentence is the refusal's own words, from
+ * `progression-reset.ts`, which is the same string the button explains itself
+ * with. Two surfaces, one state, one sentence.
+ */
+const WAY_BACK = 'Reset to chord, in the roll, turns it back into one.';
+const SOME_WAY_BACK =
+  'Reset to chord, in the roll, turns back the ones this app wrote; the others were ' +
+  'never chords here.';
 
 /**
  * The announced ceiling before it is widened. Sixteen bars of four - well past
@@ -160,20 +206,69 @@ export function buildStripView(state: ProgressionState): StripView {
   // of one screen giving one answer about what the key can say.
   const intervals = state.canBuildChords && state.keyScale ? state.keyScale.intervals : null;
 
-  const cards = state.doc.slots.map(slot => buildCard(slot, state, intervals));
+  const described = state.doc.slots.map(slot =>
+    describeSlot(slot.harmony, state.doc.key, intervals)
+  );
 
   return {
-    cards,
-    unlabelledHint: cards.some(card => card.isUnlabelled) ? UNLABELLED_HINT : null
+    cards: state.doc.slots.map((slot, index) => buildCard(slot, state, described[index])),
+    unlabelledHint: buildHint(state, described)
   };
+}
+
+/**
+ * The sentence under the strip: which road the unlabelled cards took, and
+ * whether the button they point at will work.
+ *
+ * Both halves are asked rather than assumed, and the second is asked of
+ * `resetOutcome` - the predicate `ProgressionService.resetSlotToChord` refuses
+ * on and the roll's button explains itself from. The sentence promised that
+ * button unconditionally until this, which made it false in exactly the state
+ * that fires it for every card at once.
+ *
+ * The refusals do not mix freely, and the ordering below leans on it: a key that
+ * cannot stack thirds leaves `intervals` null for the whole document, so
+ * `unbuildable-key` is all cards or none. `no-origin` is per slot, and a strip
+ * may hold one of each - hence the third clause, which promises the button for
+ * the cards it will answer on and says plainly that the rest have nowhere to go.
+ */
+function buildHint(state: ProgressionState, described: readonly CardDescription[]): string | null {
+  // Pushed rather than filtered, so that `road` is narrowed by the check that
+  // selected the card rather than by an assertion after it.
+  const bare: { road: UnlabelledRoad; harmony: SlotHarmony }[] = [];
+  state.doc.slots.forEach((slot, index) => {
+    const road = described[index].road;
+    if (road !== null) bare.push({ road, harmony: slot.harmony });
+  });
+  if (bare.length === 0) return null;
+
+  const refusals = bare.map(entry => {
+    const outcome = resetOutcome(state.canBuildChords, entry.harmony);
+    return outcome.canReset ? null : outcome.refusal;
+  });
+
+  // The key's own refusal covers every card there is, so it is the opening as
+  // well as the closing: no card's notes are the reason any of them is bare.
+  if (refusals.includes('unbuildable-key')) {
+    return `${UNLABELLED_LEAD['unnameable-key']} ${RESET_REFUSAL_TEXT['unbuildable-key']}`;
+  }
+
+  const roads = bare.map(entry => entry.road);
+  const lead = roads.every(road => road === roads[0])
+    ? UNLABELLED_LEAD[roads[0]]
+    : UNLABELLED_LEAD.mixed;
+  const refused = refusals.filter(refusal => refusal !== null).length;
+
+  if (refused === 0) return `${lead} ${WAY_BACK}`;
+  if (refused === refusals.length) return `${lead} ${RESET_REFUSAL_TEXT['no-origin']}`;
+  return `${lead} ${SOME_WAY_BACK}`;
 }
 
 function buildCard(
   slot: ChordSlot,
   state: ProgressionState,
-  intervals: readonly number[] | null
+  described: CardDescription
 ): StripCard {
-  const described = describeSlot(slot.harmony, state.doc.key, intervals);
   const beats = formatBeats(slot.lengthBeats);
   const isRelabelled = slot.id === state.relabel?.slotId;
 
@@ -215,6 +310,12 @@ function buildCard(
  * one slot. It is the same argument `effectiveChord` makes one level down, and
  * it is why this is exported rather than copied - a second naming of a slot is
  * a second set of rules for when a slot has no name.
+ *
+ * **Which road it took comes back with the answer.** It is the one thing in
+ * here that knows, and the sentence under the strip has to say something
+ * different on each - it used to say one thing on all three, which was a
+ * promise the service refuses on the third. Recovering it downstream would mean
+ * a second reading of the same two branches; see `CardDescription.road`.
  */
 export function describeSlot(
   harmony: SlotHarmony,
@@ -223,13 +324,14 @@ export function describeSlot(
 ): CardDescription {
   if (harmony.kind === 'literal') {
     return unlabelled(
+      harmony.reason,
       harmony.reason === 'unrecognised'
         ? 'its notes match no chord in this key'
         : 'detached from the key by hand'
     );
   }
 
-  if (!intervals) return unlabelled('this key cannot name it');
+  if (!intervals) return unlabelled('unnameable-key', 'this key cannot name it');
 
   const degree = harmony.degree;
   // Spelled on the letter the numeral names, so the card's two lines cannot
@@ -249,6 +351,7 @@ export function describeSlot(
 
   return {
     isUnlabelled: false,
+    road: null,
     // Asked of the namer rather than recovered from the `?` it prints, on the
     // argument `isUnlabelled` makes about the em dash. See the field.
     hasName: isNameable(chord),
@@ -263,8 +366,38 @@ export function describeSlot(
   };
 }
 
+/**
+ * Which of `describeSlot`'s three roads to an unlabelled card was taken.
+ *
+ * The first two are `LiteralReason` spelled out again rather than imported,
+ * because they are not the same fact: `LiteralReason` is why the *model* holds
+ * notes instead of a degree, and this is why the *card* has no numeral to print.
+ * They coincide on two of three values and the third has no model side at all -
+ * a perfectly good degree slot in a key with no name for it, which is a fact
+ * about the key and not about the slot. A union that imported the other would
+ * have to be widened anyway, and would read as though the third value were a
+ * kind of literal harmony, which is the one thing it is not.
+ */
+export type UnlabelledRoad = LiteralReason | 'unnameable-key';
+
 /** What a card prints, and the two phrases its labels are built from. */
 export interface CardDescription {
+  /**
+   * How this card came to have no numeral, or null when it has one.
+   *
+   * Carried for the reason `isUnlabelled` is carried one field down, taken one
+   * step further: the branches above are the only things that know which road
+   * they took, and the sentence under the strip has to say something different
+   * on each. Recovering it downstream would mean reading `harmony.kind` and
+   * `intervals` a second time, in a second place, free to disagree with the card
+   * it is printed under - which is how the sentence came to promise a button the
+   * service refuses. See `buildHint`.
+   *
+   * It is the road and not the *refusal*: whether Reset to chord will actually
+   * work is `resetOutcome`'s answer, and this function has no business holding a
+   * second opinion about it.
+   */
+  road: UnlabelledRoad | null;
   /**
    * Whether this is a card with no numeral.
    *
@@ -302,10 +435,11 @@ export interface CardDescription {
   detail: string;
 }
 
-/** A card with no numeral, and the reason it has none. */
-function unlabelled(detail: string): CardDescription {
+/** A card with no numeral, the road it took, and the reason it says aloud. */
+function unlabelled(road: UnlabelledRoad, detail: string): CardDescription {
   return {
     isUnlabelled: true,
+    road,
     // No numeral and no name: this branch has nothing to print in either slot.
     hasName: false,
     numeral: NO_NUMERAL,

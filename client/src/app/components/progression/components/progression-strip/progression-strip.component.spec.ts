@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { ProgressionStripComponent } from './progression-strip.component';
+import { buildRollView } from '../piano-roll/piano-roll-view';
 import { MusicTheoryService } from '../../../../services/music-theory.service';
 import { ProgressionService } from '../../../../services/progression.service';
 import {
@@ -84,10 +85,14 @@ describe('ProgressionStripComponent', () => {
    * being M3's - which is what makes this branch testable now rather than after
    * it is first reachable by hand.
    */
-  function literalSlot(reason: 'unrecognised' | 'user-detached'): ChordSlot {
+  function literalSlot(
+    reason: 'unrecognised' | 'user-detached',
+    from: ChordDegree | null = null,
+    id = 'literal-slot'
+  ): ChordSlot {
     return {
-      id: 'literal-slot',
-      harmony: { kind: 'literal', reason, from: null },
+      id,
+      harmony: { kind: 'literal', reason, from },
       startBeat: 0,
       lengthBeats: 4,
       notes: [{ midi: 60, startBeat: 0, lengthBeats: 4, velocity: 80 }],
@@ -429,6 +434,95 @@ describe('ProgressionStripComponent', () => {
 
       expect(component.cards[0].removeLabel).toBe('Remove unlabelled chord');
       expect(component.cards[0].resizeLabel).toBe('Length of unlabelled chord');
+    });
+  });
+
+  /**
+   * The sentence under the strip, per road, and the button it points at.
+   *
+   * **This is the pair that lied.** The sentence was one fixed string ending
+   * "Reset to chord, in the roll, turns it back into one", shown whenever any
+   * card was bare - but `resetSlotToChord` refuses in a key that cannot stack
+   * thirds, and that is precisely the road that bares *every* card at once,
+   * because `intervals` is null for the whole document together. A user in B
+   * flat major pentatonic read a promise on the strip and found the button it
+   * named greyed out one panel over, saying the opposite. It lied for a literal
+   * slot with no `from` too, in a key that could have answered.
+   *
+   * So each road is pinned by its own whole sentence rather than by "not null",
+   * which is all the tests above could tell - and the key's road is pinned
+   * against `buildRollView`'s actual reason string, so that the two surfaces
+   * cannot be brought back into disagreement one file at a time.
+   */
+  describe('the sentence under the strip', () => {
+    /** A degree for a literal slot to keep as its way back. */
+    function keptDegree(): ChordDegree {
+      const slot = degreeSlot('kept', 0, 4);
+      if (slot.harmony.kind !== 'degree') throw new Error('degreeSlot built no degree');
+      return slot.harmony.degree;
+    }
+
+    it('promises the way back to an unrecognised card that kept its degree', () => {
+      progression.replaceDocument(docOf(literalSlot('unrecognised', keptDegree())));
+      settle();
+
+      expect(component.unlabelledHint).toBe(
+        'A card with no numeral is notes this app could not name as a chord in this key. ' +
+          'They are kept exactly as they are. Reset to chord, in the roll, turns it back into one.'
+      );
+    });
+
+    /** The second road. Same way back, and it does not read as a failure. */
+    it('says it differently for a card the user detached by hand', () => {
+      progression.replaceDocument(docOf(literalSlot('user-detached', keptDegree())));
+      settle();
+
+      expect(component.unlabelledHint).toBe(
+        'A card with no numeral is notes you detached from the key by hand. They are kept ' +
+          'exactly as they are. Reset to chord, in the roll, turns it back into one.'
+      );
+    });
+
+    /** The `from: null` case: a document from elsewhere, with nowhere to go. */
+    it('refuses rather than promises when the card was never a chord here', () => {
+      progression.replaceDocument(docOf(literalSlot('unrecognised')));
+      settle();
+
+      expect(component.unlabelledHint).toContain(
+        'These notes were never a chord in this app, so there is none to go back to.'
+      );
+      expect(component.unlabelledHint).not.toContain('turns it back into one');
+    });
+
+    /** One of each, where naming either answer alone would be half wrong. */
+    it('promises it for the cards that have one when only some do', () => {
+      progression.replaceDocument(
+        docOf(literalSlot('unrecognised', keptDegree()), literalSlot('unrecognised', null, 'orphan'))
+      );
+      settle();
+
+      expect(component.unlabelledHint).toContain(
+        'Reset to chord, in the roll, turns back the ones this app wrote; the others were ' +
+          'never chords here.'
+      );
+    });
+
+    /**
+     * The third road, and the one the bug was reproduced on: build in C major,
+     * pick a pentatonic, and every card goes bare at once.
+     */
+    it('says exactly what the roll says when the key can build no chords', () => {
+      build(0, 4);
+      progression.setKey(0, 'majorPentatonic');
+      settle();
+
+      const reason = buildRollView(currentState()).resetReason;
+
+      expect(reason).toBe('This key cannot build chords, so there is no chord to go back to.');
+      expect(component.unlabelledHint).toBe(
+        'A card with no numeral is a chord this key cannot name. Its notes are kept exactly ' +
+          `as they are. ${reason}`
+      );
     });
   });
 

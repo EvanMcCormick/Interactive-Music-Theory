@@ -2,6 +2,7 @@ import { VELOCITY_MAX, VELOCITY_MIN } from '../../../../models/progression-norma
 import { ChordSlot, ProgressionState, RollNote } from '../../../../models/progression.model';
 import { SpelledNote, formatNote, scientificOctave, spellAt } from '../../../../services/note-spelling';
 import { effectiveChord } from '../../../../services/progression-harmony';
+import { RESET_REFUSAL_TEXT, resetOutcome } from '../../../../services/progression-reset';
 import { chordRootSpelling, scaleNoteSpelling } from '../../../../services/progression-spelling';
 import { MAX_BEAT_DIVISION, MidiRange, midiToY, rowCount, visibleMidiRange } from './piano-roll-geometry';
 
@@ -186,18 +187,31 @@ export function buildRollView(state: ProgressionState): RollView {
  * Whether the slot can be handed back to the generator, and why not when it
  * cannot.
  *
- * The same two refusals `ProgressionService.resetSlotToChord` makes - a key that
- * cannot stack thirds, and a slot with no degree to rebuild from - asked where a
- * button can say so rather than written out a second time.
+ * The two refusals `ProgressionService.resetSlotToChord` makes - a key that
+ * cannot stack thirds, and a slot with no degree to rebuild from - **asked
+ * through the service's own predicate** rather than restated here.
  *
- * **A literal slot is no longer refused outright**, and that was a real bug
+ * They were restated here, and the copy had already drifted: it read
+ * `slot.harmony.from` where the service reads `slot.harmony.from ?? null`, and
+ * `from` is typed `ChordDegree | null | undefined` precisely because a document
+ * parsed from a file arrives `undefined` here whatever the type says. On such a
+ * slot this said `canReset: true` with no reason while the service refused - a
+ * live button that does nothing and will not say why. Every document reaches the
+ * store through `settle`, so the divergence was unreachable today; it was also
+ * the one place the two predicates were not the same expression, which is the
+ * definition of a thing that goes wrong later. See `progression-reset.ts`.
+ *
+ * **A literal slot is not refused for being literal**, which was a real bug
  * rather than a tightening: M3 Task 8 gave literal harmony the degree it
  * degraded from and taught the service to rebuild from it, so that a slot
  * dragged into a cluster has a way back. This predicate was left asking
  * `kind === 'degree'`, which greyed the button out on exactly the slots the
  * whole escape hatch was reopened for - the one path out of `No chord matches`,
- * closed. `from` is null only for a document written elsewhere, and that slot is
- * still refused, now in words.
+ * closed.
+ *
+ * The one refusal that stays here is the one the service has no opinion about:
+ * a roll with nothing selected is not a slot that cannot be reset, it is no slot
+ * at all.
  */
 function describeReset(
   state: ProgressionState,
@@ -206,22 +220,11 @@ function describeReset(
   if (slot === null) {
     return { canReset: false, resetReason: 'Pick a chord on the strip first.' };
   }
-  if (!state.canBuildChords) {
-    return {
-      canReset: false,
-      resetReason: 'This key cannot build chords, so there is no chord to go back to.'
-    };
-  }
 
-  const held = slot.harmony.kind === 'degree' ? slot.harmony.degree : slot.harmony.from;
-  if (held === null) {
-    return {
-      canReset: false,
-      resetReason: 'These notes were never a chord in this app, so there is none to go back to.'
-    };
-  }
-
-  return { canReset: true, resetReason: null };
+  const outcome = resetOutcome(state.canBuildChords, slot.harmony);
+  return outcome.canReset
+    ? { canReset: true, resetReason: null }
+    : { canReset: false, resetReason: RESET_REFUSAL_TEXT[outcome.refusal] };
 }
 
 /**

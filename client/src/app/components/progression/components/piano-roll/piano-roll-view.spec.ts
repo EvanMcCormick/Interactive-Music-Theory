@@ -295,5 +295,35 @@ describe('buildRollView', () => {
         resetReason: 'This key cannot build chords, so there is no chord to go back to.'
       });
     });
+
+    /**
+     * `from` absent rather than null, which is the shape a document parsed from
+     * a file has at runtime whatever `SlotHarmony` says - `progression.model.ts`
+     * tells readers to write `?? null` for exactly this and names the reason.
+     *
+     * This predicate did not, where `resetSlotToChord` did, and that one missing
+     * coalesce is the whole difference between the two: the button came up live
+     * with no reason on a slot the service would silently refuse. Nothing
+     * reaches the store in this shape today - `settle` fills the field - so the
+     * state is built by hand rather than through `replaceDocument`, which would
+     * normalise the case away before the view ever saw it.
+     */
+    it('refuses a slot whose degree is absent rather than null', () => {
+      build();
+      const state = currentState();
+      const slot = state.doc.slots[0];
+      const view = buildRollView({
+        ...state,
+        doc: {
+          ...state.doc,
+          slots: [{ ...slot, harmony: { kind: 'literal', reason: 'unrecognised', from: undefined } }]
+        }
+      });
+
+      expect({ canReset: view.canReset, resetReason: view.resetReason }).toEqual({
+        canReset: false,
+        resetReason: 'These notes were never a chord in this app, so there is none to go back to.'
+      });
+    });
   });
 });
