@@ -87,7 +87,7 @@ describe('ProgressionStripComponent', () => {
   function literalSlot(reason: 'unrecognised' | 'user-detached'): ChordSlot {
     return {
       id: 'literal-slot',
-      harmony: { kind: 'literal', reason },
+      harmony: { kind: 'literal', reason, from: null },
       startBeat: 0,
       lengthBeats: 4,
       notes: [{ midi: 60, startBeat: 0, lengthBeats: 4, velocity: 80 }],
@@ -429,6 +429,64 @@ describe('ProgressionStripComponent', () => {
 
       expect(component.cards[0].removeLabel).toBe('Remove unlabelled chord');
       expect(component.cards[0].resizeLabel).toBe('Length of unlabelled chord');
+    });
+  });
+
+  /**
+   * Where a relabel happened, which is the half the chip in the roll cannot say.
+   *
+   * The chip is one slot's notice; the strip is the whole progression, and a
+   * user who drags a note is looking at the roll rather than counting cards. The
+   * card carries the fact three ways because no one of them reaches everybody: a
+   * border colour, a mark for a reader who cannot see the colour, and - because
+   * the mark is `aria-hidden` - the words in the card's own label.
+   *
+   * The label is what is pinned here. It was shipped with no test on either
+   * side, and it is the clause that cannot be recovered from anything else on
+   * the card: drop it and the screen reader has the chord's new name and not one
+   * word about the app having been the one to choose it.
+   */
+  describe('the card the app relabelled', () => {
+    /** `I` in C major is C E G; making it C F G is a suspension it can name. */
+    function relabelFirst(id: string): void {
+      progression.setSlotNotes(
+        id,
+        [60, 65, 67].map(midi => ({ midi, startBeat: 0, lengthBeats: 4, velocity: 80 }))
+      );
+      settle();
+    }
+
+    it('marks it and says so in the same breath', () => {
+      const [id] = build(0);
+      relabelFirst(id);
+
+      expect(component.cards[0].isRelabelled).toBeTrue();
+      expect(component.cards[0].numeral).toBe('Isus4');
+      expect(component.cards[0].label).toBe(
+        'C suspended fourth, degree 1, 4 beats, relabelled by your edit'
+      );
+    });
+
+    /** Only the slot the notice names, which is what makes it say *where*. */
+    it('leaves every other card alone', () => {
+      const ids = build(0, 4);
+      relabelFirst(ids[0]);
+
+      expect(component.cards.map(card => card.isRelabelled)).toEqual([true, false]);
+      expect(component.cards[1].label).not.toContain('relabelled');
+    });
+
+    /** The notice is where the user is, not what they wrote: it goes on undo. */
+    it('unmarks it when the notice goes', () => {
+      const [id] = build(0);
+      relabelFirst(id);
+      expect(component.cards[0].isRelabelled).toBeTrue();
+
+      progression.undo();
+      settle();
+
+      expect(component.cards[0].isRelabelled).toBeFalse();
+      expect(component.cards[0].label).not.toContain('relabelled');
     });
   });
 

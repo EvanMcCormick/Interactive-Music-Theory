@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 
-import { RollNote } from '../../../../models/progression.model';
+import { ProgressionState, RollNote } from '../../../../models/progression.model';
 import { ProgressionService } from '../../../../services/progression.service';
 import { RollNoteView, buildRollView } from './piano-roll-view';
 
@@ -45,6 +45,13 @@ describe('buildRollView', () => {
 
   function place(id: string, drawn: readonly RollNote[]): void {
     progression.placeNotes(id, drawn);
+  }
+
+  function currentState(): ProgressionState {
+    let captured: ProgressionState | undefined;
+    progression.getState().subscribe(value => (captured = value)).unsubscribe();
+    if (captured === undefined) throw new Error('getState published nothing on subscribe');
+    return captured;
   }
 
   /**
@@ -198,6 +205,95 @@ describe('buildRollView', () => {
       place(id, [{ midi: 62, startBeat: 0, lengthBeats: 4, velocity: 80 }]);
 
       expect(notes()[0].name).toBe('D4');
+    });
+  });
+
+  /**
+   * Whether Reset to chord can act, and what it says when it cannot.
+   *
+   * **This is the pair that drifted, and it drifted unnoticed for two tasks.**
+   * `canReset` went on asking `harmony.kind === 'degree'` after M3 Task 8 gave
+   * literal harmony the degree it degraded from and taught the service to
+   * rebuild from it, so the button was greyed out on exactly the slots the
+   * escape hatch had been reopened for - the one way out of `No chord matches`,
+   * closed. Task 10 fixed it and specced nothing here, which is how it would
+   * drift again: `describeReset` now encodes three refusals and has to stay in
+   * step with `resetSlotToChord`'s three, and neither file's tests could see the
+   * other's.
+   *
+   * So all five reachable answers are pinned, on real service states - the
+   * refusals **by their sentence** and not only by the boolean, because the
+   * sentence is the whole of what a focusable unavailable button is for. A
+   * refusal that stopped saying why would pass a `canReset` check and leave the
+   * user with a control that declines in silence.
+   */
+  describe('the way back to a chord', () => {
+    function reset(): { canReset: boolean; resetReason: string | null } {
+      const view = buildRollView(currentState());
+      return { canReset: view.canReset, resetReason: view.resetReason };
+    }
+
+    /**
+     * Turns the only slot literal, keeping its degree or dropping it.
+     *
+     * Written through `replaceDocument` for the `null` case, which is the one no
+     * edit can reach: the recogniser always records the degree it degraded from,
+     * so a literal slot with nothing to go back to is a document from elsewhere.
+     * The other case is written the same way to keep the two comparable.
+     */
+    function goLiteral(keepDegree: boolean): void {
+      build();
+      const doc = currentState().doc;
+      const slot = doc.slots[0];
+      const from = keepDegree && slot.harmony.kind === 'degree' ? slot.harmony.degree : null;
+
+      progression.replaceDocument({
+        ...doc,
+        slots: [{ ...slot, harmony: { kind: 'literal', reason: 'unrecognised', from } }]
+      });
+    }
+
+    it('offers the way back to a slot that has a degree', () => {
+      build();
+
+      expect(reset()).toEqual({ canReset: true, resetReason: null });
+    });
+
+    /** The regression. A literal slot keeps a degree, so it keeps a way back. */
+    it('offers it to a literal slot that kept the degree it degraded from', () => {
+      goLiteral(true);
+
+      expect(reset()).toEqual({ canReset: true, resetReason: null });
+    });
+
+    it('refuses a literal slot that never had one, and says which', () => {
+      goLiteral(false);
+
+      expect(reset()).toEqual({
+        canReset: false,
+        resetReason: 'These notes were never a chord in this app, so there is none to go back to.'
+      });
+    });
+
+    it('refuses when nothing is selected, and says which', () => {
+      build();
+      progression.selectSlot(null);
+
+      expect(reset()).toEqual({
+        canReset: false,
+        resetReason: 'Pick a chord on the strip first.'
+      });
+    });
+
+    /** The slot is untouched; it is the key that has stopped being able to say. */
+    it('refuses in a key that cannot stack thirds, and says which', () => {
+      build();
+      progression.setKey(0, 'majorPentatonic');
+
+      expect(reset()).toEqual({
+        canReset: false,
+        resetReason: 'This key cannot build chords, so there is no chord to go back to.'
+      });
     });
   });
 });

@@ -125,8 +125,32 @@ describe('buildRelabelChipView', () => {
    * Every alternate is dispatchable and every alternate is sayable: the degree
    * is the recogniser's own reading, and the label is the chord in words rather
    * than a numeral read out as letters.
+   *
+   * **The first one is pinned to literal strings**, and the loop below is the
+   * weaker check that it exists to make honest. `label` against
+   * `Label as ${spoken}` is the builder asserted against itself - it passes over
+   * a numeral and a name that are both the empty string, or both a description
+   * of the wrong chord - so something has to say what the words actually are
+   * once. What the loop is then good for is the property no single case can
+   * show: that every alternate carries all four.
+   *
+   * C-F-G is the case, because it is the one whose runners-up the chord namer
+   * has real words for. The recogniser will rank a parse it can express as a
+   * degree but not name - `V?`, read aloud `G unnamed chord` - and pinning one
+   * of those would pin a gap rather than a rule.
    */
-  it('names each alternate by numeral, name and phrase', () => {
+  it('names an alternate in the words the card would use', () => {
+    const view = buildRelabelChipView(relabelFirstSlot(block(60, 65, 67)));
+    const first = view!.alternates[0];
+
+    expect(first.numeral).toBe('IVsus2');
+    expect(first.name).toBe('Fsus2');
+    expect(first.spoken).toBe('F suspended second');
+    expect(first.label).toBe('Label as F suspended second');
+    expect(first.key).toBe('IVsus2:Fsus2');
+  });
+
+  it('names every alternate by numeral, name and phrase', () => {
     const view = buildRelabelChipView(relabelFirstSlot(block(60, 64, 67, 70)));
 
     expect(view!.alternates.length).toBeGreaterThan(0);
@@ -138,12 +162,55 @@ describe('buildRelabelChipView', () => {
     });
   });
 
-  /** The button says the whole announcement, plus what pressing it would do. */
+  /**
+   * The button says the whole announcement, plus what pressing it would do. The
+   * announcement itself is pinned in the table above, so the composition here is
+   * checked against it rather than spelled out a third time.
+   */
   it('gives the button the announcement and the affordance', () => {
     const view = buildRelabelChipView(relabelFirstSlot(block(60, 65, 67)));
 
-    expect(view!.buttonLabel).toBe(`${view!.announcement}. Other names for these notes.`);
+    expect(view!.buttonLabel).toBe(
+      'Relabelled C suspended fourth, was C major. Other names for these notes.'
+    );
     expect(view!.hint).toContain('notes are kept');
+  });
+
+  /**
+   * A slot relabelled *out of* an unlabelled state names the far end the way the
+   * card does - `unlabelled chord` and not a shorter word of the chip's own.
+   * The chip and the card are an inch apart on the page and are describing one
+   * slot; the printed `(was unlabelled)` is the numeral's slot, which is a
+   * different thing from what is said aloud.
+   */
+  it('says `unlabelled chord` where the card says it, and prints the short form', () => {
+    progression.appendSlot(0);
+    const doc = currentState().doc;
+    const slot = doc.slots[0];
+    // A cluster under a literal label, so that writing a triad over it is a real
+    // change: `setSlotNotes` declines a list identical to the one it holds, and
+    // a declined write recognises nothing.
+    progression.replaceDocument({
+      ...doc,
+      slots: [
+        {
+          ...slot,
+          harmony: { kind: 'literal', reason: 'unrecognised', from: null },
+          notes: block(60, 61, 62)
+        }
+      ]
+    });
+    progression.setSlotNotes(slot.id, block(60, 64, 67));
+
+    const view = buildRelabelChipView(currentState());
+
+    expect(view!.previousText).toBe('(was unlabelled)');
+    expect(view!.revertLabel).toBe('Back to unlabelled');
+    expect(view!.announcement).toBe('Relabelled C major, was unlabelled chord');
+    expect(view!.revertedAnnouncement).toBe('Back to unlabelled chord. The notes are unchanged.');
+    // The two commands are otherwise indistinguishable here, so the revert says
+    // what the difference is.
+    expect(view!.revertAriaLabel).toContain('A later edit can still name it.');
   });
 
   /** The slot the chip acts on is the one the notice named. */
