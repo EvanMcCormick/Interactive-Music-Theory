@@ -192,8 +192,8 @@ export const MIDI_MAX = 127;
  * line before a note reached `Tone.PolySynth`. Measured over the pipeline
  * `generateSlotNotes` runs - all 33 heptatonic scales, every degree, extent,
  * inversion and tonic, and every `(alter, quality)` pair a slot could then carry
- * - the widest chord reached **46** semitones above its base. At 1 that is MIDI
- * 118; at 2 it is 130, three notes off the end. So the constant came down to 1,
+ * - the widest chord reached **45** semitones above its base. At 1 that is MIDI
+ * 117; at 2 it is 129, two notes off the end. So the constant came down to 1,
  * and *every* chord in the app lost the top octave to accommodate the widest
  * one. That was the price of bounding the **input**, and it was paid
  * deliberately: the alternatives all bound the output instead, and every one of
