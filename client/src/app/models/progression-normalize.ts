@@ -95,11 +95,14 @@ import type {
  *    The clause is about *absence* only, and absence is a migration - a field
  *    added to a document type is missing from every document written before it.
  *    A member that is present and of the wrong kind is corruption rather than
- *    migration, and falls back under the first clause and throws. `extensions`
- *    is the second field under this clause and the first one for which the
- *    migration is not hypothetical: it was added to `ChordDegree` at M3, so
- *    every slot written before it has none, and the fill is the value a fresh
- *    slot carries - all three `null`, "as the key gives it".
+ *    migration, and falls back under the first clause and throws. **Three
+ *    fields are under it**, each named here as it joins rather than only in the
+ *    guard that fills it, because a clause saying "two" while the code fills
+ *    three is one rule disagreeing with itself: `owned`, which it was written
+ *    for and whose migration was hypothetical; `extensions`, which joined at M3
+ *    and is filled with the three `null`s a fresh slot carries; and `from`,
+ *    which joined at M3 Task 8 and is filled with the `null` that already means
+ *    a literal slot has no way back. See `normalizeLiteralHarmony`.
  *
  * `normalizeProgressionDoc` is what makes the rule a mechanism rather than a
  * convention: `ProgressionService.commit` calls it on every mutation, so the
@@ -361,11 +364,26 @@ export const CHORD_EXTENTS: readonly ChordExtent[] = [3, 7, 9, 11, 13];
 // Guards
 // ---------------------------------------------------------------------------
 
-function requireInteger(value: number, field: string): number {
+/**
+ * What a degree guard calls the thing it is checking, so its message names the
+ * field that actually holds it.
+ *
+ * `normalizeChordDegree` is reached from two places meaning different things:
+ * the slot's own harmony, and the degree a *literal* slot degraded from, which
+ * since M3 Task 8 is normalised too and is corrupt in documents where the slot's
+ * own degree is fine. Both threw `ChordSlot extent must be one of 3, 7, 9, 11,
+ * 13; got undefined`, sending a reader to the slot's degree to find nothing
+ * wrong with it. A path into the slot rather than a type name, because
+ * `ChordDegree` names no field either; and *every* guard takes one, because
+ * which field of a half-written `from` throws first is not a caller's choice.
+ */
+type DegreeSubject = 'ChordSlot' | 'ChordSlot harmony.from';
+
+function requireInteger(value: number, field: string, subject: DegreeSubject): number {
   // Catches `undefined` and `NaN` as well as fractions: `Number.isInteger`
   // takes no view of what a non-number might have meant.
   if (!Number.isInteger(value)) {
-    throw new Error(`ChordSlot ${field} must be a whole number; got ${value}`);
+    throw new Error(`${subject} ${field} must be a whole number; got ${value}`);
   }
   return value;
 }
@@ -405,11 +423,11 @@ function normalizeLengthBeats(lengthBeats: number): number {
   return Math.max(MIN_SLOT_BEATS, lengthBeats);
 }
 
-function requireDegreeIndex(degree: number): number {
+function requireDegreeIndex(degree: number, subject: DegreeSubject): number {
   // The domain `degreePitchClasses` enforces, checked here as well so a bad
   // degree fails when the slot is built rather than when it is first sounded.
   if (!Number.isInteger(degree) || degree < 0 || degree > 6) {
-    throw new Error(`ChordSlot degree must be a scale degree from 0 to 6; got ${degree}`);
+    throw new Error(`${subject} degree must be a scale degree from 0 to 6; got ${degree}`);
   }
   return degree;
 }
@@ -425,10 +443,10 @@ function requireDegreeIndex(degree: number): number {
  * *stepper's* job - `ProgressionService.setSlotExtent` owns that, not this
  * guard.
  */
-function requireExtent(extent: ChordExtent): ChordExtent {
+function requireExtent(extent: ChordExtent, subject: DegreeSubject): ChordExtent {
   if (!CHORD_EXTENTS.includes(extent)) {
     throw new Error(
-      `ChordSlot extent must be one of ${CHORD_EXTENTS.join(', ')}; got ${extent}`
+      `${subject} extent must be one of ${CHORD_EXTENTS.join(', ')}; got ${extent}`
     );
   }
   return extent;
@@ -459,11 +477,11 @@ function requireExtent(extent: ChordExtent): ChordExtent {
  * 4 removed the write it rested on. This is the guard that lets the laundering
  * go with it.
  */
-function requireQuality(quality: NamedQuality | null): NamedQuality | null {
+function requireQuality(quality: NamedQuality | null, subject: DegreeSubject): NamedQuality | null {
   if (quality === null) return null;
   if (!NAMED_QUALITIES.includes(quality)) {
     throw new Error(
-      `ChordDegree quality must be null or one of ${NAMED_QUALITIES.join(', ')}; ` +
+      `${subject} quality must be null or one of ${NAMED_QUALITIES.join(', ')}; ` +
         `got ${quality}`
     );
   }
@@ -521,10 +539,10 @@ export const SUSPENSIONS: readonly SuspensionKind[] = ['none', 'sus2', 'sus4'];
  * this field is as old as `ChordDegree`, so no document was ever written
  * without it and a missing one is corruption rather than migration.
  */
-function requireSuspension(suspension: SuspensionKind): SuspensionKind {
+function requireSuspension(suspension: SuspensionKind, subject: DegreeSubject): SuspensionKind {
   if (!SUSPENSIONS.includes(suspension)) {
     throw new Error(
-      `ChordDegree suspension must be one of ${SUSPENSIONS.join(', ')}; got ${suspension}`
+      `${subject} suspension must be one of ${SUSPENSIONS.join(', ')}; got ${suspension}`
     );
   }
   return suspension;
@@ -552,16 +570,18 @@ function requireSuspension(suspension: SuspensionKind): SuspensionKind {
  * replaced it - the promise `normalizeOwnership` and `normalizeChordSlot` make.
  */
 function normalizeExtensions(
-  extensions: ExtensionAlterations | undefined
+  extensions: ExtensionAlterations | undefined,
+  subject: DegreeSubject
 ): ExtensionAlterations {
   if (extensions === undefined) return createExtensions();
   return {
-    ninth: requireAlteration(extensions.ninth, NINTH_ALTERATIONS, 'ninth'),
-    eleventh: requireAlteration(extensions.eleventh, ELEVENTH_ALTERATIONS, 'eleventh'),
+    ninth: requireAlteration(extensions.ninth, NINTH_ALTERATIONS, 'ninth', subject),
+    eleventh: requireAlteration(extensions.eleventh, ELEVENTH_ALTERATIONS, 'eleventh', subject),
     thirteenth: requireAlteration(
       extensions.thirteenth,
       THIRTEENTH_ALTERATIONS,
-      'thirteenth'
+      'thirteenth',
+      subject
     )
   };
 }
@@ -569,12 +589,13 @@ function normalizeExtensions(
 function requireAlteration<T extends number>(
   value: T | null,
   allowed: readonly T[],
-  extension: string
+  extension: string,
+  subject: DegreeSubject
 ): T | null {
   if (value === null) return null;
   if (!allowed.includes(value)) {
     throw new Error(
-      `ChordDegree extensions ${extension} must be null or one of ` +
+      `${subject} extensions ${extension} must be null or one of ` +
         `${allowed.join(', ')}; got ${value}`
     );
   }
@@ -599,12 +620,16 @@ function requireAlteration<T extends number>(
  * before this guard is reached, which is the stronger place for it - `'other'`
  * carries no root either, so there was never a pairing that made it legal.
  */
-function requireBuildableRoot(alter: number, quality: NamedQuality | null): void {
+function requireBuildableRoot(
+  alter: number,
+  quality: NamedQuality | null,
+  subject: DegreeSubject
+): void {
   if (alter === 0) return;
   if (quality !== null) return;
 
   throw new Error(
-    `A chromatic ChordDegree needs a quality that names a shape; got alter ` +
+    `A chromatic degree needs a quality that names a shape; ${subject} has alter ` +
       `${alter} with quality null`
   );
 }
@@ -859,32 +884,34 @@ function normalizeLiteralHarmony(
   harmony: Extract<SlotHarmony, { kind: 'literal' }>
 ): SlotHarmony {
   const from = harmony.from;
+  const subject = 'ChordSlot harmony.from';
   return {
     kind: 'literal',
     reason: harmony.reason,
-    from: from === undefined || from === null ? null : normalizeChordDegree(from)
+    from: from === undefined || from === null ? null : normalizeChordDegree(from, subject)
   };
 }
 
-function normalizeChordDegree(degree: ChordDegree): ChordDegree {
-  const extent = requireExtent(degree.extent);
-  const alter = clamp(requireInteger(degree.alter, 'alter'), ALTER_MIN, ALTER_MAX);
-  const quality = requireQuality(degree.quality);
+/** Every guard on a degree, in one pass. `subject` is `DegreeSubject`'s. */
+function normalizeChordDegree(degree: ChordDegree, subject: DegreeSubject): ChordDegree {
+  const extent = requireExtent(degree.extent, subject);
+  const alter = clamp(requireInteger(degree.alter, 'alter', subject), ALTER_MIN, ALTER_MAX);
+  const quality = requireQuality(degree.quality, subject);
   // Judged on the alteration that will be *stored*, not the one that arrived:
   // an out-of-range `alter` is clamped above and the pair is only meaningful
   // against the value the document ends up holding.
-  requireBuildableRoot(alter, quality);
+  requireBuildableRoot(alter, quality, subject);
 
   return {
     ...degree,
-    degree: requireDegreeIndex(degree.degree),
+    degree: requireDegreeIndex(degree.degree, subject),
     alter,
     extent,
     quality,
-    suspension: requireSuspension(degree.suspension),
-    extensions: normalizeExtensions(degree.extensions),
-    inversion: normalizeInversion(requireInteger(degree.inversion, 'inversion'), extent),
-    octave: clamp(requireInteger(degree.octave, 'octave'), OCTAVE_MIN, OCTAVE_MAX)
+    suspension: requireSuspension(degree.suspension, subject),
+    extensions: normalizeExtensions(degree.extensions, subject),
+    inversion: normalizeInversion(requireInteger(degree.inversion, 'inversion', subject), extent),
+    octave: clamp(requireInteger(degree.octave, 'octave', subject), OCTAVE_MIN, OCTAVE_MAX)
   };
 }
 
@@ -928,7 +955,7 @@ export function normalizeChordSlot(slot: ChordSlot): ChordSlot {
 
   return {
     ...timed,
-    harmony: { kind: 'degree', degree: normalizeChordDegree(timed.harmony.degree) }
+    harmony: { kind: 'degree', degree: normalizeChordDegree(timed.harmony.degree, 'ChordSlot') }
   };
 }
 

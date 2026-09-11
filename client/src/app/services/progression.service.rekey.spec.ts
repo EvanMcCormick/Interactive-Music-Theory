@@ -2,6 +2,8 @@ import { TestBed } from '@angular/core/testing';
 
 import { ProgressionService } from './progression.service';
 import { ChordDegree, ChordSlot, ProgressionState, SlotHarmony } from '../models/progression.model';
+import { effectiveChord, isHeptatonic } from './progression-harmony';
+import { reduce, structuralPitchClasses } from './progression-parse';
 
 /**
  * What a key change does to a slot's *label*, which until M3 Task 8 was
@@ -256,6 +258,14 @@ describe('ProgressionService: a key change re-expresses an owned chord', () => {
    * keeps its degree and the strip says "this key cannot name it" for as long
    * as the page stays there - which is a refusal that undoes itself when the
    * key comes back, where a degradation would not.
+   *
+   * The **second** key change here is the one that used to be a lie, and this
+   * spec used to end at C ionian, where the tonic had not moved and the mode had
+   * not either: nothing needed re-expressing, so `null` came back for a reason
+   * that had nothing to do with the fix, and the spec passed over the bug it was
+   * standing on. Landing on A aeolian instead is the whole difference - the
+   * identity has to survive a key the app cannot name it in - and it was red
+   * until `rekey` learned to read the notes.
    */
   it('keeps a degree through a key with no chords in it', () => {
     const id = append(0);
@@ -263,8 +273,140 @@ describe('ProgressionService: a key change re-expresses an owned chord', () => {
 
     service.setKey(0, 'majorPentatonic');
     expect(harmonyOf(id).kind).toBe('degree');
+    expect(midiOf(id)).toEqual([60, 64, 67]);
 
-    service.setKey(0, 'ionian');
+    service.setKey(9, 'aeolian');
+
+    // The notes are a major triad on A, so the card has to say so. Reading the
+    // stale numeral out of the document instead prints `i` over it.
+    expect(midiOf(id)).toEqual([69, 73, 76]);
+    expect(degreeOf(id).degree).toBe(0);
+    expect(degreeOf(id).quality).toBe('major');
+  });
+
+  /**
+   * The same identity, and the same answer, without the detour.
+   *
+   * The pair is the point: a route through a key that can name nothing is not
+   * supposed to be a route that *changes* anything, so the chord that comes out
+   * of C ionian → C majorPentatonic → A aeolian is the chord that comes out of
+   * C ionian → A aeolian. It is the cheapest statement there is of what the
+   * detour cost before the fix.
+   */
+  it('lands where the direct move lands', () => {
+    const id = append(0);
+    own(id);
+
+    service.setKey(9, 'aeolian');
+
+    expect(midiOf(id)).toEqual([69, 73, 76]);
+    expect(degreeOf(id).degree).toBe(0);
+    expect(degreeOf(id).quality).toBe('major');
+  });
+
+  /**
+   * The invariant underneath every expectation above: **a slot's stored degree
+   * names the pitch classes it is sounding.**
+   *
+   * Both of the failures Task 8 left behind violate exactly this and nothing
+   * else - one had the quality wrong under the right root, the other had the
+   * root wrong as well - and neither is a fact about a particular pair of keys.
+   * A fixture per route would have pinned the two routes that were reported and
+   * said nothing about the third, so the property is asserted along a **walk**
+   * instead: every stop on the route below is checked, and a stop is added by
+   * adding a key rather than by writing another spec.
+   *
+   * ## Where it is asserted, and where it honestly cannot be
+   *
+   * Two stops answer nothing rather than answering wrongly, and both are
+   * refusals the design argues for rather than gaps in the check:
+   *
+   *  - **A key whose scale cannot stack thirds.** There is no degree in it for a
+   *    label to name, so there is no claim to test. That the slot passes through
+   *    such a key still holding its degree is the thing those stops are here to
+   *    exercise, and it is checked directly.
+   *  - **A literal slot.** It carries no numeral, which is the one state that
+   *    cannot be a mislabel. The route below is chosen from ordinary scales so
+   *    that no stop degrades, and the walk asserts that: a degradation would
+   *    turn the rest of the route into a run of vacuous passes.
+   *
+   * ## The route
+   *
+   * It is not a tour for its own sake. It holds both shapes the review found -
+   * a non-heptatonic stop that the tonic moves *at* (C pentatonic → A aeolian,
+   * where the voicing is transposed) and one it does not (A pentatonic → A
+   * aeolian, where `transposeBy` is 0 and only the anchor moves the notes, by a
+   * whole octave, leaving every pitch class where it was) - plus ordinary
+   * heptatonic moves between them, a six-note scale and a whole-tone one so the
+   * refusal is not only ever a pentatonic, and a return to C ionian.
+   */
+  it('keeps the label naming the notes along a route through unnameable keys', () => {
+    const id = append(0);
+    own(id);
+    expectLabelNamesNotes(id, 'C ionian, before anything moves');
+
+    for (const [tonic, scaleId] of ROUTE) {
+      service.setKey(tonic, scaleId);
+      const where = `${tonic} ${scaleId}`;
+
+      // Nothing on this route is honestly unnameable, so a literal slot here is
+      // the degradation branch reached by accident - and it would make every
+      // later stop pass without testing anything.
+      expect(harmonyOf(id).kind).withContext(where).toBe('degree');
+      expectLabelNamesNotes(id, where);
+    }
+
+    // Home, and back to the notes and the numeral it started with: the walk
+    // closes, which is the other half of what "the route cost nothing" means.
+    expect(midiOf(id)).toEqual([60, 64, 67]);
+    expect(degreeOf(id).degree).toBe(0);
     expect(degreeOf(id).quality).toBeNull();
   });
+
+  /** See the walk above for why each stop is on it. */
+  const ROUTE: readonly (readonly [number, string])[] = [
+    [0, 'majorPentatonic'],
+    [9, 'aeolian'],
+    [9, 'majorPentatonic'],
+    [9, 'aeolian'],
+    [2, 'dorian'],
+    [2, 'minorBlues'],
+    [7, 'mixolydian'],
+    [7, 'wholeTone'],
+    [0, 'ionian']
+  ];
+
+  /**
+   * Asserts the invariant at one stop, or passes silently where there is no
+   * claim to test - see the walk's docstring for which two cases those are and
+   * why neither is a hole.
+   *
+   * The chord is read the way the whole app reads it, through `effectiveChord`,
+   * rather than rebuilt here from the degree: a second construction of a chord
+   * from a numeral would be a second statement of what a numeral means, free to
+   * agree with the card while both disagreed with the synth. The notes are read
+   * through `structuralPitchClasses`, which is what decides what a slot is
+   * sounding everywhere else on this page.
+   */
+  function expectLabelNamesNotes(id: string, where: string): void {
+    const state = currentState();
+    const scale = state.keyScale;
+    if (!scale || !isHeptatonic(scale.intervals)) return;
+
+    const harmony = harmonyOf(id);
+    if (harmony.kind !== 'degree') return;
+
+    const identity = effectiveChord(scale.intervals, harmony.degree);
+    const named = identity.intervals.map(interval =>
+      reduce(state.doc.key.tonic + identity.root + interval)
+    );
+
+    const sounding = structuralPitchClasses(slot(id).notes, slot(id).lengthBeats);
+    expect(ascending(named)).withContext(where).toEqual(ascending([...sounding]));
+  }
+
+  /** Pitch classes as a sorted list with no repeat, so two sets compare. */
+  function ascending(pitchClasses: readonly number[]): number[] {
+    return [...new Set(pitchClasses)].sort((left, right) => left - right);
+  }
 });

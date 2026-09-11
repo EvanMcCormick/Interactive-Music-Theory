@@ -419,7 +419,7 @@ describe('recognise', () => {
   it('roots a diminished seventh on the bass when there is no current root', () => {
     const detached: ChordSlot = {
       ...degreeSlot(6, {}, C_HARMONIC_MINOR, HARMONIC_MINOR),
-      harmony: { kind: 'literal', reason: 'unrecognised' }
+      harmony: { kind: 'literal', reason: 'unrecognised', from: null }
     };
     const edited = sounding(detached, [68, 71, 74, 77]);
     const { degree } = relabelOf(edited, [note(71), note(74), note(77)], C_HARMONIC_MINOR, HARMONIC_MINOR);
@@ -482,7 +482,7 @@ describe('recognise', () => {
     const slot = degreeSlot(0);
     const detached: ChordSlot = {
       ...sounding(slot, [60, 64, 67, 70]),
-      harmony: { kind: 'literal', reason: 'user-detached' }
+      harmony: { kind: 'literal', reason: 'user-detached', from: null }
     };
     expect(recognise(slot.notes, detached, C_MAJOR, MAJOR).kind).toBe('unchanged');
   });
@@ -492,7 +492,7 @@ describe('recognise', () => {
     const slot = degreeSlot(0);
     const lost: ChordSlot = {
       ...slot,
-      harmony: { kind: 'literal', reason: 'unrecognised' }
+      harmony: { kind: 'literal', reason: 'unrecognised', from: null }
     };
     const { degree } = relabelOf(lost, sounding(lost, [60, 61, 62]).notes);
     expect(harmonyOf(degree)).toEqual(harmony());
@@ -503,7 +503,7 @@ describe('recognise', () => {
     const slot = degreeSlot(0);
     const lost: ChordSlot = {
       ...sounding(slot, [60, 61, 62]),
-      harmony: { kind: 'literal', reason: 'unrecognised' }
+      harmony: { kind: 'literal', reason: 'unrecognised', from: null }
     };
     expect(recognise(slot.notes, lost, C_MAJOR, MAJOR).kind).toBe('unchanged');
   });
@@ -543,7 +543,7 @@ describe('recognise', () => {
     const slot = degreeSlot(0, { alter: 1, quality: 'major' });
     const detached: ChordSlot = {
       ...slot,
-      harmony: { kind: 'literal', reason: 'unrecognised' }
+      harmony: { kind: 'literal', reason: 'unrecognised', from: null }
     };
 
     const { degree } = relabelOf(detached, sounding(slot, [61, 65, 67]).notes);

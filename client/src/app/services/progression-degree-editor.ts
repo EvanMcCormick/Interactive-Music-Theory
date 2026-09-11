@@ -10,7 +10,7 @@ import {
 import { nearestExtent, reclaimPitches, regenerateSlot, sameDegree } from './progression-edit';
 import { chordOctaveCeiling } from './progression-generate';
 import { ChordExtent, NamedQuality, effectiveChord } from './progression-harmony';
-import { expressInKey } from './progression-recognise';
+import { expressInKey, expressNotesInKey } from './progression-recognise';
 import { ProgressionStore } from './progression-history';
 import { ProgressionKeyContext } from './progression-key-context';
 
@@ -408,12 +408,48 @@ export class ProgressionDegreeEditor {
    *
    * `expressInKey` reads the inversion off a bass note and takes an octave,
    * because the recogniser learns both from where the user's notes happen to
-   * sit. Here they are already known and neither is part of the identity: the
-   * stored octave goes in, and the stored inversion is written back over the
-   * one the call computes. A key change moves the spelling, not the register -
-   * and reading the inversion off the transposed voicing instead would let a
-   * chord the user left in root position come back as a second inversion
-   * because the anchor put a different note at the bottom.
+   * sit. Here they are already known and neither is part of the identity, so
+   * both are written back over whatever the call computed. A key change moves
+   * the spelling, not the register - and reading the inversion off the
+   * transposed voicing instead would let a chord the user left in root position
+   * come back as a second inversion because the anchor put a different note at
+   * the bottom.
+   *
+   * Writing the octave back is a no-op on the degree route, where the stored
+   * octave is what went in and `atDegree`'s clamp cannot move a value the store
+   * has already bounded. It is load-bearing on the notes route below, which gets
+   * its octave from where the bass happens to sit and would otherwise quietly
+   * rewrite what the user asked the octave control for - visible the next time
+   * Reset to chord regenerates the slot.
+   *
+   * ## When the leaving key cannot name it either: read the notes
+   *
+   * The identity above is read off the *degree in the key being left*, and that
+   * source of truth is gone the moment that key's scale will not resolve -
+   * `majorPentatonic` is in the key picker, and passing through it on the way
+   * somewhere is an ordinary thing to do. Keeping the label as it stood is then
+   * the M2 bug verbatim, two clicks further along, because `regenerateSlot`
+   * transposes owned pitches happily *out of* a non-heptatonic key while
+   * refusing to transpose them *into* one: C ionian → C majorPentatonic → A
+   * aeolian ends on A, C♯, E under a card reading `i`, and C ionian → A
+   * majorPentatonic → A aeolian ends on C, E, G under the same card, where the
+   * numeral and the notes now disagree about the **root** rather than merely the
+   * quality.
+   *
+   * So when only the *leaving* scale is missing, the identity is parsed out of
+   * the notes instead - `expressNotesInKey`, which is the same last step fed
+   * from the only source that survived - and the rest of this method is
+   * unchanged. Since Task 7 the app can read a chord off notes, and those notes
+   * are what the user is hearing: reading them is how the label is made to
+   * follow the sound rather than the history.
+   *
+   * That call is deliberately not `recognise`. A key change is not a pitch edit,
+   * so the before/after quiet test would be silent on the second route above -
+   * where every pitch class stays put and only the octave moves - and the
+   * ranking's proximity and kept-numeral clauses would both prefer readings that
+   * agree with the very label being replaced. `expressNotesInKey` is that
+   * ranking with those two clauses switched off, and its docstring carries the
+   * argument.
    *
    * ## When the new key cannot write it
    *
@@ -425,12 +461,33 @@ export class ProgressionDegreeEditor {
    * is the honest answer and it is visible; carrying the old numeral into a key
    * that cannot write it is the mislabel this method exists to remove.
    *
-   * Either scale being unresolvable - the key left or the key entered cannot
-   * stack thirds at all - is not that case. There is no identity to read or
-   * nowhere to write it, so the slot keeps its degree untouched and the strip
+   * The notes route degrades on the same terms and for the same reason: a set of
+   * pitch classes the entering scale can put no numeral on is honestly
+   * unnameable there, and `from` is the way back.
+   *
+   * **What a degradation costs, and why the branch is kept narrow.** A `literal`
+   * slot is no longer re-voiced *or* transposed by any later key change -
+   * `regenerateSlot` returns a literal slot's own notes by identity - so its
+   * pitches sit still while every other slot in the progression moves around
+   * them. That follows from `literal` semantics rather than from anything here,
+   * and the strip's hint tells the user about it, but it is the strongest reason
+   * the two refusals below are refusals rather than degradations.
+   *
+   * The **entering** scale being unresolvable is one of them. There is nowhere
+   * to write an identity, so the slot keeps its degree untouched and the strip
    * says "this key cannot name it" for as long as the page stays there, exactly
-   * as it did before. Degrading would be punishing a slot for the key it is in,
-   * and it would not be undone by moving back to a key that can name it.
+   * as it did before. Degrading would be punishing a slot for the key it is in -
+   * and, by the paragraph above, it would strand the slot's pitches for good,
+   * where the refusal undoes itself the moment a key that can name chords comes
+   * back. The new branch does not weaken that argument: it runs only when the
+   * entering scale *is* heptatonic, so anything it degrades has been turned away
+   * by a key that could genuinely have written it.
+   *
+   * The other is a slot with **no notes at all**, which the page can produce -
+   * `setNoteTiming` then `setSlotNotes(id, [])` leaves a slot owning its pitches
+   * and holding none. There is nothing to read, and equally nothing that a label
+   * could disagree with: a silent slot cannot be mislabelled. It keeps its
+   * degree.
    */
   rekey(
     slot: ChordSlot,
@@ -442,19 +499,56 @@ export class ProgressionDegreeEditor {
     if (moved.harmony.kind !== 'degree' || !moved.owned.pitches) return moved;
 
     const entering = this.keys.chordScaleFor(key);
-    if (leaving === null || entering === null) return moved;
+    if (entering === null) return moved;
 
     const degree = moved.harmony.degree;
-    const identity = effectiveChord(leaving, degree);
-    // The root as the bass, so the position `expressInKey` computes is the one
-    // overwritten below. What the chord is does not depend on it either way.
-    const written = expressInKey(identity, entering, degree.octave, identity.root);
+    const written = this.identityInKey(moved, leaving, entering, key, degree);
+    if (written === undefined) return moved;
     if (written === null) return { ...moved, harmony: literalHarmony('unrecognised', degree) };
 
+    // The register is kept rather than re-derived, on both routes and for the
+    // reason given above: a key change moves the spelling, not where the chord
+    // stands. The notes route reads a bass that the anchor may just have moved,
+    // which makes overwriting it the more necessary there, not the less.
     return {
       ...moved,
-      harmony: { kind: 'degree', degree: { ...written, inversion: degree.inversion } }
+      harmony: {
+        kind: 'degree',
+        degree: { ...written, inversion: degree.inversion, octave: degree.octave }
+      }
     };
+  }
+
+  /**
+   * What the chord in `slot` is, written as a degree of the key it is entering.
+   *
+   * Three answers, and the third is why this is a method rather than an
+   * expression: `undefined` is "there is nothing to ask", which `rekey` answers
+   * by leaving the slot exactly as it found it, and is a different thing from
+   * the `null` that means "asked, and this key has no numeral for it".
+   *
+   * Which source the identity comes from is the whole of the decision. The
+   * degree in the key being left is the better one where it exists - it is what
+   * the user chose, and reading it needs no interpretation - so it is tried
+   * first, and the notes are the fallback for the case where that key's scale
+   * will not resolve.
+   */
+  private identityInKey(
+    slot: ChordSlot,
+    leaving: readonly number[] | null,
+    entering: readonly number[],
+    key: ProgressionKey,
+    degree: ChordDegree
+  ): ChordDegree | null | undefined {
+    if (leaving !== null) {
+      const identity = effectiveChord(leaving, degree);
+      // The root as the bass, so the position `expressInKey` computes is the one
+      // `rekey` overwrites. What the chord is does not depend on it either way.
+      return expressInKey(identity, entering, degree.octave, identity.root);
+    }
+
+    if (slot.notes.length === 0) return undefined;
+    return expressNotesInKey(slot.notes, slot.lengthBeats, key, entering);
   }
 
   /**

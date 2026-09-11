@@ -84,7 +84,7 @@ describe('generateSlotNotes', () => {
     const existing: RollNote[] = [{ midi: 61, startBeat: 0, lengthBeats: 1, velocity: 90 }];
     const slot = {
       ...createDegreeSlot(0, 0),
-      harmony: { kind: 'literal' as const, reason: 'unrecognised' as const },
+      harmony: { kind: 'literal' as const, reason: 'unrecognised' as const, from: null },
       notes: existing
     };
     expect(generateSlotNotes(slot, C_MAJOR_KEY, MAJOR)).toEqual(existing);
@@ -97,7 +97,7 @@ describe('generateSlotNotes', () => {
     const existing: RollNote[] = [{ midi: 61, startBeat: 0, lengthBeats: 1, velocity: 90 }];
     const slot = {
       ...createDegreeSlot(0, 0),
-      harmony: { kind: 'literal' as const, reason: 'user-detached' as const },
+      harmony: { kind: 'literal' as const, reason: 'user-detached' as const, from: null },
       notes: existing
     };
     expect(generateSlotNotes(slot, C_MAJOR_KEY, MAJOR)).toBe(existing);

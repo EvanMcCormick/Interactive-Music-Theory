@@ -328,7 +328,7 @@ function literalSlot(
 ): ChordSlot {
   return {
     id,
-    harmony: { kind: 'literal', reason: 'unrecognised' },
+    harmony: { kind: 'literal', reason: 'unrecognised', from: null },
     startBeat,
     lengthBeats,
     notes,

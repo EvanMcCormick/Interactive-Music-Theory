@@ -758,7 +758,7 @@ describe('ProgressionComponent', () => {
           ...built.slots,
           {
             id: 'detached',
-            harmony: { kind: 'literal', reason: 'unrecognised' },
+            harmony: { kind: 'literal', reason: 'unrecognised', from: null },
             startBeat: 4,
             lengthBeats: 4,
             notes: [],

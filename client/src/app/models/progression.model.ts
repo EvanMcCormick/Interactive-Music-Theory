@@ -193,20 +193,35 @@ export type SlotHarmony =
       /**
        * The degree this slot degraded from, or `null` when it had none.
        *
-       * **Optional in the type, guaranteed in a document.** The field was added
-       * at M3 Task 8, so every slot written before it arrives without one - the
-       * fifth clause of the normalisation rule, and an optional property is how
-       * a type says exactly that. `normalizeChordSlot` fills the absence with
-       * `null` and normalises a degree that is there, so anything that has been
-       * through the funnel - which is every slot in the store, on every commit -
-       * holds the field. Readers still write `?? null` rather than trusting
-       * that, because a caller may hold a slot it has just built.
+       * **A required key with an optional value**, which is the pair of facts
+       * this field actually has and which `from?:` collapsed into one. The
+       * *value* may be absent, because the field was added at M3 Task 8 and
+       * every slot written before it arrives without one - the fifth clause of
+       * the normalisation rule, which `normalizeLiteralHarmony` fills with
+       * `null` and `normalizeChordSlot` puts on every slot in the store. The
+       * *key* is required because nothing in this app writes a pre-Task-8
+       * document: every literal harmony built in this source is built now, by a
+       * writer who knows whether it has a degree to keep.
        *
-       * `literalHarmony` is the door for code that *writes* one: it takes the
-       * degree as a required argument, so a writer that has one to keep cannot
-       * quietly drop it.
+       * `from?:` said only the first, and the second is the one with teeth. Task
+       * 8 shipped with eighteen construction sites and every one of them in a
+       * spec - not one in production - so a required key would have compiled
+       * against the whole app on the day it was added, and the convention it
+       * replaced was holding by luck rather than by type. The failure it now
+       * cannot have is a writer degrading a slot and forgetting the field, which
+       * is a slot with no way back at all: `resetSlotToChord` refuses it, every
+       * command on the page refuses it, and undo is gone the moment the user
+       * does anything else.
+       *
+       * `literalHarmony` is still the door for code that writes one, and still
+       * takes the degree as a required argument. What has changed is that the
+       * door is no longer the only thing holding the guarantee.
+       *
+       * Readers still write `?? null` rather than trusting the fill, because a
+       * caller may hold a slot it has just built - and because a document parsed
+       * from a file is `undefined` here at runtime whatever this type says.
        */
-      from?: ChordDegree | null;
+      from: ChordDegree | null | undefined;
     };
 
 /**
@@ -221,12 +236,16 @@ export type LiteralReason = 'unrecognised' | 'user-detached';
 /**
  * A slot's harmony as `literal`, keeping the degree it degraded from.
  *
- * The argument is required where the field is optional, and that asymmetry is
- * the point. Absence is a *migration* - a document written before M3 Task 8 -
- * and nothing in this app writes one of those; a caller here always knows
- * whether it has a degree to keep, and passing `null` should be a decision
- * rather than a line nobody wrote. `setKey`'s degradation and Task 9's
- * keep-as-literal both have one, and both would compile without this.
+ * The argument is required, and so - since the review of 2026-09-10 - is the
+ * field. Absence is a *migration*, a document written before M3 Task 8, and
+ * nothing in this app writes one of those; a caller here always knows whether it
+ * has a degree to keep, and passing `null` should be a decision rather than a
+ * line nobody wrote. `setKey`'s degradation and Task 9's keep-as-literal both
+ * have one, and both would compile without this.
+ *
+ * It is still worth going through rather than writing the object literal out:
+ * this names the three fields once, so a fourth added to the variant is a
+ * compile error here and not a field every writer has to remember.
  */
 export function literalHarmony(reason: LiteralReason, from: ChordDegree | null): SlotHarmony {
   return { kind: 'literal', reason, from };

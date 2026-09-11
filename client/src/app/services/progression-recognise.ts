@@ -48,8 +48,13 @@ import {
  * root - is `progression-parse.ts`, and the two were one file until the ruling
  * of 2026-09-10 grew the ranking. Everything here turns a reading into a numeral
  * of a key: `expressInKey` writes one identity on one key's degrees, `rank`
- * chooses between the readings a set of notes admits, and `recognise` is the
- * boundary where an absolute MIDI note becomes a degree of something.
+ * chooses between the readings a set of notes admits, and `recognise` and
+ * `expressNotesInKey` are the two boundaries where an absolute MIDI note becomes
+ * a degree of something. They differ in what else they are given: `recognise` is
+ * handed the notes as they stood before an edit and the label the slot still
+ * carries, and uses both; `expressNotesInKey` is handed neither, because its
+ * caller is a key change rather than an edit and the label it holds was written
+ * in a different key.
  *
  * The alternative to parsing - vary one attribute of the current chord at a time
  * and see which variation matches - is what the design doc's older "Two-way
@@ -113,8 +118,9 @@ import {
  * pitch class in this module is semitones above the key's tonic, so a
  * `ChordIdentity.root` of 7 is the dominant in every key.
  *
- * `recognise` is the one function that crosses that boundary, and it is the
- * reason it takes a `ProgressionKey` where the plan's signature had only the
+ * `recognise` and `expressNotesInKey` are the two functions that cross that
+ * boundary - they are the two that are handed `RollNote`s - and it is the reason
+ * they take a `ProgressionKey` where the plan's signature had only the
  * scale. A MIDI note carries no tonic; a scale's intervals are already
  * tonic-relative and cannot supply one. Without the key nothing here could turn
  * a sounding note into a degree of anything, and putting the key any further in
@@ -503,9 +509,10 @@ interface Ranked {
  * is what makes the comparison possible: `before` says what was sounding and the
  * harmony says what it was called.
  *
- * The key is here and nowhere else in this module. `RollNote.midi` is absolute
- * and everything downstream of this function is tonic-relative, so this is the
- * boundary, and passing the key past it would mean two frames in one file.
+ * The key is here and in `expressNotesInKey`, and nowhere else in this module.
+ * `RollNote.midi` is absolute and everything downstream of these two is
+ * tonic-relative, so they are the boundary, and passing the key past it would
+ * mean two frames in one file.
  *
  * Quiet in four cases, and each is a different kind of nothing-happened:
  *
@@ -561,6 +568,55 @@ export function recognise(
     degree: best.degree,
     alternates: ranked.slice(1, 1 + ALTERNATE_COUNT).map(candidate => candidate.degree)
   };
+}
+
+/**
+ * The best chord these notes make, written as a degree of this key - or null
+ * when they make none it can write.
+ *
+ * The reading half of the module with no edit behind it. `recognise` asks "what
+ * has this slot *become*", which needs the notes it held before and the label it
+ * is still carrying; this asks the smaller question "what *is* this slot
+ * sounding", which needs neither. Task 8's `rekey` is the caller: a key change
+ * that arrives from a key whose scale could not be resolved has no degree left
+ * to read an identity off, and the notes are the only witness that survived.
+ *
+ * ## It is not `recognise`, and the two differences are the reason
+ *
+ * **No before/after quiet test.** `recognise` compares the structural set before
+ * an edit with the one after it, and is silent when they match - which is right
+ * for an edit, because a voicing change is not a harmony change. A key change is
+ * not an edit: `mergeNotes` can move a whole voicing by an octave and leave every
+ * pitch class where it was, and that is exactly the second of the two routes this
+ * function was written for. The quiet answer there would be "nothing happened" -
+ * and the label would stay wrong.
+ *
+ * **No proximity and no kept numeral.** `rank`'s clauses 2 and 3 both prefer a
+ * reading that agrees with the label the slot already carries, which is sound
+ * when that label was written in the key the notes are being read in. Here it was
+ * not - the label is the stale one this call exists to replace - so both are
+ * switched off by passing `null` for the current root and the current degree, and
+ * the four clauses that read only the notes decide: the parse whose fifth was
+ * really sounding, then the one rooted on the bass, then the one leaving the most
+ * to the key, then the shortest stack.
+ *
+ * What is *kept* is everything else `rank` does, rather than a second root loop
+ * written beside it: one statement of how a set of pitch classes is ranked into a
+ * chord, with the two clauses that need a trustworthy label switched off at the
+ * one call site that has none.
+ */
+export function expressNotesInKey(
+  notes: readonly RollNote[],
+  lengthBeats: number,
+  key: ProgressionKey,
+  scaleIntervals: readonly number[]
+): ChordDegree | null {
+  if (!isHeptatonic(scaleIntervals)) return null;
+
+  const structural = structuralPitchClasses(notes, lengthBeats);
+  const bass = bassOf(notes, structural);
+  const ranked = rank(structural, key, scaleIntervals, bass, null, null);
+  return ranked.length === 0 ? null : ranked[0].degree;
 }
 
 /**

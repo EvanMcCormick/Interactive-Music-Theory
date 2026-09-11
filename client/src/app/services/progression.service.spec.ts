@@ -1015,7 +1015,7 @@ describe('ProgressionService', () => {
       const slot = slots()[0];
       service.replaceDocument({
         ...currentState().doc,
-        slots: [{ ...slot, harmony: { kind: 'literal', reason: 'user-detached' } }]
+        slots: [{ ...slot, harmony: { kind: 'literal', reason: 'user-detached', from: null } }]
       });
       expect(service.slotOctave(id)).toBeNull();
     });
@@ -2739,7 +2739,9 @@ describe('ProgressionService', () => {
         const doc = currentState().doc;
         service.replaceDocument({
           ...doc,
-          slots: [{ ...doc.slots[0], harmony: { kind: 'literal', reason: 'user-detached' } }]
+          slots: [
+            { ...doc.slots[0], harmony: { kind: 'literal', reason: 'user-detached', from: null } }
+          ]
         });
 
         expectNoCommit(() => service.resetSlotToChord(id));
@@ -3242,7 +3244,7 @@ describe('ProgressionService', () => {
       const doc = currentState().doc;
       const detached: ChordSlot = {
         ...doc.slots[0],
-        harmony: { kind: 'literal', reason: 'user-detached' }
+        harmony: { kind: 'literal', reason: 'user-detached', from: null }
       };
       service.replaceDocument({ ...doc, slots: [detached] });
       return id;
@@ -3275,7 +3277,7 @@ describe('ProgressionService', () => {
       const doc = currentState().doc;
       const detached: ChordSlot = {
         ...doc.slots[0],
-        harmony: { kind: 'literal', reason: 'user-detached' },
+        harmony: { kind: 'literal', reason: 'user-detached', from: null },
         notes: [{ midi: 61, startBeat: 2, lengthBeats: 1, velocity: 33 }]
       };
       service.replaceDocument({ ...doc, slots: [detached] });
