@@ -239,6 +239,11 @@
   text-align: center;
 }
 
+// The grey state is `[aria-disabled='true']` and not `:disabled` throughout
+// this panel, because the buttons are no longer `disabled`: they stay in the
+// tab order so that a keyboard user can land on one and be told why it will
+// not act. The template argues it at length. The selector is the only thing
+// that had to follow - the look is unchanged.
 .step {
   width: 1.6rem;
   height: 1.6rem;
@@ -250,7 +255,7 @@
   line-height: 1;
   cursor: pointer;
 
-  &:hover:not(:disabled) {
+  &:hover:not([aria-disabled='true']) {
     background: var(--palette-chord);
   }
 
@@ -259,7 +264,7 @@
     outline-offset: 1px;
   }
 
-  &:disabled {
+  &[aria-disabled='true'] {
     color: var(--palette-text-dim);
     cursor: default;
     opacity: 0.5;
@@ -287,7 +292,7 @@
   line-height: 1;
   cursor: pointer;
 
-  &:hover:not(:disabled) {
+  &:hover:not([aria-disabled='true']) {
     background: var(--palette-chord);
   }
 
@@ -296,7 +301,7 @@
     outline-offset: 1px;
   }
 
-  &:disabled {
+  &[aria-disabled='true'] {
     color: var(--palette-text-dim);
     cursor: default;
     opacity: 0.5;
@@ -307,6 +312,25 @@
   // of button, and it survives the hover.
   &.current {
     box-shadow: inset 0 0 0 2px var(--palette-text);
+  }
+
+  // The same mark, for a user whose system has thrown this palette's colours
+  // away. `forced-colors` drops `box-shadow` outright, so the ring above is the
+  // one carrier of "this is what the chord is sounding" that simply vanishes
+  // there - `aria-pressed` still carries the fact to a screen reader, and the
+  // alternates row's `↓` is this codebase already deciding that a mark needs a
+  // second carrier, so this is that decision applied one control over.
+  //
+  // The system's own selected pair rather than an outline, because the outline
+  // on this button is the focus ring: a `.current` outline would either sit on
+  // top of the focus ring or be sat on by it, depending on which rule came
+  // last, and one of those is a keyboard user losing their place.
+  @media (forced-colors: active) {
+    &.current {
+      background: Highlight;
+      color: HighlightText;
+      forced-color-adjust: none;
+    }
   }
 }
 

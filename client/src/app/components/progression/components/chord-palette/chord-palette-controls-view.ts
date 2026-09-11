@@ -128,15 +128,31 @@ const EXTENSION_FIGURES: Readonly<Record<ExtensionName, { figure: string; spoken
 };
 
 /**
+ * Every figure any extension on this control can take.
+ *
+ * The union of the three, which is `-1 | 0 | 1` - the ninth's own range, since
+ * the eleventh and the thirteenth each drop one end of it. Written as the union
+ * rather than as that literal so it follows the model: a quarter-flat
+ * thirteenth would widen this by widening `ThirteenthAlteration`, and the two
+ * tables below would stop compiling until they had a face for it.
+ */
+type Alteration = NinthAlteration | EleventhAlteration | ThirteenthAlteration;
+
+/**
  * How each alteration is written and said.
  *
  * `♮` is printed where a chart would often print nothing, because these are
  * three buttons in a row and the unaltered one needs a face of its own - a
  * button reading `9` beside `♭9` and `♯9` reads as the row's heading rather
  * than as one of its choices.
+ *
+ * Keyed on `Alteration` and not on `number`, which is the difference between a
+ * missing face being a compile error and being a button labelled `undefined9`
+ * that announces as "undefined ninth". A `Record<number, string>` claims to
+ * hold every integer and is checked against none of them.
  */
-const ALTERATION_GLYPHS: Readonly<Record<number, string>> = { '-1': '♭', 0: '♮', 1: '♯' };
-const ALTERATION_WORDS: Readonly<Record<number, string>> = {
+const ALTERATION_GLYPHS: Readonly<Record<Alteration, string>> = { '-1': '♭', 0: '♮', 1: '♯' };
+const ALTERATION_WORDS: Readonly<Record<Alteration, string>> = {
   '-1': 'flat',
   0: 'natural',
   1: 'sharp'
@@ -270,7 +286,7 @@ export function buildOctaveView(octave: SlotOctave | null, emptyLabel: string): 
 /** The half of a tension button that is the same whichever extension it is on. */
 function tensionText(
   extension: ExtensionName,
-  alteration: number,
+  alteration: Alteration,
   current: boolean
 ): TensionChoiceText {
   const { figure, spoken } = EXTENSION_FIGURES[extension];

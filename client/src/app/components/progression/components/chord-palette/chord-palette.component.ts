@@ -140,6 +140,19 @@ const EXTENT_LABELS: Record<ChordExtent, string> = {
 const NOTHING_SELECTED = '—';
 
 /**
+ * The paragraph that says why every control on the panel is grey.
+ *
+ * An id rather than a repeated sentence: `aria-describedby` points the dead
+ * controls at the one the page already draws, so the reason a screen reader
+ * gives and the reason a sighted user reads cannot come apart. The template
+ * carries the matching `id`.
+ */
+const ADJUST_HINT_ID = 'palette-adjust-hint';
+
+/** The paragraph that says which of the two octave limits the `+` has hit. */
+const OCTAVE_LIMIT_HINT_ID = 'palette-octave-limit';
+
+/**
  * The alternates heading when no button on the row names what the slot builds.
  *
  * Reachable, and it is the case `ChordOption.current` describes: a stack that
@@ -369,6 +382,34 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
    */
   octaveLimit: string | null = null;
 
+  /**
+   * What every grey control on the panel is described by, or null when none of
+   * them is grey.
+   *
+   * Held as a field rather than written into the template as
+   * `!canAdjust ? '…' : null`, on `PaletteChord.label`'s rule: a conditional in
+   * a binding is re-evaluated on every change-detection pass, and this one is
+   * on eight bindings. It is also why there is one field for all eight - what
+   * they share is a single reason, said once on the page.
+   *
+   * Null rather than the id when the controls are live, because the paragraph
+   * is not on the page then: `aria-describedby` pointing at an id that does not
+   * resolve is a description that silently is not read, which is the failure
+   * this whole change is about, one indirection along.
+   */
+  adjustHintId: string | null = null;
+
+  /**
+   * The same, for the octave `+`, which has a second way of being dead.
+   *
+   * Two reasons and one button: no chord to raise, or a chord that cannot go
+   * higher. They are never both true - `octaveLimit` is null whenever
+   * `canAdjust` is false, because `renderOctave` asks for no octave then - so
+   * this is one id rather than a list, and `renderOctave` sets it where both
+   * facts are already in hand.
+   */
+  octaveUpHintId: string | null = null;
+
   /** None / sus2 / sus4. Empty when there is no key to build chords in. */
   suspensions: readonly SuspensionChoice[] = [];
 
@@ -464,9 +505,14 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
    *
    * The upward refusal is the same failure from the other end. At the ceiling,
    * `setSlotOctave(sounding + 1)` would store a *larger* request that still
-   * sounds where it already does: a commit, an undo step, and no change. The
-   * button is disabled as well; this guard is what catches the click that raced
-   * a re-render, as `chooseAlternate`'s does.
+   * sounds where it already does: a commit, an undo step, and no change.
+   *
+   * **This guard is now the whole of the refusal.** The button carries
+   * `aria-disabled` rather than `disabled`, so that it keeps its place in the
+   * tab order and can be asked why it is dead - see the template, which argues
+   * it - and a browser fires the click on such a button like any other. The
+   * guard was already here, written for the click that races a re-render, and
+   * it is why the swap is safe: nothing below it was relying on the platform.
    */
   stepOctave(delta: number): void {
     if (!this.canAdjust || this.selectedSlotId === null) return;
@@ -571,6 +617,9 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     // refuses every one of these edits, so offering them would be a control
     // that does nothing with no explanation for why.
     this.canAdjust = state.canBuildChords && degree !== null;
+    // The reason the grey controls point at, resolved here rather than in eight
+    // template conditions. See `adjustHintId`.
+    this.adjustHintId = this.canAdjust ? null : ADJUST_HINT_ID;
     this.extentLabel = degree ? EXTENT_LABELS[degree.extent] : NOTHING_SELECTED;
 
     // The chord this slot actually builds, asked for once and read by both
@@ -613,6 +662,15 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     this.octaveLabel = view.label;
     this.octaveCeilingReached = view.ceilingReached;
     this.octaveLimit = view.limit;
+    // Which sentence the `+` is described by, decided where both facts are
+    // already in hand. `view.limit` is non-null only when `canAdjust` is true,
+    // so the two arms cannot both apply; the order states which is asked first
+    // rather than relying on that.
+    this.octaveUpHintId = !canAdjust
+      ? ADJUST_HINT_ID
+      : view.limit !== null
+        ? OCTAVE_LIMIT_HINT_ID
+        : null;
   }
 
   private buildChords(key: ProgressionKey, intervals: readonly number[]): PaletteChord[] {

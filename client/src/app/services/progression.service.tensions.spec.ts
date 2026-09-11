@@ -18,6 +18,29 @@ import { ChordDegree, ChordSlot, ProgressionState } from '../models/progression.
  * one `progression-vocabulary.spelling.spec.ts` set: a second topic-named spec,
  * its own local fixtures, the two cross-referencing.
  *
+ * ## The fixtures are local, and one word of that argument was wrong
+ *
+ * The case for copying a fixture block rather than extracting a helper module
+ * is that the block is *this pair's*: `append`, `degreeOf`, `pitchClassesOf`
+ * and `expectNoCommit` below are read by these tests and by nothing else in the
+ * project, so a shared module would serve two files and save no third one a
+ * line. That holds, and it is why the decision stands.
+ *
+ * It does not hold of the two generic helpers a spec like this opens with, and
+ * the argument as first written was not careful to exclude them. `currentState`
+ * is independently defined in **15** spec files across the repo and `settle` in
+ * **9** - counted at the commit that added this paragraph, this file's own copy
+ * of the first included, and both were already well into double figures when
+ * the sentence was written. Neither is a fixture of any topic; they are the
+ * shape of "read the current published state" and "run change detection",
+ * written out wherever a spec needs one. (`progression-edit.ts` has a `settle`
+ * too, and it is a different thing entirely - production code, not a helper.)
+ *
+ * One more copy of a fifteen-copy idiom is not a new precedent, and the harness
+ * that would fix it is a repo-wide change rather than this file's - so nothing
+ * here moves. What is corrected is the claim: the argument above is about the
+ * topic's fixtures, and it was never true of these two.
+ *
  * ## What is deliberately *not* re-tested here
  *
  * Both setters go through `editDegree` and neither restates a line of it, so

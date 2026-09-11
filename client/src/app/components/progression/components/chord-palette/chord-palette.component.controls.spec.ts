@@ -11,7 +11,6 @@ import {
   TensionRow
 } from './chord-palette-controls-view';
 import { ProgressionService } from '../../../../services/progression.service';
-import { OCTAVE_MAX } from '../../../../models/progression-normalize';
 import {
   ChordDegree,
   ChordSlot,
@@ -27,6 +26,23 @@ import { NamedQuality, effectiveChord } from '../../../../services/progression-h
  * 1000-line cap, on the precedent `progression-vocabulary.spelling.spec.ts`
  * set - a second topic-named spec for one component, with its own local
  * fixtures rather than a shared helper module, the two files cross-referencing.
+ *
+ * ## And split again, three commits later
+ *
+ * This file reached 999 lines at M3 Task 6's review - one `it(` short of
+ * breaching the cap it had itself been created to relieve. The octave control
+ * went to `chord-palette.component.octave.spec.ts`, whose header argues why it
+ * is the seam: it is the one control here with a rule of its own, and the only
+ * one whose fixture is a hand-worked chord too wide for the range.
+ *
+ * The seam below is unchanged by that, and it is still the one to cut on next.
+ * What is left is the two verbs and the row they share: the complexity stepper
+ * beside the alternates row, because every shape is offered at its own height
+ * and choosing one moves the stepper; the sus and tension controls beside both,
+ * because the upper rungs of that ladder are what they alter. **If this file
+ * needs a third cut, it is `the sus control` and `the tensions control`
+ * together** - they are the pair that shares a subject with each other and not
+ * with the stepper, and they are what the next tasks on this panel will grow.
  *
  * ## Where the seam is, and why it is not "the rows"
  *
@@ -55,13 +71,20 @@ import { NamedQuality, effectiveChord } from '../../../../services/progression-h
  * a spec, not a fixture.
  *
  * The local half of the argument is the one that would change the answer if it
- * stopped holding: the two halves of this pair do not want the same helpers.
- * That file keeps `secondary()`, which nothing here asks for; this one grows
- * readouts for the sus, tension and octave controls that nothing there asks
- * for. A shared module frozen at the intersection would hold `settle` and two
- * three-line lookups, and every later test would have to decide whether its
- * helper was general enough to go in it - a decision per test, where copying is
- * a decision once.
+ * stopped holding: the three files this component now has do not want the same
+ * helpers. The first keeps `secondary()`, which nothing here asks for; this one
+ * keeps the sus and tension readouts, which neither of the others asks for; the
+ * octave file keeps `buildTheWidestChord`, which is thirty lines no other test
+ * in the project has a use for. A shared module frozen at the intersection
+ * would hold `settle` and two three-line lookups, and every later test would
+ * have to decide whether its helper was general enough to go in it - a decision
+ * per test, where copying is a decision once.
+ *
+ * `settle` and `currentState` are the exception, and they are not this file's
+ * to fix: both are a repo-wide idiom rather than this component's fixtures -
+ * see `progression.service.tensions.spec.ts`, whose header carries the counts.
+ * A harness for those would be a repo-wide change, and it would not save a line
+ * of the block that is actually copied here.
  */
 describe('ChordPaletteComponent controls', () => {
   let fixture: ComponentFixture<ChordPaletteComponent>;
@@ -260,41 +283,6 @@ describe('ChordPaletteComponent controls', () => {
     });
   });
 
-  describe('the octave control', () => {
-    beforeEach(() => {
-      component.addChord(component.chords[0]);
-      settle();
-    });
-
-    it('shifts the selected slot by whole octaves', () => {
-      component.stepOctave(1);
-      settle();
-      expect(selectedDegree().octave).toBe(1);
-
-      component.stepOctave(-1);
-      settle();
-      expect(selectedDegree().octave).toBe(0);
-    });
-
-    /**
-     * The sign is the readout. `1` and `-1` are two octaves apart and differ on
-     * screen by one character, so an unsigned positive reads as an absolute
-     * position rather than as a shift from where the chord sits by default.
-     */
-    it('signs the octave it reports', () => {
-      expect(component.octaveLabel).toBe('0');
-
-      component.stepOctave(1);
-      settle();
-      expect(component.octaveLabel).toBe('+1');
-
-      component.stepOctave(-1);
-      component.stepOctave(-1);
-      settle();
-      expect(component.octaveLabel).toBe('-1');
-    });
-  });
-
   /**
    * With nothing selected the controls do nothing at all, rather than falling
    * back to the last chord.
@@ -336,6 +324,52 @@ describe('ChordPaletteComponent controls', () => {
 
       expect(progression.stepSlotExtent).not.toHaveBeenCalled();
       expect(progression.setSlotOctave).not.toHaveBeenCalled();
+    });
+
+    /**
+     * And every one of them can be *asked* why, which is the half three
+     * previous fixes left out.
+     *
+     * The sentence under the panel was always here and was always the answer.
+     * What it lacked was a link: the controls carried `disabled`, so they were
+     * out of the tab order, and a keyboard user could neither land on one nor
+     * be told anything by landing on it. `aria-disabled` keeps the place in the
+     * order and `aria-describedby` carries the reason to it.
+     *
+     * The assertion resolves the id rather than comparing it to a literal,
+     * because the failure being guarded against is an `aria-describedby`
+     * pointing at nothing - which is silent in exactly the way the bug was.
+     */
+    it('lets every grey control say why it is grey', () => {
+      const controls: HTMLButtonElement[] = Array.from(
+        fixture.nativeElement.querySelectorAll('.controls button')
+      );
+      expect(controls.length).toBeGreaterThan(0);
+
+      for (const control of controls) {
+        expect(control.disabled).toBeFalse();
+        expect(control.getAttribute('aria-disabled')).toBe('true');
+
+        const hint: HTMLElement | null = fixture.nativeElement.querySelector(
+          `#${control.getAttribute('aria-describedby')}`
+        );
+        expect(hint?.textContent).toContain('Pick a chord in the strip');
+      }
+    });
+
+    /** And says nothing of the kind once there is a chord to act on. */
+    it('describes nothing while the controls are live', () => {
+      progression.selectSlot(currentState().doc.slots[0].id);
+      settle();
+
+      const controls: HTMLButtonElement[] = Array.from(
+        fixture.nativeElement.querySelectorAll('.controls button')
+      );
+
+      for (const control of controls) {
+        expect(control.getAttribute('aria-disabled')).toBe('false');
+        expect(control.getAttribute('aria-describedby')).toBeNull();
+      }
     });
 
     // A key that can build no chords can adjust none either - the service
@@ -863,137 +897,6 @@ describe('ChordPaletteComponent controls', () => {
       component.setTension(choice);
 
       expect(progression.setSlotExtension).not.toHaveBeenCalled();
-    });
-  });
-
-  /**
-   * The other half of "the octave ceiling is the chord's, not the model's":
-   * the readout says what is *sounding*, and the `+` stepper is disabled with a
-   * reason when the chord cannot go higher. A control that silently does nothing
-   * is the failure this panel has been fixed for twice, and a per-chord ceiling
-   * is exactly the shape that produces one: the document stores 2, the chord
-   * sounds at 0, and a `-` stepping from the stored value would write 1 and move
-   * nothing.
-   */
-  describe('the octave a chord is really sounding at', () => {
-    /**
-     * A chord too wide for the top of the control, built through the palette
-     * and the two setters this task adds: degree 3 of C major at a thirteenth,
-     * altered down a tone, overridden to `diminished`, suspended, with a flat
-     * ninth and a flat thirteenth. Two of those replacements land below the note
-     * beneath them, so the ascent lift adds an octave twice.
-     *
-     * It tops out at MIDI 107 where it sits, 47 semitones above the voicing
-     * base, so it fits at octave 1 and would end on 131 at octave 2. Its ceiling
-     * is therefore **1** against a control that goes to 2 - the case the two
-     * messages have to tell apart. It is the design doc's witness minus the
-     * inversion and the key that take it to 58, and those eleven semitones would
-     * only move the ceiling to 0.
-     */
-    function buildTheWidestChord(): string {
-      component.addChord(component.chords[3]);
-      settle();
-      const id = currentState().selectedSlotId ?? '';
-      progression.setSlotChord(id, { degree: 3, alter: -2, quality: 'diminished', extent: 13 });
-      progression.setSlotSuspension(id, 'sus4');
-      progression.setSlotExtension(id, 'ninth', -1);
-      progression.setSlotExtension(id, 'thirteenth', -1);
-      settle();
-      return id;
-    }
-
-    it('reports the ordinary octave when the chord fits', () => {
-      component.addChord(component.chords[0]);
-      settle();
-
-      expect(component.octaveLabel).toBe('0');
-      expect(component.octaveCeilingReached).toBeFalse();
-      expect(component.octaveLimit).toBeNull();
-    });
-
-    /** And the stepper rests there rather than running off the ladder. */
-    it('disables the up stepper at the top of the range, and says so', () => {
-      component.addChord(component.chords[0]);
-      settle();
-      for (let press = 0; press < 6; press++) {
-        component.stepOctave(1);
-        settle();
-      }
-
-      expect(selectedDegree().octave).toBe(OCTAVE_MAX);
-      expect(component.octaveLabel).toBe(`+${OCTAVE_MAX}`);
-      expect(component.octaveCeilingReached).toBeTrue();
-      expect(component.octaveLimit).toContain('top of the range');
-    });
-
-    /**
-     * A wide chord has room below its own ceiling like any other, so the panel
-     * says nothing while it is under one. This is the case Task 4b's note warns
-     * that folding the two predicates together would lose.
-     */
-    it('says nothing while a wide chord is still under its ceiling', () => {
-      const id = buildTheWidestChord();
-
-      expect(progression.slotOctave(id)?.ceiling).toBeLessThan(OCTAVE_MAX);
-      expect(component.octaveCeilingReached).toBeFalse();
-      expect(component.octaveLimit).toBeNull();
-    });
-
-    /**
-     * The chord's own limit is a different sentence: the control has room and
-     * this chord does not. Task 4b wrote the predicate as `requested > ceiling`,
-     * which is false here - the slot is asking for exactly the octave it got -
-     * so that version would have told a user one press into a two-octave control
-     * that they were at the top of the range.
-     */
-    it('says the chord is too wide when the chord is the limit', () => {
-      const id = buildTheWidestChord();
-
-      component.stepOctave(1);
-      settle();
-
-      const octave = progression.slotOctave(id);
-      expect(octave?.requested).toBe(1);
-      expect(octave?.sounding).toBe(octave?.ceiling ?? -99);
-      expect(octave?.ceiling).toBeLessThan(OCTAVE_MAX);
-      expect(component.octaveCeilingReached).toBeTrue();
-      expect(component.octaveLimit).toContain('too wide');
-    });
-
-    /** And the stepper refuses rather than storing a request that sounds nothing. */
-    it('records nothing when the up stepper is pressed against that ceiling', () => {
-      const id = buildTheWidestChord();
-      component.stepOctave(1);
-      settle();
-      const before = currentState().doc;
-
-      component.stepOctave(1);
-      settle();
-
-      expect(currentState().doc).toBe(before);
-      expect(progression.slotOctave(id)?.requested).toBe(1);
-    });
-
-    /**
-     * The readout follows what is sounding rather than what is stored, which is
-     * the number the `-` stepper has to work from: stepping down from a stored 2
-     * that sounds at 0 would write 1 and change no note.
-     */
-    it('reports the sounding octave and steps down from it', () => {
-      const id = buildTheWidestChord();
-      progression.setSlotOctave(id, OCTAVE_MAX);
-      settle();
-
-      const octave = progression.slotOctave(id);
-      const sounding = octave?.sounding ?? 0;
-      expect(octave?.requested).toBe(OCTAVE_MAX);
-      expect(sounding).toBeLessThan(OCTAVE_MAX);
-      expect(component.octaveLabel).toBe(sounding > 0 ? `+${sounding}` : `${sounding}`);
-
-      component.stepOctave(-1);
-      settle();
-
-      expect(selectedDegree().octave).toBe(sounding - 1);
     });
   });
 });

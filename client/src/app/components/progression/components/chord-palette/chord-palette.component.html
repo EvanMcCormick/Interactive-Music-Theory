@@ -80,7 +80,33 @@
   <!-- Hidden rather than greyed in a key that can build no chords. They act on
        a selected chord, and there is none to select: the panel would otherwise
        be half grey with the hint that explains grey steppers suppressed, in
-       exactly the state this component works hardest to explain. -->
+       exactly the state this component works hardest to explain.
+
+       ## Every dead control here is `aria-disabled` and stays focusable
+
+       This panel has been "fixed for a control that silently does nothing"
+       three times, and each fix reached for a live region: a sentence that is
+       announced once, beside a button that is out of the tab order and so
+       cannot be asked again. A user who arrives after the announcement - or
+       who arrives by tabbing, and simply never lands on the button at all -
+       gets nothing.
+
+       The pattern that closes it is the one below and not a fourth region: the
+       control keeps its place in the tab order, `aria-disabled` says it will
+       not act, and `aria-describedby` puts the reason *on the button*, so the
+       answer is one Tab away for as long as the state lasts. The reason is the
+       same paragraph a sighted user reads; nothing is written twice.
+
+       `disabled` is what made them unreachable, so it is gone, and with it the
+       browser's refusal to fire the click. Every handler already guards - see
+       `stepOctave`, whose guard was written for the click that races a
+       re-render - so the button is inert by the component's own rule rather
+       than by the platform's.
+
+       The cost is eight tab stops in a panel where nothing can be adjusted.
+       That is the trade taken deliberately: they are eight stops that each
+       say what they are and why they are dead, against eight that a keyboard
+       user cannot find in order to be told anything at all. -->
   <div class="controls" *ngIf="unavailable === null">
     <div class="control" role="group" aria-label="Chord complexity">
       <span class="control-label">Complexity</span>
@@ -88,14 +114,16 @@
         type="button"
         class="step"
         aria-label="Simpler chord"
-        [disabled]="!canAdjust"
+        [attr.aria-disabled]="!canAdjust"
+        [attr.aria-describedby]="adjustHintId"
         (click)="stepComplexity(-1)">&minus;</button>
       <span class="control-value">{{ extentLabel }}</span>
       <button
         type="button"
         class="step"
         aria-label="Richer chord"
-        [disabled]="!canAdjust"
+        [attr.aria-disabled]="!canAdjust"
+        [attr.aria-describedby]="adjustHintId"
         (click)="stepComplexity(1)">+</button>
     </div>
 
@@ -114,7 +142,8 @@
         [class.current]="choice.current"
         [attr.aria-pressed]="choice.current"
         [attr.aria-label]="choice.ariaLabel"
-        [disabled]="!canAdjust"
+        [attr.aria-disabled]="!canAdjust"
+        [attr.aria-describedby]="adjustHintId"
         (click)="setSuspension(choice)">{{ choice.label }}</button>
     </div>
 
@@ -124,30 +153,47 @@
         type="button"
         class="step"
         aria-label="Octave down"
-        [disabled]="!canAdjust"
+        [attr.aria-disabled]="!canAdjust"
+        [attr.aria-describedby]="adjustHintId"
         (click)="stepOctave(-1)">&minus;</button>
       <!-- What the chord is *sounding* at, which is not always what the
            document stores: a chord too wide for the octave it was given is
            clamped on use. See `slotOctave`. -->
       <span class="control-value">{{ octaveLabel }}</span>
+      <!-- The one control on this panel that dies while everything around it
+           lives, which is why it is the one that had to name its own reason:
+           `octaveUpHintId` points it at whichever sentence below applies, and
+           it is still a Tab away when it does. -->
       <button
         type="button"
         class="step"
         aria-label="Octave up"
-        [disabled]="!canAdjust || octaveCeilingReached"
+        [attr.aria-disabled]="!canAdjust || octaveCeilingReached"
+        [attr.aria-describedby]="octaveUpHintId"
         (click)="stepOctave(1)">+</button>
     </div>
   </div>
 
   <!-- Why the octave `+` is dead, in the words that say which of two limits it
-       is. A disabled control with no reason beside it is the failure this panel
-       has been fixed for twice.
+       is - and the `aria-describedby` target the button points at, which is
+       what makes it an answer a user can go and ask for rather than one they
+       had to be listening for.
 
        The region is the wrapper and not the paragraph, on the argument the
        refusal above makes: a region announces changes to itself rather than its
-       own arrival, so one that is created along with its text says nothing. -->
-  <div class="limit-region" aria-live="polite" *ngIf="unavailable === null">
-    <p class="hint" *ngIf="octaveLimit">{{ octaveLimit }}</p>
+       own arrival, so one that is created along with its text says nothing.
+
+       It carries no `*ngIf` for exactly that reason. It had one - `unavailable
+       === null`, the guard the controls above use - and it was the failure this
+       comment describes: raising a wide chord to its ceiling, switching to a
+       pentatonic key and back, rebuilt the wrapper with the sentence already
+       inside it and announced nothing. The guard bought nothing either.
+       `renderOctave` is passed `canAdjust`, `canAdjust` is false whenever
+       `canBuildChords` is, and `canBuildChords` is what `unavailable` reports -
+       so `octaveLimit` is already null in every state the `*ngIf` removed the
+       wrapper in. It was a guard against a paragraph that could not appear. -->
+  <div class="limit-region" aria-live="polite">
+    <p class="hint" id="palette-octave-limit" *ngIf="octaveLimit">{{ octaveLimit }}</p>
   </div>
 
   <!-- The Tensions control: one row per extension the chord actually has, so
@@ -180,7 +226,8 @@
         [class.current]="choice.current"
         [attr.aria-pressed]="choice.current"
         [attr.aria-label]="choice.ariaLabel"
-        [disabled]="!canAdjust"
+        [attr.aria-disabled]="!canAdjust"
+        [attr.aria-describedby]="adjustHintId"
         (click)="setTension(choice)">{{ choice.label }}</button>
     </div>
   </section>
@@ -237,8 +284,14 @@
   <!-- Why the controls are grey. They act on the selected chord, and appending
        one selects it, so this shows only after the selection is cleared. It
        stands where the alternates row does, and the two are never both on
-       screen: one needs a selection and the other says there is none. -->
-  <p class="hint" *ngIf="!canAdjust && unavailable === null">
+       screen: one needs a selection and the other says there is none.
+
+       It is also every grey control's `aria-describedby` target - see
+       `adjustHintId`. The sentence was always here and was always the answer;
+       what it lacked was a way for a keyboard user to reach it from the button
+       that raised the question. No live region, because there is nothing to
+       announce that the control cannot say for itself when asked. -->
+  <p class="hint" id="palette-adjust-hint" *ngIf="!canAdjust && unavailable === null">
     Pick a chord in the strip to change its complexity or octave.
   </p>
 </div>
