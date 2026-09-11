@@ -1026,6 +1026,40 @@ fretboard's tonic takes its spelling from the circle's own data, the rule
 `keySignatureKind` already states, and finding 2 is fixed as part of this rather
 than as a change of its own.
 
+### The alternates row replaces the chord
+
+Settled at the end of M3, from a defect the final review found. The row prints each
+option's name from a degree of its own; `chosen` used to write only the four fields
+an option names — degree, accidental, shape, height — over the *selected* slot,
+keeping its suspension and pinned tensions. So on a `Isus4` slot the row's heading
+read "Other shapes on I (Bb Maj)" while the card read `Isus4`, and pressing the
+button labelled "B flat diminished" built a B♭ diminished under a surviving sus4,
+which is `[0,5,6]` — no named shape — and printed `I?`. A button promised a name
+and produced the app's refusal to give one.
+
+So a click on that row now clears the suspension and the tensions along with the
+shape, keeping only register — inversion and octave. That is the row's own height
+argument one field over: **a shape has a height, so choosing one sets it; a
+suspension and a pinned ninth are alterations *of a shape*, and carried onto a
+different shape they alter a chord that is gone.**
+
+The alternative — teaching the namer about the slot's suspension so the button
+prints what it would really build — loses twice. `SUSPENDED_FIGURES` names six
+bases, so ten of the sixteen shapes would print `?` and announce "change to
+unnamed chord": ten buttons a user cannot tell apart by sight or by screen reader.
+And it leaves the pinned tension untouched, because every shape is offered at its
+natural height and a pin at a height the stack does not reach changes no name — so
+the round-trip spec that now guards this would have passed with that half of the
+bug still in place.
+
+`appendChord` is unaffected: it runs the same function over a fresh slot, where
+there is nothing to clear.
+
+The guard is a property rather than a fixture. For every option every group offers,
+in every key, `describeSlot` of what pressing it builds must print the button's own
+numeral, name and spoken label. One exemption, documented: a secondary dominant's
+numeral is a slash numeral measured against its target rather than the key.
+
 ### Not in M3
 
 - **Notation spelling.** `NotePitch` carries no letter, so alphaTab spells the
