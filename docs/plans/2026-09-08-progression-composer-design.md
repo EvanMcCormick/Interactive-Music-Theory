@@ -1,12 +1,13 @@
 # Progression Composer — Design
 
 **Date:** 2026-09-08
-**Status:** M1 and M2 implemented and merged. See `2026-09-08-progression-m1-core.md`
-and `2026-09-08-progression-m2-piano-roll.md` for the plans they were built from,
-and "Correction: `alter` cannot express a borrowed chord" for what implementation
-disproved. M3 (the recogniser) is settled under "M3 decisions" at the end of this
-document and planned in `2026-09-10-progression-m3-recogniser.md`; it is not
-built. M4 is designed here only.
+**Status:** M1, M2 and M3 implemented and merged. See
+`2026-09-08-progression-m1-core.md`, `2026-09-08-progression-m2-piano-roll.md`
+and `2026-09-10-progression-m3-recogniser.md` for the plans they were built
+from, and "Correction: `alter` cannot express a borrowed chord" for what
+implementation disproved. "M3 decisions" at the end of this document records
+what M3 settled, what it measured, and what it did not do. M4 is designed here
+only.
 
 **Read the sections in reverse order.** "M3 decisions" wins over "M2 decisions",
 which wins over the original design above it — each records what the milestone
@@ -489,6 +490,10 @@ F super locrian's and F ultra locrian's `♯iv`, C and F ultra locrian's `♯VII
 the `♭V` of B enigmatic, B lydian augmented and B ionian augmented. No diatonic
 mode is affected. Both are recorded in full on `rootPrefersSharps`.
 
+**Resolved in M3** by `note-spelling.ts` and the degree-letter rule under
+"Spelling comes from the degree's letter", which also deleted `rootPrefersSharps`.
+What a letter and two accidentals still cannot write is recorded there.
+
 ### A real ninth chord is unreachable
 
 **Known gap, M3.** `ChordQuality` names triads and sevenths only, and
@@ -511,6 +516,12 @@ three ways over (`[0,4,7,10,14]`, `[0,4,7,10,13]`, `[0,4,7,10,15]` are all in th
 app's chord table), and the three naming tables in `progression-chord-names.ts`
 are keyed exhaustively on `ChordQuality`, so each new member needs a numeral
 figure, a printed suffix and a spoken phrase.
+
+**Resolved in M3** by the composed extension model under "The chord model grows
+three ways, all through `null`": `extensions` pins each extension against the
+root, so `V/vi` at a ninth builds `E G♯ B D F♯` when asked. `QUALITY_INTERVALS`
+still holds base shapes only, which is how the no-two-entries-share-a-shape
+invariant survived it.
 
 ### Edits during playback take effect at the loop boundary
 
@@ -582,7 +593,11 @@ the index.
    *name* for a spelling the circle already states as data. It predates M2; what
    is new is that there is now a surface to disagree with it. Fixing it moves
    note names on the fretboard, the keyboard and the chord palette at once, so it
-   is its own change with its own tests.
+   is its own change with its own tests. **Resolved in M3**, as "Spelling comes
+   from the degree's letter" said it had to be: the tonic's spelling now comes
+   from the circle's own data through `keySignatureKind`, and the fretboard, the
+   keyboard and the palette agree with the staff. The sweep that holds it is
+   `the whole menu, swept` in `music-theory.service.spec.ts`.
 
 3. **`AlphaTabService` is a root singleton holding one api, and the notation
    panel disposes it unconditionally.** The panel creates the api in its
@@ -704,11 +719,20 @@ octave apart, rather than dropping a note the count depends on.
 ### The octave ceiling is the chord's, not the model's
 
 Widening the model widened what it can reach. The tallest chord it can now build
-reaches **58 semitones** above its voicing base, where the shipped set reached 45:
-degree 3 of C major at extent 13, altered down a tone, overridden to `diminished`,
-suspended, with a ♭9 and a ♭13. Two of those replacements land below the note
-beneath them, so the ascent lift adds an octave twice. At `OCTAVE_MAX` of 1 that
-chord ends on MIDI **130**, three notes past the end.
+reaches **58 semitones** above its voicing base, where the set M2 shipped reached
+45: degree 3 of C major at extent 13, altered down a tone, overridden to
+`diminished`, suspended, with a ♭9 and a ♭13. Two of those replacements land below
+the note beneath them, so the ascent lift adds an octave twice. At `OCTAVE_MAX` of
+1 that chord ends on MIDI **130**, three notes past the end.
+
+**Measured, and one figure moved.** The four added-tone shapes alone took the
+shipped set's own reach from 45 to **46** — `add9` puts its fourth note a ninth
+above the root — so the 45 above is M2's number and not today's. The sweep is
+`client/tools/measure-chord-reach.cjs`, which last ran on 2026-09-10 against
+`VOICING_BASE_MIDI` 60: shipped 5,613,300 chords reaching 46, with the
+suspensions 16,839,900 reaching 46, and the whole model 236,432,196 reaching 58 in
+about three minutes. `OCTAVE_MAX`'s docstring carries the same table and the
+headroom histogram behind it.
 
 `OCTAVE_MAX` stays 1. The ceiling becomes **each chord's own**: the generator knows
 the key and the scale, so it derives from the chord it is about to build the
@@ -836,6 +860,36 @@ The only omission it accepts is the fifth, so a thirteenth voiced without its
 eleventh goes literal. Accepting it is a one-line widening of the parse and more
 ambiguity in the ranking, and is left until a user misses it.
 
+**What was measured, and what holds it.** `progression-recognise.roundtrip.spec.ts`
+generates a chord, hands its notes straight back and asks what it is. It sweeps
+**22,166 chords**: every heptatonic scale at every degree, extent and suspension;
+the seven diatonic modes against every named quality and every `alter`; one
+extension pinned at a time; and both of those crossed with `sus2` and `sus4`. The
+last of the four was added on 2026-09-10 after the first three were found to cross
+suspension with nothing at all. Four axes are still uncrossed and the spec names
+them. The outcome, as printed on each run:
+
+| | |
+|---|---|
+| came back field for field | 9,583 |
+| overloaded — two notes in one role | 6,311, of which 6,057 at the height of the distinct notes and **254 refused** |
+| respelt — same notes, a reading the model prefers | 6,272, none of them renumbered |
+| outside both classes | 0 |
+
+The 254 are the shortfall rather than the rule — readable notes whose reading has
+no name — and they are pinned as a **ceiling and not a figure**: the bucket may
+shrink and may not grow. `notAtHeight` and `bug` are asserted at zero, so no chord
+comes back labelled with notes the slot is not playing. Two further assertions say
+no chord on its own degree is renumbered, and no chord whose root did not move is
+renumbered at all.
+
+**Speed is hardware and the order of magnitude is the claim.** Recognising an
+`Imaj13♯11` — seven notes, so seven roots to try — takes **tens of microseconds**.
+Figures from 17 to 34 have been taken on different machines for the same code,
+which is wider than any change to the module has produced, so nothing here is a
+baseline: `progression-recognise.spec.ts` prints its own measurement on every run
+and that printout is the figure to read.
+
 ### When it runs, and undo
 
 Once per pitch gesture, inside that gesture's undo entry. A drag defers it to
@@ -936,6 +990,16 @@ one-letter-per-degree reading. Chord entries gain a `steps` array beside
 `intervals`, because semitones alone cannot settle it: 9 is a sixth in `6` and a
 seventh in `diminished7`.
 
+**What that cost across the whole menu.** `the whole menu, swept` in
+`music-theory.service.spec.ts` selects every key against every item a degree can
+name and checks each name is on the letter its own position gives it. Before the
+change the menu carried **292 notes on a double accidental across 73 selections,
+one selection as high as six**, and one name off its letter entirely — `A♯/B♭`
+enigmatic's sixth degree, a drop to the chromatic tables. It now carries **77
+across 8, none above two**, and no name off its letter. The eight are listed in
+the spec rather than merely counted, because pinning only the best case is how
+"nobody looked" passes for "somebody decided".
+
 **This forces finding 2 under "M2 decisions".** Degree letters are only as right as
 the tonic's letter, and `shouldUseSharps` spells `D#/Eb` sharp. On top of degree
 letters that would print E♭ major as D♯–E♯–F##, which is worse than today. So the
@@ -960,11 +1024,23 @@ than as a change of its own.
   ninth with a sus2. They degrade to `literal`, which is the honest fallback
   rather than a wrong label, and Reset to chord brings them back.
 
+  **Measured after the fact, and the count is those two.** Over every heptatonic
+  scale, degree, extent and suspension with no override and nothing pinned — the
+  set the palette reaches without the alternates row — thirteen chords come back
+  `literal`, and eleven of them already read `base: 'other'`, which means they
+  print `?` and light nothing whatever the recogniser says. The two with a name
+  to lose are exactly the two above, and both lose it the same way: a ♯9 over a
+  suspended second, read as a minor third.
+
   The fix is not a patch. The parser deliberately knows nothing about keys — that
   separation is what lets `expressInKey` be reused by a key change that never
   parses anything — so "prefer a reading that can be written" cannot be asked
   inside `parseChord`. It means returning every opening's parse and ranking them
   where the key is known, which is a change to the shape of the arrow between the
   two modules. `progression-recognise.roundtrip.spec.ts` holds the count as a
-  ratchet and pins both cases by name with the diagnosis, so the day someone takes
-  it on, the evidence is already written down.
+  ratchet at 254 and pins a fixture for each of the two *reasons* a chord is
+  refused, with the diagnosis worked through: Hungarian minor's `III` for the
+  opening that wins without a name, and a suspended `add9` whose distinct notes
+  are a semitone cluster for the reading that was never there to find. Double
+  harmonic's `vi` fails the same way the first does and is not pinned separately.
+  So the day someone takes this on, the evidence is already written down.

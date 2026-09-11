@@ -151,10 +151,20 @@ A comprehensive web application for exploring scales, modes, chords, and music t
 - **Borrowed chords and secondary dominants**: ♭II, ♭III, iv, ♭VI, ♭VII and V/V, V/vi,
   V/IV, V/ii, V/iii, each labelled with its function rather than as a raw chord symbol
 - **Alternates row**: every named quality on the selected chord's own root
+- **Sus and Tensions**: suspend a chord at the second or the fourth, and pin its ninth,
+  eleventh or thirteenth where you want it — `V7♭9`, `Imaj13♯11`, `C6/9`, each named the
+  way you would write it
 - **Progression strip**: click chords into a timeline; drag to reorder, drag an edge to
   resize
 - **Piano roll**: free timing and velocity — drag notes in pitch and time, resize them,
   draw a rhythm
+- **It works out what you played**: edit a chord's notes and the card is relabelled to
+  match — drag the E of a `I` to an F and it becomes `Isus4`, add a B♭ and it becomes
+  `I7`. A chip says what changed, offers the other readings, and puts the old label back
+  with the notes kept. Notes that match no chord are kept exactly as they are and the
+  card goes unlabelled rather than lying; Reset to chord turns it back into one
+- **Spelled by degree, not by pitch**: F locrian's third degree is an A♭ and not a G♯,
+  and B♭ major's ♭II is a C♭ — on the fretboard, the keyboard and the chord names alike
 - **Edits survive a key change**: the roll tracks which dimensions you own, so a groove
   written in C keeps its rhythm when you switch to A minor while the chords re-voice
   underneath it
@@ -404,6 +414,24 @@ click a few chords from **Chords in this key** to build a progression, press **P
 Change the key while it plays and the chords follow it while your rhythm stays put.
 
 ## Recent Updates
+
+### Chord Recognition (September 2026)
+- ✨ **New**: Edit a chord's notes in the piano roll and the app reads back what chord it
+  has become, relabels the card, and offers the other readings or the old label back —
+  one undo takes back the notes and the label together
+- ✨ **New**: A slot whose notes match no chord is kept exactly as played and shown
+  unlabelled rather than mislabelled, and Reset to chord brings the chord back
+- ✨ **New**: Suspensions and altered tensions from the palette — sus2, sus4, ♭9/♮9/♯9,
+  ♮11/♯11, ♭13/♮13 — with names composed to match: `V7♭9`, `Imaj13♯11`, `C6/9`
+- 🎸 **Enhanced**: The fretboard is lit by the chord's intervals rather than by its name,
+  so every chord in the table lights and not just the ones whose names matched
+- 🐛 **Fixed**: Notes are spelled from their degree's letter — F locrian's third is an A♭,
+  B♭ major's ♭II is a C♭, and E♭ major on the fretboard's own key selector is in flats
+- 🐛 **Fixed**: Changing the mode under a hand-edited chord re-expresses its label instead
+  of leaving A–C♯–E sounding under a card reading `i`
+- 🐛 **Fixed**: The octave control has its top octave back, held down only for the chords
+  too wide to take it, and says so when it stops
+- 🧪 **Tests**: 2,207 passing
 
 ### Progression Composer (September 2026)
 - ✨ **New**: Progression composer at `/progression` — diatonic chord palette, a
