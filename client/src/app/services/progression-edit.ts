@@ -33,9 +33,11 @@ import { ChordExtent } from './progression-harmony';
  * that is `MusicTheoryService`, which is injected - so `regenerateSlot` takes
  * the intervals rather than the id, and the service resolves them.
  *
- * `CLAUDE.md` caps a file at 500 lines and the service had grown past it, which
- * is what prompted the split; the seam is where it is because everything on
- * this side of it was already the part that was never about state.
+ * `CLAUDE.md` caps a file's length and the service had grown past it, which is
+ * what prompted the split - the cap stood at 500 lines then and stands at 1000
+ * now, `fda93c1`. The raise does not un-split them: the seam is where it is
+ * because everything on this side of it was already the part that was never
+ * about state.
  */
 
 /**
@@ -411,12 +413,12 @@ export function settle(doc: ProgressionDoc): ProgressionDoc {
  * the chord or its voicing** - `setSlotExtent`, `stepSlotExtent`,
  * `setSlotInversion`, `setSlotOctave`. Without it those four collide with a
  * claim over `pitches`, and the collision is not a near miss. A complexity step
- * on such a slot writes `extent: 7`, so `effectiveQuality` prints `Imaj7` on
+ * on such a slot writes `extent: 7`, so `effectiveChord` names it `Imaj7` on
  * the card, while `mergeNotes` hands back the three pitches the user was
  * holding: the stepper does nothing audible and mislabels the slot in the same
- * press. `effectiveQuality`'s own docstring spends two sections arguing that
- * exactly that - the label disagreeing with the synth about one chord on one
- * card - is the failure it exists to prevent.
+ * press. `effectiveChord`'s own docstring opens on two examples of exactly that
+ * - the label disagreeing with the synth about one chord on one card - and
+ * calls it the failure the function exists to prevent.
  *
  * Between honouring the request and preserving the pitches the user is in the
  * act of replacing, the request wins. It is undoable, which is what makes that
@@ -458,7 +460,7 @@ export function reclaimPitches(slot: ChordSlot): ChordSlot {
  * into it here, which is consequence 4 of the design doc's correction section:
  * an override lived until the next regeneration and no longer, so there was
  * nowhere to write a borrowed chord that kept. `null` now means "as the key
- * gives it" and is re-derived on read by `effectiveQuality` - which is where
+ * gives it" and is re-derived on read by `effectiveChord` - which is where
  * the strip card and the fretboard highlight already got the name, off the
  * chord that was actually built rather than out of this field.
  *

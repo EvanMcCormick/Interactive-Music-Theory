@@ -144,8 +144,12 @@ export interface ChordSlot {
  * Tracking the three separately is what makes regeneration a **merge** rather
  * than a replace, so that a groove written in C survives a switch to A minor
  * while the chords re-voice underneath it - the whole point of storing degrees
- * rather than notes. `regenerateSlot` is the one reader, and its docstring
- * carries the table each dimension is answered from.
+ * rather than notes. `regenerateSlot` holds the table each dimension is
+ * answered from and is the reader to start at, but it stopped being the only
+ * one: `retimeNotes` asks about `timing`, `ProgressionDegreeEditor.rekey` asks
+ * about `pitches` before it will re-express a slot in a new key, and the
+ * editors' no-op comparisons ask `sameOwnership` about all three. A dimension
+ * added here has four callers to answer for.
  *
  * The dimensions are the three a piano roll edit can move independently, and
  * they partition a `RollNote`: `midi` is pitch, `startBeat` and `lengthBeats`
@@ -291,7 +295,7 @@ export type ThirteenthAlteration = -1 | 0;
  *
  * Rejected: widening `ChordQuality` into a flat list of named extended chords.
  * It stores the height twice - in the name and in `extent` - which multiplies
- * exactly the disagreements `effectiveQuality` already spends two sections on,
+ * exactly the disagreements `effectiveChord` already spends two sections on,
  * and it cannot build a combination nobody listed. See "The chord model grows
  * three ways, all through `null`" in the design doc.
  */
@@ -340,7 +344,7 @@ export interface ChordDegree {
    *
    * `null` is the default and the common case rather than a missing value: it
    * says the key decides. `chordPitchClasses` reads it that way for the notes
-   * and `effectiveQuality` for the name, so a slot left alone re-derives its
+   * and `effectiveChord` for the name, so a slot left alone re-derives its
    * chord from whichever scale is selected, and a key change re-voices it.
    *
    * A non-null value **overrides** the shape, and since M3 the shapes it may

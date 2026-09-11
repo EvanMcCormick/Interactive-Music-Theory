@@ -428,7 +428,7 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    * The selection that shows a slot's chord, or null when there is none to
    * show.
    *
-   * Four ways there is none, and the middle two are the same refusal the strip
+   * Three ways there is none, and the last two are the same refusal the strip
    * makes when it prints no numeral on a card - one screen, one answer about
    * what this key can name:
    *
@@ -438,11 +438,14 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    *    until M3's recogniser, and `replaceDocument` is the door it comes
    *    through;
    *  - the key can build no chords, so the stored quality is a leftover from
-   *    whichever scale was selected when the slot was made;
-   *  - the quality is `'other'`: a stack of thirds that is no named chord.
-   *    Reachable today - the second degree of Hungarian minor is a major third
-   *    under a diminished fifth - and there is simply no chord in
-   *    `MusicTheoryService` to point at.
+   *    whichever scale was selected when the slot was made.
+   *
+   * A fourth was listed here and never existed: "the quality is `'other'`".
+   * There is no such check, and the closing paragraph below says what actually
+   * happens to a stack with no name - the identity comes back with the notes it
+   * builds and the table lights them, while the card prints `?`. Refusing on
+   * `'other'` would be the *worse* behaviour, and the reason is two paragraphs
+   * down: the notes are known even where the name is not.
    *
    * **It is lit by the interval set, not by the name.** Until M3 Task 5 the
    * quality was handed straight to `findChordCategory` and used as the item id,

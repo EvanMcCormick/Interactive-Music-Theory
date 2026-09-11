@@ -749,7 +749,7 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
    *
    * Read off the marked option rather than figured a second time from the
    * selected degree. `ChordOption.current` is "the shape the selected slot
-   * already has", resolved through `effectiveQuality` and at the slot's own
+   * already has", resolved through `effectiveChord` and at the slot's own
    * height - which is the same composition of `romanNumeral`, `chordName` and
    * `spokenChordName` the strip card performs, already done. A heading that did
    * its own sum would be a third statement of that rule, free to disagree with

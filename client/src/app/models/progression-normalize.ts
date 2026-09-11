@@ -701,18 +701,18 @@ export function createOwnership(): SlotOwnership {
  * The clauses before it govern the numbers that reach the audio layer, where a
  * value of the wrong kind throws because nothing between the model and
  * `Tone.PolySynth` looks at it again: a `NaN` midi is inaudible as an error and
- * audible as silence. Ownership reaches no such road. Its one reader is
- * `regenerateSlot`, which merges rather than replaces and asks this record
- * which dimensions to re-derive. The safe answer to "I cannot tell" is the
- * value a fresh slot already carries - own nothing, regenerate everything -
- * which is a defined default where a `NaN` octave has none.
+ * audible as silence. Ownership reaches no such road, and the safe answer to "I
+ * cannot tell" is what a fresh slot already carries - own nothing, regenerate
+ * everything - which is a defined default where a `NaN` octave has none.
  *
- * What getting it wrong will cost, once the merge does read it, is hand edits
- * rather than a chord that never sounds. The loss is per *document* and not per
- * slot: a key change re-derives every slot in one pass, so a progression that
- * arrives owning nothing loses every hand edit on it at once. Still recoverable
- * - one undo, and nothing about it is silent - but it is the whole document's
- * work, which is why the fill is the last resort and not the first.
+ * **What that default costs is no longer hand edits alone.** It was while
+ * `regenerateSlot` was the only reader: a document arriving owning nothing
+ * loses every hand edit on it at the next key change, per document rather than
+ * per slot, and recoverable in one undo. M3 gave `owned.pitches` a second
+ * reader - `ProgressionDegreeEditor.rekey` re-expresses only a slot that owns
+ * its pitches - so a slot filled here is also a slot the new key does not
+ * re-spell, which is the M2 mislabel `rekey` exists to close, arriving by the
+ * one road that goes through the fill. That is why it is the last resort.
  *
  * ## Absent is filled; present and wrong is thrown on
  *

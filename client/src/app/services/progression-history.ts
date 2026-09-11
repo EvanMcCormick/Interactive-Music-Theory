@@ -345,7 +345,7 @@ export class ProgressionStore {
    * Task 4 made the field **durable user intent**: it is now the override that
    * survives every regeneration, so a loaded document can hold a card and a
    * synth that disagree about one chord indefinitely - the failure
-   * `effectiveQuality`'s docstring exists to prevent, arriving by the one road
+   * `effectiveChord`'s docstring exists to prevent, arriving by the one road
    * that does not go through it.
    *
    * The consequence for callers is a rule, and it is not only this method's:
