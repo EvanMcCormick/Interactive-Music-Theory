@@ -20,12 +20,17 @@ import { reduce, structuralPitchClasses } from './progression-parse';
  *
  * ## Why this is not in `progression.service.spec.ts`
  *
- * That file is over three times the project's 1000-line cap, and M3 Task 6 set
+ * That file was over three times the project's 1000-line cap, and M3 Task 6 set
  * the precedent for declining to add to it: a second topic-named spec with its
  * own local fixtures and no shared helper module, the two cross-referencing.
- * The `setKey` and merge blocks over there pin what a key change does to
- * **notes**, which is untouched by this task and is asserted afresh here only
- * where a note moving is the thing that makes a label wrong.
+ * The `setKey` and merge blocks pin what a key change does to **notes**, which
+ * is untouched by this task and is asserted afresh here only where a note
+ * moving is the thing that makes a label wrong.
+ *
+ * The end of M3 split that file five ways on the same argument. `setKey` itself
+ * is still in it, with the document's other fields; the merge blocks are now
+ * `progression.service.regenerate.spec.ts`, which is the file this one is the
+ * label half of.
  */
 describe('ProgressionService: a key change re-expresses an owned chord', () => {
   let service: ProgressionService;

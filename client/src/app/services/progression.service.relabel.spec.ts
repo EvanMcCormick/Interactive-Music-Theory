@@ -34,12 +34,15 @@ import {
  *
  * ## Why this is not in `progression.service.spec.ts`
  *
- * That file is over three times the project's 1000-line cap, and M3 Tasks 6 and
+ * That file was over three times the project's 1000-line cap, and M3 Tasks 6 and
  * 8 both declined to grow it further - a second topic-named spec with its own
  * local fixtures, the two cross-referencing. `progression.service.tensions.spec.ts`
  * and `progression.service.literal.spec.ts` are the two precedents; this is the
- * third. What the roll's setters do to *notes* is pinned over there and is
- * untouched here.
+ * third. What the roll's setters do to *notes* is untouched here.
+ *
+ * The end of M3 split that file five ways on the same argument, so those
+ * setters are now `progression.service.roll.spec.ts`, which is the file this
+ * one sits beside.
  */
 describe('ProgressionService: recognition on a pitch edit', () => {
   let service: ProgressionService;

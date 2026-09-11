@@ -9,14 +9,21 @@ import { ChordDegree, ChordSlot, ProgressionState } from '../models/progression.
  *
  * ## Why this is not in `progression.service.spec.ts`
  *
- * That file is 3273 lines, three times the project's 1000-line cap, and it is
- * the one piece of that debt this task can decline to add to. The cap is a rule
- * about every file this milestone touches, so a task that grows a file already
- * past it has chosen to grow it - and there is nothing in these two setters
- * that has to sit beside the contiguity invariant and the undo mechanism to be
- * read. The seam is the same one the palette's spec was split on and the same
- * one `progression-vocabulary.spelling.spec.ts` set: a second topic-named spec,
- * its own local fixtures, the two cross-referencing.
+ * That file was 3273 lines, three times the project's 1000-line cap, and it was
+ * the one piece of that debt this task could decline to add to. The cap is a
+ * rule about every file this milestone touches, so a task that grows a file
+ * already past it has chosen to grow it - and there is nothing in these two
+ * setters that has to sit beside the contiguity invariant and the undo
+ * mechanism to be read. The seam is the same one the palette's spec was split
+ * on and the same one `progression-vocabulary.spelling.spec.ts` set: a second
+ * topic-named spec, its own local fixtures, the two cross-referencing.
+ *
+ * The end of M3 split that file five ways on the same argument, so the two
+ * things named above are no longer even in it: the contiguity invariant is in
+ * `progression.service.timeline.spec.ts` and the undo mechanism stayed with the
+ * document in the parent. The nearest neighbour of what is here is
+ * `progression.service.degrees.spec.ts`, which holds the rest of the commands
+ * that write a slot's degree.
  *
  * ## The fixtures are local, and one word of that argument was wrong
  *
@@ -46,8 +53,8 @@ import { ChordDegree, ChordSlot, ProgressionState } from '../models/progression.
  * Both setters go through `editDegree` and neither restates a line of it, so
  * its behaviour is asserted once - that they reach it - rather than a fourth
  * and fifth time. The refusals, the no-op comparison and the pitch reclaim have
- * a spec each below and no more: `progression.service.spec.ts` already sweeps
- * every command that funnels through that method, and duplicating the sweep
+ * a spec each below and no more: `progression.service.degrees.spec.ts` already
+ * sweeps every command that funnels through that method, and duplicating it
  * would test `editDegree` five ways and these two setters not at all.
  *
  * What is tested at length is the half that is theirs: **what the chord

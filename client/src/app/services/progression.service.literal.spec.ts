@@ -22,12 +22,16 @@ import { createOwnership } from '../models/progression-normalize';
  *
  * ## Why this is not in `progression.service.spec.ts`
  *
- * That file is over three times the project's 1000-line cap, and M3 Task 6 set
+ * That file was over three times the project's 1000-line cap, and M3 Task 6 set
  * the precedent for declining to grow it further: a second topic-named spec
  * with its own local fixtures, the two cross-referencing. What
  * `resetSlotToChord` does to a *degree* slot - the claims it drops, the pin it
- * takes back, the no-op comparison - is pinned over there and is untouched
- * here; this file is the literal half only.
+ * takes back, the no-op comparison - is untouched here; this file is the
+ * literal half only.
+ *
+ * The end of M3 split that file five ways on the same argument, and the degree
+ * half now has a file of its own: `progression.service.reset.spec.ts`. The two
+ * are the two halves of one command and are best read together.
  */
 describe('ProgressionService: the way back from literal', () => {
   let service: ProgressionService;

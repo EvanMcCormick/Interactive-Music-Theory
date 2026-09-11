@@ -7,12 +7,17 @@ import { OCTAVE_MAX, normalizeChordSlot } from './progression-normalize';
  *
  * ## Why this is not in `progression-normalize.spec.ts`
  *
- * That file is 1095 lines against the project's 1000-line cap, so a task that
- * added to it would be choosing to grow a file already past it. The precedent
- * for a topic-named sibling instead is M3 Task 6's
+ * That file was 1095 lines against the project's 1000-line cap, so a task that
+ * added to it would have been choosing to grow a file already past it. The
+ * precedent for a topic-named sibling instead is M3 Task 6's
  * `progression.service.tensions.spec.ts`, and the seam here is the same kind:
  * everything below is about one field of one variant, and none of it needs to
  * sit beside the octave clamp and the tempo range to be read.
+ *
+ * The end of M3 took the octave sweep out on that same argument, to
+ * `progression-normalize.octave.spec.ts`, which leaves the three of us one
+ * module and three questions: what a stored value becomes, what this one field
+ * is guarded by, and how far the model reaches.
  *
  * The field is under two clauses of the normalisation rule at once, which is
  * what makes it worth a file rather than a line. Its **absence** is the fifth
