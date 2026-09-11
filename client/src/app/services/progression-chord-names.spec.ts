@@ -1,4 +1,5 @@
 import { CHORD_EXTENTS, createExtensions } from '../models/progression-normalize';
+import type { SuspensionKind } from '../models/progression.model';
 import { MusicTheoryService } from './music-theory.service';
 import {
   ChordExtent,
@@ -11,7 +12,12 @@ import {
   effectiveChord,
   isHeptatonic
 } from './progression-harmony';
-import { chordName, romanNumeral, spokenChordName } from './progression-chord-names';
+import {
+  chordName,
+  isNameable,
+  romanNumeral,
+  spokenChordName
+} from './progression-chord-names';
 
 const MAJOR = [0, 2, 4, 5, 7, 9, 11];
 const NATURAL_MINOR = [0, 2, 3, 5, 7, 8, 10];
@@ -797,5 +803,65 @@ describe('the signed bases at a height', () => {
 
     expect(chordName('C', augmented13)).toBe('C+13');
     expect(chordName('C', diminished13)).toBe('C°13');
+  });
+});
+
+/**
+ * The question `isNameable` answers, which is the one `composeFigure` answers a
+ * moment later.
+ *
+ * It exists for a caller that has to decide something *before* a name is
+ * printed - the relabel chip, whose menu is a menu of names and which cannot
+ * offer a chord this module would write `?` for. The risk in such a predicate is
+ * that it becomes a second statement of the refusal and drifts from the printer,
+ * so what is asserted here is the agreement rather than a list of cases: over
+ * every chord the app's own scales build, at every height and under every
+ * suspension, the predicate says no exactly where the symbol says `?`.
+ */
+describe('isNameable', () => {
+  const APP_SCALES: readonly (readonly number[])[] = new MusicTheoryService()
+    .getScaleCategories()
+    .flatMap(category => category.scales)
+    .map(scale => scale.intervals)
+    .filter(intervals => isHeptatonic(intervals));
+
+  const SUSPENSIONS: readonly SuspensionKind[] = ['none', 'sus2', 'sus4'];
+
+  it('agrees with the symbol, over every chord the app can build', () => {
+    const disagreed: string[] = [];
+    let refused = 0;
+
+    for (const intervals of APP_SCALES) {
+      for (let degree = 0; degree <= 6; degree++) {
+        for (const extent of CHORD_EXTENTS) {
+          for (const suspension of SUSPENSIONS) {
+            const identity = built(intervals, { degree, extent, suspension });
+            const printed = chordName('C', identity);
+
+            if (!isNameable(identity)) refused++;
+            if (isNameable(identity) === printed.endsWith('?')) disagreed.push(printed);
+          }
+        }
+      }
+    }
+
+    expect(disagreed).toEqual([]);
+    // The sweep reaches the refusal rather than only the happy side of it: a
+    // predicate that agreed with the printer on nothing but names would pass the
+    // assertion above and be worthless to the chip.
+    expect(refused).toBeGreaterThan(0);
+  });
+
+  /**
+   * And the four roads to it, named, so a reader need not run the sweep to see
+   * what it found: a stack that is no named chord, a suspension over a base
+   * whose sign describes the fifth, a sixth carried past its ninth, and - the
+   * happy side - an ordinary seventh.
+   */
+  it('names the three refusals and the chord beside them', () => {
+    expect(isNameable(built(MAJOR, { extent: 7, alter: -2, quality: 'major' }))).toBe(false);
+    expect(isNameable(built(MAJOR, { degree: 6, suspension: 'sus4' }))).toBe(false);
+    expect(isNameable(built(MAJOR, { extent: 11, quality: 'major6' }))).toBe(false);
+    expect(isNameable(built(MAJOR, { degree: 4, extent: 7 }))).toBe(true);
   });
 });

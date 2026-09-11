@@ -6,6 +6,7 @@ import {
 } from '../../../../models/progression.model';
 import {
   chordName,
+  isNameable,
   romanNumeral,
   spokenChordName
 } from '../../../../services/progression-chord-names';
@@ -248,6 +249,9 @@ export function describeSlot(
 
   return {
     isUnlabelled: false,
+    // Asked of the namer rather than recovered from the `?` it prints, on the
+    // argument `isUnlabelled` makes about the em dash. See the field.
+    hasName: isNameable(chord),
     numeral: romanNumeral(degree.degree, degree.alter, chord),
     name: chordName(root, chord),
     subject: spokenChordName(root, chord),
@@ -270,6 +274,26 @@ export interface CardDescription {
    * print made a styling rule and an `aria` label depend on a glyph.
    */
   isUnlabelled: boolean;
+  /**
+   * Whether what this description prints is a *name*, or the app's refusal to
+   * give one.
+   *
+   * Two ways to be false, and they print differently - the em dash of a card with
+   * no numeral, and the `?` `composeFigure` writes for a chord that is real and
+   * has no symbol - which is why this is a field of its own rather than
+   * `isUnlabelled` widened to cover both. A `♯VI?` card *has* a numeral: what it
+   * has not got is a name.
+   *
+   * Carried rather than recovered from the `?`, for exactly the reason
+   * `isUnlabelled` gives one field up.
+   *
+   * **The card does not read it**, and that is the rule rather than an omission:
+   * a card prints what the namer gives it, and `?` there is the refusal working -
+   * unlabelled rather than mislabelled. The relabel chip reads it, because its
+   * menu is a menu of *names* and a name the app has not got cannot be offered as
+   * one. See `buildAlternates` in `relabel-chip-view.ts`.
+   */
+  hasName: boolean;
   numeral: string;
   name: string;
   /** The chord as a phrase to be read aloud: `G major`. */
@@ -282,6 +306,8 @@ export interface CardDescription {
 function unlabelled(detail: string): CardDescription {
   return {
     isUnlabelled: true,
+    // No numeral and no name: this branch has nothing to print in either slot.
+    hasName: false,
     numeral: NO_NUMERAL,
     name: UNLABELLED_NAME,
     subject: UNLABELLED_SUBJECT,

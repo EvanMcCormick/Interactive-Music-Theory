@@ -135,9 +135,10 @@ describe('buildRelabelChipView', () => {
    * show: that every alternate carries all four.
    *
    * C-F-G is the case, because it is the one whose runners-up the chord namer
-   * has real words for. The recogniser will rank a parse it can express as a
-   * degree but not name - `V?`, read aloud `G unnamed chord` - and pinning one
-   * of those would pin a gap rather than a rule.
+   * has real words for. The recogniser also ranks parses this key can express as
+   * a degree and the namer cannot name - `V?`, read aloud `G unnamed chord` -
+   * and those no longer reach the menu at all. The two cases below the loop are
+   * what say so.
    */
   it('names an alternate in the words the card would use', () => {
     const view = buildRelabelChipView(relabelFirstSlot(block(60, 65, 67)));
@@ -150,8 +151,18 @@ describe('buildRelabelChipView', () => {
     expect(first.key).toBe('IVsus2:Fsus2');
   });
 
+  /**
+   * The property no single pinned case can show: that every alternate carries
+   * all four strings.
+   *
+   * A fully diminished seventh is the case with the most of them - its four
+   * inversions are one chord, so three other degrees name the same notes - and
+   * the namer has real words for every one. It replaces C-E-G-B♭, which is now
+   * the case two tests below: the namer has words for neither of *its*
+   * runners-up, so the menu offers none and there is nothing here to loop over.
+   */
   it('names every alternate by numeral, name and phrase', () => {
-    const view = buildRelabelChipView(relabelFirstSlot(block(60, 64, 67, 70)));
+    const view = buildRelabelChipView(relabelFirstSlot(block(60, 63, 66, 69)));
 
     expect(view!.alternates.length).toBeGreaterThan(0);
     view!.alternates.forEach(alternate => {
@@ -160,6 +171,47 @@ describe('buildRelabelChipView', () => {
       expect(alternate.label).toBe(`Label as ${alternate.spoken}`);
       expect(alternate.degree.degree).toBeGreaterThanOrEqual(0);
     });
+  });
+
+  /**
+   * The case the filter was written for, and it is an ordinary edit: a flat
+   * seventh dropped onto a `I`.
+   *
+   * The recogniser ranks two further readings of C-E-G-B♭ and the namer has no
+   * symbol for either - `♯VI?` / `A#?` and `V?` / `G?`, which would have said
+   * *Label as A sharp unnamed chord* and *Label as G unnamed chord*. Those items
+   * act, so they are not the dead control this component forbids; they are
+   * worse-placed than that, because a menu of names that offers the absence of
+   * one is inviting a choice nobody can make on any grounds.
+   *
+   * Every alternate goes, and what is left is a menu rather than a gap: *Back
+   * to* and *Keep as literal* are the two commands that always apply, and the
+   * template draws both whatever the alternates are.
+   */
+  it('offers no alternate the app has no name for', () => {
+    const view = buildRelabelChipView(relabelFirstSlot(block(60, 64, 67, 70)));
+
+    expect(view!.headline).toBe('I7');
+    expect(view!.alternates).toEqual([]);
+    expect(view!.revertLabel).toBe('Back to I');
+    expect(view!.keepLabel).toBe('Keep as literal');
+  });
+
+  /**
+   * And the half that does **not** change: the label the app chose.
+   *
+   * C-E♭-G-A-C♯ is a minor sixth under a flat ninth, which is a real chord that
+   * no chart writes a symbol for - so the slot is relabelled to it and the chip
+   * heads `I?`, exactly as the card prints `I?`. That is the honest refusal the
+   * whole page is built on and the filter leaves it alone; what the filter takes
+   * away is only the *offer* of one, and here that is the single runner-up,
+   * `♯I?`.
+   */
+  it('keeps a selected label it cannot say, while offering none', () => {
+    const view = buildRelabelChipView(relabelFirstSlot(block(60, 63, 67, 69, 73)));
+
+    expect(view!.headline).toBe('I?');
+    expect(view!.alternates).toEqual([]);
   });
 
   /**

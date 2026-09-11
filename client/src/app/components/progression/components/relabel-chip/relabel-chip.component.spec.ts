@@ -216,8 +216,14 @@ describe('RelabelChipComponent', () => {
     expect(progression.revertRelabel).toHaveBeenCalledWith(id);
   });
 
+  /**
+   * The default edit rather than C-E-G-B♭, which this used to pass. Both notices
+   * carry runners-up; only the suspension's have *names*, and the view builder
+   * now offers an alternate only where there is a name to offer - see
+   * `buildAlternates`. There is nothing to dispatch from a menu with no items.
+   */
   it('takes an alternate by its own degree', () => {
-    const id = relabel(block(60, 64, 67, 70));
+    const id = relabel();
     const alternate = component.view!.alternates[0];
     spyOn(progression, 'chooseRelabelAlternate').and.returnValue(true);
 

@@ -81,7 +81,13 @@ const CHIP_HINT =
   'Your edit changed what this chord is called. The notes are kept whichever ' +
   'name you choose, and going back changes the label only.';
 
-/** One runner-up from the recogniser: another name for the notes that are there. */
+/**
+ * One runner-up from the recogniser: another name for the notes that are there.
+ *
+ * A *name*, and only the runners-up that have one reach here - see
+ * `buildAlternates`, which argues why the ones that have none are dropped and why
+ * they are dropped at this layer.
+ */
 export interface RelabelAlternate {
   /**
    * The degree to dispatch. Carried whole rather than rebuilt from the numeral,
@@ -198,7 +204,7 @@ function announce(current: CardDescription, previous: CardDescription): string {
 }
 
 /**
- * The runners-up, named.
+ * The runners-up, named - and only the ones there is a name for.
  *
  * Empty for a literal notice, and that is the recogniser's answer rather than
  * this function's: nothing parsed, so there are no other readings to offer. It
@@ -206,6 +212,42 @@ function announce(current: CardDescription, previous: CardDescription): string {
  * from a scale that cannot stack thirds is the mislabel this whole design
  * refuses - `describeSlot` would answer with the unlabelled card's em dash, and
  * a menu of em dashes is not a choice.
+ *
+ * ## And the runners-up it drops, one at a time
+ *
+ * A reading this key can *express* as a degree but the namer cannot *name* is
+ * left out. The recogniser ranks by what the notes make of a key's degrees and
+ * knows nothing about figures, so it will happily rank a parse whose composed
+ * name is `composeFigure`'s refusal: C-E-G-B♭ edited into a slot offers `♯VI?` /
+ * `A#?` and `V?` / `G?` among its runners-up, which say aloud *Label as A sharp
+ * unnamed chord* and *Label as G unnamed chord*.
+ *
+ * Those items are not the dead control the module note forbids - they dispatch a
+ * real degree and the card would change - but a menu whose whole purpose is to
+ * offer a *better name* cannot offer the absence of one. `?` on a card is the
+ * honest refusal the page is built on: the app has no name for these notes and
+ * says so. An item in a list of names is not a refusal, it is an invitation, and
+ * *Label as G unnamed chord* is not a choice a user can make on any grounds.
+ *
+ * **Here rather than in `recognise`**, on the two-layer argument the whole of
+ * this file rests on. The recogniser's alternates are a fact about the *model* -
+ * which chords these notes could be, in this key's degrees - and a fact that
+ * `expressNotesInKey`'s ranking shares with it; the naming is a fact about what
+ * this app can *write*, which lives in `progression-chord-names.ts` and which the
+ * harmony layer deliberately knows nothing about (that module's header: "names
+ * know about qualities, qualities know nothing about names"). Filtering there
+ * would invert that dependency to make a menu shorter. This function is already
+ * the one that turns degrees into words, and it is already the one that answers
+ * `[]` when the key cannot name any of them - this is the same rule at one chord's
+ * resolution rather than a key's.
+ *
+ * **The selected label is untouched by all of this.** A slot whose *best* reading
+ * has no name still gets that reading, and the card still prints `?`, because
+ * that is what the chord is. Only the offer of an unnameable alternative goes.
+ *
+ * Dropping every one of them is an ordinary answer and not a broken menu: *Back
+ * to X* and *Keep as literal* are the two commands that always apply, and the
+ * template draws both whatever this returns.
  */
 function buildAlternates(
   notice: RelabelNotice,
@@ -214,15 +256,21 @@ function buildAlternates(
 ): readonly RelabelAlternate[] {
   if (intervals === null) return [];
 
-  return notice.alternates.map(degree => {
+  const named: RelabelAlternate[] = [];
+
+  for (const degree of notice.alternates) {
     const described = describeSlot({ kind: 'degree', degree }, state.doc.key, intervals);
-    return {
+    if (!described.hasName) continue;
+
+    named.push({
       degree,
       key: `${described.numeral}:${described.name}`,
       numeral: described.numeral,
       name: described.name,
       spoken: described.subject,
       label: `Label as ${described.subject}`
-    };
-  });
+    });
+  }
+
+  return named;
 }

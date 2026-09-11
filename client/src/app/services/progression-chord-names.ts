@@ -411,6 +411,28 @@ function heightOf(chord: ChordIdentity): ChordExtent {
   return chord.intervals.length >= 4 ? 7 : 3;
 }
 
+/**
+ * Whether this chord has a name at all, in any of the three conventions.
+ *
+ * The same refusal `composeFigure` makes, asked *before* it is printed rather
+ * than read back off the `?` it prints: a base of `'other'`, a suspension over a
+ * base no suspended symbol exists for, or an added-tone shape carried past the
+ * heights it has a name at. All three are `baseFigure` answering null, so this is
+ * that call and not a second statement of the rule - a second one would drift,
+ * and the drift would be a caller believing a chord nameable that this module
+ * then writes `?` for.
+ *
+ * Exported for the relabel chip, whose menu is a menu of **names**. Printing `?`
+ * on a card is the honest refusal the whole strip is built on - unlabelled rather
+ * than mislabelled - and nothing here changes that. Offering that same refusal as
+ * a menu item is a different act, because an item invites the user to choose it,
+ * and *Label as G unnamed chord* is not a choice anyone can make. See
+ * `buildAlternates` in `relabel-chip-view.ts`, which is the only caller.
+ */
+export function isNameable(chord: ChordIdentity): boolean {
+  return baseFigure(chord) !== null;
+}
+
 /** The base's own figure at the height it stands, or null when it has none. */
 function baseFigure(chord: ChordIdentity): ComposedFigure | null {
   if (chord.base === 'other') return null;
