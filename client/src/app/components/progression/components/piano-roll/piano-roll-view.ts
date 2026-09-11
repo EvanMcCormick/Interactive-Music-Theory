@@ -213,7 +213,7 @@ function describeReset(
     };
   }
 
-  const held = slot.harmony.kind === 'degree' ? slot.harmony.degree : slot.harmony.from ?? null;
+  const held = slot.harmony.kind === 'degree' ? slot.harmony.degree : slot.harmony.from;
   if (held === null) {
     return {
       canReset: false,

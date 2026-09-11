@@ -24,12 +24,22 @@
          key answers. Without this a keyboard user can move, resize, re-voice,
          re-velocity and delete a note but never make one, and deleting the last
          note of a slot leaves it uneditable but for Reset to chord - which
-         throws away every other edit in the slot. See `addNoteAtStart`. -->
+         throws away every other edit in the slot. See `addNoteAtStart`.
+
+         `aria-disabled` and not `[disabled]`, on the same argument as Reset to
+         chord below and with the same sentence: the two buttons refuse for one
+         reason - no chord is selected - and a rule that held on one of two
+         adjacent controls would not be a rule. `addNoteAtStart` returns early on
+         the same condition, so the button being pressable changes nothing but
+         its reachability. -->
     <button
       type="button"
       class="add"
       #addButton
-      [disabled]="!hasSlot"
+      [class.unavailable]="!hasSlot"
+      [attr.aria-disabled]="!hasSlot"
+      [attr.aria-describedby]="hasSlot ? null : reasonId"
+      [attr.title]="hasSlot ? null : resetReason"
       (click)="addNoteAtStart()">
       Add note
     </button>
@@ -51,7 +61,7 @@
       #resetButton
       [class.unavailable]="!canReset"
       [attr.aria-disabled]="!canReset"
-      [attr.aria-describedby]="canReset ? null : 'roll-reset-reason'"
+      [attr.aria-describedby]="canReset ? null : reasonId"
       [attr.title]="resetReason"
       (click)="resetToChord()">
       Reset to chord
@@ -59,8 +69,8 @@
     <!-- Clipped rather than laid out: the toolbar is a single row beside a grid
          control and a chip, and the sentence is long. It is on the page for
          `aria-describedby` to resolve, and the same words are on the button's
-         `title` for a pointer. -->
-    <p class="reset-reason" id="roll-reset-reason" *ngIf="resetReason">{{ resetReason }}</p>
+         `title` for a pointer. The id is per instance - see `nextRollId`. -->
+    <p class="reset-reason" [id]="reasonId" *ngIf="resetReason">{{ resetReason }}</p>
 
     <!-- What the app did to this slot's label, and the way back from it.
          Unconditional: the chip's live region only announces a relabel if it was

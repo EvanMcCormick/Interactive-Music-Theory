@@ -1,3 +1,5 @@
+@use '../../../../styles/a11y';
+
 // The app's scheme again, named locally so this component's theming is one
 // block to read - the roll, the strip and the palette each declare their own for
 // the same reason. The amber is the palette's "this lowers the chord" warning
@@ -20,17 +22,9 @@
 
 // Always on the page and empty nearly all of the time. It is clipped rather than
 // `display: none`, because a region a screen reader is not given is a region it
-// cannot announce from.
+// cannot announce from - see `%sr-only`, which is where that recipe now lives.
 .relabel-region {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
+  @extend %sr-only;
 }
 
 .relabel-chip {
@@ -143,12 +137,5 @@
 // On the page for `aria-describedby` and nowhere else; the same words are on the
 // button's `title` for a pointer. See the template.
 .hint {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
+  @extend %sr-only;
 }

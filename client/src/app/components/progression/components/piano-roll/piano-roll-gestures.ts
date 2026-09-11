@@ -1,4 +1,5 @@
 import { VELOCITY_MAX, VELOCITY_MIN } from '../../../../models/progression-normalize';
+import { RollNote } from '../../../../models/progression.model';
 import { snapBeat } from './piano-roll-geometry';
 
 /**
@@ -97,4 +98,91 @@ export function draggedVelocity(
 
   const raw = Math.round(startVelocity + deltaUp / pixelsPerVelocity);
   return Math.max(VELOCITY_MIN, Math.min(VELOCITY_MAX, raw));
+}
+
+// ---------------------------------------------------------------------------
+// What a gesture records
+// ---------------------------------------------------------------------------
+//
+// The three records the roll opens on `pointerdown` and closes on `pointerup`.
+// They are here rather than in the component for this file's own reason: none
+// of it is about a component - a record is a position, a scale and what the
+// drag has reached so far, which is exactly what the functions above take - and
+// a shape whose whole purpose is to be handed to `heldSnap`, `heldRows` and
+// `draggedVelocity` belongs beside them. It also took the component back under
+// the project's line cap, which it was ten lines from.
+
+/**
+ * What every gesture records the moment the pointer goes down, whatever it is
+ * about to drag.
+ *
+ * ## The slot is captured, not read back
+ *
+ * `notes` on a move is snapshotted for a stated reason - a drag is measured from
+ * where it began - and **the slot it belongs to is the same kind of fact.** A
+ * handler that read `this.slotId` on every `pointermove` would be asking where
+ * the selection is *now*, and the selection is not the gesture's to follow: the
+ * strip is a sibling on the same page and a click on another card republishes
+ * the state under a drag already in progress. The notes would then be slot A's,
+ * measured against slot A's geometry, and written into slot B.
+ *
+ * Nothing on the page can do that today - a pointer held down over the roll is
+ * not clicking the strip - so this closes it by construction rather than because
+ * it was reachable. It costs one field, and the field is also the honest
+ * statement: a gesture acts on the slot it started on.
+ *
+ * ## `committed` means an entry is open, and only that
+ *
+ * It is what decides `coalesce`, so it has to be true exactly when this gesture
+ * has an undo entry of its own to fold into - which is why it is set from what
+ * the setter *answers* rather than from the fact that it was called.
+ * `ProgressionNoteEditor.writeNotes` carries the argument.
+ */
+export interface Gesture {
+  /** The slot this gesture started on, and the only one it will ever write to. */
+  slotId: string;
+  index: number;
+  /** Whether a commit of this gesture has actually landed. */
+  committed: boolean;
+}
+
+/**
+ * A note being dragged in pitch and time.
+ *
+ * Transient by construction, on the same terms as the strip's two: it exists
+ * between a pointer going down and coming up again and nothing outside this
+ * component can ask about it. `notes` is the slot's list as it was when the drag
+ * began, so every move is measured from where the drag started rather than
+ * accumulated - the strip's rule, and what stops a drag that goes out and comes
+ * back leaving the note somewhere else.
+ */
+export interface MoveGesture extends Gesture {
+  originX: number;
+  originY: number;
+  startBeat: number;
+  startMidi: number;
+  notes: readonly RollNote[];
+  pixelsPerBeat: number;
+  rowHeight: number;
+  /** The beat the drag has reached; the dead zone is measured against it. */
+  beat: number;
+  /** The semitones the drag has reached, likewise. */
+  semitones: number;
+}
+
+/** A note's right edge being dragged. Transient on the same terms. */
+export interface ResizeGesture extends Gesture {
+  originX: number;
+  startBeat: number;
+  startLength: number;
+  pixelsPerBeat: number;
+  length: number;
+}
+
+/** A velocity being dragged. Transient on the same terms. */
+export interface VelocityGesture extends Gesture {
+  originY: number;
+  startVelocity: number;
+  pixelsPerVelocity: number;
+  velocity: number;
 }

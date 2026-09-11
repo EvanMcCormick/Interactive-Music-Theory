@@ -1,3 +1,5 @@
+@use '../../../../styles/a11y';
+
 // The app's scheme, named locally so this component's theming is one block to
 // read - the same set the strip and the palette declare, because the three sit
 // against each other on the page and one chord should not be two different
@@ -89,16 +91,13 @@
 .add,
 .reset {
   cursor: pointer;
-
-  &:disabled {
-    color: var(--roll-text-dim);
-    cursor: default;
-    opacity: 0.5;
-  }
 }
 
-// Reset to chord is `aria-disabled` rather than `[disabled]`, so it keeps its
-// place in the tab order and has to be greyed by hand. See the template.
+// Both toolbar buttons are `aria-disabled` rather than `[disabled]`, so they
+// keep their place in the tab order and can name their own reason - and so they
+// have to be greyed by hand, because there is no `:disabled` left to match. See
+// the template, which argues the pattern on each of them.
+.add.unavailable,
 .reset.unavailable {
   color: var(--roll-text-dim);
   cursor: default;
@@ -106,16 +105,9 @@
 }
 
 // On the page for `aria-describedby` and nowhere else; the same words are on the
-// button's `title` for a pointer.
+// button's `title` for a pointer. See `%sr-only`.
 .reset-reason {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
+  @extend %sr-only;
 }
 
 .body {

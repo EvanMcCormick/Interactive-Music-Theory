@@ -1,0 +1,27 @@
+// The recipe for text that is on the page for a screen reader and nowhere else.
+//
+// Written out once because it was written out three times: the roll's
+// `reset-reason`, and the chip's `relabel-region` and `hint`. Three copies of
+// six declarations is three chances for one of them to lose the `clip-path`
+// that makes the newer engines honour it, and a region that is not announced
+// fails silently - which is the whole failure mode this project keeps finding in
+// this corner.
+//
+// **Clipped and not `display: none`.** A region a screen reader is not given is
+// a region it cannot announce from, and an `aria-describedby` pointing at a
+// hidden element is not reliably read through. The element stays in the
+// accessibility tree and out of the layout.
+//
+// A placeholder rather than a mixin, so the three users share one rule in the
+// built CSS rather than each carrying a copy of it.
+%sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

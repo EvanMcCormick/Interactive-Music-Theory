@@ -11,12 +11,18 @@
   <p class="relabel-announcement" *ngIf="announcement">{{ announcement }}</p>
 </div>
 
-<div class="relabel-chip" *ngIf="view as chip" (keydown.escape)="closeOnEscape($event)">
-  <!-- A menu button rather than a `<select>`: the items are commands - go back,
-       call it this instead, stop calling it anything - and not values of one
-       setting. The visible text is the numeral because that is what the user is
-       comparing against the card; the spoken label says the chord in words,
-       because read aloud `V7♭9` is a run of letters and punctuation.
+<div class="relabel-chip" *ngIf="view as chip">
+  <!-- A button that discloses a group of commands rather than a `<select>`: the
+       items are commands - go back, call it this instead, stop calling it
+       anything - and not values of one setting. The visible text is the numeral
+       because that is what the user is comparing against the card; the spoken
+       label says the chord in words, because read aloud `V7♭9` is a run of
+       letters and punctuation.
+
+       `aria-haspopup="true"` and **not** `"menu"`. The latter, with the
+       `role="menu"` it promises, switches NVDA and JAWS into application mode
+       and hands them the arrow keys - a contract this component does not keep
+       and does not need. See the class docstring, which argues the whole of it.
 
        `aria-describedby` points at the sentence below rather than leaving the
        explanation to the live region alone: a region announces once, and a user
@@ -25,8 +31,9 @@
     type="button"
     class="chip-button"
     #chipButton
-    aria-haspopup="menu"
+    aria-haspopup="true"
     [attr.aria-expanded]="isOpen"
+    [attr.aria-controls]="isOpen ? menuId : null"
     [attr.aria-label]="chip.buttonLabel"
     [attr.aria-describedby]="hintId"
     [attr.title]="chip.hint"
@@ -36,21 +43,24 @@
     <span class="was">{{ chip.previousText }}</span>
   </button>
 
-  <!-- Every item acts. There is no disabled entry here and no placeholder: where
+  <!-- Three ordinary buttons under one name. A `role="group"` and no
+       `menuitem`s: Tab is what reaches them, Tab is what always reached them,
+       and this is the declaration that matches. The focus stays on the button
+       above when this opens - see `toggle`.
+
+       Every item acts. There is no disabled entry here and no placeholder: where
        the view builder finds an action that would refuse, it draws no chip. -->
-  <div class="menu" role="menu" *ngIf="isOpen" [attr.aria-label]="chip.menuLabel">
+  <div class="menu" role="group" [id]="menuId" *ngIf="isOpen" [attr.aria-label]="chip.menuLabel">
     <!-- First, because it is the way back and the way back is what the chip is
          owed for: the app changed a label the user did not ask it to change. -->
     <button
       type="button"
-      role="menuitem"
       class="item back"
       [attr.aria-label]="chip.revertAriaLabel"
       (click)="revert()">{{ chip.revertLabel }}</button>
 
     <button
       type="button"
-      role="menuitem"
       class="item alternate"
       *ngFor="let alternate of chip.alternates; trackBy: trackByKey"
       [attr.aria-label]="alternate.label"
@@ -61,7 +71,6 @@
 
     <button
       type="button"
-      role="menuitem"
       class="item keep"
       [attr.aria-label]="chip.keepAriaLabel"
       (click)="keepAsLiteral()">{{ chip.keepLabel }}</button>

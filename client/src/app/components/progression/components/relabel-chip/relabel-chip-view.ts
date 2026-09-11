@@ -55,8 +55,17 @@ import { CardDescription, describeSlot } from '../progression-strip/progression-
 /** What the chip says in place of a numeral when nothing matched. */
 const NO_MATCH = 'No chord matches';
 
-/** How the chip refers to a label that is not there - either end of a notice. */
-const UNLABELLED = 'unlabelled';
+/**
+ * What the chip **prints** in a numeral's place when there is no numeral.
+ *
+ * The printed form only - the `(was …)` line and the *Back to* label, both of
+ * which sit where a numeral otherwise goes and are read against the card's own
+ * em dash. Everything the chip *says* aloud goes through `describeSlot`'s
+ * `subject`, which calls the same thing an `unlabelled chord`; this used to be
+ * substituted there as well, so the chip and the card an inch below it gave two
+ * phrasings for one slot while the module note above claimed they gave one.
+ */
+const NO_NUMERAL = 'unlabelled';
 
 /**
  * What the chip's controls promise, and the reason the button names for itself.
@@ -137,7 +146,7 @@ export function buildRelabelChipView(state: ProgressionState): RelabelChipView |
   const previous = describeSlot(notice.previous, key, intervals);
 
   const headline = current.isUnlabelled ? NO_MATCH : current.numeral;
-  const wasNumeral = previous.isUnlabelled ? UNLABELLED : previous.numeral;
+  const wasNumeral = previous.isUnlabelled ? NO_NUMERAL : previous.numeral;
   const announcement = announce(current, previous);
 
   return {
@@ -152,10 +161,18 @@ export function buildRelabelChipView(state: ProgressionState): RelabelChipView |
     announcement,
     alternates: buildAlternates(notice, state, intervals),
     revertLabel: `Back to ${wasNumeral}`,
-    revertAriaLabel: `Back to ${previous.subject}, keeping the notes`,
+    // The two commands part company only when the slot *came from* an unlabelled
+    // state: *Back to unlabelled* and *Keep as literal* then leave the card
+    // looking identical, and the difference is whether the next edit may name it
+    // again. Neither label said so, so both say so now - and only on the branch
+    // where they are otherwise indistinguishable, because "this slot can be read
+    // as a chord again" is noise on a *Back to V9*.
+    revertAriaLabel: previous.isUnlabelled
+      ? `Back to ${previous.subject}, keeping the notes. A later edit can still name it.`
+      : `Back to ${previous.subject}, keeping the notes`,
     revertedAnnouncement: `Back to ${previous.subject}. The notes are unchanged.`,
     keepLabel: 'Keep as literal',
-    keepAriaLabel: 'Keep as notes rather than a chord',
+    keepAriaLabel: 'Keep as notes rather than a chord, and stop reading them as one',
     keptAnnouncement: 'Kept as notes. This chord has no numeral now.',
     hint: CHIP_HINT
   };
@@ -171,10 +188,13 @@ export function buildRelabelChipView(state: ProgressionState): RelabelChipView |
  * dashed border and a screen reader would otherwise see as nothing.
  */
 function announce(current: CardDescription, previous: CardDescription): string {
-  const was = previous.isUnlabelled ? UNLABELLED : previous.subject;
+  // Both ends named by `describeSlot`'s `subject`, with nothing substituted for
+  // it - which is what the module note's "says it in the same words" actually
+  // requires. `unlabelled` used to be put here in place of `unlabelled chord`,
+  // so the chip and the card an inch below it gave two phrasings for one slot.
   return current.isUnlabelled
-    ? `No chord matches these notes, was ${was}`
-    : `Relabelled ${current.subject}, was ${was}`;
+    ? `No chord matches these notes, was ${previous.subject}`
+    : `Relabelled ${current.subject}, was ${previous.subject}`;
 }
 
 /**

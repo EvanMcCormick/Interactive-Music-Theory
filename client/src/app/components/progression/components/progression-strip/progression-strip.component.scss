@@ -98,18 +98,28 @@
     opacity: 0.6;
   }
 
-  // The card the app just renamed. Amber because the palette's alternates row
-  // already means "something here changed that you did not name", and the pencil
-  // in the corner is what carries it where the colour cannot. 8.9:1 on a card.
-  &.relabelled {
-    border-color: var(--strip-relabelled);
-  }
-
   &.unlabelled {
     // Dashed rather than greyed out: the chord is real and playing, and only
     // its name is missing.
     border-style: dashed;
     border-color: var(--strip-unlabelled);
+  }
+
+  // The card the app just renamed. Amber because the palette's alternates row
+  // already means "something here changed that you did not name", and the pencil
+  // in the corner is what carries it where the colour cannot. 8.9:1 on a card.
+  //
+  // **After `.unlabelled`, and that order is the rule rather than a tidiness.**
+  // The two classes are both on the card whenever an edit relabels a slot *into*
+  // `literal` - `class="card selected unlabelled relabelled"` - which the design
+  // calls the largest thing an edit can do to a slot and is exactly the case the
+  // colour is owed to. They have equal specificity, so source order decides, and
+  // written the other way round the grey won and the one relabel that most
+  // needed the signal was the one that lost it. The dash is left to
+  // `.unlabelled` and only the colour taken back, so the card says both facts at
+  // once: no name, and the app is the one that took it.
+  &.relabelled {
+    border-color: var(--strip-relabelled);
   }
 
   &:hover .remove {
