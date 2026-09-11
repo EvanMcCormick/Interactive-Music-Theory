@@ -551,10 +551,20 @@ describe('MusicTheoryService spelling', () => {
    *
    * **Then the size.** Notes written on a double accidental are counted because
    * that is what a wrong tonic inflates: `F#/Gb` ultra locrian alone carried six
-   * of them before this change, and the whole menu carried **292 across 73
-   * selections, one of them as high as six**, where it now carries **77 across
-   * 8, none above two**. The cap is the assertion that would fail loudest — no
-   * selection either dropdown can make needs more than two.
+   * of them before this change, and the whole menu carried **292 notes across
+   * 172 selections, 73 of them carrying two or more and that one as high as
+   * six**, where it now carries **77 notes across 69 selections, 8 of them
+   * carrying two, none above two**. The cap is the assertion that would fail
+   * loudest — no selection either dropdown can make needs more than two.
+   *
+   * Both halves of that sentence used to say "across" and then quote the count
+   * of selections carrying *two or more* — "292 across 73", "77 across 8" — and
+   * arithmetic falsifies the second on sight: eight selections holding at most
+   * two doubles cannot carry 77 notes. The figures were all real and the word
+   * joining them was wrong. `doubles` below is the array collecting the `>= 2`
+   * rows, so 73 and 8 are what it held; 172 and 69 are the rows carrying any at
+   * all, which is what "across" claims. Re-measured against this sweep at both
+   * commits rather than copied from the note that reported them.
    *
    * The one off-letter name the sweep found before this change was `A♯/B♭`
    * enigmatic's sixth degree, which is the drop to the tables that the new tonic
