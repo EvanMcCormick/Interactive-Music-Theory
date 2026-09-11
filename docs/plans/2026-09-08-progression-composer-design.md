@@ -720,8 +720,10 @@ octave apart, rather than dropping a note the count depends on.
 
 Widening the model widened what it can reach. The tallest chord it can now build
 reaches **58 semitones** above its voicing base, where the set M2 shipped reached
-45: degree 3 of C major at extent 13, altered down a tone, overridden to
-`diminished`, suspended, with a ♭9 and a ♭13. Two of those replacements land below
+45: degree 3 of the major scale in D at extent 13, altered down a tone, overridden
+to `diminished`, suspended, with a ♭9 and a ♭13. (The reach is key-invariant, so
+the tonic does not change the 58; the tool, the pinned spec and the sweep's own
+output all name D, and an earlier draft here said C.) Two of those replacements land below
 the note beneath them, so the ascent lift adds an octave twice. At `OCTAVE_MAX` of
 1 that chord ends on MIDI **130**, three notes past the end.
 
@@ -734,7 +736,9 @@ suspensions 16,839,900 reaching 46, and the whole model 236,432,196 reaching 58 
 about three minutes. `OCTAVE_MAX`'s docstring carries the same table and the
 headroom histogram behind it.
 
-`OCTAVE_MAX` stays 1. The ceiling becomes **each chord's own**: the generator knows
+`OCTAVE_MAX` stays 1 **at this point in the argument** — it returns to 2 four
+paragraphs below, once the ceiling has made that affordable, and 2 is what the
+code holds. The ceiling becomes **each chord's own**: the generator knows
 the key and the scale, so it derives from the chord it is about to build the
 highest octave that still fits, and voices no higher. M2's own note on the
 constant recorded this as the thing to reach for if the top octave were ever
@@ -959,10 +963,19 @@ known one, with whatever accidental lands it on the pitch:
   fifth 4, seventh 6, ninth 1, eleventh 3, thirteenth 5, sus2 1, sus4 3, added
   sixth 5.
 
-That fixes the 55 borrowed roots and retires `rootPrefersSharps` with its 112
-wrong displaced roots. Measured over all 33 heptatonic scales × 12 tonics × 7
-degrees × 5 alters — 13,860 roots — **5,800 go from the wrong letter to the right
-one and not one regresses**. Output stays ASCII (`Cb`, `Ebb`, `F##`) to match the
+That fixes the 55 borrowed roots and retires `rootPrefersSharps`. Measured over all
+33 heptatonic scales × 12 tonics × 7 degrees × 5 alters — 13,860 roots — **5,800 go
+from the wrong letter to the right one and not one regresses**.
+
+**The 996 / 112 / 176 figures on the retired rule are unaudited**, and are quoted
+in three places besides this one. M3's final review reconstructed
+`rootPrefersSharps` and scored it by degree letter, reaching 162 over 33 scales at
+±1 and ±2 and 161 at ±1 — no population lands on 112. The same method reproduces
+the 55 exactly, so it is not obviously the wrong method; the original may have
+counted something else it did not record. Nothing rests on those three numbers —
+the rule is gone and 5,800 / 0 is measured and pinned — but a reader should treat
+them as history rather than as evidence, and anyone quoting them again should
+pin them first. Output stays ASCII (`Cb`, `Ebb`, `F##`) to match the
 tables it falls back to.
 
 **Where it still cannot spell, and why no preference could.** A letter takes an
@@ -993,12 +1006,18 @@ seventh in `diminished7`.
 **What that cost across the whole menu.** `the whole menu, swept` in
 `music-theory.service.spec.ts` selects every key against every item a degree can
 name and checks each name is on the letter its own position gives it. Before the
-change the menu carried **292 notes on a double accidental across 73 selections,
-one selection as high as six**, and one name off its letter entirely — `A♯/B♭`
-enigmatic's sixth degree, a drop to the chromatic tables. It now carries **77
-across 8, none above two**, and no name off its letter. The eight are listed in
-the spec rather than merely counted, because pinning only the best case is how
-"nobody looked" passes for "somebody decided".
+change the menu carried **292 notes on a double accidental across 172 selections,
+73 of them carrying two or more and one as high as six**, and one name off its
+letter entirely — `A♯/B♭` enigmatic's sixth degree, a drop to the chromatic
+tables. It now carries **77 notes across 69 selections, 8 of them carrying two,
+none above two**, and no name off its letter. Those eight are listed in the spec
+rather than merely counted, because pinning only the best case is how "nobody
+looked" passes for "somebody decided".
+
+An earlier draft of this paragraph said "77 across 8", which arithmetic alone
+falsifies: eight selections holding at most two doubles cannot carry 77 notes. The
+`8` counts the selections with *two or more*, which is the number the spec's own
+`doubles` array collects — every figure was right and the word "across" was not.
 
 **This forces finding 2 under "M2 decisions".** Degree letters are only as right as
 the tonic's letter, and `shouldUseSharps` spells `D#/Eb` sharp. On top of degree
