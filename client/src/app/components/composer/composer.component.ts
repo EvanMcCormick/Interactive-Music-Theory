@@ -14,6 +14,8 @@ import * as alphaTab from '@coderline/alphatab';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerService } from '../../services/composer.service';
+import { ProgressionService } from '../../services/progression.service';
+import { generatedTrackState, progressionTrack } from '../../services/progression-track';
 import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
 import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
@@ -23,8 +25,10 @@ import {
   DurationValue,
   EditCursor,
   NotePitch,
-  TexDiagnostic
+  TexDiagnostic,
+  TrackDoc
 } from '../../models/composer.model';
+import { ProgressionState } from '../../models/progression.model';
 
 interface DurationOption {
   label: string;
@@ -56,6 +60,16 @@ export class ComposerComponent implements OnInit, OnDestroy {
 
   state: ComposerState | null = null;
   playerState: AlphaTabState | null = null;
+
+  /**
+   * The progression this page can send, or null before the first publish.
+   *
+   * Held rather than read on demand because the Tracks panel asks about it on
+   * every change-detection pass - the badge, Update's disabled state and its
+   * label all come from it - and `OnPush` needs the answer to change in step
+   * with the subscription that delivered it.
+   */
+  progressionState: ProgressionState | null = null;
 
   texDraft = '';
   texDiagnostics: TexDiagnostic[] = [];
@@ -94,6 +108,7 @@ export class ComposerComponent implements OnInit, OnDestroy {
 
   constructor(
     private readonly composer: ComposerService,
+    private readonly progression: ProgressionService,
     private readonly mapper: ScoreDocMapperService,
     private readonly alphaTabService: AlphaTabService,
     private readonly texService: AlphaTexService,
@@ -106,6 +121,14 @@ export class ComposerComponent implements OnInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
         this.state = state;
+        this.cdr.markForCheck();
+      });
+
+    this.progression
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(state => {
+        this.progressionState = state;
         this.cdr.markForCheck();
       });
 
@@ -253,6 +276,124 @@ export class ComposerComponent implements OnInit, OnDestroy {
 
   selectTrack(index: number): void {
     this.composer.setCursor({ trackIndex: index, staffIndex: 0 });
+  }
+
+  // -------------------------------------------------------------------------
+  // The progression's track
+  // -------------------------------------------------------------------------
+
+  /**
+   * Puts the progression into the score, or refreshes the copy already in it.
+   *
+   * "Add progression track" and a row's Update are one call, because
+   * `sendProgression` is one command: the merge appends when the score holds
+   * nothing of this progression and replaces it in place when it does, so the
+   * difference is a fact about the score rather than a choice this component
+   * makes. The progression page's Send is the third button over the same call -
+   * the push is where the user made the thing, the pull is where it will
+   * appear, and the design doc settles that under "Where the controls are".
+   *
+   * Nothing happens before the service's first publish, which is the one state
+   * in which this page does not yet know what it would be sending.
+   */
+  addProgressionTrack(): void {
+    const state = this.progressionState;
+    if (!state) return;
+
+    // Projected fresh on every press and not retained. `sendProgression` states
+    // both of the preconditions this expression satisfies: the merged score
+    // shares bar objects with the projection, so a kept copy edited afterwards
+    // would be writing into a committed score behind undo's back; and the
+    // track has to be barred in the *score's* meter, because it will share the
+    // score's bar lines - a mismatch throws rather than engraving music that
+    // disagrees with the lines drawn over it. `scoreMeter` is the service's own
+    // name for the meter its guard asks about, so the two cannot answer
+    // differently-shaped questions.
+    //
+    // The scale comes from the published state because `progressionTrack` is
+    // pure and cannot resolve `key.scaleId` itself. Empty when the id resolves
+    // to nothing, which spells every note from the key's preference; the
+    // progression page's own export does the same for the same reason.
+    this.composer.sendProgression(
+      progressionTrack(
+        state.doc,
+        state.keyScale ? state.keyScale.intervals : [],
+        this.composer.scoreMeter
+      )
+    );
+  }
+
+  /**
+   * Update, which is a Send into a score that already holds the track.
+   *
+   * An alias and deliberately nothing more. The button is named for what the
+   * user is doing rather than for what the service calls it, and a second
+   * method with a body of its own would be a second place for the two to drift.
+   */
+  updateGeneratedTrack(): void {
+    this.addProgressionTrack();
+  }
+
+  /** Hands the track over to the user, keeping the music and dropping the link. */
+  flattenGeneratedTrack(index: number): void {
+    this.composer.flattenTrack(index);
+  }
+
+  /**
+   * Whether this row's track is behind the progression it was built from.
+   *
+   * `generatedTrackState` is the one function the badge, the edit gate and this
+   * button all read, so a moved revision and a divergence - a bar inserted into
+   * the score, which moves the track's content while the progression stands
+   * still - cannot be answered differently by two callers who each remembered
+   * one of them.
+   *
+   * The id check beside it is what keeps the answer *this row's*. The state is
+   * a fact about a score and a progression as a pair, so a score holding a
+   * track from some progression other than the one open would otherwise read
+   * that other track's freshness off this one's.
+   */
+  canUpdate(track: TrackDoc): boolean {
+    const current = this.progressionState;
+    if (!current || !this.state) return false;
+    if (track.generated?.progressionId !== current.doc.id) return false;
+
+    return generatedTrackState(this.state.doc, current.doc) === 'stale';
+  }
+
+  /**
+   * What Update is offering, in a sentence.
+   *
+   * The badge sits *beside* this button rather than inside it, and nothing
+   * carries a neighbouring element into a button's accessible name, so the
+   * label has to name both the track and the reason itself. Which track,
+   * because a panel of rows offers one of these per row and "Update" alone
+   * names none of them; and why, because the disabled state is the whole
+   * information the button carries in that case.
+   *
+   * Three answers and not two: a track whose marker names a progression that is
+   * not the one open cannot be updated either, and saying it is up to date
+   * would be a claim this page cannot check.
+   */
+  updateLabel(track: TrackDoc): string {
+    const from = track.generated?.progressionName ?? '';
+
+    if (this.canUpdate(track)) {
+      return `Update ${track.name} from the progression ${from}, which has changed since `
+        + 'this track was written';
+    }
+
+    if (track.generated?.progressionId === this.progressionState?.doc.id) {
+      return `${track.name} is up to date with the progression ${from}`;
+    }
+
+    return `${from} is not the progression that is open, so ${track.name} cannot be updated here`;
+  }
+
+  /** What Flatten is offering, named the same way and for the same reason. */
+  flattenLabel(track: TrackDoc): string {
+    const from = track.generated?.progressionName ?? '';
+    return `Flatten ${track.name}, detaching it from the progression ${from} and keeping the music`;
   }
 
   undo(): void {

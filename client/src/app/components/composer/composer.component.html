@@ -71,6 +71,31 @@
             [disabled]="s.doc.tracks.length <= 1"
             title="Remove track"
           >×</button>
+
+          <!--
+            The marker's own copy of the name, not the row's. `mergeGeneratedTrack`
+            keeps whatever the track is already called across an Update so a rename
+            survives, which leaves `track.name` free to be the user's word for the
+            row while `generated.progressionName` stays the progression's.
+          -->
+          <ng-container *ngIf="track.generated as origin">
+            <span class="track-badge">From {{ origin.progressionName }}</span>
+            <div class="track-generated">
+              <button
+                class="text-btn track-update"
+                (click)="updateGeneratedTrack(); $event.stopPropagation()"
+                [disabled]="!canUpdate(track)"
+                [attr.aria-label]="updateLabel(track)"
+                [title]="updateLabel(track)"
+              >Update</button>
+              <button
+                class="text-btn track-flatten"
+                (click)="flattenGeneratedTrack(i); $event.stopPropagation()"
+                [attr.aria-label]="flattenLabel(track)"
+                [title]="flattenLabel(track)"
+              >Flatten</button>
+            </div>
+          </ng-container>
         </li>
       </ul>
 
@@ -79,6 +104,17 @@
           <option *ngFor="let inst of instruments" [ngValue]="inst">{{ inst.name }}</option>
         </select>
         <button class="text-btn" (click)="addTrack()">Add track</button>
+        <!--
+          The pull half of the same service call the progression page's Send is the
+          push half of. Pressed with the progression already in the score it is an
+          Update, because the merge matches on the progression's id rather than
+          appending.
+        -->
+        <button
+          class="text-btn add-progression-track"
+          (click)="addProgressionTrack()"
+          aria-label="Add the current progression to this score as a track"
+        >Add progression track</button>
       </div>
 
       <h2 class="panel-heading">Bars</h2>

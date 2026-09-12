@@ -167,6 +167,10 @@ $surface-bg: #1a252f;
 .track-item {
   display: flex;
   align-items: center;
+  // The badge and the generated row's two buttons wrap under the name rather
+  // than squeezing it: the panel is 15rem wide and the track's own name is the
+  // thing a user scans this list for.
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.45rem 0.5rem;
   border-radius: 4px;
@@ -205,6 +209,38 @@ $surface-bg: #1a252f;
 
     &:hover:not(:disabled) { color: $error-color; }
     &:disabled { opacity: 0.3; cursor: not-allowed; }
+  }
+
+  .track-badge {
+    // Its own line, but only as wide as the name in it. `flex-basis` breaks the
+    // line and `max-width` caps the chip at its content, so a short progression
+    // name reads as a badge and a long one truncates instead of pushing the row
+    // past the panel.
+    flex-basis: 100%;
+    max-width: max-content;
+    box-sizing: border-box;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    color: $text-secondary;
+    background-color: rgba($accent-color, 0.18);
+    border: 1px solid rgba($accent-color, 0.5);
+    border-radius: 3px;
+    padding: 0.1rem 0.35rem;
+  }
+
+  .track-generated {
+    flex-basis: 100%;
+    display: flex;
+    gap: 0.3rem;
+
+    .text-btn {
+      flex: 1;
+      font-size: 0.7rem;
+      padding: 0.2rem 0.3rem;
+    }
   }
 }
 
