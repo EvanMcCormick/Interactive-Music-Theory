@@ -174,11 +174,14 @@ function userScore(
 
 describe('progressionTrack', () => {
   it('marks the track with the revision it was built from', () => {
-    const doc = docOf({ revision: 7 });
+    // Named, because an unnamed progression is the case the name rule below is
+    // about and this one is about the revision: a fixture carrying the factory
+    // default would make the whole marker hinge on the fallback.
+    const doc = docOf({ revision: 7, name: 'Turnaround' });
 
     expect(progressionTrack(doc, IONIAN, FOUR_FOUR).track.generated).toEqual({
       progressionId: doc.id,
-      progressionName: doc.name,
+      progressionName: 'Turnaround',
       source: { kind: 'revision', revision: 7 }
     });
   });
@@ -227,6 +230,26 @@ describe('progressionTrack', () => {
     expect(
       progressionTrack(docOf({ name: 'Untitled sketch' }), IONIAN, FOUR_FOUR).track.name
     ).toBe('Untitled sketch');
+  });
+
+  it('resolves the name on the marker the way it resolves the one on the track', () => {
+    // The two names a generated track carries, derived from one field and, for
+    // a while, resolved two different ways. It matters because the badge reads
+    // the *marker* - the track's own name is the user's to rename and goes
+    // stale on purpose - so a raw marker is the one path by which *Untitled*
+    // still reaches the screen, for every progression nobody has renamed.
+    const track = progressionTrack(createDefaultProgression(), IONIAN, FOUR_FOUR).track;
+
+    expect(track.generated?.progressionName).toBe('Progression');
+    expect(track.generated?.progressionName).toBe(track.name);
+  });
+
+  it('resolves the name on the marker for a blank one too', () => {
+    // The other half of `progressionLabel`'s rule, asked of the marker: one
+    // helper, so there is no second place for the blank case to be forgotten.
+    const track = progressionTrack(docOf({ name: '   ' }), IONIAN, FOUR_FOUR).track;
+
+    expect(track.generated?.progressionName).toBe('Progression');
   });
 
   it('gives each progression a track id of its own', () => {
@@ -328,14 +351,20 @@ describe('generatedTrackState', () => {
   });
 
   it('is absent for a score with no tracks at all', () => {
-    // The case the `tracks[-1]` idiom rests on, and the only one where the
-    // index and the lookup are both empty-handed rather than just the lookup.
+    // A boundary rather than a second reading of the -1: an empty `tracks` is
+    // the one input where there is no track to find by any route.
     expect(generatedTrackState(scoreOf([]), docOf())).toBe('absent');
   });
 
   it('is absent when the marker names a different progression', () => {
     // Two progressions can be sent to one score, and a score holding somebody
     // else's track holds nothing of this one's: absent, not stale.
+    //
+    // Also the case the `tracks[-1]` idiom rests on, and the only one of the
+    // three that does any work for it. The refactor that idiom is vulnerable to
+    // is `score.tracks.at(index)`, because `at(-1)` returns the *last* track
+    // rather than undefined - so what catches it is a score whose last track is
+    // marked, and neither of the two cases above has a marked track in it.
     const score = scoreOf([progressionTrack(docOf({ revision: 3 }), IONIAN, FOUR_FOUR).track]);
 
     expect(generatedTrackState(score, docOf({ revision: 3 }))).toBe('absent');
@@ -502,6 +531,65 @@ describe('mergeGeneratedTrack', () => {
     expect(merged.tracks[1].generated?.progressionName).toBe('Chorus');
   });
 
+  it('names an appended track after the progression', () => {
+    // The other half of that rule, and the half that says the incumbent's name
+    // is *deferred to* rather than the only name a merge can produce. Without
+    // it the pair above would hold just as well of a merge that named every
+    // track it wrote after the score's first one.
+    const merged = mergeGeneratedTrack(
+      userScore(4),
+      progressionTrack(docOf({ name: 'Verse' }), IONIAN, FOUR_FOUR)
+    );
+
+    expect(merged.tracks[1].name).toBe('Verse');
+  });
+
+  it('keeps the short name and colour it already carries too', () => {
+    // The same rule as the name and for the same reason: `shortName` and
+    // `color` are cosmetics, the projection has one constant for each, and a
+    // user who changed them changed them on purpose. Unlike the name they have
+    // no copy on the marker, so overwriting them costs a user's work and buys
+    // nothing back. Nothing edits either today; what this buys is that whatever
+    // first does will not find Update quietly reverting it.
+    const doc = docOf({ revision: 1, name: 'Verse' });
+    const score = mergeGeneratedTrack(userScore(4), progressionTrack(doc, IONIAN, FOUR_FOUR));
+    const restyled: ScoreDoc = {
+      ...score,
+      tracks: score.tracks.map(track =>
+        track.generated ? { ...track, shortName: 'Vrs', color: '#e74c3c' } : track
+      )
+    };
+
+    const merged = mergeGeneratedTrack(
+      restyled,
+      progressionTrack({ ...doc, revision: 2 }, IONIAN, FOUR_FOUR)
+    );
+
+    expect(merged.tracks[1].shortName).toBe('Vrs');
+    expect(merged.tracks[1].color).toBe('#e74c3c');
+  });
+
+  it('appends a second track wearing an id the score already holds', () => {
+    // What the track id does *not* guarantee, recorded rather than fixed.
+    // Flatten clears the marker and nothing else - that is the whole of its
+    // design, and the argument for the marker being one field - so the
+    // flattened track keeps `progression-<uuid>` while no longer answering to
+    // it, and the next Send matches no marker and appends. Uniqueness holds per
+    // *marker*, which is what every lookup in this module keys on; the id is
+    // along for the ride.
+    const doc = docOf();
+    const sent = mergeGeneratedTrack(userScore(4), progressionTrack(doc, IONIAN, FOUR_FOUR));
+    const flattened = flattenGeneratedTrack(sent, generatedTrackIndex(sent, doc));
+
+    const resent = mergeGeneratedTrack(flattened, progressionTrack(doc, IONIAN, FOUR_FOUR));
+
+    expect(resent.tracks.length).toBe(3);
+    expect(resent.tracks[1].id).toBe(resent.tracks[2].id);
+    // And the marked one is still found unambiguously, which is why the
+    // duplicate id costs nothing today.
+    expect(generatedTrackIndex(resent, doc)).toBe(2);
+  });
+
   it('grows masterBars to fit and pads every other staff', () => {
     const merged = mergeGeneratedTrack(
       userScore(2, [plainTrack('Guitar', 2), plainTrack('Bass', 2)]),
@@ -649,6 +737,13 @@ describe('flattenGeneratedTrack', () => {
       ...before,
       tracks: before.tracks.map((track, at) => (at === index ? { ...track, generated: null } : track))
     });
+    // And shared, not copied. `toEqual` above is satisfied by a deep clone of
+    // the whole score, which is what this module says it does not do - the
+    // no-op path pins that with `toBe` on the score itself, and this is the
+    // same claim on the path that acts: everything Flatten had no reason to
+    // move arrives as the object it already was.
+    expect(after.masterBars).toBe(before.masterBars);
+    expect(after.tracks[0]).toBe(before.tracks[0]);
   });
 
   it('leaves a score with no generated track alone', () => {

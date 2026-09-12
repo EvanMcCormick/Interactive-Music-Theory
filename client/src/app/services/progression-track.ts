@@ -117,8 +117,31 @@ export interface GeneratedTrack {
 }
 
 /**
- * The label a track is born with: the progression's name, or an honest
- * description of a progression that has none.
+ * A progression's name as anything that displays it should read it: the name,
+ * or an honest description of a progression that has none.
+ *
+ * Both names a generated track carries come through here - the track's own
+ * `name` and the marker's `progressionName` - and that is the point of it being
+ * a function rather than two expressions. They are one field of one document
+ * resolved for two readers, and resolving them differently is how the marker
+ * came to say *Untitled* about a track labelled *Progression*: the fallback was
+ * applied where the track was named and not where the name was denormalised,
+ * and the badge reads the denormalised one.
+ *
+ * The badge reads the marker's copy rather than the track's name deliberately:
+ * the track's name is the user's and is preserved across an Update, so it goes
+ * stale on purpose. That is what makes the marker's the copy that has to be
+ * right, and a raw one the last place *Untitled* still reaches a screen.
+ *
+ * Exported for the writer that does not exist yet. `GeneratedOrigin.progressionName`
+ * says whatever first renames a progression has to write through to it, and a
+ * write-through that passed `doc.name` straight in would reopen exactly this.
+ *
+ * (`GeneratedOrigin.progressionName`'s own docstring still says the field holds
+ * `ProgressionDoc.name` verbatim. The sentence above it - denormalised so the
+ * badge can name the progression with only the score loaded - is the reason the
+ * field exists, and it is the one this serves; the literal wording wants a
+ * one-line amendment that this module does not own.)
  *
  * There are two ways to have none and only one of them is blankness.
  * `ProgressionDoc.name` has no empty state - `createDefaultProgression` fills
@@ -146,7 +169,7 @@ export interface GeneratedTrack {
  * named. Only the exact name is read that way - `Untitled sketch` is a name and
  * survives.
  */
-function trackName(progressionName: string): string {
+export function progressionLabel(progressionName: string): string {
   const trimmed = progressionName.trim();
 
   return trimmed === '' || trimmed === UNTITLED_PROGRESSION_NAME ? 'Progression' : trimmed;
@@ -186,21 +209,33 @@ export function progressionTrack(
       // A name and an id of its own, because both of the projection's are right
       // for the only track in a preview and wrong in a score that may hold
       // several: `Progression` labels two progressions identically, and the id
-      // `progression` *is* identical. The id is built from the progression's,
-      // so it is unique across progressions and stable across rebuilds of one -
-      // Update refreshes the track it already wrote rather than introducing a
-      // second one wearing its id.
+      // `progression` *is* identical.
+      //
+      // What the id guarantees is narrower than "unique", and worth stating
+      // exactly: two progressions never share one, and rebuilding a progression
+      // never changes its own - which is what Update needs, because a refresh
+      // has to be recognisably the track already in the score. It does *not*
+      // guarantee that a score holds at most one track wearing it. Flatten
+      // clears the marker and leaves the id, so a flattened track and the next
+      // Send's track are two tracks with one id. That is not a bug in Flatten:
+      // costing one field is the whole argument for the marker being a field on
+      // a real track, and rewriting the id on the way out would spend that.
+      // Nothing keys on the id today - every lookup here matches the marker -
+      // so nothing breaks. If it ever becomes load-bearing, the de-duplication
+      // goes in `mergeGeneratedTrack`'s append branch, which is the only place
+      // a second track wearing an existing id is created, and which already
+      // holds the score to check against.
       //
       // The name is only the *initial* name. `mergeGeneratedTrack` keeps
       // whatever the track in the score is already called, so this is the label
-      // a track is born with; the marker's own copy of `progressionName` is
-      // what stays in step with the progression afterwards. `trackName` has the
-      // rule for a progression nobody has named.
+      // a track is born with; the marker's own copy is what stays in step with
+      // the progression afterwards. Both go through `progressionLabel`, and
+      // that is not tidiness - the marker's copy is the one the badge reads.
       id: `progression-${doc.id}`,
-      name: trackName(doc.name),
+      name: progressionLabel(doc.name),
       generated: {
         progressionId: doc.id,
-        progressionName: doc.name,
+        progressionName: progressionLabel(doc.name),
         source: { kind: 'revision', revision: doc.revision }
       }
     },
@@ -344,12 +379,20 @@ function padTrack(track: TrackDoc, barCount: number, masterBars: MasterBarDoc[])
  * progression sent to the same score gets a track of its own rather than
  * overwriting the first.
  *
- * The name that survives a replacement is the **incumbent's**. A track's name is
- * a label the user owns; the marker's `progressionName` is the copy that tracks
- * the progression, and it is rebuilt with the rest of the marker. So Update
- * refreshes music and leaves labels alone, which is this module's usual rule
- * once more - of the two answers, take the one that cannot destroy work.
- * Nothing renames a track today, so what this costs in the meantime is that
+ * The cosmetics that survive a replacement are the **incumbent's**: `name`,
+ * `shortName` and `color`. They are what the user's copy of the track says
+ * about itself rather than what the progression says, and the projection has
+ * one constant for each - so a replacement that took the projection's would
+ * overwrite three deliberate choices with three defaults. The marker's
+ * `progressionName` is the copy that tracks the progression, and it is rebuilt
+ * with the rest of the marker. So Update refreshes music and leaves labels
+ * alone, which is this module's usual rule once more - of the two answers, take
+ * the one that cannot destroy work.
+ *
+ * The three and no more. Everything else a `TrackDoc` carries is either the
+ * music the Update exists to refresh (`staves`) or the link itself (`id`,
+ * `generated`), and preserving those would make Update a no-op. Nothing edits
+ * any of the three today, so what the rule costs in the meantime is that
  * renaming the *progression* and pressing Update no longer relabels the track:
  * a stale label a user can retype, against a rename Update would silently
  * revert. Anything wanting the current progression name has the marker.
@@ -399,7 +442,15 @@ export function mergeGeneratedTrack(score: ScoreDoc, generated: GeneratedTrack):
   );
 
   const incumbent = existing === -1 ? null : score.tracks[existing];
-  const named = incumbent === null ? generated.track : { ...generated.track, name: incumbent.name };
+  const named =
+    incumbent === null
+      ? generated.track
+      : {
+          ...generated.track,
+          name: incumbent.name,
+          shortName: incumbent.shortName,
+          color: incumbent.color
+        };
   const merged = padTrack(named, barCount, masterBars);
   const others = score.tracks.map(track => padTrack(track, barCount, masterBars));
 
