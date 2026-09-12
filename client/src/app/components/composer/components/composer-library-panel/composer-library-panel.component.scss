@@ -55,12 +55,20 @@ $success-color: #27ae60;
 
 // The refusal, and the offer that resolves it. Warned rather than errored:
 // nothing has gone wrong, the panel is asking for a decision.
+//
+// The element is in the DOM whether or not there is anything to say, so that
+// the live region is already in the accessibility tree when its content
+// changes. That rules out `display: none` for the empty state, which would take
+// it back out again - so the chrome is what toggles, and an empty box with no
+// padding, border or margin occupies no height on its own.
 .save-blocked {
-  margin: -0.5rem 0 1rem;
-  padding: 0.6rem;
-  border: 1px solid $warning-color;
-  border-radius: 4px;
-  background-color: rgba($warning-color, 0.12);
+  &.showing {
+    margin: -0.5rem 0 1rem;
+    padding: 0.6rem;
+    border: 1px solid $warning-color;
+    border-radius: 4px;
+    background-color: rgba($warning-color, 0.12);
+  }
 
   .save-blocked-reason {
     margin: 0 0 0.5rem;
