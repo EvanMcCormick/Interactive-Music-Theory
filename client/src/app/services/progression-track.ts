@@ -137,12 +137,6 @@ export interface GeneratedTrack {
  * says whatever first renames a progression has to write through to it, and a
  * write-through that passed `doc.name` straight in would reopen exactly this.
  *
- * (`GeneratedOrigin.progressionName`'s own docstring still says the field holds
- * `ProgressionDoc.name` verbatim. The sentence above it - denormalised so the
- * badge can name the progression with only the score loaded - is the reason the
- * field exists, and it is the one this serves; the literal wording wants a
- * one-line amendment that this module does not own.)
- *
  * There are two ways to have none and only one of them is blankness.
  * `ProgressionDoc.name` has no empty state - `createDefaultProgression` fills
  * it - so a progression the user has never named is not `''`, it is still
