@@ -1,6 +1,7 @@
-import { ProgressionKey } from '../models/progression.model';
+import { ChordDegree, ChordSlot, ProgressionKey } from '../models/progression.model';
 import { createDegreeSlot } from '../models/progression.model';
-import { chordRootName, scaleNoteName } from './progression-spelling';
+import { formatNote } from './note-spelling';
+import { chordRootName, scaleNoteName, slotSpeller } from './progression-spelling';
 
 /**
  * The four spellings the old rule could not reach, and the two it reached
@@ -39,6 +40,150 @@ function degree(d: number, alter = 0) {
 function key(tonic: number, scaleId: string, preferSharps: boolean): ProgressionKey {
   return { tonic, scaleId, preferSharps };
 }
+
+/**
+ * A slot as the store really holds one, carrying the given degree.
+ *
+ * Through `createDegreeSlot` for `degree`'s reason one paragraph up, and taking
+ * an override rather than the two arguments that helper takes because the cases
+ * below need an extent, a suspension and a pinned ninth as well as an alter.
+ */
+function degreeSlot(shape: Partial<ChordDegree> & { degree: number }): ChordSlot {
+  const slot = createDegreeSlot(shape.degree, 0);
+  if (slot.harmony.kind !== 'degree') throw new Error('unreachable');
+
+  return { ...slot, harmony: { kind: 'degree', degree: { ...slot.harmony.degree, ...shape } } };
+}
+
+/** A slot that has lost its numeral, which is what `literal` means. */
+function literalSlot(): ChordSlot {
+  return {
+    ...createDegreeSlot(0, 0),
+    harmony: { kind: 'literal', reason: 'unrecognised', from: null }
+  };
+}
+
+/**
+ * The one rule the roll and the score both spell their notes by.
+ *
+ * It lives here rather than in `piano-roll-view.spec.ts` because it is no
+ * longer the roll's: M4 gave the score projection the same question, and the
+ * letter drawn on a keyboard key has to be the letter engraved on the staff.
+ * The two chord-tone cases below came from that spec, rewritten as calls
+ * rather than as service states - what they assert is unchanged.
+ *
+ * Every expectation is worked through by hand, as everywhere else in this file.
+ */
+describe('slotSpeller', () => {
+  /**
+   * The case the module exists for, one layer up from `chordRootName`'s.
+   *
+   * B flat major's `♭II` is rooted on a C flat, so pitch class 11 in that slot
+   * is a C flat too - the root's own tone. The scale has no pitch class 11 in
+   * it at all, so without the chord the key would answer, and B flat major
+   * prefers flats: `B`, a raised seventh under a numeral that says lowered
+   * second.
+   */
+  it('spells a chord tone by its position in the chord, not by the scale', () => {
+    const speller = slotSpeller(
+      key(10, 'ionian', false),
+      IONIAN,
+      degreeSlot({ degree: 1, alter: -1, quality: 'major' })
+    );
+
+    expect(formatNote(speller(11))).toBe('Cb');
+  });
+
+  /**
+   * `♭VI` in C major is A♭ C E♭. Neither the A♭ nor the E♭ is in C major, so
+   * the scale has no degree for either and the key would answer - and C major
+   * leans sharp, giving `G♯` and `D♯` under a numeral that says flat six. Read
+   * off the chord they are a root, a third and a fifth: A, C and E, one letter
+   * apart in the usual way and flattened to land on the pitches.
+   */
+  it('writes a flat six on flat letters in a key that prefers sharps', () => {
+    const speller = slotSpeller(
+      key(0, 'ionian', true),
+      IONIAN,
+      degreeSlot({ degree: 5, alter: -1, quality: 'major' })
+    );
+
+    expect([8, 0, 3].map(pitchClass => formatNote(speller(pitchClass))))
+      .toEqual(['Ab', 'C', 'Eb']);
+  });
+
+  /** So the chord is an addition to the scale's answer rather than a replacement. */
+  it('falls through to the scale for a note the chord does not contain', () => {
+    const speller = slotSpeller(
+      key(0, 'ionian', true),
+      IONIAN,
+      degreeSlot({ degree: 5, alter: -1, quality: 'major' })
+    );
+
+    expect(formatNote(speller(2))).toBe('D');
+  });
+
+  /**
+   * A slot with no numeral has no chord to ask, and neither has no slot at all
+   * - the roll draws a keyboard before anything is selected. Pitch class 6 is
+   * outside C major either way, so the key's preference is the whole answer.
+   */
+  it('falls through to the key when the slot has no degree', () => {
+    const cMajor = key(0, 'ionian', true);
+
+    expect(formatNote(slotSpeller(cMajor, IONIAN, literalSlot())(6))).toBe('F#');
+    expect(formatNote(slotSpeller(cMajor, IONIAN, null)(6))).toBe('F#');
+  });
+
+  /**
+   * The guard that used to be `ProgressionState.canBuildChords`, asked of the
+   * intervals instead.
+   *
+   * Both shapes of "no scale to build through" reach it: five degrees cannot
+   * take seven letters one apart, and an empty array is a key whose scale id
+   * resolved to nothing. `effectiveChord` throws on either, so this is the
+   * refusal that has to happen before the chord is built rather than a
+   * preference about the answer.
+   */
+  it('asks no chord of a scale thirds cannot be stacked through', () => {
+    const cMinorPentatonic = key(0, 'minorPentatonic', false);
+    const tonicSlot = degreeSlot({ degree: 0 });
+
+    expect(formatNote(slotSpeller(cMinorPentatonic, [0, 3, 5, 7, 10], tonicSlot)(3))).toBe('Eb');
+    expect(formatNote(slotSpeller(key(0, 'ionian', true), [], tonicSlot)(6))).toBe('F#');
+  });
+
+  /**
+   * **First spelling wins**, on a stack that sounds one pitch class twice.
+   *
+   * A C minor ninth with the ninth pinned sharp is C E♭ G B D♯ - and the ♯9 is
+   * the minor third an octave up, pitch class 3 twice over. The two positions
+   * read different letters: position 1 is a third, two letters above the root,
+   * and position 4 is a ninth, one. The lower position keeps the row, so this
+   * is an `Eb` and not the `D#` either the upper position or the key would
+   * give.
+   *
+   * The docstring names a sus4 at extent 11 as the case, and that is where the
+   * doubling was found, but it cannot show the rule: the suspended fourth and
+   * the eleventh are both three letters above the root, so first and last
+   * spelling agree there. A pinned ♯9 is the same collision with the two
+   * positions disagreeing, which is what makes the tie-break visible.
+   */
+  it('keeps the lower position when one pitch class appears twice', () => {
+    const speller = slotSpeller(
+      key(0, 'ionian', true),
+      IONIAN,
+      degreeSlot({
+        degree: 0,
+        quality: 'minor',
+        extent: 9,
+        extensions: { ninth: 1, eleventh: null, thirteenth: null }
+      })
+    );
+
+    expect(formatNote(speller(3))).toBe('Eb');
+  });
+});
 
 describe('chordRootName', () => {
   // B flat major's second degree is written on a C whatever it does, so the

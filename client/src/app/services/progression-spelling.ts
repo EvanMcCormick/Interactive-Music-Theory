@@ -1,7 +1,7 @@
-import { ChordDegree, ProgressionKey } from '../models/progression.model';
+import { ChordDegree, ChordSlot, ProgressionKey } from '../models/progression.model';
 import { SpelledNote, formatNote, spellAt, spellPitchClass } from './note-spelling';
 import { chordRootPitchClass } from './progression-generate';
-import { isHeptatonic } from './progression-harmony';
+import { effectiveChord, isHeptatonic } from './progression-harmony';
 
 /**
  * How the progression spells its own notes: by the letter the degree names.
@@ -146,4 +146,86 @@ export function scaleNoteSpelling(
   }
 
   return spellPitchClass(wanted, key.preferSharps);
+}
+
+/**
+ * How this progression spells a pitch class in the context of one slot.
+ *
+ * Chord tones first, from the slot's own degree; then the scale; then the key's
+ * preference. Lifted out of `piano-roll-view.ts`, where it was private, when M4
+ * gave the score projection the same question to answer - one rule, because the
+ * letter the roll writes on a key and the letter the score engraves are the
+ * same letter, and this file's header records what happens when one rule lives
+ * in two places.
+ *
+ * A speller rather than a spelling because both callers ask it many times over
+ * one slot - every note of the chord, and every row of the roll's keyboard -
+ * and the chord tones are worked out once for all of them.
+ *
+ * `scaleIntervals` empty means the key's scale id resolved to nothing, and
+ * every pitch class then falls through to the key's preference, which is what
+ * `scaleNoteSpelling` does with a scale it cannot read degrees from.
+ */
+export function slotSpeller(
+  key: ProgressionKey,
+  scaleIntervals: readonly number[],
+  slot: ChordSlot | null
+): (pitchClass: number) => SpelledNote {
+  const chordTones = chordToneSpellings(key, scaleIntervals, slot);
+
+  return pitchClass =>
+    chordTones.get(pitchClass) ?? scaleNoteSpelling(key, scaleIntervals, pitchClass);
+}
+
+/**
+ * How the slot's own chord spells each of its tones, by pitch class.
+ *
+ * A chord tone is written on the letter its *place in the chord* names - a third
+ * two letters above the root, a seventh six - and that is a finer answer than
+ * the scale's, which knows only which degree of the key a note is. The two
+ * differ wherever a chord leaves the key: the ♯11 of a `Imaj13♯11` in C is an
+ * F♯, and the scale has no F♯ to find a degree for, so it would fall back to the
+ * key's preference and could print `Gb` under a numeral that says sharp eleven.
+ *
+ * Empty whenever there is no chord to ask - no slot, a `literal` slot, or a
+ * scale thirds cannot be stacked through - and then every note falls through to
+ * the scale, which is what the roll did before this existed.
+ *
+ * The heptatonic check is the whole of that last refusal, and it is the same
+ * question `ProgressionState.canBuildChords` answers: that flag is
+ * `isHeptatonic` applied to the resolved scale, and the roll passes the same
+ * scale's intervals in here. Asking the intervals rather than the flag is what
+ * lets the projection - which holds a `ProgressionDoc` and no published state -
+ * reach the identical rule.
+ *
+ * **First spelling wins.** A stack can sound one pitch class twice, an octave
+ * apart, on two different letters: a sus4 at extent 11 puts the suspended fourth
+ * in position 1 and the eleventh in position 5. One row of the roll's keyboard
+ * cannot carry two names and neither can one note of the score, so the lower
+ * position - which is the one the chord is built on - keeps it.
+ */
+function chordToneSpellings(
+  key: ProgressionKey,
+  scaleIntervals: readonly number[],
+  slot: ChordSlot | null
+): Map<number, SpelledNote> {
+  const spellings = new Map<number, SpelledNote>();
+  if (!slot || slot.harmony.kind !== 'degree' || !isHeptatonic(scaleIntervals)) return spellings;
+
+  const degree = slot.harmony.degree;
+  const chord = effectiveChord(scaleIntervals, degree);
+  const root = chordRootSpelling(key, scaleIntervals, degree);
+
+  chord.intervals.forEach((interval, i) => {
+    const pitchClass = (((key.tonic + chord.root + interval) % 12) + 12) % 12;
+    if (spellings.has(pitchClass)) return;
+
+    // Null past a double accidental, and then this tone simply has no
+    // chord-wise spelling - the scale's answer is the honest remainder, exactly
+    // as it is for a root `chordRootSpelling` cannot spell.
+    const spelled = spellAt(pitchClass, root, chord.steps[i]);
+    if (spelled) spellings.set(pitchClass, spelled);
+  });
+
+  return spellings;
 }
