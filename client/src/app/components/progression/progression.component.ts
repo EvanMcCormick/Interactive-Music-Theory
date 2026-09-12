@@ -8,6 +8,7 @@ import {
   OnInit,
   inject
 } from '@angular/core';
+import * as alphaTab from '@coderline/alphatab';
 import { Subject, distinctUntilChanged, map, takeUntil } from 'rxjs';
 
 import { ChordPaletteComponent } from './components/chord-palette/chord-palette.component';
@@ -17,13 +18,21 @@ import { ProgressionStripComponent } from './components/progression-strip/progre
 import { ProgressionTransportComponent } from './components/progression-transport/progression-transport.component';
 import { ProgressionState } from '../../models/progression.model';
 import { findChordByIntervals } from '../../services/chord-catalog';
+import { ComposerExportService } from '../../services/composer-export.service';
+import { messageOf } from '../../services/error-message';
 import { MusicTheoryService } from '../../services/music-theory.service';
 import { PROGRESSION_AUDIO, createToneApi } from '../../services/progression-audio';
 import { chordRootPitchClass } from '../../services/progression-generate';
 import { effectiveChord } from '../../services/progression-harmony';
 import { ProgressionPlayerService } from '../../services/progression-player.service';
+import {
+  MAX_PREVIEW_BARS,
+  PROGRESSION_FINEST_DIVISION,
+  progressionToScore
+} from '../../services/progression-score';
 import { chordRootName } from '../../services/progression-spelling';
 import { ProgressionService } from '../../services/progression.service';
+import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
 
 /** What the app's own selection says, reduced to the part this page reads. */
 interface AppSelection {
@@ -45,7 +54,7 @@ interface AppSelection {
 /**
  * The progression composer: palette, strip and transport over one key.
  *
- * ## It composes, and owns five things nothing else can
+ * ## It composes, and owns six things nothing else can
  *
  * The five components below wire themselves to `ProgressionService`, so this
  * shell passes them nothing - no inputs, no outputs, no state. The roll is the
@@ -76,6 +85,12 @@ interface AppSelection {
  *     transport that fed the player would stop feeding it at that moment and
  *     leave a loop running on a schedule nothing could correct. This shell
  *     cannot be in that position - it stops the player as it goes.
+ *  6. **The progression leaves as a file.** The rail's Export block, and
+ *     `exportMidi` / `exportGuitarPro` below. It sits here rather than in the
+ *     notation panel because it does not need one: `ComposerExportService`
+ *     gained `toMidi`, so neither export asks for a rendering alphaTab
+ *     instance, and a user should not have to learn that opening a preview is
+ *     what unlocks a download.
  *
  * ## The two directions do not form a loop
  *
@@ -154,9 +169,21 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    */
   keyName = '';
 
+  /**
+   * Why the last export wrote nothing, or null when nothing has refused.
+   *
+   * Read by the rail, where it is announced rather than merely drawn - see the
+   * template. Cleared by the next export that succeeds, and not by an edit: an
+   * error that vanished on the keystroke after it was raised is an error the
+   * user has to have been looking at to read.
+   */
+  exportError: string | null = null;
+
   private readonly progression = inject(ProgressionService);
   private readonly musicTheory = inject(MusicTheoryService);
   private readonly player = inject(ProgressionPlayerService);
+  private readonly exporter = inject(ComposerExportService);
+  private readonly mapper = inject(ScoreDocMapperService);
   private readonly changes = inject(ChangeDetectorRef);
   private readonly destroy$ = new Subject<void>();
 
@@ -303,6 +330,96 @@ export class ProgressionComponent implements OnInit, OnDestroy {
       return;
     }
     this.progression.redo();
+  }
+
+  /** Writes the progression out as a standard MIDI file. */
+  exportMidi(): void {
+    this.write((score, settings, fileName) =>
+      this.exporter.downloadMidiFile(score, settings, fileName)
+    );
+  }
+
+  /** Writes the progression out as a Guitar Pro 7 file. */
+  exportGuitarPro(): void {
+    this.write((score, settings, fileName) =>
+      this.exporter.downloadGuitarPro(score, settings, fileName)
+    );
+  }
+
+  /**
+   * The three steps both exports share, and the one refusal.
+   *
+   * Project the document, map it, hand the score over - the same three the
+   * composer's own export buttons run, which is what `toMidi` bought: neither
+   * of these needs a rendering alphaTab instance, so neither needs the notation
+   * panel below to be open.
+   *
+   * ## A truncated projection refuses
+   *
+   * `progressionToScore` caps at `MAX_PREVIEW_BARS` and says so, and the
+   * preview acts on that by drawing 512 bars with a line above them saying how
+   * many it left out. An export cannot: the message sits beside the music on
+   * screen, and a file outlives every message that was ever next to it. A `.gp`
+   * that quietly stopped at bar 512 would be a file that lies about being the
+   * progression - and it would lie later, on someone else's machine, in
+   * software that has never heard of this page.
+   *
+   * So the count and the cap are both in the message. "Too long" alone does not
+   * tell the user how much they have to cut.
+   *
+   * Reachable only through `setSlotLength(id, 1e9)` - 512 bars is around twenty
+   * minutes of 4/4 at 100 BPM - which is exactly the case the bound exists for.
+   *
+   * ## The scale comes from the published state
+   *
+   * `progressionToScore` is pure and cannot resolve `key.scaleId` itself, so
+   * the caller hands it the intervals; `ProgressionState.keyScale` is the
+   * service's own answer and this page already holds the latest. Empty when the
+   * id resolves to nothing, which spells every note from the key's preference.
+   * The notation panel does the same for the same reason, and the two are
+   * separate callers rather than one because a preview and a file are drawn at
+   * different moments.
+   *
+   * Everything that can throw is inside the try, the projection included:
+   * `quantizeBar` throws on a meter its grid cannot express, and a page that
+   * broke on a bad document would take the roll and the transport down with a
+   * download.
+   */
+  private write(
+    deliver: (
+      score: alphaTab.model.Score,
+      settings: alphaTab.Settings,
+      fileName: string
+    ) => void
+  ): void {
+    const state = this.latest;
+    if (!state) return;
+
+    try {
+      const projected = progressionToScore(
+        state.doc,
+        PROGRESSION_FINEST_DIVISION,
+        state.keyScale ? state.keyScale.intervals : []
+      );
+
+      if (projected.truncated) {
+        this.exportError =
+          `This progression is ${projected.barCount} bars long and an export stops at `
+          + `${MAX_PREVIEW_BARS}. Nothing was written: a file that quietly ended at bar `
+          + `${MAX_PREVIEW_BARS} would not be this progression. Shorten it and try again.`;
+        this.changes.markForCheck();
+        return;
+      }
+
+      const settings = new alphaTab.Settings();
+      const score = this.mapper.toScore(projected.doc, settings);
+      deliver(score, settings, this.exporter.toFileName(state.doc.name));
+      this.exportError = null;
+    } catch (error) {
+      this.exportError = `Could not export the progression: ${messageOf(error)}`;
+    }
+
+    this.changes.markForCheck();
   }
 
   /**

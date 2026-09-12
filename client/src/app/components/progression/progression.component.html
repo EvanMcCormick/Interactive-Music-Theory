@@ -21,6 +21,35 @@
         sounds under what you are picking out, not over it.
       </p>
     </section>
+
+    <section class="rail-block">
+      <h2 class="rail-title">Export</h2>
+      <p class="rail-note">
+        Takes the whole progression — every bar, barred and spelled as the
+        notation below would draw it. You do not have to open that panel first.
+      </p>
+      <div class="rail-actions">
+        <button type="button" class="rail-button" (click)="exportMidi()">
+          Export MIDI
+        </button>
+        <button type="button" class="rail-button" (click)="exportGuitarPro()">
+          Export .gp
+        </button>
+      </div>
+      <p class="rail-note">
+        <strong>MIDI</strong> carries the notes into a DAW or a notation editor;
+        <strong>.gp</strong> opens in Guitar Pro and in this app's GP library.
+      </p>
+      <!-- Refused, or failed. `role="alert"` rather than colour alone: this is
+           the only sign a button that wrote nothing gives, so it has to reach a
+           screen reader as well as an eye. Same pattern as the notation panel's
+           own error, one block down the page. -->
+      <p class="rail-error" *ngIf="exportError" role="alert">{{ exportError }}</p>
+      <!-- Send to Composer goes here, above the two exports: it is the same
+           progression leaving by a third door, and the design doc puts all
+           three in this block. It waits on `ComposerService`'s commands, which
+           do not exist yet - see Task 9 of the M4 plan. -->
+    </section>
   </aside>
 
   <!-- Across the top of the working area: the chords you can reach from here. -->

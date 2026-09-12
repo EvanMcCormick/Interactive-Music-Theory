@@ -14,6 +14,10 @@ import { ProgressionService } from '../../services/progression.service';
 /**
  * The page shell: what it composes, and the three things it owns.
  *
+ * The rail's Export block is next door in `progression.component.export.spec.ts`
+ * - a file leaving the app fails for different reasons than a page wired to a
+ * service, and the two together were over the thousand-line bound.
+ *
  * ## The player is faked, and the page's own providers are why
  *
  * `ProgressionComponent` provides `PROGRESSION_AUDIO` and the player itself -
