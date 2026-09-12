@@ -53,11 +53,20 @@ import { PROGRESSION_FINEST_DIVISION, progressionToScore } from './progression-s
  * one: every staff of every track has exactly `masterBars.length` bars, so
  * growing the score means growing every staff in it, generated or not.
  *
- * The merge is pure, and that is not decoration either. The Composer calls it
- * inside `commit()`, which has already taken the undo snapshot from the same
- * document it hands in as the draft; a merge that wrote through to what it was
- * given would corrupt the snapshot sitting beside it and undo would restore the
- * merged score.
+ * The merge is pure, and that is not decoration either - but the reason is the
+ * plain one and not a rescue of the Composer. This is a pure module, so a
+ * caller is entitled to hold both arguments after the call and find them as it
+ * left them: to compare the score before against the score after, to merge one
+ * `ScoreDoc` twice, to keep the document it passed in as its own state. A
+ * function that wrote through would take all three away, and would take them
+ * away silently.
+ *
+ * It is *not* what stops undo restoring a merged score. `commit()` takes two
+ * independent `structuredClone`s of its document - one for the undo stack and
+ * one for the draft it mutates - so the Composer would survive a merge that
+ * wrote through to what it was given. That is the Composer's own belt and
+ * braces, and it is not this module's licence to lean on them: a rule that
+ * holds because one caller happens to clone is a rule the second caller breaks.
  *
  * ## Staleness is a comparison, not a diff
  *
@@ -166,6 +175,29 @@ export function progressionTrack(
 }
 
 /**
+ * Index of the track marked as generated from `progressionId`, or -1.
+ *
+ * The one place the match rule is written. `generatedTrackIndex` asks it of a
+ * `ProgressionDoc` and `mergeGeneratedTrack` of the marker on a track it is
+ * about to write, which is the same question keyed two ways - and two copies of
+ * a predicate this subtle are two copies to keep in step.
+ */
+function trackIndexFor(score: ScoreDoc, progressionId: string | undefined): number {
+  // An id of `undefined` matches nothing, and the guard is doing real work
+  // rather than restating the type. An ordinary track's `generated` is `null`,
+  // and `null?.progressionId` is `undefined` as well - so the search below,
+  // handed an undefined id, finds the first track *nobody* generated and
+  // reports it as this progression's. In the merge that means overwriting a
+  // user's own track with the progression, which is the worst outcome in the
+  // module. Nothing here builds an unmarked `GeneratedTrack`, so this is a
+  // guard against a caller that does, answered the way the rest of the merge
+  // answers: take the option that cannot destroy work.
+  if (progressionId === undefined) return -1;
+
+  return score.tracks.findIndex(track => track.generated?.progressionId === progressionId);
+}
+
+/**
  * Index of the track `doc` generated, or -1.
  *
  * Matched on `progressionId` rather than on the presence of a marker, so a
@@ -174,7 +206,7 @@ export function progressionTrack(
  * second one adopt the first one's track and overwrite it on Update.
  */
 export function generatedTrackIndex(score: ScoreDoc, doc: ProgressionDoc): number {
-  return score.tracks.findIndex(track => track.generated?.progressionId === doc.id);
+  return trackIndexFor(score, doc.id);
 }
 
 /**
@@ -196,27 +228,68 @@ export function generatedTrackState(score: ScoreDoc, doc: ProgressionDoc): Gener
 }
 
 /**
- * A staff padded out to `barCount`, in the meter `masterBars` puts in force.
+ * A staff padded out to `barCount`, in the meter `masterBars` puts in force and
+ * in the clef and key its own last bar is in.
  *
  * Only ever lengthens. A staff already at or past `barCount` is handed back as
  * it is rather than sliced: `barCount` is never below the score's own bar
  * count, so a longer staff is one that arrived already breaking the invariant,
  * and quietly deleting its tail is the one thing this module will not do to
  * find out.
+ *
+ * ## Why the tail bar is a template and not just a length
+ *
+ * `createDefaultBar` writes `g2`, `regular` and C major, which are right for a
+ * bar with no context and wrong for every bar that has one. The Composer's own
+ * `insertBar` says as much - it builds the bar and then copies clef, ottava and
+ * key signature off a neighbour - and the reason is that a score does not
+ * generally start out in the defaults. `composer-library-panel.component.ts`
+ * and `composer.component.ts` both `replaceDocument` a `.gp` file mapped into a
+ * `ScoreDoc`, so the Composer routinely holds a bass staff in `f4` with three
+ * flats on every bar; padding it with the defaults would append treble-clef,
+ * no-accidental bars to its tail, and the notes the user then wrote there would
+ * read a fifth and three accidentals away from the rest of the staff.
+ *
+ * These three and no more. They are the fields `BarDoc` carries that describe
+ * *how the staff is written* rather than *what is written in it* - `voices` is
+ * the music, and copying that would duplicate the last bar's notes into every
+ * bar of rest this function exists to produce.
+ *
+ * A staff with no bars has no answer but the default, and that is the one case
+ * where `createDefaultBar`'s own values are the right ones: there is no
+ * established clef to depart from.
  */
 function padStaff(staff: StaffDoc, barCount: number, masterBars: MasterBarDoc[]): StaffDoc {
   if (staff.bars.length >= barCount) return staff;
+
+  const template = staff.bars[staff.bars.length - 1];
 
   return {
     ...staff,
     bars: [
       ...staff.bars,
-      ...Array.from({ length: barCount - staff.bars.length }, (_, offset) =>
+      ...Array.from({ length: barCount - staff.bars.length }, (_, offset) => {
         // A bar of rests rather than an empty bar, because the caret steps
         // between a bar's rest positions - `createDefaultBar` says so - and a
         // bar holding nothing would be a bar the user cannot write in.
-        createDefaultBar(staff.showTablature, effectiveTimeSignature(masterBars, staff.bars.length + offset))
-      )
+        const bar = createDefaultBar(
+          staff.showTablature,
+          effectiveTimeSignature(masterBars, staff.bars.length + offset)
+        );
+
+        if (!template) return bar;
+
+        return {
+          ...bar,
+          clef: template.clef,
+          clefOttava: template.clefOttava,
+          // Copied rather than shared. Every bar this call appends would
+          // otherwise point at the template's one record, so a later edit to
+          // one bar's key would silently change the rest of the tail - and the
+          // template bar with them.
+          keySignature: { ...template.keySignature }
+        };
+      })
     ]
   };
 }
@@ -247,15 +320,38 @@ function padTrack(track: TrackDoc, barCount: number, masterBars: MasterBarDoc[])
  * revert. Anything wanting the current progression name has the marker.
  *
  * Bars grow and never shrink; see the module docstring for why that is the rule
- * and not an implementation detail. Pure: the score handed in is returned
- * unchanged and the result shares whatever neither of them had to move.
+ * and not an implementation detail.
+ *
+ * ## The precondition nothing here can check
+ *
+ * **`generated` must have been projected in this score's meter** - that is,
+ * built by `progressionTrack(doc, intervals, effectiveTimeSignature(score.masterBars, 0))`.
+ * A generated track shares the score's `masterBars` once it is merged, so bars
+ * projected in the progression's own meter would be handed to master bars that
+ * say something else: a 3/4 score would take four-beat bars and every one of
+ * them would be a bar over its own length, silently, with no exception and
+ * nothing on the page to say so. The meter cannot be re-derived here either,
+ * because a projected bar's beats are the only record of what it was barred in
+ * and reading them back would be guessing. The caller holds the score and knows.
+ *
+ * ## What the returned score shares
+ *
+ * `MasterBarDoc`s and `BarDoc`s, with both arguments - a pure function copies
+ * the spine and not the leaves, and nothing downstream mutates them: the
+ * Composer deep-clones on the way into every `commit()`.
+ *
+ * The one arrangement that breaks that is **reusing a `GeneratedTrack` for two
+ * merges**, which leaves two scores pointing at one set of bar objects and an
+ * edit in either showing up in the other. So a `GeneratedTrack` is built fresh
+ * per call and not retained. That is a rule for callers rather than a defensive
+ * clone here, because the clone would cost every well-behaved caller a copy of
+ * the whole track to protect against a caller that does not exist.
+ *
+ * Pure, and for the plain reason: both arguments belong to the caller, which is
+ * entitled to go on reading either of them after this returns.
  */
 export function mergeGeneratedTrack(score: ScoreDoc, generated: GeneratedTrack): ScoreDoc {
-  const progressionId = generated.track.generated?.progressionId;
-  const existing =
-    progressionId === undefined
-      ? -1
-      : score.tracks.findIndex(track => track.generated?.progressionId === progressionId);
+  const existing = trackIndexFor(score, generated.track.generated?.progressionId);
 
   const barCount = Math.max(score.masterBars.length, generated.masterBars.length);
 
@@ -300,8 +396,9 @@ export function mergeGeneratedTrack(score: ScoreDoc, generated: GeneratedTrack):
  * argument itself is the point of the no-op rather than a shortcut through it:
  * a caller comparing documents by reference sees that nothing happened.
  *
- * Pure, like its neighbours: the Composer flattens inside a command that has
- * already taken the undo snapshot from the document it hands in.
+ * Pure, like its neighbours, and for the reason the module docstring gives: the
+ * score handed in is the caller's, and the no-op above is only readable as a
+ * no-op because the caller still has the document it passed to compare against.
  */
 export function flattenGeneratedTrack(score: ScoreDoc, trackIndex: number): ScoreDoc {
   if (!score.tracks[trackIndex]?.generated) return score;

@@ -1,7 +1,10 @@
 import {
   BeatDoc,
+  ClefKind,
+  KeySignatureMode,
   MasterBarDoc,
   NoteDoc,
+  OttaviaKind,
   ScoreDoc,
   TimeSignature,
   TrackDoc,
@@ -87,7 +90,7 @@ function scoreOf(tracks: TrackDoc[]): ScoreDoc {
 }
 
 /** A track nobody generated, of the kind a user's own score is full of. */
-function plainTrack(name: string, bars = 0): TrackDoc {
+function plainTrack(name: string, bars = 0, meter: TimeSignature = FOUR_FOUR): TrackDoc {
   return {
     id: name,
     name,
@@ -105,10 +108,38 @@ function plainTrack(name: string, bars = 0): TrackDoc {
         showTablature: false,
         showSlash: false,
         showNumbered: false,
-        bars: Array.from({ length: bars }, () => createDefaultBar(false, FOUR_FOUR))
+        bars: Array.from({ length: bars }, () => createDefaultBar(false, meter))
       }
     ],
     generated: null
+  };
+}
+
+/**
+ * A staff whose bars carry none of `createDefaultBar`'s defaults.
+ *
+ * `plainTrack` cannot stand in for this one and that is the whole reason it
+ * exists: its bars *are* `createDefaultBar`'s output, so a padding routine that
+ * ignored the staff it was padding and wrote fresh defaults would agree with it
+ * exactly. This is the score a user actually has after loading a `.gp` file -
+ * `composer-library-panel.component.ts` and `composer.component.ts` both hand
+ * `replaceDocument` a mapped `ScoreDoc`, and a bass staff in E flat comes back
+ * with `f4` and three flats on every bar.
+ */
+function loadedTrack(name: string, bars: number): TrackDoc {
+  const track = plainTrack(name, bars);
+
+  return {
+    ...track,
+    staves: track.staves.map(staff => ({
+      ...staff,
+      bars: staff.bars.map(bar => ({
+        ...bar,
+        clef: 'f4' as ClefKind,
+        clefOttava: '8vb' as OttaviaKind,
+        keySignature: { fifths: -3, mode: 'major' as KeySignatureMode }
+      }))
+    }))
   };
 }
 
@@ -121,7 +152,11 @@ function plainTrack(name: string, bars = 0): TrackDoc {
  * fixture that broke it going in would make the assertion coming out
  * unreadable.
  */
-function userScore(bars: number, tracks: TrackDoc[] = [plainTrack('Guitar', bars)]): ScoreDoc {
+function userScore(
+  bars: number,
+  tracks: TrackDoc[] = [plainTrack('Guitar', bars)],
+  meter: TimeSignature = FOUR_FOUR
+): ScoreDoc {
   return {
     title: 'Score',
     subTitle: '',
@@ -130,7 +165,7 @@ function userScore(bars: number, tracks: TrackDoc[] = [plainTrack('Guitar', bars
     tempo: 120,
     masterBars: Array.from({ length: bars }, (_, index) => ({
       ...createDefaultMasterBar(),
-      timeSignature: index === 0 ? { ...FOUR_FOUR } : null
+      timeSignature: index === 0 ? { ...meter } : null
     })),
     tracks
   };
@@ -446,10 +481,104 @@ describe('mergeGeneratedTrack', () => {
     expectEveryStaffBarred(merged);
   });
 
+  it('pads a staff in the clef and key signature its own bars carry', () => {
+    // The regression a `.gp` file finds and `plainTrack` cannot. A bass staff
+    // loaded from a file is in `f4` with a real key signature on every bar, and
+    // `createDefaultBar` writes `g2` in C major - so padding that ignores the
+    // staff it is padding puts treble-clef, no-accidental bars on the tail of a
+    // bass staff. `composer.service.ts`'s own `insertBar` copies all three from
+    // a template bar, and this is the same job on the other end of the staff.
+    const merged = mergeGeneratedTrack(
+      userScore(2, [loadedTrack('Bass', 2)]),
+      progressionTrack(docOfBars(6), IONIAN, FOUR_FOUR)
+    );
+    const padded = merged.tracks[0].staves[0].bars[5];
+
+    expect(padded.clef).toBe('f4');
+    expect(padded.clefOttava).toBe('8vb');
+    expect(padded.keySignature).toEqual({ fifths: -3, mode: 'major' });
+    expectEveryStaffBarred(merged);
+  });
+
+  it('falls back to the defaults for a staff with no bar to copy from', () => {
+    // The other half of the rule, and the case that has no answer but the
+    // default: a staff of no bars carries no clef to carry forward. Reachable
+    // through the invariant rather than in spite of it - a score of no bars has
+    // staves of no bars, and merging into one is how a progression reaches an
+    // empty Composer.
+    const merged = mergeGeneratedTrack(
+      userScore(0, [plainTrack('Guitar', 0)]),
+      progressionTrack(docOf(), IONIAN, FOUR_FOUR)
+    );
+    const padded = merged.tracks[0].staves[0].bars[0];
+
+    expect(padded.clef).toBe('g2');
+    expect(padded.keySignature).toEqual({ fifths: 0, mode: 'major' });
+  });
+
+  it('keeps the repeats and sections the score\'s own bars carry', () => {
+    // What the "only bars past the score's end come from the projection" rule
+    // is *for*. A `MasterBarDoc` holds repeats, sections and tempo automations
+    // the projection has never heard of, so a grow that took the projection's
+    // bar wherever it had one would erase them. Every other fixture here is a
+    // default master bar, which the projection's own bar matches byte for byte
+    // - so this is the only case where taking the wrong one shows.
+    const score = userScore(2);
+    const marked: ScoreDoc = {
+      ...score,
+      masterBars: score.masterBars.map((bar, index) =>
+        index === 1
+          ? { ...bar, isRepeatStart: true, section: { marker: 'B', text: 'Chorus' } }
+          : bar
+      )
+    };
+
+    const merged = mergeGeneratedTrack(marked, progressionTrack(docOfBars(6), IONIAN, FOUR_FOUR));
+
+    expect(merged.masterBars.length).toBe(6);
+    expect(merged.masterBars[1].isRepeatStart).toBeTrue();
+    expect(merged.masterBars[1].section).toEqual({ marker: 'B', text: 'Chorus' });
+  });
+
+  it('pads in the meter the score is in, not the one every fixture happens to be', () => {
+    // `effectiveTimeSignature` earning its call. A 3/4 score padded with 4/4
+    // bars gives the caret a fourth position in a bar the master bars say holds
+    // three, and every fixture above is in 4/4 - so a literal would pass all of
+    // them.
+    const merged = mergeGeneratedTrack(
+      userScore(2, [plainTrack('Guitar', 2, THREE_FOUR)], THREE_FOUR),
+      progressionTrack(docOfBars(6), IONIAN, THREE_FOUR)
+    );
+
+    expect(merged.tracks[0].staves[0].bars[5].voices[0].beats.length).toBe(3);
+    expectEveryStaffBarred(merged);
+  });
+
+  it('appends rather than overwriting when the generated track carries no marker', () => {
+    // The guard the match helper opens with, and the only thing standing
+    // between an unmarked `GeneratedTrack` and the user's first track: an
+    // ordinary track's `generated` is null and `null?.progressionId` is
+    // `undefined` too, so a search for an undefined id finds the first track
+    // *nobody* generated and replaces it.
+    const generated = progressionTrack(docOf(), IONIAN, FOUR_FOUR);
+    const unmarked: GeneratedTrack = {
+      ...generated,
+      track: { ...generated.track, generated: null }
+    };
+
+    const merged = mergeGeneratedTrack(userScore(4), unmarked);
+
+    expect(merged.tracks.length).toBe(2);
+    expect(merged.tracks[0].name).toBe('Guitar');
+  });
+
   it('leaves the score it was handed alone', () => {
-    // Pure, like the rest of this file's neighbours: the Composer hands it a
-    // draft inside `commit()`, and a merge that wrote through to the previous
-    // document would corrupt the undo snapshot taken beside it.
+    // Pure, and for the reason a pure module is pure rather than for anything
+    // about the Composer: both arguments belong to the caller, which is
+    // entitled to go on reading either one after the merge returns. The
+    // Composer's `commit()` happens to clone twice over and so would survive a
+    // merge that wrote through - that is its business, and not this module's
+    // licence to.
     const score = withNoteIn(userScore(2), 0, 1);
     const before = structuredClone(score);
 
@@ -511,8 +640,9 @@ describe('flattenGeneratedTrack', () => {
   });
 
   it('leaves the score it was handed alone', () => {
-    // Pure, like its neighbours, and for the same reason: the Composer flattens
-    // inside a command that has already snapshotted the document for undo.
+    // Pure, like its neighbours, and for the same reason: the score handed in
+    // is the caller's, and a caller comparing before against after has to have
+    // a before left to compare.
     const doc = docOf();
     const score = mergeGeneratedTrack(userScore(4), progressionTrack(doc, IONIAN, FOUR_FOUR));
     const snapshot = structuredClone(score);
