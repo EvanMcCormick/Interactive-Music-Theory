@@ -17,7 +17,7 @@ import {
   createDegreeSlot
 } from '../models/progression.model';
 import { DEFAULT_VELOCITY } from '../models/progression-normalize';
-import { MAX_PREVIEW_BARS } from './progression-score';
+import { MAX_PREVIEW_BARS, PROGRESSION_FINEST_DIVISION, progressionToScore } from './progression-score';
 import {
   GeneratedTrack,
   flattenGeneratedTrack,
@@ -153,6 +153,46 @@ describe('progressionTrack', () => {
     expect(progressionTrack(doc, IONIAN, FOUR_FOUR).track.name).toBe('Twelve bar');
   });
 
+  it('falls back to a name of its own when the progression has none', () => {
+    // Nothing stops a progression being saved unnamed, and a track labelled
+    // with the empty string is a row in the panel the user cannot point at.
+    // The projection's own constant is the fallback, because it is the honest
+    // description of a track nobody has named.
+    expect(progressionTrack(docOf({ name: '   ' }), IONIAN, FOUR_FOUR).track.name).toBe(
+      'Progression'
+    );
+  });
+
+  it('gives each progression a track id of its own', () => {
+    // The projection calls its only track `progression`, which is unique in a
+    // preview holding one. Two progressions sent to one score - the case
+    // `generatedTrackIndex` exists for - would otherwise collide.
+    const first = progressionTrack(docOf(), IONIAN, FOUR_FOUR).track;
+    const second = progressionTrack(docOf(), IONIAN, FOUR_FOUR).track;
+
+    expect(first.id).not.toBe(second.id);
+  });
+
+  it('keeps one progression\'s track id across rebuilds', () => {
+    // The other half of the id rule, and the half Update needs: a refresh of a
+    // track already in the score has to be recognisably the same track.
+    const doc = docOf({ revision: 1 });
+
+    expect(progressionTrack({ ...doc, revision: 2 }, IONIAN, FOUR_FOUR).track.id).toBe(
+      progressionTrack(doc, IONIAN, FOUR_FOUR).track.id
+    );
+  });
+
+  it('is projected from a score of exactly one track', () => {
+    // The assumption `progressionTrack` destructures on. It reads as a detail
+    // of the projection and is load-bearing here: with `noUncheckedIndexedAccess`
+    // off, a projection that emitted none would hand this module `undefined`
+    // and be noticed only by whatever read the track afterwards.
+    const projected = progressionToScore(docOf(), PROGRESSION_FINEST_DIVISION, IONIAN);
+
+    expect(projected.doc.tracks.length).toBe(1);
+  });
+
   it('bars the progression in the meter it is given, not the one it holds', () => {
     // The whole of "the score's meter wins": eight quarter notes are two bars
     // of 4/4 and three of 3/4, and the progression's own 4/4 does not get a
@@ -166,10 +206,17 @@ describe('progressionTrack', () => {
   });
 
   it('leaves the progression it was handed alone', () => {
+    // The whole document rather than the meter it swaps, because the meter is
+    // only the field this function is known to touch: the projection walks
+    // every slot and note under it, and a future version that decorated a
+    // `RollNote` in place would be caught here rather than by whatever read
+    // the progression next.
     const doc = docOf({ timeSignature: FOUR_FOUR });
+    const before = structuredClone(doc);
+
     progressionTrack(doc, IONIAN, THREE_FOUR);
 
-    expect(doc.timeSignature).toEqual(FOUR_FOUR);
+    expect(doc).toEqual(before);
   });
 
   it('carries the projection\'s truncation flag out', () => {
@@ -214,6 +261,12 @@ describe('generatedTrackState', () => {
     expect(generatedTrackState(scoreOf([plainTrack('Guitar')]), docOf())).toBe('absent');
   });
 
+  it('is absent for a score with no tracks at all', () => {
+    // The case the `tracks[-1]` idiom rests on, and the only one where the
+    // index and the lookup are both empty-handed rather than just the lookup.
+    expect(generatedTrackState(scoreOf([]), docOf())).toBe('absent');
+  });
+
   it('is absent when the marker names a different progression', () => {
     // Two progressions can be sent to one score, and a score holding somebody
     // else's track holds nothing of this one's: absent, not stale.
@@ -244,7 +297,13 @@ describe('generatedTrackState', () => {
     const marked = progressionTrack(doc, IONIAN, FOUR_FOUR).track;
     const diverged: TrackDoc = {
       ...marked,
-      generated: { ...marked.generated!, source: { kind: 'diverged' } }
+      // Written out rather than spread over `marked.generated`, which is
+      // `GeneratedOrigin | null` and would need an assertion to spread.
+      generated: {
+        progressionId: doc.id,
+        progressionName: doc.name,
+        source: { kind: 'diverged' }
+      }
     };
 
     expect(generatedTrackState(scoreOf([diverged]), doc)).toBe('stale');
@@ -348,6 +407,29 @@ describe('mergeGeneratedTrack', () => {
     expect(merged.tracks.map(track => track.name)).toEqual(['Guitar', doc.name, 'Bass']);
     expect(merged.tracks[1].generated?.source).toEqual({ kind: 'revision', revision: 2 });
     expectEveryStaffBarred(merged);
+  });
+
+  it('keeps the name the track in the score already carries', () => {
+    // Update refreshes music, not labels. The marker keeps its own copy of the
+    // progression's name, so the track's own name is free to be the user's -
+    // and the answer that cannot destroy work is the one that does not
+    // overwrite it.
+    const doc = docOf({ revision: 1, name: 'Verse' });
+    const score = mergeGeneratedTrack(userScore(4), progressionTrack(doc, IONIAN, FOUR_FOUR));
+    const renamed: ScoreDoc = {
+      ...score,
+      tracks: score.tracks.map(track => (track.generated ? { ...track, name: 'Intro riff' } : track))
+    };
+
+    const merged = mergeGeneratedTrack(
+      renamed,
+      progressionTrack({ ...doc, revision: 2, name: 'Chorus' }, IONIAN, FOUR_FOUR)
+    );
+
+    expect(merged.tracks[1].name).toBe('Intro riff');
+    // What the track came from is still current, because that is the marker's
+    // copy and not the label's.
+    expect(merged.tracks[1].generated?.progressionName).toBe('Chorus');
   });
 
   it('grows masterBars to fit and pads every other staff', () => {

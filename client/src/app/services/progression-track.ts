@@ -138,11 +138,22 @@ export function progressionTrack(
   return {
     track: {
       ...projectedTrack,
-      // The projection's track is called `Progression`, which is the right name
-      // for the only track in a preview and a useless one in a score that may
-      // hold several. The marker keeps its own copy of the name so a track the
-      // user renames still says what it came from.
-      name: doc.name,
+      // A name and an id of its own, because both of the projection's are right
+      // for the only track in a preview and wrong in a score that may hold
+      // several: `Progression` labels two progressions identically, and the id
+      // `progression` *is* identical. The id is built from the progression's,
+      // so it is unique across progressions and stable across rebuilds of one -
+      // Update refreshes the track it already wrote rather than introducing a
+      // second one wearing its id.
+      //
+      // The name is only the *initial* name. `mergeGeneratedTrack` keeps
+      // whatever the track in the score is already called, so this is the label
+      // a track is born with; the marker's own copy of `progressionName` is
+      // what stays in step with the progression afterwards. An unnamed
+      // progression falls back to the projection's constant rather than
+      // labelling a row in the tracks panel with the empty string.
+      id: `progression-${doc.id}`,
+      name: doc.name.trim() || 'Progression',
       generated: {
         progressionId: doc.id,
         progressionName: doc.name,
@@ -225,6 +236,16 @@ function padTrack(track: TrackDoc, barCount: number, masterBars: MasterBarDoc[])
  * progression sent to the same score gets a track of its own rather than
  * overwriting the first.
  *
+ * The name that survives a replacement is the **incumbent's**. A track's name is
+ * a label the user owns; the marker's `progressionName` is the copy that tracks
+ * the progression, and it is rebuilt with the rest of the marker. So Update
+ * refreshes music and leaves labels alone, which is this module's usual rule
+ * once more - of the two answers, take the one that cannot destroy work.
+ * Nothing renames a track today, so what this costs in the meantime is that
+ * renaming the *progression* and pressing Update no longer relabels the track:
+ * a stale label a user can retype, against a rename Update would silently
+ * revert. Anything wanting the current progression name has the marker.
+ *
  * Bars grow and never shrink; see the module docstring for why that is the rule
  * and not an implementation detail. Pure: the score handed in is returned
  * unchanged and the result shares whatever neither of them had to move.
@@ -246,7 +267,9 @@ export function mergeGeneratedTrack(score: ScoreDoc, generated: GeneratedTrack):
     index < score.masterBars.length ? score.masterBars[index] : generated.masterBars[index]
   );
 
-  const merged = padTrack(generated.track, barCount, masterBars);
+  const incumbent = existing === -1 ? null : score.tracks[existing];
+  const named = incumbent === null ? generated.track : { ...generated.track, name: incumbent.name };
+  const merged = padTrack(named, barCount, masterBars);
   const others = score.tracks.map(track => padTrack(track, barCount, masterBars));
 
   return {
