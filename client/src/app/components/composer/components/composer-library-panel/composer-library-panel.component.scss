@@ -8,6 +8,7 @@ $text-primary: #ecf0f1;
 $text-secondary: #bdc3c7;
 $border-color: #465666;
 $error-color: #e74c3c;
+$warning-color: #f39c12;
 $success-color: #27ae60;
 
 .library-panel {
@@ -50,6 +51,29 @@ $success-color: #27ae60;
   flex-direction: column;
   gap: 0.4rem;
   margin-bottom: 1rem;
+}
+
+// The refusal, and the offer that resolves it. Warned rather than errored:
+// nothing has gone wrong, the panel is asking for a decision.
+.save-blocked {
+  margin: -0.5rem 0 1rem;
+  padding: 0.6rem;
+  border: 1px solid $warning-color;
+  border-radius: 4px;
+  background-color: rgba($warning-color, 0.12);
+
+  .save-blocked-reason {
+    margin: 0 0 0.5rem;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: $text-primary;
+  }
+
+  .save-blocked-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
 }
 
 .composition-list {

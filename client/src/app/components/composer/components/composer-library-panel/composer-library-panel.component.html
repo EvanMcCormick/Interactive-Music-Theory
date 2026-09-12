@@ -8,6 +8,22 @@
     <button class="text-btn" (click)="save(true)" *ngIf="currentId">Save as copy</button>
   </div>
 
+  <!--
+    Save stays pressable and the refusal answers the press, rather than Save
+    being disabled with the reason sitting beside it. A disabled button is out
+    of the tab order, so a reason hung off it with aria-describedby is attached
+    to something a keyboard user never lands on. role="alert" announces the
+    refusal when it appears, and the offer is a real button inside the same
+    region, so hearing the reason and reaching the remedy are one move.
+  -->
+  <div class="save-blocked" role="alert" *ngIf="saveBlockedReason">
+    <p class="save-blocked-reason">{{ saveBlockedReason }}</p>
+    <div class="save-blocked-actions">
+      <button class="text-btn" (click)="flattenAndSave()">Flatten and save</button>
+      <button class="text-btn" (click)="dismissSaveBlock()">Keep the link</button>
+    </div>
+  </div>
+
   <ul class="composition-list" *ngIf="entries.length > 0; else emptyLibrary">
     <li
       *ngFor="let entry of entries; trackBy: trackById"
