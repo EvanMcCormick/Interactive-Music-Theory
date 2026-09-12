@@ -238,7 +238,10 @@ export class ProgressionStore {
     const draft = structuredClone(state.doc);
 
     mutate(draft);
-    const settled = settle(draft);
+    // Stamped here rather than inside `settle`, which `load` also calls and
+    // which specs lean on being idempotent. `commit` is the one door a mutation
+    // comes through, so it is the one place a mutation can be counted.
+    const settled = { ...settle(draft), revision: state.doc.revision + 1 };
 
     // A continuation is only honoured while the run it names is the one under
     // way, so a caller that passes `continues` with nothing to continue - or

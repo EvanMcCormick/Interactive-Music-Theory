@@ -109,6 +109,18 @@ export interface ProgressionKey {
 
 export interface ProgressionDoc {
   id: string;
+  /**
+   * Bumped once per commit, and the whole of the Composer's staleness check.
+   *
+   * On the document rather than beside it, because undo restores a *document*:
+   * a generated track built from revision 4 and then undone back to the
+   * document that was revision 4 is current again, and a counter that lived on
+   * the store would say stale about a document that had not changed. See
+   * "Staleness is one comparison, and it is exact" in the design doc, which
+   * also records why a counter is exact here and a projection hash is not
+   * needed: every field of this interface reaches the generated track.
+   */
+  revision: number;
   name: string;
   key: ProgressionKey;
   /** BPM. */
@@ -528,6 +540,7 @@ function createId(): string {
 export function createDefaultProgression(): ProgressionDoc {
   return {
     id: createId(),
+    revision: 0,
     name: 'Untitled',
     key: { tonic: 0, scaleId: 'ionian', preferSharps: true },
     tempo: 120,

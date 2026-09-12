@@ -339,6 +339,7 @@ function literalSlot(
 function progression(slots: ChordSlot[], tempo = 120): ProgressionDoc {
   return {
     id: 'doc',
+    revision: 0,
     name: 'Test',
     key: { tonic: 0, scaleId: 'ionian', preferSharps: true },
     tempo,
