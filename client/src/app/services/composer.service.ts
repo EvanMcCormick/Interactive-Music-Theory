@@ -21,6 +21,7 @@ import {
   createRestBeat,
   STANDARD_GUITAR_TUNING
 } from '../models/composer.model';
+import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 
 /**
  * Owns the editable score document, the edit caret, and undo/redo.
@@ -34,6 +35,13 @@ import {
  * INVARIANT: every staff of every track has exactly `masterBars.length` bars.
  * Bar insertion and removal always apply across all tracks, so the shared
  * timeline can never desync.
+ *
+ * A track carrying a `GeneratedOrigin` is a progression's rather than the
+ * user's: `sendProgression` writes it, the note- and beat-level commands refuse
+ * it, and `flattenTrack` hands it over. That every one of those is an ordinary
+ * `commit()` is the point rather than a convenience - it is what makes undo
+ * restore a track together with the marker that says how fresh it is. See
+ * "Update is pressed, not inferred" in the progression composer design doc.
  */
 @Injectable({ providedIn: 'root' })
 export class ComposerService {
@@ -284,6 +292,7 @@ export class ComposerService {
   setNoteAtCursor(pitch: NotePitch, advance = true): void {
     const state = this.stateSubject.getValue();
     const cursor = state.cursor;
+    if (this.isGenerated(state.doc, cursor.trackIndex)) return;
 
     this.commit(draft => {
       const beat = this.beatAt(draft, cursor);
@@ -333,6 +342,7 @@ export class ComposerService {
   setRestAtCursor(advance = true): void {
     const state = this.stateSubject.getValue();
     const cursor = state.cursor;
+    if (this.isGenerated(state.doc, cursor.trackIndex)) return;
 
     this.commit(draft => {
       const beat = this.beatAt(draft, cursor);
@@ -354,7 +364,10 @@ export class ComposerService {
    * shorten the bar.
    */
   deleteAtCursor(): void {
-    const cursor = this.stateSubject.getValue().cursor;
+    const state = this.stateSubject.getValue();
+    const cursor = state.cursor;
+    if (this.isGenerated(state.doc, cursor.trackIndex)) return;
+
     this.commit(draft => {
       const voice = this.voiceAt(draft, cursor);
       const beat = voice?.beats[cursor.beatIndex];
@@ -369,9 +382,19 @@ export class ComposerService {
     this.stateSubject.next({ ...state, inputDuration: duration, inputDots: dots });
   }
 
-  /** Applies the current input duration to the beat under the caret. */
+  /**
+   * Applies the current input duration to the beat under the caret.
+   *
+   * A refusal on a generated track takes the palette with it: this command
+   * writes a beat *and* remembers the choice, and half of it happening would
+   * leave the toolbar showing a duration the score never received. The toolbar
+   * has `setInputDuration` for changing the choice on its own.
+   */
   applyDurationAtCursor(duration: DurationValue, dots: number): void {
-    const cursor = this.stateSubject.getValue().cursor;
+    const state = this.stateSubject.getValue();
+    const cursor = state.cursor;
+    if (this.isGenerated(state.doc, cursor.trackIndex)) return;
+
     this.commit(draft => {
       const beat = this.beatAt(draft, cursor);
       if (!beat) return;
@@ -409,6 +432,7 @@ export class ComposerService {
           staff.bars.splice(at, 0, bar);
         }
       }
+      this.markDiverged(draft);
     });
   }
 
@@ -426,6 +450,7 @@ export class ComposerService {
           staff.bars.splice(at, 1);
         }
       }
+      this.markDiverged(draft);
     });
   }
 
@@ -460,6 +485,127 @@ export class ComposerService {
     this.commit(draft => {
       draft.tempo = Math.max(20, Math.min(400, Math.round(tempo)));
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Generated tracks
+  // -------------------------------------------------------------------------
+
+  /**
+   * Puts the progression into the score, or refreshes the one already there.
+   *
+   * Send and Update are one method, because they are one operation: the merge
+   * appends when the score holds nothing of this progression and replaces in
+   * place when it does, so the difference is a fact about the score rather than
+   * a choice the caller makes. Two methods would have to agree about the
+   * marker, the divergence and the bar growth forever; the UI naming this one
+   * twice costs nothing and cannot drift.
+   *
+   * Both go through `commit()` like any edit, which is the whole reason the
+   * explicit-Update model is safe: undo restores the old track *and* its old
+   * marker, so the badge cannot end up claiming a freshness the document does
+   * not have. `composer.service.generated.spec.ts` pins that rather than
+   * assuming it, and the design doc argues it under "Update is pressed, not
+   * inferred".
+   *
+   * **`generated` must be freshly built and not retained.** `mergeGeneratedTrack`
+   * is pure but not deep: the score it returns shares `TrackDoc`, `StaffDoc`
+   * and `MasterBarDoc` nodes with both of its inputs, so the document this
+   * commit publishes points at the caller's `GeneratedTrack`. That is safe
+   * here only because `commit()` deep-clones before every later mutation - a
+   * caller that kept the object and edited it afterwards would be writing into
+   * a committed score behind undo's back.
+   */
+  sendProgression(generated: GeneratedTrack): void {
+    this.requireScoreMeter(generated);
+    this.commit(draft => Object.assign(draft, mergeGeneratedTrack(draft, generated)));
+  }
+
+  /**
+   * Detaches a generated track from its progression, leaving the music.
+   *
+   * The guard is what keeps the no-op honest. `flattenGeneratedTrack` hands
+   * back the score it was given when the index names no marked track, but
+   * committing that would still push an undo entry and set `isDirty` - a
+   * command that did nothing and cost the user their next undo.
+   */
+  flattenTrack(index: number): void {
+    if (!this.isGenerated(this.doc, index)) return;
+    this.commit(draft => Object.assign(draft, flattenGeneratedTrack(draft, index)));
+  }
+
+  /**
+   * True when the track at `trackIndex` is a progression's rather than the
+   * user's.
+   *
+   * The whole edit gate, consulted at the top of every command that writes a
+   * note or a beat. It deliberately does not reach `insertBar`, `removeBar` or
+   * the caret: bars are score-wide and stamp divergence instead, and a
+   * read-only track the caret cannot even rest on is worse than useless - the
+   * user could not read the track through the cursor, only look at it. The
+   * design doc settles both under "Where the controls are".
+   *
+   * The refusal lives here and not only in a disabled button because the
+   * button is not the only way in: a keyboard shortcut, a paste, or the next
+   * component to call the service all arrive past it.
+   */
+  private isGenerated(doc: ScoreDoc, trackIndex: number): boolean {
+    return doc.tracks[trackIndex]?.generated != null;
+  }
+
+  /**
+   * Stamps every marked track as diverged from its progression.
+   *
+   * Bar insertion and removal are score-wide, so they move a generated track's
+   * content without moving `ProgressionDoc.revision` - the one staleness the
+   * counter cannot see, because the edit happened on the score's side of the
+   * arrow. Marking the source rather than raising a flag beside it is what
+   * makes a revision and a divergence unable to disagree; see "Divergence is a
+   * state of the source, not a second check".
+   *
+   * Called inside the same `commit()` as the bar edit, so undoing the insertion
+   * takes the divergence back with it.
+   */
+  private markDiverged(draft: ScoreDoc): void {
+    for (const track of draft.tracks) {
+      if (track.generated) track.generated = { ...track.generated, source: { kind: 'diverged' } };
+    }
+  }
+
+  /**
+   * Refuses a projection that was barred in some other meter than this score's.
+   *
+   * The precondition `mergeGeneratedTrack` cannot check for itself, checked at
+   * the one place that knows both halves. A generated track shares the score's
+   * `masterBars`, so a projection barred in 3/4 merged into a 4/4 score writes
+   * music that disagrees with the bar lines drawn over it - and the caller has
+   * no freedom worth preserving here, since exactly one meter is ever right.
+   *
+   * It throws rather than returning quietly. This is a caller's bug and not a
+   * user's input, and both silent answers are worse: merging corrupts a
+   * document the user has been working in, and returning does nothing where
+   * the user pressed a button. `progressionTrack` takes the meter as an
+   * argument, so the fix at every call site is one expression -
+   * `effectiveTimeSignature(composer.doc.masterBars, 0)`.
+   *
+   * An empty projection is let through: it has no bars to be in the wrong
+   * meter, and `effectiveTimeSignature` would answer for it with a 4/4 default
+   * that means "nothing said" rather than "this meter".
+   */
+  private requireScoreMeter(generated: GeneratedTrack): void {
+    if (generated.masterBars.length === 0) return;
+
+    const score = effectiveTimeSignature(this.doc.masterBars, 0);
+    const projected = effectiveTimeSignature(generated.masterBars, 0);
+    if (projected.numerator === score.numerator && projected.denominator === score.denominator) {
+      return;
+    }
+
+    throw new Error(
+      `Generated track is barred in ${projected.numerator}/${projected.denominator}, but the ` +
+        `score's meter is ${score.numerator}/${score.denominator}. Project it with ` +
+        'effectiveTimeSignature(score.masterBars, 0).'
+    );
   }
 
   // -------------------------------------------------------------------------
