@@ -22,7 +22,7 @@ import {
 } from '../models/progression-normalize';
 import { FinestDivision } from '../models/transcription.model';
 import { CirclePosition, keySignaturePosition } from './circle-of-fifths.data';
-import { letterOf } from './note-spelling';
+import { letterOf, reduceToOctave } from './note-spelling';
 import { slotSpeller } from './progression-spelling';
 import {
   PlacedNote,
@@ -73,20 +73,26 @@ import {
  *
  * ### A note is engraved on the letter its degree names
  *
- * The projection writes a `NotePitch.letter` where it can, so B flat major's
+ * The projection writes a `NotePitch.letter` on every note, so B flat major's
  * borrowed `♭II` engraves as a C flat chord rather than as the B major one
  * alphaTab reads out of a two-flat signature and a bare pitch class. The rule
  * is `slotSpeller`'s and belongs to neither this module nor the roll, which is
  * the point of it living in `progression-spelling.ts`: the letter drawn on a
  * keyboard key and the letter engraved on the staff are one letter.
  *
- * The scale arrives as a parameter and defaults to empty, which means no
- * letters at all. That is not a degraded mode so much as the previous
- * behaviour kept reachable: `key.scaleId` resolves through
- * `MusicTheoryService`, this module is pure, and a caller that has no scale in
- * hand should hand over nothing rather than have a spelling invented from
- * `preferSharps`. See `placeProgressionNotes`, which is where the letters are
- * actually decided and why they are decided there.
+ * The scale arrives as a parameter, because `key.scaleId` resolves through
+ * `MusicTheoryService` and this module is pure. It defaults to empty, which is
+ * what an id that did not resolve looks like, and **every note is lettered all
+ * the same** - from `preferSharps`, which is the only answer left once no
+ * degree can be named. That is not the score inventing a spelling: it is the
+ * spelling the roll is already drawing on its keyboard for the same note, and
+ * the two agreeing is the whole reason the rule was lifted into
+ * `progression-spelling.ts`. Leaving the note unlettered instead would hand it
+ * to the key signature, which is the one participant with an opinion of its
+ * own - a flat-preferring key labelled `Gb` on the roll and engraved `F♯`.
+ *
+ * See `placeProgressionNotes`, which is where the letters are actually decided
+ * and why they are decided there.
  *
  * ### A note crossing a bar line is tied, not truncated
  *
@@ -255,27 +261,15 @@ function denominatorUnits(quarters: number, timeSignature: TimeSignature): numbe
 }
 
 /**
- * The pitch class a MIDI number sounds, 0-11.
- *
- * Reduced the long way rather than by `midi % 12`, because `normalizeRollNote`
- * permits a pitch below MIDI 0 - what is stored is what is heard - and a
- * negative remainder would miss every entry of the chord-tone map `slotSpeller`
- * keys by pitch class, silently taking the scale's answer for a chord tone.
- */
-function pitchClassOf(midi: number): number {
-  return ((midi % 12) + 12) % 12;
-}
-
-/**
  * MIDI to the pitched half of `NotePitch`, the inverse of `pitchToMidi`.
  *
- * `letter` is the staff letter to engrave on, or undefined to leave the
- * spelling to alphaTab and the key signature, which is what this module did
- * before M4 and what a projection with no scale still does. It is set rather
- * than defaulted-in so the field is genuinely absent, which is the state
- * `NotePitch` documents as "spell from the key signature": a `letter: undefined`
- * property would read the same to `!== undefined` but survives a `'letter' in
- * pitch` and a JSON round trip differently.
+ * `letter` is the staff letter to engrave on, and it is required, because
+ * `slotSpeller` always has one to give: a scale it cannot read degrees from -
+ * or no scale at all - falls through to the key's preference rather than
+ * declining. `NotePitch` still documents an absent `letter` as "spell from the
+ * key signature", and that state is reachable from the mapper's reverse
+ * direction; it is no longer reachable from here, and the projection does not
+ * keep a branch for a case it cannot produce.
  *
  * The octave is *not* adjusted to the letter's, and deliberately. A C flat
  * sounds where B does and this pair is read by `pitchToMidi`, which has to give
@@ -284,15 +278,12 @@ function pitchClassOf(midi: number): number {
  * an octave above the B without either end having to say so. See "A letter on
  * `NotePitch`" in the design doc.
  */
-function pitchOf(midi: number, letter?: NoteLetter): NotePitch {
+function pitchOf(midi: number, letter: NoteLetter): NotePitch {
   // Floored rather than truncated so a pitch below MIDI 0 still names a real
   // octave instead of folding onto octave -1.
   const octave = Math.floor(midi / 12) - 1;
-  const noteValue = pitchClassOf(midi);
 
-  return letter === undefined
-    ? { kind: 'pitched', noteValue, octave }
-    : { kind: 'pitched', noteValue, octave, letter };
+  return { kind: 'pitched', noteValue: reduceToOctave(midi), octave, letter };
 }
 
 /**
@@ -402,7 +393,7 @@ export function placeProgressionNotes(
   doc: ProgressionDoc,
   barCount: number,
   finestDivision: FinestDivision = PROGRESSION_FINEST_DIVISION,
-  /** The key's scale, for spelling. Empty leaves every note unlettered. */
+  /** The key's scale, for spelling. Empty spells from the key's preference. */
   scaleIntervals: readonly number[] = []
 ): ProgressionPlacement[][] {
   const timeSignature = doc.timeSignature;
@@ -410,15 +401,19 @@ export function placeProgressionNotes(
   const bars: ProgressionPlacement[][] = Array.from({ length: barCount }, () => []);
 
   for (const slot of doc.slots) {
-    // Null for an empty scale, and that is the whole of the default: no scale
-    // means no letters rather than letters guessed from the key alone. Asking
-    // `slotSpeller` anyway would answer from `preferSharps` for every note and
-    // engrave a spelling no degree named - a claim, where absence is the honest
-    // "let the key signature decide" this module made before M4.
-    const spell = scaleIntervals.length > 0 ? slotSpeller(doc.key, scaleIntervals, slot) : null;
+    // Unconditional, and that is the invariant rather than a shortcut: the roll
+    // calls `slotSpeller` on `state.keyScale ? intervals : []` with no gate of
+    // its own, so a gate here is the only way the two can print different
+    // letters for one note. An empty scale is not a special case to the speller
+    // - it answers from `preferSharps`, exactly as it does for a scale that
+    // resolves but has no degree letters to offer, a pentatonic being the case
+    // that reaches it. Both were already engraved that way; only the empty one
+    // used to be withheld, and withholding it is what let the roll label a key
+    // `Gb` while alphaTab engraved the same note `F♯`.
+    const spell = slotSpeller(doc.key, scaleIntervals, slot);
 
     for (const note of slot.notes) {
-      const letter = spell ? letterOf(spell(pitchClassOf(note.midi))) : undefined;
+      const letter = letterOf(spell(reduceToOctave(note.midi)));
       const start = slot.startBeat + note.startBeat;
       // Clamped at zero: a length is only checked for finiteness on the way in,
       // so a zero or negative one is a stored value rather than an impossible
@@ -484,6 +479,13 @@ export function placeProgressionNotes(
  *
  * The struck note wins over the held one at an equal position, which is why the
  * sort breaks ties on `isHeld`: a re-articulated chord tone should be struck.
+ * Since M4 that choice also decides a **letter**, and not only an articulation:
+ * the two placements come from different slots, so they were spelled by
+ * different spellers, and the survivor brings the incoming slot's spelling to a
+ * notehead the outgoing slot's note was going to be drawn on. That is the right
+ * way round - the note is written where the new chord begins, and should read
+ * as that chord's tone - but it is a second thing this rule settles, and it
+ * settles it silently.
  *
  * ## The second rule is only half of `snapToSlots`, and knowingly
  *
@@ -787,9 +789,10 @@ export function progressionToScore(
   doc: ProgressionDoc,
   finestDivision: FinestDivision = PROGRESSION_FINEST_DIVISION,
   /**
-   * The key's scale, for spelling. Empty - the default - leaves every note
-   * unlettered and alphaTab spells from the key signature, which is what this
-   * module did before M4.
+   * The key's scale, for spelling. Empty - the default - means the id did not
+   * resolve, and every note is then spelled from the key's own `preferSharps`,
+   * which is what `slotSpeller` does with a scale it cannot read degrees from
+   * and what the roll shows for the same document.
    *
    * Handed in rather than resolved here because resolving `key.scaleId` needs
    * `MusicTheoryService` and this module is pure - the same bargain

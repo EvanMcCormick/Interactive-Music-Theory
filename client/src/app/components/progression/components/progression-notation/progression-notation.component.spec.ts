@@ -2,6 +2,12 @@ import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testin
 import * as alphaTab from '@coderline/alphatab';
 
 import { AlphaTabSettings } from '../../../../models/alpha-tab.model';
+import { DEFAULT_VELOCITY } from '../../../../models/progression-normalize';
+import {
+  ProgressionDoc,
+  createDefaultProgression,
+  createDegreeSlot
+} from '../../../../models/progression.model';
 import { AlphaTabService } from '../../../../services/alpha-tab.service';
 import { ProgressionService } from '../../../../services/progression.service';
 import { ProgressionNotationComponent } from './progression-notation.component';
@@ -51,6 +57,37 @@ class FakeAlphaTabService {
 
 /** The debounce the component uses, plus a tick to clear it. */
 const PAST_DEBOUNCE = 150;
+
+/**
+ * B flat major with one borrowed `♭II`, sounding its root and nothing else.
+ *
+ * The milestone's fixture, built here as a document rather than through the
+ * palette because a borrowed numeral needs an `alter` the append helpers do not
+ * take. B flat's second degree is written on a C whatever the numeral does to
+ * it, so the `♭II` is a C flat chord and MIDI 71 - pitch class 11 - is its
+ * root, a C flat and not the B natural a two-flat signature reads out of the
+ * bare pitch.
+ */
+function flatTwoInBFlat(): ProgressionDoc {
+  const slot = createDegreeSlot(1, 0);
+  if (slot.harmony.kind !== 'degree') throw new Error('unreachable');
+
+  return {
+    ...createDefaultProgression(),
+    key: { tonic: 10, scaleId: 'ionian', preferSharps: false },
+    slots: [
+      {
+        ...slot,
+        lengthBeats: 4,
+        notes: [{ midi: 71, startBeat: 0, lengthBeats: 4, velocity: DEFAULT_VELOCITY }],
+        harmony: {
+          kind: 'degree',
+          degree: { ...slot.harmony.degree, alter: -1, quality: 'major' }
+        }
+      }
+    ]
+  };
+}
 
 describe('ProgressionNotationComponent', () => {
   let fixture: ComponentFixture<ProgressionNotationComponent>;
@@ -137,6 +174,33 @@ describe('ProgressionNotationComponent', () => {
     // The first bar carries the chord the palette put there.
     expect(score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes.length)
       .toBeGreaterThan(0);
+  }));
+
+  /**
+   * The panel hands the key's scale to the projection, which is the half of the
+   * spelling rule no unit test can see.
+   *
+   * `progression-score.spelling.spec.ts` pins what the projection does with a
+   * scale; this pins that *this* caller gives it one. Dropping the argument to
+   * a bare `[]` leaves that whole file green - the projection is still right
+   * about a scale it is no longer handed - and the score silently goes back to
+   * spelling from the key signature, which is the M3 behaviour the milestone
+   * exists to replace.
+   *
+   * Asserted on alphaTab's own note rather than on the `ScoreDoc`, because the
+   * fake captures what was actually handed to the engraver: a `letter` reaches
+   * the page as a forcing mode, and a C flat is `ForceFlat`. Without the scale
+   * the pitch class comes back a plain B, whose mode is `Default` - alphaTab's
+   * "spell it from the key signature", and a B natural under a numeral that
+   * says lowered second.
+   */
+  it('hands the projection the key scale, so a flat two engraves flat', fakeAsync(() => {
+    progression.replaceDocument(flatTwoInBFlat());
+    open();
+
+    const engraved =
+      engraver.rendered[0].tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+    expect(engraved.accidentalMode).toBe(alphaTab.model.NoteAccidentalMode.ForceFlat);
   }));
 
   it('follows the document while it is open', fakeAsync(() => {

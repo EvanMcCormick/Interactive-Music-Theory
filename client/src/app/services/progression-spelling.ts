@@ -1,5 +1,11 @@
 import { ChordDegree, ChordSlot, ProgressionKey } from '../models/progression.model';
-import { SpelledNote, formatNote, spellAt, spellPitchClass } from './note-spelling';
+import {
+  SpelledNote,
+  formatNote,
+  reduceToOctave,
+  spellAt,
+  spellPitchClass
+} from './note-spelling';
 import { chordRootPitchClass } from './progression-generate';
 import { effectiveChord, isHeptatonic } from './progression-harmony';
 
@@ -131,13 +137,13 @@ export function scaleNoteSpelling(
   scaleIntervals: readonly number[],
   pitchClass: number
 ): SpelledNote {
-  const wanted = ((pitchClass % 12) + 12) % 12;
+  const wanted = reduceToOctave(pitchClass);
 
   if (isHeptatonic(scaleIntervals)) {
     const tonic = tonicSpelling(key);
 
     for (let degree = 0; degree < scaleIntervals.length; degree++) {
-      if (((key.tonic + scaleIntervals[degree]) % 12 + 12) % 12 !== wanted) continue;
+      if (reduceToOctave(key.tonic + scaleIntervals[degree]) !== wanted) continue;
 
       const spelled = spellAt(wanted, tonic, degree);
       if (spelled) return spelled;
@@ -202,10 +208,13 @@ export function slotSpeller(
  * apart, and the two positions need not read the same letter. A minor ninth
  * with the ninth pinned sharp is the clean case: the minor third sits in
  * position 1, two letters above the root, and the ♯9 - the same pitch class an
- * octave up - sits in position 4, one letter above it. One row of the roll's
- * keyboard cannot carry two names and neither can one note of the score, so the
- * lower position - the one the chord is built on - keeps it, and that pitch
- * class comes back an `E♭` rather than a `D♯`.
+ * octave up - sits in position 4, one letter above the root. One row of the
+ * roll's keyboard cannot carry two names, and this map is keyed by pitch class,
+ * so it cannot hold two either. The *score* is under no such constraint of its
+ * own - a staff can write an E♭ and a D♯ in one chord at different octaves -
+ * and it inherits this one only because it is spelled through this map. So the
+ * lower position, the one the chord is built on, keeps it, and that pitch class
+ * comes back an `E♭` rather than a `D♯` at both octaves.
  *
  * The doubling was first found on a sus4 at extent 11, which puts the suspended
  * fourth in position 1 and the eleventh in position 5, and that case is worth
@@ -226,7 +235,7 @@ function chordToneSpellings(
   const root = chordRootSpelling(key, scaleIntervals, degree);
 
   chord.intervals.forEach((interval, i) => {
-    const pitchClass = (((key.tonic + chord.root + interval) % 12) + 12) % 12;
+    const pitchClass = reduceToOctave(key.tonic + chord.root + interval);
     if (spellings.has(pitchClass)) return;
 
     // Null past a double accidental, and then this tone simply has no

@@ -33,9 +33,11 @@ import { PROGRESSION_FINEST_DIVISION, progressionToScore } from './progression-s
  * would be testing nothing.
  */
 
-/** B flat major, and the intervals of the mode its id names. */
+/** The intervals of the mode each key's id names. */
 const IONIAN = [0, 2, 4, 5, 7, 9, 11];
 const LOCRIAN = [0, 1, 3, 5, 6, 8, 10];
+/** Five degrees, so no letter arithmetic applies - `isHeptatonic` is false. */
+const MINOR_PENTATONIC = [0, 3, 5, 7, 10];
 
 function key(tonic: number, scaleId: string, preferSharps: boolean): ProgressionKey {
   return { tonic, scaleId, preferSharps };
@@ -119,21 +121,56 @@ describe('progressionToScore spelling', () => {
   });
 
   /**
-   * The default, which is today's behaviour exactly.
+   * The default: no scale still means a letter, and it is the key's.
    *
    * The projection cannot resolve `key.scaleId` itself - that needs
    * `MusicTheoryService` and this module is pure - so the scale is handed in,
-   * and an empty one means no letters at all rather than letters guessed from
-   * the key alone. That is what keeps every existing caller and spec on the
-   * result it already had.
+   * and an empty one is what an id that did not resolve looks like. There is no
+   * degree to take a letter from, so `preferSharps` answers, and B flat major's
+   * preference is flat: the same three pitches come back on B, E and G with the
+   * lower two flattened - and the top one on the *wrong* letter, since 11 ought
+   * to be a C flat and the key alone cannot know that.
+   *
+   * That wrong letter is the point of the case rather than an oversight in it.
+   * It is exactly what the roll draws on its keyboard for this document -
+   * `buildRollView` calls the same `slotSpeller` on the same empty array with no
+   * gate of its own - and the invariant the whole refactor is for is that the
+   * two agree. Withholding the letter here would not make the score right; it
+   * would hand the note to the key signature, whose answer is a third opinion
+   * neither the roll nor the speller holds.
    */
-  it('leaves every note unlettered when no scale is given', () => {
+  it('spells from the key when no scale is given, as the roll does', () => {
     const doc = docOf(
       key(10, 'ionian', false),
       [slotOf({ degree: 1, alter: -1, quality: 'major' }, [note(71), note(75), note(78)])]
     );
 
-    expect(lettersOf(doc)).toEqual([undefined, undefined, undefined]);
+    expect(lettersOf(doc)).toEqual(['B', 'E', 'G']);
+  });
+
+  /**
+   * And a scale that resolves but names no degrees is the same case.
+   *
+   * A pentatonic has five degrees and cannot take seven letters one apart, so
+   * `chordToneSpellings` and `scaleNoteSpelling` both refuse on `isHeptatonic`
+   * and every note falls through to `preferSharps` - with a scale array that is
+   * emphatically not empty. This is why the gate that used to stand in
+   * `placeProgressionNotes` tested the wrong thing: it read array length, and
+   * what it meant to ask was whether a degree could be named. Length said yes
+   * for this scale and the notes were spelled from the preference anyway - so
+   * the case the gate was written to prevent was already reachable straight
+   * through it.
+   *
+   * C minor pentatonic, preferring flats, over a `I` slot: pitch class 3 has no
+   * degree letter to claim and comes back an E flat, the letter above.
+   */
+  it('spells from the key for a scale with no degree letters to give', () => {
+    const doc = docOf(
+      key(0, 'minorPentatonic', false),
+      [slotOf({ degree: 0 }, [note(60), note(63)])]
+    );
+
+    expect(lettersOf(doc, MINOR_PENTATONIC)).toEqual(['C', 'E']);
   });
 
   /**
@@ -173,6 +210,30 @@ describe('progressionToScore spelling', () => {
     ]);
 
     expect(lettersOf(doc, IONIAN)).toEqual(['C', 'B']);
+  });
+
+  /**
+   * A pitch below MIDI 0 is still the chord tone it sounds.
+   *
+   * `normalizeRollNote` permits one - what is stored is what is heard - so the
+   * projection has to reduce a negative MIDI the long way rather than by
+   * `midi % 12`. A negative remainder is not a key of the chord-tone map, which
+   * is keyed 0-11, so the lookup would miss and the *scale* would answer for a
+   * note the chord names. It answers wrongly here and silently: pitch class 11
+   * is not in B flat major at all, so the fall-through goes on to the key's
+   * preference and prints a plain B - the very spelling the `♭II` exists to
+   * correct, reached by a different route.
+   *
+   * MIDI -1 is pitch class 11, the same C flat the fixture above engraves, and
+   * `midi % 12` makes it -1.
+   */
+  it('spells a pitch below MIDI 0 from the chord, not from the remainder', () => {
+    const doc = docOf(
+      key(10, 'ionian', false),
+      [slotOf({ degree: 1, alter: -1, quality: 'major' }, [note(-1)])]
+    );
+
+    expect(lettersOf(doc, IONIAN)).toEqual(['C']);
   });
 
   /**

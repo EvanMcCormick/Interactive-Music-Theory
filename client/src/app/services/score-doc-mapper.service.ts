@@ -37,7 +37,7 @@ import {
   toOttavia,
   toTripletFeel
 } from './alpha-tab-enum.bridge';
-import { alterFor } from './note-spelling';
+import { alterFor, reduceToOctave } from './note-spelling';
 import { STEP_SEMITONES } from './staff-pitch';
 
 /** Step index of each letter, C through B, as `SpelledNote.letter` numbers them. */
@@ -125,7 +125,7 @@ function letterFor(
   const alter = ALTER_BY_MODE.get(mode);
   if (alter === undefined) return undefined;
 
-  return LETTER_BY_NATURAL.get(((((pitchClass - alter) % 12) + 12) % 12));
+  return LETTER_BY_NATURAL.get(reduceToOctave(pitchClass - alter));
 }
 
 /**

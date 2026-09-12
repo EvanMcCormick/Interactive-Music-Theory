@@ -63,8 +63,21 @@ const MAX_ACCIDENTAL = 2;
 /** One upper-case letter, then up to two of a single accidental sign. */
 const NOTE_NAME_PATTERN = /^([A-G])(#{1,2}|b{1,2})?$/;
 
-/** Reduces to 0-11, for callers holding a stack that was never reduced. */
-function reduceToOctave(value: number): number {
+/**
+ * Reduces to 0-11, for callers holding a value that was never reduced.
+ *
+ * The long way round rather than `value % 12`, because the remainder keeps the
+ * sign of its dividend and the callers have negatives to hand: a chord stack
+ * that crossed the octave downwards, and a MIDI number below 0 - which
+ * `normalizeRollNote` permits, since what is stored is what is heard. A pitch
+ * class of -1 is not 11 to a `Map` keyed 0-11 or to an `indexOf`, and it misses
+ * silently rather than throwing.
+ *
+ * Exported for the same reason `alterFor` is, and stated there: two writings of
+ * one expression is the arrangement `STEP_SEMITONES` is shared next door to
+ * avoid. It had reached four or five copies before this became the one.
+ */
+export function reduceToOctave(value: number): number {
   return ((value % 12) + 12) % 12;
 }
 
