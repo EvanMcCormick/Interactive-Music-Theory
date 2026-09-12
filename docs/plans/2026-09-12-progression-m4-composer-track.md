@@ -1025,6 +1025,17 @@ feat: Refuse to save a linked track, and offer to flatten it
   before the code and is a design until this task makes it a report. Record what Task 2
   measured about `AccidentalHelper` if it differed from what the design predicted, and
   whatever Task 7 found about staff padding.
+- Design doc, known limitations: **`insertBar(0)` erases the score's declared meter.**
+  `createDefaultMasterBar()` carries `timeSignature: null`, and `insertBar` copies clef,
+  ottava and key signature from a template *bar* but nothing from the master bar. Insert
+  at index 0 in a 3/4 score and `effectiveTimeSignature(masterBars, 0)` finds nothing at
+  bar 1 and falls through to its hardcoded 4/4, so the score reads as 4/4 at bar 1 and
+  3/4 from bar 2 — to `padStaff` and to `ComposerService.scoreMeter` alike, which is now
+  the definition of "the score's meter" that `requireScoreMeter` checks against and every
+  call site builds against. The bug predates M4 and lives in `insertBar`, not in Task 9;
+  what M4 added is a corruption path onto it, so it is recorded here rather than fixed
+  here. The fix is for the inserted master bar to carry the meter in force at its
+  position when it lands before a bar that declares one.
 - ROADMAP: M4 shipped, with what it added; the known-limitations paragraph gains the
   mid-score meter change.
 - README: what a user can now do.

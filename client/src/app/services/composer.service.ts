@@ -11,6 +11,7 @@ import {
   NotePitch,
   ScoreDoc,
   StaffDoc,
+  TimeSignature,
   TrackDoc,
   createDefaultBar,
   effectiveTimeSignature,
@@ -69,6 +70,22 @@ export class ComposerService {
 
   get doc(): ScoreDoc {
     return this.stateSubject.getValue().doc;
+  }
+
+  /**
+   * The meter a projection must be barred in to be merged into this score.
+   *
+   * `requireScoreMeter` refuses anything else, and the refusal used to be
+   * answerable only by copying an expression out of a docstring. Naming it here
+   * makes the contract one word at the call site -
+   * `progressionTrack(doc, intervals, composer.scoreMeter)` - and puts the
+   * definition of "the score's meter" in one place, so a caller cannot
+   * accidentally answer a differently-shaped question than the guard asks.
+   *
+   * Bar 1's signature, with everything that costs: see `requireScoreMeter`.
+   */
+  get scoreMeter(): TimeSignature {
+    return effectiveTimeSignature(this.doc.masterBars, 0);
   }
 
   // -------------------------------------------------------------------------
@@ -383,24 +400,44 @@ export class ComposerService {
   }
 
   /**
-   * Applies the current input duration to the beat under the caret.
+   * Applies the current input duration to the beat under the caret, and
+   * remembers it as the choice for the next note.
    *
-   * A refusal on a generated track takes the palette with it: this command
-   * writes a beat *and* remembers the choice, and half of it happening would
-   * leave the toolbar showing a duration the score never received. The toolbar
-   * has `setInputDuration` for changing the choice on its own.
+   * The gate covers the write and stops there, because these are two effects
+   * and only one of them is the generated track's business. The score is the
+   * track's; the input duration is the *toolbar's*, and the toolbar belongs to
+   * whichever track the caret moves to next.
+   *
+   * Refusing both is what a read of the gate suggests and it is wrong twice
+   * over. Every route to the input duration runs through here - the palette,
+   * the dot toggle, and the `+`/`-` keys all call this method, and nothing else
+   * in the app calls `setInputDuration` - so a blanket refusal freezes the
+   * palette outright for as long as the caret rests on a generated track, which
+   * the design explicitly permits and which is how a user reads one. It also
+   * takes away the pre-selection: choose a duration while looking at the
+   * generated track, move back to your own, and type.
+   *
+   * Nor is there an atomicity to protect. `commit()` runs its callback against
+   * a draft, so a caret on an empty beat already returns early and lands an
+   * empty commit with the choice remembered anyway - "write the beat and
+   * remember the choice, always together" was never the invariant. What is
+   * left is the honest half: a toolbar showing a duration the score under the
+   * caret does not have, which is what a toolbar showing an *input* duration
+   * means everywhere else in the editor.
    */
   applyDurationAtCursor(duration: DurationValue, dots: number): void {
     const state = this.stateSubject.getValue();
     const cursor = state.cursor;
-    if (this.isGenerated(state.doc, cursor.trackIndex)) return;
 
-    this.commit(draft => {
-      const beat = this.beatAt(draft, cursor);
-      if (!beat) return;
-      beat.duration = duration;
-      beat.dots = dots;
-    });
+    if (!this.isGenerated(state.doc, cursor.trackIndex)) {
+      this.commit(draft => {
+        const beat = this.beatAt(draft, cursor);
+        if (!beat) return;
+        beat.duration = duration;
+        beat.dots = dots;
+      });
+    }
+
     this.setInputDuration(duration, dots);
   }
 
@@ -515,6 +552,13 @@ export class ComposerService {
    * here only because `commit()` deep-clones before every later mutation - a
    * caller that kept the object and edited it afterwards would be writing into
    * a committed score behind undo's back.
+   *
+   * `generated.truncated` arrives in the argument and is dropped here by
+   * decision rather than by oversight. A truncated projection is a well-formed
+   * track, and sending one puts less music in the score than the progression
+   * holds - which is on screen, and one Send away from fixed. Export is where
+   * truncation refuses, because a file that silently drops bars is the failure
+   * a user finds in another program a week later.
    */
   sendProgression(generated: GeneratedTrack): void {
     this.requireScoreMeter(generated);
@@ -563,8 +607,17 @@ export class ComposerService {
    * makes a revision and a divergence unable to disagree; see "Divergence is a
    * state of the source, not a second check".
    *
+   * Like the revision counter, it over-reports in the safe direction, and
+   * `appendBar` is the plainest case: a bar added past the end of the music
+   * moves no note in the generated track, but the track is stamped anyway and
+   * the badge stays stale until an Update rebuilds it byte-identically. One
+   * needless click, and the check that would avoid it - did this bar edit
+   * actually touch this track's notes? - is a diff of the projection wearing a
+   * cheaper name.
+   *
    * Called inside the same `commit()` as the bar edit, so undoing the insertion
-   * takes the divergence back with it.
+   * takes the divergence back with it; `composer.service.generated.spec.ts`
+   * pins that rather than trusting it.
    */
   private markDiverged(draft: ScoreDoc): void {
     for (const track of draft.tracks) {
@@ -573,20 +626,33 @@ export class ComposerService {
   }
 
   /**
-   * Refuses a projection that was barred in some other meter than this score's.
+   * Refuses a projection whose *first* bar is in some other meter than this
+   * score's first bar.
    *
-   * The precondition `mergeGeneratedTrack` cannot check for itself, checked at
-   * the one place that knows both halves. A generated track shares the score's
-   * `masterBars`, so a projection barred in 3/4 merged into a 4/4 score writes
-   * music that disagrees with the bar lines drawn over it - and the caller has
-   * no freedom worth preserving here, since exactly one meter is ever right.
+   * Bar 1 against bar 1, and no further - which is narrower than it sounds and
+   * exactly as wide as M4's projection is. `progressionTrack` bars the whole
+   * track in the single meter it is handed, so one comparison decides whether
+   * that meter was the right one. What the comparison cannot decide is whether
+   * the *score* keeps that meter: a score that moves to 3/4 at bar 9 passes
+   * this check and still gets a generated staff whose bar lines disagree from
+   * bar 9 on. That is the design's recorded limitation and not a hole here -
+   * "A score that changes meter mid-way", under "Not in M4" in the progression
+   * composer design doc, says why the fix waits and what it costs.
+   *
+   * So: the precondition `mergeGeneratedTrack` cannot check for itself, checked
+   * at the one place that knows both halves. A generated track shares the
+   * score's `masterBars`, so a projection barred in 3/4 merged into a 4/4 score
+   * writes music that disagrees with the bar lines drawn over it - and the
+   * caller has no freedom worth preserving here, since exactly one meter is
+   * ever right.
    *
    * It throws rather than returning quietly. This is a caller's bug and not a
    * user's input, and both silent answers are worse: merging corrupts a
    * document the user has been working in, and returning does nothing where
    * the user pressed a button. `progressionTrack` takes the meter as an
-   * argument, so the fix at every call site is one expression -
-   * `effectiveTimeSignature(composer.doc.masterBars, 0)`.
+   * argument, so the fix at every call site is one word - `scoreMeter`, the
+   * getter above, which is what the message names rather than an expression a
+   * call site has no variable in scope to write.
    *
    * An empty projection is let through: it has no bars to be in the wrong
    * meter, and `effectiveTimeSignature` would answer for it with a 4/4 default
@@ -595,7 +661,7 @@ export class ComposerService {
   private requireScoreMeter(generated: GeneratedTrack): void {
     if (generated.masterBars.length === 0) return;
 
-    const score = effectiveTimeSignature(this.doc.masterBars, 0);
+    const score = this.scoreMeter;
     const projected = effectiveTimeSignature(generated.masterBars, 0);
     if (projected.numerator === score.numerator && projected.denominator === score.denominator) {
       return;
@@ -603,8 +669,8 @@ export class ComposerService {
 
     throw new Error(
       `Generated track is barred in ${projected.numerator}/${projected.denominator}, but the ` +
-        `score's meter is ${score.numerator}/${score.denominator}. Project it with ` +
-        'effectiveTimeSignature(score.masterBars, 0).'
+        `score's meter is ${score.numerator}/${score.denominator}. Build it with ` +
+        'ComposerService.scoreMeter.'
     );
   }
 

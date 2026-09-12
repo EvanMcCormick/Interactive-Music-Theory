@@ -10,9 +10,11 @@ import {
   createDegreeSlot
 } from '../models/progression.model';
 import {
+  ComposerState,
   GeneratedOrigin,
   NotePitch,
   TimeSignature,
+  TrackDoc,
   effectiveTimeSignature
 } from '../models/composer.model';
 
@@ -36,7 +38,10 @@ import {
  *    beats and nothing else, so the caret can still rest on a generated track.
  *  - **Divergence is stamped by the commands that cause it.** `insertBar` and
  *    `removeBar` move a generated track's content while the progression's
- *    revision stands still, which is the one hole the counter cannot see.
+ *    revision stands still, which is the one hole the counter cannot see. The
+ *    stamp goes on the draft inside the same `commit()`, so an undo takes it
+ *    back - pinned separately, because a stamp applied after the commit or by a
+ *    subscriber would pass the spec that only checks the insertion.
  */
 describe('ComposerService generated tracks', () => {
   let service: ComposerService;
@@ -52,18 +57,23 @@ describe('ComposerService generated tracks', () => {
     service = TestBed.inject(ComposerService);
   });
 
-  /** One bar-long C major triad, which is what the roll writes for I. */
-  function slotOf(startBeat: number): ChordSlot {
+  /** One bar-long triad on `degree`, voiced from `midis`. */
+  function slotOn(degree: number, startBeat: number, midis: number[]): ChordSlot {
     return {
-      ...createDegreeSlot(0, startBeat),
+      ...createDegreeSlot(degree, startBeat),
       lengthBeats: 4,
-      notes: [60, 64, 67].map(midi => ({
+      notes: midis.map(midi => ({
         midi,
         startBeat: 0,
         lengthBeats: 4,
         velocity: DEFAULT_VELOCITY
       }))
     };
+  }
+
+  /** One bar-long C major triad, which is what the roll writes for I. */
+  function slotOf(startBeat: number): ChordSlot {
+    return slotOn(0, startBeat, [60, 64, 67]);
   }
 
   /**
@@ -95,11 +105,47 @@ describe('ComposerService generated tracks', () => {
     return progressionTrack(doc, IONIAN, effectiveTimeSignature(service.doc.masterBars, 0));
   }
 
-  /** The marker on the track this progression generated, or a failure. */
-  function marker(): GeneratedOrigin {
+  /**
+   * The same progression revised so that its second chord is a V, not a I.
+   *
+   * Two revisions of an *identical* progression cannot tell "the marker was
+   * restored" from "the whole track was restored", because the two candidate
+   * tracks are byte-identical. Changing a chord is what gives the undo spec
+   * something to distinguish.
+   */
+  function withFifth(doc: ProgressionDoc): ProgressionDoc {
+    return { ...doc, slots: [slotOf(0), slotOn(4, 4, [67, 71, 74])] };
+  }
+
+  /** The track this progression generated, or a failure. */
+  function generatedTrack(): TrackDoc {
     const found = service.doc.tracks.find(track => track.generated?.progressionId === 'prog-1');
-    if (!found?.generated) throw new Error('no generated track in the score');
-    return found.generated;
+    if (!found) throw new Error('no generated track in the score');
+    return found;
+  }
+
+  /** The marker on that track, or a failure. */
+  function marker(): GeneratedOrigin {
+    const origin = generatedTrack().generated;
+    if (!origin) throw new Error('no generated track in the score');
+    return origin;
+  }
+
+  /** That track's music, with the marker that rides on it left out. */
+  function generatedMusic(): string {
+    return JSON.stringify(generatedTrack().staves);
+  }
+
+  /** The published state, for the fields that are not the document. */
+  function state(): ComposerState {
+    const seen: ComposerState[] = [];
+    service
+      .getState()
+      .subscribe(value => seen.push(value))
+      .unsubscribe();
+    const latest = seen[seen.length - 1];
+    if (!latest) throw new Error('the service published no state');
+    return latest;
   }
 
   /** The caret parked on the generated track's first beat. */
@@ -128,15 +174,21 @@ describe('ComposerService generated tracks', () => {
     expect(marker().source).toEqual({ kind: 'revision', revision: 9 });
   });
 
-  it('restores the old marker on undo, so the stale badge comes back', () => {
+  it('restores the old track and its marker on undo, so the stale badge comes back', () => {
     // The property the whole explicit-Update design rests on. Every write is a
-    // user action through commit(), so undo governs the marker too.
+    // user action through commit(), so undo governs the marker too - and the
+    // music with it, which is the sentence the design actually writes. The two
+    // revisions differ in a chord so that a restored marker over rebuilt music
+    // could not pass this.
     service.sendProgression(built(atRevision(4)));
-    service.sendProgression(built(atRevision(9)));
+    const music = generatedMusic();
+    service.sendProgression(built(withFifth(atRevision(9))));
+    expect(generatedMusic()).not.toBe(music);
 
     service.undo();
 
     expect(marker().source).toEqual({ kind: 'revision', revision: 4 });
+    expect(generatedMusic()).toBe(music);
   });
 
   it('refuses a projection barred in a meter the score does not use', () => {
@@ -146,8 +198,19 @@ describe('ComposerService generated tracks', () => {
     // barring into a document the user has been working in.
     const wrongMeter = progressionTrack(atRevision(4), IONIAN, THREE_FOUR);
 
-    expect(() => service.sendProgression(wrongMeter)).toThrowError(/meter/i);
+    // The message names `scoreMeter`, because the fix is at the call site and a
+    // call site has no `score` variable to read the longhand off.
+    expect(() => service.sendProgression(wrongMeter)).toThrowError(/scoreMeter/);
     expect(service.doc.tracks.every(track => track.generated === null)).toBeTrue();
+  });
+
+  it('offers the meter a caller has to build against', () => {
+    // The contract as a getter rather than a line of prose: `scoreMeter` is the
+    // one expression that always satisfies the check above.
+    const inScoreMeter = progressionTrack(atRevision(4), IONIAN, service.scoreMeter);
+
+    expect(() => service.sendProgression(inScoreMeter)).not.toThrow();
+    expect(marker().source).toEqual({ kind: 'revision', revision: 4 });
   });
 
   it('refuses a note written into a generated track', () => {
@@ -180,7 +243,12 @@ describe('ComposerService generated tracks', () => {
     expect(JSON.stringify(service.doc.tracks)).toBe(before);
   });
 
-  it('refuses a duration change inside a generated track', () => {
+  it('remembers a duration choice beside a generated track without writing it', () => {
+    // Half of this command is refused and half of it is not. The palette and
+    // the dot toggle are the only route to the input duration, so refusing the
+    // whole command would freeze them for as long as the caret rested on a
+    // track the design says the caret may rest on - including while the user
+    // pre-selects a duration to carry back to their own track.
     service.sendProgression(built(atRevision(4)));
     caretOnGenerated();
     const before = JSON.stringify(service.doc.tracks);
@@ -188,6 +256,22 @@ describe('ComposerService generated tracks', () => {
     service.applyDurationAtCursor(8, 1);
 
     expect(JSON.stringify(service.doc.tracks)).toBe(before);
+    expect(state().inputDuration).toBe(8);
+    expect(state().inputDots).toBe(1);
+  });
+
+  it('spends no undo step on the half of that command it refused', () => {
+    // The obvious way to keep the palette live - commit always, and gate inside
+    // the callback - leaves an empty commit behind, so the user's next undo
+    // takes back a duration change the score never received. The score-untouched
+    // assertion above cannot see that; this one can.
+    service.sendProgression(built(atRevision(4)));
+    caretOnGenerated();
+
+    service.applyDurationAtCursor(8, 1);
+    service.undo();
+
+    expect(service.doc.tracks.some(track => track.generated !== null)).toBeFalse();
   });
 
   it('refuses without spending an undo step', () => {
@@ -247,10 +331,28 @@ describe('ComposerService generated tracks', () => {
     expect(marker().source).toEqual({ kind: 'diverged' });
   });
 
-  it('leaves an unmarked track alone when a bar is inserted', () => {
+  it('takes the divergence back on undo', () => {
+    // The stamp is applied to the draft inside the same commit() as the bar
+    // edit, so it is undoable like the edit. A refactor that moved it into a
+    // pass after the commit, or into a subscriber, would leave a track
+    // permanently diverged by an insertion the user took back - which is
+    // exactly what "Update is pressed, not inferred" warns against.
+    service.sendProgression(built(atRevision(4)));
     service.insertBar(1);
 
-    expect(service.doc.tracks.every(track => track.generated === null)).toBeTrue();
+    service.undo();
+
+    expect(marker().source).toEqual({ kind: 'revision', revision: 4 });
+  });
+
+  it('leaves an unmarked track alone when a bar is inserted', () => {
+    // Per-track, not per-score: the user's own track sits in the same document
+    // as a generated one and must not pick up a marker from its neighbour.
+    service.sendProgression(built(atRevision(4)));
+
+    service.insertBar(1);
+
+    expect(service.doc.tracks[0].generated).toBeNull();
   });
 
   it('clears divergence on update', () => {
