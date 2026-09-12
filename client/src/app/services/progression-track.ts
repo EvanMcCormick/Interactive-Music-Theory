@@ -7,7 +7,7 @@ import {
   createDefaultBar,
   effectiveTimeSignature
 } from '../models/composer.model';
-import { ProgressionDoc } from '../models/progression.model';
+import { ProgressionDoc, UNTITLED_PROGRESSION_NAME } from '../models/progression.model';
 import { PROGRESSION_FINEST_DIVISION, progressionToScore } from './progression-score';
 
 /**
@@ -117,6 +117,42 @@ export interface GeneratedTrack {
 }
 
 /**
+ * The label a track is born with: the progression's name, or an honest
+ * description of a progression that has none.
+ *
+ * There are two ways to have none and only one of them is blankness.
+ * `ProgressionDoc.name` has no empty state - `createDefaultProgression` fills
+ * it - so a progression the user has never named is not `''`, it is still
+ * carrying `UNTITLED_PROGRESSION_NAME`. Checking only for blankness is why
+ * every track sent to the Composer arrived called *Untitled*: the check was
+ * right and it was answering a question that never comes up, because nothing in
+ * the app produces a blank name in the first place.
+ *
+ * `'Progression'` is the better of the two honest answers, and it is the
+ * projection's own constant for the same track. *Untitled* says a document was
+ * not named; *Progression* says what the row in the tracks panel holds, which
+ * is what a user scanning that panel is reading it for.
+ *
+ * The comparison is against the shared constant rather than against a `'Untitled'`
+ * of this module's own. A literal here would be one module hardcoding another
+ * module's string and would go quietly wrong the day the factory's default
+ * changed; the import is a stated fact about what that value *means*, and moves
+ * with it.
+ *
+ * The cost is that a progression a user deliberately named `Untitled` is
+ * labelled `Progression`, and it is the right trade: the two are
+ * indistinguishable by construction, and of the two readings the one that
+ * describes the track is more use than the one that describes a document nobody
+ * named. Only the exact name is read that way - `Untitled sketch` is a name and
+ * survives.
+ */
+function trackName(progressionName: string): string {
+  const trimmed = progressionName.trim();
+
+  return trimmed === '' || trimmed === UNTITLED_PROGRESSION_NAME ? 'Progression' : trimmed;
+}
+
+/**
  * Projects a progression as a track ready to be put into a score.
  *
  * The meter is the score's and not the progression's; see the module docstring
@@ -158,11 +194,10 @@ export function progressionTrack(
       // The name is only the *initial* name. `mergeGeneratedTrack` keeps
       // whatever the track in the score is already called, so this is the label
       // a track is born with; the marker's own copy of `progressionName` is
-      // what stays in step with the progression afterwards. An unnamed
-      // progression falls back to the projection's constant rather than
-      // labelling a row in the tracks panel with the empty string.
+      // what stays in step with the progression afterwards. `trackName` has the
+      // rule for a progression nobody has named.
       id: `progression-${doc.id}`,
-      name: doc.name.trim() || 'Progression',
+      name: trackName(doc.name),
       generated: {
         progressionId: doc.id,
         progressionName: doc.name,

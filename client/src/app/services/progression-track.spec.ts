@@ -16,6 +16,7 @@ import {
 import {
   ChordSlot,
   ProgressionDoc,
+  UNTITLED_PROGRESSION_NAME,
   createDefaultProgression,
   createDegreeSlot
 } from '../models/progression.model';
@@ -196,6 +197,36 @@ describe('progressionTrack', () => {
     expect(progressionTrack(docOf({ name: '   ' }), IONIAN, FOUR_FOUR).track.name).toBe(
       'Progression'
     );
+  });
+
+  it('falls back for a progression nobody has renamed either', () => {
+    // The case that actually reaches a user, and the one the blank check above
+    // never covered: `ProgressionDoc.name` has no empty state, so an unnamed
+    // progression is not blank - it is still carrying the name the factory gave
+    // it. Every track sent to the Composer was therefore called *Untitled*,
+    // which is the least useful of the two honest answers.
+    const doc = createDefaultProgression();
+
+    expect(doc.name).toBe(UNTITLED_PROGRESSION_NAME);
+    expect(progressionTrack(doc, IONIAN, FOUR_FOUR).track.name).toBe('Progression');
+  });
+
+  it('falls back for the default name with whitespace round it', () => {
+    // Same name, typed back in by hand. The comparison is against the trimmed
+    // name for the reason the blank check is: leading spaces are not a rename.
+    expect(
+      progressionTrack(docOf({ name: `  ${UNTITLED_PROGRESSION_NAME}  ` }), IONIAN, FOUR_FOUR).track
+        .name
+    ).toBe('Progression');
+  });
+
+  it('keeps a name the user chose, whatever it resembles', () => {
+    // The boundary of the rule above. Only the default name exactly is read as
+    // unnamed: a progression the user deliberately called `Untitled sketch` has
+    // been named, and the fallback has no business overruling it.
+    expect(
+      progressionTrack(docOf({ name: 'Untitled sketch' }), IONIAN, FOUR_FOUR).track.name
+    ).toBe('Untitled sketch');
   });
 
   it('gives each progression a track id of its own', () => {
@@ -423,7 +454,11 @@ describe('mergeGeneratedTrack', () => {
     // Update is a refresh of a track the user has already placed among their
     // own. Appending a second one, or moving this one to the end, would both
     // rearrange a panel the user arranged.
-    const doc = docOf({ revision: 1 });
+    //
+    // Named, so that the row in the middle is identifiable by its own label
+    // rather than by the fallback every unnamed progression shares - the point
+    // here is *which* of three tracks came back in the middle.
+    const doc = docOf({ revision: 1, name: 'Turnaround' });
     const score = mergeGeneratedTrack(
       userScore(4, [plainTrack('Guitar', 4), plainTrack('Bass', 4)]),
       progressionTrack(doc, IONIAN, FOUR_FOUR)

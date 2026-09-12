@@ -536,6 +536,34 @@ function createId(): string {
 }
 
 /**
+ * The name a progression starts with, and the name it still has if nobody
+ * renames it.
+ *
+ * A constant rather than a literal because a second module needs to *recognise*
+ * it. `ProgressionDoc.name` has no empty state - every progression has a name
+ * from the moment `createDefaultProgression` builds it - so "the user has not
+ * named this" is not blankness, it is this value, and the only way for anything
+ * outside this file to ask the question is to compare against the same string
+ * the factory wrote. `progressionTrack` is the caller that asks: it labels a
+ * track in the Composer's panel, where a row called *Untitled* says nothing
+ * about what it holds.
+ *
+ * Exporting it is what makes that a shared fact rather than a guess. The
+ * alternative on offer was for `progression-track.ts` to compare against its
+ * own copy of `'Untitled'`, which is one module hardcoding another module's
+ * literal and stays right only until this line changes.
+ *
+ * **Nothing renames a progression today.** `ProgressionService` has no setter
+ * for this field, so the only ways off this value are loading a document that
+ * was named elsewhere and `replaceDocument`. That is what makes the value worth
+ * recognising rather than a transient the user clears on their first edit: for
+ * most documents it is the name for the whole of their life. A rename command
+ * would not change any of the above - it would just make the second way to have
+ * no name rarer.
+ */
+export const UNTITLED_PROGRESSION_NAME = 'Untitled';
+
+/**
  * An empty progression in C major.
  *
  * C ionian is what `MusicTheoryService` itself starts on, so the page opens
@@ -550,7 +578,7 @@ export function createDefaultProgression(): ProgressionDoc {
   return {
     id: createId(),
     revision: 0,
-    name: 'Untitled',
+    name: UNTITLED_PROGRESSION_NAME,
     key: { tonic: 0, scaleId: 'ionian', preferSharps: true },
     tempo: 120,
     timeSignature: { numerator: 4, denominator: 4, isCommon: true },
