@@ -109,12 +109,18 @@ $surface-bg: #1a252f;
   font-size: 0.85rem;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 
-  &:hover:not(:disabled) {
+  &:hover:not(:disabled):not([aria-disabled='true']) {
     background-color: $accent-color;
     border-color: $accent-hover;
   }
 
-  &:disabled {
+  // A refusal looks the same whichever way it is made. `aria-disabled` is the
+  // one the progression's two send buttons use, because `disabled` would take
+  // the sentence explaining the refusal out of the tab order and suppress its
+  // tooltip with it; the button still looks unavailable, and its handler
+  // returns early.
+  &:disabled,
+  &[aria-disabled='true'] {
     opacity: 0.4;
     cursor: not-allowed;
   }
@@ -211,13 +217,41 @@ $surface-bg: #1a252f;
     &:disabled { opacity: 0.3; cursor: not-allowed; }
   }
 
-  .track-badge {
-    // Its own line, but only as wide as the name in it. `flex-basis` breaks the
-    // line and `max-width` caps the chip at its content, so a short progression
-    // name reads as a badge and a long one truncates instead of pushing the row
-    // past the panel.
+  // The badge and the status on a line of their own, below the track's name.
+  //
+  // The wrapper is what breaks the line, and it has no `max-width` on purpose.
+  // Flex line-breaking measures an item by its *hypothetical* main size - the
+  // flex base size clamped by the max main size - so `flex-basis: 100%` breaks
+  // the line only while nothing clamps it back under the container's width.
+  // The badge used to carry both itself, and a measurement says what that
+  // actually did: in a 15rem panel, "From Verse" came out 71px and sat on the
+  // same line as the track name, and only a long name wrapped. The comment here
+  // claimed its own line in both cases, which is the one thing a comment must
+  // not do.
+  //
+  // So the clamp moved inside, where it shapes the chip without deciding the
+  // line: the badge sizes to its content and truncates when there is not room,
+  // and the status keeps its width. `.track-generated` below has no clamp and
+  // has always broken the line for this reason.
+  .track-origin {
     flex-basis: 100%;
-    max-width: max-content;
+    display: flex;
+    // Wraps rather than squeezing: a long badge and a long status together
+    // exceed the panel, and two lines is better than a status eaten by
+    // whichever of them shrinks first.
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.2rem 0.35rem;
+    // Load-bearing, and measured: a flex item's automatic minimum size is its
+    // content, and this one's content is a badge that does not wrap. Without
+    // it a long progression name took the row to 485px inside a 240px panel.
+    // The badge below needs no such floor of its own - `overflow: hidden`
+    // already resolves `min-width: auto` to zero, which is what lets it ellipse
+    // rather than overflow.
+    min-width: 0;
+  }
+
+  .track-badge {
     box-sizing: border-box;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -229,6 +263,24 @@ $surface-bg: #1a252f;
     border: 1px solid rgba($accent-color, 0.5);
     border-radius: 3px;
     padding: 0.1rem 0.35rem;
+  }
+
+  // Not a chip: the badge names the progression and this qualifies it, so it
+  // reads as the second half of one phrase rather than a second label.
+  .track-status {
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    color: $text-secondary;
+
+    // Brightness and not hue. Colour is the redundant half of this - the words
+    // say which state it is - so all it has to do is separate "there is
+    // something to do here" from "there is not", which is the same line the two
+    // buttons refuse on. `$accent-color` was the obvious pick and fails on the
+    // background it would matter most on: 3.5:1 against the panel and 2.5:1
+    // against a *selected* row, whose tint is that same blue at 25%. The full
+    // text colour clears 4.5:1 on both, and reads as emphasis against the
+    // secondary grey beside it without asking anyone to tell two blues apart.
+    &.is-stale { color: $text-primary; }
   }
 
   .track-generated {

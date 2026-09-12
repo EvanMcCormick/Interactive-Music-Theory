@@ -73,18 +73,44 @@
           >×</button>
 
           <!--
-            The marker's own copy of the name, not the row's. `mergeGeneratedTrack`
-            keeps whatever the track is already called across an Update so a rename
-            survives, which leaves `track.name` free to be the user's word for the
-            row while `generated.progressionName` stays the progression's.
+            The badge says the marker's own copy of the name, not the row's.
+            `mergeGeneratedTrack` keeps whatever the track is already called across
+            an Update so a rename survives, which leaves `track.name` free to be the
+            user's word for the row while `generated.progressionName` stays the
+            progression's.
+
+            The status beside it is the same state Update refuses on, said where
+            nothing has to be focused to read it - a `disabled` control's own
+            explanation is unreachable by focus and its tooltip is suppressed, so a
+            label was the wrong and only place to keep it.
           -->
           <ng-container *ngIf="track.generated as origin">
-            <span class="track-badge">From {{ origin.progressionName }}</span>
+            <div class="track-origin">
+              <span class="track-badge">From {{ origin.progressionName }}</span>
+              <span
+                class="track-status"
+                [class.is-stale]="canUpdate(track)"
+              >{{ generatedStatusLabel(track) }}</span>
+            </div>
             <div class="track-generated">
+              <!--
+                `aria-disabled` and not `disabled`: the button keeps its place in
+                the tab order and keeps its tooltip, so the sentence saying why it
+                is refusing stays reachable. It only *says* it is refusing, so
+                `updateGeneratedTrack` makes the refusal itself.
+
+                `handler(); $event.stopPropagation()` runs the handler first, so a
+                throw would skip the stop and the click would fall through to the
+                row and move the caret. Nothing in either handler throws today -
+                the one guard that does is `sendProgression`'s meter check, and it
+                is handed `this.composer.scoreMeter`, which is the same meter it
+                compares against. `$event.stopPropagation(); handler()` would be
+                proof against a future one, at the cost of reading backwards.
+              -->
               <button
                 class="text-btn track-update"
                 (click)="updateGeneratedTrack(); $event.stopPropagation()"
-                [disabled]="!canUpdate(track)"
+                [attr.aria-disabled]="!canUpdate(track)"
                 [attr.aria-label]="updateLabel(track)"
                 [title]="updateLabel(track)"
               >Update</button>
@@ -108,12 +134,20 @@
           The pull half of the same service call the progression page's Send is the
           push half of. Pressed with the progression already in the score it is an
           Update, because the merge matches on the progression's id rather than
-          appending.
+          appending - and it refuses on the same reading the rows' Update refuses
+          on, so the panel cannot do from here what the button in the row is
+          greyed out to prevent.
+
+          The label leads with the words printed on the button (WCAG 2.1 SC 2.5.3);
+          the caption itself never changes, because the word on a control is what a
+          speech-input user says to press it.
         -->
         <button
           class="text-btn add-progression-track"
           (click)="addProgressionTrack()"
-          aria-label="Add the current progression to this score as a track"
+          [attr.aria-disabled]="!canAddProgressionTrack()"
+          [attr.aria-label]="addProgressionTrackLabel()"
+          [title]="addProgressionTrackLabel()"
         >Add progression track</button>
       </div>
 
