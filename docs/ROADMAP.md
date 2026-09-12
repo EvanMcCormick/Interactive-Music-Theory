@@ -306,7 +306,7 @@ records the decisions and — where implementation disproved one — the correct
 | Sheet music composer | `/composer` | Shipped. Multi-track notation and tab, MIDI and `.gp` export |
 | Audio transcription | `/transcribe` | Shipped. Basic Pitch detection, beat tracking, correctable review |
 | Circle of fifths | drawer | Shipped. Sets the key app-wide |
-| Progression composer | `/progression` | M1, M2 and M3 shipped. M4 not started |
+| Progression composer | `/progression` | M1, M2 and M3 shipped. M4 designed, not started |
 
 **Progression composer milestones:**
 
@@ -315,7 +315,7 @@ records the decisions and — where implementation disproved one — the correct
 | M1 | Shipped | Model, service, palette, strip, block chords, Tone loop |
 | M2 | Shipped | Piano roll, per-aspect edit protection, borrowed chords and secondary dominants, loop-boundary rescheduling, notation projection |
 | M3 | Shipped | The recogniser: a hand-edited slot reading its identity back, `literal` degradation and a way out of it, the alternates chip; suspensions sounded and each extension alterable; names composed from the chord; every note spelled by its degree's letter |
-| M4 | Not started | Generated track in the composer, Flatten, MIDI and `.gp` export |
+| M4 | Designed, not started | Generated track in the composer, Flatten, MIDI and `.gp` export, and a spelling letter on `NotePitch` so an exported ♭II engraves on C♭ |
 
 Three things are recorded as known limitations rather than bugs, all in the design doc:
 `quantizeBar` is onset-driven and has no note-off, so a staccato roll engraves legato;
@@ -337,7 +337,7 @@ clicks lose their numeral to a reading that has no name and degrade to `literal`
 | Audio Transcription | [plans/2026-09-05-audio-transcription-design.md](plans/2026-09-05-audio-transcription-design.md) | Implemented, M1-M3 |
 | Two-Tier Transcription | [plans/2026-09-07-two-tier-transcription-design.md](plans/2026-09-07-two-tier-transcription-design.md) | Implemented |
 | Circle of Fifths | [plans/2026-09-07-circle-of-fifths-design.md](plans/2026-09-07-circle-of-fifths-design.md) | Implemented |
-| Progression Composer | [plans/2026-09-08-progression-composer-design.md](plans/2026-09-08-progression-composer-design.md) | M1-M3 implemented |
+| Progression Composer | [plans/2026-09-08-progression-composer-design.md](plans/2026-09-08-progression-composer-design.md) | M1-M3 implemented, M4 designed |
 
 Implementation plans, one per milestone, sit beside each design in `plans/`. The
 transcription investigations that produced *negative* results are kept too — the onset

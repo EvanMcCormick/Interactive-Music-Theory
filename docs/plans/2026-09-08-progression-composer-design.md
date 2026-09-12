@@ -1,17 +1,17 @@
 # Progression Composer — Design
 
 **Date:** 2026-09-08
-**Status:** M1, M2 and M3 implemented and merged. See
+**Status:** M1, M2 and M3 implemented and merged; M4 designed, not started. See
 `2026-09-08-progression-m1-core.md`, `2026-09-08-progression-m2-piano-roll.md`
 and `2026-09-10-progression-m3-recogniser.md` for the plans they were built
 from, and "Correction: `alter` cannot express a borrowed chord" for what
-implementation disproved. "M3 decisions" at the end of this document records
-what M3 settled, what it measured, and what it did not do. M4 is designed here
-only.
+implementation disproved. The "M3 decisions" and "M4 decisions" sections at the
+end record what each milestone settled, what it measured, and what it did not
+do — M4's before it was built, so it is a design and not yet a report.
 
-**Read the sections in reverse order.** "M3 decisions" wins over "M2 decisions",
-which wins over the original design above it — each records what the milestone
-before it disproved.
+**Read the sections in reverse order.** "M4 decisions" wins over "M3 decisions",
+which wins over "M2 decisions", which wins over the original design above them —
+each records what the milestone before it disproved.
 
 ## Goal
 
@@ -1097,3 +1097,265 @@ numeral is a slash numeral measured against its target rather than the key.
   are a semitone cluster for the reading that was never there to find. Double
   harmonic's `vi` fails the same way the first does and is not pinned separately.
   So the day someone takes this on, the evidence is already written down.
+
+---
+
+## M4 decisions
+
+Settled 2026-09-12, before planning M4. The plan is
+`2026-09-12-progression-m4-composer-track.md`. Where these conflict with anything
+above — "Build order" and the two paragraphs on the generated track in particular
+— these win.
+
+### Scope
+
+The three the build order names — the generated track in the Composer, Flatten,
+MIDI and `.gp` export — **and** the spelling deferral both this document and the
+M3 plan pin to M4: `NotePitch` carries no letter, so a ♭II still engraves on B.
+
+The fourth is not separable from the first three, and the reason is the arrow M4
+adds. In M3 a wrong letter was a wrong *preview*: a panel the user is looking at,
+beside a roll that spells the same note correctly, and the disagreement is
+visible in the moment it happens. In M4 the same wrong letter is written into a
+`.gp` file that leaves the app. A preview that misspells is a bug a user can see;
+an export that misspells is a bug a user finds in another program a week later.
+
+### The generated track is a real track carrying a marker
+
+`TrackDoc` gains `generated: GeneratedOrigin | null`. The track is an ordinary
+member of `ScoreDoc.tracks` in every other respect, and the marker is what the
+UI reads to draw the badge, refuse edits, and offer Update and Flatten.
+
+The alternative was a *virtual* track: keep nothing in the document and splice
+the projection in when the score is mapped to alphaTab and when it is exported.
+It cannot be stale, which is a real advantage, and it loses anyway. `ScoreDoc`
+has four consumers that would all have to learn about a track that is not in
+`tracks`: the mapper, both export paths, the bar-count invariant stated at the
+top of `composer.service.ts`, and every piece of `trackIndex` arithmetic in the
+cursor. That is a wide change to buy off one narrow problem.
+
+Materialising it instead means the invariant holds by construction, undo/redo,
+alphaTex persistence and both exporters keep working untouched, and **Flatten
+costs one field** — which is what "detaches it into an ordinary track" should
+cost. The price is a second copy of the truth, and the next three sections are
+that price being paid.
+
+### Update is pressed, not inferred
+
+The generated track is rebuilt only when the user asks: Send, Update, Flatten.
+Nothing rebuilds it in the background.
+
+The alternative considered first was to treat it as a projection rather than a
+document — rebuilt from the live `ProgressionDoc` on every progression change and
+after every undo/redo, never committed, so it could not be stale in any state
+undo can reach. It was rejected for a reason that turned out to be the design's
+best property rather than a mere concession.
+
+`ComposerService.commit()` snapshots the whole `ScoreDoc` for undo. A rebuild
+that commits fills the undo stack with edits the user never made; a rebuild that
+does not commit lets undo restore a generated track that no longer matches its
+source, which is the staleness it was supposed to prevent, arriving through a
+door nobody was watching. Both are worse than a badge.
+
+Under the explicit model neither exists, because **every write to the `ScoreDoc`
+is a user action** and can go through `commit()` like any other edit. That gives
+the property the whole design rests on, and it falls out rather than being built:
+undoing an Update restores the old track *and* the old marker, so the stale badge
+comes back with it. The document is never left claiming a freshness it does not
+have. `progression-track.spec.ts` pins this rather than assuming it.
+
+The cost is the honest one: a user can read a stale engraving until they notice
+the badge. That is a cost the badge is *for*.
+
+### Staleness is one comparison, and it is exact
+
+`ProgressionDoc` gains `revision: number`, bumped in the single `commit()` in
+`progression-history.ts` that every mutation already goes through.
+
+A document counter is coarser than a hash of the projection, so the question is
+whether it reports staleness the user cannot see the reason for — and it does
+not, because every field of `ProgressionDoc` reaches the generated track.
+`slots` are the notes, `key` the key signature, `timeSignature` the bars, `tempo`
+the speed, and `name` the track's own name. `id` never changes and `isDirty`
+lives on `ProgressionState`, not the document. So "the revision moved" and
+"Update would change something" name the same set, and the cheap check is also
+the exact one. A field added to `ProgressionDoc` that does *not* reach the track
+would break that, and this paragraph is the thing to read before adding one.
+
+### Divergence is a state of the source, not a second check
+
+A score-wide bar insertion shifts a generated track's content while
+`ProgressionDoc.revision` never moves. Left alone that is a track which no longer
+matches its source, with no signal saying so — the one hole the counter cannot
+see, because the edit happened on the other side of the arrow.
+
+The fix is not a second comparison path. `GeneratedOrigin` states its source as a
+union, on the `SlotHarmony` and `NotePitch` precedent:
+
+```ts
+export interface GeneratedOrigin {
+  progressionId: string;
+  progressionName: string;
+  source: { kind: 'revision'; revision: number } | { kind: 'diverged' };
+}
+```
+
+Bar insertion and removal set `diverged`; Update clears it. Both read as stale
+through one function, `generatedTrackState`, and the union makes it impossible to
+hold a revision and a divergence flag that disagree — which a `revision` plus a
+`diverged: boolean` would allow on the first line of code that forgot one.
+
+### Reconciling with a score that already exists
+
+Three collisions, and the rule for each is the one that cannot destroy work.
+
+**Bars.** `mergeGeneratedTrack` grows `masterBars` to fit the projection and
+**never shrinks**, padding every other staff with rests. A progression falling
+from eight bars to four leaves four bars of rest rather than deleting bars a
+user's own track may be writing in.
+
+**Tempo.** The score's tempo wins. The projection is in beats, so the music is
+intact and only the speed differs — and a progression that silently re-tempos a
+score the user has been working in is the worse failure. On an untouched default
+score, Send adopts the progression's tempo instead.
+
+**Meter.** The generated track's bars are shared `masterBars`, so it must be
+barred in the *score's* meter and not its own. This is free: `RollNote` beats are
+quarter notes and the projection's grid is meter-independent — `progression-score.ts`
+says so under "A beat is a quarter note" — so projecting `{...doc, timeSignature:
+scoreMeter}` re-bars without moving a note, and `progressionToScore` needs no new
+argument. `progression-track.spec.ts` asserts it as a property: the multiset of
+`(absolute beat, midi)` attacks is identical across 4/4, 3/4 and 6/8.
+
+Bar 1's signature is the one used. See "Not in M4" for what that costs.
+
+### Saving refuses rather than flattening
+
+`CompositionEntry` stores a composition as alphaTex, deliberately — "compact,
+human-readable, diffable, and immune to `ScoreDoc` schema drift". alphaTex has no
+property that would round-trip a marker through alphaTab's own exporter, so a
+saved composition cannot carry one.
+
+Three ways out, and the middle one was chosen. Flattening silently on save is a
+change to the user's document that they did not ask for and would not discover
+until they reopened it. Storing the marker beside the tex keeps a link whose far
+end — a `ProgressionDoc` with no persistence of its own — may not exist when the
+composition is reopened, which is a dangling reference dressed up as a feature.
+
+So `Save` and `Save as copy` refuse while a generated track exists, and the
+refusal offers **Flatten and save**: the chore is one click without becoming
+implicit. Export is not blocked. An exported file has already left the app and
+has nothing to stay linked to.
+
+### A letter on `NotePitch`
+
+The pitched variant gains `letter?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G'`.
+Absent means exactly today's behaviour — spell from the key signature — so every
+note the Composer already holds is unaffected and only the projection populates
+it.
+
+**Why the letter and not the accidental.** alphaTab's `NoteAccidentalMode` can
+express this: the accidental kind plus the pitch class determines a letter
+uniquely, so widening `NoteDoc.accidental` to mirror the enum 1:1 would have
+worked, and would have matched the convention `composer.model.ts` states for
+`NotePitch` itself. It loses because the progression *knows a letter*.
+`progression-spelling.ts` exists precisely because "a preference chooses between
+two names for one pitch class; it cannot choose a letter". Storing the accidental
+would make the projection derive an alphaTab encoding on the way out, in a module
+that has no other reason to know alphaTab exists. The letter states the musical
+fact; the mapper translates it, which is the mapper's whole job.
+
+**The mapping, and why it is key-independent.** `alter = pitchClass −
+naturalPitchOf(letter)`, normalised into ±6 and then required to be within ±2:
+`−2 → ForceDoubleFlat`, `−1 → ForceFlat`, `0 → Default`, `+1 → ForceSharp`,
+`+2 → ForceDoubleSharp`. Past ±2 the letter is dropped and the note falls back to
+`Default` — the same refusal `spellAt` already makes at a double accidental, one
+layer out.
+
+This was read out of the bundle rather than out of the enum's doc comments, which
+describe displacement relative to a default position they never state.
+`AccidentalHelper.getNoteValue` displaces the note by exactly the forced
+accidental (`ForceFlat` +1, `ForceDoubleFlat` +2, `ForceSharp` −1,
+`ForceDoubleSharp` −2) and then draws *that* value's line under the key signature,
+with the forced glyph. The displaced value is always the target letter's natural
+pitch — always a white key — so the key signature can never ambiguate the line.
+Pitch class 11 with `ForceFlat` is C♭; pitch class 0 with `ForceSharp` is B♯.
+Because that behaviour is read from a dependency rather than owned here, the spec
+asserts it directly: the alphaTab note's displaced value must equal the letter's
+natural pitch. If alphaTab changes it, that assertion is what says so.
+
+**A misnomer this shows up, recorded rather than fixed.**
+`NoteDoc.accidental: 'explicit'` maps to `ForceSharp`, which forces a *sharp* in a
+flat key. `letter` subsumes it correctly, so the rule becomes: a letter decides
+the mode, and `accidental` only speaks when there is no letter. Composer-entered
+notes keep the old path and the old bug, which is M4's to leave alone.
+
+**Nothing new computes the letter.** `piano-roll-view.ts` already holds the rule —
+chord tones from the slot's degree first, scale degrees second, the key's
+preference last — in a local `chordToneSpellings`. That rule moves out of the view
+into `progression-spelling.ts` as an exported `slotNoteSpelling`, and both the
+roll and `progression-score.ts` call it. One implementation, because the letter
+the roll labels a key with and the letter the score engraves must be the same
+letter, and this document already records what happens when one rule lives in two
+files.
+
+### MIDI without an engraver
+
+`ComposerExportService` gains `toMidi(score, settings)` — `MidiFile`,
+`AlphaSynthMidiFileHandler` in SMF1 mode, `MidiFileGenerator.generate()`,
+`toBinary()` — and loses `downloadMidi(api)`.
+
+The old one delegated to `api.downloadMidi()` and so required a *rendering*
+alphaTab instance: one export of three with a precondition the other two do not
+have. On `/progression` that precondition would be the notation panel being open,
+which is a rule no user should have to learn. With `toMidi` there is no api to
+need, and both pages run the same three steps — build a `ScoreDoc`,
+`mapper.toScore(doc, new alphaTab.Settings())`, hand the score to the exporter.
+
+**A truncated projection refuses to export.** `progressionToScore` caps at
+`MAX_PREVIEW_BARS` and reports `truncated`; the preview can afford to draw 512
+bars and say so beside them, because the message sits next to the music. A file
+outlives the message, so an export that silently dropped bars would be a file
+that lies. At 512 bars — around twenty minutes of 4/4 at 100 BPM — this is
+reachable only through `setSlotLength(id, 1e9)`, which is the case the bound
+exists for.
+
+### Where the controls are
+
+Everything has an existing home; M4 adds no new page furniture.
+
+The Composer's **Tracks panel** draws the badge and gains Update — enabled only
+when stale — and Flatten. Remove stays: removing the track is not an edit of the
+progression. Note- and beat-level commands refuse when the cursor's track carries
+a marker, but the cursor can still *select* it, because a read-only track the
+caret cannot even rest on is worse than useless. **Save** and its refusal live in
+`composer-library-panel`, beside the Export buttons they sit with today.
+
+The progression page's **rail** gains a third block after Key and Sound, holding
+Send to Composer, Export MIDI and Export `.gp` — written in the same voice as the
+two above it, which say where a control is and what it means rather than naming
+it.
+
+Send to Composer and "Add progression track" in the Tracks panel are two buttons
+over one service call. The push is where the user made the thing; the pull is
+where the thing will appear, and is where Update and Flatten have to live anyway.
+
+### Not in M4
+
+- **A score that changes meter mid-way.** The generated track is barred by the
+  score's *first* time signature, so in a score that moves to 3/4 at bar 9 the
+  generated track's bar lines disagree from there on. Fixing it means teaching
+  `placeProgressionNotes` and `writeBar` a per-bar signature — correct in all
+  cases, and a change to a module three other things depend on, for a score shape
+  this page has no other reason to produce. Filed here with the other known
+  limitations rather than half-done.
+- **More than one generated track.** One `ProgressionDoc` exists at a time, so
+  there is no second progression to send and no "which one?" to ask. A
+  progression library would change that, and would also give the marker a far end
+  worth persisting — the two belong together, in that order.
+- **The three limitations M1–M3 recorded** are untouched: `quantizeBar` has no
+  note-off so a staccato roll still engraves legato, `BeatDoc.dynamics: null` is
+  still documented as "inherit" with nothing implementing it, and `parseChord`
+  still returns the first reading that consumes every note. The second of these
+  now reaches an exported file as well as a preview, which raises its priority
+  without changing what it is.
