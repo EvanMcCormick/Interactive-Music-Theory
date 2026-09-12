@@ -258,3 +258,35 @@ export function mergeGeneratedTrack(score: ScoreDoc, generated: GeneratedTrack):
         : others.map((track, index) => (index === existing ? merged : track))
   };
 }
+
+/**
+ * The same score with one generated track detached into an ordinary one.
+ *
+ * The whole of Flatten, and deliberately no more than that: the marker goes and
+ * nothing else does. The track keeps its name, its id, its bars and its place
+ * among the user's own, because flattening stops a track being *linked* to a
+ * progression rather than changing the music it holds. Everything the marker's
+ * absence unlocks - editing, saving, `generatedTrackState` answering
+ * `'absent'` - then follows from one cleared field rather than from a rebuild.
+ *
+ * An index naming no marked track is nothing to detach, and the score is handed
+ * straight back rather than copied. One guard covers all three ways of naming
+ * one: `tracks[-1]` is undefined - which is the -1 `generatedTrackIndex`
+ * returns for a score holding nothing of this progression - so is an index past
+ * the end, and a track nobody generated has no marker to clear. Returning the
+ * argument itself is the point of the no-op rather than a shortcut through it:
+ * a caller comparing documents by reference sees that nothing happened.
+ *
+ * Pure, like its neighbours: the Composer flattens inside a command that has
+ * already taken the undo snapshot from the document it hands in.
+ */
+export function flattenGeneratedTrack(score: ScoreDoc, trackIndex: number): ScoreDoc {
+  if (!score.tracks[trackIndex]?.generated) return score;
+
+  return {
+    ...score,
+    tracks: score.tracks.map((track, index) =>
+      index === trackIndex ? { ...track, generated: null } : track
+    )
+  };
+}

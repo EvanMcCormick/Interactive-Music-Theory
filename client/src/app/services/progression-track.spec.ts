@@ -20,6 +20,7 @@ import { DEFAULT_VELOCITY } from '../models/progression-normalize';
 import { MAX_PREVIEW_BARS } from './progression-score';
 import {
   GeneratedTrack,
+  flattenGeneratedTrack,
   generatedTrackIndex,
   generatedTrackState,
   mergeGeneratedTrack,
@@ -373,6 +374,70 @@ describe('mergeGeneratedTrack', () => {
     mergeGeneratedTrack(score, progressionTrack(docOfBars(6), IONIAN, FOUR_FOUR));
 
     expect(score).toEqual(before);
+  });
+});
+
+/**
+ * A generated track detached into an ordinary one.
+ *
+ * The whole of Flatten is the marker going away, so the cases below are mostly
+ * about what does *not* move: the track keeps its name, its id, its bars and
+ * its place, and the rest of the score is not rewritten around it. The three
+ * no-op cases are one rule stated three ways - an index naming no marked track
+ * is nothing to detach, whether it names no track at all or one nobody
+ * generated.
+ */
+describe('flattenGeneratedTrack', () => {
+  it('clears the marker and changes nothing else', () => {
+    const doc = docOf();
+    const before = mergeGeneratedTrack(userScore(4), progressionTrack(doc, IONIAN, FOUR_FOUR));
+    const index = generatedTrackIndex(before, doc);
+
+    const after = flattenGeneratedTrack(before, index);
+
+    expect(after.tracks[index].generated).toBeNull();
+    // The whole document rather than the track, because "changes nothing else"
+    // is a claim about the score: the bars, the other tracks and the track's
+    // own name and id all have to arrive the way they left.
+    expect(after).toEqual({
+      ...before,
+      tracks: before.tracks.map((track, at) => (at === index ? { ...track, generated: null } : track))
+    });
+  });
+
+  it('leaves a score with no generated track alone', () => {
+    // Spelled through `generatedTrackIndex` because that is how the Composer
+    // will reach it, and -1 is what it hands over for a score holding nothing
+    // of this progression.
+    const score = userScore(4);
+
+    expect(flattenGeneratedTrack(score, generatedTrackIndex(score, docOf()))).toBe(score);
+  });
+
+  it('leaves a score alone for an index past its last track', () => {
+    const score = userScore(4);
+
+    expect(flattenGeneratedTrack(score, score.tracks.length)).toBe(score);
+  });
+
+  it('leaves a track nobody generated alone', () => {
+    // An in-range index is not on its own a licence to write: the marker is
+    // what Flatten removes, and a plain track has none to remove.
+    const score = userScore(4);
+
+    expect(flattenGeneratedTrack(score, 0)).toBe(score);
+  });
+
+  it('leaves the score it was handed alone', () => {
+    // Pure, like its neighbours, and for the same reason: the Composer flattens
+    // inside a command that has already snapshotted the document for undo.
+    const doc = docOf();
+    const score = mergeGeneratedTrack(userScore(4), progressionTrack(doc, IONIAN, FOUR_FOUR));
+    const snapshot = structuredClone(score);
+
+    flattenGeneratedTrack(score, generatedTrackIndex(score, doc));
+
+    expect(score).toEqual(snapshot);
   });
 });
 
