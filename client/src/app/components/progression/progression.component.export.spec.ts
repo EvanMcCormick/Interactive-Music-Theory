@@ -1,8 +1,10 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { Router } from '@angular/router';
 import * as alphaTab from '@coderline/alphatab';
 import { BehaviorSubject, Observable } from 'rxjs';
 
 import { ProgressionComponent } from './progression.component';
+import { ScoreDoc, TrackDoc } from '../../models/composer.model';
 import { DEFAULT_VELOCITY } from '../../models/progression-normalize';
 import {
   ProgressionDoc,
@@ -10,12 +12,13 @@ import {
   createDegreeSlot
 } from '../../models/progression.model';
 import { ComposerExportService } from '../../services/composer-export.service';
+import { ComposerService } from '../../services/composer.service';
 import { ProgressionPlayerService } from '../../services/progression-player.service';
 import { MAX_PREVIEW_BARS } from '../../services/progression-score';
 import { ProgressionService } from '../../services/progression.service';
 
 /**
- * The rail's Export block: what the two buttons write, and what they refuse.
+ * The rail's Export block: what its three buttons send out, and what they refuse.
  *
  * Separate from `progression.component.spec.ts` because that file is about the
  * page as a composition - the key it takes from the circle, the chord it sends
@@ -38,6 +41,15 @@ import { ProgressionService } from '../../services/progression.service';
  * assertions are about is the `Score` handed over, which a spy captures without
  * anything having to stand in for alphaTab. Everything under the spy - the
  * projection, the mapper - is the real thing.
+ *
+ * ## The composer is real and the router is not
+ *
+ * Send is the one control here whose result stays in the app, so the assertions
+ * are about the score `ComposerService` ends up holding - the real service,
+ * because `sendProgression` throws on a meter mismatch and a fake would swallow
+ * the one contract worth pinning. `Router` is stubbed to a spy, following
+ * `transcription.component.spec.ts`: what matters is that the page asks to go
+ * to `/composer` and does not ask when it refused.
  */
 class FakePlayer {
   private readonly currentSlotSubject = new BehaviorSubject<string | null>(null);
@@ -90,10 +102,15 @@ describe('ProgressionComponent exports', () => {
   let component: ProgressionComponent;
   let progression: ProgressionService;
   let exporter: ComposerExportService;
+  let composer: ComposerService;
+  let navigate: jasmine.Spy;
 
   beforeEach(async () => {
+    navigate = jasmine.createSpy('navigate').and.resolveTo(true);
+
     await TestBed.configureTestingModule({
-      imports: [ProgressionComponent]
+      imports: [ProgressionComponent],
+      providers: [{ provide: Router, useValue: { navigate } }]
     })
       .overrideComponent(ProgressionComponent, {
         set: { providers: [{ provide: ProgressionPlayerService, useValue: new FakePlayer() }] }
@@ -102,6 +119,7 @@ describe('ProgressionComponent exports', () => {
 
     progression = TestBed.inject(ProgressionService);
     exporter = TestBed.inject(ComposerExportService);
+    composer = TestBed.inject(ComposerService);
     spyOn(exporter, 'downloadMidiFile');
     spyOn(exporter, 'downloadGuitarPro');
 
@@ -265,5 +283,152 @@ describe('ProgressionComponent exports', () => {
     expect(exporter.downloadMidiFile).toHaveBeenCalled();
     expect(component.exportError).toBeNull();
     expect(announcement()).toBeNull();
+  });
+
+  /**
+   * The third control in the block, and the only one whose result stays in the
+   * app: Send hands the progression to `ComposerService` as a track and follows
+   * it there.
+   */
+  describe('Send to Composer', () => {
+    /** The track the composer holds for this progression, or null. */
+    function sentTrack(): TrackDoc | null {
+      const id = progression.doc.id;
+      return composer.doc.tracks.find(track => track.generated?.progressionId === id) ?? null;
+    }
+
+    /**
+     * An empty score barred in 3/4.
+     *
+     * `ComposerService` has no time-signature command, so the meter arrives by
+     * document replacement. The point is only that the score's meter is not the
+     * progression's: `sendProgression` throws on a track projected in any other,
+     * so a page that handed over its own 4/4 fails this rather than quietly
+     * writing bar lines that disagree with every other track.
+     */
+    function threeFourScore(): ScoreDoc {
+      const empty = ComposerService.createEmptyScore();
+      return {
+        ...empty,
+        masterBars: empty.masterBars.map((bar, index) => ({
+          ...bar,
+          timeSignature: index === 0 ? { numerator: 3, denominator: 4, isCommon: false } : null
+        }))
+      };
+    }
+
+    it('puts the progression into the composer as a marked track', () => {
+      progression.appendSlot(0);
+      progression.appendSlot(4);
+
+      component.send();
+
+      expect(sentTrack()).not.toBeNull();
+      expect(sentTrack()?.generated?.source).toEqual({
+        kind: 'revision',
+        revision: progression.doc.revision
+      });
+      expect(component.exportError).toBeNull();
+    });
+
+    it('goes to the composer, where the track now is', () => {
+      progression.appendSlot(0);
+
+      component.send();
+
+      expect(navigate).toHaveBeenCalledWith(['/composer']);
+    });
+
+    it('offers the send from the rail', () => {
+      progression.appendSlot(0);
+
+      button('Composer').click();
+
+      expect(sentTrack()).not.toBeNull();
+    });
+
+    /**
+     * The contract `sendProgression` throws on, pinned from the caller's side:
+     * the track has to be barred in the *score's* meter, because it shares the
+     * score's master bars once it is in.
+     */
+    it('bars the track in the score meter rather than the progression one', () => {
+      composer.replaceDocument(threeFourScore());
+      progression.appendSlot(0);
+
+      component.send();
+
+      expect(component.exportError).toBeNull();
+      expect(sentTrack()).not.toBeNull();
+    });
+
+    /**
+     * The same refusal the exports make, for a reason of its own: Send is the
+     * control that leaves the page, so the message beside it cannot stay beside
+     * the result, and nothing the track carries into the Composer says it is
+     * short - the marker records a revision, not a bar count. A truncated track
+     * would then be saved and exported from there as if it were the whole
+     * progression.
+     */
+    it('refuses a truncated projection, and stays where it is', () => {
+      overlong();
+
+      component.send();
+
+      expect(sentTrack()).toBeNull();
+      expect(navigate).not.toHaveBeenCalled();
+      expect(component.exportError).toContain('512');
+    });
+
+    it('announces that refusal rather than only showing it', () => {
+      overlong();
+
+      component.send();
+      fixture.detectChanges();
+
+      expect(announcement()?.textContent).toContain('512');
+    });
+
+    /**
+     * `sendProgression` merges rather than duplicating, so a second press is an
+     * Update - and a button that still said Send would be promising a second
+     * track it does not deliver.
+     */
+    it('says Update once the composer holds the track', () => {
+      progression.appendSlot(0);
+      expect(component.sendLabel).toContain('Send');
+
+      component.send();
+      fixture.detectChanges();
+
+      expect(component.sendLabel).toContain('Update');
+      expect(button('Composer').textContent).toContain('Update');
+    });
+
+    it('refreshes the track it already sent rather than adding a second', () => {
+      progression.appendSlot(0);
+      component.send();
+      const tracks = composer.doc.tracks.length;
+
+      progression.appendSlot(4);
+      component.send();
+
+      expect(composer.doc.tracks.length).toBe(tracks);
+      expect(sentTrack()?.generated?.source).toEqual({
+        kind: 'revision',
+        revision: progression.doc.revision
+      });
+    });
+
+    /** Flattening in the Composer takes the marker away, so the label comes back. */
+    it('says Send again once the composer stops holding one', () => {
+      progression.appendSlot(0);
+      component.send();
+
+      composer.flattenTrack(composer.doc.tracks.findIndex(track => track.generated !== null));
+      fixture.detectChanges();
+
+      expect(component.sendLabel).toContain('Send');
+    });
   });
 });

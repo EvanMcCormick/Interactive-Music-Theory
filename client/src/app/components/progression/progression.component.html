@@ -25,8 +25,23 @@
     <section class="rail-block">
       <h2 class="rail-title">Export</h2>
       <p class="rail-note">
-        Takes the whole progression — every bar, barred and spelled as the
-        notation below would draw it. You do not have to open that panel first.
+        Takes the whole progression — every bar, spelled as the notation below
+        would draw it. You do not have to open that panel first.
+      </p>
+      <!-- Send first, because it is the one that keeps the progression: the
+           two below it make a copy that stops following this page, and this one
+           makes a track that still knows where it came from. -->
+      <div class="rail-actions">
+        <button type="button" class="rail-button" (click)="send()">
+          {{ sendLabel }}
+        </button>
+      </div>
+      <p class="rail-note">
+        Puts it in the <strong>Composer</strong> as a track of its own and takes
+        you there. It arrives read-only and barred in that score's meter, so it
+        lines up with the tracks already beside it. Come back, change the
+        chords, press this again — it refreshes the track it already wrote
+        rather than leaving a second one behind.
       </p>
       <div class="rail-actions">
         <button type="button" class="rail-button" (click)="exportMidi()">
@@ -45,10 +60,6 @@
            screen reader as well as an eye. Same pattern as the notation panel's
            own error, one block down the page. -->
       <p class="rail-error" *ngIf="exportError" role="alert">{{ exportError }}</p>
-      <!-- Send to Composer goes here, above the two exports: it is the same
-           progression leaving by a third door, and the design doc puts all
-           three in this block. It waits on `ComposerService`'s commands, which
-           do not exist yet - see Task 9 of the M4 plan. -->
     </section>
   </aside>
 

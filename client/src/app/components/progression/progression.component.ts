@@ -8,6 +8,7 @@ import {
   OnInit,
   inject
 } from '@angular/core';
+import { Router } from '@angular/router';
 import * as alphaTab from '@coderline/alphatab';
 import { Subject, distinctUntilChanged, map, takeUntil } from 'rxjs';
 
@@ -16,9 +17,11 @@ import { PianoRollComponent } from './components/piano-roll/piano-roll.component
 import { ProgressionNotationComponent } from './components/progression-notation/progression-notation.component';
 import { ProgressionStripComponent } from './components/progression-strip/progression-strip.component';
 import { ProgressionTransportComponent } from './components/progression-transport/progression-transport.component';
+import { effectiveTimeSignature } from '../../models/composer.model';
 import { ProgressionState } from '../../models/progression.model';
 import { findChordByIntervals } from '../../services/chord-catalog';
 import { ComposerExportService } from '../../services/composer-export.service';
+import { ComposerService } from '../../services/composer.service';
 import { messageOf } from '../../services/error-message';
 import { MusicTheoryService } from '../../services/music-theory.service';
 import { PROGRESSION_AUDIO, createToneApi } from '../../services/progression-audio';
@@ -31,6 +34,7 @@ import {
   progressionToScore
 } from '../../services/progression-score';
 import { chordRootName } from '../../services/progression-spelling';
+import { generatedTrackState, progressionTrack } from '../../services/progression-track';
 import { ProgressionService } from '../../services/progression.service';
 import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
 
@@ -91,6 +95,11 @@ interface AppSelection {
  *     gained `toMidi`, so neither export asks for a rendering alphaTab
  *     instance, and a user should not have to learn that opening a preview is
  *     what unlocks a download.
+ *  7. **The progression leaves as a track.** `send` below, the third control in
+ *     that block. It is the same projection the exports run, handed to
+ *     `ComposerService` instead of to a file - and then the page navigates, so
+ *     it has to be the page that does it. See `send` for what it refuses and
+ *     why the button renames itself.
  *
  * ## The two directions do not form a loop
  *
@@ -170,20 +179,44 @@ export class ProgressionComponent implements OnInit, OnDestroy {
   keyName = '';
 
   /**
-   * Why the last export wrote nothing, or null when nothing has refused.
+   * Why the last thing the rail's block tried to do wrote nothing, or null when
+   * nothing has refused.
+   *
+   * One field and one alert region for all three buttons, because only one of
+   * them can be acting at a time and a user reading a refusal should not have
+   * to work out which of three places it will appear in.
    *
    * Read by the rail, where it is announced rather than merely drawn - see the
-   * template. Cleared by the next export that succeeds, and not by an edit: an
+   * template. Cleared by the next attempt that succeeds, and not by an edit: an
    * error that vanished on the keystroke after it was raised is an error the
    * user has to have been looking at to read.
    */
   exportError: string | null = null;
 
+  /**
+   * What the Send button says, which is what pressing it will do.
+   *
+   * `ComposerService.sendProgression` merges rather than appending, so the
+   * second press refreshes the track the first one wrote rather than adding
+   * another - the button says so rather than promising a second track it does
+   * not deliver. `generatedTrackState` is the one place that rule is written,
+   * and the Composer's own tracks panel reads the same function.
+   *
+   * Only the two answers, not three. `generatedTrackState` also distinguishes
+   * a current track from a stale one, and this deliberately does not: the badge
+   * that says which is in the Composer, beside the track, and a button here
+   * that read `Refresh` versus `Already there` would be reporting on a document
+   * the user is not looking at.
+   */
+  sendLabel = 'Send to Composer';
+
   private readonly progression = inject(ProgressionService);
   private readonly musicTheory = inject(MusicTheoryService);
   private readonly player = inject(ProgressionPlayerService);
   private readonly exporter = inject(ComposerExportService);
+  private readonly composer = inject(ComposerService);
   private readonly mapper = inject(ScoreDocMapperService);
+  private readonly router = inject(Router);
   private readonly changes = inject(ChangeDetectorRef);
   private readonly destroy$ = new Subject<void>();
 
@@ -250,6 +283,18 @@ export class ProgressionComponent implements OnInit, OnDestroy {
         takeUntil(this.destroy$)
       )
       .subscribe(selection => this.adopt(selection));
+
+    // The Send button's label is a fact about the *Composer's* document, which
+    // this page does not own and does not otherwise read: a track flattened or
+    // removed over there has to reach the button here. `ComposerService`
+    // publishes a `BehaviorSubject`, so this also settles the label on load.
+    this.composer
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(() => {
+        this.refreshSendLabel();
+        this.changes.markForCheck();
+      });
 
     // Opened last, so that `latest` is filled before the first cue. The
     // player's subject starts empty and replays that emptiness on subscribe,
@@ -330,6 +375,89 @@ export class ProgressionComponent implements OnInit, OnDestroy {
       return;
     }
     this.progression.redo();
+  }
+
+  /**
+   * Hands the progression to the Composer as a track, and follows it there.
+   *
+   * The third door out of the rail's block, and the only one whose result stays
+   * in the app. It is the same projection the two exports run, with the meter
+   * swapped and the destination changed: `progressionTrack` marks the track
+   * with the revision it was built from, `sendProgression` merges it into the
+   * score, and the page then navigates - which is why this lives here and not
+   * in a service. `transcription.component.ts` takes the same two steps in the
+   * same order for the same reason.
+   *
+   * ## The meter is the score's, and `sendProgression` throws if it is not
+   *
+   * A generated track shares the score's master bars, so it has to be barred in
+   * the score's meter rather than in the progression's:
+   * `effectiveTimeSignature(masterBars, 0)` is that meter, and the service
+   * verifies it rather than trusting the caller. Re-barring moves no note -
+   * `progression-track.ts` argues that under "Why the meter is swapped and not
+   * passed" - so this costs the progression nothing but bar lines that agree
+   * with everything else in the score.
+   *
+   * The `GeneratedTrack` is built here, used once and dropped, which
+   * `sendProgression` requires: the merged score shares bar objects with it, so
+   * a caller that kept one and edited it later would be writing into a
+   * committed document behind undo's back.
+   *
+   * ## Send and Update are one press
+   *
+   * There is no second method. The merge replaces the track it already wrote
+   * and appends only when there is none, so pressing twice is an Update - see
+   * `sendLabel`, which says which of the two the next press will be.
+   *
+   * ## A truncated projection refuses, as the exports do
+   *
+   * The reasoning is not quite theirs, and it is stronger. An export refuses
+   * because a file outlives the message beside it. This message cannot even
+   * reach the result: Send navigates, so the rail carrying the warning is gone
+   * a moment later, and nothing on the other side would repeat it - a
+   * `GeneratedOrigin` records which revision a track was built from, not how
+   * much of it arrived, so the Composer cannot draw a badge it has no fact for.
+   * The truncated track would then be saved to the library and exported from
+   * over there as though it were the whole progression, which is the same lie
+   * the export refusal exists to prevent, told one page further from the user.
+   *
+   * Warning and proceeding was the alternative and it is the worse one for the
+   * same reason: a warning nobody is left looking at is not a warning.
+   *
+   * Everything that can throw is inside the try - the projection, and the
+   * meter check - because a page that broke on a refused send would take the
+   * roll and the transport down with a button press.
+   */
+  send(): void {
+    const state = this.latest;
+    if (!state) return;
+
+    try {
+      const generated = progressionTrack(
+        state.doc,
+        state.keyScale ? state.keyScale.intervals : [],
+        effectiveTimeSignature(this.composer.doc.masterBars, 0)
+      );
+
+      if (generated.truncated) {
+        this.exportError =
+          `This progression runs past the ${MAX_PREVIEW_BARS} bars a projection stops at, so `
+          + 'nothing was sent. A track ending at bar '
+          + `${MAX_PREVIEW_BARS} would not be this progression, and nothing it carried into the `
+          + 'composer would say so - a generated track records which revision it came from, not '
+          + 'how much of it arrived. Shorten it and try again.';
+        this.changes.markForCheck();
+        return;
+      }
+
+      this.composer.sendProgression(generated);
+      this.exportError = null;
+      void this.router.navigate(['/composer']);
+    } catch (error) {
+      this.exportError = `Could not send the progression to the composer: ${messageOf(error)}`;
+    }
+
+    this.changes.markForCheck();
   }
 
   /** Writes the progression out as a standard MIDI file. */
@@ -664,6 +792,19 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     // The scale is null only for an id the app cannot resolve, which leaves the
     // note on its own rather than printing `C undefined`.
     this.keyName = state.keyScale ? `${tonic} ${state.keyScale.name}` : tonic;
+
+    // The other half of the label's inputs: the marker is matched on the
+    // progression's id, so a document replaced here can stop matching a track
+    // the Composer still holds.
+    this.refreshSendLabel();
+  }
+
+  /** Send or Update, from what the Composer currently holds of this document. */
+  private refreshSendLabel(): void {
+    const state = this.latest;
+    const held = state ? generatedTrackState(this.composer.doc, state.doc) : 'absent';
+
+    this.sendLabel = held === 'absent' ? 'Send to Composer' : 'Update in Composer';
   }
 }
 
