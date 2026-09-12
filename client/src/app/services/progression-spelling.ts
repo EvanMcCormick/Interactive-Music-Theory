@@ -199,10 +199,19 @@ export function slotSpeller(
  * reach the identical rule.
  *
  * **First spelling wins.** A stack can sound one pitch class twice, an octave
- * apart, on two different letters: a sus4 at extent 11 puts the suspended fourth
- * in position 1 and the eleventh in position 5. One row of the roll's keyboard
- * cannot carry two names and neither can one note of the score, so the lower
- * position - which is the one the chord is built on - keeps it.
+ * apart, and the two positions need not read the same letter. A minor ninth
+ * with the ninth pinned sharp is the clean case: the minor third sits in
+ * position 1, two letters above the root, and the ♯9 - the same pitch class an
+ * octave up - sits in position 4, one letter above it. One row of the roll's
+ * keyboard cannot carry two names and neither can one note of the score, so the
+ * lower position - the one the chord is built on - keeps it, and that pitch
+ * class comes back an `E♭` rather than a `D♯`.
+ *
+ * The doubling was first found on a sus4 at extent 11, which puts the suspended
+ * fourth in position 1 and the eleventh in position 5, and that case is worth
+ * naming only as where to look: it cannot demonstrate the rule. Both positions
+ * are three letters above the root, so `spellAt` returns the same letter either
+ * way and there is no tie for the tie-break to settle.
  */
 function chordToneSpellings(
   key: ProgressionKey,

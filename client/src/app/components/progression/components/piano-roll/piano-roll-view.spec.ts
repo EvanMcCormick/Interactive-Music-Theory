@@ -159,10 +159,14 @@ describe('buildRollView', () => {
    * six-sharp wedge - which is the point. The letter is the degree's and not
    * the preference's, so even a sharp-preferring key writes this note flat.
    *
-   * What is left here is the *number* beside the letter, which is the view's:
-   * which letter a pitch class gets is `slotSpeller`'s, and it is pinned in
-   * `progression-spelling.spec.ts` since the score reads the same rule. The two
-   * chord-tone cases that used to sit below moved there with it.
+   * Which letter a pitch class gets is `slotSpeller`'s rule rather than this
+   * file's, and it is pinned unit-wise in `progression-spelling.spec.ts` since
+   * the score reads the same rule. What stays here is a different question:
+   * that the roll is *wired* to it. The chord-tone case below is deliberately
+   * the same fixture as that spec's, and duplicating it is the point -
+   * replacing `slot` with `null` where `buildRollView` calls the speller leaves
+   * every unit-level assertion passing, because the rule is still correct; it
+   * is only the roll that has stopped asking it about the selected chord.
    */
   describe('the letters a note is named by', () => {
     it('names a C flat in F locrian, in the octave its letter is in', () => {
@@ -180,6 +184,26 @@ describe('buildRollView', () => {
       place(id, [{ midi: 60, startBeat: 0, lengthBeats: 4, velocity: 80 }]);
 
       expect(notes()[0].name).toBe('C4');
+    });
+
+    /**
+     * The wiring, on the fixture `progression-spelling.spec.ts` argues from.
+     *
+     * `♭VI` in C major is A♭ C E♭, and none of the A♭ or the E♭ is in C major,
+     * so the scale has no degree for either and the key - which leans sharp
+     * here - would print `G♯` and `D♯` under a numeral that says flat six. The
+     * chord's own letters are A, C and E, one apart in the usual way.
+     *
+     * The assertion is the same three letters that spec makes, and it is here
+     * as well because the two answer different questions: that the rule is
+     * right, and that `buildRollView` hands it the *selected slot* rather than
+     * nothing. Only this one can see the second.
+     */
+    it('asks the rule about the selected slot, so a chord tone is spelled from the chord', () => {
+      const id = build();
+      progression.setSlotChord(id, { degree: 5, alter: -1, quality: 'major', extent: 3 });
+
+      expect(notes().map(note => note.name.slice(0, -1))).toEqual(['Ab', 'C', 'Eb']);
     });
   });
 

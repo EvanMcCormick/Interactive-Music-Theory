@@ -1340,7 +1340,7 @@ notes keep the old path and the old bug, which is M4's to leave alone.
 **Nothing new computes the letter.** `piano-roll-view.ts` already holds the rule —
 chord tones from the slot's degree first, scale degrees second, the key's
 preference last — in a local `chordToneSpellings`. That rule moves out of the view
-into `progression-spelling.ts` as an exported `slotNoteSpelling`, and both the
+into `progression-spelling.ts` as an exported `slotSpeller`, and both the
 roll and `progression-score.ts` call it. One implementation, because the letter
 the roll labels a key with and the letter the score engraves must be the same
 letter, and this document already records what happens when one rule lives in two

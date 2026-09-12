@@ -166,10 +166,14 @@ export function buildRollView(state: ProgressionState): RollView {
   const range = visibleMidiRange(slotNotes);
   // The scale as the key resolves it, or nothing when the id does not resolve -
   // in which case every note falls back to the key's own preference, which is
-  // what `slotSpeller` does with a scale it cannot read degrees from. That
-  // empty array is also `canBuildChords` false, which is why the spelling does
-  // not read the flag: `canBuildChords` *is* `isHeptatonic` applied to this
-  // same scale, and `slotSpeller` applies it to these same intervals.
+  // what `slotSpeller` does with a scale it cannot read degrees from.
+  //
+  // That is also why the spelling never reads `canBuildChords`: the flag *is*
+  // `isHeptatonic` applied to this same scale, and `slotSpeller` applies it to
+  // these same intervals, so both ways the flag goes false arrive intact. An
+  // unresolved id reaches the speller as this empty array; a scale that
+  // resolves but cannot stack thirds - a pentatonic, say - reaches it as its
+  // own five intervals, which are not empty and fail the same test there.
   const intervals = state.keyScale ? state.keyScale.intervals : [];
   const spellHere = slotSpeller(state.doc.key, intervals, slot);
   const columns = buildLaneColumns(slotNotes);

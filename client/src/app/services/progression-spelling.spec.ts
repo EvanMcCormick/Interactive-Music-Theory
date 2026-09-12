@@ -23,6 +23,9 @@ const AEOLIAN = [0, 2, 3, 5, 7, 8, 10];
 const LOCRIAN = [0, 1, 3, 5, 6, 8, 10];
 const SUPER_LOCRIAN = [0, 1, 3, 4, 6, 8, 10];
 
+/** The one scale here that is not heptatonic, and the only reason it is here. */
+const MINOR_PENTATONIC = [0, 3, 5, 7, 10];
+
 /**
  * A degree as a slot really holds one, with the accidental applied.
  *
@@ -70,7 +73,10 @@ function literalSlot(): ChordSlot {
  * longer the roll's: M4 gave the score projection the same question, and the
  * letter drawn on a keyboard key has to be the letter engraved on the staff.
  * The two chord-tone cases below came from that spec, rewritten as calls
- * rather than as service states - what they assert is unchanged.
+ * rather than as service states - what they assert is unchanged. The `♭VI` one
+ * also still stands over there, on a real service state: that the rule is right
+ * and that the roll is wired to it are two claims, and only a case built the
+ * roll's way can fail for the second.
  *
  * Every expectation is worked through by hand, as everywhere else in this file.
  */
@@ -149,7 +155,7 @@ describe('slotSpeller', () => {
     const cMinorPentatonic = key(0, 'minorPentatonic', false);
     const tonicSlot = degreeSlot({ degree: 0 });
 
-    expect(formatNote(slotSpeller(cMinorPentatonic, [0, 3, 5, 7, 10], tonicSlot)(3))).toBe('Eb');
+    expect(formatNote(slotSpeller(cMinorPentatonic, MINOR_PENTATONIC, tonicSlot)(3))).toBe('Eb');
     expect(formatNote(slotSpeller(key(0, 'ionian', true), [], tonicSlot)(6))).toBe('F#');
   });
 
@@ -163,11 +169,11 @@ describe('slotSpeller', () => {
    * is an `Eb` and not the `D#` either the upper position or the key would
    * give.
    *
-   * The docstring names a sus4 at extent 11 as the case, and that is where the
-   * doubling was found, but it cannot show the rule: the suspended fourth and
-   * the eleventh are both three letters above the root, so first and last
-   * spelling agree there. A pinned ♯9 is the same collision with the two
-   * positions disagreeing, which is what makes the tie-break visible.
+   * The sus4 at extent 11 the docstring names as where the doubling was found
+   * cannot stand here: the suspended fourth and the eleventh are both three
+   * letters above the root, so first and last spelling agree and nothing is
+   * being broken. A pinned ♯9 is the same collision with the two positions
+   * disagreeing, which is what makes the tie-break visible.
    */
   it('keeps the lower position when one pitch class appears twice', () => {
     const speller = slotSpeller(
@@ -226,6 +232,6 @@ describe('scaleNoteName', () => {
   // spell by, so the tables answer for every note of it. See the module header.
   it('leaves a scale that is not heptatonic to the key', () => {
     const cMinorPentatonic = key(0, 'minorPentatonic', false);
-    expect(scaleNoteName(cMinorPentatonic, [0, 3, 5, 7, 10], 3)).toBe('Eb');
+    expect(scaleNoteName(cMinorPentatonic, MINOR_PENTATONIC, 3)).toBe('Eb');
   });
 });
