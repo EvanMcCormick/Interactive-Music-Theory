@@ -276,10 +276,13 @@ describe('ScoreDocMapperService', () => {
       const parsed = tex.parse(tex.export(score));
       const back = mapper.toDoc(parsed.score!);
 
+      // No letter: nothing in the tex forces an accidental, so the note asks to
+      // be spelled from the key signature, which is what it always did.
       expect(back.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].pitch).toEqual({
         kind: 'pitched',
         noteValue: 0,
-        octave: 4
+        octave: 4,
+        letter: undefined
       });
     });
 

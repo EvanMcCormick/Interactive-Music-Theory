@@ -9,6 +9,7 @@ import {
   KeySignature,
   MasterBarDoc,
   NoteDoc,
+  NoteLetter,
   NotePitch,
   OttaviaKind,
   ScoreDoc,
@@ -36,6 +37,75 @@ import {
   toOttavia,
   toTripletFeel
 } from './alpha-tab-enum.bridge';
+
+/** Semitones above C of each letter's natural pitch. All white keys. */
+const NATURAL_PITCH: Record<NoteLetter, number> =
+  { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+/** `NATURAL_PITCH` read the other way, so a white pitch class names its letter. */
+const LETTER_BY_NATURAL: ReadonlyMap<number, NoteLetter> = new Map(
+  (Object.entries(NATURAL_PITCH) as [NoteLetter, number][]).map(
+    ([letter, pitch]): [number, NoteLetter] => [pitch, letter]
+  )
+);
+
+/**
+ * The alteration each forcing mode carries, in semitones above the letter's
+ * natural pitch.
+ *
+ * That is the musical sign, and it is the opposite of the displacement alphaTab
+ * applies: a flat is an alteration of -1 and a displacement of +1. See
+ * `accidentalModeFor`.
+ *
+ * `Default` is deliberately absent, which is what makes the reverse direction
+ * honest. A note with no letter also carries `Default`, so reading `Default`
+ * back can only mean "no letter was asked for". A natural letter therefore does
+ * not survive the round trip, and does not need to: alphaTab puts a white pitch
+ * class on its own letter under every key signature.
+ */
+const ALTER_BY_MODE: ReadonlyMap<alphaTab.model.NoteAccidentalMode, number> = new Map([
+  [alphaTab.model.NoteAccidentalMode.ForceDoubleFlat, -2],
+  [alphaTab.model.NoteAccidentalMode.ForceFlat, -1],
+  [alphaTab.model.NoteAccidentalMode.ForceSharp, 1],
+  [alphaTab.model.NoteAccidentalMode.ForceDoubleSharp, 2]
+]);
+
+/** `ALTER_BY_MODE` read the other way, so the two directions cannot disagree. */
+const MODE_BY_ALTER: ReadonlyMap<number, alphaTab.model.NoteAccidentalMode> = new Map(
+  Array.from(ALTER_BY_MODE, ([mode, alter]): [number, alphaTab.model.NoteAccidentalMode] =>
+    [alter, mode]
+  )
+);
+
+/**
+ * The accidental mode that makes alphaTab engrave `pitchClass` on `letter`.
+ *
+ * `AccidentalHelper.getNoteValue` displaces the note by exactly the forced
+ * accidental and draws that value's line: the displaced value is the letter's
+ * natural pitch, always a white key, so the key signature can never ambiguate
+ * it. Past a double accidental there is no notation to ask for, so the letter
+ * is dropped and alphaTab spells from the key signature - the same refusal
+ * `spellAt` makes, one layer out. A natural asks for no forcing and takes the
+ * same fallback, which draws the letter anyway.
+ */
+function accidentalModeFor(
+  letter: NoteLetter,
+  pitchClass: number
+): alphaTab.model.NoteAccidentalMode {
+  const alter = ((((pitchClass - NATURAL_PITCH[letter] + 6) % 12) + 12) % 12) - 6;
+  return MODE_BY_ALTER.get(alter) ?? alphaTab.model.NoteAccidentalMode.Default;
+}
+
+/** The letter a forced accidental puts a pitch class on, or undefined if none is forced. */
+function letterFor(
+  mode: alphaTab.model.NoteAccidentalMode,
+  pitchClass: number
+): NoteLetter | undefined {
+  const alter = ALTER_BY_MODE.get(mode);
+  if (alter === undefined) return undefined;
+
+  return LETTER_BY_NATURAL.get(((((pitchClass - alter) % 12) + 12) % 12));
+}
 
 /**
  * Converts between our editable ScoreDoc and alphaTab's runtime Score.
@@ -302,10 +372,16 @@ export class ScoreDocMapperService {
     }
 
     note.isTieDestination = doc.isTied;
+    // A letter decides the mode; `accidental` only speaks when there is no
+    // letter. Note that `'explicit'` has always meant ForceSharp, which forces
+    // a sharp in a flat key - a misnomer `letter` routes around for generated
+    // notes and leaves in place for composer-entered ones. See the design doc.
     note.accidentalMode =
-      doc.accidental === 'explicit'
-        ? alphaTab.model.NoteAccidentalMode.ForceSharp
-        : alphaTab.model.NoteAccidentalMode.Default;
+      doc.pitch.kind === 'pitched' && doc.pitch.letter !== undefined
+        ? accidentalModeFor(doc.pitch.letter, doc.pitch.noteValue)
+        : doc.accidental === 'explicit'
+          ? alphaTab.model.NoteAccidentalMode.ForceSharp
+          : alphaTab.model.NoteAccidentalMode.Default;
 
     note.isGhost = doc.effects.isGhost;
     note.isDead = doc.effects.isDead;
@@ -466,7 +542,8 @@ export class ScoreDocMapperService {
       : {
           kind: 'pitched',
           noteValue: note.tone,
-          octave: note.octave - ScoreDocMapperService.OCTAVE_OFFSET
+          octave: note.octave - ScoreDocMapperService.OCTAVE_OFFSET,
+          letter: letterFor(note.accidentalMode, note.tone)
         };
 
     return {

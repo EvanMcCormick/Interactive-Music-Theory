@@ -1,3 +1,4 @@
+import { NoteLetter } from '../models/composer.model';
 import { STEP_SEMITONES } from './staff-pitch';
 
 /**
@@ -147,6 +148,11 @@ export function pitchClassOf(note: SpelledNote): number {
 export function formatNote(note: SpelledNote): string {
   const sign = note.accidental < 0 ? 'b' : '#';
   return LETTER_NAMES[note.letter] + sign.repeat(Math.abs(note.accidental));
+}
+
+/** The staff letter of a spelling, for a caller that wants the letter alone. */
+export function letterOf(spelled: SpelledNote): NoteLetter {
+  return LETTER_NAMES[((spelled.letter % 7) + 7) % 7];
 }
 
 /**

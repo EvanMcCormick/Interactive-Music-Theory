@@ -183,12 +183,32 @@ export interface BeatEffectsDoc {
 }
 
 /**
+ * A staff letter. Declared here rather than in `note-spelling.ts` so the model
+ * owns it and the spelling service imports it, which is the direction the
+ * layers already run.
+ */
+export type NoteLetter = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
+
+/**
  * alphaTex has exactly two note syntaxes - `3.3` (fret.string) and `C#4` -
  * so a discriminated union maps 1:1 onto them.
  */
 export type NotePitch =
   | { kind: 'fretted'; string: number; fret: number }
-  | { kind: 'pitched'; noteValue: number; octave: number };
+  | {
+      kind: 'pitched';
+      noteValue: number;
+      octave: number;
+      /**
+       * The letter to engrave on, when the writer knows one.
+       *
+       * Absent means what the Composer has always done: spell from the key
+       * signature. Only the progression's projection sets it, and only because
+       * a pitch class does not have a letter and a degree does - see
+       * "A letter on `NotePitch`" in the progression design doc.
+       */
+      letter?: NoteLetter;
+    };
 
 export interface NoteDoc {
   pitch: NotePitch;

@@ -1,6 +1,7 @@
 import {
   SpelledNote,
   formatNote,
+  letterOf,
   parseNoteName,
   pitchClassOf,
   scientificOctave,
@@ -104,5 +105,16 @@ describe('pitchClassOf, scientificOctave, spellPitchClass', () => {
     expect(spellPitchClass(1, true)).toEqual({ letter: 0, accidental: 1 });
     expect(spellPitchClass(1, false)).toEqual({ letter: 1, accidental: -1 });
     expect(spellPitchClass(4, false)).toEqual({ letter: 2, accidental: 0 });
+  });
+});
+
+describe('letterOf', () => {
+  // The caller that wants the letter alone is the projection, which hands it to
+  // a note so the engraver draws the line the degree names. The accidental has
+  // already done its work by then.
+  it('names the letter of a spelling, accidental and all', () => {
+    expect(letterOf({ letter: 0, accidental: -1 })).toBe('C'); // Cb is on a C
+    expect(letterOf({ letter: 6, accidental: 1 })).toBe('B');  // B# is on a B
+    expect(letterOf({ letter: 3, accidental: 0 })).toBe('F');
   });
 });
