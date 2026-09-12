@@ -1,8 +1,8 @@
-import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
+  ErrorHandler,
   HostListener,
   OnDestroy,
   OnInit,
@@ -17,12 +17,11 @@ import { PianoRollComponent } from './components/piano-roll/piano-roll.component
 import { ProgressionNotationComponent } from './components/progression-notation/progression-notation.component';
 import { ProgressionStripComponent } from './components/progression-strip/progression-strip.component';
 import { ProgressionTransportComponent } from './components/progression-transport/progression-transport.component';
-import { effectiveTimeSignature } from '../../models/composer.model';
 import { ProgressionState } from '../../models/progression.model';
 import { findChordByIntervals } from '../../services/chord-catalog';
 import { ComposerExportService } from '../../services/composer-export.service';
 import { ComposerService } from '../../services/composer.service';
-import { messageOf } from '../../services/error-message';
+import { errorOf } from '../../services/error-message';
 import { MusicTheoryService } from '../../services/music-theory.service';
 import { PROGRESSION_AUDIO, createToneApi } from '../../services/progression-audio';
 import { chordRootPitchClass } from '../../services/progression-generate';
@@ -34,7 +33,11 @@ import {
   progressionToScore
 } from '../../services/progression-score';
 import { chordRootName } from '../../services/progression-spelling';
-import { generatedTrackState, progressionTrack } from '../../services/progression-track';
+import {
+  generatedTrackState,
+  progressionLabel,
+  progressionTrack
+} from '../../services/progression-track';
 import { ProgressionService } from '../../services/progression.service';
 import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
 
@@ -58,7 +61,7 @@ interface AppSelection {
 /**
  * The progression composer: palette, strip and transport over one key.
  *
- * ## It composes, and owns six things nothing else can
+ * ## It composes, and owns seven things nothing else can
  *
  * The five components below wire themselves to `ProgressionService`, so this
  * shell passes them nothing - no inputs, no outputs, no state. The roll is the
@@ -151,7 +154,6 @@ interface AppSelection {
   selector: 'app-progression',
   standalone: true,
   imports: [
-    CommonModule,
     ChordPaletteComponent,
     PianoRollComponent,
     ProgressionNotationComponent,
@@ -179,19 +181,37 @@ export class ProgressionComponent implements OnInit, OnDestroy {
   keyName = '';
 
   /**
-   * Why the last thing the rail's block tried to do wrote nothing, or null when
-   * nothing has refused.
+   * What the last thing the rail's block tried to do has to say, or null when
+   * nothing has spoken.
    *
-   * One field and one alert region for all three buttons, because only one of
-   * them can be acting at a time and a user reading a refusal should not have
-   * to work out which of three places it will appear in.
+   * One field for all three buttons, because only one of them can be acting at
+   * a time and a user reading a refusal should not have to work out which of
+   * three places it will appear in. What that costs is that every path writing
+   * it has to say which button it came from, and every path that succeeds has
+   * to clear it; both halves are pinned by spec.
    *
-   * Read by the rail, where it is announced rather than merely drawn - see the
-   * template. Cleared by the next attempt that succeeds, and not by an edit: an
-   * error that vanished on the keystroke after it was raised is an error the
-   * user has to have been looking at to read.
+   * Not always a refusal. A send that committed and then failed to navigate
+   * writes here too, and says the opposite of the refusals around it - the
+   * track arrived. See `leave`.
+   *
+   * Cleared by the next attempt that succeeds, and not by an edit: an error
+   * that vanished on the keystroke after it was raised is an error the user has
+   * to have been looking at to read.
    */
   exportError: string | null = null;
+
+  /**
+   * `exportError` as the rail's two live regions hold it: in one of them, with
+   * the other empty.
+   *
+   * Two regions, both always in the page, because `role="alert"` announces a
+   * *change inside* a region rather than the presence of text in one. Export
+   * MIDI and then Export .gp on an over-long progression produce byte-identical
+   * sentences, so a single region behind an `*ngIf` mutated nothing on the
+   * second press and a screen-reader user perceived nothing at all. `showError`
+   * swaps them on every message, which makes a repeat a change in both.
+   */
+  alerts: readonly [string, string] = ['', ''];
 
   /**
    * What the Send button says, which is what pressing it will do.
@@ -217,6 +237,7 @@ export class ProgressionComponent implements OnInit, OnDestroy {
   private readonly composer = inject(ComposerService);
   private readonly mapper = inject(ScoreDocMapperService);
   private readonly router = inject(Router);
+  private readonly errors = inject(ErrorHandler);
   private readonly changes = inject(ChangeDetectorRef);
   private readonly destroy$ = new Subject<void>();
 
@@ -391,9 +412,12 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    * ## The meter is the score's, and `sendProgression` throws if it is not
    *
    * A generated track shares the score's master bars, so it has to be barred in
-   * the score's meter rather than in the progression's:
-   * `effectiveTimeSignature(masterBars, 0)` is that meter, and the service
-   * verifies it rather than trusting the caller. Re-barring moves no note -
+   * the score's meter rather than in the progression's. `ComposerService.scoreMeter`
+   * is that meter, and the service verifies it rather than trusting the caller -
+   * its refusal names the getter for the same reason this call site uses it:
+   * one definition of "the score's meter", in one place, rather than an
+   * expression copied out of a docstring that would go on compiling after the
+   * definition moved. Re-barring moves no note -
    * `progression-track.ts` argues that under "Why the meter is swapped and not
    * passed" - so this costs the progression nothing but bar lines that agree
    * with everything else in the score.
@@ -424,40 +448,104 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    * Warning and proceeding was the alternative and it is the worse one for the
    * same reason: a warning nobody is left looking at is not a warning.
    *
+   * The refusal cannot name a number, and says so. `write` argues below that
+   * "too long" alone does not tell a user how much to cut, and names a count
+   * because `progressionToScore` hands one back; `GeneratedTrack` carries a
+   * truncation flag and no count. It names the meter for a sharper reason: the
+   * bars are counted in the *score's* meter and the exports count them in the
+   * progression's, so a 4/4 progression sent to a 3/4 score is refused here and
+   * written happily by both exports a moment later - and a message mentioning
+   * neither would be unactionable in exactly that case.
+   *
+   * ## Nothing to send is refused too
+   *
+   * `sendProgression` cannot make that refusal: an empty projection has no bars
+   * to be in the wrong meter, so `requireScoreMeter` passes it, the merge
+   * appends a marked track with no music in it, and the page then navigates
+   * away from the thing the user did not mean to make.
+   *
+   * ## What can throw, and who each failure is for
+   *
    * Everything that can throw is inside the try - the projection, and the
    * meter check - because a page that broke on a refused send would take the
-   * roll and the transport down with a button press.
+   * roll and the transport down with a button press. What the catch must not do
+   * is paint the thrown message into the rail: `requireScoreMeter` ends its
+   * throw with an instruction to change a service call, which is a sentence for
+   * whoever is holding the code and not for whoever is holding the mouse. See
+   * `reportFailure`, which keeps both readers.
    */
   send(): void {
     const state = this.latest;
     if (!state) return;
 
+    if (state.doc.slots.length === 0) {
+      this.showError(
+        'There are no chords in this progression yet, so nothing was sent. Add one from the '
+        + 'palette and try again.'
+      );
+      return;
+    }
+
     try {
       const generated = progressionTrack(
         state.doc,
         state.keyScale ? state.keyScale.intervals : [],
-        effectiveTimeSignature(this.composer.doc.masterBars, 0)
+        this.composer.scoreMeter
       );
 
       if (generated.truncated) {
-        this.exportError =
+        this.showError(
           `This progression runs past the ${MAX_PREVIEW_BARS} bars a projection stops at, so `
           + 'nothing was sent. A track ending at bar '
           + `${MAX_PREVIEW_BARS} would not be this progression, and nothing it carried into the `
           + 'composer would say so - a generated track records which revision it came from, not '
-          + 'how much of it arrived. Shorten it and try again.';
-        this.changes.markForCheck();
+          + 'how much of it arrived, which is also why this cannot say how far over you are. '
+          + `The bars are counted in the score's meter rather than in this progression's, so a `
+          + 'progression short enough to export can still be too long to send. Shorten it and '
+          + 'try again.'
+        );
         return;
       }
 
       this.composer.sendProgression(generated);
-      this.exportError = null;
-      void this.router.navigate(['/composer']);
+      this.clearError();
+      this.leave();
     } catch (error) {
-      this.exportError = `Could not send the progression to the composer: ${messageOf(error)}`;
+      this.reportFailure(
+        error,
+        'Something went wrong sending the progression to the composer, so nothing was sent. '
+        + 'The details are in the browser console.'
+      );
     }
+  }
 
-    this.changes.markForCheck();
+  /**
+   * Follows the track to the Composer, and says so when the page does not move.
+   *
+   * `Router.navigate` answers twice over and both answers can be no: it
+   * resolves `false` when a guard turns the move down or a redirect sends it
+   * elsewhere, and it rejects when a guard or a resolver throws. `void` on the
+   * promise swallowed both - and by the time either can happen the commit has
+   * succeeded and the refusal beside the button has been cleared, so the user
+   * was left here beside a button that had quietly renamed itself to *Update in
+   * Composer*, with no account of why nothing had moved.
+   *
+   * The sentence says the send stood, because it did. "Could not send" would be
+   * false, and a user who read it would press again - harmless, since the merge
+   * replaces rather than duplicates, and still the wrong thing to tell someone.
+   * A rejection carries a real error as well as a stuck page, and that half
+   * goes where the two catches send theirs rather than into the rail.
+   *
+   * Both callbacks run after `send` has returned, so nothing it did covers
+   * them: `showError` marks for check itself, which is what makes that safe.
+   */
+  private leave(): void {
+    this.router.navigate(['/composer']).then(
+      moved => {
+        if (!moved) this.showError(SENT_BUT_STILL_HERE);
+      },
+      error => this.reportFailure(error, SENT_BUT_STILL_HERE)
+    );
   }
 
   /** Writes the progression out as a standard MIDI file. */
@@ -508,10 +596,19 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    * separate callers rather than one because a preview and a file are drawn at
    * different moments.
    *
+   * ## The file is named the way the Composer names the track
+   *
+   * Through `progressionLabel`, which is the function `progressionTrack` puts
+   * both of a generated track's names through. Handing `doc.name` straight to
+   * `toFileName` is why one unnamed document arrived in the Composer as
+   * *Progression* and on disk as *Untitled.mid*: two readings of one field, and
+   * the user's own two copies of one progression disagreeing about its name.
+   *
    * Everything that can throw is inside the try, the projection included:
    * `quantizeBar` throws on a meter its grid cannot express, and a page that
    * broke on a bad document would take the roll and the transport down with a
-   * download.
+   * download. The thrown message stays out of the rail, for the reason `send`
+   * gives: see `reportFailure`.
    */
   private write(
     deliver: (
@@ -531,23 +628,71 @@ export class ProgressionComponent implements OnInit, OnDestroy {
       );
 
       if (projected.truncated) {
-        this.exportError =
+        this.showError(
           `This progression is ${projected.barCount} bars long and an export stops at `
           + `${MAX_PREVIEW_BARS}. Nothing was written: a file that quietly ended at bar `
-          + `${MAX_PREVIEW_BARS} would not be this progression. Shorten it and try again.`;
-        this.changes.markForCheck();
+          + `${MAX_PREVIEW_BARS} would not be this progression. Shorten it and try again.`
+        );
         return;
       }
 
       const settings = new alphaTab.Settings();
       const score = this.mapper.toScore(projected.doc, settings);
-      deliver(score, settings, this.exporter.toFileName(state.doc.name));
-      this.exportError = null;
+      deliver(score, settings, this.exporter.toFileName(progressionLabel(state.doc.name)));
+      this.clearError();
     } catch (error) {
-      this.exportError = `Could not export the progression: ${messageOf(error)}`;
+      this.reportFailure(
+        error,
+        'Something went wrong writing the file, so nothing was downloaded. The details are in '
+        + 'the browser console.'
+      );
     }
+  }
 
+  /**
+   * Puts a sentence in front of the user, and makes a repeat of it audible.
+   *
+   * The swap is the whole of it. Two `role="alert"` regions stand in the rail
+   * at all times and the message goes into whichever is empty, so a second
+   * refusal identical to the first is still a change *in a live region* - which
+   * is the thing assistive technology announces.
+   *
+   * It marks for check itself rather than leaving that to its callers, two of
+   * which are promise callbacks running after the method that started them
+   * returned. One rule with no exception in it is cheaper to keep.
+   */
+  private showError(message: string): void {
+    this.exportError = message;
+    this.alerts = this.alerts[0] === '' ? [message, ''] : ['', message];
     this.changes.markForCheck();
+  }
+
+  /** Takes the last message down, on the attempt that did not need one. */
+  private clearError(): void {
+    this.exportError = null;
+    this.alerts = ['', ''];
+    this.changes.markForCheck();
+  }
+
+  /**
+   * A sentence for the user and the error itself for whoever has to fix it.
+   *
+   * Two readers and two texts, which is the whole point. `messageOf(error)` in
+   * the rail put developer prose on screen in soft pink - `requireScoreMeter`
+   * ends its throw with "Build it with ComposerService.scoreMeter." - so a
+   * broken contract showed a user an instruction to edit a service call, and a
+   * deliberately loud programming error became a paragraph that ships.
+   *
+   * So the user gets a sentence about their button and the error goes to
+   * Angular's `ErrorHandler`, which is where an unhandled one would have gone
+   * had the try not been here: the try exists to keep a refused send from
+   * taking the roll and the transport down, not to make failures disappear.
+   * `errorOf` rather than `new Error(messageOf(error))` keeps the stack that
+   * points at where it was actually thrown.
+   */
+  private reportFailure(error: unknown, sentence: string): void {
+    this.showError(sentence);
+    this.errors.handleError(errorOf(error));
   }
 
   /**
@@ -807,6 +952,18 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     this.sendLabel = held === 'absent' ? 'Send to Composer' : 'Update in Composer';
   }
 }
+
+/**
+ * What a send that committed but did not navigate has to say.
+ *
+ * Not a failure, and worded so it cannot be read as one: the track is in the
+ * score by the time this can be shown, so the only thing that did not happen is
+ * the move. It names the way back, because the button beside it now says
+ * *Update in Composer* and pressing that again would not move the page either.
+ */
+const SENT_BUT_STILL_HERE =
+  'The progression is in the composer, but this page could not move there. Nothing was lost - '
+  + 'open the Composer from the navigation at the top of the page to see the track.';
 
 /**
  * Whether a key press belongs to something the user is typing into.

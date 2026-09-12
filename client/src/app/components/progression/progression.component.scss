@@ -8,6 +8,17 @@
   --page-line: #1a242f;
   --page-text: #ecf0f1;
   --page-text-dim: #adbcc8;
+  // Lifted off the raised surface by roughly the same step that surface is
+  // lifted off the rail, so a hovered button reads as pressable without
+  // becoming a second accent.
+  --page-rail-hover: #3d5a73;
+  --page-focus: #5dade2;
+  // The notation panel's `--notation-error`, which measures 5.4:1 on its
+  // surface and 6.1:1 on this one. Written out a second time rather than
+  // shared, because that token is declared on that component's own `:host` and
+  // a sibling cannot read it; the two are one colour with two declarations, and
+  // the day this app grows a global palette they collapse into it.
+  --page-error: #f1948a;
 
   display: block;
 }
@@ -148,25 +159,31 @@
   cursor: pointer;
 
   &:hover {
-    background: #3d5a73;
+    background: var(--page-rail-hover);
   }
 
   // Kept visible rather than removed with the default ring: these are the only
   // controls in the rail, so they are the only thing in it a keyboard can land
   // on.
   &:focus-visible {
-    outline: 2px solid #5dade2;
+    outline: 2px solid var(--page-focus);
     outline-offset: 2px;
   }
 }
 
-// The notation panel's error colour, which measures 5.4:1 on its surface and
-// 6.1:1 on this one.
+// Holds the two live regions, which stay in the page whether or not either of
+// them has anything in it - see the template. Empty, it draws nothing and takes
+// no height; `is-quiet` takes the margin away as well, so the block below reads
+// exactly as it did when the paragraph was behind an `*ngIf`.
 .rail-error {
   margin: 0.6rem 0 0;
   font-size: 0.8rem;
   line-height: 1.5;
-  color: #f1948a;
+  color: var(--page-error);
+
+  &.is-quiet {
+    margin: 0;
+  }
 }
 
 // One column under the width where a 14rem rail leaves the palette's seven

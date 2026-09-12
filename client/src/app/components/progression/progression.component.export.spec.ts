@@ -1,3 +1,4 @@
+import { ErrorHandler } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import * as alphaTab from '@coderline/alphatab';
@@ -150,10 +151,35 @@ describe('ProgressionComponent exports', () => {
     return found;
   }
 
-  /** The refusal as a screen reader would reach it, or null when there is none. */
-  function announcement(): HTMLElement | null {
+  /**
+   * The rail's two live regions, as text, in the order they appear.
+   *
+   * Two rather than one, and both always in the page: `role="alert"` announces
+   * a *change* inside a region that was already there, so a message has to move
+   * between them for a repeat of it to be a change at all. Exactly one of them
+   * ever holds text.
+   */
+  function alertSlots(): string[] {
     const page: HTMLElement = fixture.nativeElement;
-    return page.querySelector<HTMLElement>('.rail [role="alert"]');
+    return Array.from(page.querySelectorAll<HTMLElement>('.rail [role="alert"]')).map(
+      region => (region.textContent ?? '').trim()
+    );
+  }
+
+  /** The refusal as a screen reader would reach it, or '' when there is none. */
+  function announced(): string {
+    return alertSlots().join('');
+  }
+
+  /** The handler a real failure is reported through, spied for one test. */
+  function errorHandler(): jasmine.Spy {
+    return spyOn(TestBed.inject(ErrorHandler), 'handleError');
+  }
+
+  /** The name the last MIDI export asked for, before any extension. */
+  function exportedName(): string {
+    const spy = exporter.downloadMidiFile as jasmine.Spy;
+    return spy.calls.mostRecent().args[2] as string;
   }
 
   /** The id of the first slot, which is what a length edit names. */
@@ -264,12 +290,75 @@ describe('ProgressionComponent exports', () => {
   it('announces the refusal rather than only showing it', () => {
     overlong();
     fixture.detectChanges();
-    expect(announcement()).toBeNull();
+    expect(announced()).toBe('');
 
     component.exportMidi();
     fixture.detectChanges();
 
-    expect(announcement()?.textContent).toContain('512');
+    expect(announced()).toContain('512');
+  });
+
+  /**
+   * The regions are in the page before there is anything to put in them.
+   *
+   * An `*ngIf` that inserted the paragraph on the first refusal announced that
+   * one and nothing after it: putting identical text where identical text
+   * already stands is not a DOM change, so the second press was silent.
+   */
+  it('keeps the live regions in the page while there is nothing to say', () => {
+    expect(alertSlots().length).toBe(2);
+    expect(announced()).toBe('');
+  });
+
+  /**
+   * Export MIDI and then Export .gp on an over-long progression produce the
+   * same sentence twice. The second press has to be heard as well as the
+   * first, so the message swaps regions and the swap is the change.
+   */
+  it('moves a repeated refusal to the other region', () => {
+    overlong();
+
+    component.exportMidi();
+    fixture.detectChanges();
+    const first = alertSlots();
+
+    component.exportGuitarPro();
+    fixture.detectChanges();
+    const second = alertSlots();
+
+    expect(second.join('')).toBe(first.join(''));
+    expect(second).not.toEqual(first);
+  });
+
+  /**
+   * The file and the Composer's track agree about what this progression is
+   * called. `progressionTrack` resolves the name through `progressionLabel`, so
+   * an unnamed document is a track called *Progression*; a raw `doc.name` here
+   * put the same document on disk as *Untitled*.
+   */
+  it('names the file for the label the composer uses', () => {
+    progression.appendSlot(0);
+
+    component.exportMidi();
+
+    expect(exportedName()).toBe('Progression');
+  });
+
+  /**
+   * A failure inside the export is the user's to hear about and the
+   * developer's to read. The rail gets a sentence of its own; the thrown
+   * message goes to the app's `ErrorHandler` rather than into the page.
+   */
+  it('says an export failed without painting the failure into the rail', () => {
+    const handled = errorHandler();
+    progression.appendSlot(0);
+    (exporter.downloadMidiFile as jasmine.Spy).and.throwError('alphaTab fell over');
+
+    component.exportMidi();
+
+    expect(component.exportError).toContain('nothing was downloaded');
+    expect(component.exportError).not.toContain('alphaTab fell over');
+    expect((handled.calls.mostRecent().args[0] as Error).message).toContain('alphaTab');
   });
 
   it('clears the refusal once something exports', () => {
@@ -282,7 +371,7 @@ describe('ProgressionComponent exports', () => {
 
     expect(exporter.downloadMidiFile).toHaveBeenCalled();
     expect(component.exportError).toBeNull();
-    expect(announcement()).toBeNull();
+    expect(announced()).toBe('');
   });
 
   /**
@@ -386,7 +475,154 @@ describe('ProgressionComponent exports', () => {
       component.send();
       fixture.detectChanges();
 
-      expect(announcement()?.textContent).toContain('512');
+      expect(announced()).toContain('512');
+    });
+
+    /**
+     * Send counts bars in the *score's* meter and the exports count them in the
+     * progression's, so a progression short enough to export can still be too
+     * long to send. The message says so, because a refusal naming neither the
+     * meter nor a number is unactionable in exactly that case.
+     *
+     * It also says why it cannot name the number. `GeneratedTrack` carries a
+     * truncation flag and no bar count, so unlike the export refusal one method
+     * below it, this one genuinely cannot tell the user how much to cut.
+     */
+    it('says the length it refused is counted in the score meter', () => {
+      overlong();
+
+      component.send();
+
+      expect(component.exportError).toContain('meter');
+      expect(component.exportError).toContain('how far over');
+    });
+
+    /**
+     * An empty progression sends an empty track and then leaves the page the
+     * user would have to come back to in order to fill it. Two things lost to
+     * one press, and neither of them wanted.
+     */
+    it('refuses a progression with no chords', () => {
+      component.send();
+
+      expect(sentTrack()).toBeNull();
+      expect(navigate).not.toHaveBeenCalled();
+      expect(component.exportError).toContain('no chords');
+    });
+
+    /**
+     * `Router.navigate` resolves `false` when a guard turns the move down. The
+     * commit has already happened by then, so the message says the track
+     * arrived - a user told the send failed would press it again, and be right
+     * to.
+     */
+    it('says the track arrived when the navigation is refused', async () => {
+      navigate.and.resolveTo(false);
+      progression.appendSlot(0);
+
+      component.send();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(sentTrack()).not.toBeNull();
+      expect(component.exportError).toContain('is in the composer');
+      expect(component.exportError).not.toContain('nothing was sent');
+      expect(announced()).toContain('is in the composer');
+    });
+
+    /** The other branch: a guard or resolver that throws rejects the promise. */
+    it('says the same, and reports the reason, when the navigation fails', async () => {
+      const handled = errorHandler();
+      navigate.and.rejectWith(new Error('a resolver blew up'));
+      progression.appendSlot(0);
+
+      component.send();
+      await fixture.whenStable();
+
+      expect(sentTrack()).not.toBeNull();
+      expect(component.exportError).toContain('is in the composer');
+      expect((handled.calls.mostRecent().args[0] as Error).message).toContain('resolver');
+    });
+
+    /**
+     * `requireScoreMeter` throws a sentence ending "Build it with
+     * ComposerService.scoreMeter." - an instruction to change a service call,
+     * which is not something to show a user in soft pink. The rail gets a
+     * sentence of its own and the thrown one goes to the `ErrorHandler`, which
+     * is where a deliberately loud programming error stays loud.
+     */
+    it('keeps a broken contract out of the sentence the user reads', () => {
+      const handled = errorHandler();
+      progression.appendSlot(0);
+      spyOn(composer, 'sendProgression').and.throwError(
+        "Generated track is barred in 3/4, but the score's meter is 4/4. Build it with "
+          + 'ComposerService.scoreMeter.'
+      );
+
+      component.send();
+
+      expect(component.exportError).not.toContain('scoreMeter');
+      expect(component.exportError).toContain('nothing was sent');
+      expect(navigate).not.toHaveBeenCalled();
+      expect((handled.calls.mostRecent().args[0] as Error).message).toContain('scoreMeter');
+    });
+
+    /**
+     * One field serves all three buttons, so the sentence in it has to say
+     * which of them wrote it.
+     */
+    it('says a failed send in different words from a failed export', () => {
+      errorHandler();
+      progression.appendSlot(0);
+      spyOn(composer, 'sendProgression').and.throwError('kaboom');
+
+      component.send();
+      const failedSend = component.exportError;
+
+      (exporter.downloadMidiFile as jasmine.Spy).and.throwError('kaboom');
+      component.exportMidi();
+
+      expect(failedSend).toContain('composer');
+      expect(failedSend).not.toBe(component.exportError);
+    });
+
+    /** The single field is only honest while every path that writes it clears it. */
+    it('clears a send refusal once a later send succeeds', () => {
+      overlong();
+      component.send();
+      expect(component.exportError).not.toBeNull();
+
+      progression.setSlotLength(firstSlotId(), 4);
+      component.send();
+
+      expect(sentTrack()).not.toBeNull();
+      expect(component.exportError).toBeNull();
+    });
+
+    it('replaces an export refusal with its own', () => {
+      overlong();
+      component.exportMidi();
+      expect(component.exportError).toContain('Nothing was written');
+
+      component.send();
+
+      expect(component.exportError).toContain('nothing was sent');
+      expect(component.exportError).not.toContain('Nothing was written');
+    });
+
+    /**
+     * The label is a fact about two documents, and the Composer's subscription
+     * only reports on one of them. A progression replaced *here* stops matching
+     * a track the Composer still holds, and nothing over there emits to say so.
+     */
+    it('recomputes the label when the document here is replaced', () => {
+      progression.appendSlot(0);
+      component.send();
+      expect(component.sendLabel).toContain('Update');
+
+      progression.replaceDocument(createDefaultProgression());
+
+      expect(component.sendLabel).toBe('Send to Composer');
     });
 
     /**

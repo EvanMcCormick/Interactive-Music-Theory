@@ -55,11 +55,20 @@
         <strong>MIDI</strong> carries the notes into a DAW or a notation editor;
         <strong>.gp</strong> opens in Guitar Pro and in this app's GP library.
       </p>
-      <!-- Refused, or failed. `role="alert"` rather than colour alone: this is
-           the only sign a button that wrote nothing gives, so it has to reach a
-           screen reader as well as an eye. Same pattern as the notation panel's
-           own error, one block down the page. -->
-      <p class="rail-error" *ngIf="exportError" role="alert">{{ exportError }}</p>
+      <!-- Refused, or failed, or sent-but-still-here. `role="alert"` rather
+           than colour alone: this is the only sign a button that wrote nothing
+           gives, so it has to reach a screen reader as well as an eye.
+
+           Two regions, both always present, rather than one region behind an
+           `*ngIf`. A live region announces a change *inside itself*, so a
+           second refusal with the same wording as the first - Export MIDI and
+           then Export .gp, on the same over-long progression - mutated nothing
+           and was announced to nobody. The message swaps regions on every
+           press, so a repeat is a change in both of them. Exactly one ever
+           holds text; see `showError`. -->
+      <p class="rail-error" [class.is-quiet]="!exportError">
+        <span role="alert">{{ alerts[0] }}</span><span role="alert">{{ alerts[1] }}</span>
+      </p>
     </section>
   </aside>
 
