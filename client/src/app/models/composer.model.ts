@@ -118,15 +118,20 @@ export interface GeneratedOrigin {
    */
   progressionId: string;
   /**
-   * `ProgressionDoc.name` as it stood when the track was built.
+   * What to call the progression this track was built from.
+   *
+   * The *resolved* label rather than `ProgressionDoc.name` verbatim: a document
+   * nobody has renamed carries `UNTITLED_PROGRESSION_NAME`, and a badge reading
+   * "From Untitled" tells a reader nothing. `progressionLabel` in
+   * `progression-track.ts` resolves both this and the track's own name, and is
+   * exported so that whatever first renames a progression writes a resolved
+   * label through rather than reopening the hole.
    *
    * Denormalised so the badge can say which progression a track came from with
    * only the score loaded. This is the second copy of the truth the design doc
    * prices in under "The generated track is a real track carrying a marker",
    * and it is a copy the revision counter cannot police: `revision` does not
    * move on a rename, so a stale name here would not even read as stale.
-   * Nothing renames a progression today; whatever first does has to write
-   * through to this field.
    */
   progressionName: string;
   source: { kind: 'revision'; revision: number } | { kind: 'diverged' };
