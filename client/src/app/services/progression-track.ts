@@ -1,4 +1,12 @@
-import { MasterBarDoc, ScoreDoc, TimeSignature, TrackDoc } from '../models/composer.model';
+import {
+  MasterBarDoc,
+  ScoreDoc,
+  StaffDoc,
+  TimeSignature,
+  TrackDoc,
+  createDefaultBar,
+  effectiveTimeSignature
+} from '../models/composer.model';
 import { ProgressionDoc } from '../models/progression.model';
 import { PROGRESSION_FINEST_DIVISION, progressionToScore } from './progression-score';
 
@@ -30,6 +38,26 @@ import { PROGRESSION_FINEST_DIVISION, progressionToScore } from './progression-s
  * quarter note". Re-barring therefore moves no note, only bar lines. That
  * property is what the meter rule rests on, so it is asserted as a property
  * where the bars are actually shared, not here.
+ *
+ * ## Reconciling with a score that already exists
+ *
+ * `mergeGeneratedTrack` is the half of this module that touches somebody else's
+ * document, and every rule in it is chosen the same way: of the two answers to a
+ * collision, take the one that cannot destroy work.
+ *
+ * Bars therefore **grow and never shrink**. A progression that fell from eight
+ * bars to four leaves four bars of rest behind rather than deleting bars a
+ * user's own track may be writing in - the four bars of rest are visible and
+ * one keypress from gone, and the deleted bar 7 is neither. `composer.service.ts`
+ * states the invariant that makes this a padding job rather than a truncation
+ * one: every staff of every track has exactly `masterBars.length` bars, so
+ * growing the score means growing every staff in it, generated or not.
+ *
+ * The merge is pure, and that is not decoration either. The Composer calls it
+ * inside `commit()`, which has already taken the undo snapshot from the same
+ * document it hands in as the draft; a merge that wrote through to what it was
+ * given would corrupt the snapshot sitting beside it and undo would restore the
+ * merged score.
  *
  * ## Staleness is a comparison, not a diff
  *
@@ -154,4 +182,79 @@ export function generatedTrackState(score: ScoreDoc, doc: ProgressionDoc): Gener
   if (marker.source.kind === 'diverged') return 'stale';
 
   return marker.source.revision === doc.revision ? 'current' : 'stale';
+}
+
+/**
+ * A staff padded out to `barCount`, in the meter `masterBars` puts in force.
+ *
+ * Only ever lengthens. A staff already at or past `barCount` is handed back as
+ * it is rather than sliced: `barCount` is never below the score's own bar
+ * count, so a longer staff is one that arrived already breaking the invariant,
+ * and quietly deleting its tail is the one thing this module will not do to
+ * find out.
+ */
+function padStaff(staff: StaffDoc, barCount: number, masterBars: MasterBarDoc[]): StaffDoc {
+  if (staff.bars.length >= barCount) return staff;
+
+  return {
+    ...staff,
+    bars: [
+      ...staff.bars,
+      ...Array.from({ length: barCount - staff.bars.length }, (_, offset) =>
+        // A bar of rests rather than an empty bar, because the caret steps
+        // between a bar's rest positions - `createDefaultBar` says so - and a
+        // bar holding nothing would be a bar the user cannot write in.
+        createDefaultBar(staff.showTablature, effectiveTimeSignature(masterBars, staff.bars.length + offset))
+      )
+    ]
+  };
+}
+
+/** Every staff of a track padded out to `barCount`. */
+function padTrack(track: TrackDoc, barCount: number, masterBars: MasterBarDoc[]): TrackDoc {
+  return { ...track, staves: track.staves.map(staff => padStaff(staff, barCount, masterBars)) };
+}
+
+/**
+ * Puts a generated track into a score that already exists.
+ *
+ * Appends when the score holds nothing of this progression and replaces **in
+ * place** when it does, because Update is a refresh of a track the user has
+ * already placed among their own and moving it to the end would rearrange a
+ * panel they arranged. The marker is matched by `progressionId`, so a second
+ * progression sent to the same score gets a track of its own rather than
+ * overwriting the first.
+ *
+ * Bars grow and never shrink; see the module docstring for why that is the rule
+ * and not an implementation detail. Pure: the score handed in is returned
+ * unchanged and the result shares whatever neither of them had to move.
+ */
+export function mergeGeneratedTrack(score: ScoreDoc, generated: GeneratedTrack): ScoreDoc {
+  const progressionId = generated.track.generated?.progressionId;
+  const existing =
+    progressionId === undefined
+      ? -1
+      : score.tracks.findIndex(track => track.generated?.progressionId === progressionId);
+
+  const barCount = Math.max(score.masterBars.length, generated.masterBars.length);
+
+  // The score's own bars are kept as they are - a `MasterBarDoc` carries the
+  // user's repeats, sections and tempo automations, and the projection knows
+  // none of them. Only the bars past the score's end come from the projection,
+  // where there was nothing to keep.
+  const masterBars: MasterBarDoc[] = Array.from({ length: barCount }, (_, index) =>
+    index < score.masterBars.length ? score.masterBars[index] : generated.masterBars[index]
+  );
+
+  const merged = padTrack(generated.track, barCount, masterBars);
+  const others = score.tracks.map(track => padTrack(track, barCount, masterBars));
+
+  return {
+    ...score,
+    masterBars,
+    tracks:
+      existing === -1
+        ? [...others, merged]
+        : others.map((track, index) => (index === existing ? merged : track))
+  };
 }

@@ -1,20 +1,30 @@
 import {
+  BeatDoc,
   MasterBarDoc,
+  NoteDoc,
   ScoreDoc,
   TimeSignature,
   TrackDoc,
+  createDefaultBar,
+  createDefaultMasterBar,
+  createDefaultNoteEffects,
   createDefaultPlaybackInfo
 } from '../models/composer.model';
 import {
   ChordSlot,
   ProgressionDoc,
-  RollNote,
   createDefaultProgression,
   createDegreeSlot
 } from '../models/progression.model';
 import { DEFAULT_VELOCITY } from '../models/progression-normalize';
 import { MAX_PREVIEW_BARS } from './progression-score';
-import { generatedTrackIndex, generatedTrackState, progressionTrack } from './progression-track';
+import {
+  GeneratedTrack,
+  generatedTrackIndex,
+  generatedTrackState,
+  mergeGeneratedTrack,
+  progressionTrack
+} from './progression-track';
 
 /**
  * The progression as a track, and what a score can say about it afterwards.
@@ -31,28 +41,35 @@ import { generatedTrackIndex, generatedTrackState, progressionTrack } from './pr
 
 const FOUR_FOUR: TimeSignature = { numerator: 4, denominator: 4, isCommon: true };
 const THREE_FOUR: TimeSignature = { numerator: 3, denominator: 4, isCommon: false };
+const SIX_EIGHT: TimeSignature = { numerator: 6, denominator: 8, isCommon: false };
 
 const IONIAN = [0, 2, 4, 5, 7, 9, 11];
 
 /** C major triad from middle C, the voicing `generateSlotNotes` produces for I. */
 const C_MAJOR_TRIAD = [60, 64, 67];
+const F_MAJOR_TRIAD = [65, 69, 72];
+const G_MAJOR_TRIAD = [67, 71, 74];
 
-function triadNotes(lengthBeats: number): RollNote[] {
-  return C_MAJOR_TRIAD.map(midi => ({
-    midi,
-    startBeat: 0,
+/** A chord held for the whole of its slot, which is what the roll writes. */
+function slotOf(startBeat: number, lengthBeats: number, midis = C_MAJOR_TRIAD): ChordSlot {
+  return {
+    ...createDegreeSlot(0, startBeat),
     lengthBeats,
-    velocity: DEFAULT_VELOCITY
-  }));
-}
-
-function slotOf(startBeat: number, lengthBeats: number): ChordSlot {
-  return { ...createDegreeSlot(0, startBeat), lengthBeats, notes: triadNotes(lengthBeats) };
+    notes: midis.map(midi => ({ midi, startBeat: 0, lengthBeats, velocity: DEFAULT_VELOCITY }))
+  };
 }
 
 /** A progression of one bar-long chord, unless a caller wants otherwise. */
 function docOf(overrides: Partial<ProgressionDoc> = {}): ProgressionDoc {
   return { ...createDefaultProgression(), slots: [slotOf(0, 4)], ...overrides };
+}
+
+/** A progression of `bars` bar-long chords, one per 4/4 bar. */
+function docOfBars(bars: number, overrides: Partial<ProgressionDoc> = {}): ProgressionDoc {
+  return docOf({
+    slots: Array.from({ length: bars }, (_, index) => slotOf(index * 4, 4)),
+    ...overrides
+  });
 }
 
 /**
@@ -69,15 +86,52 @@ function scoreOf(tracks: TrackDoc[]): ScoreDoc {
 }
 
 /** A track nobody generated, of the kind a user's own score is full of. */
-function plainTrack(name: string): TrackDoc {
+function plainTrack(name: string, bars = 0): TrackDoc {
   return {
     id: name,
     name,
     shortName: name.slice(0, 3),
     color: '#3498db',
     playback: createDefaultPlaybackInfo(0),
-    staves: [],
+    staves: [
+      {
+        tuning: [],
+        tuningLabel: '',
+        capo: 0,
+        transpose: 0,
+        displayTranspose: 0,
+        showStandardNotation: true,
+        showTablature: false,
+        showSlash: false,
+        showNumbered: false,
+        bars: Array.from({ length: bars }, () => createDefaultBar(false, FOUR_FOUR))
+      }
+    ],
     generated: null
+  };
+}
+
+/**
+ * A score of `bars` bars holding the user's own tracks, and nothing generated.
+ *
+ * Unlike `scoreOf` this one honours the invariant at the top of
+ * `composer.service.ts` - every staff has exactly `masterBars.length` bars -
+ * because that invariant is the thing the merge cases are checking, and a
+ * fixture that broke it going in would make the assertion coming out
+ * unreadable.
+ */
+function userScore(bars: number, tracks: TrackDoc[] = [plainTrack('Guitar', bars)]): ScoreDoc {
+  return {
+    title: 'Score',
+    subTitle: '',
+    artist: '',
+    album: '',
+    tempo: 120,
+    masterBars: Array.from({ length: bars }, (_, index) => ({
+      ...createDefaultMasterBar(),
+      timeSignature: index === 0 ? { ...FOUR_FOUR } : null
+    })),
+    tracks
   };
 }
 
@@ -193,5 +247,201 @@ describe('generatedTrackState', () => {
     };
 
     expect(generatedTrackState(scoreOf([diverged]), doc)).toBe('stale');
+  });
+});
+
+/**
+ * A copy of `score` with a note struck in one bar of one track.
+ *
+ * Stands in for the user's own work, and it has to be a *note* rather than a
+ * marker of some cheaper kind: the rule under test is that a shorter
+ * progression does not delete a bar somebody else is writing in, and only a bar
+ * with something in it can demonstrate that it survived.
+ */
+function withNoteIn(score: ScoreDoc, trackIndex: number, barIndex: number, midi = 62): ScoreDoc {
+  const note: NoteDoc = {
+    pitch: { kind: 'pitched', noteValue: midi % 12, octave: Math.floor(midi / 12) - 1 },
+    isTied: false,
+    accidental: 'auto',
+    effects: createDefaultNoteEffects()
+  };
+
+  const clone = structuredClone(score);
+  const beat = clone.tracks[trackIndex].staves[0].bars[barIndex].voices[0].beats[0];
+  beat.isRest = false;
+  beat.notes = [note];
+  return clone;
+}
+
+/** MIDI of the first note written in that bar, or null if the bar is silent. */
+function noteMidiAt(score: ScoreDoc, trackIndex: number, barIndex: number): number | null {
+  const bar = score.tracks[trackIndex].staves[0].bars[barIndex];
+  for (const beat of bar?.voices[0].beats ?? []) {
+    if (!beat.isRest && beat.notes.length > 0) return midiOf(beat.notes[0]);
+  }
+  return null;
+}
+
+/**
+ * The invariant at the top of `composer.service.ts`, asserted rather than
+ * assumed.
+ *
+ * Called from every merge case instead of from one of them, because each case
+ * reaches the padding by a different route - appending, replacing, growing -
+ * and a single check would only pin whichever route it happened to take.
+ */
+function expectEveryStaffBarred(score: ScoreDoc): void {
+  for (const track of score.tracks) {
+    for (const staff of track.staves) {
+      expect(staff.bars.length).toBe(score.masterBars.length);
+    }
+  }
+}
+
+describe('mergeGeneratedTrack', () => {
+  it('never shrinks the score, and keeps the bars a user was writing in', () => {
+    // The rule of the three that protects a user's own work, so it is the one
+    // written first. A progression falling from eight bars to four leaves four
+    // bars of rest behind; deleting bar 7 out from under the guitar track is
+    // not an answer, however tidy the result looks.
+    const eight = mergeGeneratedTrack(userScore(1), progressionTrack(docOfBars(8), IONIAN, FOUR_FOUR));
+    const withWork = withNoteIn(eight, 0, 6);
+
+    const four = mergeGeneratedTrack(withWork, progressionTrack(docOfBars(4), IONIAN, FOUR_FOUR));
+
+    expect(four.masterBars.length).toBe(8);
+    expect(noteMidiAt(four, 0, 6)).toBe(62);
+    expectEveryStaffBarred(four);
+  });
+
+  it('appends when the score has none', () => {
+    const generated = progressionTrack(docOf(), IONIAN, FOUR_FOUR);
+
+    const merged = mergeGeneratedTrack(userScore(4), generated);
+
+    expect(merged.tracks.length).toBe(2);
+    expect(merged.tracks[1].generated).toEqual(generated.track.generated);
+    expectEveryStaffBarred(merged);
+  });
+
+  it('replaces in place, keeping the track order', () => {
+    // Update is a refresh of a track the user has already placed among their
+    // own. Appending a second one, or moving this one to the end, would both
+    // rearrange a panel the user arranged.
+    const doc = docOf({ revision: 1 });
+    const score = mergeGeneratedTrack(
+      userScore(4, [plainTrack('Guitar', 4), plainTrack('Bass', 4)]),
+      progressionTrack(doc, IONIAN, FOUR_FOUR)
+    );
+    const reordered: ScoreDoc = {
+      ...score,
+      tracks: [score.tracks[0], score.tracks[2], score.tracks[1]]
+    };
+
+    const merged = mergeGeneratedTrack(
+      reordered,
+      progressionTrack({ ...doc, revision: 2 }, IONIAN, FOUR_FOUR)
+    );
+
+    expect(merged.tracks.length).toBe(3);
+    expect(merged.tracks.map(track => track.name)).toEqual(['Guitar', doc.name, 'Bass']);
+    expect(merged.tracks[1].generated?.source).toEqual({ kind: 'revision', revision: 2 });
+    expectEveryStaffBarred(merged);
+  });
+
+  it('grows masterBars to fit and pads every other staff', () => {
+    const merged = mergeGeneratedTrack(
+      userScore(2, [plainTrack('Guitar', 2), plainTrack('Bass', 2)]),
+      progressionTrack(docOfBars(6), IONIAN, FOUR_FOUR)
+    );
+
+    expect(merged.masterBars.length).toBe(6);
+    // Padding, not silence-by-omission: the caret steps through a bar's rests,
+    // so an empty bar has to be a bar of rests.
+    expect(merged.tracks[0].staves[0].bars[5].voices[0].beats.length).toBe(4);
+    expect(merged.tracks[0].staves[0].bars[5].voices[0].beats.every(beat => beat.isRest)).toBeTrue();
+    expectEveryStaffBarred(merged);
+  });
+
+  it('leaves the score it was handed alone', () => {
+    // Pure, like the rest of this file's neighbours: the Composer hands it a
+    // draft inside `commit()`, and a merge that wrote through to the previous
+    // document would corrupt the undo snapshot taken beside it.
+    const score = withNoteIn(userScore(2), 0, 1);
+    const before = structuredClone(score);
+
+    mergeGeneratedTrack(score, progressionTrack(docOfBars(6), IONIAN, FOUR_FOUR));
+
+    expect(score).toEqual(before);
+  });
+});
+
+/**
+ * Quarter notes a written beat occupies, dots and tuplet included.
+ *
+ * Negative durations are alphaTab's: -2 is a breve and -4 a longa, so they
+ * multiply where the positive values divide.
+ */
+function beatQuarters(beat: BeatDoc): number {
+  const plain = beat.duration < 0 ? 4 * -beat.duration : 4 / beat.duration;
+  const dotted = plain * (2 - Math.pow(0.5, beat.dots));
+  return beat.tuplet ? (dotted * beat.tuplet.denominator) / beat.tuplet.numerator : dotted;
+}
+
+function midiOf(note: NoteDoc): number {
+  if (note.pitch.kind !== 'pitched') throw new Error('the projection writes pitched notes only');
+  return note.pitch.noteValue + (note.pitch.octave + 1) * 12;
+}
+
+/**
+ * Every attack in a generated track, as sorted `beat@midi` strings.
+ *
+ * Walks the bars and sums durations rather than reading a position off
+ * anything, because a position read back off the same bar lines the property is
+ * about would agree with itself whatever those bar lines did. Tied notes are
+ * skipped: a tie's far end is one attack still sounding, and where a re-barring
+ * cuts it is exactly what is allowed to move.
+ */
+function attackSet(generated: GeneratedTrack): string[] {
+  const attacks: string[] = [];
+  let quarters = 0;
+
+  for (const bar of generated.track.staves[0].bars) {
+    for (const beat of bar.voices[0].beats) {
+      for (const note of beat.notes) {
+        if (!note.isTied) attacks.push(`${quarters.toFixed(4)}@${midiOf(note)}`);
+      }
+      quarters += beatQuarters(beat);
+    }
+  }
+
+  return attacks.sort();
+}
+
+describe('the meter is the score\'s, and re-barring moves no note', () => {
+  it('places the same attacks in 4/4, 3/4 and 6/8', () => {
+    // What the design's meter rule rests on. Swapping the progression's meter
+    // for the score's is only free if it moves bar lines and nothing else, and
+    // this is the whole of that claim: twelve quarter notes of I-IV-V land on
+    // the same absolute beats however they are barred.
+    const doc = docOf({
+      slots: [
+        slotOf(0, 4, C_MAJOR_TRIAD),
+        slotOf(4, 4, F_MAJOR_TRIAD),
+        slotOf(8, 4, G_MAJOR_TRIAD)
+      ]
+    });
+    const attacks = (meter: TimeSignature) => attackSet(progressionTrack(doc, IONIAN, meter));
+
+    // Two guards, because an equality between two empty arrays is also true and
+    // so is one between two re-barrings that did not re-bar. Nine attacks, and
+    // three bars against four.
+    expect(attacks(FOUR_FOUR).length).toBe(9);
+    expect(progressionTrack(doc, IONIAN, FOUR_FOUR).masterBars.length).toBe(3);
+    expect(progressionTrack(doc, IONIAN, THREE_FOUR).masterBars.length).toBe(4);
+    expect(progressionTrack(doc, IONIAN, SIX_EIGHT).masterBars.length).toBe(4);
+
+    expect(attacks(THREE_FOUR)).toEqual(attacks(FOUR_FOUR));
+    expect(attacks(SIX_EIGHT)).toEqual(attacks(FOUR_FOUR));
   });
 });
