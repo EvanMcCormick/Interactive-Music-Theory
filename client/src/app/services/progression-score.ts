@@ -5,6 +5,7 @@ import {
   DynamicValue,
   KeySignature,
   MasterBarDoc,
+  NoteLetter,
   NotePitch,
   ScoreDoc,
   StaffDoc,
@@ -21,6 +22,8 @@ import {
 } from '../models/progression-normalize';
 import { FinestDivision } from '../models/transcription.model';
 import { CirclePosition, keySignaturePosition } from './circle-of-fifths.data';
+import { letterOf } from './note-spelling';
+import { slotSpeller } from './progression-spelling';
 import {
   PlacedNote,
   WrittenNote,
@@ -67,6 +70,23 @@ import {
  * the grid this module lays down is meter-independent in any case: a slot is
  * `4 / finestDivision` quarter notes wide whatever the denominator, which at 64
  * is exactly `MIN_NOTE_BEATS`. Nothing the roll can store is too fine to write.
+ *
+ * ### A note is engraved on the letter its degree names
+ *
+ * The projection writes a `NotePitch.letter` where it can, so B flat major's
+ * borrowed `♭II` engraves as a C flat chord rather than as the B major one
+ * alphaTab reads out of a two-flat signature and a bare pitch class. The rule
+ * is `slotSpeller`'s and belongs to neither this module nor the roll, which is
+ * the point of it living in `progression-spelling.ts`: the letter drawn on a
+ * keyboard key and the letter engraved on the staff are one letter.
+ *
+ * The scale arrives as a parameter and defaults to empty, which means no
+ * letters at all. That is not a degraded mode so much as the previous
+ * behaviour kept reachable: `key.scaleId` resolves through
+ * `MusicTheoryService`, this module is pure, and a caller that has no scale in
+ * hand should hand over nothing rather than have a spelling invented from
+ * `preferSharps`. See `placeProgressionNotes`, which is where the letters are
+ * actually decided and why they are decided there.
  *
  * ### A note crossing a bar line is tied, not truncated
  *
@@ -234,16 +254,45 @@ function denominatorUnits(quarters: number, timeSignature: TimeSignature): numbe
   return (quarters * timeSignature.denominator) / 4;
 }
 
-/** MIDI to the pitched half of `NotePitch`, the inverse of `pitchToMidi`. */
-function pitchOf(midi: number): NotePitch {
-  return {
-    kind: 'pitched',
-    // Floored rather than truncated so a pitch below MIDI 0 - which
-    // `normalizeRollNote` permits, since what is stored is what is heard - still
-    // names a real octave instead of folding onto octave -1.
-    noteValue: ((midi % 12) + 12) % 12,
-    octave: Math.floor(midi / 12) - 1
-  };
+/**
+ * The pitch class a MIDI number sounds, 0-11.
+ *
+ * Reduced the long way rather than by `midi % 12`, because `normalizeRollNote`
+ * permits a pitch below MIDI 0 - what is stored is what is heard - and a
+ * negative remainder would miss every entry of the chord-tone map `slotSpeller`
+ * keys by pitch class, silently taking the scale's answer for a chord tone.
+ */
+function pitchClassOf(midi: number): number {
+  return ((midi % 12) + 12) % 12;
+}
+
+/**
+ * MIDI to the pitched half of `NotePitch`, the inverse of `pitchToMidi`.
+ *
+ * `letter` is the staff letter to engrave on, or undefined to leave the
+ * spelling to alphaTab and the key signature, which is what this module did
+ * before M4 and what a projection with no scale still does. It is set rather
+ * than defaulted-in so the field is genuinely absent, which is the state
+ * `NotePitch` documents as "spell from the key signature": a `letter: undefined`
+ * property would read the same to `!== undefined` but survives a `'letter' in
+ * pitch` and a JSON round trip differently.
+ *
+ * The octave is *not* adjusted to the letter's, and deliberately. A C flat
+ * sounds where B does and this pair is read by `pitchToMidi`, which has to give
+ * the pitch back; alphaTab does the same arithmetic on its own side, displacing
+ * the note by the forced accidental before it picks a line, so the C flat lands
+ * an octave above the B without either end having to say so. See "A letter on
+ * `NotePitch`" in the design doc.
+ */
+function pitchOf(midi: number, letter?: NoteLetter): NotePitch {
+  // Floored rather than truncated so a pitch below MIDI 0 still names a real
+  // octave instead of folding onto octave -1.
+  const octave = Math.floor(midi / 12) - 1;
+  const noteValue = pitchClassOf(midi);
+
+  return letter === undefined
+    ? { kind: 'pitched', noteValue, octave }
+    : { kind: 'pitched', noteValue, octave, letter };
 }
 
 /**
@@ -334,18 +383,42 @@ function barsIn(doc: ProgressionDoc): number {
  * right answer here for the opposite reason: there the clamp kept a real
  * performance inside a grid that had run out, here the excess is the part of a
  * progression the preview has already said it is not drawing.
+ *
+ * ## Where the letters are decided
+ *
+ * This is the only place that holds a note and the slot that owns it at the
+ * same time, which is what makes it the place to spell from. A `PlacedNote`
+ * carries a `NotePitch` and nothing that names its slot; by `writeBar` the
+ * slot is three functions away and `quantizeBar` has copied the pitch besides.
+ * So the letter goes onto the `NotePitch` here, and rides the copy
+ * `quantizeBar` makes of it onto every `NoteDoc` - both ends of a tie included,
+ * which is the case that would otherwise write a C flat tied to a B.
+ *
+ * One speller per **slot**, built outside the note loop: `slotSpeller` calls
+ * `effectiveChord` and walks the chord's intervals to build its tone map, and
+ * that is work per chord rather than per note.
  */
 export function placeProgressionNotes(
   doc: ProgressionDoc,
   barCount: number,
-  finestDivision: FinestDivision = PROGRESSION_FINEST_DIVISION
+  finestDivision: FinestDivision = PROGRESSION_FINEST_DIVISION,
+  /** The key's scale, for spelling. Empty leaves every note unlettered. */
+  scaleIntervals: readonly number[] = []
 ): ProgressionPlacement[][] {
   const timeSignature = doc.timeSignature;
   const beats = barBeats(timeSignature);
   const bars: ProgressionPlacement[][] = Array.from({ length: barCount }, () => []);
 
   for (const slot of doc.slots) {
+    // Null for an empty scale, and that is the whole of the default: no scale
+    // means no letters rather than letters guessed from the key alone. Asking
+    // `slotSpeller` anyway would answer from `preferSharps` for every note and
+    // engrave a spelling no degree named - a claim, where absence is the honest
+    // "let the key signature decide" this module made before M4.
+    const spell = scaleIntervals.length > 0 ? slotSpeller(doc.key, scaleIntervals, slot) : null;
+
     for (const note of slot.notes) {
+      const letter = spell ? letterOf(spell(pitchClassOf(note.midi))) : undefined;
       const start = slot.startBeat + note.startBeat;
       // Clamped at zero: a length is only checked for finiteness on the way in,
       // so a zero or negative one is a stored value rather than an impossible
@@ -371,7 +444,7 @@ export function placeProgressionNotes(
         bars[bar].push({
           placed: {
             beatInBar: denominatorUnits(isHeld ? 0 : start - bar * beats, timeSignature),
-            pitch: pitchOf(note.midi)
+            pitch: pitchOf(note.midi, letter)
           },
           midi: note.midi,
           velocity: note.velocity,
@@ -712,13 +785,24 @@ function clefFor(placements: readonly ProgressionPlacement[][]): ClefKind {
  */
 export function progressionToScore(
   doc: ProgressionDoc,
-  finestDivision: FinestDivision = PROGRESSION_FINEST_DIVISION
+  finestDivision: FinestDivision = PROGRESSION_FINEST_DIVISION,
+  /**
+   * The key's scale, for spelling. Empty - the default - leaves every note
+   * unlettered and alphaTab spells from the key signature, which is what this
+   * module did before M4.
+   *
+   * Handed in rather than resolved here because resolving `key.scaleId` needs
+   * `MusicTheoryService` and this module is pure - the same bargain
+   * `progression-spelling.ts` strikes for the same reason, and the reason its
+   * functions take intervals rather than an id.
+   */
+  scaleIntervals: readonly number[] = []
 ): ProgressionScore {
   const timeSignature = doc.timeSignature;
   const barCount = barsIn(doc);
   const drawn = Math.min(barCount, MAX_PREVIEW_BARS);
 
-  const placements = placeProgressionNotes(doc, drawn, finestDivision);
+  const placements = placeProgressionNotes(doc, drawn, finestDivision, scaleIntervals);
   const keySignature = keySignatureOf(doc.key);
   const clef = clefFor(placements);
 

@@ -15,7 +15,10 @@ import { Subject, debounceTime, takeUntil } from 'rxjs';
 import { ProgressionDoc } from '../../../../models/progression.model';
 import { AlphaTabService } from '../../../../services/alpha-tab.service';
 import { messageOf } from '../../../../services/error-message';
-import { progressionToScore } from '../../../../services/progression-score';
+import {
+  PROGRESSION_FINEST_DIVISION,
+  progressionToScore
+} from '../../../../services/progression-score';
 import { ProgressionService } from '../../../../services/progression.service';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 
@@ -109,6 +112,17 @@ export class ProgressionNotationComponent implements OnInit, OnDestroy {
   /** The document last published, drawn whenever the panel is open. */
   private latest: ProgressionDoc | null = null;
 
+  /**
+   * The key's scale as the service resolved it, for spelling.
+   *
+   * Carried beside the document because the projection is pure and cannot
+   * resolve `key.scaleId` itself - `ProgressionState.keyScale` is the service's
+   * own answer to that, already published, and this is the component that has
+   * it. Empty when the id resolves to nothing, which is what leaves every note
+   * to the key signature.
+   */
+  private latestScale: readonly number[] = [];
+
   private container: HTMLDivElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
 
@@ -159,6 +173,7 @@ export class ProgressionNotationComponent implements OnInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
         this.latest = state.doc;
+        this.latestScale = state.keyScale ? state.keyScale.intervals : [];
         // Only while open: a closed panel has no api to draw with, and
         // projecting a document nobody is looking at is work for nothing.
         if (this.isOpen) this.renderRequest$.next();
@@ -226,7 +241,7 @@ export class ProgressionNotationComponent implements OnInit, OnDestroy {
       this.barCount = 0;
       this.truncatedTo = null;
 
-      const projected = progressionToScore(doc);
+      const projected = progressionToScore(doc, PROGRESSION_FINEST_DIVISION, this.latestScale);
       this.barCount = projected.barCount;
       this.truncatedTo = projected.truncated ? projected.doc.masterBars.length : null;
       this.renderError = null;
