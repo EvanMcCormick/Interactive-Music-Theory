@@ -41,13 +41,46 @@ export class ComposerExportService {
   }
 
   /**
-   * Downloads a standard MIDI file. alphaTab generates this from the score it
-   * currently has loaded, so the API must already be rendering the score.
+   * Standard MIDI bytes, generated from the score with no engraver involved.
+   *
+   * `AlphaTabApi.downloadMidi()` would do the same job, but only from the score
+   * an api is *rendering* - which made MIDI the one export of three with a
+   * precondition, and on `/progression` that precondition would read "the
+   * notation panel must be open". `MidiFileGenerator` is the same machinery the
+   * api calls, minus the api: it takes a `Score` and writes events through a
+   * handler, and neither step asks for a layout.
+   *
+   * SMF type 1 rather than alphaTab's type 0 default, so each score track
+   * arrives in other software as its own track instead of as channels merged
+   * into one. `smf1Mode` matches what alphaTab passes on its own export path;
+   * it drops the vendor rest events that only alphaSynth reads, at the
+   * documented cost of multiple bends sharing a beat.
    */
-  downloadMidi(api: alphaTab.AlphaTabApi | null): boolean {
-    if (!api) return false;
-    api.downloadMidi();
-    return true;
+  toMidi(score: alphaTab.model.Score, settings: alphaTab.Settings): Uint8Array {
+    const file = new alphaTab.midi.MidiFile();
+    file.format = alphaTab.midi.MidiFileFormat.MultiTrack;
+
+    const handler = new alphaTab.midi.AlphaSynthMidiFileHandler(file, true);
+    new alphaTab.midi.MidiFileGenerator(score, settings, handler).generate();
+    return file.toBinary();
+  }
+
+  /** Triggers a browser download of the score as a .mid file. */
+  downloadMidiFile(
+    score: alphaTab.model.Score,
+    settings: alphaTab.Settings,
+    fileName: string
+  ): void {
+    const bytes = this.toMidi(score, settings);
+    // Copy into a plain ArrayBuffer for the same reason toGuitarPro does: the
+    // returned view may sit in a larger buffer that Blob would otherwise keep.
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+
+    this.downloadBlob(
+      new Blob([buffer], { type: 'audio/midi' }),
+      this.withExtension(fileName, 'mid')
+    );
   }
 
   /** Turns a score title into a safe file name. */

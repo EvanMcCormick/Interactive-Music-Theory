@@ -10,7 +10,6 @@ import { FormsModule } from '@angular/forms';
 import { Subject, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
-import { AlphaTabService } from '../../../../services/alpha-tab.service';
 import { AlphaTexService } from '../../../../services/alpha-tex.service';
 import { ComposerExportService } from '../../../../services/composer-export.service';
 import {
@@ -51,7 +50,6 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
     private readonly exporter: ComposerExportService,
     private readonly mapper: ScoreDocMapperService,
     private readonly tex: AlphaTexService,
-    private readonly alphaTabService: AlphaTabService,
     private readonly cdr: ChangeDetectorRef
   ) {}
 
@@ -184,11 +182,21 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   }
 
   exportMidi(): void {
-    const ok = this.exporter.downloadMidi(this.alphaTabService.getApi());
-    if (ok) {
+    if (!this.state) return;
+    try {
+      // Same three steps as the Guitar Pro export: build the score, hand it to
+      // the exporter. MIDI used to go through the rendering api instead, which
+      // meant it alone could fail with "the player is not ready yet".
+      const settings = new alphaTab.Settings();
+      const score = this.mapper.toScore(this.state.doc, settings);
+      this.exporter.downloadMidiFile(
+        score,
+        settings,
+        this.exporter.toFileName(this.state.doc.title)
+      );
       this.report('Exported MIDI file');
-    } else {
-      this.reportError(new Error('The player is not ready yet'));
+    } catch (error) {
+      this.reportError(error);
     }
   }
 
