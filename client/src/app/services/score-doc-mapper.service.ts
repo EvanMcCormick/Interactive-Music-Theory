@@ -481,7 +481,11 @@ export class ScoreDocMapperService {
         isMute: track.playbackInfo.isMute,
         isSolo: track.playbackInfo.isSolo
       },
-      staves: track.staves.map(s => this.fromStaff(s))
+      staves: track.staves.map(s => this.fromStaff(s)),
+      // alphaTab's model has nowhere to carry a marker, so every track read
+      // back out of it is an ordinary one. Stated rather than left off: a
+      // missing field and an absent marker must not be two different states.
+      generated: null
     };
   }
 

@@ -122,6 +122,7 @@ function buildDoc(pitch: NotePitch, keySignature: KeySignature): ScoreDoc {
         shortName: 'Pno',
         color: '#2c3e50',
         playback: createDefaultPlaybackInfo(0),
+        generated: null,
         staves: [
           {
             // Empty, which is what marks the staff as unfretted.

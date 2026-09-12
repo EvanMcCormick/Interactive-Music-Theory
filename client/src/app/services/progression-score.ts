@@ -858,7 +858,10 @@ export function progressionToScore(
     // General MIDI 0, acoustic grand: the page's rail says the progression is a
     // piano and the score should not disagree with it.
     playback: createDefaultPlaybackInfo(0),
-    staves: [staff]
+    staves: [staff],
+    // Marked by `progression-track.ts` when a user sends it to the Composer.
+    // The projection on its own is just a score.
+    generated: null
   };
 
   return {

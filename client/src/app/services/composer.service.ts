@@ -117,7 +117,8 @@ export class ComposerService {
       shortName,
       color: fretted ? '#e74c3c' : '#3498db',
       playback: createDefaultPlaybackInfo(program),
-      staves: [staff]
+      staves: [staff],
+      generated: null
     };
   }
 

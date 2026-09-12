@@ -93,6 +93,22 @@ export interface PlaybackInfoDoc {
   isSolo: boolean;
 }
 
+/**
+ * What a generated track was generated from.
+ *
+ * `source` is a union rather than a `revision` plus a `diverged: boolean`
+ * because the two can disagree and a union cannot: a score-wide bar insertion
+ * moves a generated track's content without moving `ProgressionDoc.revision`,
+ * so divergence is a *different* answer to "what is this built from", not an
+ * extra flag on the same one. See "Divergence is a state of the source" in the
+ * progression design doc.
+ */
+export interface GeneratedOrigin {
+  progressionId: string;
+  progressionName: string;
+  source: { kind: 'revision'; revision: number } | { kind: 'diverged' };
+}
+
 export interface TrackDoc {
   id: string;
   name: string;
@@ -101,6 +117,17 @@ export interface TrackDoc {
   color: string;
   playback: PlaybackInfoDoc;
   staves: StaffDoc[];
+  /**
+   * The progression this track was built from, or `null` for an ordinary one.
+   * Written and read by `progression-track.ts`; nothing else interprets it.
+   *
+   * Not optional: an absent marker and a missing field would be the same answer
+   * from two different states, and `ScoreDocMapperService` already produces the
+   * second - alphaTab has nowhere to keep this, so a round trip through it
+   * flattens the track. That is why saving a composition refuses a linked one
+   * rather than writing it out.
+   */
+  generated: GeneratedOrigin | null;
 }
 
 export interface StaffDoc {

@@ -85,6 +85,7 @@ function buildDoc(): ScoreDoc {
         shortName: 'Bs',
         color: '#3498db',
         playback: createDefaultPlaybackInfo(33),
+        generated: null,
         staves: [
           {
             tuning: STANDARD_BASS_TUNING.slice(),

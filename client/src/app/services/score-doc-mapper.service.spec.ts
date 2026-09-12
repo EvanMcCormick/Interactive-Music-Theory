@@ -77,6 +77,7 @@ function buildDoc(): ScoreDoc {
         shortName: 'Pno',
         color: '#3498db',
         playback: createDefaultPlaybackInfo(0),
+        generated: null,
         staves: [
           {
             tuning: [],
@@ -111,6 +112,7 @@ function buildDoc(): ScoreDoc {
         shortName: 'Gtr',
         color: '#e74c3c',
         playback: createDefaultPlaybackInfo(25),
+        generated: null,
         staves: [
           {
             tuning: STANDARD_GUITAR_TUNING.slice(),
@@ -302,6 +304,49 @@ describe('ScoreDocMapperService', () => {
       const back = mapper.toDoc(parsed.score!);
 
       expect(back.tracks[0].staves[0].bars[1].voices[0].beats[1].isRest).toBeTrue();
+    });
+  });
+
+  describe('the generated marker', () => {
+    // alphaTab's model has nowhere to put `TrackDoc.generated`, so the round
+    // trip drops it and a generated track comes back as an ordinary one. That
+    // is expected rather than a defect - but it is load-bearing, because it is
+    // the whole reason saving a composition has to refuse a linked track
+    // instead of writing one out. Asserted here so the reason stays visible if
+    // anyone ever wonders why save is fussy.
+    function marked(): ScoreDoc {
+      return {
+        ...doc,
+        tracks: [
+          {
+            ...doc.tracks[0],
+            generated: {
+              progressionId: 'prog-1',
+              progressionName: 'Verse',
+              source: { kind: 'revision', revision: 4 }
+            }
+          },
+          ...doc.tracks.slice(1)
+        ]
+      };
+    }
+
+    it('does not survive a trip through alphaTab', () => {
+      const back = mapper.toDoc(mapper.toScore(marked(), settings));
+
+      expect(back.tracks[0].generated).toBeNull();
+    });
+
+    it('comes back null rather than undefined, on every track', () => {
+      // `undefined` would satisfy `GeneratedOrigin | null` nowhere and would
+      // read as absent everywhere it is checked - which is the same answer by
+      // accident. The field is a stated null.
+      const back = mapper.toDoc(mapper.toScore(marked(), settings));
+
+      for (const track of back.tracks) {
+        expect(track.generated).toBeNull();
+        expect('generated' in track).toBeTrue();
+      }
     });
   });
 });

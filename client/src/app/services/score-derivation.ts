@@ -622,7 +622,8 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
     shortName: 'Trn',
     color: '#2c3e50',
     playback: createDefaultPlaybackInfo(voice.program),
-    staves: [staff]
+    staves: [staff],
+    generated: null
   };
 
   return {
