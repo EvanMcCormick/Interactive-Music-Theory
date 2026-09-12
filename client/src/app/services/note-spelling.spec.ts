@@ -1,5 +1,6 @@
 import {
   SpelledNote,
+  alterFor,
   formatNote,
   letterOf,
   parseNoteName,
@@ -105,6 +106,29 @@ describe('pitchClassOf, scientificOctave, spellPitchClass', () => {
     expect(spellPitchClass(1, true)).toEqual({ letter: 0, accidental: 1 });
     expect(spellPitchClass(1, false)).toEqual({ letter: 1, accidental: -1 });
     expect(spellPitchClass(4, false)).toEqual({ letter: 2, accidental: 0 });
+  });
+});
+
+describe('alterFor', () => {
+  // The octave boundary is the whole reason this is normalised into ±6 rather
+  // than left as a 0-11 remainder, and B♯ and C♭ are the pair that sit across
+  // it: each is one semitone from its letter, in opposite directions, and a
+  // raw remainder would call them eleven.
+  it('reads the octave boundary as one semitone, not eleven', () => {
+    expect(alterFor(0, 6)).toBe(1); // pitch class C written on a B is a B sharp
+    expect(alterFor(11, 0)).toBe(-1); // pitch class B written on a C is a C flat
+  });
+
+  it('names the accidental a letter needs to reach a pitch class', () => {
+    expect(alterFor(6, 3)).toBe(1); // F sharp
+    expect(alterFor(6, 4)).toBe(-1); // G flat
+    expect(alterFor(2, 1)).toBe(0); // D natural
+    expect(alterFor(2, 2)).toBe(-2); // E double flat
+  });
+
+  it('takes an unreduced pitch class, as a crossed chord stack hands one over', () => {
+    expect(alterFor(14, 1)).toBe(0);
+    expect(alterFor(-1, 6)).toBe(0);
   });
 });
 

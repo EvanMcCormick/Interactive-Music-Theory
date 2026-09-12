@@ -69,6 +69,27 @@ function reduceToOctave(value: number): number {
 }
 
 /**
+ * The accidental, in semitones, that lands `letter` on `pitchClass`.
+ *
+ * The signed distance from the natural letter to the pitch, read as the nearer
+ * of its two representatives: -6..5. Reading it nearest is what makes B to C an
+ * ascent of one rather than a descent of eleven, which is the whole question at
+ * an octave boundary - B♯ and C♭ live on opposite sides of one.
+ *
+ * `letter` is a step index, 0-6 for C through B, as `SpelledNote.letter` is.
+ * `pitchClass` may be unreduced, as `degreePitchClasses` returns them.
+ *
+ * Exported because `score-doc-mapper.service.ts` needs this exact number to
+ * pick alphaTab's forcing mode for a letter - the mapping is `-2` through `+2`
+ * onto the Force* modes - and two writings of one expression is the arrangement
+ * `STEP_SEMITONES` is shared next door to avoid. The mapper is a caller, not a
+ * second author.
+ */
+export function alterFor(pitchClass: number, letter: number): number {
+  return ((((pitchClass - STEP_SEMITONES[letter] + 6) % 12) + 12) % 12) - 6;
+}
+
+/**
  * The note `steps` letters above `from` that sounds `pitchClass`, or null when
  * that letter would need more than a double accidental.
  *
@@ -124,12 +145,7 @@ export function spellAt(
   steps: number
 ): SpelledNote | null {
   const letter = (((from.letter + steps) % 7) + 7) % 7;
-  // The signed distance from the natural letter to the pitch, read as the
-  // nearer of its two representatives: -6..5. Reading it nearest is what makes
-  // B to C an ascent of one rather than a descent of eleven, which is the whole
-  // question at an octave boundary - B♯ and C♭ live on opposite sides of one.
-  const accidental =
-    ((((pitchClass - STEP_SEMITONES[letter] + 6) % 12) + 12) % 12) - 6;
+  const accidental = alterFor(pitchClass, letter);
 
   return Math.abs(accidental) > MAX_ACCIDENTAL ? null : { letter, accidental };
 }
@@ -150,9 +166,17 @@ export function formatNote(note: SpelledNote): string {
   return LETTER_NAMES[note.letter] + sign.repeat(Math.abs(note.accidental));
 }
 
-/** The staff letter of a spelling, for a caller that wants the letter alone. */
+/**
+ * The staff letter of a spelling, for a caller that wants the letter alone.
+ *
+ * Indexes raw, as `formatNote` and `pitchClassOf` do: `SpelledNote.letter` is
+ * already 0-6 by construction - `spellAt` reduces it and `parseNoteName` reads
+ * it out of a seven-letter table - and a defensive reduction here would be the
+ * only one of the three that distrusted the invariant, which reads as though
+ * the other two had missed something.
+ */
 export function letterOf(spelled: SpelledNote): NoteLetter {
-  return LETTER_NAMES[((spelled.letter % 7) + 7) % 7];
+  return LETTER_NAMES[spelled.letter];
 }
 
 /**

@@ -2,7 +2,12 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "outDir": "./out-tsc/spec",
-    "types": ["jasmine", "node"]
+    "types": ["jasmine", "node"],
+    // So `score-doc-mapper.spelling.spec.ts` can assert the declared alphaTab
+    // version against the one an unobservable behaviour was read from. Specs
+    // only - `rootDir` widens with it, and the app build keeps both narrow.
+    "resolveJsonModule": true,
+    "rootDir": "./"
   },
   "files": [
     "src/test.ts"

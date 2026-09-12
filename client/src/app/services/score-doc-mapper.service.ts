@@ -37,15 +37,20 @@ import {
   toOttavia,
   toTripletFeel
 } from './alpha-tab-enum.bridge';
+import { alterFor } from './note-spelling';
+import { STEP_SEMITONES } from './staff-pitch';
 
-/** Semitones above C of each letter's natural pitch. All white keys. */
-const NATURAL_PITCH: Record<NoteLetter, number> =
-  { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+/** Step index of each letter, C through B, as `SpelledNote.letter` numbers them. */
+const LETTER_STEP: Record<NoteLetter, number> =
+  { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
 
-/** `NATURAL_PITCH` read the other way, so a white pitch class names its letter. */
+/**
+ * `LETTER_STEP` read the other way through `STEP_SEMITONES`, so a white pitch
+ * class names its letter.
+ */
 const LETTER_BY_NATURAL: ReadonlyMap<number, NoteLetter> = new Map(
-  (Object.entries(NATURAL_PITCH) as [NoteLetter, number][]).map(
-    ([letter, pitch]): [number, NoteLetter] => [pitch, letter]
+  (Object.entries(LETTER_STEP) as [NoteLetter, number][]).map(
+    ([letter, step]): [number, NoteLetter] => [STEP_SEMITONES[step], letter]
   )
 );
 
@@ -62,6 +67,18 @@ const LETTER_BY_NATURAL: ReadonlyMap<number, NoteLetter> = new Map(
  * back can only mean "no letter was asked for". A natural letter therefore does
  * not survive the round trip, and does not need to: alphaTab puts a white pitch
  * class on its own letter under every key signature.
+ *
+ * **Why not `ForceNatural` for alter 0.** It is the one mode that would make
+ * the round trip lossless - a natural letter would come back as itself rather
+ * than as no letter - and it is still not worth taking. The enum documents it
+ * as moving the note a line and applying a naturalize, but 1.8.0 does neither:
+ * `AccidentalHelper.getNoteValue` has no case for it, and neither does
+ * `ModelUtils.computeAccidental`, so it falls through and renders exactly as
+ * `Default` does. Adopting it would buy a round-trip nicety on the strength of
+ * a documented behaviour the bundle does not implement, and would go wrong in
+ * whichever direction a later version resolved that contradiction - drawing a
+ * ♮ on every natural degree the progression writes, or shifting the line. The
+ * lossiness it would fix costs nothing, per the paragraph above.
  */
 const ALTER_BY_MODE: ReadonlyMap<alphaTab.model.NoteAccidentalMode, number> = new Map([
   [alphaTab.model.NoteAccidentalMode.ForceDoubleFlat, -2],
@@ -87,12 +104,16 @@ const MODE_BY_ALTER: ReadonlyMap<number, alphaTab.model.NoteAccidentalMode> = ne
  * is dropped and alphaTab spells from the key signature - the same refusal
  * `spellAt` makes, one layer out. A natural asks for no forcing and takes the
  * same fallback, which draws the letter anyway.
+ *
+ * The alteration itself comes from `note-spelling.ts` rather than being worked
+ * out here: it is the same ±6 normalisation `spellAt` runs, and the same
+ * octave-boundary argument holds it up.
  */
 function accidentalModeFor(
   letter: NoteLetter,
   pitchClass: number
 ): alphaTab.model.NoteAccidentalMode {
-  const alter = ((((pitchClass - NATURAL_PITCH[letter] + 6) % 12) + 12) % 12) - 6;
+  const alter = alterFor(pitchClass, LETTER_STEP[letter]);
   return MODE_BY_ALTER.get(alter) ?? alphaTab.model.NoteAccidentalMode.Default;
 }
 

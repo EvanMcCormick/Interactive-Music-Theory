@@ -927,7 +927,31 @@ Composer, Export MIDI, Export `.gp`. Each builds the `ScoreDoc` through
 `progressionToScore`, maps it with `new alphaTab.Settings()`, and hands it to the
 exporter. Send navigates to `/composer` after committing.
 
-**Step 5: Commit**
+**Step 5: Hand-check the exported letter in real Guitar Pro.**
+
+A Task 2 finding, recorded here because Task 11 is where a `.gp` file first exists.
+alphaTab's Gp7 *exporter* derives the letter differently from its renderer:
+`GpifWriter._writePitchForValue` only displaces when the value's default spelling is
+already a sharp. D♭ therefore exports correctly, but **C♭ exports as Step B /
+Accidental b — a B♭ — and B♯ exports as C♯**: exactly the two cases M4's spelling
+work exists to produce.
+
+Nothing in this repo can see it. An alphaTab → `.gp` → alphaTab round trip survives,
+because the importer takes the pitch from `Octave`/`Tone`/`Midi` and reads only the
+accidental glyph, so a round-trip spec passes on a file that is wrong. What real
+Guitar Pro displays cannot be settled from here.
+
+So, by hand: export a progression containing a ♭II to `.gp`, open it in **Guitar Pro
+itself**, and record the letter it shows on that chord's root.
+
+- Shows C♭ — nothing to do; note that it was checked.
+- Shows B♭ — that is an upstream alphaTab bug. Report it there and record it as a
+  known limitation of `.gp` export. **Do not work around it in this codebase.** The
+  renderer is right and the mapper feeds it correctly; a compensating hack in
+  `score-doc-mapper.service.ts` would corrupt the notation panel to flatter the
+  exporter, and would have to be unpicked when alphaTab fixes it.
+
+**Step 6: Commit**
 
 ```
 feat: Export a progression, and send it to the composer
@@ -1027,3 +1051,9 @@ On `/progression` in B♭ major:
    goes and the composition saves.
 8. Export `.gp` from both pages and open both in the GP viewer: the ♭II is a C♭ in each.
 9. Export MIDI from `/progression` with the notation panel **closed**: it downloads.
+10. Open one of those `.gp` files in **real Guitar Pro**, not the alphaTab viewer, and
+    read the ♭II's root letter. Step 8 only proves alphaTab reads back what alphaTab
+    wrote: `GpifWriter._writePitchForValue` writes C♭ as Step B / Accidental b, and the
+    importer recovers the pitch from `Octave`/`Tone`/`Midi` either way, so the round
+    trip hides it. If Guitar Pro shows B♭, report it upstream and record it as a
+    limitation rather than fixing it here — see Task 11.

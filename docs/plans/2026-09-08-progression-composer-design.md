@@ -1311,9 +1311,25 @@ accidental (`ForceFlat` +1, `ForceDoubleFlat` +2, `ForceSharp` −1,
 with the forced glyph. The displaced value is always the target letter's natural
 pitch — always a white key — so the key signature can never ambiguate the line.
 Pitch class 11 with `ForceFlat` is C♭; pitch class 0 with `ForceSharp` is B♯.
-Because that behaviour is read from a dependency rather than owned here, the spec
-asserts it directly: the alphaTab note's displaced value must equal the letter's
-natural pitch. If alphaTab changes it, that assertion is what says so.
+
+**A correction: no spec can watch that reading.** This section originally said that
+because the behaviour is read from a dependency, the spec asserts it directly, and
+that if alphaTab changed it the assertion would say so. That was wrong, and the
+spec header repeated it until review caught it. `AccidentalHelper` is exported from
+neither the typings nor the bundle, so the helper cannot be called; a spec can only
+mirror the displacement in a switch of its own, and a mirror cannot notice the
+original moving. Flip `ForceFlat`'s sign upstream and every spelling spec stays
+green.
+
+What the specs do check is a different and still useful thing: that mirrored switch
+is an independently written oracle for the same table `ALTER_BY_MODE` holds, and the
+sweep pins the mapper against it over every letter, every pitch class within a double
+accidental, and three key signatures — one flat, one sharp and C major, so the
+key-independence claim is exercised rather than assumed. The tripwire for the
+dependency itself is coarse and version-shaped: one spec asserts the
+`@coderline/alphatab` version `client/package.json` declares equals the one
+`AccidentalHelper.getNoteValue` was read at, so a bump fails and sends the next
+person back to re-read the four Force* cases before moving the string.
 
 **A misnomer this shows up, recorded rather than fixed.**
 `NoteDoc.accidental: 'explicit'` maps to `ForceSharp`, which forces a *sharp* in a
