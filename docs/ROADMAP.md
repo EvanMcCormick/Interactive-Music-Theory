@@ -306,7 +306,7 @@ records the decisions and — where implementation disproved one — the correct
 | Sheet music composer | `/composer` | Shipped. Multi-track notation and tab, MIDI and `.gp` export |
 | Audio transcription | `/transcribe` | Shipped. Basic Pitch detection, beat tracking, correctable review |
 | Circle of fifths | drawer | Shipped. Sets the key app-wide |
-| Progression composer | `/progression` | M1, M2 and M3 shipped. M4 designed, not started |
+| Progression composer | `/progression` | M1–M4 shipped. Sends a track to the composer, MIDI and `.gp` export |
 
 **Progression composer milestones:**
 
@@ -315,14 +315,23 @@ records the decisions and — where implementation disproved one — the correct
 | M1 | Shipped | Model, service, palette, strip, block chords, Tone loop |
 | M2 | Shipped | Piano roll, per-aspect edit protection, borrowed chords and secondary dominants, loop-boundary rescheduling, notation projection |
 | M3 | Shipped | The recogniser: a hand-edited slot reading its identity back, `literal` degradation and a way out of it, the alternates chip; suspensions sounded and each extension alterable; names composed from the chord; every note spelled by its degree's letter |
-| M4 | Designed, not started | Generated track in the composer, Flatten, MIDI and `.gp` export, and a spelling letter on `NotePitch` so an exported ♭II engraves on C♭ |
+| M4 | Shipped | Send a progression into the composer as a real track that knows where it came from, press again to update it, flatten it into an ordinary track; saving refuses while a track is still linked and offers to flatten first; MIDI and `.gp` export from either page, with no notation panel required; and a spelling letter on `NotePitch`, so an exported ♭II engraves on C♭ rather than B |
 
-Three things are recorded as known limitations rather than bugs, all in the design doc:
+Five things are recorded as known limitations rather than bugs, all in the design doc:
 `quantizeBar` is onset-driven and has no note-off, so a staccato roll engraves legato;
 `BeatDoc.dynamics: null` is documented as "inherit" but nothing implements it, which
-affects transcription as well as the progression preview; and the recogniser takes the
+affects transcription as well as the progression preview; the recogniser takes the
 first reading that consumes every note, so two chords the palette can build in three
-clicks lose their numeral to a reading that has no name and degrade to `literal`.
+clicks lose their numeral to a reading that has no name and degrade to `literal`; a
+generated track is barred by the score's *first* time signature, so its bar lines
+disagree from the point a score changes meter mid-way; and `insertBar(0)` leaves a bar
+with no declared signature, which makes a 3/4 score read as 4/4 to everything that asks
+what meter it is in — pre-existing, but M4 made that question load-bearing.
+
+One hand-check is outstanding: alphaTab's Guitar Pro exporter appears, from reading its
+source, to write a C♭ as B♭ and a B♯ as C♯. Nobody has yet opened an exported file in
+real Guitar Pro, so it is recorded in the design doc as an open question rather than as
+a limitation or a bug.
 
 ---
 
@@ -337,7 +346,7 @@ clicks lose their numeral to a reading that has no name and degrade to `literal`
 | Audio Transcription | [plans/2026-09-05-audio-transcription-design.md](plans/2026-09-05-audio-transcription-design.md) | Implemented, M1-M3 |
 | Two-Tier Transcription | [plans/2026-09-07-two-tier-transcription-design.md](plans/2026-09-07-two-tier-transcription-design.md) | Implemented |
 | Circle of Fifths | [plans/2026-09-07-circle-of-fifths-design.md](plans/2026-09-07-circle-of-fifths-design.md) | Implemented |
-| Progression Composer | [plans/2026-09-08-progression-composer-design.md](plans/2026-09-08-progression-composer-design.md) | M1-M3 implemented, M4 designed |
+| Progression Composer | [plans/2026-09-08-progression-composer-design.md](plans/2026-09-08-progression-composer-design.md) | Implemented, M1-M4 |
 
 Implementation plans, one per milestone, sit beside each design in `plans/`. The
 transcription investigations that produced *negative* results are kept too — the onset

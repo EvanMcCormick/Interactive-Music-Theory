@@ -1,13 +1,14 @@
 # Progression Composer — Design
 
 **Date:** 2026-09-08
-**Status:** M1, M2 and M3 implemented and merged; M4 designed, not started. See
-`2026-09-08-progression-m1-core.md`, `2026-09-08-progression-m2-piano-roll.md`
-and `2026-09-10-progression-m3-recogniser.md` for the plans they were built
+**Status:** M1–M4 implemented and merged. See
+`2026-09-08-progression-m1-core.md`, `2026-09-08-progression-m2-piano-roll.md`,
+`2026-09-10-progression-m3-recogniser.md` and
+`2026-09-12-progression-m4-composer-track.md` for the plans they were built
 from, and "Correction: `alter` cannot express a borrowed chord" for what
 implementation disproved. The "M3 decisions" and "M4 decisions" sections at the
 end record what each milestone settled, what it measured, and what it did not
-do — M4's before it was built, so it is a design and not yet a report.
+do.
 
 **Read the sections in reverse order.** "M4 decisions" wins over "M3 decisions",
 which wins over "M2 decisions", which wins over the original design above them —
@@ -1102,16 +1103,22 @@ numeral is a slash numeral measured against its target rather than the key.
 
 ## M4 decisions
 
-Settled 2026-09-12, before planning M4. The plan is
-`2026-09-12-progression-m4-composer-track.md`. Where these conflict with anything
-above — "Build order" and the two paragraphs on the generated track in particular
-— these win.
+Settled 2026-09-12, before planning M4, and rewritten after building it. The
+plan is `2026-09-12-progression-m4-composer-track.md`. Where these conflict with
+anything above — "Build order" and the two paragraphs on the generated track in
+particular — these win.
+
+This section was a design before it was a report, and building it disproved
+parts of the design. Those paragraphs say so where they stand rather than
+holding the new position as though it had always been the plan: an argument that
+was wrong is worth more on the page than a claim quietly edited into agreement
+with the code. Each one is marked as a correction where it sits.
 
 ### Scope
 
 The three the build order names — the generated track in the Composer, Flatten,
 MIDI and `.gp` export — **and** the spelling deferral both this document and the
-M3 plan pin to M4: `NotePitch` carries no letter, so a ♭II still engraves on B.
+M3 plan pinned to M4: `NotePitch` carried no letter, so a ♭II still engraved on B.
 
 The fourth is not separable from the first three, and the reason is the arrow M4
 adds. In M3 a wrong letter was a wrong *preview*: a panel the user is looking at,
@@ -1162,7 +1169,9 @@ is a user action** and can go through `commit()` like any other edit. That gives
 the property the whole design rests on, and it falls out rather than being built:
 undoing an Update restores the old track *and* the old marker, so the stale badge
 comes back with it. The document is never left claiming a freshness it does not
-have. `progression-track.spec.ts` pins this rather than assuming it.
+have. `composer.service.generated.spec.ts` pins this rather than assuming it —
+it is a fact about `ComposerService`'s undo stack, so it is asserted where the
+stack is, not in the pure module's spec this section used to name.
 
 The cost is the honest one: a user can read a stale engraving until they notice
 the badge. That is a cost the badge is *for*.
@@ -1206,6 +1215,40 @@ are not comparable, and a check that can only make the cheap one is worth more
 than a hash that promises to make neither and has a second copy of the
 projection's semantics to keep in step in order to keep that promise.
 
+**A correction: the counter has to be allocated, not derived.** This section
+originally said the revision was "bumped in the single `commit()`" and left it
+there, as though where the number came *from* were an implementation detail. It
+is the whole thing. The first implementation stamped `state.doc.revision + 1`,
+which reads as the same idea and counts the *path* rather than the document:
+build to 3, let the Composer mark a track `{revision: 3}`, undo one step and make
+a *different* edit — the document is 3 again with different content in it, and
+the check reports current for a track that was never built from what is on
+screen. That is the badge going quiet about the one thing it exists to say, and
+it was the milestone's only Critical finding. The issuing therefore moves off the
+document: `ProgressionStore.nextRevision` is monotonic and hands out
+`nextRevision++`, while the value it hands out still travels on the document so
+that undo restores it. A revision is an identity and not a position — undo moves
+which number is published, not which numbers are left.
+
+**A load re-issues rather than adopts, and pays for it.** `replaceDocument` is
+the one door a document this store did not build comes through, and the
+`revision` on it was issued by some other producer. Installed as it stands it is
+a number two documents hold — a marker left behind by that producer would later
+match a document of ours that happens to reach the same value. So the allocator
+is moved past whatever arrived, `Math.max(next, (doc.revision ?? 0) + 1)`, and
+the document is then stamped from it like any commit. The trade is stated rather
+than hidden: **the number a load shows is not the number the file held**, because
+a revision means "this document, in this store" and the only thing worth carrying
+across the door is the promise that no two documents answer to one.
+
+That expression has a residual, unfixed and recorded here rather than guarded. A
+`NaN` in the arriving field poisons the allocator permanently — `NaN` propagates
+through `Math.max`, and a `NaN` revision equals nothing including itself, so
+every later comparison reads stale forever. `?? 0` covers the reachable case, a
+document written before the field existed; `NaN` is only reachable from a corrupt
+document, and there is no loader yet to produce one. Whoever writes the loader
+owns this.
+
 **Before adding a field to `ProgressionDoc`, read this.** A field that does not
 reach the generated track only widens the over-report, which is acceptable and
 needs no more than a line here. The bug to avoid is the other direction: a field
@@ -1236,9 +1279,28 @@ through one function, `generatedTrackState`, and the union makes it impossible t
 hold a revision and a divergence flag that disagree — which a `revision` plus a
 `diverged: boolean` would allow on the first line of code that forgot one.
 
+`markDiverged` stamps *every* marked track in the score, and it over-reports in
+the same direction the counter does. `appendBar` is the plainest case and the
+one the Composer's own toolbar reaches first: a bar added past the end of the
+music moves no note in the generated track, the stamp lands anyway, and the badge
+stays stale until an Update rebuilds the track byte-identically. The check that
+would avoid it — did this bar edit actually touch this track's notes? — is a diff
+of the projection wearing a cheaper name, which is the thing "Staleness is one
+comparison" already declined to build. So there are two over-reporting
+mechanisms and not one, and this is the second: the counter over-reports on
+edits to the progression, the divergence stamp on edits to the score.
+
 ### Reconciling with a score that already exists
 
-Three collisions, and the rule for each is the one that cannot destroy work.
+**A correction: there are four collisions, not three.** This section opened by
+counting them — Bars, Tempo and Meter — and the count was wrong. Update replaces
+a track *in place*, and a track already in the score already has a name, a short
+name and a colour that the projection also has an opinion about. That is a
+collision like the other three and was decided the same way; it just lived in a
+code docstring and a commit message rather than here. Labels are below, as the
+fourth bullet the section should always have had.
+
+Four collisions, and the rule for each is the one that cannot destroy work.
 
 **Bars.** `mergeGeneratedTrack` grows `masterBars` to fit the projection and
 **never shrinks**, padding every other staff with rests. A progression falling
@@ -1258,7 +1320,69 @@ scoreMeter}` re-bars without moving a note, and `progressionToScore` needs no ne
 argument. `progression-track.spec.ts` asserts it as a property: the multiset of
 `(absolute beat, midi)` attacks is identical across 4/4, 3/4 and 6/8.
 
+**Labels.** The track's own win. Replacing in place keeps its `name`,
+`shortName` and `color`; the projection has one constant for each, so taking the
+projection's would overwrite three deliberate choices with three defaults. Those
+three and no more — everything else a `TrackDoc` carries is either the music
+Update exists to refresh or the link itself, and preserving those would make
+Update a no-op.
+
+The justification is the asymmetry alone, and it is worth being exact about that
+rather than claiming more. Neither a rename nor its silent reversion is
+observable today: there is no rename control on a track at all, and nothing in
+the app writes `TrackDoc.name` after the track is born. So this rule costs
+nothing today and buys nothing today. It is chosen for the day a rename control
+lands, on the same reasoning as every other rule here — a stale label is a label
+the user retypes, and a rename Update reverted underneath them is work that is
+simply gone. The marker's own `progressionName` is rebuilt with the rest of the
+marker, so anything wanting the progression's *current* name has it there; see
+"Where the controls are" for which of the two the badge reads.
+
 Bar 1's signature is the one used. See "Not in M4" for what that costs.
+
+**Growing the score means padding it, and padding is not defaulting.** The
+invariant `composer.service.ts` states — every staff of every track has exactly
+`masterBars.length` bars — makes growth a padding job across every track,
+generated or not. Two things about the bars that get appended were not in the
+design and are load-bearing.
+
+The padded bar carries the staff's **own** clef, ottava and key signature
+forward, copied off `staff.bars[last]`, which is what `insertBar` already does
+for the same reason. `createDefaultBar` alone writes `g2` and C major, and the
+Composer routinely holds neither: `composer-library-panel.component.ts` and
+`composer.component.ts` both `replaceDocument` a `.gp` file mapped into a
+`ScoreDoc`, so a bass staff in `f4` with three flats is the ordinary case and not
+the exotic one. Padding it with the defaults would append treble-clef,
+no-accidental bars to its tail and the notes a user then wrote there would read a
+fifth and three accidentals away from the rest of the staff. Those three fields
+and no others: they describe *how the staff is written*, where `voices` is what
+is written in it, and copying that would duplicate the last bar's music into
+every bar of rest the padding exists to produce.
+
+The padded bar's meter must be asked of the **merged** master bars, not the
+score's and not the projection's. Only bar 0 carries a signature and the rest
+inherit it, so `effectiveTimeSignature` answers correctly for an appended bar
+only when it is walking the array the merge is about to install. Asking either
+input is right whenever the two agree and wrong exactly when they do not, which
+is the shape of bug that ships.
+
+**The meter precondition is enforced, not documented.** `mergeGeneratedTrack`
+cannot check that the track it is handed was projected in the score's meter — a
+projected bar's beats are the only record of what it was barred in, and reading
+them back would be guessing — so the check lives where both halves are known.
+`sendProgression` calls `requireScoreMeter` and **throws**: this is a caller's
+bug rather than a user's input, and both quiet answers are worse, since merging
+corrupts a document the user has been working in and returning does nothing where
+the user pressed a button. `ComposerService.scoreMeter` exists so the fix at a
+call site is one word rather than an expression copied out of a docstring.
+
+It compares bar 1 against bar 1 and no further, which is exactly as wide as the
+projection is: `progressionTrack` bars the whole track in the single meter it is
+handed, so one comparison decides whether that meter was the right one. What it
+cannot decide is whether the *score* keeps that meter — a score that moves to 3/4
+at bar 9 passes the check and still gets a generated staff whose bar lines
+disagree from bar 9 on. That is the limitation recorded under "Not in M4", and
+the guard points there rather than implying it covers more than it does.
 
 ### Saving refuses rather than flattening
 
@@ -1277,6 +1401,36 @@ So `Save` and `Save as copy` refuse while a generated track exists, and the
 refusal offers **Flatten and save**: the chore is one click without becoming
 implicit. Export is not blocked. An exported file has already left the app and
 has nothing to stay linked to.
+
+**The refusal has to remember which save was asked for.** The design said only
+that saving refuses and offers to flatten, and stopped a step short: the offer
+resumes a command, so it has to resume the right one. A refused `Save as copy`
+finished as an overwrite would destroy the original the user was deliberately
+keeping — and it would do it as the consequence of accepting a chore they only
+accepted in order to get the copy. So the pending offer carries `asNew` beside
+its text, and the two are one object rather than two fields written together by
+convention: nothing makes a writer that updates one and forgets the other fail,
+and forgetting is exactly this path.
+
+**The offer has to be safe to fail.** `Flatten and save` is two steps and the
+second one reaches IndexedDB, where quota, private browsing and a failed version
+upgrade are ordinary outcomes. By the time one lands the flatten has already
+committed, which is precisely the state the refusal exists to prevent: the
+user's document changed in a way they did not ask for and nothing was written in
+exchange. Reporting that in the panel's ordinary error paragraph is not enough,
+because the region the user was reading — and had just pressed a button inside —
+is torn down at that moment. So the failure goes back through the same announced
+region the refusal used, saying the three things in order: what changed, that
+nothing was written, and that undo puts it back.
+
+**Flattening two linked tracks costs two undo entries for one click.**
+`flattenTrack` takes a single index and commits, so the loop behind
+`Flatten and save` lands one entry per track and one press of undo restores one
+link. That is a real wart rather than a decision that came out well — the atomic
+version is a `reduce` over the pure `flattenGeneratedTrack` inside one `commit`,
+which is a small change. It is left alone because two progressions in one score
+is rare, and the failure message spells the count out rather than letting the
+user discover it by pressing undo once and finding half a link back.
 
 ### A letter on `NotePitch`
 
@@ -1331,6 +1485,53 @@ dependency itself is coarse and version-shaped: one spec asserts the
 `AccidentalHelper.getNoteValue` was read at, so a bump fails and sends the next
 person back to re-read the four Force* cases before moving the string.
 
+**Why `ForceNatural` is not the mode for a natural letter.** Alter 0 maps to
+`Default`, which loses information — a note with no letter also carries
+`Default`, so a natural letter does not survive the round trip back into a
+`NoteDoc`. `ForceNatural` would fix that, and it is still not taken. The enum's
+doc comment says the mode moves the note one line down and applies a naturalize;
+1.8.0 does neither. Neither `AccidentalHelper.getNoteValue` nor
+`ModelUtils.computeAccidental` has a case for it, so it falls through and renders
+exactly as `Default` does. The reason to decline it is therefore not the phantom
+♮ it was first suspected of drawing — it draws nothing — but that adopting it
+would buy a round-trip nicety on the strength of a documented behaviour the
+bundle does not implement, and would go wrong in whichever direction a later
+version resolved the contradiction. The lossiness it would fix costs nothing:
+alphaTab puts a white pitch class on its own letter under every key signature.
+
+**Forcing a mode does not print redundant accidentals.** The obvious worry about
+lettering every note — that a diatonic B♭ in B♭ major would be engraved with a
+flat the key signature already gives it — does not happen, and the reason was
+read out of the bundle rather than assumed. `computeAccidental` suppresses the
+glyph when the forced accidental matches the one the key signature has set for
+that note, and it is indexed by the **displaced** value, which is the target
+letter's natural pitch. So a B♭ asked for on the letter B displaces to B natural,
+finds the key signature already flatting that line, and prints no glyph; a C♭
+asked for in the same key displaces to C, finds nothing, and prints the flat that
+makes it a C♭. Diatonic notes are unaffected, which is why lettering *every* note
+rather than only the chromatic ones is safe.
+
+**A correction: the projection letters every note, with no scale gate.** An
+optional `letter` invites a condition on writing one, and the first
+implementation took the invitation: `scaleIntervals.length > 0 ? slotSpeller(…) :
+null`, which reads as prudence and is a bug. `buildRollView` calls `slotSpeller` with
+the identical expression and **no gate at all**, so any gate on the score side
+would by construction be the only way the roll and the staff could print
+different letters for one note — which is the exact failure "Nothing new computes
+the letter" exists to prevent, reintroduced one layer down. An empty scale is not
+a special case to the speller; it answers from `preferSharps`, the same way it
+answers for a scale that resolves but has no degree letters to offer.
+
+One expectation moved deliberately as a consequence, and it is not an
+improvement in itself: a document whose `scaleId` resolves to nothing now
+engraves a plain `B` where a C♭ is wanted. That is the right answer anyway,
+because it is exactly what the roll draws beside it — a wrong letter both
+surfaces agree on is a bug; two surfaces disagreeing about one note is a bug plus
+a reason to distrust both. `pitchOf`'s `letter` stopped being optional at the
+same time, since `slotSpeller` always has one to give — the optionality on
+`NotePitch` itself stays, because that is where a Composer-entered note with no
+letter still lives.
+
 **A misnomer this shows up, recorded rather than fixed.**
 `NoteDoc.accidental: 'explicit'` maps to `ForceSharp`, which forces a *sharp* in a
 flat key. `letter` subsumes it correctly, so the rule becomes: a letter decides
@@ -1359,6 +1560,23 @@ which is a rule no user should have to learn. With `toMidi` there is no api to
 need, and both pages run the same three steps — build a `ScoreDoc`,
 `mapper.toScore(doc, new alphaTab.Settings())`, hand the score to the exporter.
 
+**Two flags the design did not name, both required.** `MidiFile.format` must be
+set to `MidiFileFormat.MultiTrack`. alphaTab's default is SMF type 0, which
+funnels every event into one track, so a two-track score would arrive in a DAW as
+one track of merged channels — which is not what a user pressing Export MIDI on a
+multi-track score is asking for, and is silent when it happens.
+
+**A correction: `smf1Mode: true` is not there for the reason it looks like.**
+The plausible reading — that it is what alphaTab uses to play a score, so it is
+the well-trodden path — is backwards. All four of alphaTab's own *player* paths
+construct `AlphaSynthMidiFileHandler` with the flag left false; the only place it
+passes `true` is its own `downloadMidi`, which is the file-writing path and not
+the playing one. The real reason is what the flag switches off: with it false,
+`addRest` emits a vendor `AlphaTabRestEvent` that only alphaSynth understands, so
+a file written without it carries events no other program can read. The
+documented cost of turning it on is that multiple bends sharing a beat may break,
+which the progression's projection cannot produce.
+
 **A truncated projection refuses to export.** `progressionToScore` caps at
 `MAX_PREVIEW_BARS` and reports `truncated`; the preview can afford to draw 512
 bars and say so beside them, because the message sits next to the music. A file
@@ -1366,6 +1584,35 @@ outlives the message, so an export that silently dropped bars would be a file
 that lies. At 512 bars — around twenty minutes of 4/4 at 100 BPM — this is
 reachable only through `setSlotLength(id, 1e9)`, which is the case the bound
 exists for.
+
+### Open: what `.gp` export does with a C♭
+
+**Not settled, and recorded here so it is not mistaken for settled.** Reading
+alphaTab's Gp7 exporter suggests it misspells the exact cases M4 exists to fix.
+`GpifWriter._writePitchForValue` starts from the note's default spelling under
+the key signature and then applies the forced accidental, and it only *displaces*
+the step when that default spelling is already a sharp. So a D♭ exports correctly
+— pitch class 1 defaults to C♯, the `#` is seen, the value moves and the step
+becomes D. A C♭ does not: pitch class 11 defaults to a plain B, there is no sharp
+to see, no displacement happens, and the file is written with step `B` and
+accidental `b` — **B♭**. B♯ goes the same way and writes as C♯.
+
+Three things keep this an open question rather than a recorded limitation.
+Nobody has opened an exported file in real Guitar Pro, which is the only thing
+that can settle what a reader actually draws from those fields. Our own reload
+survives regardless, because alphaTab's importer takes the pitch from the
+`Octave` and `Tone` properties and reads only the accidental out of the `Pitch`
+element — so a round trip through this app looks correct and would hide the
+problem from exactly the test most likely to be written. And until the hand-check
+is done there is no way to tell an upstream bug report from a misreading of the
+writer.
+
+**The hand-check comes before this is written up as either.** Export a ♭II in B♭
+major to `.gp`, open it in Guitar Pro, and look at the note. If it reads B♭ the
+finding stands and the choice is an upstream report or a limitation recorded
+beside the others; if it reads C♭ the reading above is wrong and this section
+goes. Nothing in the code should be changed on the strength of it in the
+meantime.
 
 ### Where the controls are
 
@@ -1378,6 +1625,21 @@ a marker, but the cursor can still *select* it, because a read-only track the
 caret cannot even rest on is worse than useless. **Save** and its refusal live in
 `composer-library-panel`, beside the Export buttons they sit with today.
 
+**The gate covers the write and stops there.** `applyDurationAtCursor` has two
+effects and only one of them is the generated track's business: the score is the
+track's, the input duration is the *toolbar's*, and the toolbar belongs to
+whichever track the caret moves to next. Refusing both is what a quick read of
+the gate suggests, and it is wrong twice over. Every route to the input duration
+runs through that one method — the palette, the dot toggle and the `+`/`-` keys —
+so a blanket refusal freezes the duration palette outright for as long as the
+caret rests on a generated track, which the sentence above explicitly permits it
+to do. It also takes away the pre-selection: choose a duration while looking at
+the generated track, move back to your own, and type. Nor is there an atomicity
+to protect, since a caret on an empty beat already returns early and lands an
+empty commit with the choice remembered anyway. What is left is the honest half —
+a toolbar showing a duration the score under the caret does not have, which is
+what an *input* duration means everywhere else in the editor.
+
 The progression page's **rail** gains a third block after Key and Sound, holding
 Send to Composer, Export MIDI and Export `.gp` — written in the same voice as the
 two above it, which say where a control is and what it means rather than naming
@@ -1386,6 +1648,74 @@ it.
 Send to Composer and "Add progression track" in the Tracks panel are two buttons
 over one service call. The push is where the user made the thing; the pull is
 where the thing will appear, and is where Update and Flatten have to live anyway.
+
+**Send is also Update, and says which.** There is no second method on the page.
+`sendProgression` merges — replacing the track it already wrote and appending
+only when there is none — so a second press refreshes rather than leaving a
+second track behind, and the button's label reads `Send to Composer` or
+`Update in Composer` according to `generatedTrackState`. It distinguishes only
+those two and deliberately not the third: `stale` versus `current` is a fact
+about a document the user is not looking at, and the badge that reports it lives
+beside the track. Pressing Send then navigates to `/composer`, which is why the
+call sits in the component rather than in a service — the projection and the
+merge are the service's, the navigation is the page's.
+
+**Send refuses a truncated projection, and for a stronger reason than the
+exports do.** An export refuses because a file outlives the message beside it;
+Send refuses because the message cannot reach the result at all. The page
+navigates, so the rail carrying the warning is gone a moment later, and nothing
+on the other side would repeat it — a `GeneratedOrigin` records which revision a
+track came from, not how much of it arrived, so the Composer has no fact to draw
+a badge from. The truncated track would then be saved to the library and
+exported from over there as though it were the whole progression: the same lie
+the export refusal prevents, told one page further from the user. Warning and
+proceeding loses on the same ground — a warning nobody is left looking at is not
+a warning.
+
+**The badge reads the marker's name, not the track's.** "From …" is
+`marker.progressionName` and it has to be, because the collision rule above
+preserves the incumbent track's `name` across an Update: the track's label is the
+user's and goes stale on purpose, so it is the wrong thing to name a *source*
+with. That makes the marker's copy the one that has to be right, which is why
+both names a generated track carries are resolved through one function — a raw
+`ProgressionDoc.name` is how the badge came to read "From Untitled" about a track
+labelled "Progression".
+
+**Clicking a generated notation staff still auditions the note it will not
+write.** The edit gate lives in `ComposerService`, so the click reaches
+`placeClickedPitch`, sounds the pitch, and then hands a write to a command that
+refuses it. That is arguably the right behaviour — audition-on-read is what a
+read-only staff should do under a pointer, and the alternative is a track you can
+look at and not hear — but it is currently *unconsidered* rather than chosen, and
+recording it that way is the honest version. Whoever next touches the click path
+should decide it deliberately.
+
+### Two conventions the milestone found out about
+
+**`CLAUDE.md` §6 is out of step, and it is §6 that is wrong.** It says methods
+are "camelCase, verb-first". This codebase names a pure derivation for **what it
+returns** and has done since well before M4: `progressionToScore`,
+`keySignatureOf`, `slotSpeller`, `barBeats`, `letterOf`, and now
+`progressionTrack` and `generatedTrackState`. The rule as written would have
+`getProgressionTrack` and `computeBarBeats`, which reads worse and says less —
+`barBeats(timeSignature)` is a noun because the thing it hands back is a number
+of beats, not an action. The verb-first rule is right for commands, which is
+where it came from and where every method it names lives. What is wanted is a
+line in the §6 table admitting the second convention, not a rename sweep; the
+rename would touch every call site in the projection to make the code agree with
+a sentence.
+
+**M4's specs were written beside their bases, not appended to them.** Four went
+into files of their own under the repo's existing `<base>.<aspect>.spec.ts`
+convention — `progression.component.export.spec.ts`,
+`progression-score.spelling.spec.ts`, `score-doc-mapper.spelling.spec.ts` and
+`composer.service.generated.spec.ts`. Appending them would have put
+`progression.component.spec.ts` over the 1000-line cap on its own, so one of
+these is a cap that would have been hit; the other three are the same choice made
+before it had to be. The seam is what the file *measures* rather than a line
+number, which is how the source modules are cut too: a spec named for an aspect
+is one a later reader can decide to read or skip, where a spec named for a half
+is one they have to open to find out.
 
 ### Not in M4
 
@@ -1396,6 +1726,31 @@ where the thing will appear, and is where Update and Flatten have to live anyway
   cases, and a change to a module three other things depend on, for a score shape
   this page has no other reason to produce. Filed here with the other known
   limitations rather than half-done.
+- **`insertBar(0)` erases a score's declared meter.** `createDefaultMasterBar()`
+  writes `timeSignature: null`, and `insertBar` copies clef, ottava and key
+  signature off a neighbouring *bar* but takes nothing from the neighbouring
+  *master* bar. So inserting at index 0 in a 3/4 score leaves a bar 1 that
+  declares nothing, and `effectiveTimeSignature`, walking backwards and finding
+  no signature at all, falls through to its hardcoded 4/4 — to the meter guard
+  and to the padding alike. The score's own 3/4 has moved to what is now bar 2
+  and still declares itself there, so a uniform 3/4 score has quietly become a
+  score that changes meter at bar 2, which is the limitation above arriving by
+  accident. `requireScoreMeter` does not catch it: every caller derives the meter
+  from bar 0 the same way the guard does, so both sides agree on 4/4 and the
+  refusal never fires — the projection is merged, correctly barred against a
+  wrong answer. Pre-existing, and it earns an entry here because M4 promoted
+  `effectiveTimeSignature(masterBars, 0)` to *the* definition of the score's
+  meter and gave a latent oddity in bar insertion something to break.
+- **A generated track's id is not unique after flatten-then-Send.** Flatten
+  clears the marker and keeps `progression-<uuid>`, so the next Send finds no
+  marker to match, appends, and leaves the score holding two tracks with one id.
+  Harmless today — every lookup here matches on the marker and nothing reads
+  `TrackDoc.id` — and deliberately not fixed in Flatten, because rewriting the id
+  on the way out would spend the "Flatten costs one field" argument that made the
+  marker a field on a real track in the first place. If the id ever becomes
+  load-bearing, the de-duplication belongs in `mergeGeneratedTrack`'s append
+  branch, which is the only place a second track wearing an existing id is made
+  and which already holds the score to check against.
 - **More than one generated track.** One `ProgressionDoc` exists at a time, so
   there is no second progression to send and no "which one?" to ask. A
   progression library would change that, and would also give the marker a far end

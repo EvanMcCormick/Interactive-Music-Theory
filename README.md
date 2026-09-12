@@ -172,6 +172,14 @@ A comprehensive web application for exploring scales, modes, chords, and music t
   what you see
 - **Notation preview**: the progression engraved as sheet music, ties across bar lines
   and all
+- **Send it to the Composer**: the progression arrives there as a track of its own,
+  barred in that score's meter so it lines up with the tracks beside it. It stays
+  linked — change the chords, press the button again, and it refreshes the track it
+  already wrote instead of leaving a second one behind. The track is read-only while
+  the link holds, with a badge saying which progression it came from and whether it has
+  fallen behind; **Flatten** hands it over as an ordinary track you can edit
+- **Export MIDI and `.gp`** straight from the progression page, whether or not the
+  notation panel is open — the whole progression, spelled the way the notation draws it
 - The sounding chord lights up on the fretboard as the progression plays
 
 ### Sheet Music Composer
@@ -412,8 +420,28 @@ A quick tour of the progression composer: open the **Circle of Fifths** and pick
 click a few chords from **Chords in this key** to build a progression, press **Play** with
 **Loop** on, then drag a note in the roll and watch the change arrive on the next pass.
 Change the key while it plays and the chords follow it while your rhythm stays put.
+When you like it, **Send to Composer** puts it on a staff beside your own tracks, and
+**Export MIDI** or **Export .gp** takes it out of the app entirely.
 
 ## Recent Updates
+
+### Progression to Composer (September 2026)
+- ✨ **New**: Send a progression to the Composer as a track of its own. It arrives
+  barred in that score's meter, sitting among the tracks already there, and it stays
+  linked — press the button again and it refreshes the track it already wrote
+- ✨ **New**: The linked track carries a badge saying which progression it came from
+  and whether it has fallen behind, is read-only while the link holds, and **Flatten**
+  hands it over as an ordinary track you can edit like any other
+- ✨ **New**: Saving a composition refuses while a track is still linked, and offers
+  to flatten it first — a saved composition has nowhere to keep the link, and losing
+  it quietly is not something to find out about on reopening
+- ✨ **New**: Export MIDI and `.gp` from the progression page, notation panel open or
+  not
+- 🐛 **Fixed**: MIDI export no longer needs a rendering score behind it, so the one
+  export of three that could fail with "the player is not ready yet" no longer can
+- 🐛 **Fixed**: An exported ♭II is engraved on the letter its degree names — B♭ major's
+  is a C♭ and not a B, on the staff as well as in the roll
+- 🧪 **Tests**: 2,395 passing
 
 ### Chord Recognition (September 2026)
 - ✨ **New**: Edit a chord's notes in the piano roll and the app reads back what chord it
