@@ -110,15 +110,24 @@ export interface ProgressionKey {
 export interface ProgressionDoc {
   id: string;
   /**
-   * Bumped once per commit, and the whole of the Composer's staleness check.
+   * A number no two documents share, and the whole of the Composer's staleness
+   * check.
    *
    * On the document rather than beside it, because undo restores a *document*:
    * a generated track built from revision 4 and then undone back to the
    * document that was revision 4 is current again, and a counter that lived on
-   * the store would say stale about a document that had not changed. See
-   * "Staleness is one comparison, and it is exact" in the design doc, which
-   * also records why a counter is exact here and a projection hash is not
-   * needed: every field of this interface reaches the generated track.
+   * the store would say stale about a document that had not changed. Issued by
+   * one that does not rewind, though - see `ProgressionStore.nextRevision`,
+   * which is what stops an undone branch's number being handed to the different
+   * document that replaces it.
+   *
+   * Equality here is not exactly "the generated track would differ". It
+   * over-reports: `tempo` and `timeSignature` move it while a merge into an
+   * existing score ignores both, a setter called with the value it already holds
+   * commits anyway, and this field is itself a field that never reaches the
+   * track. "Staleness is one comparison, and it over-reports in the safe
+   * direction" in the design doc argues why that is the direction to err in, and
+   * is the thing to read before adding a field here.
    */
   revision: number;
   name: string;

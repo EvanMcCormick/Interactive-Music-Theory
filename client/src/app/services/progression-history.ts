@@ -133,6 +133,23 @@ export class ProgressionStore {
   private currentRun: string | null = null;
 
   /**
+   * The next revision to hand out. Never reused, and never rewound.
+   *
+   * The number itself travels *on* the document, because undo restores a
+   * document and a track built from one and undone back to it is current again.
+   * What cannot live there too is the issuing. `state.doc.revision + 1` counts
+   * the path rather than the document: undo one step, edit differently, and the
+   * second branch is stamped with the number the first branch already spent - so
+   * a generated track marked with it reads as current against a document it was
+   * never built from, which is the badge going quiet about the one thing it
+   * exists to say.
+   *
+   * A revision is therefore an identity and not a position. Undo moves which
+   * number is published; it does not move which numbers are left.
+   */
+  private nextRevision = 1;
+
+  /**
    * The first state goes through `derive` like every one after it, rather than
    * having the seven fields written out a second time. A field added to
    * `ProgressionState` and filled in only one of two places would be right
@@ -240,8 +257,10 @@ export class ProgressionStore {
     mutate(draft);
     // Stamped here rather than inside `settle`, which `load` also calls and
     // which specs lean on being idempotent. `commit` is the one door a mutation
-    // comes through, so it is the one place a mutation can be counted.
-    const settled = { ...settle(draft), revision: state.doc.revision + 1 };
+    // comes through, so it is the one place a mutation can be counted - and
+    // counted from `nextRevision`, not from the document, for the reason that
+    // field's docstring gives.
+    const settled = { ...settle(draft), revision: this.nextRevision++ };
 
     // A continuation is only honoured while the run it names is the one under
     // way, so a caller that passes `continues` with nothing to continue - or
@@ -368,10 +387,32 @@ export class ProgressionStore {
    * is exactly the harmony knowledge the split above keeps out. A loader that
    * wants it wants a method on `ProgressionService` that regenerates and then
    * calls this.
+   *
+   * ## The revision is re-issued, not adopted
+   *
+   * The `revision` on an arriving document was issued by whatever produced it
+   * and means nothing to this store's allocator. Installed as it stands, it is a
+   * number two documents can hold: the next commit here resumes from a counter
+   * that never saw it, so a marker left behind by that other producer - a
+   * generated track built from the file's own revision 7 - would later match a
+   * document of ours that happens to reach 7 and read as current.
+   *
+   * So the allocator is first moved past whatever arrived, and then the
+   * installed document is stamped from it like any commit. `?? 0` is the other
+   * half: a document written before the field existed arrives holding
+   * `undefined`, and `undefined + 1` is `NaN`, which - `NaN` equalling nothing,
+   * itself included - would read as stale forever rather than fail loudly.
+   *
+   * The number a load *shows* is therefore not the number the file held, and
+   * that is the trade: a revision means "this document, in this store", so the
+   * only thing worth preserving across the door is the promise that no two
+   * documents ever answer to one.
    */
   replaceDocument(doc: ProgressionDoc, markClean = false): void {
     const state = this.stateSubject.getValue();
-    const settled = settle(requireUniqueSlotIds(doc));
+    const clean = settle(requireUniqueSlotIds(doc));
+    this.nextRevision = Math.max(this.nextRevision, (doc.revision ?? 0) + 1);
+    const settled = { ...clean, revision: this.nextRevision++ };
 
     this.currentRun = null;
     this.pushHistory(structuredClone(state.doc));

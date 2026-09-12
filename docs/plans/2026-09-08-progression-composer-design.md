@@ -1167,20 +1167,51 @@ have. `progression-track.spec.ts` pins this rather than assuming it.
 The cost is the honest one: a user can read a stale engraving until they notice
 the badge. That is a cost the badge is *for*.
 
-### Staleness is one comparison, and it is exact
+### Staleness is one comparison, and it over-reports in the safe direction
 
-`ProgressionDoc` gains `revision: number`, bumped in the single `commit()` in
-`progression-history.ts` that every mutation already goes through.
+`ProgressionDoc` gains `revision: number`, allocated from a monotonic counter on
+`ProgressionStore` and stamped onto the document in the single `commit()` in
+`progression-history.ts` that every mutation already goes through. The value is
+read off the *document*, so undo restores it along with the document it belongs
+to and a track undone back to its own source reads as current again. The counter
+that issues it never rewinds, so two documents can never answer to one number —
+`progression-history.ts` argues both halves at `nextRevision`.
 
 A document counter is coarser than a hash of the projection, so the question is
-whether it reports staleness the user cannot see the reason for — and it does
-not, because every field of `ProgressionDoc` reaches the generated track.
-`slots` are the notes, `key` the key signature, `timeSignature` the bars, `tempo`
-the speed, and `name` the track's own name. `id` never changes and `isDirty`
-lives on `ProgressionState`, not the document. So "the revision moved" and
-"Update would change something" name the same set, and the cheap check is also
-the exact one. A field added to `ProgressionDoc` that does *not* reach the track
-would break that, and this paragraph is the thing to read before adding one.
+whether it reports staleness the user cannot see the reason for. It does. This
+section used to say otherwise, on the grounds that every field of
+`ProgressionDoc` reaches the generated track, and "Reconciling with a score that
+already exists" — two sections below — is where that stops being true. Three
+cases move the revision while Update would change nothing in the merged track:
+
+- **Tempo, on a score that is not an untouched default.** "Reconciling with a
+  score that already exists" gives the score's tempo the win, so `setTempo`
+  bumps and the merge ignores the result.
+- **Meter, always.** The generated track is barred in the score's meter, not the
+  progression's, so `timeSignature` moves a number that changes no bar line.
+- **A setter called with the value it already holds.** `setTempo` has no no-op
+  guard; `setTempo(120)` on a 120bpm document commits, and so bumps.
+
+A fourth was there before any of the three: `revision` is itself a field of
+`ProgressionDoc`, and it reaches nothing. The blanket claim was false on its own
+terms the moment it was written.
+
+So the counter **over-reports and never under-reports**, and that asymmetry is
+the whole argument for keeping it. A revision that moved when the projection did
+not costs a needless Update: one click, and the rebuild it triggers is a
+refresh to the identical track. A revision that failed to move when the
+projection did costs a badge that says current about an engraving that is not —
+a document lying about itself, discovered later and by the user. The two errors
+are not comparable, and a check that can only make the cheap one is worth more
+than a hash that promises to make neither and has a second copy of the
+projection's semantics to keep in step in order to keep that promise.
+
+**Before adding a field to `ProgressionDoc`, read this.** A field that does not
+reach the generated track only widens the over-report, which is acceptable and
+needs no more than a line here. The bug to avoid is the other direction: a field
+that *does* reach the track and can be written by a path that bypasses
+`commit()`. That is an under-report, and it is the thing this design cannot
+survive.
 
 ### Divergence is a state of the source, not a second check
 

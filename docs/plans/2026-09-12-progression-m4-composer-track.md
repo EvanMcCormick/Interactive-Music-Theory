@@ -45,33 +45,61 @@ the task.
 
 **Step 1: Write the failing test**
 
+`ProgressionService` has no `state` property; read the state by subscribing. The
+`revision()` helper below wraps that so the expectations stay one line each. The
+degree-taking append is `appendSlot(degree)` — `appendChord` exists but takes a
+`ChordChoice`.
+
 ```typescript
 // progression.service.revision.spec.ts
 describe('ProgressionService revision', () => {
+  function currentState(): ProgressionState {
+    let captured: ProgressionState | undefined;
+    service.getState().subscribe(value => (captured = value)).unsubscribe();
+    if (captured === undefined) throw new Error('getState published nothing on subscribe');
+    return captured;
+  }
+
+  function revision(): number {
+    return currentState().doc.revision;
+  }
+
   it('starts at 0 and rises once per commit', () => {
-    expect(service.state.doc.revision).toBe(0);
-    service.appendChord(0);
-    expect(service.state.doc.revision).toBe(1);
+    expect(revision()).toBe(0);
+    service.appendSlot(0);
+    expect(revision()).toBe(1);
     service.setTempo(96);
-    expect(service.state.doc.revision).toBe(2);
+    expect(revision()).toBe(2);
   });
 
   // The reason the counter lives on the document. A track built from revision 1
   // and then undone back to revision 1 is not stale, and would be if undo
   // stamped a fresh number onto an identical document.
   it('travels backwards with undo rather than counting the undo', () => {
-    service.appendChord(0);
-    const at = service.state.doc.revision;
-    service.appendChord(1);
+    service.appendSlot(0);
+    const at = revision();
+    service.appendSlot(1);
     service.undo();
-    expect(service.state.doc.revision).toBe(at);
+    expect(revision()).toBe(at);
   });
 
   it('does not rise on a publish that changes no document', () => {
-    service.appendChord(0);
-    const at = service.state.doc.revision;
-    service.selectSlot(service.state.doc.slots[0].id);
-    expect(service.state.doc.revision).toBe(at);
+    service.appendSlot(0);
+    const at = revision();
+    service.selectSlot(currentState().doc.slots[0].id);
+    expect(revision()).toBe(at);
+  });
+
+  // And the other half: the number is an identity, not a position on the path.
+  // `previous + 1` re-issues an abandoned branch's number to a different
+  // document, and a track marked with it then reads as current.
+  it('never issues one number to two different documents', () => {
+    service.appendSlot(0);
+    service.appendSlot(1);
+    const abandoned = revision();
+    service.undo();
+    service.appendSlot(2);
+    expect(revision()).not.toBe(abandoned);
   });
 });
 ```
@@ -90,36 +118,51 @@ In `progression.model.ts`, on `ProgressionDoc`, after `id`:
 
 ```typescript
   /**
-   * Bumped once per commit, and the whole of the Composer's staleness check.
+   * A number no two documents share, and the whole of the Composer's staleness
+   * check.
    *
    * On the document rather than beside it, because undo restores a *document*:
    * a generated track built from revision 4 and then undone back to the
    * document that was revision 4 is current again, and a counter that lived on
-   * the store would say stale about a document that had not changed. See
-   * "Staleness is one comparison, and it is exact" in the design doc, which
-   * also records why a counter is exact here and a projection hash is not
-   * needed: every field of this interface reaches the generated track.
+   * the store would say stale about a document that had not changed. Issued by
+   * one that does not rewind, though - see `ProgressionStore.nextRevision`.
    */
   revision: number;
 ```
 
 `createDefaultProgression()` gains `revision: 0`.
 
-In `progression-history.ts`, inside `commit`, replace the settle line:
+In `progression-history.ts`, the number is *stored* on the document but
+*allocated* from the store, which is what keeps the two properties above from
+contradicting each other. Add the field:
+
+```typescript
+  /** The next revision to hand out. Never reused, and never rewound. */
+  private nextRevision = 1;
+```
+
+and inside `commit`, replace the settle line:
 
 ```typescript
     // Stamped here rather than inside `settle`, which `load` also calls and
     // which specs lean on being idempotent. `commit` is the one door a mutation
     // comes through, so it is the one place a mutation can be counted.
-    const settled = { ...settle(draft), revision: state.doc.revision + 1 };
+    const settled = { ...settle(draft), revision: this.nextRevision++ };
 ```
+
+`replaceDocument` reconciles the allocator with what arrives rather than
+adopting it — `this.nextRevision = Math.max(this.nextRevision, (doc.revision ??
+0) + 1)`, then stamp the installed document from the allocator like any commit.
+The `?? 0` is not decoration: a document written before the field existed
+arrives with `undefined`, and `undefined + 1` is `NaN`, which equals nothing and
+so reads as stale forever.
 
 `undo`, `redo` and `load` are untouched: they publish a stored document, which
 carries the revision it had.
 
 **Step 4: Run and watch it pass**
 
-Expected: PASS, 3 tests. Then run the whole suite — `normalizeProgressionDoc` spreads
+Expected: PASS. Then run the whole suite — `normalizeProgressionDoc` spreads
 `...doc` so `revision` survives normalisation, but any spec that builds a
 `ProgressionDoc` literal will now fail to compile.
 
