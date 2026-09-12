@@ -104,7 +104,30 @@ export interface PlaybackInfoDoc {
  * progression design doc.
  */
 export interface GeneratedOrigin {
+  /**
+   * The `ProgressionDoc.id` this track was built from.
+   *
+   * May name a progression that no longer exists. A marker outlives its source
+   * as soon as the two are held apart - a `ProgressionDoc` has no persistence
+   * of its own, and the design doc weighs exactly that dangling reference under
+   * "Saving refuses rather than flattening". Nothing guards it, because nothing
+   * needs to: an id that matches no progression matches no track either, so
+   * `generatedTrackIndex` returns -1 and `generatedTrackState` answers
+   * `'absent'`. The score then holds a track the UI treats as ordinary, which
+   * is the safe end of the failure and not an error anyone has to handle.
+   */
   progressionId: string;
+  /**
+   * `ProgressionDoc.name` as it stood when the track was built.
+   *
+   * Denormalised so the badge can say which progression a track came from with
+   * only the score loaded. This is the second copy of the truth the design doc
+   * prices in under "The generated track is a real track carrying a marker",
+   * and it is a copy the revision counter cannot police: `revision` does not
+   * move on a rename, so a stale name here would not even read as stale.
+   * Nothing renames a progression today; whatever first does has to write
+   * through to this field.
+   */
   progressionName: string;
   source: { kind: 'revision'; revision: number } | { kind: 'diverged' };
 }
@@ -119,7 +142,15 @@ export interface TrackDoc {
   staves: StaffDoc[];
   /**
    * The progression this track was built from, or `null` for an ordinary one.
-   * Written and read by `progression-track.ts`; nothing else interprets it.
+   *
+   * Read only by `generatedTrackState` in `progression-track.ts` - the badge,
+   * the edit gate and the Update button all ask it rather than this field, so
+   * a marker means one thing to every caller. Written there too, and - for
+   * divergence alone - by the bar-structure commands in `composer.service.ts`:
+   * a score-wide bar insertion moves a generated track's content without moving
+   * `ProgressionDoc.revision`, so those commands restate the source as
+   * `diverged`. They stamp the marker without interpreting it; what a diverged
+   * source *means* is still settled in one place.
    *
    * Not optional: an absent marker and a missing field would be the same answer
    * from two different states, and `ScoreDocMapperService` already produces the

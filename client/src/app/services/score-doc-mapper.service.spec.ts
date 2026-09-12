@@ -77,7 +77,6 @@ function buildDoc(): ScoreDoc {
         shortName: 'Pno',
         color: '#3498db',
         playback: createDefaultPlaybackInfo(0),
-        generated: null,
         staves: [
           {
             tuning: [],
@@ -104,7 +103,8 @@ function buildDoc(): ScoreDoc {
               }
             ]
           }
-        ]
+        ],
+        generated: null
       },
       {
         id: 't2',
@@ -112,7 +112,6 @@ function buildDoc(): ScoreDoc {
         shortName: 'Gtr',
         color: '#e74c3c',
         playback: createDefaultPlaybackInfo(25),
-        generated: null,
         staves: [
           {
             tuning: STANDARD_GUITAR_TUNING.slice(),
@@ -139,7 +138,8 @@ function buildDoc(): ScoreDoc {
               }
             ]
           }
-        ]
+        ],
+        generated: null
       }
     ]
   };
@@ -314,6 +314,11 @@ describe('ScoreDocMapperService', () => {
     // the whole reason saving a composition has to refuse a linked track
     // instead of writing one out. Asserted here so the reason stays visible if
     // anyone ever wonders why save is fussy.
+    //
+    // Save goes through the alphaTex exporter and these assertions do not, on
+    // purpose: `toScore`/`toDoc` is the stronger bound. The marker is already
+    // gone in alphaTab's own model, before a character of tex is written, so no
+    // choice of exporter or parser downstream could have carried it.
     function marked(): ScoreDoc {
       return {
         ...doc,
@@ -345,7 +350,6 @@ describe('ScoreDocMapperService', () => {
 
       for (const track of back.tracks) {
         expect(track.generated).toBeNull();
-        expect('generated' in track).toBeTrue();
       }
     });
   });

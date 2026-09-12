@@ -623,6 +623,9 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
     color: '#2c3e50',
     playback: createDefaultPlaybackInfo(voice.program),
     staves: [staff],
+    // Null despite this track being generated, from audio, by the code around
+    // it: the field means "generated from a progression" and nothing broader.
+    // It is a link back to a `ProgressionDoc`, and a transcription has none.
     generated: null
   };
 
