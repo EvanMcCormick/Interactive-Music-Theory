@@ -425,9 +425,14 @@ Not rejected - not yet placed. Each needs its own design pass:
 - **Before the first click, the caret box is not drawn** - it needs a click to learn
   which staff it is on - so arrow keys move an invisible caret. The selection
   highlight in M2 draws from state rather than from the last click.
-- **A hammer-on with nothing to land on does not save.** alphaTab's `Note.finish` clears
-  `isHammerPullOrigin` when no note follows on the same string, or on another string as a
-  left-hand tap, within three bars - so the editor can show a hammer-on that a reload
-  loses. M1 pins the loss in `score-doc-mapper.effects.spec.ts`. M2 decides what the
-  hammer-on tool does about it: refuse where there is no destination, or allow it and
-  say so.
+- **A hammer-on or a shift or legato slide with nothing to land on does not save.**
+  alphaTab's `Note.finish` clears `isHammerPullOrigin` when no note follows on the same
+  string, or on another string as a left-hand tap, within three bars, and resets a shift
+  or legato slide when no note follows on its string - so the editor can show a
+  technique that a reload loses. M1 pins both losses in
+  `score-doc-mapper.effects.spec.ts`. M2 decides what the hammer-on and slide tools do:
+  refuse where there is nothing to land on, or allow it and say so.
+- **Four slide types have no name in the model.** In from above, out down, and pick
+  slides down and up read back as no slide, so alphaTex applied from the source panel
+  loses them. Nothing the composer writes can produce them; widening
+  `NoteEffectsDoc.slide` belongs with M2's slide tools.

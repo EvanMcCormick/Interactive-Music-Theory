@@ -189,7 +189,10 @@ export function applySlide(note: alphaTab.model.Note, slide: NoteDoc['effects'][
  *
  * `NoteEffectsDoc.slide` is one value where alphaTab has two fields - a slide in and a
  * slide out - so a note carrying both reads as its slide out, which is the one the
- * palette sets. An in-slide the model has no name for (from above) reads as none.
+ * palette sets. alphaTab slides the model has no name for - in from above, out down, and
+ * pick slides down and up - read as none, so applying alphaTex that uses them in the
+ * source panel drops them. A note carrying both a slide in and a slide out keeps only its
+ * slide out.
  */
 export function slideOf(note: alphaTab.model.Note): NoteDoc['effects']['slide'] {
   switch (note.slideOutType) {

@@ -149,5 +149,15 @@ describe('ScoreDocMapperService effects round trip', () => {
     });
   }
 
+  for (const slide of ['shiftSlide', 'legatoSlide'] as const) {
+    it(`loses a ${slide} with nothing to land on - alphaTab clears it`, () => {
+      // `Note.finish` resets a shift or legato slide to none when no note follows on the
+      // same string within three bars, as it does a hammer-on. The last beat has none.
+      const doc = guitarBar(beats => (beats[3].notes[0].effects.slide = slide));
+
+      expect(beatsOf(throughTex(doc))[3].notes[0].effects.slide).toBe('none');
+    });
+  }
+
   // <!-- A3 -->
 });

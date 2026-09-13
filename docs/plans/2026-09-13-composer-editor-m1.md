@@ -47,7 +47,9 @@ writes them generously; 1000 lines per file at most.
   `Note.bendType` from the points and links a hammer-on to its destination. `finish`
   clears `isHammerPullOrigin` on a hammer-on with no destination - no note on the same
   string, and no left-hand-tapped note on another, within three bars - so such a
-  hammer-on does not survive save. Task A1 pins that loss.
+  hammer-on does not survive save. Task A1 pins that loss. It does the same to a shift
+  or legato slide with no following note on its string (slide out up and slide in from
+  below are unaffected); the review of Task A2 pins that loss.
 - Forced accidentals survive alphaTex on fretted *and* pitched notes (`{acc b}`).
 - alphaTab's `Beat` has **no staccato**; only `Note.isStaccato` exists.
 - Accent, heavy accent and tenuto are one field, `Note.accentuated: AccentuationType`.
