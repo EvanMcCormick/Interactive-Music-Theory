@@ -1,4 +1,4 @@
-import { AccidentalMode, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc } from '../models/composer.model';
+import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc } from '../models/composer.model';
 import { BeatRef } from './composer-selection';
 import { notesAt } from './note-edits';
 import { forcedLetterOf, reduceToOctave } from './note-spelling';
@@ -12,20 +12,37 @@ import { forcedLetterOf, reduceToOctave } from './note-spelling';
  * without a compile error; as its own variant, `{ family: 'note', key: 'accidental' }`
  * does not type-check.
  *
+ * A beat edit names what it changes for the same reason: some beat effects belong to strings,
+ * and a scope that could leave the key out could skip that check.
+ *
  * `forcedLetterOf` comes from `note-spelling.ts`, not the mapper: this module stays pure,
  * and importing an `@Injectable` service file would pull alphaTab in with it.
  */
 export type EditScope =
-  | { family: 'beat' }
+  | { family: 'beat'; key: keyof BeatEffectsDoc | 'duration' | 'dynamics' | 'tuplet' }
   | { family: 'note'; key: keyof NoteEffectsDoc | 'tie' }
   | { family: 'note'; key: 'accidental'; accidental: AccidentalMode }
   | { family: 'track'; trackIndex: number };
 
-/** Techniques that only mean something on a string. */
-const FRETTED_ONLY: ReadonlySet<string> = new Set(['bendPoints', 'slide', 'isLeftHandTapped', 'harmonic']);
+/** Note techniques that only mean something on a string. */
+const FRETTED_ONLY_NOTE: ReadonlySet<string> = new Set(['bendPoints', 'slide', 'isLeftHandTapped', 'harmonic']);
+
+/**
+ * Beat techniques that only mean something on a string: a tap, a slap and a pop.
+ *
+ * Palm mute and let ring stay allowed on a pitched staff. Design Part 4 names bend, slide, tap
+ * and harmonics as the fretted-only techniques, and alphaTab draws both from their flags with no
+ * string needed (`PalmMuteEffectInfo`, `alphaTab.core.mjs` ~60249, reads `note.isPalmMute`;
+ * `LetRingEffectInfo` ~59704 reads `beat.isLetRing`).
+ */
+const FRETTED_ONLY_BEAT: ReadonlySet<string> = new Set(['tap', 'slap', 'pop']);
+
+const FRETTED = 'Bends, slides, taps and harmonics belong to fretted staves.';
 
 const GENERATED =
   'That reaches a track generated from a progression. Flatten the track to edit it by hand.';
+
+const SECOND_VOICE = 'Editing a second voice is not available yet.';
 
 const UNSPELLABLE = 'That accidental cannot spell this note - it would be drawn on the wrong line.';
 
@@ -91,6 +108,10 @@ function anyNoteUnspellable(
  * range is never half-edited. `focus` must be the same one the edit will use, so this and
  * `notesAt` agree about which notes a press means.
  *
+ * Voice 1 only. Bar filling measures a bar's first voice (`barFillOf`), so an edit to another
+ * could not keep its bar honest; any ref in a later voice refuses the press, until multiple
+ * voices are designed.
+ *
  * A forced accidental that cannot name one of its notes is refused rather than set to
  * `auto`: alphaTab would draw that note on a line chosen by the key signature while it
  * sounds right. The check is `forcedLetterOf`, the predicate the mapper reads a letter back
@@ -111,14 +132,15 @@ export function editRefusal(
   }
   if (refs.length === 0) return 'Nothing is selected.';
   if (refs.some(ref => doc.tracks[ref.trackIndex]?.generated)) return GENERATED;
-  if (scope.family === 'beat') return null;
+  if (refs.some(ref => ref.voiceIndex > 0)) return SECOND_VOICE;
 
   const onPitchedStaff = refs.some(
     ref => (doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.tuning.length ?? 0) === 0
   );
-  if (FRETTED_ONLY.has(scope.key) && onPitchedStaff) {
-    return 'Bends, slides, taps and harmonics belong to fretted staves.';
+  if (scope.family === 'beat') {
+    return FRETTED_ONLY_BEAT.has(scope.key) && onPitchedStaff ? FRETTED : null;
   }
+  if (FRETTED_ONLY_NOTE.has(scope.key) && onPitchedStaff) return FRETTED;
   const notes = notesAt(doc, refs, focus);
   if (notes.length === 0) return 'There is no note there to change.';
   // Fretted notes only. alphaTab moves a natural harmonic off its fret only on a stringed

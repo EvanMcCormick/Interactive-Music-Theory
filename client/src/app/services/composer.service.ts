@@ -32,16 +32,6 @@ import {
   STANDARD_GUITAR_TUNING
 } from '../models/composer.model';
 import {
-  keySignatureFault,
-  setClef,
-  setKeySignature,
-  setMasterBarValue,
-  setTimeSignature,
-  timeSignatureFault,
-  toggleMasterBarFlag
-} from './bar-edits';
-import { barFillAt, fixBarOverflow } from './bar-fill';
-import {
   beatsAt,
   setBeatDurations,
   setDynamics,
@@ -50,12 +40,12 @@ import {
   toggleBeatEffect,
   toggledValue
 } from './beat-edits';
-import { BeatRef, selectedBars, selectionTargets } from './composer-selection';
+import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
+import { ComposerStructureCommands } from './composer-service-structure';
 import { EditScope, editRefusal } from './edit-refusals';
 import { setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 import { insertBarInto } from './score-structure';
-import { renameTrack, setPlayback, setStaffNumber, setStaffTuning, setStaffViews } from './track-edits';
 
 /**
  * Owns the editable score document, the edit caret, and undo/redo.
@@ -76,6 +66,12 @@ import { renameTrack, setPlayback, setStaffNumber, setStaffTuning, setStaffViews
  * `commit()` is the point rather than a convenience - it is what makes undo
  * restore a track together with the marker that says how fresh it is. See
  * "Update is pressed, not inferred" in the progression composer design doc.
+ *
+ * The bar and track commands, and Fix bar, live in `ComposerStructureCommands`
+ * (composer-service-structure.ts), which this file had to shed to stay under the
+ * 1000-line cap. Their public methods stay here and delegate, so callers see one
+ * service; the helper reaches back only through `commitFollowing`, `refuse` and
+ * `markDiverged`.
  */
 @Injectable({ providedIn: 'root' })
 export class ComposerService {
@@ -84,6 +80,13 @@ export class ComposerService {
   private readonly stateSubject: BehaviorSubject<ComposerState>;
   private undoStack: ScoreDoc[] = [];
   private redoStack: ScoreDoc[] = [];
+
+  private readonly structure = new ComposerStructureCommands({
+    state: () => this.stateSubject.getValue(),
+    commitFollowing: edit => this.commitFollowing(edit),
+    refuse: reason => this.refuse(reason),
+    markDiverged: draft => this.markDiverged(draft)
+  });
 
   constructor() {
     this.stateSubject = new BehaviorSubject<ComposerState>({
@@ -187,18 +190,47 @@ export class ComposerService {
   // -------------------------------------------------------------------------
 
   /** Applies a mutation to a cloned document and commits the result. */
-  private commit(mutate: (draft: ScoreDoc) => void, cursor?: EditCursor): void {
+  private commit(mutate: (draft: ScoreDoc) => void): void {
     const draft = structuredClone(this.stateSubject.getValue().doc);
     mutate(draft);
-    this.commitDocument(draft, cursor);
+    this.commitDocument(draft);
   }
 
   /**
-   * Publishes a prepared document and pushes the old one onto undo. For edits that can
-   * refuse part-way: they run on a clone, and only a clone that succeeded arrives here.
+   * Runs `edit` on a clone of the document and commits it with the selection still on its
+   * beats - or, when `edit` returns a reason, publishes that and commits nothing, so an edit
+   * that refuses part-way leaves nothing behind.
+   *
+   * The selection's ends name beats by position, and an edit can move the beats they name: a
+   * duration change puts rests right after each beat it shortens, a new grace gets its gap's
+   * rests in front of it, Fix bar splits and carries beats. Left by position, a range of four
+   * notes made eighths would end on a rest halfway through them, and the next press would miss
+   * half the notes. So the beat each end names is found before the edit and looked for again
+   * after it (`followedEnd`). An end whose beat is gone stays where it was, clamped.
    */
-  private commitDocument(next: ScoreDoc, cursor?: EditCursor): void {
+  private commitFollowing(edit: (draft: ScoreDoc) => string | null | void): void {
     const state = this.stateSubject.getValue();
+    const draft = structuredClone(state.doc);
+    const cursorBeat = this.beatAt(draft, state.cursor);
+    const anchorBeat = state.anchor ? this.beatAt(draft, state.anchor) : null;
+
+    const reason = edit(draft);
+    if (typeof reason === 'string') return this.refuse(reason);
+
+    this.commitDocument(draft, {
+      cursor: followedEnd(draft, state.cursor, cursorBeat),
+      anchor: state.anchor ? followedEnd(draft, state.anchor, anchorBeat) : null
+    });
+  }
+
+  /**
+   * Publishes a prepared document and pushes the old one onto undo, with `selection` in place
+   * of the current one when given. Either way the selection is clamped into the new document.
+   */
+  private commitDocument(next: ScoreDoc, selection?: { cursor: EditCursor; anchor: EditCursor | null }): void {
+    const state = this.stateSubject.getValue();
+    const cursor = selection ? selection.cursor : state.cursor;
+    const anchor = selection ? selection.anchor : state.anchor;
     this.undoStack.push(structuredClone(state.doc));
     if (this.undoStack.length > ComposerService.MAX_HISTORY) {
       this.undoStack.shift();
@@ -208,8 +240,8 @@ export class ComposerService {
     this.stateSubject.next({
       ...state,
       doc: next,
-      cursor: this.clampCursor(cursor ?? state.cursor, next),
-      anchor: state.anchor ? this.clampCursor(state.anchor, next) : null,
+      cursor: this.clampCursor(cursor, next),
+      anchor: anchor ? this.clampCursor(anchor, next) : null,
       refusal: null,
       isDirty: true,
       canUndo: true,
@@ -502,14 +534,14 @@ export class ComposerService {
    *
    * It acts on the selection, not only the caret, and keeps each bar honest through
    * `setBeatDurations`: a gap fills with rests where it opened, and a beat that grows takes
-   * only rests.
+   * only rests. The selection follows its beats past the rests that inserts (`commitFollowing`).
    */
   applyDurationAtCursor(duration: DurationValue, dots: number): void {
     const state = this.stateSubject.getValue();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
 
-    if (!editRefusal(state.doc, refs, { family: 'beat' }, null)) {
-      this.commit(draft => setBeatDurations(draft, refs, duration, dots));
+    if (!editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null)) {
+      this.commitFollowing(draft => setBeatDurations(draft, refs, duration, dots));
     }
 
     this.setInputDuration(duration, dots);
@@ -538,7 +570,7 @@ export class ComposerService {
     on: BeatEffectsDoc[K],
     off: BeatEffectsDoc[K]
   ): void {
-    this.applyEdit({ family: 'beat' }, (draft, refs) => toggleBeatEffect(draft, refs, key, on, off));
+    this.applyEdit({ family: 'beat', key }, (draft, refs) => toggleBeatEffect(draft, refs, key, on, off));
   }
 
   /**
@@ -546,33 +578,23 @@ export class ComposerService {
    * that grace, they become ordinary beats again. A grace takes no room, so this is a length
    * change, and `setGrace` settles each bar as a duration change does.
    *
-   * With the caret alone, the caret follows its beat. The rests that fill a new grace's gap go
-   * where its value stood, in front of it, so the grace's index moves forward by however many
-   * rests that took. Left where it was, the caret would sit on one of those rests, and pressing
-   * the same tool again - to undo a mistaken press by the toggle rule, or to add an effect to
-   * the grace - would act on the rest instead. A range keeps its ends, which name beats by
-   * position; see `selectionTargets`.
+   * The rests that fill a new grace's gap go where its value stood, in front of it, so the
+   * grace's index moves forward by however many rests that took. The selection follows it
+   * (`commitFollowing`), so pressing the same tool again - to undo a mistaken press by the
+   * toggle rule, or to add an effect to the grace - acts on the grace and not on a rest.
    */
   toggleGrace(grace: Exclude<BeatEffectsDoc['grace'], 'none'>): void {
-    const { anchor, cursor } = this.stateSubject.getValue();
-    let followed: number | null = null;
-
-    this.applyEdit({ family: 'beat' }, (draft, refs) => {
-      const caretBeat = anchor ? null : this.beatAt(draft, cursor);
-      setGrace(draft, refs, toggledValue(beatsAt(draft, refs).map(beat => beat.effects.grace), grace, 'none'));
-      const index = caretBeat ? (this.voiceAt(draft, cursor)?.beats.indexOf(caretBeat) ?? -1) : -1;
-      followed = index >= 0 ? index : null;
-    });
-
-    if (followed !== null) this.setCursor({ beatIndex: followed });
+    this.applyEdit({ family: 'beat', key: 'grace' }, (draft, refs) =>
+      setGrace(draft, refs, toggledValue(beatsAt(draft, refs).map(beat => beat.effects.grace), grace, 'none'))
+    );
   }
 
   setDynamics(dynamics: DynamicValue | null): void {
-    this.applyEdit({ family: 'beat' }, (draft, refs) => setDynamics(draft, refs, dynamics));
+    this.applyEdit({ family: 'beat', key: 'dynamics' }, (draft, refs) => setDynamics(draft, refs, dynamics));
   }
 
   setTuplet(tuplet: Tuplet | null): void {
-    this.applyEdit({ family: 'beat' }, (draft, refs) => setTuplet(draft, refs, tuplet));
+    this.applyEdit({ family: 'beat', key: 'tuplet' }, (draft, refs) => setTuplet(draft, refs, tuplet));
   }
 
   /**
@@ -580,7 +602,8 @@ export class ComposerService {
    *
    * A refusal is published and nothing is committed, so a refused press costs no undo step
    * and changes nothing at all - not half a range. The focused string applies only when the
-   * selection is the caret alone: a range means every note in it.
+   * selection is the caret alone: a range means every note in it. The selection follows its
+   * beats through whatever the edit inserts or removes (`commitFollowing`).
    */
   private applyEdit(
     scope: EditScope,
@@ -594,7 +617,7 @@ export class ComposerService {
       this.refuse(refusal);
       return;
     }
-    this.commit(draft => edit(draft, refs, focus));
+    this.commitFollowing(draft => edit(draft, refs, focus));
   }
 
   /** Publishes why a command did nothing. Commits nothing, so it costs no undo step. */
@@ -603,135 +626,59 @@ export class ComposerService {
   }
 
   // -------------------------------------------------------------------------
-  // Bar and track edits
+  // Bar and track edits, and Fix bar: see composer-service-structure.ts
   // -------------------------------------------------------------------------
 
+  /** Declares a time signature from the selection's first bar, fitting the bars under it. */
   setTimeSignature(timeSignature: TimeSignature): void {
-    const fault = timeSignatureFault(timeSignature);
-    if (fault) return this.refuse(fault);
-    this.applyBarEdit((draft, bars) => setTimeSignature(draft, bars.first, timeSignature));
+    this.structure.setTimeSignature(timeSignature);
   }
 
+  /** Sets the key on every staff from the selection's first bar. */
   setKeySignature(keySignature: KeySignature): void {
-    const fault = keySignatureFault(keySignature);
-    if (fault) return this.refuse(fault);
-    this.applyBarEdit((draft, bars) => setKeySignature(draft, bars.first, keySignature));
+    this.structure.setKeySignature(keySignature);
   }
 
+  /** Sets clef and ottava on the caret's staff from the selection's first bar. */
   setClef(clef: ClefKind, ottava: OttaviaKind): void {
-    const { trackIndex, staffIndex } = this.stateSubject.getValue().cursor;
-    this.applyBarEdit((draft, bars) => setClef(draft, trackIndex, staffIndex, bars.first, clef, ottava));
+    this.structure.setClef(clef, ottava);
   }
 
-  /**
-   * A bar flag over the selected bars. Taking bars out of free time fits them to their meter
-   * in the same commit (`toggleMasterBarFlag`), so that is one undo step too, and like any bar
-   * edit it stamps generated tracks diverged.
-   */
+  /** A bar flag over the selected bars, by the toggle rule. */
   toggleMasterBarFlag(key: 'isRepeatStart' | 'isDoubleBar' | 'isFreeTime'): void {
-    this.applyBarEdit((draft, bars) => toggleMasterBarFlag(draft, bars, key));
+    this.structure.toggleMasterBarFlag(key);
   }
 
   setMasterBarValue<K extends 'repeatCount' | 'alternateEndings' | 'tripletFeel' | 'section'>(
     key: K,
     value: MasterBarDoc[K]
   ): void {
-    if (key === 'section' && value !== null && !(value as MasterBarDoc['section'])?.text.trim()) {
-      return this.refuse('A section needs a name.');
-    }
-    if ((key === 'repeatCount' || key === 'alternateEndings') && (value as number) < 0) {
-      return this.refuse('That cannot be negative.');
-    }
-    this.applyBarEdit((draft, bars) => setMasterBarValue(draft, bars, key, value));
+    this.structure.setMasterBarValue(key, value);
   }
 
   setStaffTuning(tuning: number[], label: string): void {
-    this.applyTrackEdit(true, (draft, t, s) => setStaffTuning(draft, t, s, tuning, label));
+    this.structure.setStaffTuning(tuning, label);
   }
 
   setStaffNumber(key: 'capo' | 'transpose' | 'displayTranspose', value: number): void {
-    this.applyTrackEdit(true, (draft, t, s) => setStaffNumber(draft, t, s, key, value));
+    this.structure.setStaffNumber(key, value);
   }
 
   setStaffViews(views: Partial<Pick<StaffDoc, 'showStandardNotation' | 'showTablature' | 'showSlash' | 'showNumbered'>>): void {
-    this.applyTrackEdit(true, (draft, t, s) => setStaffViews(draft, t, s, views));
+    this.structure.setStaffViews(views);
   }
 
   setPlayback(changes: Partial<PlaybackInfoDoc>): void {
-    this.applyTrackEdit(false, (draft, t) => setPlayback(draft, t, changes));
+    this.structure.setPlayback(changes);
   }
 
   renameTrack(name: string, shortName: string): void {
-    this.applyTrackEdit(true, (draft, t) => renameTrack(draft, t, name, shortName));
+    this.structure.renameTrack(name, shortName);
   }
 
-  /**
-   * A bar edit over the selected bars. Score-wide, like `insertBar`: never refused on a
-   * generated track, and it stamps every generated track diverged in the same commit.
-   */
-  private applyBarEdit(edit: (draft: ScoreDoc, bars: { first: number; last: number }) => void): void {
-    const state = this.stateSubject.getValue();
-    const bars = selectedBars(state.anchor, state.cursor);
-    this.commit(draft => {
-      edit(draft, bars);
-      this.markDiverged(draft);
-    });
-  }
-
-  /**
-   * A track edit on the caret's staff, run on a clone so an edit that refuses part-way
-   * leaves nothing behind. `gated` edits are refused on a generated track.
-   */
-  private applyTrackEdit(
-    gated: boolean,
-    edit: (draft: ScoreDoc, trackIndex: number, staffIndex: number) => string | null | void
-  ): void {
-    const state = this.stateSubject.getValue();
-    const { trackIndex, staffIndex } = state.cursor;
-    if (gated) {
-      const refusal = editRefusal(state.doc, [], { family: 'track', trackIndex }, null);
-      if (refusal) return this.refuse(refusal);
-    }
-    const draft = structuredClone(state.doc);
-    const reason = edit(draft, trackIndex, staffIndex);
-    if (typeof reason === 'string') return this.refuse(reason);
-    this.commitDocument(draft);
-  }
-
-  /**
-   * Fix bar: carries the overflow of every over bar in the selection, on the caret's staff,
-   * into the bars after it.
-   *
-   * Runs on a clone and commits only if every bar fixed, because `fixBarOverflow` can refuse
-   * part-way - a tuplet across a line - and a half-carried score is exactly the corruption
-   * the refusal exists to prevent. Refused on a generated track like any content edit.
-   * Appending a bar is score-wide, so it stamps generated tracks diverged; carrying within
-   * existing bars touches only this staff and does not. Each selected bar is read with
-   * `barFillAt`, against its own meter and free time, rather than measuring the whole score
-   * once per bar.
-   */
+  /** Carries the overflow of every over bar in the selection into the bars after it, all or nothing. */
   fixBar(): void {
-    const state = this.stateSubject.getValue();
-    const { trackIndex, staffIndex } = state.cursor;
-    const refusal = editRefusal(state.doc, [], { family: 'track', trackIndex }, null);
-    if (refusal) return this.refuse(refusal);
-
-    const bars = selectedBars(state.anchor, state.cursor);
-    const draft = structuredClone(state.doc);
-    let fixed = false;
-    let appended = 0;
-
-    for (let index = bars.first; index <= bars.last; index++) {
-      if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
-      const result = fixBarOverflow(draft, trackIndex, staffIndex, index);
-      if (result.kind === 'refused') return this.refuse(result.reason);
-      fixed = true;
-      appended += result.appendedBars;
-    }
-
-    if (!fixed) return this.refuse('No selected bar is over its time signature.');
-    if (appended > 0) this.markDiverged(draft);
-    this.commitDocument(draft);
+    this.structure.fixBar();
   }
 
 

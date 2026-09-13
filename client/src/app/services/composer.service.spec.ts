@@ -353,6 +353,37 @@ describe('ComposerService edits', () => {
     expect(beats().map(beat => beat.effects.grace)).toEqual(['none', 'none', 'none', 'none']);
   });
 
+  it('keeps a range on its beats when an edit inserts rests inside it', () => {
+    // Four quarter notes become eighths, and each eighth rest goes right after its note, so the
+    // fourth note moves from beat 3 to beat 6. The range's end follows it there, so the next press
+    // still covers all four notes - and the rests between them, which have no note to take it.
+    [0, 1, 2, 3].forEach(beatIndex => writeNote(0, beatIndex));
+    service.setCursor({ barIndex: 0, beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 3 });
+
+    service.applyDurationAtCursor(8, 0);
+    service.toggleNoteEffect('isStaccato', true, false);
+
+    const beats = service.doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    expect(beats.map(beat => (beat.isRest ? 'r' : beat.notes[0].effects.isStaccato ? 'staccato' : 'n')))
+      .toEqual(['staccato', 'r', 'staccato', 'r', 'staccato', 'r', 'staccato', 'r']);
+    service.getState().subscribe(state => {
+      expect(state.anchor?.beatIndex).toBe(0);
+      expect(state.cursor.beatIndex).toBe(6);
+    }).unsubscribe();
+  });
+
+  it('refuses a tap on a pitched staff, and commits nothing', () => {
+    service.addTrack('Piano', 0, false);
+    service.setCursor({ trackIndex: 1, barIndex: 0, beatIndex: 0 });
+    const before = JSON.stringify(service.doc);
+
+    service.toggleBeatEffect('tap', true, false);
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(refusal()).toMatch(/fretted/i);
+  });
+
   it('marks a dynamic on every beat in a range, rests included', () => {
     service.selectAllInTrack();
 

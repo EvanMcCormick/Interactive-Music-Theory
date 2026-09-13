@@ -39,6 +39,18 @@ export function selectionTargets(doc: ScoreDoc, anchor: EditCursor | null, head:
   return barRectangle(doc, anchor, head);
 }
 
+/**
+ * `end` moved to wherever `beat` now is in the voice `end` names, after an edit that inserted or
+ * removed beats around it - or `end` unchanged when `beat` is null or no longer in that voice, as
+ * when Fix bar replaced it with its split pieces. An unchanged end may point past its voice now,
+ * so the caller clamps what comes back.
+ */
+export function followedEnd(doc: ScoreDoc, end: EditCursor, beat: BeatDoc | null): EditCursor {
+  const beats = doc.tracks[end.trackIndex]?.staves[end.staffIndex]?.bars[end.barIndex]?.voices[end.voiceIndex]?.beats;
+  const index = beat && beats ? beats.indexOf(beat) : -1;
+  return index >= 0 ? { ...end, beatIndex: index } : end;
+}
+
 /** The bars a selection spans, first to last. */
 export function selectedBars(anchor: EditCursor | null, head: EditCursor): { first: number; last: number } {
   const other = anchor ?? head;

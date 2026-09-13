@@ -25,7 +25,7 @@ describe('editRefusal', () => {
   });
 
   it('refuses when nothing is selected', () => {
-    expect(editRefusal(doc(), [], { family: 'beat' }, null)).toMatch(/nothing/i);
+    expect(editRefusal(doc(), [], { family: 'beat', key: 'duration' }, null)).toMatch(/nothing/i);
   });
 
   it('refuses a note edit on a rest', () => {
@@ -37,18 +37,41 @@ describe('editRefusal', () => {
   });
 
   it('lets a beat edit through on a rest', () => {
-    expect(editRefusal(doc(), [ref(0, 1)], { family: 'beat' }, null)).toBeNull();
+    expect(editRefusal(doc(), [ref(0, 1)], { family: 'beat', key: 'fadeIn' }, null)).toBeNull();
   });
 
   it('refuses a fretted technique on a pitched staff', () => {
     expect(editRefusal(doc(), [ref(1)], { family: 'note', key: 'bendPoints' }, null)).toMatch(/fretted/i);
   });
 
+  it('refuses tap, slap and pop on a pitched staff, and allows them on a fretted one', () => {
+    for (const key of ['tap', 'slap', 'pop'] as const) {
+      expect(editRefusal(doc(), [ref(1)], { family: 'beat', key }, null)).toMatch(/fretted/i);
+      expect(editRefusal(doc(), [ref(0)], { family: 'beat', key }, null)).toBeNull();
+    }
+  });
+
+  it('allows palm mute and let ring on a pitched staff', () => {
+    // Design Part 4 names bend, slide, tap and harmonics as the fretted-only techniques.
+    expect(editRefusal(doc(), [ref(1)], { family: 'beat', key: 'isPalmMute' }, null)).toBeNull();
+    expect(editRefusal(doc(), [ref(1)], { family: 'beat', key: 'isLetRing' }, null)).toBeNull();
+    expect(editRefusal(doc(), [ref(1)], { family: 'note', key: 'isPalmMute' }, null)).toBeNull();
+    expect(editRefusal(doc(), [ref(1)], { family: 'note', key: 'isLetRing' }, null)).toBeNull();
+  });
+
+  it('refuses the whole press when any of it reaches a second voice', () => {
+    // Bar filling measures voice 1 only, so an edit there could not keep its bar honest.
+    const second: BeatRef = { ...ref(0), voiceIndex: 1 };
+
+    expect(editRefusal(doc(), [ref(0), second], { family: 'beat', key: 'duration' }, null)).toMatch(/second voice/i);
+    expect(editRefusal(doc(), [second], { family: 'note', key: 'isGhost' }, null)).toMatch(/second voice/i);
+  });
+
   it('refuses the whole range when any of it is a generated track', () => {
     const score = doc();
     score.tracks[1].generated = { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision', revision: 1 } };
 
-    expect(editRefusal(score, [ref(0), ref(1)], { family: 'beat' }, null)).toMatch(/progression/i);
+    expect(editRefusal(score, [ref(0), ref(1)], { family: 'beat', key: 'dynamics' }, null)).toMatch(/progression/i);
     expect(editRefusal(score, [], { family: 'track', trackIndex: 1 }, null)).toMatch(/progression/i);
   });
 
