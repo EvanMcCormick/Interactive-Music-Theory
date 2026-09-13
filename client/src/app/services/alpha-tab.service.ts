@@ -66,6 +66,9 @@ export class AlphaTabService {
     defaultSettings.display.layoutMode = settings?.display?.layoutMode === 'horizontal'
       ? alphaTab.LayoutMode.Horizontal
       : alphaTab.LayoutMode.Page;
+    // alphaTab's own default, restated: a score's last system keeps its natural
+    // width. Right for a page, wrong for a short preview, so a caller can ask.
+    defaultSettings.display.justifyLastSystem = settings?.display?.justifyLastSystem ?? false;
 
     // Player settings
     defaultSettings.player.enablePlayer = settings?.player?.enablePlayer ?? true;

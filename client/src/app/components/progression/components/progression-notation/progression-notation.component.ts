@@ -156,7 +156,27 @@ export class ProgressionNotationComponent implements OnInit, OnDestroy {
     this.container = element;
     this.alphaTab.initializeApi(element, {
       core: { fontDirectory: '/font/', useWorkers: true },
-      display: { scale: 0.9, staveProfile: 'default', layoutMode: 'page' },
+      // `justifyLastSystem` is the one that matters, and it is not a preference.
+      // alphaTab leaves a score's final system unstretched, which is right for
+      // a printed page and wrong for this panel: a progression is almost always
+      // one system, so the only system *is* the last one, and it was drawing
+      // four bars into 180px of a 540px panel with the rest left white. Turning
+      // it on lays the bars across the width the panel already has. A long
+      // progression that runs to several systems now stretches its final,
+      // partial one too - unusual engraving, and the right trade for a view
+      // whose job is to be read rather than printed.
+      //
+      // 1.1 rather than the 0.9 this panel opened with: the extra width the
+      // line above buys is width between noteheads, not larger ones, and at 0.9
+      // the accidentals a borrowed chord prints are the smallest thing on the
+      // page. Measured at the default panel height - the content still fits
+      // without scrolling.
+      display: {
+        scale: 1.1,
+        staveProfile: 'default',
+        layoutMode: 'page',
+        justifyLastSystem: true
+      },
       // No player. This is a preview to read; the progression's own transport
       // is three rows up, and a soundfont is a megabyte to fetch for a second
       // way to hear the same thing.

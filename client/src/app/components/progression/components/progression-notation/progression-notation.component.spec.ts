@@ -163,6 +163,24 @@ describe('ProgressionNotationComponent', () => {
     expect(engraver.settings?.player?.enablePlayer).toBeFalse();
   }));
 
+  /**
+   * alphaTab leaves a score's final system at its natural width, which is the
+   * printed-page convention and the wrong one here: a progression is almost
+   * always a single system, so the only system is also the last, and four bars
+   * drew into a third of the panel with the rest left white.
+   *
+   * Asserted as a *request*, not as a rendered width. What alphaTab does with
+   * the flag is alphaTab's business and is not this suite's to pin; that the
+   * panel asks for it is the part a refactor could drop silently, and the
+   * setting travels through a hand-written mapping in `AlphaTabService` that
+   * would not fail to compile if the line were removed.
+   */
+  it('asks for a system stretched to the panel it has', fakeAsync(() => {
+    open();
+
+    expect(engraver.settings?.display?.justifyLastSystem).toBeTrue();
+  }));
+
   it('draws the progression, not an empty score', fakeAsync(() => {
     progression.appendSlot(0);
     progression.appendSlot(4);

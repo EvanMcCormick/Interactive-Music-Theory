@@ -122,6 +122,16 @@ export interface AlphaTabSettings {
     layoutMode?: 'page' | 'horizontal';
     /** Bar count per row (for page layout) */
     barsPerRow?: number;
+    /**
+     * Stretch the final system to the full width instead of leaving it short.
+     *
+     * alphaTab defaults this off, which is the printed-page convention. A
+     * preview of a few bars is the case it reads wrongly: the only system is
+     * also the last one, so the music draws at its natural width and the rest
+     * of the panel stays blank. See `ProgressionNotationComponent`, which turns
+     * it on for exactly that reason.
+     */
+    justifyLastSystem?: boolean;
   };
   /** Player settings */
   player?: {
