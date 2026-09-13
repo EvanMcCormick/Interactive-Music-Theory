@@ -138,8 +138,11 @@
   color: var(--page-text-dim);
 }
 
-// Wrapped rather than laid out in a row: the rail is 14rem at its narrowest and
-// two buttons side by side there would each be a word wide.
+// A row that wraps only when it has to. The rail is 14rem at its narrowest, and
+// the pair of export buttons does not fit side by side there - but it does at
+// every width the page actually renders at, so wrapping has to be the exception
+// rather than the resting state. See `.rail-button` for the measurement that
+// decides which one is in force.
 .rail-actions {
   display: flex;
   flex-wrap: wrap;
@@ -148,7 +151,20 @@
 }
 
 .rail-button {
-  flex: 1 1 8rem;
+  // Zero basis, so two buttons share whatever the row has rather than each
+  // claiming a width and forcing a wrap: an 8rem basis needed 264px for the
+  // pair and the block gives 240px, which is why Export MIDI and Export .gp
+  // sat one above the other at the width the page normally renders at.
+  //
+  // `min-width` is the wrap threshold, and it is measured rather than picked.
+  // "Export MIDI" is 97px on one line with this padding and font, so 6.25rem
+  // (100px) is the narrowest a button can be and still read on one line.
+  // Below 208px of row the pair breaks to a column - each button then full
+  // width and still one line - which is the right way to lose the row. Without
+  // it they stay side by side and the longer label breaks across two lines,
+  // which is the same wrap in the place it does the most damage.
+  flex: 1 1 0;
+  min-width: 6.25rem;
   padding: 0.45rem 0.7rem;
   border: 1px solid var(--page-line);
   border-radius: 4px;
