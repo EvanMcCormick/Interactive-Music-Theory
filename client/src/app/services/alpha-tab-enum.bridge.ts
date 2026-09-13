@@ -4,6 +4,7 @@ import {
   BeatDoc,
   ClefKind,
   DynamicValue,
+  FingerKind,
   NoteDoc,
   OttaviaKind,
   TripletFeelKind,
@@ -237,4 +238,21 @@ export function vibratoOf(vibrato: alphaTab.model.VibratoType): VibratoKind {
     case alphaTab.model.VibratoType.Wide: return 'wide';
     default: return 'none';
   }
+}
+
+const FINGERS: ReadonlyArray<[FingerKind, alphaTab.model.Fingers]> = [
+  ['thumb', alphaTab.model.Fingers.Thumb],
+  ['index', alphaTab.model.Fingers.IndexFinger],
+  ['middle', alphaTab.model.Fingers.MiddleFinger],
+  ['annular', alphaTab.model.Fingers.AnnularFinger],
+  ['little', alphaTab.model.Fingers.LittleFinger]
+];
+
+export function toFingers(finger: FingerKind): alphaTab.model.Fingers {
+  return FINGERS.find(([kind]) => kind === finger)?.[1] ?? alphaTab.model.Fingers.Unknown;
+}
+
+/** `NoOrDead` reads as none too: the model has no way to say "deliberately no finger". */
+export function fingerOf(fingers: alphaTab.model.Fingers): FingerKind {
+  return FINGERS.find(([, value]) => value === fingers)?.[0] ?? 'none';
 }

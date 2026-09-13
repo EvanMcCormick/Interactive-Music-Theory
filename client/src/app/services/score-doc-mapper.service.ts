@@ -16,6 +16,7 @@ import {
   StaffDoc,
   TrackDoc,
   TripletFeelKind,
+  TrillDoc,
   VoiceDoc,
   createDefaultBeatEffects,
   createDefaultNoteEffects
@@ -23,6 +24,7 @@ import {
 import {
   accentOf,
   applySlide,
+  fingerOf,
   fromBrushType,
   fromClef,
   fromDynamicValue,
@@ -35,6 +37,7 @@ import {
   toBrushType,
   toClef,
   toDynamicValue,
+  toFingers,
   toGraceType,
   toHarmonicType,
   toOttavia,
@@ -417,6 +420,13 @@ export class ScoreDocMapperService {
       note.addBendPoint(new alphaTab.model.BendPoint(point.offset, point.value));
     }
     note.accentuated = toAccentuation(doc.effects.accent);
+    note.isLeftHandTapped = doc.effects.isLeftHandTapped;
+    if (doc.effects.trill) {
+      note.trillValue = doc.effects.trill.value;
+      note.trillSpeed = doc.effects.trill.speed as unknown as alphaTab.model.Duration;
+    }
+    note.leftHandFinger = toFingers(doc.effects.leftHandFinger);
+    note.rightHandFinger = toFingers(doc.effects.rightHandFinger);
     note.vibrato = toVibratoType(doc.effects.vibrato);
     note.harmonicType = toHarmonicType(doc.effects.harmonic);
     applySlide(note, doc.effects.slide);
@@ -570,6 +580,12 @@ export class ScoreDocMapperService {
       value: point.value
     }));
     effects.accent = accentOf(note.accentuated);
+    effects.isLeftHandTapped = note.isLeftHandTapped;
+    effects.trill = note.isTrill
+      ? { value: note.trillValue, speed: note.trillSpeed as number as TrillDoc['speed'] }
+      : null;
+    effects.leftHandFinger = fingerOf(note.leftHandFinger);
+    effects.rightHandFinger = fingerOf(note.rightHandFinger);
 
     const pitch: NotePitch = note.isStringed
       ? {

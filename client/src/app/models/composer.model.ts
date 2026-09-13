@@ -38,6 +38,22 @@ export type AccentKind = 'none' | 'normal' | 'heavy' | 'tenuto';
 /** Vibrato width, one-to-one with alphaTab's `VibratoType` - a boolean would save a wide vibrato as slight. */
 export type VibratoKind = 'none' | 'slight' | 'wide';
 
+/**
+ * A trill, in alphaTab's own terms so the mapper copies rather than converts.
+ *
+ * `value` is `Note.trillValue`, which alphaTab stores as an absolute value and exposes
+ * relative to the string as `trillFret` - a trill to fret 7 on the G string exports as
+ * `tr (-48 16)` and still reads back as 7. Whatever sets a trill from a fret (the M4
+ * trill editor) converts there, once, rather than every round trip converting here.
+ */
+export interface TrillDoc {
+  value: number;
+  speed: 16 | 32 | 64;
+}
+
+/** A finger, for either hand. `none` is alphaTab's `Fingers.Unknown`. */
+export type FingerKind = 'none' | 'thumb' | 'index' | 'middle' | 'annular' | 'little';
+
 export type KeySignatureMode = 'major' | 'minor';
 
 export type TripletFeelKind =
@@ -308,6 +324,11 @@ export interface NoteEffectsDoc {
   isPalmMute: boolean;
   isStaccato: boolean;
   accent: AccentKind;
+  isLeftHandTapped: boolean;
+  /** null = no trill. */
+  trill: TrillDoc | null;
+  leftHandFinger: FingerKind;
+  rightHandFinger: FingerKind;
   vibrato: VibratoKind;
   slide: 'none' | 'shiftSlide' | 'legatoSlide' | 'slideInBelow' | 'slideOutUp';
   harmonic: 'none' | 'natural' | 'artificial' | 'pinch' | 'tap' | 'semi';
@@ -406,6 +427,10 @@ export function createDefaultNoteEffects(): NoteEffectsDoc {
     isPalmMute: false,
     isStaccato: false,
     accent: 'none',
+    isLeftHandTapped: false,
+    trill: null,
+    leftHandFinger: 'none',
+    rightHandFinger: 'none',
     vibrato: 'none',
     slide: 'none',
     harmonic: 'none',

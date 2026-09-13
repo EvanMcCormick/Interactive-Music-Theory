@@ -230,5 +230,29 @@ describe('ScoreDocMapperService effects round trip', () => {
     expect(back.notes[0].effects.vibrato).toBe('slight');
   });
 
-  // <!-- A6 -->
+  it('keeps a left-hand tap', () => {
+    const doc = guitarBar(beats => (beats[0].notes[0].effects.isLeftHandTapped = true));
+
+    expect(beatsOf(throughTex(doc))[0].notes[0].effects.isLeftHandTapped).toBeTrue();
+  });
+
+  it('keeps a trill with its speed', () => {
+    // `value` is alphaTab's absolute trill value, not a fret - see TrillDoc.
+    const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 7, speed: 16 }));
+
+    expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 7, speed: 16 });
+  });
+
+  it('keeps fingering for both hands', () => {
+    const doc = guitarBar(beats => {
+      beats[0].notes[0].effects.leftHandFinger = 'middle';
+      beats[0].notes[0].effects.rightHandFinger = 'index';
+    });
+
+    const effects = beatsOf(throughTex(doc))[0].notes[0].effects;
+    expect(effects.leftHandFinger).toBe('middle');
+    expect(effects.rightHandFinger).toBe('index');
+  });
+
+  // <!-- A7 -->
 });
