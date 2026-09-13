@@ -470,3 +470,10 @@ Not rejected - not yet placed. Each needs its own design pass:
   leaves the copies. M1 pins it. M2's fermata tool decides whether a fermata belongs to a
   beat or to a bar and tick; the latter matches alphaTab and Guitar Pro and would make the
   spread correct rather than surprising.
+- **A forced accidental that cannot name its pitch is drawn on the wrong line.** alphaTab
+  shifts the note by the forced amount and picks the staff line from the key signature, so
+  whenever the pitch minus the forced alteration is not a white key - a sharp on D, a flat
+  on C, any double accidental that overshoots - the note is drawn on a line that depends
+  on the key while still sounding right. The model can hold this from M1's A8 on. M1's
+  accidental edit refuses it with a reason rather than falling back to `auto`; the check is
+  the same one the mapper uses to find a note's letter.

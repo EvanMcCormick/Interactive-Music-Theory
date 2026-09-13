@@ -95,6 +95,10 @@ writes them generously; 1000 lines per file at most.
 4. **Today's duration buttons change behaviour in M1.** They are the design's "duration
    change", so they fill gaps and flag overflow from Task D1. The design's M1 row said
    "nothing else" changes; that row is corrected in the same commit as this plan.
+5. **Accidental presses that cannot name their note are refused** (review of A8). A forced
+   accidental whose shifted pitch is not a white key is drawn on a line that depends on the
+   key signature, so Task C4 refuses the press with a reason rather than falling back to
+   `auto`. Recorded in the design doc's "Found while designing".
 
 ---
 
@@ -2694,8 +2698,8 @@ palette's disabled-state tooltips, give the same reason.
 ```typescript
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { editRefusal } from './edit-refusals';
-import { ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+import { EditScope, editRefusal } from './edit-refusals';
+import { AccidentalMode, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
 
 const ref = (trackIndex: number, beatIndex = 0): BeatRef =>
   ({ trackIndex, staffIndex: 0, barIndex: 0, voiceIndex: 0, beatIndex });
@@ -2745,6 +2749,41 @@ describe('editRefusal', () => {
     expect(editRefusal(score, [ref(0), ref(1)], { family: 'beat' }, null)).toMatch(/progression/i);
     expect(editRefusal(score, [], { family: 'track', trackIndex: 1 }, null)).toMatch(/progression/i);
   });
+
+  describe('an accidental', () => {
+    const accidental = (forced: AccidentalMode): EditScope => ({ family: 'note', key: 'accidental', accidental: forced });
+
+    /** The document with its guitar note moved to `string` and `fret`. */
+    function guitarAt(string: number, fret: number): ScoreDoc {
+      const score = doc();
+      score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].pitch = { kind: 'fretted', string, fret };
+      return score;
+    }
+
+    it('is refused on a note it cannot spell - a sharp on a fretted D', () => {
+      // String 2 (B, 59) at fret 3 is D, 62. A sharp shifts it to 61, a black key, so
+      // alphaTab would take the line from the key signature.
+      expect(editRefusal(guitarAt(2, 3), [ref(0)], accidental('sharp'), null)).toMatch(/line/i);
+    });
+
+    it('is allowed on a note it can spell - a flat on a fretted B flat', () => {
+      // String 3 (G, 55) at fret 3 is B flat, 58. A flat shifts it to 59, B.
+      expect(editRefusal(guitarAt(3, 3), [ref(0)], accidental('flat'), null)).toBeNull();
+    });
+
+    it('reads a fretted note under a capo as alphaTab draws it, capo included', () => {
+      // Fret 2 on string 2 is C sharp without a capo and D with one.
+      const score = guitarAt(2, 2);
+      expect(editRefusal(score, [ref(0)], accidental('sharp'), null)).toBeNull();
+
+      score.tracks[0].staves[0].capo = 1;
+      expect(editRefusal(score, [ref(0)], accidental('sharp'), null)).toMatch(/line/i);
+    });
+
+    it('is never refused as auto, which forces nothing', () => {
+      expect(editRefusal(guitarAt(2, 3), [ref(0)], accidental('auto'), null)).toBeNull();
+    });
+  });
 });
 ```
 
@@ -2753,14 +2792,21 @@ describe('editRefusal', () => {
 **Step 3: Implement** `edit-refusals.ts`:
 
 ```typescript
-import { NoteEffectsDoc, ScoreDoc } from '../models/composer.model';
+import { AccidentalMode, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc } from '../models/composer.model';
 import { BeatRef } from './composer-selection';
 import { notesAt } from './note-edits';
+import { reduceToOctave } from './note-spelling';
+import { forcedLetterOf } from './score-doc-mapper.service';
 
-/** What kind of edit is being asked about. */
+/**
+ * What kind of edit is being asked about.
+ *
+ * `accidental` is the accidental an accidental press would force, so the refusal can check
+ * it can spell every note. Other note edits leave it out.
+ */
 export type EditScope =
   | { family: 'beat' }
-  | { family: 'note'; key: keyof NoteEffectsDoc | 'accidental' | 'tie' }
+  | { family: 'note'; key: keyof NoteEffectsDoc | 'accidental' | 'tie'; accidental?: AccidentalMode }
   | { family: 'track'; trackIndex: number };
 
 /** Techniques that only mean something on a string. */
@@ -2769,12 +2815,65 @@ const FRETTED_ONLY: ReadonlySet<string> = new Set(['bendPoints', 'slide', 'isLef
 const GENERATED =
   'That reaches a track generated from a progression. Flatten the track to edit it by hand.';
 
+const UNSPELLABLE = 'That accidental cannot spell this note - it would be drawn on the wrong line.';
+
+/**
+ * The pitch class alphaTab draws a note from, before a forced accidental shifts it.
+ *
+ * `AccidentalHelper.getNoteValue` (`alphaTab.core.mjs` ~24936 in 1.8) starts from
+ * `Note.displayValue`: `realValue` less the staff's display transposition (~6215), moved by
+ * whole octaves for an ottava, which leaves the pitch class alone. `realValue` is
+ * `fret + stringTuning` on a string (~6071) and `octave * 12 + tone` otherwise (~6074), less
+ * the staff's transposition - and `Note.stringTuning` is the capo plus the string's tuning
+ * (~6032). So a capo moves the drawn note exactly as it moves the sounding one.
+ *
+ * Two parts of `displayValue` are left out. A pre-bend adds its initial bend, but
+ * `Note.finish` resets a forced accidental on a pre-bent note (~6473), so nothing is drawn
+ * wrong there. A natural harmonic is drawn at its harmonic's pitch, which rests on a
+ * harmonic value the model does not carry yet.
+ */
+function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
+  const sounding =
+    pitch.kind === 'fretted'
+      ? (staff.tuning[pitch.string - 1] ?? 0) + staff.capo + pitch.fret
+      : pitch.noteValue;
+  return reduceToOctave(sounding - staff.transpose - staff.displayTranspose);
+}
+
+/**
+ * Whether forcing `accidental` would leave any note a press means without a letter.
+ *
+ * One ref at a time, because the pitch class depends on each note's staff. The focus
+ * narrows only a single-beat selection, as it does in `notesAt`.
+ */
+function anyNoteUnspellable(
+  doc: ScoreDoc,
+  refs: readonly BeatRef[],
+  focus: number | null,
+  accidental: AccidentalMode
+): boolean {
+  const narrowed = refs.length === 1 ? focus : null;
+  return refs.some(ref => {
+    const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
+    return (
+      staff !== undefined &&
+      notesAt(doc, [ref], narrowed).some(
+        note => forcedLetterOf(accidental, drawnPitchClassOf(staff, note.pitch)) === undefined
+      )
+    );
+  });
+}
+
 /**
  * Why an edit cannot apply to `refs`, or null when it can.
  *
  * Whole or nothing: one generated track anywhere in a range refuses the entire press, so a
  * range is never half-edited. `focus` must be the same one the edit will use, so this and
  * `notesAt` agree about which notes a press means.
+ *
+ * A forced accidental that cannot name one of its notes is refused rather than set to
+ * `auto`: alphaTab would draw that note on a line chosen by the key signature while it
+ * sounds right. The check is `forcedLetterOf`, which the mapper reads a letter back with.
  */
 export function editRefusal(
   doc: ScoreDoc,
@@ -2796,6 +2895,13 @@ export function editRefusal(
     return 'Bends, slides, taps and harmonics belong to fretted staves.';
   }
   if (notesAt(doc, refs, focus).length === 0) return 'There is no note there to change.';
+  if (
+    scope.accidental !== undefined &&
+    scope.accidental !== 'auto' &&
+    anyNoteUnspellable(doc, refs, focus, scope.accidental)
+  ) {
+    return UNSPELLABLE;
+  }
   return null;
 }
 ```
@@ -3559,7 +3665,7 @@ beside the existing gate specs:
   }
 
   setAccidental(accidental: AccidentalMode): void {
-    this.applyEdit({ family: 'note', key: 'accidental' }, (draft, refs, focus) => setAccidental(draft, refs, focus, accidental));
+    this.applyEdit({ family: 'note', key: 'accidental', accidental }, (draft, refs, focus) => setAccidental(draft, refs, focus, accidental));
   }
 
   toggleTie(): void {

@@ -164,6 +164,29 @@ function letterFor(
 }
 
 /**
+ * The letter `accidental` puts `pitchClass` on, or undefined when it cannot name it.
+ *
+ * `AccidentalHelper.getNoteValue` shifts a forced note by the forced amount and draws the
+ * line of the value it lands on, under the key signature. When that value is a white key
+ * the line is the letter's own, and no key signature can move it. When it is not, alphaTab
+ * picks the line from the key signature's table: a sharp on D lands on 61, drawn as a C
+ * sharp in C major and a D sharp in F major, while the note still sounds D. `auto` forces
+ * nothing, so it names no letter either.
+ *
+ * Exported so the accidental tool can refuse a press this is undefined for, by the same
+ * check `fromNote` reads a letter back with. It lives here rather than in
+ * `note-spelling.ts` because the tables it reads are keyed by alphaTab's enum, and that
+ * module is deliberately free of alphaTab.
+ */
+export function forcedLetterOf(
+  accidental: AccidentalMode,
+  pitchClass: number
+): NoteLetter | undefined {
+  const mode = MODE_BY_ACCIDENTAL.get(accidental);
+  return mode === undefined ? undefined : letterFor(mode, pitchClass);
+}
+
+/**
  * Converts between our editable ScoreDoc and alphaTab's runtime Score.
  *
  * ScoreDoc -> Score feeds `api.renderScore()` for engraving and playback, and
@@ -619,6 +642,7 @@ export class ScoreDocMapperService {
     effects.leftHandFinger = fingerOf(note.leftHandFinger);
     effects.rightHandFinger = fingerOf(note.rightHandFinger);
 
+    const accidental = accidentalOf(note.accidentalMode);
     const pitch: NotePitch = note.isStringed
       ? {
           kind: 'fretted',
@@ -629,13 +653,13 @@ export class ScoreDocMapperService {
           kind: 'pitched',
           noteValue: note.tone,
           octave: note.octave - ScoreDocMapperService.OCTAVE_OFFSET,
-          letter: letterFor(note.accidentalMode, note.tone)
+          letter: forcedLetterOf(accidental, note.tone)
         };
 
     return {
       pitch,
       isTied: note.isTieDestination,
-      accidental: accidentalOf(note.accidentalMode),
+      accidental,
       effects
     };
   }

@@ -318,6 +318,9 @@ export type NotePitch =
        * signature. Only the progression's projection sets it, and only because
        * a pitch class does not have a letter and a degree does - see
        * "A letter on `NotePitch`" in the progression design doc.
+       *
+       * Anything that changes `noteValue` must drop or recompute the letter, or
+       * a stale letter overrules the accidental.
        */
       letter?: NoteLetter;
     };

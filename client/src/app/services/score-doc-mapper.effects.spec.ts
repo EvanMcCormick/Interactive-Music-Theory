@@ -123,6 +123,17 @@ describe('ScoreDocMapperService effects round trip', () => {
     return doc.tracks[0].staves[0].bars[0].voices[0].beats;
   }
 
+  /** `doc` with a copy of its first track appended, every beat of the copy without a fermata. */
+  function withSecondTrack(doc: ScoreDoc): ScoreDoc {
+    const second = structuredClone(doc.tracks[0]);
+    second.id = 'gtr2';
+    second.name = 'Guitar 2';
+    second.shortName = 'gt2';
+    second.staves[0].bars[0].voices[0].beats.forEach(beat => (beat.effects.fermata = null));
+    doc.tracks.push(second);
+    return doc;
+  }
+
   it('keeps a hammer-on on its origin, and only there', () => {
     const doc = guitarBar(beats => (beats[0].notes[0].effects.isHammerPullOrigin = true));
 
@@ -304,22 +315,14 @@ describe('ScoreDocMapperService effects round trip', () => {
     });
   }
 
-  /** `doc` with a copy of its first track appended, every beat of the copy without a fermata. */
-  function withSecondTrack(doc: ScoreDoc): ScoreDoc {
-    const second = structuredClone(doc.tracks[0]);
-    second.id = 'gtr2';
-    second.name = 'Guitar 2';
-    second.shortName = 'gt2';
-    second.staves[0].bars[0].voices[0].beats.forEach(beat => (beat.effects.fermata = null));
-    doc.tracks.push(second);
-    return doc;
-  }
-
   it('gives a fermata to a later track at the same tick - alphaTab keeps fermatas per bar', () => {
     // `Voice.finish` files a beat's fermata on the master bar by tick and hands it to every
     // beat finished after it at that tick without one - later voices, staves and tracks -
     // before render or export. Pinned so M2 has to decide whether a fermata is per beat.
     const doc = withSecondTrack(guitarBar(beats => (beats[1].effects.fermata = { type: 'long', length: 1 })));
+
+    // Already there on the render path, before any save.
+    expect(mapper.toDoc(mapper.toScore(doc, settings)).tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata).toEqual({ type: 'long', length: 1 });
 
     const back = throughTex(doc);
     expect(back.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata).toEqual({ type: 'long', length: 1 });
