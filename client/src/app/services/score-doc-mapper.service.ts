@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import * as alphaTab from '@coderline/alphatab';
 import {
+  AccidentalMode,
   BarDoc,
   BeatDoc,
   ClefKind,
@@ -107,6 +108,26 @@ const MODE_BY_ALTER: ReadonlyMap<number, alphaTab.model.NoteAccidentalMode> = ne
     [alter, mode]
   )
 );
+
+/**
+ * The forcing mode each `AccidentalMode` asks for. Read both ways, so the directions cannot
+ * disagree. `ForceNone` and `ForceNatural` are absent and read back as `auto`: 1.8.0
+ * renders `ForceNatural` exactly as `Default` (see `ALTER_BY_MODE`), and the model has no
+ * way to ask for either.
+ */
+const MODE_BY_ACCIDENTAL: ReadonlyMap<AccidentalMode, alphaTab.model.NoteAccidentalMode> = new Map([
+  ['doubleFlat', alphaTab.model.NoteAccidentalMode.ForceDoubleFlat],
+  ['flat', alphaTab.model.NoteAccidentalMode.ForceFlat],
+  ['sharp', alphaTab.model.NoteAccidentalMode.ForceSharp],
+  ['doubleSharp', alphaTab.model.NoteAccidentalMode.ForceDoubleSharp]
+]);
+
+function accidentalOf(mode: alphaTab.model.NoteAccidentalMode): AccidentalMode {
+  for (const [accidental, forced] of MODE_BY_ACCIDENTAL) {
+    if (forced === mode) return accidental;
+  }
+  return 'auto';
+}
 
 /**
  * The accidental mode that makes alphaTab engrave `pitchClass` on `letter`.
@@ -409,16 +430,12 @@ export class ScoreDocMapperService {
     }
 
     note.isTieDestination = doc.isTied;
-    // A letter decides the mode; `accidental` only speaks when there is no
-    // letter. Note that `'explicit'` has always meant ForceSharp, which forces
-    // a sharp in a flat key - a misnomer `letter` routes around for generated
-    // notes and leaves in place for composer-entered ones. See the design doc.
+    // A letter decides the mode; `accidental` only speaks when there is no letter. On a
+    // note read back from alphaTab the two agree, because both come from the same mode.
     note.accidentalMode =
       doc.pitch.kind === 'pitched' && doc.pitch.letter !== undefined
         ? accidentalModeFor(doc.pitch.letter, doc.pitch.noteValue)
-        : doc.accidental === 'explicit'
-          ? alphaTab.model.NoteAccidentalMode.ForceSharp
-          : alphaTab.model.NoteAccidentalMode.Default;
+        : MODE_BY_ACCIDENTAL.get(doc.accidental) ?? alphaTab.model.NoteAccidentalMode.Default;
 
     note.isGhost = doc.effects.isGhost;
     note.isDead = doc.effects.isDead;
@@ -618,10 +635,7 @@ export class ScoreDocMapperService {
     return {
       pitch,
       isTied: note.isTieDestination,
-      accidental:
-        note.accidentalMode === alphaTab.model.NoteAccidentalMode.Default
-          ? 'auto'
-          : 'explicit',
+      accidental: accidentalOf(note.accidentalMode),
       effects
     };
   }

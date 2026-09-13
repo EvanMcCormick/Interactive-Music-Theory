@@ -305,14 +305,14 @@ describe('ScoreDocMapperService spelling', () => {
     expect(note.accidentalMode).toBe(alphaTab.model.NoteAccidentalMode.Default);
   });
 
-  it('lets the letter overrule the accidental flag it subsumes', () => {
-    // `accidental: 'explicit'` has always meant ForceSharp; a C flat asks for
-    // the opposite. The letter decides, and the flag only speaks without one.
+  it('lets the letter overrule the accidental', () => {
+    // A C flat with `accidental: 'sharp'`: the letter decides, and the accidental only
+    // speaks without one.
     const doc = buildDoc(
       { kind: 'pitched', noteValue: 11, octave: OCTAVE, letter: 'C' },
       C_MAJOR
     );
-    doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].accidental = 'explicit';
+    doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].accidental = 'sharp';
 
     const score = mapper.toScore(doc, new alphaTab.Settings());
     const note = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
@@ -320,24 +320,15 @@ describe('ScoreDocMapperService spelling', () => {
     expect(note.accidentalMode).toBe(alphaTab.model.NoteAccidentalMode.ForceFlat);
   });
 
-  it('still forces a sharp for an explicit accidental with no letter', () => {
-    // The legacy half of that rule, and the only thing holding it up. Nothing
-    // in the app sets `accidental: 'explicit'` yet, so the whole
-    // `'explicit' ? ForceSharp` arm deletes without a single spec going red -
-    // which is how it would go missing during a later tidy of the expression
-    // this commit rewrote.
-    //
-    // The misnomer is deliberate and recorded rather than fixed: `'explicit'`
-    // forces a *sharp*, so in B flat major pitch class 6 is engraved F♯ where
-    // the key wants G♭. `letter` routes generated notes around it; a
-    // composer-entered note keeps today's behaviour, because silently
-    // respelling documents that already exist is not a spelling fix.
+  it('forces the accidental it names when there is no letter', () => {
+    // Pitch class 6 in B flat major. This was the misnomer's own example: `'explicit'`
+    // could only force a sharp, so it engraved F sharp where the key wants G flat.
     const doc = buildDoc({ kind: 'pitched', noteValue: 6, octave: OCTAVE }, B_FLAT_MAJOR);
-    doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].accidental = 'explicit';
+    doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].accidental = 'flat';
 
     const score = mapper.toScore(doc, new alphaTab.Settings());
     const note = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
 
-    expect(note.accidentalMode).toBe(alphaTab.model.NoteAccidentalMode.ForceSharp);
+    expect(note.accidentalMode).toBe(alphaTab.model.NoteAccidentalMode.ForceFlat);
   });
 });

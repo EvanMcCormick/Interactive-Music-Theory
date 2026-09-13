@@ -335,5 +335,24 @@ describe('ScoreDocMapperService effects round trip', () => {
     expect(back.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata).toEqual({ type: 'long', length: 1 });
   });
 
-  // <!-- A8 -->
+  for (const accidental of ['doubleFlat', 'flat', 'sharp', 'doubleSharp'] as const) {
+    it(`keeps a forced ${accidental} on a fretted note`, () => {
+      const doc = guitarBar(beats => (beats[0].notes[0].accidental = accidental));
+
+      expect(beatsOf(throughTex(doc))[0].notes[0].accidental).toBe(accidental);
+    });
+  }
+
+  it('loses a forced accidental on a pre-bent note - alphaTab resets it', () => {
+    // `Note.finish` sets `accidentalMode` back to `Default` when the first bend point is
+    // above zero, so a pre-bent note cannot keep a forced spelling through a save.
+    const doc = guitarBar(beats => {
+      beats[0].notes[0].accidental = 'flat';
+      beats[0].notes[0].effects.bendPoints = [{ offset: 0, value: 4 }, { offset: 60, value: 4 }];
+    });
+
+    expect(beatsOf(throughTex(doc))[0].notes[0].accidental).toBe('auto');
+  });
+
+  // <!-- A9 -->
 });

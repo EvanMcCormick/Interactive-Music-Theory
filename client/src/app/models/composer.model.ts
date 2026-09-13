@@ -26,7 +26,13 @@ export type OttaviaKind = '15ma' | '8va' | 'regular' | '8vb' | '15mb';
 
 export type DynamicValue = 'ppp' | 'pp' | 'p' | 'mp' | 'mf' | 'f' | 'ff' | 'fff';
 
-export type AccidentalMode = 'auto' | 'explicit';
+/**
+ * The accidental a note forces, or `auto` to spell from the key signature.
+ *
+ * Was `'auto' | 'explicit'`, where `'explicit'` always forced a sharp. On a pitched note
+ * `NotePitch.letter` still decides first - see `ScoreDocMapperService.toNote`.
+ */
+export type AccidentalMode = 'auto' | 'doubleFlat' | 'flat' | 'sharp' | 'doubleSharp';
 
 /**
  * An accent mark. One field for three marks because alphaTab's `AccentuationType` holds
