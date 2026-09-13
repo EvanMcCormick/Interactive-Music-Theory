@@ -41,10 +41,14 @@ export type VibratoKind = 'none' | 'slight' | 'wide';
 /**
  * A trill, in alphaTab's own terms so the mapper copies rather than converts.
  *
- * `value` is `Note.trillValue`, which alphaTab stores as an absolute value and exposes
- * relative to the string as `trillFret` - a trill to fret 7 on the G string exports as
- * `tr (-48 16)` and still reads back as 7. Whatever sets a trill from a fret (the M4
- * trill editor) converts there, once, rather than every round trip converting here.
+ * `value` is `Note.trillValue`, the trilled-to pitch as a MIDI number - playback plays it
+ * as it is. alphaTab exposes it relative to the string as `trillFret`, `trillValue` minus
+ * the string's tuning with the capo included, and alphaTex writes and reads that fret as
+ * `tr (fret speed)`: a trill to fret 7 on the G string is value 62 and exports as
+ * `tr (7 16)`. A negative value is no trill (`isTrill` is `trillValue >= 0`), so one
+ * cannot be stored. Whatever sets a trill from a fret (M4's trill editor) must add the
+ * string's tuning, capo included - there, once, rather than every round trip converting
+ * here.
  */
 export interface TrillDoc {
   value: number;

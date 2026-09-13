@@ -451,3 +451,8 @@ Not rejected - not yet placed. Each needs its own design pass:
   would write the continuation's own value, which changes nothing on screen but stops
   alphaTab carrying a bend across the tie. M2's vibrato tool should read vibrato from the
   tie origin, and either refuse on a continuation or write to the origin.
+- **A pitched note on a staff with a tuning loses its trill.** alphaTex carries a trill as
+  a fret relative to the string's tuning, and a pitched note has no string, so on a staff
+  that has a tuning it exports as `tr (NaN 16)` and reads back as no trill. Unreachable
+  today - the composer builds pitched staves with no tuning, and the alphaTex importer
+  clears a pitched staff's tuning - but it matters if M3 lets a pitched staff carry one.

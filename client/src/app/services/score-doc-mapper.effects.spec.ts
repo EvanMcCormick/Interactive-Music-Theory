@@ -237,10 +237,10 @@ describe('ScoreDocMapperService effects round trip', () => {
   });
 
   it('keeps a trill with its speed', () => {
-    // `value` is alphaTab's absolute trill value, not a fret - see TrillDoc.
-    const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 7, speed: 16 }));
+    // 62 is fret 7 on the G string (open 55) - `value` is a pitch, see TrillDoc.
+    const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 62, speed: 16 }));
 
-    expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 7, speed: 16 });
+    expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 62, speed: 16 });
   });
 
   it('keeps fingering for both hands', () => {

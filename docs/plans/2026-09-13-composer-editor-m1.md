@@ -66,8 +66,10 @@ writes them generously; 1000 lines per file at most.
 - Forced accidentals survive alphaTex on fretted *and* pitched notes (`{acc b}`).
 - alphaTab's `Beat` has **no staccato**; only `Note.isStaccato` exists.
 - Accent, heavy accent and tenuto are one field, `Note.accentuated: AccentuationType`.
-- `Note.trillValue` is an absolute pitch value, not a fret: a trill to fret 7 on the G
-  string exports as `tr (-48 16)` and still reads back as `7`. Store alphaTab's value.
+- `Note.trillValue` is the trilled-to pitch as a MIDI number. alphaTex carries it as a fret
+  relative to the string's tuning, capo included (`trillFret`): a trill to fret 7 on the G
+  string is `62` and exports as `tr (7 16)`. A negative value is no trill. Store alphaTab's
+  value.
 - The composer library stores alphaTex (`composer-library.service.ts` header), and every
   load goes through `toDoc`, which builds every field. **No migration is needed.**
 - alphaTab measures a beat in ticks, 960 per quarter, integer-truncating at each step
@@ -621,10 +623,10 @@ New in the model. alphaTab's defaults, checked on a fresh `Note`: `isLeftHandTap
   });
 
   it('keeps a trill with its speed', () => {
-    // `value` is alphaTab's absolute trill value, not a fret - see TrillDoc.
-    const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 7, speed: 16 }));
+    // 62 is fret 7 on the G string (open 55) - `value` is a pitch, see TrillDoc.
+    const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 62, speed: 16 }));
 
-    expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 7, speed: 16 });
+    expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 62, speed: 16 });
   });
 
   it('keeps fingering for both hands', () => {
@@ -649,10 +651,14 @@ New in the model. alphaTab's defaults, checked on a fresh `Note`: `isLeftHandTap
 /**
  * A trill, in alphaTab's own terms so the mapper copies rather than converts.
  *
- * `value` is `Note.trillValue`, which alphaTab stores as an absolute value and exposes
- * relative to the string as `trillFret` - a trill to fret 7 on the G string exports as
- * `tr (-48 16)` and still reads back as 7. Whatever sets a trill from a fret (the M4
- * trill editor) converts there, once, rather than every round trip converting here.
+ * `value` is `Note.trillValue`, the trilled-to pitch as a MIDI number - playback plays it
+ * as it is. alphaTab exposes it relative to the string as `trillFret`, `trillValue` minus
+ * the string's tuning with the capo included, and alphaTex writes and reads that fret as
+ * `tr (fret speed)`: a trill to fret 7 on the G string is value 62 and exports as
+ * `tr (7 16)`. A negative value is no trill (`isTrill` is `trillValue >= 0`), so one
+ * cannot be stored. Whatever sets a trill from a fret (M4's trill editor) must add the
+ * string's tuning, capo included - there, once, rather than every round trip converting
+ * here.
  */
 export interface TrillDoc {
   value: number;
