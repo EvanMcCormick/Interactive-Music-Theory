@@ -9,7 +9,7 @@ fill their gaps and report their overflow.
 **Architecture:** Bottom-up, per the design in
 [2026-09-13-composer-editor-design.md](2026-09-13-composer-editor-design.md). Phase A closes
 every data-loss path in `ScoreDocMapperService` and adds the model fields alphaTab already
-has. Phase B adds a pure bar-filling module that measures beats exactly as alphaTab does.
+has. Phase B adds a pure bar-filling module that measures beats exactly as alphaTab lays them out.
 Phase C adds a selection to `ComposerState` and four families of edit functions. Phase D
 routes the service's commands - including today's duration buttons - through them.
 
@@ -78,6 +78,18 @@ writes them generously; 1000 lines per file at most.
 - alphaTab measures a beat in ticks, 960 per quarter, integer-truncating at each step
   (`MidiUtils.toTicks`, `applyDot`, `applyTuplet`). `MidiUtils` is not in the public
   typings, so Phase B mirrors it and a spec pins the mirror against alphaTab.
+- Bar filling uses alphaTab's **layout** length, `Beat.displayDuration`, not
+  `playbackDuration`. `Voice.finish` advances each beat's `displayStart` by it
+  (`alphaTab.core.mjs` ~3304) and the renderer spaces beats by it (~65300), while
+  `playbackDuration` is rewritten around graces: on the beat before a before-beat grace
+  (~3249), on the beat an on-beat grace steals from (~3273), on grace beats themselves
+  (~7713-7730) and on the beat after a bend grace (~7736). A grace beat's `displayDuration` is
+  **0** (~7726, ~7730), so it takes no room in its bar. A voice holding a lone whole rest -
+  `Beat.isFullBarRest`, a rest alone in its voice with `duration === Whole` (~7281-7283) - has
+  a `displayDuration` of the master bar's length whatever its dots or tuplet, because
+  `_calculateDuration` returns before reading them (~7694-7696). That length is
+  `numerator * valueToTicks(denominator)` (`MasterBar.calculateDuration`, ~2685-2698; the model
+  has no anacrusis): the bar's capacity, in any meter.
 - Only `ComposerService` constructs a `ComposerState` (constructor and `reset`), and only
   the model and mapper touch `vibrato`, so the model changes below have no other callers.
 - A fermata is kept per bar and tick, not per beat: `Voice.finish` files it on the master
@@ -1235,9 +1247,14 @@ Two rules from the design shape every function here:
 
 - **Gaps fill; overflow is only reported.** Nothing in this module moves a note except
   `fixBarOverflow`, and that runs only when the user presses Fix bar.
-- **Measure the way alphaTab plays.** Beats are measured in alphaTab's ticks with its
-  truncation, so a bar this module calls full is a bar alphaTab lays out as full - including
-  tuplets that do not divide evenly.
+- **Measure the way alphaTab lays a bar out.** Beats are measured in alphaTab's ticks with
+  its truncation, and by the length it gives them on the page (`Beat.displayDuration`) rather
+  than the length it plays them for, so a bar this module calls full is a bar alphaTab lays
+  out as full - including tuplets that do not divide evenly. Two rules follow. A **grace beat
+  takes no room**: it is drawn in front of its beat and its sound is stolen from a neighbour,
+  so four quarters and a grace note are a full bar of 4/4. And a voice that is **a lone whole
+  rest fills its bar in any meter**, because alphaTab draws it as a full-bar rest - which is
+  how an alphaTex `r.1` bar in 3/4 arrives from the library or the source panel.
 
 Rests are spelled by the transcription quantizer's `slotsToDurations` at a 64th-note grid
 (60 ticks a slot), which already splits a span at beat and half-bar boundaries. A gap that is
@@ -1246,15 +1263,23 @@ reported as under, rather than filled with something that only looks right.
 
 ### Task B1: A beat's length, the way alphaTab measures it
 
-alphaTab 1.8.0's `Beat._calculateDuration` is `MidiUtils.toTicks(duration)`, then
-`applyDot(ticks, true)` for two dots or `applyDot(ticks, false)` for one, then - when the
-beat has a tuplet - `applyTuplet(ticks, tupletNumerator, tupletDenominator)`, which is
-`(ticks * denominator / numerator) | 0`. `MidiUtils` is not in the public typings, so this
-mirrors it, and a spec holds the mirror to alphaTab's own `Beat.playbackDuration`.
+alphaTab 1.8.0 lays a bar out by `Beat.displayDuration`: `Voice.finish` advances each beat's
+`displayStart` by it (`alphaTab.core.mjs` ~3304) and the renderer spaces beats by it (~65300).
+`Beat.updateDurations` (~7709) sets it to 0 for a grace beat (~7726, ~7730) and otherwise to
+`_calculateDuration` (~7690): `MidiUtils.toTicks(duration)`, then `applyDot(ticks, true)` for
+two dots or `applyDot(ticks, false)` for one, then - only when `tupletDenominator > 0 &&
+tupletNumerator >= 0` (~7704) - `applyTuplet(ticks, tupletNumerator, tupletDenominator)`, which
+is `(ticks * denominator / numerator) | 0`. `MidiUtils` is not in the public typings, so this
+mirrors it, and a spec holds the mirror to alphaTab's own `displayDuration`.
 
-One deliberate difference: alphaTab counts a rest that is the *only* beat in its voice as a
-whole bar, whatever its written value. The composer always writes explicit beats, so this
-module measures written values and says so.
+`playbackDuration` is the wrong quantity to hold it to. alphaTab rewrites it for grace beats,
+for the beats graces steal from, and for the beat after a bend grace (~3249, ~3273,
+~7713-7736), so it does not say how much of a bar a beat fills.
+
+One rule of alphaTab's depends on the voice rather than the beat, so it waits for Task B2.
+`_calculateDuration` returns the master bar's length for `isFullBarRest` (~7281-7283, ~7694):
+a rest that is the only beat in its voice and whose value is a **whole**, dots and tuplet
+ignored. Any other lone rest is measured at its written value.
 
 **Files:**
 - Create: `client/src/app/services/bar-fill.ts`
@@ -1269,13 +1294,38 @@ import * as alphaTab from '@coderline/alphatab';
 import { ComposerService } from './composer.service';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { beatTicks } from './bar-fill';
-import { BeatDoc, DurationValue, Tuplet, createRestBeat } from '../models/composer.model';
+import {
+  BeatDoc,
+  DurationValue,
+  Tuplet,
+  createDefaultNoteEffects,
+  createRestBeat
+} from '../models/composer.model';
 
 function beatOf(duration: DurationValue, dots = 0, tuplet: Tuplet | null = null): BeatDoc {
   return { ...createRestBeat(duration), dots, tuplet };
 }
 
+function noteBeatOf(duration: DurationValue, grace: BeatDoc['effects']['grace'] = 'none'): BeatDoc {
+  const beat = createRestBeat(duration);
+  return {
+    ...beat,
+    isRest: false,
+    notes: [{
+      pitch: { kind: 'fretted', string: 1, fret: 3 },
+      isTied: false,
+      accidental: 'auto',
+      effects: createDefaultNoteEffects()
+    }],
+    effects: { ...beat.effects, grace }
+  };
+}
+
 describe('beatTicks', () => {
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+  });
+
   it('gives a quarter 960 ticks', () => {
     expect(beatTicks(beatOf(4))).toBe(960);
   });
@@ -1289,25 +1339,50 @@ describe('beatTicks', () => {
     expect(beatTicks(beatOf(8, 0, { numerator: 3, denominator: 2 }))).toBe(320);
   });
 
-  it('agrees with alphaTab on every value, dot and tuplet the palette can write', () => {
-    // The septuplet is the case that matters: 240 * 4 / 7 truncates, and a mirror that
-    // rounded instead would call a bar full that alphaTab lays out one tick short.
-    TestBed.configureTestingModule({});
+  it('applies a tuplet only where alphaTab does', () => {
+    // alphaTab's guard is `tupletDenominator > 0 && tupletNumerator >= 0`. A numerator of 0
+    // passes and divides by zero, which `| 0` turns into 0.
+    expect(beatTicks(beatOf(4, 0, { numerator: 3, denominator: 0 }))).toBe(960);
+    expect(beatTicks(beatOf(4, 0, { numerator: -1, denominator: 2 }))).toBe(960);
+    expect(beatTicks(beatOf(4, 0, { numerator: 0, denominator: 2 }))).toBe(0);
+  });
+
+  it('gives a grace beat no room in the bar', () => {
+    expect(beatTicks(noteBeatOf(8, 'onBeat'))).toBe(0);
+    expect(beatTicks(noteBeatOf(8, 'beforeBeat'))).toBe(0);
+  });
+
+  it('agrees with alphaTab\'s layout on every value, dot, tuplet and grace the palette can write', () => {
+    // Compared with `displayDuration`, the length alphaTab lays a bar out by. Three samples
+    // tell truncation from rounding: a quarter 7:4 is 548.57 (548 truncated, 549 rounded),
+    // a dotted quarter 7:4 822.86, a half 9:8 1706.67. Every other tuplet here lands on or
+    // below .5 and would pass either way. The graces sit before notes: a before-beat grace
+    // shortens the previous beat's playback and an on-beat grace its own beat's, and neither
+    // touches any beat's `displayDuration`. The voice has many beats, so the lone-whole-rest
+    // rule does not apply to the whole rest.
     const mapper = TestBed.inject(ScoreDocMapperService);
     const beats = [
       beatOf(1), beatOf(2, 1), beatOf(4, 2), beatOf(64),
       beatOf(8, 0, { numerator: 3, denominator: 2 }),
       beatOf(16, 1, { numerator: 5, denominator: 4 }),
       beatOf(16, 0, { numerator: 7, denominator: 4 }),
-      beatOf(32, 2, { numerator: 3, denominator: 2 })
+      beatOf(32, 2, { numerator: 3, denominator: 2 }),
+      beatOf(4, 0, { numerator: 7, denominator: 4 }),
+      beatOf(4, 1, { numerator: 7, denominator: 4 }),
+      beatOf(2, 0, { numerator: 9, denominator: 8 }),
+      noteBeatOf(4),
+      noteBeatOf(8, 'onBeat'),
+      noteBeatOf(4),
+      noteBeatOf(8, 'beforeBeat'),
+      noteBeatOf(2)
     ];
     const doc = ComposerService.createEmptyScore();
     doc.tracks[0].staves[0].bars[0].voices[0].beats = beats;
 
     const score = mapper.toScore(doc, new alphaTab.Settings());
-    const played = score.tracks[0].staves[0].bars[0].voices[0].beats.map(beat => beat.playbackDuration);
+    const laidOut = score.tracks[0].staves[0].bars[0].voices[0].beats.map(beat => beat.displayDuration);
 
-    expect(beats.map(beatTicks)).toEqual(played);
+    expect(beats.map(beatTicks)).toEqual(laidOut);
   });
 });
 ```
@@ -1324,8 +1399,9 @@ import { BeatDoc, TimeSignature } from '../models/composer.model';
  * Bar arithmetic for the composer: how full a bar is, filling its gaps with rests, and
  * carrying its overflow into the next bar when the user asks.
  *
- * Everything is measured in alphaTab's ticks with alphaTab's truncation, so this module and
- * the renderer cannot disagree about whether a bar is full. See "Bar filling" in
+ * Everything is measured the way alphaTab lays a bar out - its ticks, its truncation, and
+ * its `displayDuration` rather than its `playbackDuration` - so this module and the renderer
+ * cannot disagree about whether a bar is full. See "Bar filling" in
  * docs/plans/2026-09-13-composer-editor-design.md for why gaps fill and overflow does not.
  */
 
@@ -1333,20 +1409,36 @@ import { BeatDoc, TimeSignature } from '../models/composer.model';
 export const TICKS_PER_QUARTER = 960;
 
 /**
- * A beat's written length in ticks, as alphaTab 1.8.0's `Beat._calculateDuration` computes
- * it: the value, then its dots, then its tuplet, truncating at each step.
+ * The ticks a beat occupies in its bar as alphaTab 1.8.0 lays it out: `Beat.displayDuration`.
  *
- * Unlike alphaTab, a rest that is the only beat in its voice is measured at its written
- * value rather than as a whole bar - the composer never relies on that shorthand.
+ * Layout, not playback, is the measure. `Voice.finish` advances each beat's `displayStart` by
+ * `displayDuration` (`alphaTab.core.mjs` ~3304) and the renderer spaces beats by it (~65300).
+ * `playbackDuration` is rewritten for grace notes and the beats they steal from (~3248-3276,
+ * ~7713-7736), so it does not say how much of a bar a beat fills.
+ *
+ * A grace beat occupies no ticks: `updateDurations` sets its `displayDuration` to 0 (~7726).
+ * Every other beat is `_calculateDuration` (~7690-7708): the value, then its dots, then its
+ * tuplet, truncating at each step.
+ *
+ * alphaTab also lays out a voice made of one whole rest as exactly the bar's length
+ * (`isFullBarRest`, ~7281). That depends on the voice, not the beat, so `barFillOf` applies
+ * it; here a whole rest is always 3840.
  */
-export function beatTicks(beat: Pick<BeatDoc, 'duration' | 'dots' | 'tuplet'>): number {
+export function beatTicks(beat: Pick<BeatDoc, 'duration' | 'dots' | 'tuplet' | 'effects'>): number {
+  if (beat.effects.grace !== 'none') return 0;
+
   const value = beat.duration < 0 ? 1 / -beat.duration : beat.duration;
   let ticks = (TICKS_PER_QUARTER * (4 / value)) | 0;
 
   if (beat.dots === 2) ticks = ticks + ((ticks / 4) | 0) * 3;
   else if (beat.dots === 1) ticks = ticks + ((ticks / 2) | 0);
 
-  if (beat.tuplet) ticks = ((ticks * beat.tuplet.denominator) / beat.tuplet.numerator) | 0;
+  // alphaTab's guard, exactly (~7704): a tuplet with no positive denominator, or a negative
+  // numerator, is no tuplet. A numerator of 0 passes it and divides by zero; `Infinity | 0`
+  // (and `NaN | 0`) is 0 in JavaScript, so alphaTab measures that beat as 0 and so does this.
+  if (beat.tuplet && beat.tuplet.denominator > 0 && beat.tuplet.numerator >= 0) {
+    ticks = ((ticks * beat.tuplet.denominator) / beat.tuplet.numerator) | 0;
+  }
   return ticks;
 }
 ```
@@ -1354,7 +1446,7 @@ export function beatTicks(beat: Pick<BeatDoc, 'duration' | 'dots' | 'tuplet'>): 
 `TimeSignature` is imported for Task B2; if the linter objects to it being unused for one
 commit, leave it out here and add it there.
 
-**Step 4: Run.** Expected: 4 SUCCESS.
+**Step 4: Run.** Expected: 6 SUCCESS.
 
 **Step 5: Commit** both files: `feat: Measure a beat in alphaTab's ticks, held to alphaTab by a spec`.
 
@@ -1365,7 +1457,8 @@ commit, leave it out here and add it there.
 - Test: `client/src/app/services/bar-fill.spec.ts`
 
 **Step 1: Failing specs.** Add to `bar-fill.spec.ts` (extend its imports with `barFillOf`,
-`scoreBarFills`, `createDefaultBar`, `createDefaultMasterBar`, `ComposerService`):
+`scoreBarFills`, `createDefaultBar`, `createDefaultMasterBar`, `ComposerService`; `noteBeatOf`
+is Task B1's helper):
 
 ```typescript
 describe('barFillOf', () => {
@@ -1393,6 +1486,29 @@ describe('barFillOf', () => {
     const sixEight = { numerator: 6, denominator: 8, isCommon: false };
 
     expect(barFillOf(createDefaultBar(false, sixEight), sixEight)).toEqual({ kind: 'full' });
+  });
+
+  it('calls a bar holding only a whole rest full in any meter, as alphaTab draws it', () => {
+    // alphaTab's `isFullBarRest`: a lone whole rest is laid out as the bar's length, and its
+    // dots are never read. A lone whole note is not a rest, so it is measured, and is over.
+    const threeFour = { numerator: 3, denominator: 4, isCommon: false };
+    const bar = createDefaultBar(false, threeFour);
+
+    bar.voices[0].beats = [createRestBeat(1)];
+    expect(barFillOf(bar, threeFour)).toEqual({ kind: 'full' });
+
+    bar.voices[0].beats = [{ ...createRestBeat(1), dots: 1 }];
+    expect(barFillOf(bar, threeFour)).toEqual({ kind: 'full' });
+
+    bar.voices[0].beats = [noteBeatOf(1)];
+    expect(barFillOf(bar, threeFour)).toEqual({ kind: 'over', ticks: 960 });
+  });
+
+  it('calls four quarters and an on-beat grace note full in 4/4', () => {
+    const bar = createDefaultBar(false, FOUR_FOUR);
+    bar.voices[0].beats.splice(2, 0, noteBeatOf(8, 'onBeat'));
+
+    expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'full' });
   });
 });
 
@@ -1430,24 +1546,51 @@ export type BarFill =
   | { kind: 'under'; ticks: number }
   | { kind: 'over'; ticks: number };
 
-/** A bar's capacity in ticks under `timeSignature`. */
+/**
+ * A bar's capacity in ticks under `timeSignature`: alphaTab's `MasterBar.calculateDuration`
+ * (~2685-2698), the numerator times one denominator value's ticks. The model has no anacrusis,
+ * so alphaTab's pickup-bar branch never applies.
+ */
 export function barCapacityTicks(timeSignature: TimeSignature): number {
-  return ((TICKS_PER_QUARTER * 4 * timeSignature.numerator) / timeSignature.denominator) | 0;
+  return timeSignature.numerator * ((TICKS_PER_QUARTER * (4 / timeSignature.denominator)) | 0);
 }
 
-/** The ticks a voice's beats add up to. */
+/**
+ * Whether `voice` is one whole rest, which alphaTab lays out as exactly its bar in any meter.
+ *
+ * alphaTab's `Beat.isFullBarRest` (~7281-7283) is a rest, alone in its voice, whose value is a
+ * whole. `_calculateDuration` returns the master bar's length for it before reading dots or a
+ * tuplet (~7694-7696), so a dotted or tupleted lone whole rest still fills the bar. A grace
+ * beat's `displayDuration` is 0 whatever `_calculateDuration` returned (~7726), so a lone whole
+ * grace rest fills nothing. To alphaTab a rest is a beat with no notes (~7275); the mapper
+ * writes notes only when `isRest` is false, so either one makes a rest here too.
+ */
+function isLoneWholeRest(voice: VoiceDoc): boolean {
+  if (voice.beats.length !== 1) return false;
+  const beat = voice.beats[0];
+  return (beat.isRest || beat.notes.length === 0) && beat.duration === 1 && beat.effects.grace === 'none';
+}
+
+/**
+ * The ticks a voice's beats occupy, each as `beatTicks` measures it - so a grace beat adds
+ * nothing. It does not apply the lone-whole-rest rule, which needs the meter: `barFillOf`
+ * does, and every caller in this module reads this only for a bar `barFillOf` has not called
+ * full.
+ */
 export function voiceTicks(voice: VoiceDoc): number {
   return voice.beats.reduce((sum, beat) => sum + beatTicks(beat), 0);
 }
 
 /**
- * How full `bar` is under `timeSignature`.
+ * How full `bar` is under `timeSignature`, as alphaTab lays it out: a grace beat takes no
+ * room, and a voice that is a lone whole rest is full in any meter.
  *
  * Voice 1 only. It is the only voice the composer writes, and multiple voices are listed
  * beyond M4 in the design; when they arrive, this answers for the fullest voice.
  */
 export function barFillOf(bar: BarDoc, timeSignature: TimeSignature): BarFill {
   const voice = bar.voices[0];
+  if (voice && isLoneWholeRest(voice)) return { kind: 'full' };
   const difference = (voice ? voiceTicks(voice) : 0) - barCapacityTicks(timeSignature);
   if (difference === 0) return { kind: 'full' };
   return difference < 0 ? { kind: 'under', ticks: -difference } : { kind: 'over', ticks: difference };
@@ -1480,13 +1623,17 @@ export function scoreBarFills(doc: ScoreDoc): BarFill[][][] {
 - Modify: `client/src/app/services/bar-fill.ts`
 - Test: `client/src/app/services/bar-fill.spec.ts`
 
-**Step 1: Failing specs.** Add (import `fillBarGaps`, `createRestBeat`):
+**Step 1: Failing specs.** Add (import `fillBarGaps`, `BarDoc` and `createDefaultBeatEffects`):
 
 ```typescript
 describe('fillBarGaps', () => {
   const FOUR_FOUR = { numerator: 4, denominator: 4, isCommon: true };
   const shape = (bar: BarDoc): string[] =>
     bar.voices[0].beats.map(beat => `${beat.isRest ? 'r' : 'n'}${beat.duration}${'.'.repeat(beat.dots)}`);
+  const graceRest = (): BeatDoc => ({
+    ...createRestBeat(8),
+    effects: { ...createDefaultBeatEffects(), grace: 'beforeBeat' }
+  });
 
   it('fills a shortened beat\'s gap at the end of the bar', () => {
     const bar = createDefaultBar(false, FOUR_FOUR);
@@ -1536,6 +1683,26 @@ describe('fillBarGaps', () => {
 
     expect(shape(bar)).toEqual(['r2', 'r4', 'r4', 'r4']);
   });
+
+  it('measures a grace beat as no room', () => {
+    // A quarter, a grace and a quarter leave half a bar, spelled from the half-bar.
+    const bar = createDefaultBar(false, FOUR_FOUR);
+    bar.voices[0].beats = [createRestBeat(4), graceRest(), createRestBeat(4)];
+
+    fillBarGaps(bar, FOUR_FOUR);
+
+    expect(shape(bar)).toEqual(['r4', 'r8', 'r4', 'r2']);
+  });
+
+  it('puts the rests in front of a grace that ends the bar, so it still leads into what follows', () => {
+    const bar = createDefaultBar(false, FOUR_FOUR);
+    bar.voices[0].beats = [createRestBeat(4), createRestBeat(4), createRestBeat(4), graceRest()];
+
+    fillBarGaps(bar, FOUR_FOUR);
+
+    expect(shape(bar)).toEqual(['r4', 'r4', 'r4', 'r4', 'r8']);
+    expect(bar.voices[0].beats[4].effects.grace).toBe('beforeBeat');
+  });
 });
 ```
 
@@ -1550,10 +1717,25 @@ const SLOT_DIVISION = 64;
 const SLOT_TICKS = TICKS_PER_QUARTER / 16;
 
 /**
- * Appends rests to the end of `bar` until it is full, when that can be done exactly.
+ * Where the run of grace beats that ends just before `voice.beats[index]` begins - `index`
+ * itself when the beat before it is not a grace.
+ *
+ * A grace beat is written in front of the beat after it, and alphaTab groups it with the next
+ * non-grace beat (`Voice.finish`, ~3200-3216). Anything inserted or cut at `index` goes before
+ * such a run, so the graces stay with what they lead into.
+ */
+function graceRunStart(voice: VoiceDoc, index: number): number {
+  let start = index;
+  while (start > 0 && voice.beats[start - 1].effects.grace !== 'none') start--;
+  return start;
+}
+
+/**
+ * Adds rests at the end of `bar` until it is full, when that can be done exactly.
  *
  * The gap goes at the end because that is where shortening a beat leaves it: every later
- * beat moves earlier. Rests are spelled at a 64th grid, split at beat and half-bar lines by
+ * beat moves earlier. The rests go in front of any grace beats that end the bar, which were
+ * written before whatever follows them. A grace takes no room, so it moves no rest's start. Rests are spelled at a 64th grid, split at beat and half-bar lines by
  * the quantizer's own speller. Nothing happens when the bar is full or over, when the meter
  * has no 64th grid, or when the gap or its start is not a whole number of 64ths - a lone
  * tuplet's remainder - because a fill that is only nearly right is worse than a bar still
@@ -1570,9 +1752,8 @@ export function fillBarGaps(bar: BarDoc, timeSignature: TimeSignature): void {
 
   const frame = metricFrame(timeSignature, SLOT_DIVISION / timeSignature.denominator);
   const units = slotsToDurations(fill.ticks / SLOT_TICKS, SLOT_DIVISION, used / SLOT_TICKS, frame);
-  for (const unit of units) {
-    voice.beats.push({ ...createRestBeat(unit.duration), dots: unit.dots });
-  }
+  const rests = units.map(unit => ({ ...createRestBeat(unit.duration), dots: unit.dots }));
+  voice.beats.splice(graceRunStart(voice, voice.beats.length), 0, ...rests);
 }
 ```
 
@@ -1646,6 +1827,20 @@ describe('absorbFollowingRests', () => {
     expect(left).toBe(0);
     expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'full' });
   });
+
+  it('stops at a grace beat, even a grace rest, and never takes it', () => {
+    // A grace takes no room, so taking one gains nothing, and it belongs to the beat after it.
+    // A grace rest is the case that matters: `isRest` alone would let the walk take it.
+    const bar = createDefaultBar(false, FOUR_FOUR);
+    const beats = bar.voices[0].beats;
+    beats.splice(2, 0, { ...createRestBeat(8), effects: { ...createDefaultBeatEffects(), grace: 'beforeBeat' } });
+    beats[0].duration = 1;
+
+    const left = absorbFollowingRests(bar.voices[0], beats[0], 2880, new Set());
+
+    expect(left).toBe(1920);
+    expect(bar.voices[0].beats.map(beat => beat.effects.grace)).toEqual(['none', 'beforeBeat', 'none', 'none']);
+  });
 });
 ```
 
@@ -1655,12 +1850,28 @@ describe('absorbFollowingRests', () => {
 
 ```typescript
 /**
+ * Whether a walk that makes room may remove `voice.beats[index]`: a rest that is not a grace
+ * beat, and that no grace beat leads into.
+ *
+ * A grace beat takes no room, so removing one gains nothing, and it belongs to the beat after
+ * it (see `graceRunStart`): removing the rest a grace leads into would leave the grace in front
+ * of whatever came next. A walk stops at either, and what it could not take is left as
+ * overflow - the same line the design draws at a note.
+ */
+function isTakeableRest(voice: VoiceDoc, index: number): boolean {
+  const beat = voice.beats[index];
+  const before = index > 0 ? voice.beats[index - 1] : null;
+  return beat.isRest && beat.effects.grace === 'none' && (before === null || before.effects.grace === 'none');
+}
+
+/**
  * Removes rests after `beat` in `voice` until `ticks` are covered, and returns the ticks it
  * could not cover.
  *
  * It stops at the first note - the design's line: lengthening consumes only following
  * rests, and anything that would overwrite a note is left as overflow for the user to
- * see. It also stops at any beat in `changing`, so a range pressed together is changed
+ * see. It stops at a grace beat too, rest or not, and never removes one (`isTakeableRest`).
+ * And it stops at any beat in `changing`, so a range pressed together is changed
  * together rather than one beat eating its neighbours. A rest longer than what is left is
  * taken whole; the caller's `fillBarGaps` puts the difference back. Beats are held by
  * identity, not index, because every removal shifts the indices after it.
@@ -1675,9 +1886,10 @@ export function absorbFollowingRests(
   let index = voice.beats.indexOf(beat) + 1;
   if (index === 0) return remaining;
 
+  // Every pass removes a beat or stops, so the walk ends however little a beat is worth.
   while (remaining > 0 && index < voice.beats.length) {
     const next = voice.beats[index];
-    if (!next.isRest || changing.has(next)) break;
+    if (!isTakeableRest(voice, index) || changing.has(next)) break;
     remaining -= beatTicks(next);
     voice.beats.splice(index, 1);
   }
@@ -1821,6 +2033,13 @@ What a tied continuation carries: the same pitches, `isTied` set (the model's ti
 marks the note a tie *arrives* at), and no effects. A tied note is not struck again, so an
 accent or a hammer-on on its continuation would be a second attack the player never made.
 
+Grace beats take no room and belong to the beat after them. Graces just before the first
+whole beat past the line travel with it; graces before the crossing beat stay with its head,
+where the attack is. Making room in the next bar never takes a grace or a rest a grace leads
+into (Task B4's `isTakeableRest`), so such a bar stays over and the carry goes on. A bar that
+is only a whole rest is full in any meter, so Fix bar refuses it; a carry into one takes the
+whole rest as room and fills the gap behind what it carried.
+
 **Files:**
 - Modify: `client/src/app/services/bar-fill.ts`
 - Test: `client/src/app/services/bar-fill.spec.ts`
@@ -1840,6 +2059,10 @@ describe('fixBarOverflow', () => {
     isRest: false,
     notes: [fretNote()]
   });
+  const graceBeat = (): BeatDoc => {
+    const beat = noteBeat(8);
+    return { ...beat, effects: { ...beat.effects, grace: 'beforeBeat' } };
+  };
   const shape = (doc: ScoreDoc, bar: number): string[] =>
     doc.tracks[0].staves[0].bars[bar].voices[0].beats.map(beat =>
       `${beat.isRest ? 'r' : 'n'}${beat.duration}${'.'.repeat(beat.dots)}${beat.notes[0]?.isTied ? '~' : ''}`);
@@ -1920,6 +2143,57 @@ describe('fixBarOverflow', () => {
 
     expect(result.kind).toBe('refused');
   });
+
+  it('carries a grace note with the beat it leads into', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[0].voices[0].beats = [
+      noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(4), graceBeat(), noteBeat(4)
+    ];
+
+    fixBarOverflow(doc, 0, 0, 0);
+
+    expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
+    expect(shape(doc, 1)).toEqual(['n8', 'n4', 'r4', 'r4', 'r4']);
+    expect(doc.tracks[0].staves[0].bars[1].voices[0].beats[0].effects.grace).toBe('beforeBeat');
+  });
+
+  it('never takes a rest a grace leads into, and carries on instead', () => {
+    // Bar 2 cannot give up its last rest, so it goes over and passes the grace and that rest on.
+    const doc = ComposerService.createEmptyScore();
+    const bars = doc.tracks[0].staves[0].bars;
+    bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+    bars[1].voices[0].beats = [createRestBeat(4), createRestBeat(4), createRestBeat(4), graceBeat(), createRestBeat(4)];
+
+    const result = fixBarOverflow(doc, 0, 0, 0);
+
+    expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+    expect(shape(doc, 1)).toEqual(['n4', 'r4', 'r4', 'r4']);
+    expect(shape(doc, 2)).toEqual(['n8', 'r4', 'r4', 'r4', 'r4']);
+  });
+
+  it('refuses a bar that is only a whole rest, which fills any meter', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.masterBars[0].timeSignature = { numerator: 3, denominator: 4, isCommon: false };
+    doc.tracks[0].staves[0].bars[1].voices[0].beats = [createRestBeat(1)];
+
+    expect(fixBarOverflow(doc, 0, 0, 1).kind).toBe('refused');
+  });
+
+  it('takes a lone whole rest as room, and fills behind what it carried', () => {
+    // Once the carried quarter joins it the whole rest is no longer alone, so it is measured
+    // at 3840 and taken; the 3/4 bar is then one quarter, and the gap fills from beat 2.
+    const doc = ComposerService.createEmptyScore();
+    doc.masterBars[0].timeSignature = { numerator: 3, denominator: 4, isCommon: false };
+    const bars = doc.tracks[0].staves[0].bars;
+    bars[0].voices[0].beats = [4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+    bars[1].voices[0].beats = [createRestBeat(1)];
+
+    const result = fixBarOverflow(doc, 0, 0, 0);
+
+    expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+    expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4']);
+    expect(shape(doc, 1)).toEqual(['n4', 'r2']);
+  });
 });
 ```
 
@@ -1951,9 +2225,8 @@ export function fillBarGaps(bar: BarDoc, timeSignature: TimeSignature): void {
   if (fill.kind !== 'under' || !voice) return;
 
   const units = spelledTicks(fill.ticks, voiceTicks(voice), timeSignature) ?? [];
-  for (const unit of units) {
-    voice.beats.push({ ...createRestBeat(unit.duration), dots: unit.dots });
-  }
+  const rests = units.map(unit => ({ ...createRestBeat(unit.duration), dots: unit.dots }));
+  voice.beats.splice(graceRunStart(voice, voice.beats.length), 0, ...rests);
 }
 ```
 
@@ -2024,6 +2297,9 @@ export function fixBarOverflow(
  * Cuts `voice` at its bar line and returns what lay past it: the tied tail of the beat that
  * crossed the line, then every later beat whole. Returns null, leaving `voice` untouched,
  * when the crossing beat cannot be split into written values.
+ *
+ * A grace beat is 0 ticks, so it never crosses the line. Graces just before the first whole
+ * beat past it go with that beat; graces before a crossing beat stay with its head.
  */
 function beatsPastBarLine(
   voice: VoiceDoc,
@@ -2041,7 +2317,7 @@ function beatsPastBarLine(
       continue;
     }
 
-    if (start >= capacity) return voice.beats.splice(index);
+    if (start >= capacity) return voice.beats.splice(graceRunStart(voice, index));
 
     const head = spelledTicks(capacity - start, start, timeSignature);
     const tail = spelledTicks(end - capacity, 0, nextTimeSignature);
@@ -2077,13 +2353,16 @@ function piecesOf(beat: BeatDoc, units: DurationUnit[], isTail: boolean): BeatDo
   });
 }
 
-/** Removes rests from the end of `voice` until `ticks` are covered or a note is reached. */
+/**
+ * Removes rests from the end of `voice` until `ticks` are covered. It stops at a note, a grace
+ * beat, or a rest a grace leads into (`isTakeableRest`); what it cannot take stays as overflow.
+ */
 function takeTrailingRests(voice: VoiceDoc, ticks: number): void {
   let remaining = ticks;
   while (remaining > 0 && voice.beats.length > 0) {
-    const last = voice.beats[voice.beats.length - 1];
-    if (!last.isRest) return;
-    remaining -= beatTicks(last);
+    const last = voice.beats.length - 1;
+    if (!isTakeableRest(voice, last)) return;
+    remaining -= beatTicks(voice.beats[last]);
     voice.beats.pop();
   }
 }
@@ -3023,7 +3302,7 @@ import {
   toggleMasterBarFlag
 } from './bar-edits';
 import { scoreBarFills } from './bar-fill';
-import { createDefaultNoteEffects } from '../models/composer.model';
+import { createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
 
 const THREE_FOUR = { numerator: 3, denominator: 4, isCommon: false };
 const FOUR_FOUR = { numerator: 4, denominator: 4, isCommon: true };
@@ -3078,6 +3357,18 @@ describe('setTimeSignature', () => {
 
     expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'over', ticks: 960 });
   });
+
+  it('leaves a bar that is only a whole rest as it is, since that fills any meter', () => {
+    // Measured by written value the rest would be 960 over in 3/4, taken, and refilled as a
+    // dotted half. alphaTab draws it as a full-bar rest, so nothing needs to change.
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[1].voices[0].beats = [createRestBeat(1)];
+
+    setTimeSignature(doc, 1, THREE_FOUR);
+
+    expect(doc.tracks[0].staves[0].bars[1].voices[0].beats.map(beat => beat.duration)).toEqual([1]);
+    expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'full' });
+  });
 });
 
 describe('setKeySignature and setClef', () => {
@@ -3121,6 +3412,10 @@ describe('toggleMasterBarFlag', () => {
 /**
  * Settles a bar after its meter changed: trailing rests it no longer has room for go, a gap
  * fills with rests, and notes that no longer fit stay as overflow for Fix bar.
+ *
+ * A bar that is only a whole rest is full in any meter (`barFillOf`), so it is left as it is.
+ * Trailing rests stop at a grace beat or a rest one leads into (`takeTrailingRests`), so a bar
+ * ending that way can stay over.
  */
 export function fitBarToMeter(bar: BarDoc, timeSignature: TimeSignature): void {
   const fill = barFillOf(bar, timeSignature);
