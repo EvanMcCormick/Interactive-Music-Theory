@@ -30,7 +30,10 @@ npx ng test --watch=false --browsers=ChromeHeadless --include=src/app/services/s
 
 **Running everything** (from `client/`): `npx ng test --watch=false --browsers=ChromeHeadless`
 
-**Type-checking without a test run** (from `client/`): `npx tsc -p tsconfig.app.json --noEmit`
+**Type-checking without a test run** (from `client/`): `npx tsc -p tsconfig.app.json --noEmit`,
+then `npx tsc -p tsconfig.spec.json --noEmit`. Run both: `tsconfig.app.json` excludes
+`src/**/*.spec.ts`, so a compile error that only a spec file contains is shown only by
+`tsconfig.spec.json`.
 
 **Commits.** `<type>: <description>`, and every message ends with a blank line and
 `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`. Pass it as a second `-m`.
@@ -1164,8 +1167,15 @@ In `fromMasterBar`, `tempoAutomation` becomes:
 
 `updateScoreInfo(changes: Partial<ScoreDoc>)` is an `Object.assign`, so a caller can replace
 `masterBars` or `tracks` and break the one-bar-per-master-bar invariant. Its one caller
-passes `{ title }`. The guard is the type, so there is no runtime spec: the red is a
-deliberate compile error you write and then remove.
+passes `{ title }`.
+
+The narrow parameter type is not the guard on its own. It rejects an object literal that
+names `tracks`, because TypeScript checks excess properties only on a fresh literal - but a
+spread, or a variable of a wider type such as a whole `ScoreDoc`, passes it untouched. The
+per-field body below is the real guard. The red here is still a deliberate compile error you
+write and then remove, since that is what shows the old signature accepted anything; the
+review of this task added the runtime specs in `composer.service.spec.ts` that pin the body,
+by passing a spread of a whole document with `tracks: []`.
 
 **Files:**
 - Modify: `client/src/app/services/composer.service.ts` (`updateScoreInfo`)
@@ -1179,7 +1189,9 @@ deliberate compile error you write and then remove.
   it('scratch', () => service.updateScoreInfo({ tracks: [] }));
 ```
 
-**Step 2: Type check.** Expected: no error today. That is the bug.
+**Step 2: Type check** with `npx tsc -p tsconfig.spec.json --noEmit` - the scratch line is
+in a spec file, which `tsconfig.app.json` does not compile. Expected: no error today. That is
+the bug.
 
 **Step 3: Implement.**
 
@@ -1198,9 +1210,10 @@ deliberate compile error you write and then remove.
   }
 ```
 
-Type check: expected `Object literal may only specify known properties, and 'tracks' does not exist`.
+Type check (`tsconfig.spec.json` again): expected `Object literal may only specify known
+properties, and 'tracks' does not exist`.
 
-**Step 4: Delete the scratch spec.** Type check: no output.
+**Step 4: Delete the scratch spec.** Type check, both configs: no output.
 
 **Step 5: Commit** `composer.service.ts`: `fix: Stop updateScoreInfo from replacing a score's structure`.
 
@@ -2783,6 +2796,55 @@ describe('editRefusal', () => {
     it('is never refused as auto, which forces nothing', () => {
       expect(editRefusal(guitarAt(2, 3), [ref(0)], accidental('auto'), null)).toBeNull();
     });
+
+    it('is checked on a pitched staff too', () => {
+      // The piano's note is C, pitch class 0. A flat shifts it up to 1, a black key, so it
+      // is refused. A sharp shifts it down to 11, B - a B sharp, on the B line - so it is not:
+      // what is refused is an overshoot onto a black key, not a sharp on a white one.
+      const score = doc();
+      expect(editRefusal(score, [ref(1)], accidental('flat'), null)).toMatch(/line/i);
+      expect(editRefusal(score, [ref(1)], accidental('sharp'), null)).toBeNull();
+
+      // C sharp is 1. A flat shifts it up to 2, D - a D flat.
+      score.tracks[1].staves[0].bars[0].voices[0].beats[0].notes[0].pitch = { kind: 'pitched', noteValue: 1, octave: 4 };
+      expect(editRefusal(score, [ref(1)], accidental('flat'), null)).toBeNull();
+    });
+
+    it('checks only the focused note of a chord on one beat, and every note of a range', () => {
+      // String 3 (G, 55) at fret 3 is B flat, 58: a flat shifts it to 59, B. String 2 (B, 59)
+      // at fret 3 is D, 62: a flat shifts it to 63, a black key. Focus 2 is tab string 3.
+      const score = guitarAt(3, 3);
+      score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes.push(
+        { pitch: { kind: 'fretted', string: 2, fret: 3 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }
+      );
+
+      expect(editRefusal(score, [ref(0)], accidental('flat'), 2)).toBeNull();
+      expect(editRefusal(score, [ref(0)], accidental('flat'), null)).toMatch(/line/i);
+      // A range means every note in it, focus or not - here the chord and the rest after it.
+      expect(editRefusal(score, [ref(0), ref(0, 1)], accidental('flat'), 2)).toMatch(/line/i);
+    });
+
+    it('subtracts a display transposition, as alphaTab draws it', () => {
+      // `Note.displayValue` is the sounding value less `displayTranspositionPitch`, so with 1
+      // the fretted B flat, 58, is drawn as an A, 57, and a flat shifts that to 58, a black
+      // key. Added instead, it would be drawn from 59, B, and a flat would shift that to 60,
+      // C - still allowed, which is how this spec tells the two signs apart.
+      const score = guitarAt(3, 3);
+      expect(editRefusal(score, [ref(0)], accidental('flat'), null)).toBeNull();
+
+      score.tracks[0].staves[0].displayTranspose = 1;
+      expect(editRefusal(score, [ref(0)], accidental('flat'), null)).toMatch(/line/i);
+    });
+
+    it('is refused on a natural harmonic, which is not drawn at its fret', () => {
+      // The B flat a flat is allowed on above. The mapper writes `harmonicType` and not
+      // `harmonicValue`, so alphaTab draws a natural harmonic at the open string's pitch - G,
+      // 55, whose flat would land on 56, a black key - and not at the fret the check reads.
+      const score = guitarAt(3, 3);
+      score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].effects.harmonic = 'natural';
+
+      expect(editRefusal(score, [ref(0)], accidental('flat'), null)).toMatch(/harmonic/i);
+    });
   });
 });
 ```
@@ -2795,18 +2857,24 @@ describe('editRefusal', () => {
 import { AccidentalMode, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc } from '../models/composer.model';
 import { BeatRef } from './composer-selection';
 import { notesAt } from './note-edits';
-import { reduceToOctave } from './note-spelling';
-import { forcedLetterOf } from './score-doc-mapper.service';
+import { forcedLetterOf, reduceToOctave } from './note-spelling';
 
 /**
  * What kind of edit is being asked about.
  *
- * `accidental` is the accidental an accidental press would force, so the refusal can check
- * it can spell every note. Other note edits leave it out.
+ * An accidental press is a variant of its own that must say which accidental it would
+ * force, so the refusal can check that accidental can spell every note. With the field
+ * optional on one shared note variant, a caller could leave it out and skip the check
+ * without a compile error; as its own variant, `{ family: 'note', key: 'accidental' }`
+ * does not type-check.
+ *
+ * `forcedLetterOf` comes from `note-spelling.ts`, not the mapper: this module stays pure,
+ * and importing an `@Injectable` service file would pull alphaTab in with it.
  */
 export type EditScope =
   | { family: 'beat' }
-  | { family: 'note'; key: keyof NoteEffectsDoc | 'accidental' | 'tie'; accidental?: AccidentalMode }
+  | { family: 'note'; key: keyof NoteEffectsDoc | 'tie' }
+  | { family: 'note'; key: 'accidental'; accidental: AccidentalMode }
   | { family: 'track'; trackIndex: number };
 
 /** Techniques that only mean something on a string. */
@@ -2816,6 +2884,8 @@ const GENERATED =
   'That reaches a track generated from a progression. Flatten the track to edit it by hand.';
 
 const UNSPELLABLE = 'That accidental cannot spell this note - it would be drawn on the wrong line.';
+
+const NATURAL_HARMONIC = "A natural harmonic's accidental cannot be forced yet.";
 
 /**
  * The pitch class alphaTab draws a note from, before a forced accidental shifts it.
@@ -2829,8 +2899,12 @@ const UNSPELLABLE = 'That accidental cannot spell this note - it would be drawn 
  *
  * Two parts of `displayValue` are left out. A pre-bend adds its initial bend, but
  * `Note.finish` resets a forced accidental on a pre-bent note (~6473), so nothing is drawn
- * wrong there. A natural harmonic is drawn at its harmonic's pitch, which rests on a
- * harmonic value the model does not carry yet.
+ * wrong there. A natural harmonic is not drawn at its fret at all: `calculateRealValue`
+ * puts it at `harmonicPitch` above the open string, capo included (~6059), and
+ * `harmonicPitch` (~6078) reads `Note.harmonicValue`, which the mapper does not write. At
+ * alphaTab's default of 0 that is 0, so a natural harmonic is drawn at the open string's
+ * pitch whatever the fret. This function would read the fret, so `editRefusal` refuses a
+ * forced accidental on a natural harmonic before it asks.
  */
 function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
   const sounding =
@@ -2873,7 +2947,12 @@ function anyNoteUnspellable(
  *
  * A forced accidental that cannot name one of its notes is refused rather than set to
  * `auto`: alphaTab would draw that note on a line chosen by the key signature while it
- * sounds right. The check is `forcedLetterOf`, which the mapper reads a letter back with.
+ * sounds right. The check is `forcedLetterOf`, the predicate the mapper reads a letter back
+ * with, but not asked of the same pitch. The mapper asks it of a pitched note's stored
+ * pitch class, with no transposition applied; this asks it of the pitch as drawn,
+ * transposition and display transposition included. The two agree whenever a staff's
+ * transpositions come to a whole number of octaves. A natural harmonic is refused outright:
+ * see `drawnPitchClassOf`.
  */
 export function editRefusal(
   doc: ScoreDoc,
@@ -2894,9 +2973,17 @@ export function editRefusal(
   if (FRETTED_ONLY.has(scope.key) && onPitchedStaff) {
     return 'Bends, slides, taps and harmonics belong to fretted staves.';
   }
-  if (notesAt(doc, refs, focus).length === 0) return 'There is no note there to change.';
+  const notes = notesAt(doc, refs, focus);
+  if (notes.length === 0) return 'There is no note there to change.';
   if (
-    scope.accidental !== undefined &&
+    scope.key === 'accidental' &&
+    scope.accidental !== 'auto' &&
+    notes.some(note => note.effects.harmonic === 'natural')
+  ) {
+    return NATURAL_HARMONIC;
+  }
+  if (
+    scope.key === 'accidental' &&
     scope.accidental !== 'auto' &&
     anyNoteUnspellable(doc, refs, focus, scope.accidental)
   ) {

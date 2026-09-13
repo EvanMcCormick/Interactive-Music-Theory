@@ -417,6 +417,11 @@ Not rejected - not yet placed. Each needs its own design pass:
 - **The tempo round trip** in the loss table above. M1.
 - **`updateScoreInfo` is a blind `Object.assign`** of `Partial<ScoreDoc>`, so it could
   replace `masterBars` or `tracks` and break the bar-count invariant. M1.
+- **Every call to `updateScoreInfo` is an undo step.** It commits on every call, so each
+  keystroke in the title field is its own undo step, and retyping an unchanged title marks
+  the score dirty. Whichever milestone gives score info a real UI (M3's inspector) should
+  coalesce the edits, or skip a commit that changes nothing, as `flattenTrack` already
+  does by returning before it commits.
 - **`KEY_SIGNATURES` in the mapper** lists major keys only and omits ±7. The key
   signature popover needs all fifteen, major and minor.
 - **Sidebar clipping.** A user saw headings lose their first letter ("RACKS", "ARS",
@@ -475,5 +480,11 @@ Not rejected - not yet placed. Each needs its own design pass:
   whenever the pitch minus the forced alteration is not a white key - a sharp on D, a flat
   on C, any double accidental that overshoots - the note is drawn on a line that depends
   on the key while still sounding right. The model can hold this from M1's A8 on. M1's
-  accidental edit refuses it with a reason rather than falling back to `auto`; the check is
-  the same one the mapper uses to find a note's letter.
+  accidental edit refuses it with a reason rather than falling back to `auto`. The check is
+  the predicate the mapper uses to find a note's letter, `forcedLetterOf`, but not asked of
+  the same pitch: the mapper reads a pitched note's letter from its stored pitch class, with
+  no transposition applied, and the refusal checks the pitch as drawn, transposition and
+  display transposition included. They agree whenever a staff's transpositions come to a
+  whole number of octaves. A forced accidental on a natural harmonic is refused outright:
+  the mapper writes `harmonicType` and not `harmonicValue`, so alphaTab draws a natural
+  harmonic at its open string's pitch, not its fret's.
