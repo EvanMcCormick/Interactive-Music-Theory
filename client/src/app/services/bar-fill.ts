@@ -61,6 +61,27 @@ export type BarFill =
   | { kind: 'over'; ticks: number };
 
 /**
+ * Everything a bar's length is measured against: the time signature in force there, and
+ * whether the bar is in free time.
+ *
+ * One value rather than a bare `TimeSignature`, so no per-bar function in this module can be
+ * called without saying whether the meter governs the bar. Free time is the score saying it
+ * does not, so a free-time bar is full whatever it holds - and nothing fills or trims it.
+ */
+export interface BarMeter {
+  timeSignature: TimeSignature;
+  isFreeTime: boolean;
+}
+
+/** The meter bar `barIndex` is measured against: the time signature in force, and free time. */
+export function barMeterAt(doc: ScoreDoc, barIndex: number): BarMeter {
+  return {
+    timeSignature: effectiveTimeSignature(doc.masterBars, barIndex),
+    isFreeTime: doc.masterBars[barIndex]?.isFreeTime ?? false
+  };
+}
+
+/**
  * A bar's capacity in ticks under `timeSignature`: alphaTab's `MasterBar.calculateDuration`
  * (~2685-2698), the numerator times one denominator value's ticks. The model has no anacrusis,
  * so alphaTab's pickup-bar branch never applies.
@@ -70,19 +91,27 @@ export function barCapacityTicks(timeSignature: TimeSignature): number {
 }
 
 /**
+ * Whether alphaTab reads `beat` as a rest: a beat with no notes (`Beat.isRest`, ~7275). The
+ * mapper writes notes only when `isRest` is false, so a beat is a rest to alphaTab when either
+ * says so - including a beat marked `isRest: false` that holds no notes.
+ */
+function isAlphaTabRest(beat: BeatDoc): boolean {
+  return beat.isRest || beat.notes.length === 0;
+}
+
+/**
  * Whether `voice` is one whole rest, which alphaTab lays out as exactly its bar in any meter.
  *
  * alphaTab's `Beat.isFullBarRest` (~7281-7283) is a rest, alone in its voice, whose value is a
  * whole. `_calculateDuration` returns the master bar's length for it before reading dots or a
  * tuplet (~7694-7696), so a dotted or tupleted lone whole rest still fills the bar. A grace
  * beat's `displayDuration` is 0 whatever `_calculateDuration` returned (~7726), so a lone whole
- * grace rest fills nothing. To alphaTab a rest is a beat with no notes (~7275); the mapper
- * writes notes only when `isRest` is false, so either one makes a rest here too.
+ * grace rest fills nothing.
  */
 function isLoneWholeRest(voice: VoiceDoc): boolean {
   if (voice.beats.length !== 1) return false;
   const beat = voice.beats[0];
-  return (beat.isRest || beat.notes.length === 0) && beat.duration === 1 && beat.effects.grace === 'none';
+  return isAlphaTabRest(beat) && beat.duration === 1 && beat.effects.grace === 'none';
 }
 
 /**
@@ -96,32 +125,41 @@ export function voiceTicks(voice: VoiceDoc): number {
 }
 
 /**
- * How full `bar` is under `timeSignature`, as alphaTab lays it out: a grace beat takes no
- * room, and a voice that is a lone whole rest is full in any meter.
+ * How full `bar` is under `meter`, as alphaTab lays it out: a grace beat takes no room, a
+ * voice that is a lone whole rest is full in any meter, and a free-time bar is full whatever
+ * it holds.
  *
  * Voice 1 only. It is the only voice the composer writes, and multiple voices are listed
- * beyond M4 in the design; when they arrive, this answers for the fullest voice.
+ * beyond M4 in the design. When they arrive each voice is measured on its own - alphaTab
+ * applies `isFullBarRest` per voice, so a lone whole rest is full in any voice, not just the
+ * first - and the bar answers for its fullest voice.
  */
-export function barFillOf(bar: BarDoc, timeSignature: TimeSignature): BarFill {
+export function barFillOf(bar: BarDoc, meter: BarMeter): BarFill {
+  if (meter.isFreeTime) return { kind: 'full' };
   const voice = bar.voices[0];
   if (voice && isLoneWholeRest(voice)) return { kind: 'full' };
-  const difference = (voice ? voiceTicks(voice) : 0) - barCapacityTicks(timeSignature);
+  const difference = (voice ? voiceTicks(voice) : 0) - barCapacityTicks(meter.timeSignature);
   if (difference === 0) return { kind: 'full' };
   return difference < 0 ? { kind: 'under', ticks: -difference } : { kind: 'over', ticks: difference };
 }
 
-/**
- * Every bar's fill, indexed `[track][staff][bar]`, each read against the meter in force
- * at that bar. A free-time bar is full by definition.
- */
+/** Every bar's fill, indexed `[track][staff][bar]`, each read against its own `barMeterAt`. */
 export function scoreBarFills(doc: ScoreDoc): BarFill[][][] {
   return doc.tracks.map(track =>
-    track.staves.map(staff =>
-      staff.bars.map((bar, index) =>
-        doc.masterBars[index]?.isFreeTime
-          ? { kind: 'full' }
-          : barFillOf(bar, effectiveTimeSignature(doc.masterBars, index))
-      )
-    )
+    track.staves.map(staff => staff.bars.map((bar, index) => barFillOf(bar, barMeterAt(doc, index))))
   );
+}
+
+/**
+ * One bar's fill, read against its own `barMeterAt` - or undefined when there is no such bar.
+ * For a caller asking about a few bars, which should not measure the whole score to do it.
+ */
+export function barFillAt(
+  doc: ScoreDoc,
+  trackIndex: number,
+  staffIndex: number,
+  barIndex: number
+): BarFill | undefined {
+  const bar = doc.tracks[trackIndex]?.staves[staffIndex]?.bars[barIndex];
+  return bar ? barFillOf(bar, barMeterAt(doc, barIndex)) : undefined;
 }

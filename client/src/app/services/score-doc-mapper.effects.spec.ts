@@ -360,7 +360,9 @@ describe('ScoreDocMapperService effects round trip', () => {
     // `MODE_BY_ACCIDENTAL` is derived from `ALTER_BY_ACCIDENTAL` by a `flatMap` that drops an
     // accidental whose alteration alphaTab has no mode for, so a new accidental with no mode
     // would map as `Default` without a word. Iterating the table rather than a list of
-    // literals covers the next accidental added to it.
+    // literals covers the next accidental added to it - and the count pins that the table
+    // holds every forcing mode, not an empty or partial one this loop would pass vacuously.
+    expect(ALTER_BY_ACCIDENTAL.size).toBe(4);
     for (const accidental of ALTER_BY_ACCIDENTAL.keys()) {
       const doc = guitarBar(beats => (beats[0].notes[0].accidental = accidental));
       const note = mapper.toScore(doc, settings).tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];

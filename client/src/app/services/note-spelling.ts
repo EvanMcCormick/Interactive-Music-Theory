@@ -111,13 +111,20 @@ export function alterFor(pitchClass: number, letter: number): number {
  * reads the same table back, so the mode written and the letter read cannot disagree. Keyed
  * by the model's accidental rather than alphaTab's enum, which is what lets it live in a
  * module with no alphaTab dependency.
+ *
+ * Built from a `Record` over every forcing mode, so a new `AccidentalMode` member does not
+ * compile until it is given an alteration here - and so cannot reach the mapper as `Default`.
  */
-export const ALTER_BY_ACCIDENTAL: ReadonlyMap<AccidentalMode, number> = new Map<AccidentalMode, number>([
-  ['doubleFlat', -2],
-  ['flat', -1],
-  ['sharp', 1],
-  ['doubleSharp', 2]
-]);
+const ALTERATIONS: Record<Exclude<AccidentalMode, 'auto'>, number> = {
+  doubleFlat: -2,
+  flat: -1,
+  sharp: 1,
+  doubleSharp: 2
+};
+
+export const ALTER_BY_ACCIDENTAL: ReadonlyMap<AccidentalMode, number> = new Map<AccidentalMode, number>(
+  Object.entries(ALTERATIONS) as [Exclude<AccidentalMode, 'auto'>, number][]
+);
 
 /**
  * The letter `accidental` puts `pitchClass` on, or undefined when it cannot name it.
