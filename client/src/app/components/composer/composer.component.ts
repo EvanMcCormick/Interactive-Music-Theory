@@ -587,27 +587,47 @@ export class ComposerComponent implements OnInit, OnDestroy {
    * check.
    */
   updateLabel(track: TrackDoc): string {
-    const from = track.generated?.progressionName ?? '';
+    const from = this.sourceOf(track);
 
     switch (this.generatedStatus(track)) {
       case 'behind':
-        return `Update ${track.name} from the progression ${from}, which has changed since `
-          + 'this track was written';
+        return `Update ${track.name} from ${from}, which has changed since this track was `
+          + 'written';
       case 'moved':
-        return `Update ${track.name} from the progression ${from}, because a score edit has `
-          + 'moved this track since it was written';
+        return `Update ${track.name} from ${from}, because a score edit has moved this track `
+          + 'since it was written';
       case 'foreign':
-        return `Update ${track.name}: ${from} is not the progression that is open, so this `
-          + 'track cannot be updated here';
+        return `Update ${track.name}: ${from} is not the one that is open, so this track `
+          + 'cannot be updated here';
       default:
-        return `Update ${track.name}: it already matches the progression ${from}`;
+        return `Update ${track.name}: it already matches ${from}`;
     }
   }
 
   /** What Flatten is offering, named the same way and for the same reason. */
   flattenLabel(track: TrackDoc): string {
+    return `Flatten ${track.name}, detaching it from ${this.sourceOf(track)} and keeping the music`;
+  }
+
+  /**
+   * How a label refers to the progression a track came from.
+   *
+   * Two names that are usually one string. The row is labelled with the track's
+   * name and the marker carries the progression's, and they start out equal
+   * because nothing renames a progression - so naming both said "it already
+   * matches the progression Progression", which is what nearly every user
+   * heard. They are still two different facts, and they come apart the moment
+   * either end is renamed, so the fix is to stop saying the second aloud when
+   * it would only repeat the first rather than to drop it from the sentence.
+   *
+   * Every caller reads this as a noun phrase mid-sentence, which is why the
+   * article is in here and not at the call sites: "the progression it came
+   * from" and "the progression Verse" have to substitute for one another in
+   * all five, including `'foreign'`, where the phrase is the subject.
+   */
+  private sourceOf(track: TrackDoc): string {
     const from = track.generated?.progressionName ?? '';
-    return `Flatten ${track.name}, detaching it from the progression ${from} and keeping the music`;
+    return from === track.name ? 'the progression it came from' : `the progression ${from}`;
   }
 
   undo(): void {

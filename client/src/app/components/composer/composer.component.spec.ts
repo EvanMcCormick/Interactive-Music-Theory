@@ -386,6 +386,29 @@ describe('ComposerComponent tracks panel', () => {
     expect(progression.doc.revision).not.toBe(first);
   });
 
+  /**
+   * The default case, and so the one nearly every user hears: nothing renames a
+   * progression, so the track and the marker are both called *Progression* and
+   * naming the source produced "it already matches the progression Progression".
+   * Grammatical, and it reads like a stutter.
+   *
+   * The two names are the same string here but not the same fact - one is the
+   * row's label and one is where the music came from - so the fix is to stop
+   * saying the second out loud when it would only repeat the first, not to drop
+   * either from the sentence.
+   */
+  it('does not name the progression twice when the track carries its name', () => {
+    sendAProgression();
+
+    const current = label(row(generatedIndex()), '.track-update');
+    const flatten = label(row(generatedIndex()), '.track-flatten');
+
+    expect(current).not.toMatch(/progression Progression/i);
+    expect(flatten).not.toMatch(/progression Progression/i);
+    expect(current).toMatch(/^Update\b/);
+    expect(current).toMatch(/came from/i);
+  });
+
   it('names the track and the reason in Update\'s accessible label', () => {
     nameProgression('Verse');
     sendAProgression();
@@ -429,8 +452,11 @@ describe('ComposerComponent tracks panel', () => {
     openAnotherProgression();
 
     const foreign = label(row(generatedIndex()), '.track-update');
+    // "Verse" survives as the track's own name at the head of the sentence. The
+    // source clause no longer repeats it, because here too the two names are
+    // the same string - see the stutter test above for why that is not a loss.
     expect(foreign).toContain('Verse');
-    expect(foreign).toMatch(/not the progression that is open/i);
+    expect(foreign).toMatch(/is not the one that is open/i);
   });
 
   /**
