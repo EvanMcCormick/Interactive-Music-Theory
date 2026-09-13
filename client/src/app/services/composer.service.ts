@@ -412,11 +412,24 @@ export class ComposerService {
   // Note entry
   // -------------------------------------------------------------------------
 
+  /**
+   * Whether note entry, rest entry or a delete at the caret is refused - on a generated track,
+   * or in a second voice, which a click can reach in a loaded bar and bar filling cannot measure.
+   * Publishes the reason and commits nothing, so a refusal costs no undo step and the caret does
+   * not advance. A beat scope, not a note one: a delete on a rest clears nothing, and a note
+   * scope would refuse it as a note tool on a rest.
+   */
+  private refusesEntryAt(doc: ScoreDoc, cursor: EditCursor): boolean {
+    const refusal = editRefusal(doc, [cursor], { family: 'beat', key: 'duration' }, null);
+    if (refusal) this.refuse(refusal);
+    return refusal !== null;
+  }
+
   /** Writes a note at the caret, replacing any note already on that string. */
   setNoteAtCursor(pitch: NotePitch, advance = true): void {
     const state = this.stateSubject.getValue();
     const cursor = state.cursor;
-    if (this.isGenerated(state.doc, cursor.trackIndex)) return;
+    if (this.refusesEntryAt(state.doc, cursor)) return;
 
     this.commit(draft => {
       const beat = this.beatAt(draft, cursor);
@@ -467,7 +480,7 @@ export class ComposerService {
   setRestAtCursor(advance = true): void {
     const state = this.stateSubject.getValue();
     const cursor = state.cursor;
-    if (this.isGenerated(state.doc, cursor.trackIndex)) return;
+    if (this.refusesEntryAt(state.doc, cursor)) return;
 
     this.commit(draft => {
       const beat = this.beatAt(draft, cursor);
@@ -490,7 +503,7 @@ export class ComposerService {
   deleteAtCursor(): void {
     const state = this.stateSubject.getValue();
     const cursor = state.cursor;
-    if (this.isGenerated(state.doc, cursor.trackIndex)) return;
+    if (this.refusesEntryAt(state.doc, cursor)) return;
 
     this.commit(draft => {
       const voice = this.voiceAt(draft, cursor);
@@ -580,8 +593,9 @@ export class ComposerService {
    *
    * The rests that fill a new grace's gap go where its value stood, in front of it, so the
    * grace's index moves forward by however many rests that took. The selection follows it
-   * (`commitFollowing`), so pressing the same tool again - to undo a mistaken press by the
-   * toggle rule, or to add an effect to the grace - acts on the grace and not on a rest.
+   * (`commitFollowing`), so the next press - an effect on the grace - acts on the grace and not
+   * on a rest. A second press of this tool is no way back from a mistaken one: the ordinary beat
+   * it makes takes only the rests after it, so the rests in front stay. Undo takes it back.
    */
   toggleGrace(grace: Exclude<BeatEffectsDoc['grace'], 'none'>): void {
     this.applyEdit({ family: 'beat', key: 'grace' }, (draft, refs) =>
@@ -810,8 +824,8 @@ export class ComposerService {
    * True when the track at `trackIndex` is a progression's rather than the
    * user's.
    *
-   * The whole edit gate, consulted at the top of every command that writes a
-   * note or a beat. It deliberately does not reach `insertBar`, `removeBar` or
+   * `flattenTrack`'s guard. Every command that writes a note or a beat asks
+   * `editRefusal`, which reads the same marker. Neither reaches `insertBar`, `removeBar` or
    * the caret: bars are score-wide and stamp divergence instead, and a
    * read-only track the caret cannot even rest on is worse than useless - the
    * user could not read the track through the cursor, only look at it. The

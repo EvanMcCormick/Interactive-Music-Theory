@@ -11,11 +11,22 @@ import {
   createDegreeSlot
 } from '../models/progression.model';
 import {
+  BeatDoc,
   ComposerState,
+  DurationValue,
   ScoreDoc,
   TimeSignature,
+  createDefaultNoteEffects,
+  createRestBeat,
   effectiveTimeSignature
 } from '../models/composer.model';
+
+/** A beat holding one note on string 1. */
+const noteBeat = (duration: DurationValue): BeatDoc => ({
+  ...createRestBeat(duration),
+  isRest: false,
+  notes: [{ pitch: { kind: 'fretted', string: 1, fret: 0 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }]
+});
 
 /**
  * Bar insertion and the score's meter.
@@ -562,5 +573,80 @@ describe('ComposerService fix bar', () => {
 
     expect(JSON.stringify(service.doc)).toBe(before);
     expect(refusal).toMatch(/over/i);
+  });
+
+  it('keeps the caret on a beat it carries into the next bar', () => {
+    // The eighth lies wholly past the line, so Fix bar moves it, whole, to the start of bar 2.
+    const doc = ComposerService.createEmptyScore();
+    const bar = doc.tracks[0].staves[0].bars[0].voices[0];
+    bar.beats = [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(8)];
+    service.replaceDocument(doc);
+    service.setCursor({ barIndex: 0, beatIndex: 4 });
+
+    service.fixBar();
+
+    service.getState().subscribe(state => {
+      expect(state.cursor.barIndex).toBe(1);
+      expect(state.cursor.beatIndex).toBe(0);
+    }).unsubscribe();
+    const carried = service.doc.tracks[0].staves[0].bars[1].voices[0].beats[0];
+    expect(carried.isRest).toBeFalse();
+    expect(carried.duration).toBe(8);
+  });
+});
+
+describe('ComposerService note entry in a second voice', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+    // A loaded bar can hold a second voice, and a click can put the caret in it. Its first beat
+    // holds a note, so a delete would have something to clear.
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[0].voices.push({ beats: [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(4)] });
+    service.replaceDocument(doc);
+    service.setCursor({ barIndex: 0, voiceIndex: 1, beatIndex: 0 });
+  });
+
+  const state = (): ComposerState => {
+    let latest: ComposerState | null = null;
+    service.getState().subscribe(value => (latest = value)).unsubscribe();
+    return latest as unknown as ComposerState;
+  };
+
+  it('refuses a rest, changes nothing, and says why', () => {
+    service.setInputDuration(8, 0);
+    const before = JSON.stringify(service.doc);
+
+    service.setRestAtCursor();
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(state().refusal).toMatch(/second voice/i);
+    expect(state().cursor.beatIndex).toBe(0);
+  });
+
+  it('refuses a note and a delete the same way', () => {
+    const before = JSON.stringify(service.doc);
+
+    service.setNoteAtCursor({ kind: 'fretted', string: 2, fret: 3 });
+    expect(state().refusal).toMatch(/second voice/i);
+
+    service.deleteAtCursor();
+    expect(state().refusal).toMatch(/second voice/i);
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(state().cursor.beatIndex).toBe(0);
+  });
+
+  it('still clears a rest in the first voice', () => {
+    // Delete on a rest is a no-op clear, not a note tool on a rest, so it is not refused. A
+    // refusal is published first, so a delete that lands is seen to clear it.
+    service.setRestAtCursor();
+    service.setCursor({ barIndex: 0, voiceIndex: 0, beatIndex: 1 });
+
+    service.deleteAtCursor();
+
+    expect(state().refusal).toBeNull();
   });
 });

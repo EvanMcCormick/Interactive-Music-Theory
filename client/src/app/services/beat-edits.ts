@@ -149,20 +149,26 @@ export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEff
  *    range first, and a beat that shrinks in an overflowing bar uses up the overflow. Four
  *    quarters set to eighths are `n8 r8 n8 r8 n8 r8 n8 r8`; `n4 r4 r4 r4` dotted is `n4. r8 r4 r4`.
  * 3. **Blocked growth takes the rests after the range.** A beat blocked only by its changing
- *    neighbour is still owed room when the bar is over. The range's last beat takes up to that
- *    much of the rests after it, and puts back right after itself what it took beyond the need.
- *    Growth a note blocks stays as overflow for Fix bar, as the design asks.
+ *    neighbour is still owed room when the bar is over - less whatever room phase 2 freed and
+ *    did not place, which has paid for it already. So a bar that arrived over keeps exactly its
+ *    overflow when the range's lengths change its total by nothing: `n8 n4. r4 r4 n4 n4` with
+ *    its first two beats set to quarters is `n4 n4 r4 r4 n4 n4`, still 1920 over. The range's
+ *    last beat takes up to what is owed of the rests after it, no more than the bar is over, and
+ *    puts back right after itself what it took beyond the need. Growth a note blocks, and that
+ *    no freed room paid for, stays as overflow for Fix bar, as the design asks.
  * 4. A bar still short - one that arrived short, or a gap no rest could spell at its position,
  *    such as a tuplet's remainder - fills at its end (`fillBarGaps`), where that can be spelled.
  */
 function relength(doc: ScoreDoc, refs: readonly BeatRef[], change: (beat: BeatDoc) => void): void {
   const changing = new Set(beatsAt(doc, refs));
-  // Grouped by voice, not bar: a range's beats are settled against the voice they are in. Bar
-  // filling measures voice 1 (`barFillOf`), and `editRefusal` refuses an edit on any other, so
-  // today each voice here is a bar's first.
+  // Grouped by voice, not bar: a range's beats are settled against the voice they are in.
   const voices = new Map<VoiceDoc, { bar: BarDoc; barIndex: number; beats: BeatDoc[] }>();
 
   for (const ref of refs) {
+    // Voice 1 only. Bar filling measures a bar's first voice (`barFillOf`), so a later voice
+    // would be changed and then settled against voice 1's fill. `editRefusal` refuses such an
+    // edit before it gets here; this is the backstop for a caller that did not ask.
+    if (ref.voiceIndex !== 0) continue;
     const bar = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex];
     const voice = bar?.voices[ref.voiceIndex];
     const beat = beatAt(doc, ref);
@@ -204,18 +210,24 @@ function settleRange(
     }
   }
 
+  // Room freed but not placed, because the bar was not short when its turn came. That room has
+  // already paid for growth within the range, so phase 3 must not take rests for it again.
+  let unplaced = 0;
   for (const beat of inOrder) {
     const room = freed.get(beat) ?? 0;
     const fill = barFillOf(bar, meter);
-    if (room > 0 && fill.kind === 'under') {
-      insertRestsAt(voice, voice.beats.indexOf(beat) + 1, Math.min(room, fill.ticks), meter);
-    }
+    const placed = room > 0 && fill.kind === 'under' ? Math.min(room, fill.ticks) : 0;
+    if (placed > 0) insertRestsAt(voice, voice.beats.indexOf(beat) + 1, placed, meter);
+    unplaced += room - placed;
   }
 
+  // Blocked growth the unplaced room did not pay for. Capped by the bar's overflow below, but the
+  // overflow alone is no measure of it: a bar can arrive over, and that overflow is not owed.
+  const owed = Math.max(0, blocked - unplaced);
   const fill = barFillOf(bar, meter);
   const last = inOrder[inOrder.length - 1];
-  if (fill.kind === 'over' && blocked > 0 && last) {
-    const taken = absorbFollowingRests(voice, last, Math.min(blocked, fill.ticks), changing, meter);
+  if (fill.kind === 'over' && owed > 0 && last) {
+    const taken = absorbFollowingRests(voice, last, Math.min(owed, fill.ticks), changing, meter);
     insertRestsAt(voice, voice.beats.indexOf(last) + 1, taken.overTaken, meter);
   }
 

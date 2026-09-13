@@ -37,7 +37,7 @@ const FRETTED_ONLY_NOTE: ReadonlySet<string> = new Set(['bendPoints', 'slide', '
  */
 const FRETTED_ONLY_BEAT: ReadonlySet<string> = new Set(['tap', 'slap', 'pop']);
 
-const FRETTED = 'Bends, slides, taps and harmonics belong to fretted staves.';
+const FRETTED = 'Bends, slides, taps, slap, pop and harmonics belong to fretted staves.';
 
 const GENERATED =
   'That reaches a track generated from a progression. Flatten the track to edit it by hand.';

@@ -40,15 +40,22 @@ export function selectionTargets(doc: ScoreDoc, anchor: EditCursor | null, head:
 }
 
 /**
- * `end` moved to wherever `beat` now is in the voice `end` names, after an edit that inserted or
- * removed beats around it - or `end` unchanged when `beat` is null or no longer in that voice, as
- * when Fix bar replaced it with its split pieces. An unchanged end may point past its voice now,
- * so the caller clamps what comes back.
+ * `end` moved to wherever `beat` now is, after an edit that inserted or removed beats around it.
+ *
+ * Looked for in `end`'s own bar first, then in each later bar of the same staff and voice, in
+ * order: Fix bar carries a beat wholly past the line into the bars after it, and a carry only
+ * ever goes forward. `end` comes back unchanged when `beat` is null or found in none of those,
+ * as when Fix bar replaced it with its split pieces. An unchanged end may point past its voice
+ * now, so the caller clamps what comes back.
  */
 export function followedEnd(doc: ScoreDoc, end: EditCursor, beat: BeatDoc | null): EditCursor {
-  const beats = doc.tracks[end.trackIndex]?.staves[end.staffIndex]?.bars[end.barIndex]?.voices[end.voiceIndex]?.beats;
-  const index = beat && beats ? beats.indexOf(beat) : -1;
-  return index >= 0 ? { ...end, beatIndex: index } : end;
+  const bars = doc.tracks[end.trackIndex]?.staves[end.staffIndex]?.bars ?? [];
+  if (!beat) return end;
+  for (let barIndex = end.barIndex; barIndex < bars.length; barIndex++) {
+    const index = bars[barIndex]?.voices[end.voiceIndex]?.beats.indexOf(beat) ?? -1;
+    if (index >= 0) return { ...end, barIndex, beatIndex: index };
+  }
+  return end;
 }
 
 /** The bars a selection spans, first to last. */

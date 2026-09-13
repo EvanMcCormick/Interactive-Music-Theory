@@ -157,6 +157,18 @@ describe('setBeatDurations', () => {
     expect(beats(doc).map(beat => beat.duration)).toEqual([2, 4, 4, 4]);
     expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
   });
+
+  it('leaves a second voice alone, since bar filling cannot measure it', () => {
+    // `editRefusal` refuses this before it gets here; the length edit refuses it too, rather
+    // than change a voice whose bar it would then settle against voice 1.
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[0].voices.push({ beats: [4, 4, 4, 4].map(() => createRestBeat(4)) });
+    const before = JSON.stringify(doc);
+
+    setBeatDurations(doc, [{ ...ref(0, 0), voiceIndex: 1 }], 8, 0);
+
+    expect(JSON.stringify(doc)).toBe(before);
+  });
 });
 
 describe('setBeatDurations on a range', () => {
@@ -251,6 +263,42 @@ describe('setBeatDurations on a range', () => {
 
     expect(shape(doc)).toEqual(['n4', 'n4', 'n8', 'n8', 'r2']);
     expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'over', ticks: 960 });
+  });
+
+  // The next three bars arrive over already. Each range's first beat grows into its changing
+  // neighbour, and the neighbour's own shrink - or the spare rest it took - pays for that growth
+  // exactly. The range's lengths change the bar's total by nothing, so its overflow must stay what
+  // it was, and no rest after the range may go to pay for growth that is already paid for.
+
+  it('keeps an over bar\'s overflow when a range\'s shrink pays for its growth', () => {
+    // 480 1440 960 960 960 960, 1920 over. The dotted quarter frees 480 and the eighth grows 480.
+    const doc = scoreWith('n8 n4. r4 r4 n4 n4');
+
+    setBeatDurations(doc, refsTo(2), 4, 0);
+
+    expect(shape(doc)).toEqual(['n4', 'n4', 'r4', 'r4', 'n4', 'n4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'over', ticks: 1920 });
+  });
+
+  it('keeps an over bar\'s overflow when it is less than the growth paid for', () => {
+    // 960 over, more than the 480 the eighth grows, so taking rests would not be capped by it.
+    const doc = scoreWith('n8 n4. r4 r4 n4');
+
+    setBeatDurations(doc, refsTo(2), 4, 0);
+
+    expect(shape(doc)).toEqual(['n4', 'n4', 'r4', 'r4', 'n4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'over', ticks: 960 });
+  });
+
+  it('keeps an over bar\'s overflow when a growing beat\'s spare rest pays for its neighbour', () => {
+    // 1920 over. The second eighth grows 480 into the quarter rest after it and takes it all,
+    // freeing the 480 it did not need; that is the room the first eighth's blocked 480 wanted.
+    const doc = scoreWith('n8 n8 r4 r4 r4 n4 n4');
+
+    setBeatDurations(doc, refsTo(2), 4, 0);
+
+    expect(shape(doc)).toEqual(['n4', 'n4', 'r4', 'r4', 'n4', 'n4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'over', ticks: 1920 });
   });
 });
 

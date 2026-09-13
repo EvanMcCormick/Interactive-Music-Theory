@@ -44,9 +44,10 @@ describe('editRefusal', () => {
     expect(editRefusal(doc(), [ref(1)], { family: 'note', key: 'bendPoints' }, null)).toMatch(/fretted/i);
   });
 
-  it('refuses tap, slap and pop on a pitched staff, and allows them on a fretted one', () => {
+  it('refuses tap, slap and pop on a pitched staff, naming each, and allows them on a fretted one', () => {
     for (const key of ['tap', 'slap', 'pop'] as const) {
       expect(editRefusal(doc(), [ref(1)], { family: 'beat', key }, null)).toMatch(/fretted/i);
+      expect(editRefusal(doc(), [ref(1)], { family: 'beat', key }, null)).toMatch(new RegExp(`\\b${key}`, 'i'));
       expect(editRefusal(doc(), [ref(0)], { family: 'beat', key }, null)).toBeNull();
     }
   });
