@@ -459,4 +459,14 @@ Not rejected - not yet placed. Each needs its own design pass:
   `stringTuning.reset()`, `alphaTab.core.mjs` ~16517-16526 in 1.8, reached from
   `\tuning piano|none|voice` ~13178 or from the first pitched note on a staff ~16411) - but
   it matters if M3 lets a pitched staff carry one.
-- **A trill's target does not follow its note.** `TrillDoc.value` is a pitch, so moving a trilled note by a fret, string, capo or tuning change leaves the trill aimed where it was, and the interval silently changes. M2's pitch tools and M3's capo and tuning controls must move it with the note.
+- **A trill's target does not follow its note.** `TrillDoc.value` is a pitch, so moving a
+  trilled note by a fret, string, capo or tuning change leaves the trill aimed where it
+  was, and the interval silently changes. M2's pitch tools and M3's capo and tuning
+  controls must move it with the note.
+- **A fermata spreads to later tracks and voices at the same tick.** alphaTab keeps
+  fermatas per bar and tick (`Voice.finish` ~3294, `MasterBar.getFermata` ~2728): a
+  fermata on one track appears on every later track's beat at that tick, on screen at once
+  and in the saved file, while an earlier track is untouched - so clearing the original
+  leaves the copies. M1 pins it. M2's fermata tool decides whether a fermata belongs to a
+  beat or to a bar and tick; the latter matches alphaTab and Guitar Pro and would make the
+  spread correct rather than surprising.

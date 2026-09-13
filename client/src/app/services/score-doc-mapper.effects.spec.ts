@@ -249,7 +249,20 @@ describe('ScoreDocMapperService effects round trip', () => {
     const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 62, speed: 32 }));
     doc.tracks[0].staves[0].capo = 2;
 
+    // 62 less the open G (55) less the capo (2).
+    expect(tex.export(mapper.toScore(doc, settings))).toContain('tr (5 32)');
     expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 62, speed: 32 });
+  });
+
+  it('brings a trill speed alphaTex cannot load to a 32nd', () => {
+    // alphaTab's model takes any duration, but alphaTex rejects a trill that is not a 16th,
+    // 32nd or 64th. Read straight off a score, not through alphaTex, which could not carry it.
+    const score = mapper.toScore(guitarBar(() => undefined), settings);
+    const note = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+    note.trillValue = 62;
+    note.trillSpeed = alphaTab.model.Duration.Eighth;
+
+    expect(beatsOf(mapper.toDoc(score))[0].notes[0].effects.trill).toEqual({ value: 62, speed: 32 });
   });
 
   it('keeps fingering for both hands', () => {
@@ -290,6 +303,37 @@ describe('ScoreDocMapperService effects round trip', () => {
       expect(beatsOf(throughTex(doc))[0].effects.pickStroke).toBe(pickStroke);
     });
   }
+
+  /** `doc` with a copy of its first track appended, every beat of the copy without a fermata. */
+  function withSecondTrack(doc: ScoreDoc): ScoreDoc {
+    const second = structuredClone(doc.tracks[0]);
+    second.id = 'gtr2';
+    second.name = 'Guitar 2';
+    second.shortName = 'gt2';
+    second.staves[0].bars[0].voices[0].beats.forEach(beat => (beat.effects.fermata = null));
+    doc.tracks.push(second);
+    return doc;
+  }
+
+  it('gives a fermata to a later track at the same tick - alphaTab keeps fermatas per bar', () => {
+    // `Voice.finish` files a beat's fermata on the master bar by tick and hands it to every
+    // beat finished after it at that tick without one - later voices, staves and tracks -
+    // before render or export. Pinned so M2 has to decide whether a fermata is per beat.
+    const doc = withSecondTrack(guitarBar(beats => (beats[1].effects.fermata = { type: 'long', length: 1 })));
+
+    const back = throughTex(doc);
+    expect(back.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata).toEqual({ type: 'long', length: 1 });
+    expect(back.tracks[1].staves[0].bars[0].voices[0].beats[0].effects.fermata).toBeNull();
+  });
+
+  it('does not give a fermata to an earlier track', () => {
+    const doc = withSecondTrack(guitarBar(() => undefined));
+    doc.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata = { type: 'long', length: 1 };
+
+    const back = throughTex(doc);
+    expect(beatsOf(back)[1].effects.fermata).toBeNull();
+    expect(back.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata).toEqual({ type: 'long', length: 1 });
+  });
 
   // <!-- A8 -->
 });

@@ -77,6 +77,9 @@ writes them generously; 1000 lines per file at most.
   typings, so Phase B mirrors it and a spec pins the mirror against alphaTab.
 - Only `ComposerService` constructs a `ComposerState` (constructor and `reset`), and only
   the model and mapper touch `vibrato`, so the model changes below have no other callers.
+- A fermata is kept per bar and tick, not per beat: `Voice.finish` files it on the master
+  bar, and `MasterBar.getFermata` hands it to every beat finished later at that tick
+  without one - later voices, staves and tracks, never earlier ones. Pinned after Task A7.
 
 ### Where this plan departs from the design
 
