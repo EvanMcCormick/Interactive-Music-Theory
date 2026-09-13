@@ -3,11 +3,21 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerService } from './composer.service';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
-import { BarMeter, barCapacityTicks, barFillAt, barFillOf, beatTicks, fillBarGaps, scoreBarFills } from './bar-fill';
+import {
+  BarMeter,
+  absorbFollowingRests,
+  barCapacityTicks,
+  barFillAt,
+  barFillOf,
+  beatTicks,
+  fillBarGaps,
+  scoreBarFills
+} from './bar-fill';
 import {
   BarDoc,
   BeatDoc,
   DurationValue,
+  NoteDoc,
   Tuplet,
   createDefaultBar,
   createDefaultBeatEffects,
@@ -349,6 +359,88 @@ describe('bar-fill', () => {
 
       expect(shape(bar)).toEqual(['r4', 'r4', 'r4', 'r4', 'r8']);
       expect(bar.voices[0].beats[4].effects.grace).toBe('beforeBeat');
+    });
+  });
+
+  describe('absorbFollowingRests', () => {
+    const FOUR_FOUR = meterOf(4, 4);
+    const note = (): NoteDoc => ({
+      pitch: { kind: 'pitched', noteValue: 0, octave: 4 },
+      isTied: false,
+      accidental: 'auto',
+      effects: createDefaultNoteEffects()
+    });
+
+    it('removes the rests a lengthened beat now covers', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const [first] = bar.voices[0].beats;
+      first.duration = 2;
+
+      const left = absorbFollowingRests(bar.voices[0], first, 960, new Set());
+
+      expect(left).toBe(0);
+      expect(bar.voices[0].beats.length).toBe(3);
+    });
+
+    it('stops at a note and reports what it could not take', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const beats = bar.voices[0].beats;
+      beats[1] = { ...beats[1], isRest: false, notes: [note()] };
+      beats[0].duration = 2;
+
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set());
+
+      expect(left).toBe(960);
+      expect(bar.voices[0].beats.length).toBe(4);
+    });
+
+    it('takes a beat with no notes, which alphaTab draws as a rest, even when it is not marked one', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const beats = bar.voices[0].beats;
+      beats[1] = { ...beats[1], isRest: false };
+      beats[0].duration = 2;
+
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set());
+
+      expect(left).toBe(0);
+      expect(bar.voices[0].beats.length).toBe(3);
+    });
+
+    it('never takes a beat that is itself being changed', () => {
+      // Pressing a half on four selected quarters makes four halves, not one.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const beats = bar.voices[0].beats;
+
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set(beats));
+
+      expect(left).toBe(960);
+      expect(bar.voices[0].beats.length).toBe(4);
+    });
+
+    it('takes a longer rest whole, leaving the difference as a gap to fill', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats = [createRestBeat(4), createRestBeat(2), createRestBeat(4)];
+      bar.voices[0].beats[0].duration = 2;
+
+      const left = absorbFollowingRests(bar.voices[0], bar.voices[0].beats[0], 960, new Set());
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(left).toBe(0);
+      expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'full' });
+    });
+
+    it('stops at a grace beat, even a grace rest, and never takes it', () => {
+      // A grace takes no room, so taking one gains nothing, and it belongs to the beat after it.
+      // A grace rest is the case that matters: `isRest` alone would let the walk take it.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const beats = bar.voices[0].beats;
+      beats.splice(2, 0, { ...createRestBeat(8), effects: { ...createDefaultBeatEffects(), grace: 'beforeBeat' } });
+      beats[0].duration = 1;
+
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 2880, new Set());
+
+      expect(left).toBe(1920);
+      expect(bar.voices[0].beats.map(beat => beat.effects.grace)).toEqual(['none', 'beforeBeat', 'none', 'none']);
     });
   });
 });

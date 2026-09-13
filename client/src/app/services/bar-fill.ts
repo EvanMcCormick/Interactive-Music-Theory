@@ -214,3 +214,50 @@ export function fillBarGaps(bar: BarDoc, meter: BarMeter): void {
   const rests = units.map(unit => ({ ...createRestBeat(unit.duration), dots: unit.dots }));
   voice.beats.splice(graceRunStart(voice, voice.beats.length), 0, ...rests);
 }
+
+/**
+ * Whether a walk that makes room may remove `voice.beats[index]`: a beat alphaTab reads as a
+ * rest (`isAlphaTabRest`) that is not a grace beat, and that no grace beat leads into.
+ *
+ * A grace beat takes no room, so removing one gains nothing, and it belongs to the beat after
+ * it (see `graceRunStart`): removing the rest a grace leads into would leave the grace in front
+ * of whatever came next. A walk stops at either, and what it could not take is left as
+ * overflow - the same line the design draws at a note.
+ */
+function isTakeableRest(voice: VoiceDoc, index: number): boolean {
+  const beat = voice.beats[index];
+  const before = index > 0 ? voice.beats[index - 1] : null;
+  return isAlphaTabRest(beat) && beat.effects.grace === 'none' && (before === null || before.effects.grace === 'none');
+}
+
+/**
+ * Removes rests after `beat` in `voice` until `ticks` are covered, and returns the ticks it
+ * could not cover.
+ *
+ * It stops at the first note - the design's line: lengthening consumes only following
+ * rests, and anything that would overwrite a note is left as overflow for the user to
+ * see. It stops at a grace beat too, rest or not, and never removes one (`isTakeableRest`).
+ * And it stops at any beat in `changing`, so a range pressed together is changed
+ * together rather than one beat eating its neighbours. A rest longer than what is left is
+ * taken whole; the caller's `fillBarGaps` puts the difference back. Beats are held by
+ * identity, not index, because every removal shifts the indices after it.
+ */
+export function absorbFollowingRests(
+  voice: VoiceDoc,
+  beat: BeatDoc,
+  ticks: number,
+  changing: ReadonlySet<BeatDoc>
+): number {
+  let remaining = ticks;
+  let index = voice.beats.indexOf(beat) + 1;
+  if (index === 0) return remaining;
+
+  // Every pass removes a beat or stops, so the walk ends however little a beat is worth.
+  while (remaining > 0 && index < voice.beats.length) {
+    const next = voice.beats[index];
+    if (!isTakeableRest(voice, index) || changing.has(next)) break;
+    remaining -= beatTicks(next);
+    voice.beats.splice(index, 1);
+  }
+  return Math.max(0, remaining);
+}
