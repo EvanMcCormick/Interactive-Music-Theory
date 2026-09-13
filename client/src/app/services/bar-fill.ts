@@ -1,4 +1,11 @@
-import { BeatDoc, TimeSignature } from '../models/composer.model';
+import {
+  BarDoc,
+  BeatDoc,
+  ScoreDoc,
+  TimeSignature,
+  VoiceDoc,
+  effectiveTimeSignature
+} from '../models/composer.model';
 
 /**
  * Bar arithmetic for the composer: how full a bar is, filling its gaps with rests, and
@@ -45,4 +52,76 @@ export function beatTicks(beat: Pick<BeatDoc, 'duration' | 'dots' | 'tuplet' | '
     ticks = ((ticks * beat.tuplet.denominator) / beat.tuplet.numerator) | 0;
   }
   return ticks;
+}
+
+/** How a bar's contents compare with its meter. */
+export type BarFill =
+  | { kind: 'full' }
+  | { kind: 'under'; ticks: number }
+  | { kind: 'over'; ticks: number };
+
+/**
+ * A bar's capacity in ticks under `timeSignature`: alphaTab's `MasterBar.calculateDuration`
+ * (~2685-2698), the numerator times one denominator value's ticks. The model has no anacrusis,
+ * so alphaTab's pickup-bar branch never applies.
+ */
+export function barCapacityTicks(timeSignature: TimeSignature): number {
+  return timeSignature.numerator * ((TICKS_PER_QUARTER * (4 / timeSignature.denominator)) | 0);
+}
+
+/**
+ * Whether `voice` is one whole rest, which alphaTab lays out as exactly its bar in any meter.
+ *
+ * alphaTab's `Beat.isFullBarRest` (~7281-7283) is a rest, alone in its voice, whose value is a
+ * whole. `_calculateDuration` returns the master bar's length for it before reading dots or a
+ * tuplet (~7694-7696), so a dotted or tupleted lone whole rest still fills the bar. A grace
+ * beat's `displayDuration` is 0 whatever `_calculateDuration` returned (~7726), so a lone whole
+ * grace rest fills nothing. To alphaTab a rest is a beat with no notes (~7275); the mapper
+ * writes notes only when `isRest` is false, so either one makes a rest here too.
+ */
+function isLoneWholeRest(voice: VoiceDoc): boolean {
+  if (voice.beats.length !== 1) return false;
+  const beat = voice.beats[0];
+  return (beat.isRest || beat.notes.length === 0) && beat.duration === 1 && beat.effects.grace === 'none';
+}
+
+/**
+ * The ticks a voice's beats occupy, each as `beatTicks` measures it - so a grace beat adds
+ * nothing. It does not apply the lone-whole-rest rule, which needs the meter: `barFillOf`
+ * does, and every caller in this module reads this only for a bar `barFillOf` has not called
+ * full.
+ */
+export function voiceTicks(voice: VoiceDoc): number {
+  return voice.beats.reduce((sum, beat) => sum + beatTicks(beat), 0);
+}
+
+/**
+ * How full `bar` is under `timeSignature`, as alphaTab lays it out: a grace beat takes no
+ * room, and a voice that is a lone whole rest is full in any meter.
+ *
+ * Voice 1 only. It is the only voice the composer writes, and multiple voices are listed
+ * beyond M4 in the design; when they arrive, this answers for the fullest voice.
+ */
+export function barFillOf(bar: BarDoc, timeSignature: TimeSignature): BarFill {
+  const voice = bar.voices[0];
+  if (voice && isLoneWholeRest(voice)) return { kind: 'full' };
+  const difference = (voice ? voiceTicks(voice) : 0) - barCapacityTicks(timeSignature);
+  if (difference === 0) return { kind: 'full' };
+  return difference < 0 ? { kind: 'under', ticks: -difference } : { kind: 'over', ticks: difference };
+}
+
+/**
+ * Every bar's fill, indexed `[track][staff][bar]`, each read against the meter in force
+ * at that bar. A free-time bar is full by definition.
+ */
+export function scoreBarFills(doc: ScoreDoc): BarFill[][][] {
+  return doc.tracks.map(track =>
+    track.staves.map(staff =>
+      staff.bars.map((bar, index) =>
+        doc.masterBars[index]?.isFreeTime
+          ? { kind: 'full' }
+          : barFillOf(bar, effectiveTimeSignature(doc.masterBars, index))
+      )
+    )
+  );
 }

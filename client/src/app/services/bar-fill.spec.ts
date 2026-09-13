@@ -3,11 +3,13 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerService } from './composer.service';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
-import { beatTicks } from './bar-fill';
+import { barFillOf, beatTicks, scoreBarFills } from './bar-fill';
 import {
   BeatDoc,
   DurationValue,
   Tuplet,
+  createDefaultBar,
+  createDefaultMasterBar,
   createDefaultNoteEffects,
   createRestBeat
 } from '../models/composer.model';
@@ -93,5 +95,76 @@ describe('beatTicks', () => {
     const laidOut = score.tracks[0].staves[0].bars[0].voices[0].beats.map(beat => beat.displayDuration);
 
     expect(beats.map(beatTicks)).toEqual(laidOut);
+  });
+});
+
+describe('barFillOf', () => {
+  const FOUR_FOUR = { numerator: 4, denominator: 4, isCommon: true };
+
+  it('calls a bar of four quarters full in 4/4', () => {
+    expect(barFillOf(createDefaultBar(false, FOUR_FOUR), FOUR_FOUR)).toEqual({ kind: 'full' });
+  });
+
+  it('reports a short bar by how much', () => {
+    const bar = createDefaultBar(false, FOUR_FOUR);
+    bar.voices[0].beats[0].duration = 8;
+
+    expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'under', ticks: 480 });
+  });
+
+  it('reports an overfull bar by how much', () => {
+    const bar = createDefaultBar(false, FOUR_FOUR);
+    bar.voices[0].beats[0].duration = 2;
+
+    expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'over', ticks: 960 });
+  });
+
+  it('measures 6/8 in its own units', () => {
+    const sixEight = { numerator: 6, denominator: 8, isCommon: false };
+
+    expect(barFillOf(createDefaultBar(false, sixEight), sixEight)).toEqual({ kind: 'full' });
+  });
+
+  it('calls a bar holding only a whole rest full in any meter, as alphaTab draws it', () => {
+    // alphaTab's `isFullBarRest`: a lone whole rest is laid out as the bar's length, and its
+    // dots are never read. A lone whole note is not a rest, so it is measured, and is over.
+    const threeFour = { numerator: 3, denominator: 4, isCommon: false };
+    const bar = createDefaultBar(false, threeFour);
+
+    bar.voices[0].beats = [createRestBeat(1)];
+    expect(barFillOf(bar, threeFour)).toEqual({ kind: 'full' });
+
+    bar.voices[0].beats = [{ ...createRestBeat(1), dots: 1 }];
+    expect(barFillOf(bar, threeFour)).toEqual({ kind: 'full' });
+
+    bar.voices[0].beats = [noteBeatOf(1)];
+    expect(barFillOf(bar, threeFour)).toEqual({ kind: 'over', ticks: 960 });
+  });
+
+  it('calls four quarters and an on-beat grace note full in 4/4', () => {
+    const bar = createDefaultBar(false, FOUR_FOUR);
+    bar.voices[0].beats.splice(2, 0, noteBeatOf(8, 'onBeat'));
+
+    expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'full' });
+  });
+});
+
+describe('scoreBarFills', () => {
+  it('reads every bar of every staff against the meter in force there', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[2].voices[0].beats[0].duration = 2;
+
+    const fills = scoreBarFills(doc);
+
+    expect(fills[0][0].map(fill => fill.kind)).toEqual(['full', 'full', 'over', 'full']);
+  });
+
+  it('calls a free-time bar full whatever it holds', () => {
+    // Free time is the score saying the meter does not govern this bar.
+    const doc = ComposerService.createEmptyScore();
+    doc.masterBars[1].isFreeTime = true;
+    doc.tracks[0].staves[0].bars[1].voices[0].beats[0].duration = 1;
+
+    expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'full' });
   });
 });
