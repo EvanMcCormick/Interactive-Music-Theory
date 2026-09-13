@@ -183,3 +183,19 @@ export function applySlide(note: alphaTab.model.Note, slide: NoteDoc['effects'][
       note.slideOutType = alphaTab.model.SlideOutType.None;
   }
 }
+
+/**
+ * The slide `applySlide` would have written, read back off a note.
+ *
+ * `NoteEffectsDoc.slide` is one value where alphaTab has two fields - a slide in and a
+ * slide out - so a note carrying both reads as its slide out, which is the one the
+ * palette sets. An in-slide the model has no name for (from above) reads as none.
+ */
+export function slideOf(note: alphaTab.model.Note): NoteDoc['effects']['slide'] {
+  switch (note.slideOutType) {
+    case alphaTab.model.SlideOutType.Shift: return 'shiftSlide';
+    case alphaTab.model.SlideOutType.Legato: return 'legatoSlide';
+    case alphaTab.model.SlideOutType.OutUp: return 'slideOutUp';
+  }
+  return note.slideInType === alphaTab.model.SlideInType.IntoFromBelow ? 'slideInBelow' : 'none';
+}

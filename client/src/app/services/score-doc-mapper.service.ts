@@ -29,6 +29,7 @@ import {
   fromHarmonicType,
   fromOttavia,
   fromTripletFeel,
+  slideOf,
   toBrushType,
   toClef,
   toDynamicValue,
@@ -559,6 +560,7 @@ export class ScoreDocMapperService {
     effects.isHammerPullOrigin = note.isHammerPullOrigin;
     effects.vibrato = note.vibrato !== alphaTab.model.VibratoType.None;
     effects.harmonic = fromHarmonicType(note.harmonicType);
+    effects.slide = slideOf(note);
 
     const pitch: NotePitch = note.isStringed
       ? {

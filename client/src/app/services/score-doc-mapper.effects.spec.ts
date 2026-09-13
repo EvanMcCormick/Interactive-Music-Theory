@@ -141,5 +141,13 @@ describe('ScoreDocMapperService effects round trip', () => {
     expect(beatsOf(throughTex(doc))[3].notes[0].effects.isHammerPullOrigin).toBeFalse();
   });
 
-  // <!-- A2 -->
+  for (const slide of ['shiftSlide', 'legatoSlide', 'slideInBelow', 'slideOutUp'] as const) {
+    it(`keeps a ${slide}`, () => {
+      const doc = guitarBar(beats => (beats[0].notes[0].effects.slide = slide));
+
+      expect(beatsOf(throughTex(doc))[0].notes[0].effects.slide).toBe(slide);
+    });
+  }
+
+  // <!-- A3 -->
 });
