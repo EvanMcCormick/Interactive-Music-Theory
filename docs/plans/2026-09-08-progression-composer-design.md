@@ -1805,6 +1805,11 @@ said about itself.
   wrong answer. Pre-existing, and it earns an entry here because M4 promoted
   `effectiveTimeSignature(masterBars, 0)` to *the* definition of the score's
   meter and gave a latent oddity in bar insertion something to break.
+  **Fixed 2026-09-13, after M4.** A bar inserted at index 0 now takes over bar
+  1's declaration, and the displaced bar drops it, since it can only repeat the
+  meter already in force — the declare-on-change shape the mapper reads a file
+  into. Pinned in `composer.service.spec.ts`, including the Send guard refusing
+  a 4/4 projection afterwards, which is the symptom above seen from outside.
 - **A generated track's id is not unique after flatten-then-Send.** Flatten
   clears the marker and keeps `progression-<uuid>`, so the next Send finds no
   marker to match, appends, and leaves the score holding two tracks with one id.

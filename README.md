@@ -447,7 +447,9 @@ When you like it, **Send to Composer** puts it on a staff beside your own tracks
 - 🐛 **Fixed**: The notation preview fills the panel it sits in. A progression is
   usually a single system, and a score's last system is drawn at its natural width,
   so four bars were rendering into a third of the page
-- 🧪 **Tests**: 2,426 passing
+- 🐛 **Fixed**: Inserting a bar at the start of a score keeps its time signature. A
+  3/4 score used to turn into 4/4 from bar 1
+- 🧪 **Tests**: 2,433 passing
 
 ### Chord Recognition (September 2026)
 - ✨ **New**: Edit a chord's notes in the piano roll and the app reads back what chord it

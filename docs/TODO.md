@@ -43,13 +43,6 @@ the reasoning is there, not here.
 - **A score that changes meter mid-way.** A generated track is barred by the score's
   *first* time signature, so its bar lines disagree from the point the meter changes.
   Fixing it means teaching `placeProgressionNotes` and `writeBar` a per-bar signature.
-- **`insertBar(0)` erases a score's declared meter.** `createDefaultMasterBar()` has
-  `timeSignature: null` and `insertBar` copies clef, ottava and key signature but
-  nothing from the master bar, so inserting at index 0 in a 3/4 score makes bar 1 read
-  as the hardcoded 4/4 default. Pre-existing, but M4 promoted
-  `effectiveTimeSignature(masterBars, 0)` to *the* definition of the score's meter, so
-  it now has a corruption path attached. **This one is a real bug and deserves its own
-  fix**, not just a note.
 - **A generated track's id is not unique after Flatten then Send.** Flatten keeps
   `progression-<uuid>` and drops the marker, so the next Send appends a second track
   with the same id. Harmless today — nothing reads `TrackDoc.id` — and reproducible in

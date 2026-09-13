@@ -449,11 +449,25 @@ export class ComposerService {
   /**
    * Inserts a bar at `index` across every track, preserving the invariant that
    * the timeline is shared.
+   *
+   * A new first bar takes over bar 1's time signature declaration. Anywhere
+   * else a fresh master bar declaring nothing inherits the meter in force, but
+   * bar 1 has nothing to inherit from, and `effectiveTimeSignature` answers an
+   * undeclared bar 1 with 4/4 - which is `scoreMeter`, and so the guard on
+   * `sendProgression`. The displaced bar drops a declaration that now repeats
+   * the meter already in force, so a uniform score does not gain a meter change
+   * at bar 2: the shape the mapper reads a loaded file into.
    */
   insertBar(index: number): void {
     this.commit(draft => {
       const at = this.clamp(index, 0, draft.masterBars.length);
-      draft.masterBars.splice(at, 0, createDefaultMasterBar());
+      const masterBar = createDefaultMasterBar();
+      const displaced = draft.masterBars[at];
+      if (at === 0 && displaced) {
+        masterBar.timeSignature = effectiveTimeSignature(draft.masterBars, 0);
+        displaced.timeSignature = null;
+      }
+      draft.masterBars.splice(at, 0, masterBar);
       for (const track of draft.tracks) {
         for (const staff of track.staves) {
           const template = staff.bars[Math.min(at, staff.bars.length - 1)];

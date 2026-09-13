@@ -317,20 +317,18 @@ records the decisions and — where implementation disproved one — the correct
 | M3 | Shipped | The recogniser: a hand-edited slot reading its identity back, `literal` degradation and a way out of it, the alternates chip; suspensions sounded and each extension alterable; names composed from the chord; every note spelled by its degree's letter |
 | M4 | Shipped | Send a progression into the composer as a real track that knows where it came from, press again to update it, flatten it into an ordinary track; saving refuses while a track is still linked and offers to flatten first; MIDI and `.gp` export from either page, with no notation panel required; and a spelling letter on `NotePitch`, so an exported ♭II engraves on C♭ rather than B |
 
-Five things are recorded as known limitations rather than bugs, all in the design doc:
+Four things are recorded as known limitations rather than bugs, all in the design doc:
 `quantizeBar` is onset-driven and has no note-off, so a staccato roll engraves legato;
 `BeatDoc.dynamics: null` is documented as "inherit" but nothing implements it, which
 affects transcription as well as the progression preview; the recogniser takes the
 first reading that consumes every note, so two chords the palette can build in three
-clicks lose their numeral to a reading that has no name and degrade to `literal`; a
+clicks lose their numeral to a reading that has no name and degrade to `literal`; and a
 generated track is barred by the score's *first* time signature, so its bar lines
-disagree from the point a score changes meter mid-way; and `insertBar(0)` leaves a bar
-with no declared signature, which makes a 3/4 score read as 4/4 to everything that asks
-what meter it is in — pre-existing, but M4 made that question load-bearing.
+disagree from the point a score changes meter mid-way.
 
 Those, and everything else known to be left, are collected in [TODO.md](TODO.md) —
-including three checks nobody has performed and the one item in the list that is a real
-bug rather than a recorded limitation.
+including three checks nobody has performed. The one real bug that list used to carry,
+`insertBar(0)` making a 3/4 score read as 4/4, was fixed on 2026-09-13.
 
 One hand-check is outstanding: alphaTab's Guitar Pro exporter appears, from reading its
 source, to write a C♭ as B♭ and a B♯ as C♯. Nobody has yet opened an exported file in
