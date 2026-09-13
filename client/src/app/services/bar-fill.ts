@@ -4,10 +4,12 @@ import {
   ScoreDoc,
   TimeSignature,
   VoiceDoc,
+  createDefaultNoteEffects,
   createRestBeat,
   effectiveTimeSignature
 } from '../models/composer.model';
-import { barGridFault, metricFrame, slotsToDurations } from './transcription-quantize';
+import { insertBarInto } from './score-structure';
+import { DurationUnit, barGridFault, metricFrame, slotsToDurations } from './transcription-quantize';
 
 /**
  * Bar arithmetic for the composer: how full a bar is, filling its gaps with rests, and
@@ -188,6 +190,18 @@ function graceRunStart(voice: VoiceDoc, index: number): number {
 }
 
 /**
+ * `ticks` spelled as written values starting `startTicks` into a bar of `timeSignature`,
+ * split at beat and half-bar lines - or null when that cannot be done exactly.
+ */
+function spelledTicks(ticks: number, startTicks: number, timeSignature: TimeSignature): DurationUnit[] | null {
+  if (ticks % SLOT_TICKS !== 0 || startTicks % SLOT_TICKS !== 0) return null;
+  if (barGridFault(timeSignature, SLOT_DIVISION) !== null) return null;
+
+  const frame = metricFrame(timeSignature, SLOT_DIVISION / timeSignature.denominator);
+  return slotsToDurations(ticks / SLOT_TICKS, SLOT_DIVISION, startTicks / SLOT_TICKS, frame);
+}
+
+/**
  * Adds rests at the end of `bar` until it is full, when that can be done exactly.
  *
  * The gap goes at the end because that is where shortening a beat leaves it: every later
@@ -203,14 +217,8 @@ export function fillBarGaps(bar: BarDoc, meter: BarMeter): void {
   const fill = barFillOf(bar, meter);
   const voice = bar.voices[0];
   if (fill.kind !== 'under' || !voice) return;
-  const { timeSignature } = meter;
-  if (barGridFault(timeSignature, SLOT_DIVISION) !== null) return;
 
-  const used = voiceTicks(voice);
-  if (used % SLOT_TICKS !== 0 || fill.ticks % SLOT_TICKS !== 0) return;
-
-  const frame = metricFrame(timeSignature, SLOT_DIVISION / timeSignature.denominator);
-  const units = slotsToDurations(fill.ticks / SLOT_TICKS, SLOT_DIVISION, used / SLOT_TICKS, frame);
+  const units = spelledTicks(fill.ticks, voiceTicks(voice), meter.timeSignature) ?? [];
   const rests = units.map(unit => ({ ...createRestBeat(unit.duration), dots: unit.dots }));
   voice.beats.splice(graceRunStart(voice, voice.beats.length), 0, ...rests);
 }
@@ -260,4 +268,145 @@ export function absorbFollowingRests(
     voice.beats.splice(index, 1);
   }
   return Math.max(0, remaining);
+}
+
+/** What Fix bar did: how many bars it had to add, or why it did nothing. */
+export type FixBarResult =
+  | { kind: 'fixed'; appendedBars: number }
+  | { kind: 'refused'; reason: string };
+
+const TUPLET_ACROSS_LINE =
+  'A tuplet crosses the bar line, so no written value can split it. Shorten it until the bar fits.';
+
+/**
+ * Carries the overflow of bar `barIndex` on one staff into the bars after it, tied, until
+ * a bar it reaches is no longer over. See the section comment above Task B6 in the M1 plan
+ * for what a continuation carries.
+ *
+ * Every bar is read against its own `barMeterAt`, so a free-time bar is never over: Fix bar
+ * refuses one, and a carry that reaches one stops there, taking none of its rests.
+ *
+ * **May leave `doc` partly changed when it refuses.** Call it on a draft you can discard.
+ */
+export function fixBarOverflow(
+  doc: ScoreDoc,
+  trackIndex: number,
+  staffIndex: number,
+  barIndex: number
+): FixBarResult {
+  const staff = doc.tracks[trackIndex]?.staves[staffIndex];
+  if (!staff?.bars[barIndex]) return { kind: 'refused', reason: 'There is no bar there.' };
+
+  let appendedBars = 0;
+  for (let index = barIndex; index < staff.bars.length; index++) {
+    const meter = barMeterAt(doc, index);
+    const bar = staff.bars[index];
+
+    if (barFillOf(bar, meter).kind !== 'over') {
+      if (index === barIndex) {
+        return { kind: 'refused', reason: 'That bar is not over its time signature.' };
+      }
+      fillBarGaps(bar, meter);
+      return { kind: 'fixed', appendedBars };
+    }
+
+    const carried = beatsPastBarLine(
+      bar.voices[0],
+      meter.timeSignature,
+      barMeterAt(doc, index + 1).timeSignature
+    );
+    if (carried === null) return { kind: 'refused', reason: TUPLET_ACROSS_LINE };
+
+    if (index === staff.bars.length - 1) {
+      insertBarInto(doc, staff.bars.length);
+      appendedBars++;
+    }
+
+    const next = staff.bars[index + 1];
+    next.voices[0].beats.unshift(...carried);
+    takeTrailingRests(next, barMeterAt(doc, index + 1));
+  }
+  return { kind: 'fixed', appendedBars };
+}
+
+/**
+ * Cuts `voice` at its bar line and returns what lay past it: the tied tail of the beat that
+ * crossed the line, then every later beat whole. Returns null, leaving `voice` untouched,
+ * when the crossing beat cannot be split into written values.
+ *
+ * A grace beat is 0 ticks, so it never crosses the line. Graces just before the first whole
+ * beat past it go with that beat; graces before a crossing beat stay with its head. Graces
+ * after a crossing beat go behind its tied tail, keeping the order they were written in - so
+ * graces that ended the bar, which led into nothing there, follow the tail into the next bar.
+ */
+function beatsPastBarLine(
+  voice: VoiceDoc,
+  timeSignature: TimeSignature,
+  nextTimeSignature: TimeSignature
+): BeatDoc[] | null {
+  const capacity = barCapacityTicks(timeSignature);
+  let start = 0;
+
+  for (let index = 0; index < voice.beats.length; index++) {
+    const beat = voice.beats[index];
+    const end = start + beatTicks(beat);
+    if (end <= capacity) {
+      start = end;
+      continue;
+    }
+
+    if (start >= capacity) return voice.beats.splice(graceRunStart(voice, index));
+
+    const head = spelledTicks(capacity - start, start, timeSignature);
+    const tail = spelledTicks(end - capacity, 0, nextTimeSignature);
+    if (!head || !tail) return null;
+
+    const after = voice.beats.splice(index + 1);
+    voice.beats.splice(index, 1, ...piecesOf(beat, head, false));
+    return [...piecesOf(beat, tail, true), ...after];
+  }
+  return [];
+}
+
+/**
+ * `beat` rewritten as one beat per written value. The first piece of the head is the beat
+ * itself, re-valued, so its effects and attack stay where they were struck; every other
+ * piece is a tied continuation - same pitches, `isTied`, no effects.
+ */
+function piecesOf(beat: BeatDoc, units: DurationUnit[], isTail: boolean): BeatDoc[] {
+  return units.map((unit, index): BeatDoc => {
+    if (index === 0 && !isTail) {
+      return { ...structuredClone(beat), duration: unit.duration, dots: unit.dots, tuplet: null };
+    }
+    return {
+      ...createRestBeat(unit.duration),
+      dots: unit.dots,
+      isRest: beat.isRest,
+      notes: beat.notes.map(note => ({
+        ...structuredClone(note),
+        isTied: true,
+        effects: createDefaultNoteEffects()
+      }))
+    };
+  });
+}
+
+/**
+ * Removes rests from the end of `bar` while it is over `meter`, and stops as soon as it is not.
+ *
+ * Stopping when the bar stops being over, rather than once some number of ticks is covered,
+ * is what keeps a whole rest that still fits: once the rests after it are gone a lone whole
+ * rest is full in any meter (`barFillOf`), and a carry can leave a whole rest exactly filling
+ * a bar beside it. It stops at a note, a grace beat, or a rest a grace leads into
+ * (`isTakeableRest`); what it cannot take stays as overflow. A free-time bar is never over, so
+ * nothing is taken from one.
+ */
+function takeTrailingRests(bar: BarDoc, meter: BarMeter): void {
+  const voice = bar.voices[0];
+  if (!voice) return;
+  while (barFillOf(bar, meter).kind === 'over') {
+    const last = voice.beats.length - 1;
+    if (last < 0 || !isTakeableRest(voice, last)) return;
+    voice.beats.pop();
+  }
 }

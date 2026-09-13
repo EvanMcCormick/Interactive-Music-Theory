@@ -11,6 +11,7 @@ import {
   barFillOf,
   beatTicks,
   fillBarGaps,
+  fixBarOverflow,
   scoreBarFills
 } from './bar-fill';
 import {
@@ -18,6 +19,7 @@ import {
   BeatDoc,
   DurationValue,
   NoteDoc,
+  ScoreDoc,
   Tuplet,
   createDefaultBar,
   createDefaultBeatEffects,
@@ -441,6 +443,199 @@ describe('bar-fill', () => {
 
       expect(left).toBe(1920);
       expect(bar.voices[0].beats.map(beat => beat.effects.grace)).toEqual(['none', 'beforeBeat', 'none', 'none']);
+    });
+  });
+
+  describe('fixBarOverflow', () => {
+    const fretNote = (): NoteDoc => ({
+      pitch: { kind: 'fretted', string: 1, fret: 0 },
+      isTied: false,
+      accidental: 'auto',
+      effects: { ...createDefaultNoteEffects(), accent: 'normal' }
+    });
+    const noteBeat = (duration: DurationValue): BeatDoc => ({
+      ...createRestBeat(duration),
+      isRest: false,
+      notes: [fretNote()]
+    });
+    const graceBeat = (): BeatDoc => {
+      const beat = noteBeat(8);
+      return { ...beat, effects: { ...beat.effects, grace: 'beforeBeat' } };
+    };
+    const shape = (doc: ScoreDoc, bar: number): string[] =>
+      doc.tracks[0].staves[0].bars[bar].voices[0].beats.map(beat =>
+        `${beat.isRest ? 'r' : 'n'}${beat.duration}${'.'.repeat(beat.dots)}${beat.notes[0]?.isTied ? '~' : ''}`);
+
+    it('splits a beat across the bar line and ties the rest into the next bar', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(2)];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n4~', 'r4', 'r4', 'r4']);
+    });
+
+    it('gives the tied continuation the pitch and not the attack', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(2)];
+
+      fixBarOverflow(doc, 0, 0, 0);
+
+      const tail = doc.tracks[0].staves[0].bars[1].voices[0].beats[0].notes[0];
+      expect(tail.pitch).toEqual({ kind: 'fretted', string: 1, fret: 0 });
+      expect(tail.effects.accent).toBe('none');
+    });
+
+    it('carries whole beats past the line without splitting them', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+
+      fixBarOverflow(doc, 0, 0, 0);
+
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n4', 'r4', 'r4', 'r4']);
+    });
+
+    it('carries on into the next bar when that one has no rests to give', () => {
+      const doc = ComposerService.createEmptyScore();
+      const bars = doc.tracks[0].staves[0].bars;
+      bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+      bars[1].voices[0].beats = [4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+
+      fixBarOverflow(doc, 0, 0, 0);
+
+      expect(scoreBarFills(doc)[0][0].map(fill => fill.kind)).toEqual(['full', 'full', 'full', 'full']);
+      expect(shape(doc, 2)).toEqual(['n4', 'r4', 'r4', 'r4']);
+    });
+
+    it('appends a bar only when the carry runs off the end', () => {
+      const doc = ComposerService.createEmptyScore();
+      const last = doc.tracks[0].staves[0].bars[3];
+      last.voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+
+      const result = fixBarOverflow(doc, 0, 0, 3);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 1 });
+      expect(doc.masterBars.length).toBe(5);
+      expect(shape(doc, 4)).toEqual(['n4', 'r4', 'r4', 'r4']);
+    });
+
+    it('refuses a bar that is not over', () => {
+      const doc = ComposerService.createEmptyScore();
+
+      expect(fixBarOverflow(doc, 0, 0, 0).kind).toBe('refused');
+    });
+
+    it('refuses a free-time bar however much it holds, since free time is never over', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.masterBars[0].isFreeTime = true;
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'refused', reason: jasmine.stringMatching(/not over/) });
+      expect(shape(doc, 0).length).toBe(5);
+    });
+
+    it('refuses to split a tuplet across the bar line', () => {
+      // Three quarters, a triplet eighth, then a quarter that starts 640 ticks before the
+      // line: 640 is not a whole number of 64ths, so no written value can be the head.
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [
+        noteBeat(4), noteBeat(4), noteBeat(4),
+        { ...noteBeat(8), tuplet: { numerator: 3, denominator: 2 } },
+        noteBeat(4)
+      ];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result.kind).toBe('refused');
+    });
+
+    it('carries a grace note with the beat it leads into', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [
+        noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(4), graceBeat(), noteBeat(4)
+      ];
+
+      fixBarOverflow(doc, 0, 0, 0);
+
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n8', 'n4', 'r4', 'r4', 'r4']);
+      expect(doc.tracks[0].staves[0].bars[1].voices[0].beats[0].effects.grace).toBe('beforeBeat');
+    });
+
+    it('carries a grace that ends the bar behind the tied tail, in the order it was written', () => {
+      // The grace follows the half that crosses the line, so it follows the whole half - head
+      // and tail. It led into nothing where it was, and leads into a rest now.
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(2), graceBeat()];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n4~', 'n8', 'r4', 'r4', 'r4']);
+      expect(doc.tracks[0].staves[0].bars[1].voices[0].beats[1].effects.grace).toBe('beforeBeat');
+    });
+
+    it('never takes a rest a grace leads into, and carries on instead', () => {
+      // Bar 2 cannot give up its last rest, so it goes over and passes the grace and that rest on.
+      const doc = ComposerService.createEmptyScore();
+      const bars = doc.tracks[0].staves[0].bars;
+      bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+      bars[1].voices[0].beats = [createRestBeat(4), createRestBeat(4), createRestBeat(4), graceBeat(), createRestBeat(4)];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+      expect(shape(doc, 1)).toEqual(['n4', 'r4', 'r4', 'r4']);
+      expect(shape(doc, 2)).toEqual(['n8', 'r4', 'r4', 'r4', 'r4']);
+    });
+
+    it('refuses a bar that is only a whole rest, which fills any meter', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.masterBars[0].timeSignature = { numerator: 3, denominator: 4, isCommon: false };
+      doc.tracks[0].staves[0].bars[1].voices[0].beats = [createRestBeat(1)];
+
+      expect(fixBarOverflow(doc, 0, 0, 1).kind).toBe('refused');
+    });
+
+    it('takes a lone whole rest as room when the bar is over with it, and fills behind what it carried', () => {
+      // Once the carried quarter joins it the whole rest is no longer alone, so it is measured
+      // at 3840: 4800 in a 3/4 bar of 2880 is over, so it is taken, the bar is one quarter,
+      // and the gap fills from beat 2.
+      const doc = ComposerService.createEmptyScore();
+      doc.masterBars[0].timeSignature = { numerator: 3, denominator: 4, isCommon: false };
+      const bars = doc.tracks[0].staves[0].bars;
+      bars[0].voices[0].beats = [4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+      bars[1].voices[0].beats = [createRestBeat(1)];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n4', 'r2']);
+    });
+
+    it('keeps a whole rest the carry leaves the bar exactly full with', () => {
+      // In 5/4 the carried quarter and the whole rest, measured at 3840 now it is not alone,
+      // are 4800 ticks: the bar's capacity. Rests are taken only while a bar is over, so the
+      // whole rest stays.
+      const doc = ComposerService.createEmptyScore();
+      doc.masterBars[1].timeSignature = { numerator: 5, denominator: 4, isCommon: false };
+      const bars = doc.tracks[0].staves[0].bars;
+      bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+      bars[1].voices[0].beats = [createRestBeat(1)];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n4', 'r1']);
+      expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'full' });
     });
   });
 });
