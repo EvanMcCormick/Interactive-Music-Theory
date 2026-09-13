@@ -240,24 +240,32 @@ function isTakeableRest(voice: VoiceDoc, index: number): boolean {
 
 /**
  * Removes rests after `beat` in `voice` until `ticks` are covered, and returns the ticks it
- * could not cover.
+ * could not cover. `voice` is in a bar measured against `meter`.
  *
  * It stops at the first note - the design's line: lengthening consumes only following
  * rests, and anything that would overwrite a note is left as overflow for the user to
- * see. It stops at a grace beat too, rest or not, and never removes one (`isTakeableRest`).
- * And it stops at any beat in `changing`, so a range pressed together is changed
- * together rather than one beat eating its neighbours. A rest longer than what is left is
- * taken whole; the caller's `fillBarGaps` puts the difference back. Beats are held by
- * identity, not index, because every removal shifts the indices after it.
+ * see. It stops at a grace beat too, rest or not, or a rest a grace leads into, and never
+ * removes either (`isTakeableRest`). And it stops at any beat in `changing`, so a range
+ * pressed together is changed together rather than one beat eating its neighbours. A rest
+ * longer than what is left is taken whole; the caller's `fillBarGaps` puts the difference
+ * back. Beats are held by identity, not index, because every removal shifts the indices
+ * after it.
+ *
+ * In a free-time bar it removes nothing and returns all of `ticks`: the meter does not
+ * govern that bar, so there is no room to make, and a lengthened beat simply makes the bar
+ * longer. `meter` is required, like every per-bar function here, so no caller can forget
+ * to ask. The walk's index never moves: each removal brings the next beat to it.
  */
 export function absorbFollowingRests(
   voice: VoiceDoc,
   beat: BeatDoc,
   ticks: number,
-  changing: ReadonlySet<BeatDoc>
+  changing: ReadonlySet<BeatDoc>,
+  meter: BarMeter
 ): number {
+  if (meter.isFreeTime) return ticks;
   let remaining = ticks;
-  let index = voice.beats.indexOf(beat) + 1;
+  const index = voice.beats.indexOf(beat) + 1;
   if (index === 0) return remaining;
 
   // Every pass removes a beat or stops, so the walk ends however little a beat is worth.

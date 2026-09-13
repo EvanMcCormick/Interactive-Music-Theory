@@ -378,7 +378,7 @@ describe('bar-fill', () => {
       const [first] = bar.voices[0].beats;
       first.duration = 2;
 
-      const left = absorbFollowingRests(bar.voices[0], first, 960, new Set());
+      const left = absorbFollowingRests(bar.voices[0], first, 960, new Set(), FOUR_FOUR);
 
       expect(left).toBe(0);
       expect(bar.voices[0].beats.length).toBe(3);
@@ -390,7 +390,7 @@ describe('bar-fill', () => {
       beats[1] = { ...beats[1], isRest: false, notes: [note()] };
       beats[0].duration = 2;
 
-      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set());
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set(), FOUR_FOUR);
 
       expect(left).toBe(960);
       expect(bar.voices[0].beats.length).toBe(4);
@@ -402,7 +402,7 @@ describe('bar-fill', () => {
       beats[1] = { ...beats[1], isRest: false };
       beats[0].duration = 2;
 
-      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set());
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set(), FOUR_FOUR);
 
       expect(left).toBe(0);
       expect(bar.voices[0].beats.length).toBe(3);
@@ -413,7 +413,7 @@ describe('bar-fill', () => {
       const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
       const beats = bar.voices[0].beats;
 
-      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set(beats));
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set(beats), FOUR_FOUR);
 
       expect(left).toBe(960);
       expect(bar.voices[0].beats.length).toBe(4);
@@ -424,7 +424,7 @@ describe('bar-fill', () => {
       bar.voices[0].beats = [createRestBeat(4), createRestBeat(2), createRestBeat(4)];
       bar.voices[0].beats[0].duration = 2;
 
-      const left = absorbFollowingRests(bar.voices[0], bar.voices[0].beats[0], 960, new Set());
+      const left = absorbFollowingRests(bar.voices[0], bar.voices[0].beats[0], 960, new Set(), FOUR_FOUR);
       fillBarGaps(bar, FOUR_FOUR);
 
       expect(left).toBe(0);
@@ -439,10 +439,24 @@ describe('bar-fill', () => {
       beats.splice(2, 0, { ...createRestBeat(8), effects: { ...createDefaultBeatEffects(), grace: 'beforeBeat' } });
       beats[0].duration = 1;
 
-      const left = absorbFollowingRests(bar.voices[0], beats[0], 2880, new Set());
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 2880, new Set(), FOUR_FOUR);
 
       expect(left).toBe(1920);
       expect(bar.voices[0].beats.map(beat => beat.effects.grace)).toEqual(['none', 'beforeBeat', 'none', 'none']);
+    });
+
+    it('takes nothing in a free-time bar, which the lengthened beat simply makes longer', () => {
+      // Free time is the score saying the meter does not govern this bar, so there is no room
+      // to make: all 960 ticks come back, and the three rests stay where they were.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const before = [...bar.voices[0].beats];
+      before[0].duration = 2;
+
+      const left = absorbFollowingRests(bar.voices[0], before[0], 960, new Set(), meterOf(4, 4, true));
+
+      expect(left).toBe(960);
+      expect(bar.voices[0].beats).toEqual(before);
+      expect(bar.voices[0].beats.every((beat, index) => beat === before[index])).toBeTrue();
     });
   });
 
