@@ -87,7 +87,10 @@ Five choices were put to the user; each records what was rejected.
    consumes only following rests. Anything that would overwrite a note or cross the
    bar line leaves the bar red with a **Fix bar** command. Rejected: fully automatic
    (a slip overwrites earlier notes) and free-with-a-warning (every bar tidied by
-   hand). Bars are measured as alphaTab lays them out. Grace beats take no room, so
+   hand). Gap rests go where the gap opened, so the beats after it keep their places, as
+   Guitar Pro writes them: after a beat that shrank, after a beat that grew by taking a
+   longer rest than it needed, and after what Fix bar carried; only a meter change fills at
+   the end of the bar. Bars are measured as alphaTab lays them out. Grace beats take no room, so
    making or unmaking a grace settles the bar like any length change, and lengthening
    stops at a grace or a rest a grace leads into. A lone whole rest fills a bar in any
    meter. A free-time bar is never filled or trimmed; taking a bar out of free time fits
@@ -167,20 +170,28 @@ existing note and beat commands already refuse generated tracks, and this extend
 that gate to every family. A note tool on a rest refuses the same way.
 
 **Bar filling in the flow.** A duration change fills the affected bars' gaps with
-rests inside the same commit. Overflow is never resolved automatically: a pure
+rests inside the same commit, each where it opened and spelled from there, so the beats after
+it keep their places. A beat that shrinks gets its rests right after it: an empty 4/4 bar
+whose first quarter becomes an eighth is `r8 r8 r4 r4 r4`. A beat that grows takes the rests
+after it, and when the last one it took was longer than it needed the spare goes back right
+after it: `n4 r4 r4 r4` dotted is `n4. r8 r4 r4`. Rests never go between a grace and the beat
+it leads into. Overflow is never resolved automatically: a pure
 `scoreBarFills(doc)` reports each bar as full, under or over by how much - `barFillAt`
 reads one bar - and the track strip and score overlay read it. **Fix bar** is its own
 command on the selected bars: it splits the overflowing beat at the bar line, ties the
-remainder into the next bar, and appends a bar only when the carry runs off the end of
-the score. A grace beat
+remainder into the next bar - carrying what goes on sounding, the dynamic, palm mute, let
+ring, a harmonic, vibrato and a crescendo, and nothing that attacks - makes room there by
+taking trailing rests, putting any it took beyond the need right after what it carried, and
+appends a bar only when the carry runs off the end of the score. It refuses, saying why, a
+tuplet across the line, a split between 64th notes, and a meter with no room. A grace beat
 takes no room, so making a beat a grace, or a grace an ordinary beat, settles the bar
 in the same commit as a duration change does, and a lengthened beat stops at a grace
 or a rest a grace leads into rather than take it. A bar holding only a whole rest is
 full in any meter, because alphaTab draws it as a full-bar rest. A free-time bar is full
 whatever it holds: nothing fills it, trims it, carries out of it, or takes its rests when
 a beat in it grows. Taking a bar out of free time fits it to its meter in the same
-commit, on every staff: trailing rests go while it is over, a gap fills, and notes that
-no longer fit stay as overflow for Fix bar.
+commit, on every staff: trailing rests go while it is over, a gap fills at the end of the
+bar, where a meter change opens it, and notes that no longer fit stay as overflow for Fix bar.
 
 **Pen** writes through the same note commands. Its hover notehead is rendering only
 and never touches the document.
