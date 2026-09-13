@@ -85,8 +85,14 @@ the reasoning is there, not here.
 
 ## Next milestone, when there is one
 
-The design doc's "Not in M4" names the one that unlocks the others: **a progression
-library**. It would give `GeneratedOrigin.progressionId` a far end worth persisting,
+**Next up is the composer editor redesign**, designed on 2026-09-13 in
+`docs/plans/2026-09-13-composer-editor-design.md`: a Guitar Pro-style palette,
+selection and shortcuts over a model and mapper that stop losing data. It came first
+because the composer cannot set a time signature, which blocked a hand check of the
+`insertBar(0)` fix.
+
+After that, the progression design doc's "Not in M4" names the one that unlocks the
+others: **a progression library**. It would give `GeneratedOrigin.progressionId` a far end worth persisting,
 make the `'foreign'` state in the tracks panel reachable (it is coded and specced but
 cannot occur today), and turn "more than one generated track" from a curiosity into a
 case with a name.

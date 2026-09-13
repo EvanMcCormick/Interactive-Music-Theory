@@ -349,6 +349,7 @@ a limitation or a bug.
 | Two-Tier Transcription | [plans/2026-09-07-two-tier-transcription-design.md](plans/2026-09-07-two-tier-transcription-design.md) | Implemented |
 | Circle of Fifths | [plans/2026-09-07-circle-of-fifths-design.md](plans/2026-09-07-circle-of-fifths-design.md) | Implemented |
 | Progression Composer | [plans/2026-09-08-progression-composer-design.md](plans/2026-09-08-progression-composer-design.md) | Implemented, M1-M4 |
+| Composer Editor Redesign | [plans/2026-09-13-composer-editor-design.md](plans/2026-09-13-composer-editor-design.md) | Designed |
 
 Implementation plans, one per milestone, sit beside each design in `plans/`. The
 transcription investigations that produced *negative* results are kept too — the onset

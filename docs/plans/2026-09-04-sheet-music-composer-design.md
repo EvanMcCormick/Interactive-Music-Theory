@@ -300,8 +300,12 @@ Working and verified in the browser: note entry on fretted and pitched staves,
 playback, undo/redo, multi-track, add/remove bars and tracks, save/load to the
 IndexedDB library, export, and the alphaTex escape hatch with diagnostics.
 
-Still outstanding, all of which the model and mapper already support - only the
-UI controls are missing:
+Still outstanding. This said "all of which the model and mapper already support -
+only the UI controls are missing", and an inventory on 2026-09-13 found that untrue:
+none of these has a service command, and the mapper drops hammer-ons, bends, beat
+staccato, fade-in and double bars and cannot read slides back. The list is taken
+over by [2026-09-13-composer-editor-design.md](2026-09-13-composer-editor-design.md),
+which records the loss table and the plan.
 
 - Editing time signature, key signature and clef per bar.
 - Repeats, alternate endings, section markers and triplet feel.
