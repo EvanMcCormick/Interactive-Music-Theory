@@ -266,3 +266,97 @@ describe('ComposerService selection', () => {
     expect(state().anchor).toBeNull();
   });
 });
+
+describe('ComposerService edits', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  const refusal = (): string | null => {
+    let latest: string | null = null;
+    service.getState().subscribe(value => (latest = value.refusal)).unsubscribe();
+    return latest;
+  };
+  const writeNote = (barIndex: number, beatIndex: number, string = 1): void => {
+    service.setCursor({ barIndex, beatIndex, stringIndex: string - 1 });
+    service.setNoteAtCursor({ kind: 'fretted', string, fret: 3 }, false);
+  };
+
+  it('palm-mutes every note in a range as one undo step', () => {
+    writeNote(0, 0);
+    writeNote(0, 1);
+    service.setCursor({ barIndex: 0, beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 1 });
+
+    service.toggleNoteEffect('isPalmMute', true, false);
+    const beats = service.doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    expect(beats.slice(0, 2).every(beat => beat.notes[0].effects.isPalmMute)).toBeTrue();
+
+    service.undo();
+    expect(service.doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].effects.isPalmMute).toBeFalse();
+  });
+
+  it('acts on the caret\'s string alone in a chord', () => {
+    writeNote(0, 0, 1);
+    writeNote(0, 0, 2);
+    service.setCursor({ barIndex: 0, beatIndex: 0, stringIndex: 1 });
+
+    service.toggleNoteEffect('isGhost', true, false);
+
+    const notes = service.doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes;
+    expect(notes.map(note => note.effects.isGhost)).toEqual([false, true]);
+  });
+
+  it('refuses a note tool on a rest, says why, and spends no undo', () => {
+    const before = JSON.stringify(service.doc);
+
+    service.toggleNoteEffect('isGhost', true, false);
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(refusal()).toMatch(/note/i);
+    let canUndo = true;
+    service.getState().subscribe(value => (canUndo = value.canUndo)).unsubscribe();
+    expect(canUndo).toBeFalse();
+  });
+
+  it('clears the refusal when the next edit lands', () => {
+    service.toggleNoteEffect('isGhost', true, false);
+    writeNote(0, 0);
+
+    service.toggleNoteEffect('isGhost', true, false);
+
+    expect(refusal()).toBeNull();
+  });
+
+  it('makes a grace by the toggle rule, settling the bar each way', () => {
+    // The caret's quarter rest becomes a grace, which takes no room. The rest that fills its gap
+    // goes where the quarter stood, in front of the grace, so the grace moves to index 2 - and
+    // the caret follows it there, so a second press acts on the grace. Pressed again it is a
+    // quarter, and takes the rest it led into.
+    const beats = () => service.doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    const caret = (): number => {
+      let beatIndex = -1;
+      service.getState().subscribe(value => (beatIndex = value.cursor.beatIndex)).unsubscribe();
+      return beatIndex;
+    };
+    service.setCursor({ barIndex: 0, beatIndex: 1 });
+
+    service.toggleGrace('beforeBeat');
+    expect(beats().map(beat => beat.effects.grace)).toEqual(['none', 'none', 'beforeBeat', 'none', 'none']);
+    expect(caret()).toBe(2);
+
+    service.toggleGrace('beforeBeat');
+    expect(beats().map(beat => beat.effects.grace)).toEqual(['none', 'none', 'none', 'none']);
+  });
+
+  it('marks a dynamic on every beat in a range, rests included', () => {
+    service.selectAllInTrack();
+
+    service.setDynamics('mp');
+
+    expect(service.doc.tracks[0].staves[0].bars[3].voices[0].beats[3].dynamics).toBe('mp');
+  });
+});

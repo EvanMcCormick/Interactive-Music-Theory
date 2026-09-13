@@ -1,18 +1,23 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import {
+  AccidentalMode,
   BarDoc,
   BeatDoc,
+  BeatEffectsDoc,
   ComposerState,
   DurationValue,
+  DynamicValue,
   EditCursor,
   MasterBarDoc,
   NoteDoc,
+  NoteEffectsDoc,
   NotePitch,
   ScoreDoc,
   StaffDoc,
   TimeSignature,
   TrackDoc,
+  Tuplet,
   createDefaultBar,
   effectiveTimeSignature,
   createDefaultCursor,
@@ -22,6 +27,10 @@ import {
   createRestBeat,
   STANDARD_GUITAR_TUNING
 } from '../models/composer.model';
+import { beatsAt, setDynamics, setGrace, setTuplet, toggleBeatEffect, toggledValue } from './beat-edits';
+import { BeatRef, selectionTargets } from './composer-selection';
+import { EditScope, editRefusal } from './edit-refusals';
+import { setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 import { insertBarInto } from './score-structure';
 
@@ -477,6 +486,93 @@ export class ComposerService {
     }
 
     this.setInputDuration(duration, dots);
+  }
+
+  // -------------------------------------------------------------------------
+  // Edits on the selection
+  // -------------------------------------------------------------------------
+
+  /** Presses a note effect tool on the selection. See `toggleNoteEffect` in note-edits.ts. */
+  toggleNoteEffect<K extends keyof NoteEffectsDoc>(key: K, on: NoteEffectsDoc[K], off: NoteEffectsDoc[K]): void {
+    this.applyEdit({ family: 'note', key }, (draft, refs, focus) => toggleNoteEffect(draft, refs, focus, key, on, off));
+  }
+
+  setAccidental(accidental: AccidentalMode): void {
+    this.applyEdit({ family: 'note', key: 'accidental', accidental }, (draft, refs, focus) => setAccidental(draft, refs, focus, accidental));
+  }
+
+  toggleTie(): void {
+    this.applyEdit({ family: 'note', key: 'tie' }, (draft, refs, focus) => toggleTie(draft, refs, focus));
+  }
+
+  /** Presses a beat effect tool on the selection. Not grace: see `toggleGrace`. */
+  toggleBeatEffect<K extends Exclude<keyof BeatEffectsDoc, 'grace'>>(
+    key: K,
+    on: BeatEffectsDoc[K],
+    off: BeatEffectsDoc[K]
+  ): void {
+    this.applyEdit({ family: 'beat' }, (draft, refs) => toggleBeatEffect(draft, refs, key, on, off));
+  }
+
+  /**
+   * Presses Grace before or Grace on beat, by the toggle rule: when every target is already
+   * that grace, they become ordinary beats again. A grace takes no room, so this is a length
+   * change, and `setGrace` settles each bar as a duration change does.
+   *
+   * With the caret alone, the caret follows its beat. The rests that fill a new grace's gap go
+   * where its value stood, in front of it, so the grace's index moves forward by however many
+   * rests that took. Left where it was, the caret would sit on one of those rests, and pressing
+   * the same tool again - to undo a mistaken press by the toggle rule, or to add an effect to
+   * the grace - would act on the rest instead. A range keeps its ends, which name beats by
+   * position; see `selectionTargets`.
+   */
+  toggleGrace(grace: Exclude<BeatEffectsDoc['grace'], 'none'>): void {
+    const { anchor, cursor } = this.stateSubject.getValue();
+    let followed: number | null = null;
+
+    this.applyEdit({ family: 'beat' }, (draft, refs) => {
+      const caretBeat = anchor ? null : this.beatAt(draft, cursor);
+      setGrace(draft, refs, toggledValue(beatsAt(draft, refs).map(beat => beat.effects.grace), grace, 'none'));
+      const index = caretBeat ? (this.voiceAt(draft, cursor)?.beats.indexOf(caretBeat) ?? -1) : -1;
+      followed = index >= 0 ? index : null;
+    });
+
+    if (followed !== null) this.setCursor({ beatIndex: followed });
+  }
+
+  setDynamics(dynamics: DynamicValue | null): void {
+    this.applyEdit({ family: 'beat' }, (draft, refs) => setDynamics(draft, refs, dynamics));
+  }
+
+  setTuplet(tuplet: Tuplet | null): void {
+    this.applyEdit({ family: 'beat' }, (draft, refs) => setTuplet(draft, refs, tuplet));
+  }
+
+  /**
+   * The one way a note or beat edit reaches the document.
+   *
+   * A refusal is published and nothing is committed, so a refused press costs no undo step
+   * and changes nothing at all - not half a range. The focused string applies only when the
+   * selection is the caret alone: a range means every note in it.
+   */
+  private applyEdit(
+    scope: EditScope,
+    edit: (draft: ScoreDoc, refs: BeatRef[], focus: number | null) => void
+  ): void {
+    const state = this.stateSubject.getValue();
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const focus = state.anchor ? null : state.cursor.stringIndex;
+    const refusal = editRefusal(state.doc, refs, scope, focus);
+    if (refusal) {
+      this.refuse(refusal);
+      return;
+    }
+    this.commit(draft => edit(draft, refs, focus));
+  }
+
+  /** Publishes why a command did nothing. Commits nothing, so it costs no undo step. */
+  private refuse(reason: string): void {
+    this.stateSubject.next({ ...this.stateSubject.getValue(), refusal: reason });
   }
 
 

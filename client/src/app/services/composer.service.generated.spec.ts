@@ -286,6 +286,19 @@ describe('ComposerService generated tracks', () => {
     expect(service.doc.tracks.some(track => track.generated !== null)).toBeFalse();
   });
 
+  it('refuses a range that reaches a generated track, whole', () => {
+    service.sendProgression(built(atRevision(4)));
+    const generated = service.doc.tracks.findIndex(track => track.generated !== null);
+    service.setCursor({ trackIndex: 0, barIndex: 0, beatIndex: 0 });
+    service.extendSelectionTo({ trackIndex: generated, barIndex: 1 });
+    const before = JSON.stringify(service.doc);
+
+    service.setDynamics('pp');
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(state().refusal).toMatch(/progression/i);
+  });
+
   it('still writes notes into the user\'s own track', () => {
     // The gate reads the caret's track, not the score's - a score holding a
     // generated track is not a read-only score.
