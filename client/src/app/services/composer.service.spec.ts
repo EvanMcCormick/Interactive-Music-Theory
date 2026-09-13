@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 
 import { ComposerService } from './composer.service';
+import { selectionTargets } from './composer-selection';
 import { progressionTrack } from './progression-track';
 import { DEFAULT_VELOCITY } from '../models/progression-normalize';
 import {
@@ -9,6 +10,7 @@ import {
   createDegreeSlot
 } from '../models/progression.model';
 import {
+  ComposerState,
   ScoreDoc,
   TimeSignature,
   effectiveTimeSignature
@@ -199,5 +201,68 @@ describe('ComposerService updateScoreInfo', () => {
     service.updateScoreInfo({ title: 'Named' });
     service.updateScoreInfo({});
     expect(service.doc.title).toBe('Named');
+  });
+});
+
+describe('ComposerService selection', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  const state = (): ComposerState => {
+    let latest: ComposerState | undefined;
+    service.getState().subscribe(value => (latest = value)).unsubscribe();
+    if (!latest) throw new Error('no state');
+    return latest;
+  };
+
+  it('starts as the caret alone', () => {
+    expect(state().anchor).toBeNull();
+  });
+
+  it('extends from where the caret was', () => {
+    service.setCursor({ barIndex: 0, beatIndex: 1 });
+
+    service.extendSelectionTo({ barIndex: 1, beatIndex: 0 });
+
+    expect(state().anchor?.beatIndex).toBe(1);
+    expect(state().cursor.barIndex).toBe(1);
+    expect(selectionTargets(service.doc, state().anchor, state().cursor).length).toBe(4);
+  });
+
+  it('drops the range on a plain caret move', () => {
+    service.extendSelectionTo({ barIndex: 2 });
+
+    service.setCursor({ barIndex: 0 });
+
+    expect(state().anchor).toBeNull();
+  });
+
+  it('selects every beat of the caret\'s track', () => {
+    service.selectAllInTrack();
+
+    expect(selectionTargets(service.doc, state().anchor, state().cursor).length).toBe(16);
+  });
+
+  it('keeps the anchor inside the score when bars go', () => {
+    service.setCursor({ barIndex: 0 });
+    service.extendSelectionTo({ barIndex: 3 });
+    service.setCursor({ barIndex: 3 });
+    service.extendSelectionTo({ barIndex: 0 });
+
+    service.removeBar(3);
+
+    expect(state().anchor?.barIndex).toBe(2);
+  });
+
+  it('drops the range when the whole document is replaced', () => {
+    service.extendSelectionTo({ barIndex: 2 });
+
+    service.replaceDocument(ComposerService.createEmptyScore());
+
+    expect(state().anchor).toBeNull();
   });
 });

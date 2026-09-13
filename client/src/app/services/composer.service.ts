@@ -172,6 +172,8 @@ export class ComposerService {
       ...state,
       doc: draft,
       cursor: cursor ? this.clampCursor(cursor, draft) : this.clampCursor(state.cursor, draft),
+      anchor: state.anchor ? this.clampCursor(state.anchor, draft) : null,
+      refusal: null,
       isDirty: true,
       canUndo: true,
       canRedo: false
@@ -188,6 +190,7 @@ export class ComposerService {
       ...state,
       doc: previous,
       cursor: this.clampCursor(state.cursor, previous),
+      anchor: state.anchor ? this.clampCursor(state.anchor, previous) : null,
       isDirty: true,
       canUndo: this.undoStack.length > 0,
       canRedo: true
@@ -204,6 +207,7 @@ export class ComposerService {
       ...state,
       doc: next,
       cursor: this.clampCursor(state.cursor, next),
+      anchor: state.anchor ? this.clampCursor(state.anchor, next) : null,
       isDirty: true,
       canUndo: true,
       canRedo: this.redoStack.length > 0
@@ -220,6 +224,8 @@ export class ComposerService {
       ...state,
       doc,
       cursor: this.clampCursor(state.cursor, doc),
+      anchor: null,
+      refusal: null,
       isDirty: !markClean,
       canUndo: true,
       canRedo: false
@@ -235,11 +241,40 @@ export class ComposerService {
   // Cursor
   // -------------------------------------------------------------------------
 
+  /** Moves the caret, and drops any range: a plain click or arrow key. */
   setCursor(cursor: Partial<EditCursor>): void {
     const state = this.stateSubject.getValue();
     this.stateSubject.next({
       ...state,
+      anchor: null,
       cursor: this.clampCursor({ ...state.cursor, ...cursor }, state.doc)
+    });
+  }
+
+  /**
+   * Moves the selection's moving end, fixing the other end where the caret was if no range
+   * existed yet: shift-click and shift-arrow.
+   */
+  extendSelectionTo(cursor: Partial<EditCursor>): void {
+    const state = this.stateSubject.getValue();
+    this.stateSubject.next({
+      ...state,
+      anchor: state.anchor ?? state.cursor,
+      cursor: this.clampCursor({ ...state.cursor, ...cursor }, state.doc)
+    });
+  }
+
+  /** Selects every beat of the caret's staff, first bar to last. */
+  selectAllInTrack(): void {
+    const state = this.stateSubject.getValue();
+    const staff = this.staffAt(state.doc, state.cursor);
+    if (!staff) return;
+    const lastBar = staff.bars.length - 1;
+    const lastBeat = (staff.bars[lastBar]?.voices[state.cursor.voiceIndex]?.beats.length ?? 1) - 1;
+    this.stateSubject.next({
+      ...state,
+      anchor: { ...state.cursor, barIndex: 0, beatIndex: 0 },
+      cursor: this.clampCursor({ ...state.cursor, barIndex: lastBar, beatIndex: lastBeat }, state.doc)
     });
   }
 
@@ -275,7 +310,7 @@ export class ComposerService {
 
     const current = state.cursor.stringIndex ?? 0;
     const next = Math.max(0, Math.min(staff.tuning.length - 1, current + delta));
-    this.setCursor({ stringIndex: next });
+    this.stateSubject.next({ ...state, cursor: { ...state.cursor, stringIndex: next } });
   }
 
   private clampCursor(cursor: EditCursor, doc: ScoreDoc): EditCursor {
