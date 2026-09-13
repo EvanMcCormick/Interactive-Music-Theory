@@ -1717,6 +1717,70 @@ number, which is how the source modules are cut too: a spec named for an aspect
 is one a later reader can decide to read or skip, where a spec named for a half
 is one they have to open to find out.
 
+### What running the page found
+
+Everything above was settled by argument, by spec, or by reading a dependency's
+source. This section is the one written *after* someone opened the app and used
+it, and it is here because every item in it is a defect no spec in this
+milestone could have caught — each is either a sentence that is true when it is
+written and rots afterwards, or a fact about a rendered box that the suite has
+no way to see.
+
+**A refusal outlived the document it described.** Pressing Send on an empty
+progression says there are no chords in it. Adding three left the sentence on
+screen, now false, until the next press cleared it. `forgetStaleMessage` takes
+a message down when `ProgressionDoc.revision` moves, which is exactly "the
+document this was about has changed" — and not on every publish, because the
+page also hears selections and Composer edits, neither of which makes a
+sentence about the document untrue. The specs asserted on the press, where the
+message is correct; nothing asserted on the moment afterwards.
+
+**The tracks panel encoded its state only in labels.** `'stale'` has two causes
+and one sentence was serving both, so a score-side bar insert announced that
+the progression had changed when it had not. The two are now told apart, and
+the state is drawn *beside the badge* rather than living in an `aria-label`:
+Update refuses with `aria-disabled` and an early return instead of `disabled`,
+because a disabled control is out of the tab order and browsers suppress its
+tooltip, so the explanation the plan asked that label to carry reached only a
+screen reader in browse mode. "Add progression track" refuses on the same
+reading, so the panel can no longer do from one button what the button beside
+it is greyed out to prevent.
+
+**Two labels named one progression twice.** Nothing renames a progression, so
+the track and the marker are both *Progression* and Update read "it already
+matches the progression Progression". Every spec that asserted a label renamed
+the progression first — the one case where the stutter cannot happen — so the
+suite covered the interesting case and never the default one. `sourceOf` says
+"the progression it came from" when naming it would only repeat the row's own
+label.
+
+**A send that commits but does not navigate now says so.** `Router.navigate`
+resolves `false` on a guard rejection and rejects on a guard error; both were
+being discarded, leaving the user on the page with a button that had silently
+relabelled itself. The message has to say *sent but not navigated*, because the
+commit stands.
+
+**The preview was drawing into a third of its panel.** Not a scale problem, and
+worth recording because the obvious diagnosis is wrong: alphaTab leaves a
+score's *final* system at its natural width, which is correct for a printed
+page. A progression is almost always one system, so the only system is also the
+last one and nothing ever stretched. `justifyLastSystem` turns that off — and a
+long progression running to several systems now stretches its final partial one
+too, which is unusual engraving and the right trade for a view whose job is to
+be read. The setting travels through `AlphaTabService`'s hand-written mapping,
+so passing it from the component alone compiled and did nothing.
+
+**The two export buttons wrapped.** `flex: 1 1 8rem` meant the pair wanted 264px
+of a 240px block. A zero basis lets them share the row; the wrap survives on
+`min-width`, measured rather than guessed, so the fallback is a clean column
+rather than a broken label.
+
+The pattern worth keeping: five of these six are *messages and boxes*, which is
+the half of a feature a headless suite is worst at. The arithmetic this
+milestone worried most about — the revision counter, the letter mapping, the
+merge rules — was right when it was first run. What was wrong was what the page
+said about itself.
+
 ### Not in M4
 
 - **A score that changes meter mid-way.** The generated track is barred by the

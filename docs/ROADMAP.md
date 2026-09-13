@@ -328,6 +328,10 @@ disagree from the point a score changes meter mid-way; and `insertBar(0)` leaves
 with no declared signature, which makes a 3/4 score read as 4/4 to everything that asks
 what meter it is in — pre-existing, but M4 made that question load-bearing.
 
+Those, and everything else known to be left, are collected in [TODO.md](TODO.md) —
+including three checks nobody has performed and the one item in the list that is a real
+bug rather than a recorded limitation.
+
 One hand-check is outstanding: alphaTab's Guitar Pro exporter appears, from reading its
 source, to write a C♭ as B♭ and a B♯ as C♯. Nobody has yet opened an exported file in
 real Guitar Pro, so it is recorded in the design doc as an open question rather than as

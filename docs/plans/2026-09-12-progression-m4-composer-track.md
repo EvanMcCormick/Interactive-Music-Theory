@@ -1,5 +1,11 @@
 # Progression Composer M4 — Implementation Plan
 
+> **Status: complete.** All fourteen tasks landed and merged to `main` on 2026-09-12,
+> along with the review fixes each one earned and six more found by running the page.
+> The suite went from 2224 to 2426. What the plan got wrong is recorded task by task in
+> the design doc's "M4 decisions"; what is still outstanding is in [TODO.md](../TODO.md).
+> This file is kept as the record of how it was built, not as work to do.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** A progression becomes a track inside the Composer — badged, read-only, updated

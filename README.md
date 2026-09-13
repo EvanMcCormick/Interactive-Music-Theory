@@ -441,7 +441,13 @@ When you like it, **Send to Composer** puts it on a staff beside your own tracks
   export of three that could fail with "the player is not ready yet" no longer can
 - 🐛 **Fixed**: An exported ♭II is engraved on the letter its degree names — B♭ major's
   is a C♭ and not a B, on the staff as well as in the roll
-- 🧪 **Tests**: 2,395 passing
+- 🐛 **Fixed**: The linked track says *which* kind of out-of-date it is — the progression
+  moved on, or a score edit moved the track — beside the badge rather than only in a
+  label, and Update stays reachable by keyboard while it is refusing
+- 🐛 **Fixed**: The notation preview fills the panel it sits in. A progression is
+  usually a single system, and a score's last system is drawn at its natural width,
+  so four bars were rendering into a third of the page
+- 🧪 **Tests**: 2,426 passing
 
 ### Chord Recognition (September 2026)
 - ✨ **New**: Edit a chord's notes in the piano roll and the app reads back what chord it

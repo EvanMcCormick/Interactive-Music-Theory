@@ -198,6 +198,12 @@ function calculateNote(fret, stringTuning) {  // implicit any
 - Services: `PascalCase` + `Service` suffix
 - Interfaces: `PascalCase` (no `I` prefix)
 - Methods: `camelCase`, verb-first (`calculateNote`, `playScale`)
+- **Pure derivations are named for what they return**, not verb-first:
+  `progressionToScore`, `keySignatureOf`, `letterOf`, `barBeats`, `slotSpeller`,
+  `generatedTrackState`. This is the established convention across the pure modules
+  in `services/` and was documented in September 2026 after a review flagged the
+  rule above as the thing out of step, not the code. Verb-first still holds for a
+  method that *does* something — a command on a service, an event handler.
 
 ### SCSS Patterns
 - Component-scoped styles ONLY
