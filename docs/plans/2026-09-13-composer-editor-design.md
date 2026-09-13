@@ -89,8 +89,9 @@ Five choices were put to the user; each records what was rejected.
    (a slip overwrites earlier notes) and free-with-a-warning (every bar tidied by
    hand). Bars are measured as alphaTab lays them out. Grace beats take no room, so
    making or unmaking a grace settles the bar like any length change, and lengthening
-   stops at a grace. A lone whole rest fills a bar in any meter. A free-time bar is
-   never filled or trimmed.
+   stops at a grace or a rest a grace leads into. A lone whole rest fills a bar in any
+   meter. A free-time bar is never filled or trimmed; taking a bar out of free time fits
+   it to its meter.
 4. **Selection: ranges, like Guitar Pro.** Click, shift-click, drag; note tools act
    on a focused note in a chord. Rejected: caret only, and tools as sticky input
    modes.
@@ -167,15 +168,19 @@ that gate to every family. A note tool on a rest refuses the same way.
 
 **Bar filling in the flow.** A duration change fills the affected bars' gaps with
 rests inside the same commit. Overflow is never resolved automatically: a pure
-`barStatus(doc)` reports each bar as full or over by how much, and the track strip
-and score overlay read it. **Fix bar** is its own command on the selected bars: it
-splits the overflowing beat at the bar line, ties the remainder into the next bar,
-and appends a bar only when the carry runs off the end of the score. A grace beat
+`scoreBarFills(doc)` reports each bar as full, under or over by how much - `barFillAt`
+reads one bar - and the track strip and score overlay read it. **Fix bar** is its own
+command on the selected bars: it splits the overflowing beat at the bar line, ties the
+remainder into the next bar, and appends a bar only when the carry runs off the end of
+the score. A grace beat
 takes no room, so making a beat a grace, or a grace an ordinary beat, settles the bar
 in the same commit as a duration change does, and a lengthened beat stops at a grace
-rather than take it. A bar holding only a whole rest is full in any meter, because
-alphaTab draws it as a full-bar rest. A free-time bar is full whatever it holds: nothing
-fills it, trims it, or carries out of it.
+or a rest a grace leads into rather than take it. A bar holding only a whole rest is
+full in any meter, because alphaTab draws it as a full-bar rest. A free-time bar is full
+whatever it holds: nothing fills it, trims it, carries out of it, or takes its rests when
+a beat in it grows. Taking a bar out of free time fits it to its meter in the same
+commit, on every staff: trailing rests go while it is over, a gap fills, and notes that
+no longer fit stay as overflow for Fix bar.
 
 **Pen** writes through the same note commands. Its hover notehead is rendering only
 and never touches the document.

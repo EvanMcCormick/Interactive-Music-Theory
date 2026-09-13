@@ -1259,10 +1259,11 @@ Two rules from the design shape every function here:
   rest fills its bar in any meter**, because alphaTab draws it as a full-bar rest - which is
   how an alphaTex `r.1` bar in 3/4 arrives from the library or the source panel.
 
-Every function here that measures one bar takes a `BarMeter` - the time signature in force
-and whether the bar is in free time - rather than a bare time signature, and `barMeterAt`
-reads one from the score, so no caller can drop free time on the way. A free-time bar is full
-whatever it holds, so nothing here fills or trims one. And since a grace takes no room,
+Every function here that measures or settles one bar - `absorbFollowingRests` included -
+takes a `BarMeter` - the time signature in force and whether the bar is in free time - rather
+than a bare time signature, and `barMeterAt` reads one from the score, so no caller can drop
+free time on the way. A free-time bar is full whatever it holds, so nothing here fills or
+trims one, or takes its rests when a beat in it grows. And since a grace takes no room,
 becoming or leaving a grace is a length change: Task C2's `setGrace` settles the bar for it,
 as a duration change does.
 
@@ -1960,7 +1961,7 @@ allowed one dot. It is at the time of writing.
       const [first] = bar.voices[0].beats;
       first.duration = 2;
 
-      const left = absorbFollowingRests(bar.voices[0], first, 960, new Set());
+      const left = absorbFollowingRests(bar.voices[0], first, 960, new Set(), FOUR_FOUR);
 
       expect(left).toBe(0);
       expect(bar.voices[0].beats.length).toBe(3);
@@ -1972,7 +1973,7 @@ allowed one dot. It is at the time of writing.
       beats[1] = { ...beats[1], isRest: false, notes: [note()] };
       beats[0].duration = 2;
 
-      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set());
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set(), FOUR_FOUR);
 
       expect(left).toBe(960);
       expect(bar.voices[0].beats.length).toBe(4);
@@ -1984,7 +1985,7 @@ allowed one dot. It is at the time of writing.
       beats[1] = { ...beats[1], isRest: false };
       beats[0].duration = 2;
 
-      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set());
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set(), FOUR_FOUR);
 
       expect(left).toBe(0);
       expect(bar.voices[0].beats.length).toBe(3);
@@ -1995,7 +1996,7 @@ allowed one dot. It is at the time of writing.
       const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
       const beats = bar.voices[0].beats;
 
-      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set(beats));
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set(beats), FOUR_FOUR);
 
       expect(left).toBe(960);
       expect(bar.voices[0].beats.length).toBe(4);
@@ -2006,7 +2007,7 @@ allowed one dot. It is at the time of writing.
       bar.voices[0].beats = [createRestBeat(4), createRestBeat(2), createRestBeat(4)];
       bar.voices[0].beats[0].duration = 2;
 
-      const left = absorbFollowingRests(bar.voices[0], bar.voices[0].beats[0], 960, new Set());
+      const left = absorbFollowingRests(bar.voices[0], bar.voices[0].beats[0], 960, new Set(), FOUR_FOUR);
       fillBarGaps(bar, FOUR_FOUR);
 
       expect(left).toBe(0);
@@ -2021,10 +2022,24 @@ allowed one dot. It is at the time of writing.
       beats.splice(2, 0, { ...createRestBeat(8), effects: { ...createDefaultBeatEffects(), grace: 'beforeBeat' } });
       beats[0].duration = 1;
 
-      const left = absorbFollowingRests(bar.voices[0], beats[0], 2880, new Set());
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 2880, new Set(), FOUR_FOUR);
 
       expect(left).toBe(1920);
       expect(bar.voices[0].beats.map(beat => beat.effects.grace)).toEqual(['none', 'beforeBeat', 'none', 'none']);
+    });
+
+    it('takes nothing in a free-time bar, which the lengthened beat simply makes longer', () => {
+      // Free time is the score saying the meter does not govern this bar, so there is no room
+      // to make: all 960 ticks come back, and the three rests stay where they were.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const before = [...bar.voices[0].beats];
+      before[0].duration = 2;
+
+      const left = absorbFollowingRests(bar.voices[0], before[0], 960, new Set(), meterOf(4, 4, true));
+
+      expect(left).toBe(960);
+      expect(bar.voices[0].beats).toEqual(before);
+      expect(bar.voices[0].beats.every((beat, index) => beat === before[index])).toBeTrue();
     });
   });
 ```
@@ -2051,24 +2066,32 @@ function isTakeableRest(voice: VoiceDoc, index: number): boolean {
 
 /**
  * Removes rests after `beat` in `voice` until `ticks` are covered, and returns the ticks it
- * could not cover.
+ * could not cover. `voice` is in a bar measured against `meter`.
  *
  * It stops at the first note - the design's line: lengthening consumes only following
  * rests, and anything that would overwrite a note is left as overflow for the user to
- * see. It stops at a grace beat too, rest or not, and never removes one (`isTakeableRest`).
- * And it stops at any beat in `changing`, so a range pressed together is changed
- * together rather than one beat eating its neighbours. A rest longer than what is left is
- * taken whole; the caller's `fillBarGaps` puts the difference back. Beats are held by
- * identity, not index, because every removal shifts the indices after it.
+ * see. It stops at a grace beat too, rest or not, or a rest a grace leads into, and never
+ * removes either (`isTakeableRest`). And it stops at any beat in `changing`, so a range
+ * pressed together is changed together rather than one beat eating its neighbours. A rest
+ * longer than what is left is taken whole; the caller's `fillBarGaps` puts the difference
+ * back. Beats are held by identity, not index, because every removal shifts the indices
+ * after it.
+ *
+ * In a free-time bar it removes nothing and returns all of `ticks`: the meter does not
+ * govern that bar, so there is no room to make, and a lengthened beat simply makes the bar
+ * longer. `meter` is required, like every per-bar function here, so no caller can forget
+ * to ask. The walk's index never moves: each removal brings the next beat to it.
  */
 export function absorbFollowingRests(
   voice: VoiceDoc,
   beat: BeatDoc,
   ticks: number,
-  changing: ReadonlySet<BeatDoc>
+  changing: ReadonlySet<BeatDoc>,
+  meter: BarMeter
 ): number {
+  if (meter.isFreeTime) return ticks;
   let remaining = ticks;
-  let index = voice.beats.indexOf(beat) + 1;
+  const index = voice.beats.indexOf(beat) + 1;
   if (index === 0) return remaining;
 
   // Every pass removes a beat or stops, so the walk ends however little a beat is worth.
@@ -2935,6 +2958,19 @@ describe('setBeatDurations', () => {
     expect(beats(doc).map(beat => `${beat.duration}${'.'.repeat(beat.dots)}`)).toEqual(['16', '4', '4', '4', '4', '8.']);
     expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
   });
+
+  it('leaves a free-time bar as the change made it, taking none of its rests', () => {
+    // The meter does not govern a free-time bar, so the quarter that becomes a half takes
+    // nothing after it and nothing fills behind it: four beats, a half and three quarters,
+    // 4800 ticks - and the bar still reads full, because a free-time bar always does.
+    const doc = ComposerService.createEmptyScore();
+    doc.masterBars[0].isFreeTime = true;
+
+    setBeatDurations(doc, [ref(0, 0)], 2, 0);
+
+    expect(beats(doc).map(beat => beat.duration)).toEqual([2, 4, 4, 4]);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
 });
 
 describe('setGrace', () => {
@@ -3090,8 +3126,9 @@ export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEff
  * a beat that grows takes the rests after it, never a note, a grace, or another beat being
  * changed; whatever it cannot take is left as overflow for Fix bar; and any gap is filled
  * with rests. A beat's length is `beatTicks`, so becoming or leaving a grace is a change like
- * any other. Each bar is settled against its own `barMeterAt`, so a free-time bar is left as
- * the change made it.
+ * any other. Each bar is settled against its own `barMeterAt`, read once and passed to both
+ * the absorbing and the filling, so a free-time bar is left as the change made it: none of
+ * its rests are taken and no gap is filled.
  *
  * Beats are changed last to first within a bar, so absorbing the rests after one beat never
  * moves a beat still waiting its turn.
@@ -3111,13 +3148,14 @@ function relength(doc: ScoreDoc, refs: readonly BeatRef[], change: (beat: BeatDo
 
   for (const [bar, { barIndex, voiceIndex, beats }] of bars) {
     const voice = bar.voices[voiceIndex];
+    const meter = barMeterAt(doc, barIndex);
     for (const beat of [...beats].reverse()) {
       const before = beatTicks(beat);
       change(beat);
       const grown = beatTicks(beat) - before;
-      if (grown > 0) absorbFollowingRests(voice, beat, grown, changing);
+      if (grown > 0) absorbFollowingRests(voice, beat, grown, changing, meter);
     }
-    fillBarGaps(bar, barMeterAt(doc, barIndex));
+    fillBarGaps(bar, meter);
   }
 }
 ```
@@ -3631,6 +3669,11 @@ the next deliberate change stops it. A time signature inherits, so it is declare
 the bars under it are fitted: trailing rests go while a bar is over, gaps fill, and notes
 that no longer fit stay as overflow for Fix bar. A free-time bar is left as it is.
 
+Free time is a bar flag, and nothing fits a bar while it is in free time, so taking a bar out
+of free time fits it to its meter in the same edit, on every staff - otherwise a short bar
+would stay short until its next length edit. Putting a bar into free time changes nothing
+else.
+
 **Files:**
 - Modify: `client/src/app/services/bar-fill.ts` (export `fitBarToMeter`)
 - Create: `client/src/app/services/bar-edits.ts`
@@ -3770,6 +3813,41 @@ describe('toggleMasterBarFlag', () => {
 
     expect(doc.masterBars.slice(0, 2).map(bar => bar.isDoubleBar)).toEqual([true, true]);
   });
+
+  it('fits a bar taken out of free time to its meter, on every staff', () => {
+    // Bar 2 is a lone quarter rest in free time on both tracks, full while free. Out of free
+    // time it is 4/4's, 2880 ticks short from beat 2: the gap fills to the half-bar with a
+    // quarter rest, then a half rest, so the bar is a quarter, a quarter and a half, and full.
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    doc.masterBars[1].isFreeTime = true;
+    for (const track of doc.tracks) {
+      for (const staff of track.staves) staff.bars[1].voices[0].beats = [createRestBeat(4)];
+    }
+
+    toggleMasterBarFlag(doc, { first: 1, last: 1 }, 'isFreeTime');
+
+    expect(doc.masterBars[1].isFreeTime).toBeFalse();
+    for (const track of doc.tracks) {
+      for (const staff of track.staves) {
+        expect(staff.bars[1].voices[0].beats.map(beat => beat.duration)).toEqual([4, 4, 2]);
+      }
+    }
+    expect(scoreBarFills(doc).every(track => track.every(staff => staff[1].kind === 'full'))).toBeTrue();
+  });
+
+  it('leaves a bar put into free time as it was', () => {
+    // A lone quarter rest is 2880 ticks short in 4/4. Free time changes nothing in the bar:
+    // it only stops the meter governing it, so the bar reads full holding the same quarter.
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[1].voices[0].beats = [createRestBeat(4)];
+
+    toggleMasterBarFlag(doc, { first: 1, last: 1 }, 'isFreeTime');
+
+    expect(doc.masterBars[1].isFreeTime).toBeTrue();
+    expect(doc.tracks[0].staves[0].bars[1].voices[0].beats.map(beat => beat.duration)).toEqual([4]);
+    expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'full' });
+  });
 });
 ```
 
@@ -3907,7 +3985,14 @@ export function setClef(
   }
 }
 
-/** Presses a bar flag tool across bars `first` to `last`, by the toggle rule. */
+/**
+ * Presses a bar flag tool across bars `first` to `last`, by the toggle rule.
+ *
+ * Free time is the one flag that changes how a bar is measured. Nothing fits a bar while it is
+ * in free time (`barFillOf` calls it full), so each bar this press takes out of free time is
+ * fitted to its meter on every staff, read after the flag changes - otherwise a short bar would
+ * stay short until its next length edit. Putting a bar into free time changes nothing else.
+ */
 export function toggleMasterBarFlag(
   doc: ScoreDoc,
   bars: { first: number; last: number },
@@ -3915,7 +4000,19 @@ export function toggleMasterBarFlag(
 ): void {
   const targets = doc.masterBars.slice(bars.first, bars.last + 1);
   const value = toggledValue(targets.map(bar => bar[key]), true, false);
+  const leavingFreeTime = targets.flatMap((bar, offset) =>
+    key === 'isFreeTime' && bar.isFreeTime && !value ? [bars.first + offset] : []
+  );
   for (const bar of targets) bar[key] = value;
+
+  for (const track of doc.tracks) {
+    for (const staff of track.staves) {
+      for (const index of leavingFreeTime) {
+        const bar = staff.bars[index];
+        if (bar) fitBarToMeter(bar, barMeterAt(doc, index));
+      }
+    }
+  }
 }
 
 /** Sets a valued bar attribute across bars `first` to `last`. */
@@ -4671,6 +4768,11 @@ Then the commands (import the bar and track edits, `selectedBars`, `ClefKind`,
     this.applyBarEdit((draft, bars) => setClef(draft, trackIndex, staffIndex, bars.first, clef, ottava));
   }
 
+  /**
+   * A bar flag over the selected bars. Taking bars out of free time fits them to their meter
+   * in the same commit (`toggleMasterBarFlag`), so that is one undo step too, and like any bar
+   * edit it stamps generated tracks diverged.
+   */
   toggleMasterBarFlag(key: 'isRepeatStart' | 'isDoubleBar' | 'isFreeTime'): void {
     this.applyBarEdit((draft, bars) => toggleMasterBarFlag(draft, bars, key));
   }
