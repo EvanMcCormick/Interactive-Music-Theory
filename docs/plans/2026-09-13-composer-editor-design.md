@@ -1,7 +1,7 @@
 # Composer Editor Redesign
 
 **Date:** 2026-09-13
-**Status:** Designed, not started
+**Status:** Designed; M1 planned in [2026-09-13-composer-editor-m1.md](2026-09-13-composer-editor-m1.md)
 **Replaces:** the "Still outstanding" list in
 [2026-09-04-sheet-music-composer-design.md](2026-09-04-sheet-music-composer-design.md)
 
@@ -34,7 +34,8 @@ a mapper gap is permanent loss:
 | Field | What happens |
 |---|---|
 | `isHammerPullOrigin`, `bendPoints` | Neither written nor read |
-| `BeatEffectsDoc` staccato, fade in | Neither written nor read |
+| `BeatEffectsDoc.fadeIn` | Neither written nor read |
+| `BeatEffectsDoc.isStaccato` | Nowhere to go: alphaTab's `Beat` has no staccato, only `Note.isStaccato`. Removed from the model in M1 |
 | `slide` | Written, never read back - gone after a reload |
 | `MasterBarDoc.isDoubleBar` | Read, never written |
 | `accidental: 'explicit'` | Always `ForceSharp`, so a forced flat returns as a sharp |
@@ -57,8 +58,12 @@ package:
 |---|---|
 | Tempo, capo, time signature and a mid-score change, key signature, repeat open and count, alternate endings, section, triplet feel, bend, hammer-on, legato and shift slide, palm mute, let ring, staccato, ghost, natural harmonic, vibrato, accent, trill, tie, fade in, dynamics, tuplet, grace note, pick stroke, dead note, fermata, crescendo | **Double bar** (`\db` parses, is not exported) |
 
-Fingering was in the test but not conclusively: `lf 1` read back as `0` on both sides,
-which is consistent but proves nothing.
+Fingering was in that test but not conclusively (`lf 1` read `0` on both sides). A
+second probe built the score with plain property writes, the way the mapper does, and
+settled it: fingering, tenuto, trill value and speed, fermata type and length,
+decrescendo, pick stroke, fade in, a legato slide and a two-point bend all survive, and
+`Score.finish` derives the bend type and the hammer-on destination by itself. Setting
+the field is enough; the mapper never computes alphaTab's derived state.
 
 So every loss in the table above is ours to fix, and one - the double bar - is
 alphaTab's. Persistence stays alphaTex.
@@ -101,8 +106,9 @@ Built bottom-up. A palette button is only as good as the command and the persist
 under it, so each layer is proven before the next leans on it.
 
 1. **Model and mapper.** Add to the model what alphaTab has and `ScoreDoc` lacks:
-   accent and heavy accent, tenuto, trill, fingering, fermata, crescendo and
-   diminuendo, grace notes, pick stroke. Fix every row of the loss table. One
+   accent, heavy accent and tenuto (one field - alphaTab's `AccentuationType` makes
+   them exclusive), trill, fingering, fermata, crescendo and diminuendo, wide vibrato,
+   pick stroke. Fix every row of the loss table. One
    round-trip spec per field, through the mapper and alphaTex and back. The double bar
    is reported upstream and pinned as a known loss, the way the C♭ `.gp` question was
    recorded.
@@ -114,7 +120,7 @@ under it, so each layer is proven before the next leans on it.
 
 | | Delivers | Visible change |
 |---|---|---|
-| **M1** | Model additions, mapper fixes and round-trip specs, `normalizeScoreDoc`, selection, commands, bar filling | Saving stops losing data. Nothing else |
+| **M1** | Model additions, mapper fixes and round-trip specs, selection, commands, bar filling | Saving stops losing data, and today's duration buttons fill gaps and leave overflow for Fix bar |
 | **M2** | Palette, Select / Pen, the tool table and every shortcut, the new page grid | The editor |
 | **M3** | Inspector and track strip: tuning presets (a real bass tuning), capo, transpose, staff views, mixer | Track setup |
 | **M4** | Tools that need their own editor: bend curve, custom tuplet, trill speed | The long tail |
@@ -139,10 +145,11 @@ The highlight uses alphaTab's `highlightPlaybackRange(startBeat, endBeat)`, whic
 the markers without setting `playbackRange`, so selecting does not change what the
 transport loops.
 
-**Commands are pure functions** of the document and the selection, returning a new
-document, in four modules: `beat-edits`, `note-edits`, `bar-edits`, `track-edits`. The
-service wraps each call in a single `commit()`, so one press over a forty-beat range
-is one undo.
+**Commands are edit functions** of a draft document and the selection, free of service
+state, in four modules: `beat-edits`, `note-edits`, `bar-edits`, `track-edits`. They
+change the draft `commit()` hands them rather than returning a copy - `commit()` has
+already cloned, and a second clone would buy nothing. The service wraps each call in a
+single `commit()`, so one press over a forty-beat range is one undo.
 
 **Toggles on a mixed range.** If any target lacks the effect, the press turns it on
 for all; if all have it, the press turns it off. A button therefore has three states -
@@ -248,9 +255,11 @@ overflowing bar does not - alphaTex stores and renders it.
 **Paste** writes from the caret for the copied length and then fills gaps. Overflow is
 flagged, never pushed on.
 
-**Older saves.** New model fields default to `false` or `null`, and a
-`normalizeScoreDoc` on load fills anything missing, so compositions saved before the
-redesign open unchanged.
+**Older saves need nothing.** The library stores alphaTex, not a serialised `ScoreDoc` -
+`composer-library.service.ts` says so, for exactly this reason - and every load goes
+through `ScoreDocMapperService.toDoc`, which constructs every field. A composition saved
+before the redesign cannot come back missing a new one. The `normalizeScoreDoc` this
+section first proposed was dropped while planning M1.
 
 **Tests.**
 
@@ -415,4 +424,4 @@ Not rejected - not yet placed. Each needs its own design pass:
   panel scrolled sideways, which its styles permit. The M2 grid removes the panel.
 - **Before the first click, the caret box is not drawn** - it needs a click to learn
   which staff it is on - so arrow keys move an invisible caret. The selection
-  highlight in M1 draws from state rather than from the last click.
+  highlight in M2 draws from state rather than from the last click.
