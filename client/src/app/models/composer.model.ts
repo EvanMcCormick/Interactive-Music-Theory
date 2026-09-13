@@ -30,7 +30,8 @@ export type AccidentalMode = 'auto' | 'explicit';
 
 /**
  * An accent mark. One field for three marks because alphaTab's `AccentuationType` holds
- * them in one, so a note carries at most one of them.
+ * them in one, so a note carries at most one of them. Staccato is not one of them: alphaTab
+ * keeps it in `Note.isStaccato`, and a note can be staccato and accented at once.
  */
 export type AccentKind = 'none' | 'normal' | 'heavy' | 'tenuto';
 

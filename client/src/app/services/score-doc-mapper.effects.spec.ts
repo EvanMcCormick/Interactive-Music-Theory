@@ -189,5 +189,18 @@ describe('ScoreDocMapperService effects round trip', () => {
     });
   }
 
+  it('keeps staccato and an accent together on one note', () => {
+    // Separate fields in alphaTab, so neither may clear the other - a palette that made
+    // them exclusive would be wrong.
+    const doc = guitarBar(beats => {
+      beats[0].notes[0].effects.isStaccato = true;
+      beats[0].notes[0].effects.accent = 'heavy';
+    });
+
+    const effects = beatsOf(throughTex(doc))[0].notes[0].effects;
+    expect(effects.isStaccato).toBeTrue();
+    expect(effects.accent).toBe('heavy');
+  });
+
   // <!-- A5 -->
 });
