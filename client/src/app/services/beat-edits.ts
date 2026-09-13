@@ -5,9 +5,18 @@ import {
   DurationValue,
   DynamicValue,
   ScoreDoc,
-  Tuplet
+  Tuplet,
+  VoiceDoc
 } from '../models/composer.model';
-import { absorbFollowingRests, barFillOf, barMeterAt, beatTicks, fillBarGaps, insertRestsAt } from './bar-fill';
+import {
+  BarMeter,
+  absorbFollowingRests,
+  barFillOf,
+  barMeterAt,
+  beatTicks,
+  fillBarGaps,
+  insertRestsAt
+} from './bar-fill';
 import { BeatRef, beatAt } from './composer-selection';
 
 /**
@@ -109,46 +118,92 @@ export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEff
  * everything that settles it, so a free-time bar is left as the change made it: none of its
  * rests are taken and no gap is filled.
  *
- * Each beat is settled as it changes, at that beat. One that shrinks frees room right after it.
- * One that grows takes the rests after it, and when the last rest it took was longer than it
- * needed, the spare (`RestsTaken.overTaken`) is room freed right after it. Freed room fills with
- * rests there (`insertRestsAt`), spelled from where it starts - but only as much as the bar is
- * now short, so a beat that shrinks in an overflowing bar uses up the overflow first. So four
- * quarters set to eighths are `n8 r8 n8 r8 n8 r8 n8 r8`, and `n4 r4 r4 r4` dotted is
- * `n4. r8 r4 r4`.
+ * A range is settled in two passes, so that it never reports overflow its new lengths do not
+ * have. Settled one beat at a time, a beat that shrank would spend its room on rests at once,
+ * while an earlier beat that grew could not take its changing neighbour: `n4 n8 n8 n2` set to
+ * quarters would read as over, holding rests, when four quarters fill the bar exactly.
  *
- * Beats are changed last to first within a bar, so settling one never moves a beat still
- * waiting its turn. A beat settled exactly keeps everything after it where it was, so the rests
- * already placed for later beats stay where their gaps opened. A bar still short once every beat
- * is settled - one that arrived short, or a gap no rest could spell at its position, such as a
- * tuplet's remainder - fills at its end (`fillBarGaps`), where that can be spelled.
+ * 1. **Last to first, every beat changes.** One that grows takes the rests after it
+ *    (`absorbFollowingRests`), never a beat still changing. What it could not take is its
+ *    blocked growth; when the last rest it took was longer than it needed, the spare
+ *    (`RestsTaken.overTaken`) is room freed right after it. One that shrinks frees its
+ *    difference right after it. No rest goes in yet. Last to first, so taking rests never moves
+ *    a beat still waiting its turn.
+ * 2. **First to last, freed room fills with rests** right after the beat that freed it
+ *    (`insertRestsAt`), spelled from where it starts - but only while the bar is short, and only
+ *    as much as it is short. So room a shrinking beat frees pays for growth elsewhere in the
+ *    range first, and a beat that shrinks in an overflowing bar uses up the overflow. Four
+ *    quarters set to eighths are `n8 r8 n8 r8 n8 r8 n8 r8`; `n4 r4 r4 r4` dotted is `n4. r8 r4 r4`.
+ * 3. **Blocked growth takes the rests after the range.** A beat blocked only by its changing
+ *    neighbour is still owed room when the bar is over. The range's last beat takes up to that
+ *    much of the rests after it, and puts back right after itself what it took beyond the need.
+ *    Growth a note blocks stays as overflow for Fix bar, as the design asks.
+ * 4. A bar still short - one that arrived short, or a gap no rest could spell at its position,
+ *    such as a tuplet's remainder - fills at its end (`fillBarGaps`), where that can be spelled.
  */
 function relength(doc: ScoreDoc, refs: readonly BeatRef[], change: (beat: BeatDoc) => void): void {
   const changing = new Set(beatsAt(doc, refs));
-  const bars = new Map<BarDoc, { barIndex: number; voiceIndex: number; beats: BeatDoc[] }>();
+  // Grouped by voice, not bar: a range's beats are settled against the voice they are in. Bar
+  // filling measures voice 1 (`barFillOf`), and `editRefusal` refuses an edit on any other, so
+  // today each voice here is a bar's first.
+  const voices = new Map<VoiceDoc, { bar: BarDoc; barIndex: number; beats: BeatDoc[] }>();
 
   for (const ref of refs) {
     const bar = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex];
+    const voice = bar?.voices[ref.voiceIndex];
     const beat = beatAt(doc, ref);
-    if (!bar || !beat) continue;
-    const entry = bars.get(bar) ?? { barIndex: ref.barIndex, voiceIndex: ref.voiceIndex, beats: [] };
+    if (!bar || !voice || !beat) continue;
+    const entry = voices.get(voice) ?? { bar, barIndex: ref.barIndex, beats: [] };
     entry.beats.push(beat);
-    bars.set(bar, entry);
+    voices.set(voice, entry);
   }
 
-  for (const [bar, { barIndex, voiceIndex, beats }] of bars) {
-    const voice = bar.voices[voiceIndex];
-    const meter = barMeterAt(doc, barIndex);
-    for (const beat of [...beats].reverse()) {
-      const before = beatTicks(beat);
-      change(beat);
-      const grown = beatTicks(beat) - before;
-      const freed = grown > 0 ? absorbFollowingRests(voice, beat, grown, changing, meter).overTaken : -grown;
-      const fill = barFillOf(bar, meter);
-      if (freed > 0 && fill.kind === 'under') {
-        insertRestsAt(voice, voice.beats.indexOf(beat) + 1, Math.min(freed, fill.ticks), meter);
-      }
-    }
-    fillBarGaps(bar, meter);
+  for (const [voice, { bar, barIndex, beats }] of voices) {
+    settleRange(voice, bar, barMeterAt(doc, barIndex), beats, changing, change);
   }
+}
+
+/** `relength`'s passes for one voice. `beats` are the changing beats in it, in any order. */
+function settleRange(
+  voice: VoiceDoc,
+  bar: BarDoc,
+  meter: BarMeter,
+  beats: readonly BeatDoc[],
+  changing: ReadonlySet<BeatDoc>,
+  change: (beat: BeatDoc) => void
+): void {
+  // Beats are removed and inserted around them, never reordered, so this order holds throughout.
+  const inOrder = [...beats].sort((a, b) => voice.beats.indexOf(a) - voice.beats.indexOf(b));
+  const freed = new Map<BeatDoc, number>();
+  let blocked = 0;
+
+  for (const beat of [...inOrder].reverse()) {
+    const before = beatTicks(beat);
+    change(beat);
+    const grown = beatTicks(beat) - before;
+    if (grown > 0) {
+      const taken = absorbFollowingRests(voice, beat, grown, changing, meter);
+      blocked += taken.uncovered;
+      freed.set(beat, taken.overTaken);
+    } else {
+      freed.set(beat, -grown);
+    }
+  }
+
+  for (const beat of inOrder) {
+    const room = freed.get(beat) ?? 0;
+    const fill = barFillOf(bar, meter);
+    if (room > 0 && fill.kind === 'under') {
+      insertRestsAt(voice, voice.beats.indexOf(beat) + 1, Math.min(room, fill.ticks), meter);
+    }
+  }
+
+  const fill = barFillOf(bar, meter);
+  const last = inOrder[inOrder.length - 1];
+  if (fill.kind === 'over' && blocked > 0 && last) {
+    const taken = absorbFollowingRests(voice, last, Math.min(blocked, fill.ticks), changing, meter);
+    insertRestsAt(voice, voice.beats.indexOf(last) + 1, taken.overTaken, meter);
+  }
+
+  fillBarGaps(bar, meter);
 }

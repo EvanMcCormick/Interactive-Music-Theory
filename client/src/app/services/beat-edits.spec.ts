@@ -2,7 +2,7 @@ import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
 import { setBeatDurations, setGrace, setTuplet, toggleBeatEffect, toggledValue } from './beat-edits';
 import { scoreBarFills } from './bar-fill';
-import { ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
+import { DurationValue, ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
 
 const ref = (barIndex: number, beatIndex: number): BeatRef =>
   ({ trackIndex: 0, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex });
@@ -148,6 +148,101 @@ describe('setBeatDurations', () => {
 
     expect(beats(doc).map(beat => beat.duration)).toEqual([2, 4, 4, 4]);
     expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+});
+
+describe('setBeatDurations on a range', () => {
+  /** An empty score whose first bar is `written`: `n` or `r`, a value and its dots, as `shape` prints. */
+  const scoreWith = (written: string): ScoreDoc => {
+    const doc = ComposerService.createEmptyScore();
+    beats(doc).splice(0, beats(doc).length, ...written.split(' ').map(token => {
+      const [, kind, value, dots] = /^([nr])(\d+)(\.*)$/.exec(token) ?? ['', 'r', '4', ''];
+      return { ...createRestBeat(Number(value) as DurationValue), dots: dots.length };
+    }));
+    written.split(' ').forEach((token, index) => {
+      if (token.startsWith('n')) withNote(doc, 0, index);
+    });
+    return doc;
+  };
+  const refsTo = (count: number): BeatRef[] => Array.from({ length: count }, (_, index) => ref(0, index));
+
+  // Every case below changes beats a range holds together. Settled one at a time, a beat that
+  // grows could not take a neighbour that is itself changing, while the room a later beat freed
+  // was already spent on rests: the bar read as over when every beat's new length fitted it.
+
+  it('fits a range whose later beats shrink as its earlier ones grow', () => {
+    // 960 480 480 1920 to four quarters. The half frees 960; each eighth grows by 480 into its
+    // changing neighbour, which the freed room now covers. Nothing needs a rest.
+    const doc = scoreWith('n4 n8 n8 n2');
+
+    setBeatDurations(doc, refsTo(4), 4, 0);
+
+    expect(shape(doc)).toEqual(['n4', 'n4', 'n4', 'n4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+
+  it('puts only what is left of the freed room back as rests, where it opened', () => {
+    // The half becomes a quarter and frees 960; the eighth before it grows by 480. The bar is 480
+    // short, which fills right after the quarter that shrank, at 1920 - so the quarter and eighth
+    // rests after it keep their places at 2400 and 3360.
+    const doc = scoreWith('n8 n2 r4 r8');
+
+    setBeatDurations(doc, refsTo(2), 4, 0);
+
+    expect(shape(doc)).toEqual(['n4', 'n4', 'r8', 'r4', 'r8']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+
+  it('lets a growing beat at the end of the bar use room freed before it', () => {
+    // The eighth rest ends the bar and grows by 480 with nothing after it; the eighth grows by
+    // 480 into the unchanged quarter. The half frees 960, which covers both.
+    const doc = scoreWith('n2 n8 n4 r8');
+
+    setBeatDurations(doc, refsTo(4), 4, 0);
+
+    expect(shape(doc)).toEqual(['n4', 'n4', 'n4', 'r4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+
+  it('gives growth blocked by a changing neighbour the rests after the range', () => {
+    // The second eighth rest grows into the third and takes it. The first grows into the second,
+    // which is changing, so its 480 is blocked - and the bar is 480 over until the last beat of
+    // the range takes the next eighth rest for it.
+    const doc = scoreWith('r8 r8 r8 r8 r8 r8 r8 r8');
+
+    setBeatDurations(doc, refsTo(2), 4, 0);
+
+    expect(shape(doc)).toEqual(['r4', 'r4', 'r8', 'r8', 'r8', 'r8']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+
+  it('fits two eighths that grow into the room a half frees after them', () => {
+    const doc = scoreWith('n8 n8 n4 n2');
+
+    setBeatDurations(doc, refsTo(4), 4, 0);
+
+    expect(shape(doc)).toEqual(['n4', 'n4', 'n4', 'n4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+
+  it('fits a range that becomes dotted quarters, one growing and one shrinking', () => {
+    const doc = scoreWith('n4 n2 r4');
+
+    setBeatDurations(doc, refsTo(2), 4, 1);
+
+    expect(shape(doc)).toEqual(['n4.', 'n4.', 'r4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+
+  it('still leaves growth a note blocks as overflow', () => {
+    // Both eighths grow by 480, and the notes after the range give nothing: 960 over, as the
+    // design asks, and no note is taken.
+    const doc = scoreWith('n8 n8 n8 n8 r2');
+
+    setBeatDurations(doc, refsTo(2), 4, 0);
+
+    expect(shape(doc)).toEqual(['n4', 'n4', 'n8', 'n8', 'r2']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'over', ticks: 960 });
   });
 });
 

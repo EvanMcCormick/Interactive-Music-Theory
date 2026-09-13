@@ -2,6 +2,7 @@ import {
   BarDoc,
   BeatDoc,
   BeatEffectsDoc,
+  NoteDoc,
   NoteEffectsDoc,
   ScoreDoc,
   TimeSignature,
@@ -335,12 +336,18 @@ const TUPLET_ACROSS_LINE =
   'A tuplet crosses the bar line, so no written value can split it. Shorten it until the bar fits.';
 
 const OFF_GRID_AT_LINE =
-  'The beat at the bar line starts or ends between 64th notes, so it cannot be split exactly.';
+  'A beat before the bar line, or the one across it, is off the 64th-note grid, so the beat across ' +
+  'the line cannot be split exactly. Change the tuplet, 128th or dotted 64th that puts it off the grid first.';
 
+// The next two can only come from a loaded file: `timeSignatureFault` refuses every meter that
+// would cause them before the composer can set one.
 const NO_GRID_AT_LINE =
-  'A time signature at the bar line has no 64th-note grid, so the beat across it cannot be split exactly.';
+  'A time signature at the bar line has no 64th-note grid, which only a loaded file can have, so ' +
+  'the beat across the line cannot be split exactly. Change the time signature first.';
 
-const NO_ROOM = 'That time signature leaves no room in a bar, so there is nowhere to carry the overflow.';
+const NO_ROOM =
+  'That time signature leaves no room in a bar, which only a loaded file can have, so there is ' +
+  'nowhere to carry the overflow. Change the time signature first.';
 
 /**
  * Carries the overflow of bar `barIndex` on one staff into the bars after it, tied, until
@@ -479,10 +486,27 @@ function beatsPastBarLine(
  * What a tied continuation keeps of the beat and notes it continues: what goes on sounding
  * across the tie, not what attacks.
  *
- * A tied note is not struck again. So accents, hammer-ons and pull-offs, slides, bends, trills,
- * ghost and dead notes, staccato, taps, slap and pop, a pick stroke, a fade in, a grace, a
- * fermata and fingering all stay on the beat that was struck, and a continuation carrying one
- * would show a second attack the player never made. What it keeps is a state that runs on:
+ * A tied note is not struck again. So accents, bends, ghost and dead notes, staccato, taps, slap
+ * and pop, a pick stroke, a fade in, a grace, a fermata, fingering and a slide in from below all
+ * stay on the beat that was struck, and a continuation carrying one would show a second attack
+ * the player never made. What connects the note to the next one - a hammer-on or pull-off, a
+ * shift or legato slide, a slide out - goes to the note's last piece instead (`piecesOf`).
+ *
+ * A continuation prints no accidental: `continuationOf` resets it to `auto`, because the tie
+ * already says the pitch goes on.
+ *
+ * Two things that do go on sounding are still not carried, because of how alphaTab treats a tie:
+ *
+ * - **Note vibrato.** alphaTab draws and plays a tie destination with its origin's vibrato
+ *   (`MidiFileGenerator`, `alphaTab.core.mjs` ~48360; `SlightNoteVibratoEffectInfo` ~63881;
+ *   `WideNoteVibratoEffectInfo` ~64605), so the continuation's own stays none.
+ * - **A trill.** `_generateTrill` (~48998) plays the origin's trill to the end of the tie
+ *   (`untilTieOrSlideEnd`, ~48500), and a continuation with its own trill plays a second one over
+ *   it: pinned by probe, a tied quarter's trill doubled its note events in the bar carried into.
+ *   The cost is on screen: `TrillEffectInfo` (~64233) draws a trill line only on a note that
+ *   has one, so the line stops at the bar line while the sound runs on.
+ *
+ * What a continuation keeps is a state that runs on:
  *
  * - **The dynamic** (`BeatDoc.dynamics`, carried beside these), a level rather than an attack.
  *   alphaTab reads an unmarked beat as forte and prints a dynamic wherever it differs from the
@@ -518,9 +542,28 @@ function continuationOf(beat: BeatDoc): BeatDoc {
     notes: beat.notes.map(note => {
       const noteEffects = createDefaultNoteEffects();
       copyFields(noteEffects, note.effects, CARRIED_OVER_A_TIE.note);
-      return { ...structuredClone(note), isTied: true, effects: noteEffects };
+      return { ...structuredClone(note), isTied: true, accidental: 'auto', effects: noteEffects };
     })
   };
+}
+
+/**
+ * Slides that belong to where a note ends. A shift or legato slide runs into the next note on
+ * its string (`Note.finish`, ~6291-6303) and a slide out is drawn off the note's right edge
+ * (~72859). A slide in from below leads into the attack, so it is not here.
+ */
+const SLIDES_AT_THE_END: ReadonlySet<NoteEffectsDoc['slide']> = new Set(['shiftSlide', 'legatoSlide', 'slideOutUp']);
+
+/** `note` without what connects it to the note after it. */
+function withoutEnding(note: NoteDoc): NoteDoc {
+  const slide = SLIDES_AT_THE_END.has(note.effects.slide) ? 'none' : note.effects.slide;
+  return { ...note, effects: { ...note.effects, isHammerPullOrigin: false, slide } };
+}
+
+/** `piece` given what connected `origin` to the note after it. */
+function withEndingOf(piece: NoteDoc, origin: NoteDoc): NoteDoc {
+  const slide = SLIDES_AT_THE_END.has(origin.effects.slide) ? origin.effects.slide : piece.effects.slide;
+  return { ...piece, effects: { ...piece.effects, isHammerPullOrigin: origin.effects.isHammerPullOrigin, slide } };
 }
 
 /**
@@ -528,16 +571,26 @@ function continuationOf(beat: BeatDoc): BeatDoc {
  * itself, re-valued, so its effects and attack stay where they were struck; every other piece
  * is a tied continuation (`continuationOf`).
  *
- * The first piece is a shallow copy, not a clone. `beatsPastBarLine` splices `beat` out of its
- * voice as it puts the pieces in, so nothing in the document still holds `beat`'s notes or
- * effects to share them with, and every continuation builds its own.
+ * What connects the note to the next one moves to the tail's last piece. alphaTab looks for a
+ * hammer-on's destination and a slide's target on the next beat with a note on the same string
+ * (`Note.nextNoteOnSameLine` and `findHammerPullDestination`, ~6477-6510), and after a split
+ * that is the note's own tie continuation - so left on the head, a hammer-on or slide would land
+ * on the tie instead of the note the user wrote it toward.
+ *
+ * The first piece is a shallow copy of the beat, with new note objects only where an ending is
+ * taken off. `beatsPastBarLine` splices `beat` out of its voice as it puts the pieces in, so
+ * nothing in the document still holds `beat`'s notes or effects to share them with, and every
+ * continuation builds its own.
  */
 function piecesOf(beat: BeatDoc, units: DurationUnit[], isTail: boolean): BeatDoc[] {
-  return units.map((unit, index): BeatDoc =>
-    index === 0 && !isTail
-      ? { ...beat, duration: unit.duration, dots: unit.dots, tuplet: null }
-      : { ...continuationOf(beat), duration: unit.duration, dots: unit.dots }
-  );
+  return units.map((unit, index): BeatDoc => {
+    if (index === 0 && !isTail) {
+      return { ...beat, notes: beat.notes.map(withoutEnding), duration: unit.duration, dots: unit.dots, tuplet: null };
+    }
+    const piece = { ...continuationOf(beat), duration: unit.duration, dots: unit.dots };
+    if (!isTail || index !== units.length - 1) return piece;
+    return { ...piece, notes: piece.notes.map((note, noteIndex) => withEndingOf(note, beat.notes[noteIndex])) };
+  });
 }
 
 /**

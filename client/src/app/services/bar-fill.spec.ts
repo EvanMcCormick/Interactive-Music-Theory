@@ -665,8 +665,8 @@ describe('bar-fill', () => {
 
         const result = fixBarOverflow(doc, 0, 0, 0);
 
-        expect(result).toEqual({ kind: 'refused', reason: jasmine.stringMatching(/between 64th notes/) });
-        expect(result).not.toEqual({ kind: 'refused', reason: jasmine.stringMatching(/tuplet/i) });
+        expect(result).toEqual({ kind: 'refused', reason: jasmine.stringMatching(/off the 64th-note grid/) });
+        expect(result).not.toEqual({ kind: 'refused', reason: jasmine.stringMatching(/A tuplet crosses/) });
         expect(shape(doc, 0).length).toBe(5);
       }
     });
@@ -697,7 +697,8 @@ describe('bar-fill', () => {
 
       const result = fixBarOverflow(doc, 0, 0, 0);
 
-      expect(result).toEqual({ kind: 'refused', reason: jasmine.stringMatching(/no room/) });
+      // Only a loaded file can have such a meter, and the message says what to do about it.
+      expect(result).toEqual({ kind: 'refused', reason: jasmine.stringMatching(/no room[\s\S]*loaded file[\s\S]*Change the time signature/) });
       expect(doc.masterBars.length).toBe(4);
     });
 
@@ -712,7 +713,7 @@ describe('bar-fill', () => {
 
       const result = fixBarOverflow(doc, 0, 0, 0);
 
-      expect(result).toEqual({ kind: 'refused', reason: jasmine.stringMatching(/between 64th notes/) });
+      expect(result).toEqual({ kind: 'refused', reason: jasmine.stringMatching(/off the 64th-note grid/) });
       expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
       expect(shape(doc, 1)).toEqual(['n4', 'n8', 'n4', 'n4', 'n4']);
     });
@@ -730,6 +731,10 @@ describe('bar-fill', () => {
     });
 
     it('carries what goes on sounding over the tie, and drops what attacks', () => {
+      // The tail is one piece, so it is also the end of the note, and the hammer-on - which
+      // connects to the next note on the string - moves to it. A trill stays behind: alphaTab
+      // already plays the origin's trill through the tie, and a continuation with its own would
+      // play a second one over it.
       const crossing = noteBeat(2);
       crossing.notes[0].effects = {
         ...crossing.notes[0].effects,
@@ -737,6 +742,7 @@ describe('bar-fill', () => {
         isPalmMute: true,
         isLetRing: true,
         isHammerPullOrigin: true,
+        trill: { value: 62, speed: 16 },
         bendPoints: [{ offset: 0, value: 0 }, { offset: 60, value: 4 }]
       };
       crossing.effects = {
@@ -755,7 +761,13 @@ describe('bar-fill', () => {
       fixBarOverflow(doc, 0, 0, 0);
 
       const tail = doc.tracks[0].staves[0].bars[1].voices[0].beats[0];
-      expect(tail.notes[0].effects).toEqual({ ...createDefaultNoteEffects(), harmonic: 'natural', isPalmMute: true, isLetRing: true });
+      expect(tail.notes[0].effects).toEqual({
+        ...createDefaultNoteEffects(),
+        harmonic: 'natural',
+        isPalmMute: true,
+        isLetRing: true,
+        isHammerPullOrigin: true
+      });
       expect(tail.effects).toEqual({
         ...createDefaultBeatEffects(),
         isPalmMute: true,
@@ -763,6 +775,48 @@ describe('bar-fill', () => {
         vibrato: 'slight',
         crescendo: 'crescendo'
       });
+    });
+
+    it('moves what connects to the next note to the end of a split note, and keeps a slide in on its start', () => {
+      // A whole note from beat 4 is a quarter head and a half-and-quarter tail. After the split,
+      // the next note on each string is the note's own tie continuation, so a hammer-on or a shift
+      // or legato slide left on the head would land on the tie. They belong to the last piece,
+      // where the note really ends, and so does a slide out, drawn off the end of the note. A
+      // slide in from below leads into the struck note, so it stays on the head.
+      const chord = noteBeat(1);
+      const onString = (string: number, effects: Partial<NoteDoc['effects']>): NoteDoc =>
+        ({ ...fretNote(), pitch: { kind: 'fretted', string, fret: 2 }, effects: { ...createDefaultNoteEffects(), ...effects } });
+      chord.notes = [
+        onString(1, { isHammerPullOrigin: true, slide: 'shiftSlide' }),
+        onString(2, { slide: 'slideInBelow' }),
+        onString(3, { slide: 'slideOutUp' }),
+        onString(4, { slide: 'legatoSlide' })
+      ];
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), chord];
+
+      fixBarOverflow(doc, 0, 0, 0);
+
+      const connecting = (beat: BeatDoc): string[] =>
+        beat.notes.map(note => `${note.effects.isHammerPullOrigin ? 'h ' : ''}${note.effects.slide}`);
+      const [head] = doc.tracks[0].staves[0].bars[0].voices[0].beats.slice(3);
+      const [middle, end] = doc.tracks[0].staves[0].bars[1].voices[0].beats;
+      expect(shape(doc, 1)).toEqual(['n2~', 'n4~', 'r4']);
+      expect(connecting(head)).toEqual(['none', 'slideInBelow', 'none', 'none']);
+      expect(connecting(middle)).toEqual(['none', 'none', 'none', 'none']);
+      expect(connecting(end)).toEqual(['h shiftSlide', 'none', 'slideOutUp', 'legatoSlide']);
+    });
+
+    it('prints no accidental on a tied continuation', () => {
+      const crossing = noteBeat(2);
+      crossing.notes[0].accidental = 'sharp';
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), crossing];
+
+      fixBarOverflow(doc, 0, 0, 0);
+
+      expect(doc.tracks[0].staves[0].bars[0].voices[0].beats[3].notes[0].accidental).toBe('sharp');
+      expect(doc.tracks[0].staves[0].bars[1].voices[0].beats[0].notes[0].accidental).toBe('auto');
     });
 
     it('spells the tail in the meter of the bar it lands in', () => {
