@@ -374,5 +374,26 @@ describe('ScoreDocMapperService effects round trip', () => {
     expect(throughTex(doc).masterBars[0].isDoubleBar).toBeFalse();
   });
 
-  // <!-- A10 -->
+  describe('tempo', () => {
+    it('follows the tempo field after a load', () => {
+      const loaded = throughTex(guitarBar(() => undefined));
+      loaded.tempo = 90;
+
+      expect(mapper.toScore(loaded, settings).tempo).toBe(90);
+    });
+
+    it('keeps bar 1 tempo in one place', () => {
+      expect(throughTex(guitarBar(() => undefined)).masterBars[0].tempoAutomation).toBeNull();
+    });
+
+    it('still keeps a tempo change later in the score', () => {
+      const doc = guitarBar(() => undefined);
+      doc.masterBars.push({ ...createDefaultMasterBar(), tempoAutomation: 140 });
+      doc.tracks[0].staves[0].bars.push(structuredClone(doc.tracks[0].staves[0].bars[0]));
+
+      expect(throughTex(doc).masterBars[1].tempoAutomation).toBe(140);
+    });
+  });
+
+  // <!-- A11 -->
 });

@@ -270,7 +270,9 @@ export class ScoreDocMapperService {
       masterBar.section = section;
     }
 
-    const tempo = doc.tempoAutomation ?? initialTempo;
+    // Bar 1's tempo is `ScoreDoc.tempo` and nothing else, so it wins over an automation a
+    // loaded document may still carry there.
+    const tempo = initialTempo ?? doc.tempoAutomation;
     if (tempo !== null) {
       masterBar.tempoAutomations.push(
         alphaTab.model.Automation.buildTempoAutomation(false, 0, tempo, 60)
@@ -520,8 +522,13 @@ export class ScoreDocMapperService {
             isCommon: masterBar.timeSignatureCommon
           }
         : null,
+      // Bar 1's automation *is* the score tempo, which `toDoc` already reads into
+      // `ScoreDoc.tempo`. Copying it here too gave the document two answers, and
+      // `toMasterBar` used to believe the stale one.
       tempoAutomation:
-        masterBar.tempoAutomations.length > 0 ? masterBar.tempoAutomations[0].value : null,
+        index > 0 && masterBar.tempoAutomations.length > 0
+          ? masterBar.tempoAutomations[0].value
+          : null,
       isRepeatStart: masterBar.isRepeatStart,
       repeatCount: masterBar.repeatCount,
       alternateEndings: masterBar.alternateEndings,
