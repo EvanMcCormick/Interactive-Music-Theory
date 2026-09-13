@@ -1,4 +1,4 @@
-import { NoteLetter } from '../models/composer.model';
+import { AccidentalMode, NoteLetter } from '../models/composer.model';
 import { STEP_SEMITONES } from './staff-pitch';
 
 /**
@@ -100,6 +100,53 @@ export function reduceToOctave(value: number): number {
  */
 export function alterFor(pitchClass: number, letter: number): number {
   return ((((pitchClass - STEP_SEMITONES[letter] + 6) % 12) + 12) % 12) - 6;
+}
+
+/**
+ * The alteration each forcing `AccidentalMode` carries, in semitones above the letter's
+ * natural pitch. The musical sign, so a flat is -1.
+ *
+ * `auto` is absent because it forces nothing. `score-doc-mapper.service.ts` derives the
+ * alphaTab forcing mode it writes for an accidental from this table, and `forcedLetterOf`
+ * reads the same table back, so the mode written and the letter read cannot disagree. Keyed
+ * by the model's accidental rather than alphaTab's enum, which is what lets it live in a
+ * module with no alphaTab dependency.
+ */
+export const ALTER_BY_ACCIDENTAL: ReadonlyMap<AccidentalMode, number> = new Map<AccidentalMode, number>([
+  ['doubleFlat', -2],
+  ['flat', -1],
+  ['sharp', 1],
+  ['doubleSharp', 2]
+]);
+
+/**
+ * The letter `accidental` puts `pitchClass` on, or undefined when it cannot name it.
+ *
+ * **`pitchClass` is the pitch class as drawn.** alphaTab's `AccidentalHelper.getNoteValue`
+ * starts from `Note.displayValue`, which is the sounding value with the staff's
+ * transposition and display transposition taken off. A caller that has a staff must take
+ * them off before asking. The mapper, reading a letter back, has no staff in hand and passes
+ * a pitched note's stored pitch class, which is the drawn one whenever those transpositions
+ * come to a whole number of octaves. `pitchClass` may be unreduced.
+ *
+ * A forced note is shifted by the forced amount and drawn on the line of the value it lands
+ * on. When that value is a white key the line is the letter's own, and no key signature can
+ * move it. When it is not, alphaTab takes the line from the key signature, so the note is
+ * drawn on a line that depends on the key while still sounding right - and no letter is
+ * named. `auto` forces nothing, so it names no letter either.
+ *
+ * Undoing the alteration is `reduceToOctave`, and reading a white key's letter is
+ * `STEP_SEMITONES` read backwards, as `spellPitchClass` reads it.
+ */
+export function forcedLetterOf(
+  accidental: AccidentalMode,
+  pitchClass: number
+): NoteLetter | undefined {
+  const alter = ALTER_BY_ACCIDENTAL.get(accidental);
+  if (alter === undefined) return undefined;
+
+  const letter = STEP_SEMITONES.indexOf(reduceToOctave(pitchClass - alter));
+  return letter < 0 ? undefined : LETTER_NAMES[letter];
 }
 
 /**

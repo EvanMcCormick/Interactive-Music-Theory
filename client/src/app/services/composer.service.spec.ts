@@ -160,3 +160,43 @@ describe('ComposerService bar insertion', () => {
     expect(service.doc.tracks.some(track => track.generated !== null)).toBeTrue();
   });
 });
+
+/**
+ * `updateScoreInfo` changes the descriptive fields and nothing else.
+ *
+ * Its parameter type rejects an object literal that names `tracks`, but TypeScript checks
+ * excess properties only on a fresh literal: a spread or a variable of a wider type passes,
+ * and a cast gets past the literal check outright. So the per-field body is the guard, and
+ * these pin it at runtime.
+ */
+describe('ComposerService updateScoreInfo', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('leaves the structure alone when handed a whole document', () => {
+    const before = structuredClone(service.doc);
+
+    service.updateScoreInfo(
+      { ...structuredClone(service.doc), title: 'New', tracks: [] } as Parameters<ComposerService['updateScoreInfo']>[0]
+    );
+
+    expect(service.doc.title).toBe('New');
+    expect(service.doc.tracks).toEqual(before.tracks);
+    expect(service.doc.masterBars).toEqual(before.masterBars);
+  });
+
+  it('clears a title given as empty, and leaves one that is not given', () => {
+    service.updateScoreInfo({ title: 'Named' });
+
+    service.updateScoreInfo({ title: '' });
+    expect(service.doc.title).toBe('');
+
+    service.updateScoreInfo({ title: 'Named' });
+    service.updateScoreInfo({});
+    expect(service.doc.title).toBe('Named');
+  });
+});

@@ -100,7 +100,12 @@ export interface Tuplet {
 export interface MasterBarDoc {
   /** null inherits the previous bar's time signature. */
   timeSignature: TimeSignature | null;
-  /** BPM change starting at this bar. null = no change. */
+  /**
+   * BPM change starting at this bar. null = no change.
+   *
+   * Ignored on the first bar: bar 1's tempo is `ScoreDoc.tempo`, and `toDoc` reads it back as
+   * null there.
+   */
   tempoAutomation: number | null;
   isRepeatStart: boolean;
   /** 0 = not a repeat end. */

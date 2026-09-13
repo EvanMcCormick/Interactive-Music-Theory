@@ -52,22 +52,11 @@ import {
   trillSpeedOf,
   vibratoOf
 } from './alpha-tab-enum.bridge';
-import { alterFor, reduceToOctave } from './note-spelling';
-import { STEP_SEMITONES } from './staff-pitch';
+import { ALTER_BY_ACCIDENTAL, alterFor, forcedLetterOf } from './note-spelling';
 
 /** Step index of each letter, C through B, as `SpelledNote.letter` numbers them. */
 const LETTER_STEP: Record<NoteLetter, number> =
   { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
-
-/**
- * `LETTER_STEP` read the other way through `STEP_SEMITONES`, so a white pitch
- * class names its letter.
- */
-const LETTER_BY_NATURAL: ReadonlyMap<number, NoteLetter> = new Map(
-  (Object.entries(LETTER_STEP) as [NoteLetter, number][]).map(
-    ([letter, step]): [number, NoteLetter] => [STEP_SEMITONES[step], letter]
-  )
-);
 
 /**
  * The alteration each forcing mode carries, in semitones above the letter's
@@ -111,16 +100,23 @@ const MODE_BY_ALTER: ReadonlyMap<number, alphaTab.model.NoteAccidentalMode> = ne
 
 /**
  * The forcing mode each `AccidentalMode` asks for. Read both ways, so the directions cannot
- * disagree. `ForceNone` and `ForceNatural` are absent and read back as `auto`: 1.8.0
- * renders `ForceNatural` exactly as `Default` (see `ALTER_BY_MODE`), and the model has no
- * way to ask for either.
+ * disagree.
+ *
+ * Derived rather than written out: the alteration `note-spelling.ts` gives an accidental,
+ * read through `MODE_BY_ALTER`. `forcedLetterOf` reads a letter back from that same
+ * alteration table, so the mode written here and the letter `fromNote` reads back cannot
+ * disagree either. `auto` has no alteration and is absent. `ForceNone` and `ForceNatural`
+ * are absent and read back as `auto`: 1.8.0 renders `ForceNatural` exactly as `Default`
+ * (see `ALTER_BY_MODE`), and the model has no way to ask for either.
  */
-const MODE_BY_ACCIDENTAL: ReadonlyMap<AccidentalMode, alphaTab.model.NoteAccidentalMode> = new Map([
-  ['doubleFlat', alphaTab.model.NoteAccidentalMode.ForceDoubleFlat],
-  ['flat', alphaTab.model.NoteAccidentalMode.ForceFlat],
-  ['sharp', alphaTab.model.NoteAccidentalMode.ForceSharp],
-  ['doubleSharp', alphaTab.model.NoteAccidentalMode.ForceDoubleSharp]
-]);
+const MODE_BY_ACCIDENTAL: ReadonlyMap<AccidentalMode, alphaTab.model.NoteAccidentalMode> = new Map(
+  Array.from(ALTER_BY_ACCIDENTAL).flatMap(
+    ([accidental, alter]): [AccidentalMode, alphaTab.model.NoteAccidentalMode][] => {
+      const mode = MODE_BY_ALTER.get(alter);
+      return mode === undefined ? [] : [[accidental, mode]];
+    }
+  )
+);
 
 function accidentalOf(mode: alphaTab.model.NoteAccidentalMode): AccidentalMode {
   for (const [accidental, forced] of MODE_BY_ACCIDENTAL) {
@@ -150,40 +146,6 @@ function accidentalModeFor(
 ): alphaTab.model.NoteAccidentalMode {
   const alter = alterFor(pitchClass, LETTER_STEP[letter]);
   return MODE_BY_ALTER.get(alter) ?? alphaTab.model.NoteAccidentalMode.Default;
-}
-
-/** The letter a forced accidental puts a pitch class on, or undefined if none is forced. */
-function letterFor(
-  mode: alphaTab.model.NoteAccidentalMode,
-  pitchClass: number
-): NoteLetter | undefined {
-  const alter = ALTER_BY_MODE.get(mode);
-  if (alter === undefined) return undefined;
-
-  return LETTER_BY_NATURAL.get(reduceToOctave(pitchClass - alter));
-}
-
-/**
- * The letter `accidental` puts `pitchClass` on, or undefined when it cannot name it.
- *
- * `AccidentalHelper.getNoteValue` shifts a forced note by the forced amount and draws the
- * line of the value it lands on, under the key signature. When that value is a white key
- * the line is the letter's own, and no key signature can move it. When it is not, alphaTab
- * picks the line from the key signature's table: a sharp on D lands on 61, drawn as a C
- * sharp in C major and a D sharp in F major, while the note still sounds D. `auto` forces
- * nothing, so it names no letter either.
- *
- * Exported so the accidental tool can refuse a press this is undefined for, by the same
- * check `fromNote` reads a letter back with. It lives here rather than in
- * `note-spelling.ts` because the tables it reads are keyed by alphaTab's enum, and that
- * module is deliberately free of alphaTab.
- */
-export function forcedLetterOf(
-  accidental: AccidentalMode,
-  pitchClass: number
-): NoteLetter | undefined {
-  const mode = MODE_BY_ACCIDENTAL.get(accidental);
-  return mode === undefined ? undefined : letterFor(mode, pitchClass);
 }
 
 /**

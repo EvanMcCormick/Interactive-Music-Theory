@@ -19,9 +19,13 @@ import {
  * `toScore`, alphaTex export, parse, `toDoc`.
  *
  * Save stores alphaTex made from the mapper's output, so a field the mapper drops is not
- * a rendering glitch but permanent loss. Each spec here was red before its task, and the
- * one that stays a loss - the double bar - is pinned as a loss, so an alphaTab upgrade
- * that fixes it fails a spec rather than going unnoticed.
+ * a rendering glitch but permanent loss.
+ *
+ * Where alphaTab itself drops or reshapes a field, a spec pins what survives, so an alphaTab
+ * upgrade that changes it turns a spec red rather than going unnoticed. The pinned cases: a
+ * hammer-on or a shift or legato slide with nothing to land on, a bend's shape, a pre-bent
+ * note's forced accidental, a fermata spreading to later tracks, and the double bar through
+ * alphaTex.
  */
 describe('ScoreDocMapperService effects round trip', () => {
   let mapper: ScoreDocMapperService;
@@ -121,17 +125,6 @@ describe('ScoreDocMapperService effects round trip', () => {
   /** The first bar's beats. */
   function beatsOf(doc: ScoreDoc): BeatDoc[] {
     return doc.tracks[0].staves[0].bars[0].voices[0].beats;
-  }
-
-  /** `doc` with a copy of its first track appended, every beat of the copy without a fermata. */
-  function withSecondTrack(doc: ScoreDoc): ScoreDoc {
-    const second = structuredClone(doc.tracks[0]);
-    second.id = 'gtr2';
-    second.name = 'Guitar 2';
-    second.shortName = 'gt2';
-    second.staves[0].bars[0].voices[0].beats.forEach(beat => (beat.effects.fermata = null));
-    doc.tracks.push(second);
-    return doc;
   }
 
   it('keeps a hammer-on on its origin, and only there', () => {
@@ -293,12 +286,6 @@ describe('ScoreDocMapperService effects round trip', () => {
     expect(beatsOf(throughTex(doc))[0].effects.fadeIn).toBeTrue();
   });
 
-  it('keeps a fermata with its type and length', () => {
-    const doc = guitarBar(beats => (beats[0].effects.fermata = { type: 'long', length: 1 }));
-
-    expect(beatsOf(throughTex(doc))[0].effects.fermata).toEqual({ type: 'long', length: 1 });
-  });
-
   for (const crescendo of ['crescendo', 'decrescendo'] as const) {
     it(`keeps a ${crescendo}`, () => {
       const doc = guitarBar(beats => (beats[0].effects.crescendo = crescendo));
@@ -315,27 +302,49 @@ describe('ScoreDocMapperService effects round trip', () => {
     });
   }
 
-  it('gives a fermata to a later track at the same tick - alphaTab keeps fermatas per bar', () => {
-    // `Voice.finish` files a beat's fermata on the master bar by tick and hands it to every
-    // beat finished after it at that tick without one - later voices, staves and tracks -
-    // before render or export. Pinned so M2 has to decide whether a fermata is per beat.
-    const doc = withSecondTrack(guitarBar(beats => (beats[1].effects.fermata = { type: 'long', length: 1 })));
+  describe('fermata', () => {
+    /** `doc` with a copy of its first track appended, every beat of the copy without a fermata. */
+    function withSecondTrack(doc: ScoreDoc): ScoreDoc {
+      const second = structuredClone(doc.tracks[0]);
+      second.id = 'gtr2';
+      second.name = 'Guitar 2';
+      second.shortName = 'gt2';
+      second.staves[0].bars[0].voices[0].beats.forEach(beat => (beat.effects.fermata = null));
+      doc.tracks.push(second);
+      return doc;
+    }
 
-    // Already there on the render path, before any save.
-    expect(mapper.toDoc(mapper.toScore(doc, settings)).tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata).toEqual({ type: 'long', length: 1 });
+    it('keeps a fermata with its type and length', () => {
+      const doc = guitarBar(beats => (beats[0].effects.fermata = { type: 'long', length: 1 }));
 
-    const back = throughTex(doc);
-    expect(back.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata).toEqual({ type: 'long', length: 1 });
-    expect(back.tracks[1].staves[0].bars[0].voices[0].beats[0].effects.fermata).toBeNull();
-  });
+      expect(beatsOf(throughTex(doc))[0].effects.fermata).toEqual({ type: 'long', length: 1 });
+    });
 
-  it('does not give a fermata to an earlier track', () => {
-    const doc = withSecondTrack(guitarBar(() => undefined));
-    doc.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata = { type: 'long', length: 1 };
+    it('gives a fermata to a later track at the same tick - alphaTab keeps fermatas per bar', () => {
+      // `Voice.finish` files a beat's fermata on the master bar by tick and hands it to every
+      // beat finished after it at that tick without one - later voices, staves and tracks,
+      // never earlier ones - before render or export. Pinned so M2 has to decide whether a
+      // fermata is per beat.
+      const doc = withSecondTrack(guitarBar(beats => (beats[1].effects.fermata = { type: 'long', length: 1 })));
 
-    const back = throughTex(doc);
-    expect(beatsOf(back)[1].effects.fermata).toBeNull();
-    expect(back.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata).toEqual({ type: 'long', length: 1 });
+      // Already there on the render path, before any save - and only at that tick.
+      const rendered = mapper.toDoc(mapper.toScore(doc, settings));
+      expect(rendered.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata).toEqual({ type: 'long', length: 1 });
+      expect(rendered.tracks[1].staves[0].bars[0].voices[0].beats[0].effects.fermata).toBeNull();
+
+      const back = throughTex(doc);
+      expect(back.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata).toEqual({ type: 'long', length: 1 });
+      expect(back.tracks[1].staves[0].bars[0].voices[0].beats[0].effects.fermata).toBeNull();
+    });
+
+    it('does not give a fermata to an earlier track', () => {
+      const doc = withSecondTrack(guitarBar(() => undefined));
+      doc.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata = { type: 'long', length: 1 };
+
+      const back = throughTex(doc);
+      expect(beatsOf(back)[1].effects.fermata).toBeNull();
+      expect(back.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata).toEqual({ type: 'long', length: 1 });
+    });
   });
 
   for (const accidental of ['doubleFlat', 'flat', 'sharp', 'doubleSharp'] as const) {
@@ -347,8 +356,10 @@ describe('ScoreDocMapperService effects round trip', () => {
   }
 
   it('loses a forced accidental on a pre-bent note - alphaTab resets it', () => {
-    // `Note.finish` sets `accidentalMode` back to `Default` when the first bend point is
-    // above zero, so a pre-bent note cannot keep a forced spelling through a save.
+    // `Note.finish` sets `accidentalMode` back to `Default` when `initialBendValue` is above
+    // zero: when the first bend value is 2 quarter tones or more, and likewise for a bend
+    // carried over a tie or a whammy bar. So a pre-bent note cannot keep a forced spelling
+    // through a save. The bend specs above pin what a bend's points become; this, what a bend costs.
     const doc = guitarBar(beats => {
       beats[0].notes[0].accidental = 'flat';
       beats[0].notes[0].effects.bendPoints = [{ offset: 0, value: 4 }, { offset: 60, value: 4 }];
@@ -392,6 +403,13 @@ describe('ScoreDocMapperService effects round trip', () => {
       doc.tracks[0].staves[0].bars.push(structuredClone(doc.tracks[0].staves[0].bars[0]));
 
       expect(throughTex(doc).masterBars[1].tempoAutomation).toBe(140);
+    });
+
+    it('lets the tempo field win over a bar 1 automation', () => {
+      const doc = guitarBar(() => undefined);
+      doc.tempo = 90;
+      doc.masterBars[0].tempoAutomation = 140;
+      expect(mapper.toScore(doc, settings).tempo).toBe(90);
     });
   });
 });

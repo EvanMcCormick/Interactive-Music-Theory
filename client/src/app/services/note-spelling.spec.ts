@@ -1,6 +1,7 @@
 import {
   SpelledNote,
   alterFor,
+  forcedLetterOf,
   formatNote,
   letterOf,
   parseNoteName,
@@ -140,5 +141,37 @@ describe('letterOf', () => {
     expect(letterOf({ letter: 0, accidental: -1 })).toBe('C'); // Cb is on a C
     expect(letterOf({ letter: 6, accidental: 1 })).toBe('B');  // B# is on a B
     expect(letterOf({ letter: 3, accidental: 0 })).toBe('F');
+  });
+});
+
+describe('forcedLetterOf', () => {
+  it('is the letter a forced accidental lands a pitch class on', () => {
+    expect(forcedLetterOf('flat', 10)).toBe('B');
+    expect(forcedLetterOf('sharp', 1)).toBe('C');
+    expect(forcedLetterOf('doubleSharp', 2)).toBe('C');
+  });
+
+  it('is undefined when the forced amount lands on a black key', () => {
+    // A sharp on D shifts it to C sharp and a flat on C shifts it to D flat. alphaTab would
+    // take the line from the key signature, so no letter is named - and the accidental
+    // tool refuses the press.
+    expect(forcedLetterOf('sharp', 2)).toBeUndefined();
+    expect(forcedLetterOf('flat', 0)).toBeUndefined();
+  });
+
+  it('is undefined for auto, which forces nothing', () => {
+    expect(forcedLetterOf('auto', 0)).toBeUndefined();
+  });
+
+  it('reads a double flat two semitones down from the letter', () => {
+    // B double flat sounds A, 9. C double flat sounds B flat, 10: two below C, across the
+    // octave boundary, which is why 10 names C and not nothing.
+    expect(forcedLetterOf('doubleFlat', 9)).toBe('B');
+    expect(forcedLetterOf('doubleFlat', 10)).toBe('C');
+  });
+
+  it('is undefined for a double flat that overshoots onto a black key', () => {
+    // G sharp, 8, raised by two is 10, a black key: no letter's double flat sounds 8.
+    expect(forcedLetterOf('doubleFlat', 8)).toBeUndefined();
   });
 });

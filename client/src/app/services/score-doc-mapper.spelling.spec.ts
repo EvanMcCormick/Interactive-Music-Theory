@@ -12,7 +12,7 @@ import {
   createDefaultNoteEffects,
   createDefaultPlaybackInfo
 } from '../models/composer.model';
-import { ScoreDocMapperService, forcedLetterOf } from './score-doc-mapper.service';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
 
 /**
  * The letter a note asks to be engraved on, and how the mapper says it in
@@ -330,25 +330,5 @@ describe('ScoreDocMapperService spelling', () => {
     const note = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
 
     expect(note.accidentalMode).toBe(alphaTab.model.NoteAccidentalMode.ForceFlat);
-  });
-});
-
-describe('forcedLetterOf', () => {
-  it('is the letter a forced accidental lands a pitch class on', () => {
-    expect(forcedLetterOf('flat', 10)).toBe('B');
-    expect(forcedLetterOf('sharp', 1)).toBe('C');
-    expect(forcedLetterOf('doubleSharp', 2)).toBe('C');
-  });
-
-  it('is undefined when the forced amount lands on a black key', () => {
-    // A sharp on D shifts it to C sharp and a flat on C shifts it to D flat. alphaTab would
-    // take the line from the key signature, so no letter is named - and the accidental
-    // tool refuses the press.
-    expect(forcedLetterOf('sharp', 2)).toBeUndefined();
-    expect(forcedLetterOf('flat', 0)).toBeUndefined();
-  });
-
-  it('is undefined for auto, which forces nothing', () => {
-    expect(forcedLetterOf('auto', 0)).toBeUndefined();
   });
 });
