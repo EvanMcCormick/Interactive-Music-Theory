@@ -16,7 +16,6 @@ import {
   StaffDoc,
   TrackDoc,
   TripletFeelKind,
-  TrillDoc,
   VoiceDoc,
   createDefaultBeatEffects,
   createDefaultNoteEffects
@@ -43,6 +42,7 @@ import {
   toOttavia,
   toTripletFeel,
   toVibratoType,
+  trillSpeedOf,
   vibratoOf
 } from './alpha-tab-enum.bridge';
 import { alterFor, reduceToOctave } from './note-spelling';
@@ -423,7 +423,7 @@ export class ScoreDocMapperService {
     note.isLeftHandTapped = doc.effects.isLeftHandTapped;
     if (doc.effects.trill) {
       note.trillValue = doc.effects.trill.value;
-      note.trillSpeed = doc.effects.trill.speed as unknown as alphaTab.model.Duration;
+      note.trillSpeed = doc.effects.trill.speed;
     }
     note.leftHandFinger = toFingers(doc.effects.leftHandFinger);
     note.rightHandFinger = toFingers(doc.effects.rightHandFinger);
@@ -582,7 +582,7 @@ export class ScoreDocMapperService {
     effects.accent = accentOf(note.accentuated);
     effects.isLeftHandTapped = note.isLeftHandTapped;
     effects.trill = note.isTrill
-      ? { value: note.trillValue, speed: note.trillSpeed as number as TrillDoc['speed'] }
+      ? { value: note.trillValue, speed: trillSpeedOf(note.trillSpeed) }
       : null;
     effects.leftHandFinger = fingerOf(note.leftHandFinger);
     effects.rightHandFinger = fingerOf(note.rightHandFinger);

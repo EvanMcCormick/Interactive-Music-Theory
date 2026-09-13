@@ -7,6 +7,7 @@ import {
   FingerKind,
   NoteDoc,
   OttaviaKind,
+  TrillDoc,
   TripletFeelKind,
   VibratoKind
 } from '../models/composer.model';
@@ -255,4 +256,15 @@ export function toFingers(finger: FingerKind): alphaTab.model.Fingers {
 /** `NoOrDead` reads as none too: the model has no way to say "deliberately no finger". */
 export function fingerOf(fingers: alphaTab.model.Fingers): FingerKind {
   return FINGERS.find(([, value]) => value === fingers)?.[0] ?? 'none';
+}
+
+/**
+ * A trill speed the model can hold. alphaTex accepts only 16th, 32nd and 64th trills and
+ * rejects a file with any other - so an out-of-range speed read from elsewhere is brought
+ * to alphaTab's own default rather than saved into a composition that will not load.
+ */
+export function trillSpeedOf(speed: alphaTab.model.Duration): TrillDoc['speed'] {
+  return speed === alphaTab.model.Duration.Sixteenth || speed === alphaTab.model.Duration.SixtyFourth
+    ? speed
+    : 32;
 }

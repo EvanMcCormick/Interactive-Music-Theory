@@ -238,9 +238,18 @@ describe('ScoreDocMapperService effects round trip', () => {
 
   it('keeps a trill with its speed', () => {
     // 62 is fret 7 on the G string (open 55) - `value` is a pitch, see TrillDoc.
-    const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 62, speed: 16 }));
+    const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 62, speed: 64 }));
 
-    expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 62, speed: 16 });
+    expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 62, speed: 64 });
+  });
+
+  it('keeps a trill under a capo, where alphaTex carries it as a lower fret', () => {
+    // alphaTex writes the trill as a fret relative to the string's tuning *including capo*,
+    // and reads it back the same way, so a capo must not shift the stored pitch.
+    const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 62, speed: 32 }));
+    doc.tracks[0].staves[0].capo = 2;
+
+    expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 62, speed: 32 });
   });
 
   it('keeps fingering for both hands', () => {

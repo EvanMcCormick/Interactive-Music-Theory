@@ -68,7 +68,7 @@ writes them generously; 1000 lines per file at most.
 - Accent, heavy accent and tenuto are one field, `Note.accentuated: AccentuationType`.
 - `Note.trillValue` is the trilled-to pitch as a MIDI number. alphaTex carries it as a fret
   relative to the string's tuning, capo included (`trillFret`): a trill to fret 7 on the G
-  string is `62` and exports as `tr (7 16)`. A negative value is no trill. Store alphaTab's
+  string (no capo) is `62` and exports as `tr (7 16)`. A negative value is no trill. Store alphaTab's
   value.
 - The composer library stores alphaTex (`composer-library.service.ts` header), and every
   load goes through `toDoc`, which builds every field. **No migration is needed.**
@@ -624,9 +624,18 @@ New in the model. alphaTab's defaults, checked on a fresh `Note`: `isLeftHandTap
 
   it('keeps a trill with its speed', () => {
     // 62 is fret 7 on the G string (open 55) - `value` is a pitch, see TrillDoc.
-    const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 62, speed: 16 }));
+    const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 62, speed: 64 }));
 
-    expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 62, speed: 16 });
+    expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 62, speed: 64 });
+  });
+
+  it('keeps a trill under a capo, where alphaTex carries it as a lower fret', () => {
+    // alphaTex writes the trill as a fret relative to the string's tuning *including capo*,
+    // and reads it back the same way, so a capo must not shift the stored pitch.
+    const doc = guitarBar(beats => (beats[0].notes[0].effects.trill = { value: 62, speed: 32 }));
+    doc.tracks[0].staves[0].capo = 2;
+
+    expect(beatsOf(throughTex(doc))[0].notes[0].effects.trill).toEqual({ value: 62, speed: 32 });
   });
 
   it('keeps fingering for both hands', () => {
@@ -654,11 +663,15 @@ New in the model. alphaTab's defaults, checked on a fresh `Note`: `isLeftHandTap
  * `value` is `Note.trillValue`, the trilled-to pitch as a MIDI number - playback plays it
  * as it is. alphaTab exposes it relative to the string as `trillFret`, `trillValue` minus
  * the string's tuning with the capo included, and alphaTex writes and reads that fret as
- * `tr (fret speed)`: a trill to fret 7 on the G string is value 62 and exports as
- * `tr (7 16)`. A negative value is no trill (`isTrill` is `trillValue >= 0`), so one
+ * `tr (fret speed)`: a trill to fret 7 on the G string (no capo) is value 62 and exports
+ * as `tr (7 16)`. A negative value is no trill (`isTrill` is `trillValue >= 0`), so one
  * cannot be stored. Whatever sets a trill from a fret (M4's trill editor) must add the
  * string's tuning, capo included - there, once, rather than every round trip converting
  * here.
+ *
+ * `value` is a fixed pitch, so it does not follow its note: whatever changes a note's fret,
+ * string, capo or tuning must move `trill.value` by the same amount, or a whole-step trill
+ * becomes some other interval.
  */
 export interface TrillDoc {
   value: number;
@@ -707,15 +720,27 @@ export function toFingers(finger: FingerKind): alphaTab.model.Fingers {
 export function fingerOf(fingers: alphaTab.model.Fingers): FingerKind {
   return FINGERS.find(([, value]) => value === fingers)?.[0] ?? 'none';
 }
+
+/**
+ * A trill speed the model can hold. alphaTex accepts only 16th, 32nd and 64th trills and
+ * rejects a file with any other - so an out-of-range speed read from elsewhere is brought
+ * to alphaTab's own default rather than saved into a composition that will not load.
+ */
+export function trillSpeedOf(speed: alphaTab.model.Duration): TrillDoc['speed'] {
+  return speed === alphaTab.model.Duration.Sixteenth || speed === alphaTab.model.Duration.SixtyFourth
+    ? speed
+    : 32;
+}
 ```
 
-In the mapper, import both. `toNote`, after the accent:
+(the bridge imports `TrillDoc` too). In the mapper, import `toFingers`, `fingerOf` and
+`trillSpeedOf`. `toNote`, after the accent - `16 | 32 | 64` assigns to `Duration` directly:
 
 ```typescript
     note.isLeftHandTapped = doc.effects.isLeftHandTapped;
     if (doc.effects.trill) {
       note.trillValue = doc.effects.trill.value;
-      note.trillSpeed = doc.effects.trill.speed as unknown as alphaTab.model.Duration;
+      note.trillSpeed = doc.effects.trill.speed;
     }
     note.leftHandFinger = toFingers(doc.effects.leftHandFinger);
     note.rightHandFinger = toFingers(doc.effects.rightHandFinger);
@@ -726,13 +751,11 @@ In the mapper, import both. `toNote`, after the accent:
 ```typescript
     effects.isLeftHandTapped = note.isLeftHandTapped;
     effects.trill = note.isTrill
-      ? { value: note.trillValue, speed: note.trillSpeed as number as TrillDoc['speed'] }
+      ? { value: note.trillValue, speed: trillSpeedOf(note.trillSpeed) }
       : null;
     effects.leftHandFinger = fingerOf(note.leftHandFinger);
     effects.rightHandFinger = fingerOf(note.rightHandFinger);
 ```
-
-(import `TrillDoc` from the model).
 
 **Step 4: Run.** Expected: 16 SUCCESS.
 

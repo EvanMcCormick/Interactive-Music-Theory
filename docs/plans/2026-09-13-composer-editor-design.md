@@ -455,4 +455,8 @@ Not rejected - not yet placed. Each needs its own design pass:
   a fret relative to the string's tuning, and a pitched note has no string, so on a staff
   that has a tuning it exports as `tr (NaN 16)` and reads back as no trill. Unreachable
   today - the composer builds pitched staves with no tuning, and the alphaTex importer
-  clears a pitched staff's tuning - but it matters if M3 lets a pitched staff carry one.
+  clears a pitched staff's tuning (`applyStaffNoteKind`'s Pitched case calls
+  `stringTuning.reset()`, `alphaTab.core.mjs` ~16517-16526 in 1.8, reached from
+  `\tuning piano|none|voice` ~13178 or from the first pitched note on a staff ~16411) - but
+  it matters if M3 lets a pitched staff carry one.
+- **A trill's target does not follow its note.** `TrillDoc.value` is a pitch, so moving a trilled note by a fret, string, capo or tuning change leaves the trill aimed where it was, and the interval silently changes. M2's pitch tools and M3's capo and tuning controls must move it with the note.
