@@ -360,3 +360,83 @@ describe('ComposerService edits', () => {
     expect(service.doc.tracks[0].staves[0].bars[3].voices[0].beats[3].dynamics).toBe('mp');
   });
 });
+
+describe('ComposerService bar and track edits', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  const latest = (): ComposerState => {
+    let value: ComposerState | undefined;
+    service.getState().subscribe(state => (value = state)).unsubscribe();
+    if (!value) throw new Error('no state');
+    return value;
+  };
+
+  it('declares a time signature from the caret\'s bar and fits the bars under it', () => {
+    service.setCursor({ barIndex: 1 });
+
+    service.setTimeSignature({ numerator: 3, denominator: 4, isCommon: false });
+
+    expect(service.doc.masterBars[1].timeSignature?.numerator).toBe(3);
+    const bars = service.doc.tracks[0].staves[0].bars;
+    expect(bars.map(bar => bar.voices[0].beats.length)).toEqual([4, 3, 3, 3]);
+  });
+
+  it('refuses a time signature no score can have, and commits nothing', () => {
+    const before = JSON.stringify(service.doc);
+
+    service.setTimeSignature({ numerator: 5, denominator: 6, isCommon: false });
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(latest().refusal).toMatch(/denominator/i);
+  });
+
+  it('sets the key on every staff from the caret\'s bar on', () => {
+    service.addTrack('Piano', 0, false);
+    service.setCursor({ barIndex: 2 });
+
+    service.setKeySignature({ fifths: 2, mode: 'major' });
+
+    for (const track of service.doc.tracks) {
+      expect(track.staves[0].bars.map(bar => bar.keySignature.fifths)).toEqual([0, 0, 2, 2]);
+    }
+  });
+
+  it('toggles a repeat start across the selected bars as one undo step', () => {
+    service.setCursor({ barIndex: 0 });
+    service.extendSelectionTo({ barIndex: 1 });
+
+    service.toggleMasterBarFlag('isRepeatStart');
+    expect(service.doc.masterBars.slice(0, 2).map(bar => bar.isRepeatStart)).toEqual([true, true]);
+
+    service.undo();
+    expect(service.doc.masterBars[0].isRepeatStart).toBeFalse();
+  });
+
+  it('refuses a tuning that would strand notes on strings it removes', () => {
+    service.setCursor({ barIndex: 0, beatIndex: 0, stringIndex: 5 });
+    service.setNoteAtCursor({ kind: 'fretted', string: 6, fret: 3 }, false);
+    const before = JSON.stringify(service.doc);
+
+    service.setStaffTuning([43, 38, 33, 28], 'Bass Standard Tuning');
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(latest().refusal).toMatch(/string/i);
+  });
+
+  it('retunes a staff whose notes all fit', () => {
+    service.setStaffTuning([43, 38, 33, 28], 'Bass Standard Tuning');
+
+    expect(service.doc.tracks[0].staves[0].tuning).toEqual([43, 38, 33, 28]);
+  });
+
+  it('mutes a track', () => {
+    service.setPlayback({ isMute: true });
+
+    expect(service.doc.tracks[0].playback.isMute).toBeTrue();
+  });
+});

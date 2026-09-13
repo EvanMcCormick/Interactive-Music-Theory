@@ -5,14 +5,18 @@ import {
   BarDoc,
   BeatDoc,
   BeatEffectsDoc,
+  ClefKind,
   ComposerState,
   DurationValue,
   DynamicValue,
   EditCursor,
+  KeySignature,
   MasterBarDoc,
   NoteDoc,
   NoteEffectsDoc,
   NotePitch,
+  OttaviaKind,
+  PlaybackInfoDoc,
   ScoreDoc,
   StaffDoc,
   TimeSignature,
@@ -27,12 +31,22 @@ import {
   createRestBeat,
   STANDARD_GUITAR_TUNING
 } from '../models/composer.model';
+import {
+  keySignatureFault,
+  setClef,
+  setKeySignature,
+  setMasterBarValue,
+  setTimeSignature,
+  timeSignatureFault,
+  toggleMasterBarFlag
+} from './bar-edits';
 import { beatsAt, setDynamics, setGrace, setTuplet, toggleBeatEffect, toggledValue } from './beat-edits';
-import { BeatRef, selectionTargets } from './composer-selection';
+import { BeatRef, selectedBars, selectionTargets } from './composer-selection';
 import { EditScope, editRefusal } from './edit-refusals';
 import { setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 import { insertBarInto } from './score-structure';
+import { renameTrack, setPlayback, setStaffNumber, setStaffTuning, setStaffViews } from './track-edits';
 
 /**
  * Owns the editable score document, the edit caret, and undo/redo.
@@ -163,15 +177,20 @@ export class ComposerService {
   // History
   // -------------------------------------------------------------------------
 
-  /** Applies a mutation to a cloned document and pushes the old one onto undo. */
+  /** Applies a mutation to a cloned document and commits the result. */
   private commit(mutate: (draft: ScoreDoc) => void, cursor?: EditCursor): void {
-    const state = this.stateSubject.getValue();
-    const previous = structuredClone(state.doc);
-    const draft = structuredClone(state.doc);
-
+    const draft = structuredClone(this.stateSubject.getValue().doc);
     mutate(draft);
+    this.commitDocument(draft, cursor);
+  }
 
-    this.undoStack.push(previous);
+  /**
+   * Publishes a prepared document and pushes the old one onto undo. For edits that can
+   * refuse part-way: they run on a clone, and only a clone that succeeded arrives here.
+   */
+  private commitDocument(next: ScoreDoc, cursor?: EditCursor): void {
+    const state = this.stateSubject.getValue();
+    this.undoStack.push(structuredClone(state.doc));
     if (this.undoStack.length > ComposerService.MAX_HISTORY) {
       this.undoStack.shift();
     }
@@ -179,9 +198,9 @@ export class ComposerService {
 
     this.stateSubject.next({
       ...state,
-      doc: draft,
-      cursor: cursor ? this.clampCursor(cursor, draft) : this.clampCursor(state.cursor, draft),
-      anchor: state.anchor ? this.clampCursor(state.anchor, draft) : null,
+      doc: next,
+      cursor: this.clampCursor(cursor ?? state.cursor, next),
+      anchor: state.anchor ? this.clampCursor(state.anchor, next) : null,
       refusal: null,
       isDirty: true,
       canUndo: true,
@@ -573,6 +592,102 @@ export class ComposerService {
   /** Publishes why a command did nothing. Commits nothing, so it costs no undo step. */
   private refuse(reason: string): void {
     this.stateSubject.next({ ...this.stateSubject.getValue(), refusal: reason });
+  }
+
+  // -------------------------------------------------------------------------
+  // Bar and track edits
+  // -------------------------------------------------------------------------
+
+  setTimeSignature(timeSignature: TimeSignature): void {
+    const fault = timeSignatureFault(timeSignature);
+    if (fault) return this.refuse(fault);
+    this.applyBarEdit((draft, bars) => setTimeSignature(draft, bars.first, timeSignature));
+  }
+
+  setKeySignature(keySignature: KeySignature): void {
+    const fault = keySignatureFault(keySignature);
+    if (fault) return this.refuse(fault);
+    this.applyBarEdit((draft, bars) => setKeySignature(draft, bars.first, keySignature));
+  }
+
+  setClef(clef: ClefKind, ottava: OttaviaKind): void {
+    const { trackIndex, staffIndex } = this.stateSubject.getValue().cursor;
+    this.applyBarEdit((draft, bars) => setClef(draft, trackIndex, staffIndex, bars.first, clef, ottava));
+  }
+
+  /**
+   * A bar flag over the selected bars. Taking bars out of free time fits them to their meter
+   * in the same commit (`toggleMasterBarFlag`), so that is one undo step too, and like any bar
+   * edit it stamps generated tracks diverged.
+   */
+  toggleMasterBarFlag(key: 'isRepeatStart' | 'isDoubleBar' | 'isFreeTime'): void {
+    this.applyBarEdit((draft, bars) => toggleMasterBarFlag(draft, bars, key));
+  }
+
+  setMasterBarValue<K extends 'repeatCount' | 'alternateEndings' | 'tripletFeel' | 'section'>(
+    key: K,
+    value: MasterBarDoc[K]
+  ): void {
+    if (key === 'section' && value !== null && !(value as MasterBarDoc['section'])?.text.trim()) {
+      return this.refuse('A section needs a name.');
+    }
+    if ((key === 'repeatCount' || key === 'alternateEndings') && (value as number) < 0) {
+      return this.refuse('That cannot be negative.');
+    }
+    this.applyBarEdit((draft, bars) => setMasterBarValue(draft, bars, key, value));
+  }
+
+  setStaffTuning(tuning: number[], label: string): void {
+    this.applyTrackEdit(true, (draft, t, s) => setStaffTuning(draft, t, s, tuning, label));
+  }
+
+  setStaffNumber(key: 'capo' | 'transpose' | 'displayTranspose', value: number): void {
+    this.applyTrackEdit(true, (draft, t, s) => setStaffNumber(draft, t, s, key, value));
+  }
+
+  setStaffViews(views: Partial<Pick<StaffDoc, 'showStandardNotation' | 'showTablature' | 'showSlash' | 'showNumbered'>>): void {
+    this.applyTrackEdit(true, (draft, t, s) => setStaffViews(draft, t, s, views));
+  }
+
+  setPlayback(changes: Partial<PlaybackInfoDoc>): void {
+    this.applyTrackEdit(false, (draft, t) => setPlayback(draft, t, changes));
+  }
+
+  renameTrack(name: string, shortName: string): void {
+    this.applyTrackEdit(true, (draft, t) => renameTrack(draft, t, name, shortName));
+  }
+
+  /**
+   * A bar edit over the selected bars. Score-wide, like `insertBar`: never refused on a
+   * generated track, and it stamps every generated track diverged in the same commit.
+   */
+  private applyBarEdit(edit: (draft: ScoreDoc, bars: { first: number; last: number }) => void): void {
+    const state = this.stateSubject.getValue();
+    const bars = selectedBars(state.anchor, state.cursor);
+    this.commit(draft => {
+      edit(draft, bars);
+      this.markDiverged(draft);
+    });
+  }
+
+  /**
+   * A track edit on the caret's staff, run on a clone so an edit that refuses part-way
+   * leaves nothing behind. `gated` edits are refused on a generated track.
+   */
+  private applyTrackEdit(
+    gated: boolean,
+    edit: (draft: ScoreDoc, trackIndex: number, staffIndex: number) => string | null | void
+  ): void {
+    const state = this.stateSubject.getValue();
+    const { trackIndex, staffIndex } = state.cursor;
+    if (gated) {
+      const refusal = editRefusal(state.doc, [], { family: 'track', trackIndex }, null);
+      if (refusal) return this.refuse(refusal);
+    }
+    const draft = structuredClone(state.doc);
+    const reason = edit(draft, trackIndex, staffIndex);
+    if (typeof reason === 'string') return this.refuse(reason);
+    this.commitDocument(draft);
   }
 
 
