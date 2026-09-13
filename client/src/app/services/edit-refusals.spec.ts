@@ -132,8 +132,9 @@ describe('editRefusal', () => {
 
       expect(editRefusal(score, [ref(0)], accidental('flat'), 2)).toBeNull();
       expect(editRefusal(score, [ref(0)], accidental('flat'), null)).toMatch(/line/i);
-      // A range means every note in it, focus or not - here the chord and the rest after it.
-      expect(editRefusal(score, [ref(0), ref(0, 1)], accidental('flat'), 2)).toMatch(/line/i);
+      // A range means every note in it, focus or not - here the chord and the rest after it - and
+      // the reason says so: one note in it cannot be spelled, not the one under the caret.
+      expect(editRefusal(score, [ref(0), ref(0, 1)], accidental('flat'), 2)).toMatch(/a note[\s\S]*line/i);
     });
 
     it('subtracts a display transposition, as alphaTab draws it', () => {

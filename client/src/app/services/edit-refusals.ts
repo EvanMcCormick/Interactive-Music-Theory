@@ -44,7 +44,7 @@ const GENERATED =
 
 const SECOND_VOICE = 'Editing a second voice is not available yet.';
 
-const UNSPELLABLE = 'That accidental cannot spell this note - it would be drawn on the wrong line.';
+const UNSPELLABLE = 'That accidental cannot spell a note in the selection - it would be drawn on the wrong line.';
 
 const NATURAL_HARMONIC = "A natural harmonic's accidental cannot be forced yet.";
 

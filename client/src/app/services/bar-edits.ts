@@ -18,7 +18,7 @@ const DENOMINATORS: readonly number[] = [1, 2, 4, 8, 16, 32];
 export function timeSignatureFault(timeSignature: TimeSignature): string | null {
   const { numerator, denominator } = timeSignature;
   if (!Number.isInteger(numerator) || numerator < 1 || numerator > 32) {
-    return 'The top number must be a whole number from 1 to 32.';
+    return 'The top number (the numerator) must be a whole number from 1 to 32.';
   }
   if (!DENOMINATORS.includes(denominator)) {
     return 'The bottom number (the denominator) must be 1, 2, 4, 8, 16 or 32.';
@@ -35,8 +35,13 @@ export function keySignatureFault(keySignature: KeySignature): string | null {
   return mode === 'major' || mode === 'minor' ? null : 'A key is major or minor.';
 }
 
+/**
+ * Whether two declarations are the same meter as a reader sees it. Common time is its own: C is
+ * drawn as its symbol and 4/4 as numbers, and the mapper writes `isCommon`, so switching between
+ * them is a change to declare, and a C declared under 4/4 is not a repeat to drop.
+ */
 const sameMeter = (a: TimeSignature | null, b: TimeSignature | null): boolean =>
-  !!a && !!b && a.numerator === b.numerator && a.denominator === b.denominator;
+  !!a && !!b && a.numerator === b.numerator && a.denominator === b.denominator && a.isCommon === b.isCommon;
 
 /**
  * Declares `timeSignature` from bar `first`, and fits every staff's bars under it.

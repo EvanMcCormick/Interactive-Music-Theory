@@ -28,6 +28,14 @@ describe('toggledValue', () => {
   it('compares structured values by content', () => {
     expect(toggledValue([{ type: 'long', length: 1 }], { type: 'long', length: 1 }, null)).toBeNull();
   });
+
+  it('compares structured values whatever order their keys were written in', () => {
+    // A value read back through the mapper and one built by a tool can list the same fields in a
+    // different order; that is still the same value, so the press turns it off.
+    expect(toggledValue([{ length: 1, type: 'long' }], { type: 'long', length: 1 }, null)).toBeNull();
+    expect(toggledValue([{ value: 62, speed: 16 }, { speed: 16, value: 62 }], { speed: 16, value: 62 }, null)).toBeNull();
+    expect(toggledValue([{ length: 1, type: 'long' }], { type: 'long', length: 2 }, null)).toEqual({ type: 'long', length: 2 });
+  });
 });
 
 describe('toggleBeatEffect', () => {

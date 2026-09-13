@@ -21,7 +21,7 @@ describe('timeSignatureFault and keySignatureFault', () => {
 
   it('names what is wrong', () => {
     expect(timeSignatureFault({ numerator: 5, denominator: 6, isCommon: false })).toMatch(/denominator/i);
-    expect(timeSignatureFault({ numerator: 0, denominator: 4, isCommon: false })).toMatch(/top/i);
+    expect(timeSignatureFault({ numerator: 0, denominator: 4, isCommon: false })).toMatch(/top[\s\S]*numerator/i);
     expect(keySignatureFault({ fifths: 8, mode: 'major' })).toMatch(/7/);
   });
 });
@@ -42,6 +42,26 @@ describe('setTimeSignature', () => {
     setTimeSignature(doc, 2, FOUR_FOUR);
 
     expect(doc.masterBars[2].timeSignature).toBeNull();
+  });
+
+  it('declares 4/4 under common time, since C is drawn as a meter of its own', () => {
+    // Bar 1 of an empty score is C. The same four quarters drawn as 4/4 are a change a reader sees.
+    const doc = ComposerService.createEmptyScore();
+    const plain = { numerator: 4, denominator: 4, isCommon: false };
+
+    setTimeSignature(doc, 2, plain);
+
+    expect(doc.masterBars[2].timeSignature).toEqual(plain);
+  });
+
+  it('keeps a later common-time declaration when 4/4 is declared before it', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.masterBars[3].timeSignature = FOUR_FOUR;
+    const plain = { numerator: 4, denominator: 4, isCommon: false };
+
+    setTimeSignature(doc, 1, plain);
+
+    expect(doc.masterBars.map(bar => bar.timeSignature?.isCommon ?? null)).toEqual([true, false, null, true]);
   });
 
   it('drops a later declaration the change now repeats', () => {

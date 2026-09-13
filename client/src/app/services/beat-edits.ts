@@ -31,10 +31,24 @@ import { BeatRef, beatAt } from './composer-selection';
  *
  * The design's rule for a mixed range. It never depends on which end of the selection was
  * clicked first, so the palette can show what a press will do before it is pressed.
+ *
+ * Structured values - a fermata, a trill - compare by content, whatever order their fields were
+ * written in: a value read back through the mapper and one a tool built can list the same fields
+ * differently (`canonicalJsonOf`).
  */
 export function toggledValue<T>(current: readonly T[], on: T, off: T): T {
-  const allOn = current.length > 0 && current.every(value => JSON.stringify(value) === JSON.stringify(on));
+  const target = canonicalJsonOf(on);
+  const allOn = current.length > 0 && current.every(value => canonicalJsonOf(value) === target);
   return allOn ? off : on;
+}
+
+/** `value` as JSON with every object's keys sorted, so equal values always print alike. */
+function canonicalJsonOf(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    inner !== null && typeof inner === 'object' && !Array.isArray(inner)
+      ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : inner
+  );
 }
 
 /** The beats `refs` name, skipping any that name nothing. */
