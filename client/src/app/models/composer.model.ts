@@ -413,6 +413,13 @@ export interface TexDiagnostic {
 export interface ComposerState {
   doc: ScoreDoc;
   cursor: EditCursor;
+  /**
+   * The fixed end of a range selection; `cursor` is the end that moves. null means the
+   * selection is the caret alone. See `selectionTargets` for what a range covers.
+   */
+  anchor: EditCursor | null;
+  /** Why the last command did nothing, for the status line. The next edit clears it. */
+  refusal: string | null;
   /** Duration applied to the next entered note. */
   inputDuration: DurationValue;
   inputDots: number;

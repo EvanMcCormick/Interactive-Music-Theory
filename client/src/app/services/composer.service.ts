@@ -57,6 +57,8 @@ export class ComposerService {
     this.stateSubject = new BehaviorSubject<ComposerState>({
       doc: ComposerService.createEmptyScore(),
       cursor: createDefaultCursor(),
+      anchor: null,
+      refusal: null,
       inputDuration: 4,
       inputDots: 0,
       isDirty: false,
@@ -689,6 +691,8 @@ export class ComposerService {
     this.stateSubject.next({
       doc: ComposerService.createEmptyScore(),
       cursor: createDefaultCursor(),
+      anchor: null,
+      refusal: null,
       inputDuration: 4,
       inputDots: 0,
       isDirty: false,
