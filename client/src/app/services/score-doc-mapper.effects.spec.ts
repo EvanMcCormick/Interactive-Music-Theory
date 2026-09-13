@@ -394,6 +394,4 @@ describe('ScoreDocMapperService effects round trip', () => {
       expect(throughTex(doc).masterBars[1].tempoAutomation).toBe(140);
     });
   });
-
-  // <!-- A11 -->
 });
