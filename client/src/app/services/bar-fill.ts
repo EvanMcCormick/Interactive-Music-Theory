@@ -559,3 +559,19 @@ function takeTrailingRests(bar: BarDoc, meter: BarMeter): void {
     voice.beats.pop();
   }
 }
+
+/**
+ * Settles a bar after its meter changed: trailing rests go while the bar is over, a gap fills
+ * with rests, and notes that no longer fit stay as overflow for Fix bar.
+ *
+ * The gap fills at the end of the bar (`fillBarGaps`), because that is where a meter change
+ * opens it: no beat changed length, the bar did. Rests go only while the bar is over
+ * (`takeTrailingRests`), so a whole rest left alone once the rests after it are gone stays,
+ * because that fills any meter (`barFillOf`): 5/4's `r1 r4` fitted to 3/4 keeps its whole rest.
+ * Trailing rests stop at a grace beat or a rest one leads into, so a bar ending that way can
+ * stay over. A free-time bar is never over or under, so nothing here changes one.
+ */
+export function fitBarToMeter(bar: BarDoc, meter: BarMeter): void {
+  takeTrailingRests(bar, meter);
+  fillBarGaps(bar, meter);
+}
