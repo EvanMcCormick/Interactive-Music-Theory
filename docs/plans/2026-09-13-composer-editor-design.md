@@ -488,3 +488,11 @@ Not rejected - not yet placed. Each needs its own design pass:
   whole number of octaves. A forced accidental on a natural harmonic is refused outright:
   the mapper writes `harmonicType` and not `harmonicValue`, so alphaTab draws a natural
   harmonic at its open string's pitch, not its fret's.
+- **A grace beat's written value is alphaTab's, not the user's.** `Beat.finish`
+  (`alphaTab.core.mjs` ~7772-7786 in 1.8) rewrites an on-beat or before-beat grace's
+  `duration` by the size of its grace group - an eighth for one grace, a sixteenth for two,
+  a thirty-second for three or more - when the score is finished, so before anything is
+  saved. A lone on-beat grace written as a half, quarter, sixteenth or thirty-second comes
+  back from `toScore` as an eighth, and alphaTex exports it as one (`3.1.8{gr onbeat}`). A
+  duration the user sets on a grace does not survive a save. M2's grace tool should either
+  fix the grace's value to alphaTab's rule or refuse a duration edit on a grace.

@@ -113,7 +113,9 @@ writes them generously; 1000 lines per file at most.
 5. **Accidental presses that cannot name their note are refused** (review of A8). A forced
    accidental whose shifted pitch is not a white key is drawn on a line that depends on the
    key signature, so Task C4 refuses the press with a reason rather than falling back to
-   `auto`. Recorded in the design doc's "Found while designing".
+   `auto`. A forced accidental on a natural harmonic on a fretted note is refused too:
+   alphaTab draws it at the open string's harmonic pitch, not its fret's. Recorded in the
+   design doc's "Found while designing".
 
 ---
 
@@ -3124,6 +3126,15 @@ describe('editRefusal', () => {
 
       expect(editRefusal(score, [ref(0)], accidental('flat'), null)).toMatch(/harmonic/i);
     });
+
+    it('is not refused on a pitched note marked as a natural harmonic, which is drawn at its pitch', () => {
+      // alphaTab moves a natural harmonic only on a stringed note (`isStringed`), so the
+      // piano's C is drawn as C and a sharp spells it as B sharp, as above.
+      const score = doc();
+      score.tracks[1].staves[0].bars[0].voices[0].beats[0].notes[0].effects.harmonic = 'natural';
+
+      expect(editRefusal(score, [ref(1)], accidental('sharp'), null)).toBeNull();
+    });
   });
 });
 ```
@@ -3183,7 +3194,9 @@ const NATURAL_HARMONIC = "A natural harmonic's accidental cannot be forced yet."
  * `harmonicPitch` (~6078) reads `Note.harmonicValue`, which the mapper does not write. At
  * alphaTab's default of 0 that is 0, so a natural harmonic is drawn at the open string's
  * pitch whatever the fret. This function would read the fret, so `editRefusal` refuses a
- * forced accidental on a natural harmonic before it asks.
+ * forced accidental on a fretted natural harmonic before it asks. Both of those alphaTab
+ * branches test `isStringed`, so a pitched note marked natural is drawn at its own pitch
+ * and is read correctly here.
  */
 function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
   const sounding =
@@ -3254,10 +3267,16 @@ export function editRefusal(
   }
   const notes = notesAt(doc, refs, focus);
   if (notes.length === 0) return 'There is no note there to change.';
+  // Fretted notes only. alphaTab moves a natural harmonic off its fret only on a stringed
+  // note: `calculateRealValue`'s harmonic branch and `harmonicPitch` both test `isStringed`
+  // (`Note.string >= 0`, ~5677; ~6053-6090), and the mapper sets `string` only for a fretted
+  // pitch, so a pitched note keeps its default of -1. A pitched note marked natural - which
+  // an alphaTex import can produce - is drawn at its own pitch, and the spelling check
+  // below reads it correctly.
   if (
     scope.key === 'accidental' &&
     scope.accidental !== 'auto' &&
-    notes.some(note => note.effects.harmonic === 'natural')
+    notes.some(note => note.pitch.kind === 'fretted' && note.effects.harmonic === 'natural')
   ) {
     return NATURAL_HARMONIC;
   }
