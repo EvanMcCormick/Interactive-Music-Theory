@@ -70,8 +70,8 @@ import { insertBarInto } from './score-structure';
  * The bar and track commands, and Fix bar, live in `ComposerStructureCommands`
  * (composer-service-structure.ts), which this file had to shed to stay under the
  * 1000-line cap. Their public methods stay here and delegate, so callers see one
- * service; the helper reaches back only through `commitFollowing`, `refuse` and
- * `markDiverged`.
+ * service; the helper reaches back only through `state`, `commitFollowing`,
+ * `refuse` and `markDiverged`.
  */
 @Injectable({ providedIn: 'root' })
 export class ComposerService {

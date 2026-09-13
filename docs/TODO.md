@@ -138,6 +138,14 @@ that owns the control that reaches them. Each is in the same "Found while design
   spelling cluster now uses it; the rest is a separate sweep.
 - **Clicking a generated notation staff still auditions the note** it will refuse to
   write. Arguably right — audition-on-read — but unconsidered rather than chosen.
+- **Redo does not put back a followed selection.** An edit keeps the selection on its beats
+  through the rests it inserts, but undo and redo only clamp the current selection, so after
+  undo then redo a range made shorter can end short of its notes. Recorded under "Found while
+  designing" in the composer editor design doc.
+- **Rests that could merge are left as two.** A duration change puts a gap's rests where the gap
+  opened and leaves the bar's other rests in place, so `n8 n2 r4 r8` with its first two beats
+  set to quarters is `n4 n4 r8 r4 r8`. The beats after it keep their ticks, which is the point;
+  M2 may merge them.
 
 ## Next milestone, when there is one
 

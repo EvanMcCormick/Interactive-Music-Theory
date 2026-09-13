@@ -134,7 +134,7 @@ writes them generously; 1000 lines per file at most.
 
 ### Corrections during implementation
 
-Two reviews of Tasks B1-D5 changed the code after it was written to the tasks below. **For
+Three reviews of Tasks B1-D5 changed the code after it was written to the tasks below. **For
 the tasks named here, the plan's code blocks are superseded by the committed code**; they are
 left as written, as the record of what was planned.
 
@@ -143,13 +143,30 @@ left as written, as the record of what was planned.
   once, and an earlier beat that grew could not take it. Beats now all change last to first,
   freed room fills first to last while the bar is short, and growth only a changing neighbour
   blocked takes the rests after the range. Grouped by voice, not bar.
-- **The selection follows its beats** (Tasks D2, D4, D5). Every edit path commits through
-  `commitFollowing`, which finds each end's beat again after the edit, so a range made shorter
-  still covers its notes. It replaces `toggleGrace`'s own caret follow.
+- **The selection follows its beats** (Tasks D2, D4, D5). The edits that act on a selection
+  commit through `commitFollowing`, which finds each end's beat again after the edit, so a range
+  made shorter still covers its notes: the duration buttons, every note and beat edit, the bar
+  and track commands, and Fix bar. It replaces `toggleGrace`'s own caret follow. Note entry,
+  rest entry and delete still use `commit`, as do bar and track insertion and removal, score
+  info, tempo, Send and Flatten; the caret there is placed by the command, not followed.
 - **A beat `EditScope` names its key** (Tasks C4, D2):
   `{ family: 'beat'; key: keyof BeatEffectsDoc | 'duration' | 'dynamics' | 'tuplet' }`. Tap,
   slap and pop are refused on a pitched staff; palm mute and let ring are not.
 - **Voice 1 only** (Task C4). Any ref in a later voice refuses the press.
+- **A bar that arrives over keeps its overflow** (Tasks C2, D4; third review). Phase 3 of
+  `relength` counted growth a changing neighbour blocked even when that neighbour's shrink had
+  paid for it, and took rests for it out of the bar's existing overflow: `n8 n4. r4 r4 n4 n4`,
+  1920 over, with its first two beats set to quarters came out `n4 n4 r8 r4 n4 n4`, 1440 over.
+  Phase 2 now counts the freed room it did not place, and phase 3 takes rests only for blocked
+  growth that room did not cover. It now gives `n4 n4 r4 r4 n4 n4`, still 1920 over.
+- **Note entry, rest entry and delete are refused in a second voice** (Task D4; third review).
+  They checked only for a generated track, and a click can put the caret in voice 2 of a loaded
+  bar, where a rest entry left the voice short and unfilled. All three now ask `editRefusal`
+  with a beat scope - a note scope would refuse a delete on a rest - and publish the reason.
+  `relength` also skips any voice but the first, as a backstop.
+- **Fix bar's caret follows a carried beat** (Task D5; third review). `followedEnd` looked only
+  in the end's own bar, so a caret on a beat Fix bar carried whole into the next bar stayed
+  behind, clamped. It now looks in later bars of the same staff and voice too.
 - **A split note's hammer-on and slides** (Task B6). A hammer-on, shift and legato slide and
   slide out move from the head to the tail's last piece, since after the split the next note on
   the string is the note's own continuation. A slide in from below stays on the head.

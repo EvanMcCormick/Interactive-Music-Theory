@@ -205,7 +205,10 @@ taking rests as it grows; then the room the shrinking beats freed fills with res
 last, only while the bar is short; and growth that only a changing neighbour blocked takes the
 rests after the range. So a range edit never reports overflow its new lengths do not have -
 `n4 n8 n8 n2` set to quarters is four quarters, not a bar over and holding rests. Growth a
-note blocks is still overflow. The selection's ends follow their beats through the rests an
+note blocks is overflow, unless room the range freed covers it, as settling one beat at a
+time would: `n2 n8 n4 r8` with its first two beats set to quarters is `n4 r8 n4 n4 r8`, a full
+bar, since the half gives up the room the eighth grows into. A bar that was already over keeps
+exactly its overflow when a range's lengths change its total by nothing. The selection's ends follow their beats through the rests an
 edit inserts, so a range of four notes made eighths still covers all four. A note tool on a
 range of notes and rests applies to the notes and skips the rests, refusing only when there
 are no notes at all. Overflow is never resolved automatically: a pure
@@ -598,3 +601,13 @@ Not rejected - not yet placed. Each needs its own design pass:
   starts at the tick of the beat it leads into. So at the earlier end every grace in a run at
   that tick is taken with its beat, and at the later end the beat the run leads into is taken
   too. No edit reaches it in M1, which refuses a second voice; multiple voices must decide it.
+- **Rests that could merge are left unmerged.** A duration change puts the rests for a gap where
+  the gap opened, and the rests already in the bar keep their places, so two rests that could be
+  written as one stay two: `n8 n2 r4 r8` with its first two beats set to quarters is
+  `n4 n4 r8 r4 r8`, not `n4 n4 r4. r8`. The beats after the edit keep their ticks, which is what
+  the rule is for. M2 may merge them.
+- **Redo does not restore a followed selection.** An edit that commits through
+  `commitFollowing` moves the selection's ends onto the beats they named, but undo and redo only
+  clamp whatever selection is current into the document they restore. So after undo then redo,
+  a range made shorter no longer covers its notes, as it did straight after the edit. Recorded,
+  not changed in M1.
