@@ -1,9 +1,12 @@
 import {
   BarDoc,
   BeatDoc,
+  BeatEffectsDoc,
+  NoteEffectsDoc,
   ScoreDoc,
   TimeSignature,
   VoiceDoc,
+  createDefaultBeatEffects,
   createDefaultNoteEffects,
   createRestBeat,
   effectiveTimeSignature
@@ -204,23 +207,59 @@ function spelledTicks(ticks: number, startTicks: number, timeSignature: TimeSign
 /**
  * Adds rests at the end of `bar` until it is full, when that can be done exactly.
  *
- * The gap goes at the end because that is where shortening a beat leaves it: every later
- * beat moves earlier. The rests go in front of any grace beats that end the bar, so those
- * graces stay last, in the order they were written (`graceRunStart`). A grace takes no room,
- * so it moves no rest's start. Rests are spelled at a 64th grid, split at beat and half-bar
- * lines by the quantizer's own speller. Nothing happens when the bar is full or over - a
- * free-time bar always is (`barFillOf`) - when the meter has no 64th grid, or when the gap or
- * its start is not a whole number of 64ths - a lone tuplet's remainder - because a fill that
- * is only nearly right is worse than a bar still honestly reported as under.
+ * For a gap that has no position of its own to go to: a bar that arrived short, or one whose
+ * meter changed, which opens its gap at the end of the bar. A gap a length change opens has a
+ * position, and goes there instead - see `insertRestsAt`, which this calls at the end of the
+ * voice. So the rests go in front of any grace beats that end the bar, which stay last, in the
+ * order they were written. Nothing happens when the bar is full or over - a free-time bar
+ * always is (`barFillOf`) - or when `insertRestsAt` cannot spell the gap exactly, because a
+ * fill that is only nearly right is worse than a bar still honestly reported as under.
  */
 export function fillBarGaps(bar: BarDoc, meter: BarMeter): void {
   const fill = barFillOf(bar, meter);
   const voice = bar.voices[0];
   if (fill.kind !== 'under' || !voice) return;
+  insertRestsAt(voice, voice.beats.length, fill.ticks, meter);
+}
 
-  const units = spelledTicks(fill.ticks, voiceTicks(voice), meter.timeSignature) ?? [];
-  const rests = units.map(unit => ({ ...createRestBeat(unit.duration), dots: unit.dots }));
-  voice.beats.splice(graceRunStart(voice, voice.beats.length), 0, ...rests);
+/**
+ * Inserts `ticks` of rests into `voice` at beat `index`, spelled from the tick they start at,
+ * and says whether it could. `voice` is in a bar measured against `meter`.
+ *
+ * This is where a gap goes when the caller knows where it opened: right after a beat that
+ * shrank (`index` one past it), right after the rests a growing beat took more of than it
+ * needed, right after the beats Fix bar carried into a bar. Rests placed there keep every later
+ * beat where it was in the bar, so an empty bar whose first quarter becomes an eighth reads
+ * `r8 r8 r4 r4 r4`, and its quarter slots survive.
+ *
+ * Rests never go between a grace and the beat it leads into: the insertion moves back in front
+ * of any grace run that ends at `index` (`graceRunStart`). A grace takes no room, so that is
+ * the same tick. The rule for the cases that meet a grace:
+ * - After a beat a grace run precedes: the rests go right after that beat. Its graces are in
+ *   front of it, not at `index`, so they stay with it.
+ * - After a beat followed by graces: `index` is in front of those graces, so they stay in front
+ *   of the beat they lead into.
+ * - After a beat that has itself become a grace: the rests go in front of it and any graces
+ *   before it, and it goes on leading into the beat after it.
+ * - At the end of a bar that graces end: in front of them, so they stay last.
+ *
+ * Rests are spelled at a 64th grid, split at beat and half-bar lines by the quantizer's own
+ * speller, starting from the ticks of every beat before the insertion point. It inserts nothing
+ * and returns false in a free-time bar, which the meter does not govern, when the meter has no
+ * 64th grid, and when the gap or its start is not a whole number of 64ths - a tuplet's
+ * remainder. A gap of 0 needs nothing and returns true.
+ */
+export function insertRestsAt(voice: VoiceDoc, index: number, ticks: number, meter: BarMeter): boolean {
+  if (ticks === 0) return true;
+  if (meter.isFreeTime || !(ticks > 0)) return false;
+
+  const at = graceRunStart(voice, Math.max(0, Math.min(index, voice.beats.length)));
+  const start = voiceTicks({ beats: voice.beats.slice(0, at) });
+  const units = spelledTicks(ticks, start, meter.timeSignature);
+  if (!units) return false;
+
+  voice.beats.splice(at, 0, ...units.map(unit => ({ ...createRestBeat(unit.duration), dots: unit.dots })));
+  return true;
 }
 
 /**
@@ -238,22 +277,31 @@ function isTakeableRest(voice: VoiceDoc, index: number): boolean {
   return isAlphaTabRest(beat) && beat.effects.grace === 'none' && (before === null || before.effects.grace === 'none');
 }
 
+/** What `absorbFollowingRests` could not cover, and what it took beyond what was asked. */
+export interface RestsTaken {
+  /** Ticks still wanted: the growth left as overflow. */
+  uncovered: number;
+  /** Ticks taken past what was wanted, because the last rest taken was longer than the need. */
+  overTaken: number;
+}
+
 /**
- * Removes rests after `beat` in `voice` until `ticks` are covered, and returns the ticks it
- * could not cover. `voice` is in a bar measured against `meter`.
+ * Removes rests after `beat` in `voice` until `ticks` are covered, and reports what it could not
+ * cover and what it took beyond that. `voice` is in a bar measured against `meter`.
  *
  * It stops at the first note - the design's line: lengthening consumes only following
  * rests, and anything that would overwrite a note is left as overflow for the user to
  * see. It stops at a grace beat too, rest or not, or a rest a grace leads into, and never
  * removes either (`isTakeableRest`). And it stops at any beat in `changing`, so a range
  * pressed together is changed together rather than one beat eating its neighbours. A rest
- * longer than what is left is taken whole; the caller's `fillBarGaps` puts the difference
- * back. Beats are held by identity, not index, because every removal shifts the indices
- * after it.
+ * longer than what is left is taken whole, and the difference comes back as `overTaken`: the
+ * caller puts it back right after `beat` (`insertRestsAt`), where the room it did not need now
+ * opens - so `n4 r4 r4 r4` with its note dotted reads `n4. r8 r4 r4`, as Guitar Pro writes it.
+ * Beats are held by identity, not index, because every removal shifts the indices after it.
  *
- * In a free-time bar it removes nothing and returns all of `ticks`: the meter does not
- * govern that bar, so there is no room to make, and a lengthened beat simply makes the bar
- * longer. `meter` is required, like every per-bar function here, so no caller can forget
+ * In a free-time bar it removes nothing and reports all of `ticks` uncovered: the meter does
+ * not govern that bar, so there is no room to make, and a lengthened beat simply makes the
+ * bar longer. `meter` is required, like every per-bar function here, so no caller can forget
  * to ask. The walk's index never moves: each removal brings the next beat to it.
  */
 export function absorbFollowingRests(
@@ -262,11 +310,11 @@ export function absorbFollowingRests(
   ticks: number,
   changing: ReadonlySet<BeatDoc>,
   meter: BarMeter
-): number {
-  if (meter.isFreeTime) return ticks;
+): RestsTaken {
+  if (meter.isFreeTime) return { uncovered: ticks, overTaken: 0 };
   let remaining = ticks;
   const index = voice.beats.indexOf(beat) + 1;
-  if (index === 0) return remaining;
+  if (index === 0) return { uncovered: remaining, overTaken: 0 };
 
   // Every pass removes a beat or stops, so the walk ends however little a beat is worth.
   while (remaining > 0 && index < voice.beats.length) {
@@ -275,7 +323,7 @@ export function absorbFollowingRests(
     remaining -= beatTicks(next);
     voice.beats.splice(index, 1);
   }
-  return Math.max(0, remaining);
+  return { uncovered: Math.max(0, remaining), overTaken: Math.max(0, -remaining) };
 }
 
 /** What Fix bar did: how many bars it had to add, or why it did nothing. */
@@ -286,15 +334,33 @@ export type FixBarResult =
 const TUPLET_ACROSS_LINE =
   'A tuplet crosses the bar line, so no written value can split it. Shorten it until the bar fits.';
 
+const OFF_GRID_AT_LINE =
+  'The beat at the bar line starts or ends between 64th notes, so it cannot be split exactly.';
+
+const NO_GRID_AT_LINE =
+  'A time signature at the bar line has no 64th-note grid, so the beat across it cannot be split exactly.';
+
+const NO_ROOM = 'That time signature leaves no room in a bar, so there is nowhere to carry the overflow.';
+
 /**
  * Carries the overflow of bar `barIndex` on one staff into the bars after it, tied, until
  * a bar it reaches is no longer over. See the section comment above Task B6 in the M1 plan
- * for what a continuation carries.
+ * for what a continuation carries, and `CARRIED_OVER_A_TIE`.
  *
  * Every bar is read against its own `barMeterAt`, so a free-time bar is never over: Fix bar
- * refuses one, and a carry that reaches one stops there, taking none of its rests.
+ * refuses one, and a carry that reaches one stops there, taking none of its rests. Room in a
+ * bar carried into is made by taking its trailing rests; if that takes more than was needed,
+ * the spare room goes back right after the carried beats (`insertRestsAt`), where it opened.
+ *
+ * It refuses, and says why, when the beat across a line cannot be split exactly - a tuplet, a
+ * start or end between 64th notes, a meter with no 64th grid - and when a bar it must carry out
+ * of has no room at all, which would otherwise append bars forever.
  *
  * **May leave `doc` partly changed when it refuses.** Call it on a draft you can discard.
+ *
+ * **Replaces beats, so callers must not hold `BeatDoc` references across it.** The beat across
+ * the line is replaced by new beats for its head and tail, carried beats move bars, and rests
+ * are removed and inserted. Address beats again by position afterwards.
  */
 export function fixBarOverflow(
   doc: ScoreDoc,
@@ -306,24 +372,32 @@ export function fixBarOverflow(
   if (!staff?.bars[barIndex]) return { kind: 'refused', reason: 'There is no bar there.' };
 
   let appendedBars = 0;
+  /** How many beats at the start of the bar in hand were carried into it. */
+  let carriedIn = 0;
   for (let index = barIndex; index < staff.bars.length; index++) {
     const meter = barMeterAt(doc, index);
     const bar = staff.bars[index];
 
-    if (barFillOf(bar, meter).kind !== 'over') {
+    const fill = barFillOf(bar, meter);
+    if (fill.kind !== 'over') {
       if (index === barIndex) {
         return { kind: 'refused', reason: 'That bar is not over its time signature.' };
       }
-      fillBarGaps(bar, meter);
+      if (fill.kind === 'under') insertRestsAt(bar.voices[0], carriedIn, fill.ticks, meter);
       return { kind: 'fixed', appendedBars };
     }
 
-    const carried = beatsPastBarLine(
+    // A bar of no ticks puts every beat past its line, and each bar appended after it inherits
+    // the meter, so the carry would never end. Checked on every bar, not only the first, since
+    // a carry can reach such a meter.
+    if (barCapacityTicks(meter.timeSignature) <= 0) return { kind: 'refused', reason: NO_ROOM };
+
+    const cut = beatsPastBarLine(
       bar.voices[0],
       meter.timeSignature,
       barMeterAt(doc, index + 1).timeSignature
     );
-    if (carried === null) return { kind: 'refused', reason: TUPLET_ACROSS_LINE };
+    if (cut.kind === 'refused') return cut;
 
     if (index === staff.bars.length - 1) {
       insertBarInto(doc, staff.bars.length);
@@ -331,16 +405,37 @@ export function fixBarOverflow(
     }
 
     const next = staff.bars[index + 1];
-    next.voices[0].beats.unshift(...carried);
+    next.voices[0].beats.unshift(...cut.carried);
+    carriedIn = cut.carried.length;
     takeTrailingRests(next, barMeterAt(doc, index + 1));
   }
   return { kind: 'fixed', appendedBars };
 }
 
+/** What cutting a voice at its bar line gave: the beats past the line, or why it could not. */
+type LineCut = { kind: 'cut'; carried: BeatDoc[] } | { kind: 'refused'; reason: string };
+
+/**
+ * Whether alphaTab draws `beat` as a tuplet: `Beat.hasTuplet` (`alphaTab.core.mjs` ~7370), any
+ * ratio but -1:-1, its default, and 1:1. The mapper writes a model tuplet's ratio as it is.
+ */
+function hasTuplet(beat: BeatDoc): boolean {
+  const tuplet = beat.tuplet;
+  return (
+    tuplet !== null &&
+    !(tuplet.numerator === -1 && tuplet.denominator === -1) &&
+    !(tuplet.numerator === 1 && tuplet.denominator === 1)
+  );
+}
+
 /**
  * Cuts `voice` at its bar line and returns what lay past it: the tied tail of the beat that
- * crossed the line, then every later beat whole. Returns null, leaving `voice` untouched,
- * when the crossing beat cannot be split into written values.
+ * crossed the line, then every later beat whole. Refuses, leaving `voice` untouched, when the
+ * crossing beat cannot be split into written values - saying which reason applies.
+ *
+ * A tuplet is refused first, even when both sides of the split are whole 64ths: its pieces would
+ * be written values, and the bracket would be gone. Then a meter on either side with no 64th
+ * grid, and then a split that falls between 64ths.
  *
  * A grace beat is 0 ticks, so it never crosses the line. Graces just before the first whole
  * beat past it go with that beat; graces before a crossing beat stay with its head. Graces
@@ -351,7 +446,7 @@ function beatsPastBarLine(
   voice: VoiceDoc,
   timeSignature: TimeSignature,
   nextTimeSignature: TimeSignature
-): BeatDoc[] | null {
+): LineCut {
   const capacity = barCapacityTicks(timeSignature);
   let start = 0;
 
@@ -363,40 +458,86 @@ function beatsPastBarLine(
       continue;
     }
 
-    if (start >= capacity) return voice.beats.splice(graceRunStart(voice, index));
+    if (start >= capacity) return { kind: 'cut', carried: voice.beats.splice(graceRunStart(voice, index)) };
 
+    if (hasTuplet(beat)) return { kind: 'refused', reason: TUPLET_ACROSS_LINE };
+    if (barGridFault(timeSignature, SLOT_DIVISION) !== null || barGridFault(nextTimeSignature, SLOT_DIVISION) !== null) {
+      return { kind: 'refused', reason: NO_GRID_AT_LINE };
+    }
     const head = spelledTicks(capacity - start, start, timeSignature);
     const tail = spelledTicks(end - capacity, 0, nextTimeSignature);
-    if (!head || !tail) return null;
+    if (!head || !tail) return { kind: 'refused', reason: OFF_GRID_AT_LINE };
 
     const after = voice.beats.splice(index + 1);
     voice.beats.splice(index, 1, ...piecesOf(beat, head, false));
-    return [...piecesOf(beat, tail, true), ...after];
+    return { kind: 'cut', carried: [...piecesOf(beat, tail, true), ...after] };
   }
-  return [];
+  return { kind: 'cut', carried: [] };
+}
+
+/**
+ * What a tied continuation keeps of the beat and notes it continues: what goes on sounding
+ * across the tie, not what attacks.
+ *
+ * A tied note is not struck again. So accents, hammer-ons and pull-offs, slides, bends, trills,
+ * ghost and dead notes, staccato, taps, slap and pop, a pick stroke, a fade in, a grace, a
+ * fermata and fingering all stay on the beat that was struck, and a continuation carrying one
+ * would show a second attack the player never made. What it keeps is a state that runs on:
+ *
+ * - **The dynamic** (`BeatDoc.dynamics`, carried beside these), a level rather than an attack.
+ *   alphaTab reads an unmarked beat as forte and prints a dynamic wherever it differs from the
+ *   beat before (`DynamicsEffectInfo._internalShouldCreateGlyph`, `alphaTab.core.mjs`
+ *   ~58929-58937), so a continuation without it would print an f nobody played.
+ * - **Palm mute and let ring**, on the beat and its notes. alphaTab runs each line on to the
+ *   next note on the string only while that note has it too (`Note.finish`, ~6259-6276), so a
+ *   continuation without it would end the line at the tie.
+ * - **A harmonic**, which is how the held note sounds.
+ * - **Beat vibrato, and a crescendo or decrescendo.** A hairpin grows across beats that share
+ *   it (`CrescendoEffectInfo.canExpand`, ~58565), so a continuation without it would cut the
+ *   hairpin at the tie.
+ */
+const CARRIED_OVER_A_TIE = {
+  beat: ['isPalmMute', 'isLetRing', 'vibrato', 'crescendo'],
+  note: ['harmonic', 'isPalmMute', 'isLetRing']
+} as const satisfies { beat: readonly (keyof BeatEffectsDoc)[]; note: readonly (keyof NoteEffectsDoc)[] };
+
+/** Copies `keys` of `source` onto `target`. Generic in the key, so each copy is type-checked. */
+function copyFields<T, K extends keyof T>(target: T, source: T, keys: readonly K[]): void {
+  for (const key of keys) target[key] = source[key];
+}
+
+/** A tied continuation of `beat`, at `beat`'s value until `piecesOf` re-values it. */
+function continuationOf(beat: BeatDoc): BeatDoc {
+  const effects = createDefaultBeatEffects();
+  copyFields(effects, beat.effects, CARRIED_OVER_A_TIE.beat);
+  return {
+    ...createRestBeat(beat.duration),
+    isRest: beat.isRest,
+    dynamics: beat.dynamics,
+    effects,
+    notes: beat.notes.map(note => {
+      const noteEffects = createDefaultNoteEffects();
+      copyFields(noteEffects, note.effects, CARRIED_OVER_A_TIE.note);
+      return { ...structuredClone(note), isTied: true, effects: noteEffects };
+    })
+  };
 }
 
 /**
  * `beat` rewritten as one beat per written value. The first piece of the head is the beat
- * itself, re-valued, so its effects and attack stay where they were struck; every other
- * piece is a tied continuation - same pitches, `isTied`, no effects.
+ * itself, re-valued, so its effects and attack stay where they were struck; every other piece
+ * is a tied continuation (`continuationOf`).
+ *
+ * The first piece is a shallow copy, not a clone. `beatsPastBarLine` splices `beat` out of its
+ * voice as it puts the pieces in, so nothing in the document still holds `beat`'s notes or
+ * effects to share them with, and every continuation builds its own.
  */
 function piecesOf(beat: BeatDoc, units: DurationUnit[], isTail: boolean): BeatDoc[] {
-  return units.map((unit, index): BeatDoc => {
-    if (index === 0 && !isTail) {
-      return { ...structuredClone(beat), duration: unit.duration, dots: unit.dots, tuplet: null };
-    }
-    return {
-      ...createRestBeat(unit.duration),
-      dots: unit.dots,
-      isRest: beat.isRest,
-      notes: beat.notes.map(note => ({
-        ...structuredClone(note),
-        isTied: true,
-        effects: createDefaultNoteEffects()
-      }))
-    };
-  });
+  return units.map((unit, index): BeatDoc =>
+    index === 0 && !isTail
+      ? { ...beat, duration: unit.duration, dots: unit.dots, tuplet: null }
+      : { ...continuationOf(beat), duration: unit.duration, dots: unit.dots }
+  );
 }
 
 /**

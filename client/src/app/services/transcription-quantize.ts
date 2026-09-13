@@ -75,6 +75,10 @@ const DOT_MULTIPLIER = [1, 1.5, 1.75];
  * enough in real parts to read as a mistake, and longest-first decomposition
  * reaches for them constantly: the rest in front of a note on the "and of 4"
  * comes out as a single double-dotted half. One dot is the practical ceiling.
+ *
+ * Not only transcription reads this. `bar-fill.ts` spells the composer's gap rests with
+ * `slotsToDurations`, so changing the ceiling changes every rest a composer edit writes - its
+ * spec "spells with at most one dot" pins the spelling a change would break.
  */
 const MAX_WRITTEN_DOTS = 1;
 
@@ -339,6 +343,10 @@ function metricFragments(
  * and the bar would silently come out wrong, which is the one failure this
  * module exists to rule out; a NaN one - the shape a NaN `beatInBar` arrives
  * in - would empty the bar with no diagnostic at all.
+ *
+ * `bar-fill.ts` is a consumer too: it spells every rest the composer's bar filling writes
+ * through this, at a 64th grid. Changing how a span is cut or which values it reaches for
+ * changes those rests, and `bar-fill.spec.ts` pins them.
  */
 export function slotsToDurations(
   slots: number,
