@@ -3,6 +3,7 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { AlphaTexService } from './alpha-tex.service';
+import { ALTER_BY_ACCIDENTAL } from './note-spelling';
 import {
   BeatDoc,
   NoteDoc,
@@ -354,6 +355,19 @@ describe('ScoreDocMapperService effects round trip', () => {
       expect(beatsOf(throughTex(doc))[0].notes[0].accidental).toBe(accidental);
     });
   }
+
+  it('gives every accidental the model can force an alphaTab mode', () => {
+    // `MODE_BY_ACCIDENTAL` is derived from `ALTER_BY_ACCIDENTAL` by a `flatMap` that drops an
+    // accidental whose alteration alphaTab has no mode for, so a new accidental with no mode
+    // would map as `Default` without a word. Iterating the table rather than a list of
+    // literals covers the next accidental added to it.
+    for (const accidental of ALTER_BY_ACCIDENTAL.keys()) {
+      const doc = guitarBar(beats => (beats[0].notes[0].accidental = accidental));
+      const note = mapper.toScore(doc, settings).tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+
+      expect(note.accidentalMode).withContext(accidental).not.toBe(alphaTab.model.NoteAccidentalMode.Default);
+    }
+  });
 
   it('loses a forced accidental on a pre-bent note - alphaTab resets it', () => {
     // `Note.finish` sets `accidentalMode` back to `Default` when `initialBendValue` is above

@@ -179,10 +179,11 @@ describe('ComposerService updateScoreInfo', () => {
 
   it('leaves the structure alone when handed a whole document', () => {
     const before = structuredClone(service.doc);
+    // Built as a variable and passed with no cast: excess properties are checked only on a
+    // fresh literal, so this compiles, and it is the spread a caller could really write.
+    const whole = { ...structuredClone(service.doc), title: 'New', tracks: [] };
 
-    service.updateScoreInfo(
-      { ...structuredClone(service.doc), title: 'New', tracks: [] } as Parameters<ComposerService['updateScoreInfo']>[0]
-    );
+    service.updateScoreInfo(whole);
 
     expect(service.doc.title).toBe('New');
     expect(service.doc.tracks).toEqual(before.tracks);
