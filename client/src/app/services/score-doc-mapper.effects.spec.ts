@@ -123,10 +123,22 @@ describe('ScoreDocMapperService effects round trip', () => {
     return doc.tracks[0].staves[0].bars[0].voices[0].beats;
   }
 
-  it('keeps a hammer-on', () => {
+  it('keeps a hammer-on on its origin, and only there', () => {
     const doc = guitarBar(beats => (beats[0].notes[0].effects.isHammerPullOrigin = true));
 
-    expect(beatsOf(throughTex(doc))[0].notes[0].effects.isHammerPullOrigin).toBeTrue();
+    const back = beatsOf(throughTex(doc));
+    expect(back[0].notes[0].effects.isHammerPullOrigin).toBeTrue();
+    expect(back[1].notes[0].effects.isHammerPullOrigin).toBeFalse();
+  });
+
+  it('loses a hammer-on with nothing to land on - alphaTab clears it', () => {
+    // `Note.finish` clears an origin with no destination: no note on the same string, and
+    // no left-hand-tapped note on another, within three bars. The last beat has neither, so
+    // the flag is gone before a character of alphaTex is written. Pinned so the loss stays
+    // visible, and so M2's hammer-on tool has to decide what to do about it.
+    const doc = guitarBar(beats => (beats[3].notes[0].effects.isHammerPullOrigin = true));
+
+    expect(beatsOf(throughTex(doc))[3].notes[0].effects.isHammerPullOrigin).toBeFalse();
   });
 
   // <!-- A2 -->

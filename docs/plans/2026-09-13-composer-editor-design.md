@@ -425,3 +425,9 @@ Not rejected - not yet placed. Each needs its own design pass:
 - **Before the first click, the caret box is not drawn** - it needs a click to learn
   which staff it is on - so arrow keys move an invisible caret. The selection
   highlight in M2 draws from state rather than from the last click.
+- **A hammer-on with nothing to land on does not save.** alphaTab's `Note.finish` clears
+  `isHammerPullOrigin` when no note follows on the same string, or on another string as a
+  left-hand tap, within three bars - so the editor can show a hammer-on that a reload
+  loses. M1 pins the loss in `score-doc-mapper.effects.spec.ts`. M2 decides what the
+  hammer-on tool does about it: refuse where there is no destination, or allow it and
+  say so.

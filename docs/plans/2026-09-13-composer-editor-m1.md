@@ -44,8 +44,10 @@ writes them generously; 1000 lines per file at most.
 - alphaTex 1.8 round-trips every effect in this plan **except the double bar**
   (`MasterBar.isDoubleBar` parses from `\db` and is not exported).
 - Writing alphaTab model fields and calling `Score.finish` is enough. `finish` derives
-  `Note.bendType` from the points and links a hammer-on to its destination. A hammer-on
-  with no destination keeps `isHammerPullOrigin`.
+  `Note.bendType` from the points and links a hammer-on to its destination. `finish`
+  clears `isHammerPullOrigin` on a hammer-on with no destination - no note on the same
+  string, and no left-hand-tapped note on another, within three bars - so such a
+  hammer-on does not survive save. Task A1 pins that loss.
 - Forced accidentals survive alphaTex on fretted *and* pitched notes (`{acc b}`).
 - alphaTab's `Beat` has **no staccato**; only `Note.isStaccato` exists.
 - Accent, heavy accent and tenuto are one field, `Note.accentuated: AccentuationType`.
