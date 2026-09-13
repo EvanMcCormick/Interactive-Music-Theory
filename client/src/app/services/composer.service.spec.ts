@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 
+import { scoreBarFills } from './bar-fill';
 import { ComposerService } from './composer.service';
 import { selectionTargets } from './composer-selection';
 import { progressionTrack } from './progression-track';
@@ -490,5 +491,45 @@ describe('ComposerService durations and bar filling', () => {
 
     expect(firstBar().length).toBe(4);
     expect(firstBar()[1].isRest).toBeFalse();
+  });
+});
+
+describe('ComposerService fix bar', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  const overfillBar = (barIndex: number): void => {
+    for (const beatIndex of [0, 1, 2, 3]) {
+      service.setCursor({ barIndex, beatIndex, stringIndex: 0 });
+      service.setNoteAtCursor({ kind: 'fretted', string: 1, fret: beatIndex }, false);
+    }
+    service.setCursor({ barIndex, beatIndex: 0 });
+    service.applyDurationAtCursor(2, 0);
+  };
+
+  it('carries the caret bar\'s overflow into the next as one undo step', () => {
+    overfillBar(0);
+    const before = JSON.stringify(service.doc);
+
+    service.fixBar();
+    expect(scoreBarFills(service.doc)[0][0].slice(0, 2).map(fill => fill.kind)).toEqual(['full', 'full']);
+
+    service.undo();
+    expect(JSON.stringify(service.doc)).toBe(before);
+  });
+
+  it('refuses when no selected bar is over, committing nothing', () => {
+    const before = JSON.stringify(service.doc);
+    let refusal: string | null = null;
+
+    service.fixBar();
+    service.getState().subscribe(state => (refusal = state.refusal)).unsubscribe();
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(refusal).toMatch(/over/i);
   });
 });

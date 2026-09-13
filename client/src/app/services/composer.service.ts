@@ -40,6 +40,7 @@ import {
   timeSignatureFault,
   toggleMasterBarFlag
 } from './bar-edits';
+import { barFillAt, fixBarOverflow } from './bar-fill';
 import {
   beatsAt,
   setBeatDurations,
@@ -694,6 +695,42 @@ export class ComposerService {
     const draft = structuredClone(state.doc);
     const reason = edit(draft, trackIndex, staffIndex);
     if (typeof reason === 'string') return this.refuse(reason);
+    this.commitDocument(draft);
+  }
+
+  /**
+   * Fix bar: carries the overflow of every over bar in the selection, on the caret's staff,
+   * into the bars after it.
+   *
+   * Runs on a clone and commits only if every bar fixed, because `fixBarOverflow` can refuse
+   * part-way - a tuplet across a line - and a half-carried score is exactly the corruption
+   * the refusal exists to prevent. Refused on a generated track like any content edit.
+   * Appending a bar is score-wide, so it stamps generated tracks diverged; carrying within
+   * existing bars touches only this staff and does not. Each selected bar is read with
+   * `barFillAt`, against its own meter and free time, rather than measuring the whole score
+   * once per bar.
+   */
+  fixBar(): void {
+    const state = this.stateSubject.getValue();
+    const { trackIndex, staffIndex } = state.cursor;
+    const refusal = editRefusal(state.doc, [], { family: 'track', trackIndex }, null);
+    if (refusal) return this.refuse(refusal);
+
+    const bars = selectedBars(state.anchor, state.cursor);
+    const draft = structuredClone(state.doc);
+    let fixed = false;
+    let appended = 0;
+
+    for (let index = bars.first; index <= bars.last; index++) {
+      if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
+      const result = fixBarOverflow(draft, trackIndex, staffIndex, index);
+      if (result.kind === 'refused') return this.refuse(result.reason);
+      fixed = true;
+      appended += result.appendedBars;
+    }
+
+    if (!fixed) return this.refuse('No selected bar is over its time signature.');
+    if (appended > 0) this.markDiverged(draft);
     this.commitDocument(draft);
   }
 

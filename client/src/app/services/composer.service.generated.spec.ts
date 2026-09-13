@@ -358,6 +358,21 @@ describe('ComposerService generated tracks', () => {
     expect(marker().source).toEqual({ kind: 'revision', revision: 4 });
   });
 
+  it('stamps divergence when Fix bar has to append a bar', () => {
+    service.sendProgression(built(atRevision(4)));
+    const last = service.doc.masterBars.length - 1;
+    for (const beatIndex of [0, 1, 2, 3]) {
+      service.setCursor({ trackIndex: 0, barIndex: last, beatIndex, stringIndex: 0 });
+      service.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 0 }, false);
+    }
+    service.setCursor({ trackIndex: 0, barIndex: last, beatIndex: 0 });
+    service.applyDurationAtCursor(2, 0);
+
+    service.fixBar();
+
+    expect(marker().source).toEqual({ kind: 'diverged' });
+  });
+
   it('leaves an unmarked track alone when a bar is inserted', () => {
     // Per-track, not per-score: the user's own track sits in the same document
     // as a generated one and must not pick up a marker from its neighbour.
