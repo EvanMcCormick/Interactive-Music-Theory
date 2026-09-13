@@ -255,6 +255,15 @@ export class ProgressionComponent implements OnInit, OnDestroy {
   private latest: ProgressionState | null = null;
 
   /**
+   * The revision the rail's last message was written about.
+   *
+   * Null until the first publish, which is why `forgetStaleMessage` requires a
+   * previous value rather than treating the first emission as a move: nothing
+   * can be showing before the page has a document.
+   */
+  private messageRevision: number | null = null;
+
+  /**
    * The user's own selection, held while the fretboard is showing a chord of
    * ours, and null when it is showing theirs.
    *
@@ -270,6 +279,7 @@ export class ProgressionComponent implements OnInit, OnDestroy {
       .getState()
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
+        this.forgetStaleMessage(state);
         this.latest = state;
         // Handed over on every emission, unconditionally. The player decides
         // what to do with it - collect it for the loop boundary, or drop it
@@ -665,6 +675,41 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     this.exportError = message;
     this.alerts = this.alerts[0] === '' ? [message, ''] : ['', message];
     this.changes.markForCheck();
+  }
+
+  /**
+   * Takes a message down once the document it was written about has moved.
+   *
+   * Every sentence this block shows is about what happened to *a document*
+   * when a button was pressed - there are no chords in it, it is longer than
+   * the projection will draw, it went to the composer. Edit the document and
+   * the sentence stops describing anything the user is looking at. The one
+   * that made this worth fixing was the empty-progression refusal, which sat
+   * in the rail telling a user there were no chords while three of theirs were
+   * on screen underneath it.
+   *
+   * **Keyed on the revision, not on the emission.** This page hears from the
+   * progression on every publish, including ones that change no document - a
+   * card being selected, a relabel notice clearing - and it hears from the
+   * Composer as well, to keep the Send label honest. None of those makes a
+   * sentence about this document untrue, and a refusal the user has not
+   * answered yet should still be there when they look back at it.
+   * `ProgressionDoc.revision` is exactly "the document moved", which is
+   * exactly the question being asked. See "Staleness is one comparison" in the
+   * design doc for why that counter over-reports, and why over-reporting is
+   * the safe direction here too: the cost is a message cleared a moment early,
+   * against a message that lies.
+   *
+   * This is a bug no spec on the press could have caught. The refusal is true
+   * when it is written and only rots afterwards, so it was found by running
+   * the page.
+   */
+  private forgetStaleMessage(state: ProgressionState): void {
+    const revision = state.doc.revision;
+    const moved = this.messageRevision !== null && revision !== this.messageRevision;
+    this.messageRevision = revision;
+
+    if (moved && this.exportError !== null) this.clearError();
   }
 
   /** Takes the last message down, on the attempt that did not need one. */

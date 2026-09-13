@@ -511,6 +511,49 @@ describe('ProgressionComponent exports', () => {
     });
 
     /**
+     * Every message this block shows describes what happened to *a document*
+     * when a button was pressed. Edit the document and the sentence stops
+     * describing anything - "there are no chords in this progression yet" sat
+     * on screen through the user adding three, which is the message telling
+     * them something false about what they are looking at.
+     *
+     * Found by running the page, not by a spec: the refusal is correct at the
+     * moment it is written and only rots afterwards, so nothing that asserts
+     * on the press can see it.
+     */
+    it('takes a refusal down once the document it described has changed', () => {
+      component.send();
+      expect(component.exportError).toContain('no chords');
+
+      progression.appendSlot(0);
+
+      expect(component.exportError).toBeNull();
+    });
+
+    /**
+     * The other half of the rule, and the reason it is keyed on the revision
+     * rather than on any emission the page hears.
+     *
+     * Selecting a card publishes a state with the same document in it. That
+     * says nothing about whether a sentence about the document is still true,
+     * and a message the user has not read yet should still be there when they
+     * look back at it - clearing on every publish would take it down the
+     * instant they clicked anything.
+     */
+    it('leaves a message up when a publish changed no document', async () => {
+      navigate.and.resolveTo(false);
+      progression.appendSlot(0);
+      component.send();
+      await fixture.whenStable();
+      const shown = component.exportError;
+      expect(shown).toContain('is in the composer');
+
+      progression.selectSlot(null);
+
+      expect(component.exportError).toBe(shown);
+    });
+
+    /**
      * `Router.navigate` resolves `false` when a guard turns the move down. The
      * commit has already happened by then, so the message says the track
      * arrived - a user told the send failed would press it again, and be right
