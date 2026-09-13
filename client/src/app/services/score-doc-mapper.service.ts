@@ -409,6 +409,7 @@ export class ScoreDocMapperService {
     note.isLetRing = doc.effects.isLetRing;
     note.isPalmMute = doc.effects.isPalmMute;
     note.isStaccato = doc.effects.isStaccato;
+    note.isHammerPullOrigin = doc.effects.isHammerPullOrigin;
     note.vibrato = doc.effects.vibrato
       ? alphaTab.model.VibratoType.Slight
       : alphaTab.model.VibratoType.None;
@@ -555,6 +556,7 @@ export class ScoreDocMapperService {
     effects.isLetRing = note.isLetRing;
     effects.isPalmMute = note.isPalmMute;
     effects.isStaccato = note.isStaccato;
+    effects.isHammerPullOrigin = note.isHammerPullOrigin;
     effects.vibrato = note.vibrato !== alphaTab.model.VibratoType.None;
     effects.harmonic = fromHarmonicType(note.harmonicType);
 
