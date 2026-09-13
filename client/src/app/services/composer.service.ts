@@ -526,9 +526,16 @@ export class ComposerService {
     });
   }
 
-  updateScoreInfo(changes: Partial<ScoreDoc>): void {
+  /**
+   * Changes the score's descriptive fields. Only those: structure has its own commands,
+   * because `masterBars` and `tracks` share an invariant a blind assign could break.
+   */
+  updateScoreInfo(changes: Partial<Pick<ScoreDoc, 'title' | 'subTitle' | 'artist' | 'album'>>): void {
     this.commit(draft => {
-      Object.assign(draft, changes);
+      draft.title = changes.title ?? draft.title;
+      draft.subTitle = changes.subTitle ?? draft.subTitle;
+      draft.artist = changes.artist ?? draft.artist;
+      draft.album = changes.album ?? draft.album;
     });
   }
 
