@@ -444,3 +444,10 @@ Not rejected - not yet placed. Each needs its own design pass:
   changes. M1 stores what alphaTab keeps and pins the rewrite. M4's bend curve editor must
   write Guitar Pro's shapes, or normalise after each edit. A pre-bend of 2 or more quarter
   tones also resets a forced accidental; M1 pins that too.
+- **A tied note shows its origin's vibrato.** alphaTab draws and plays a tie destination
+  with the vibrato of the note it is tied from, even when its own value is none - and a
+  tied continuation written by Fix bar has none by design. So a palette that lights vibrato
+  from the selected note would show it off on a note with a visible wave, and pressing it
+  would write the continuation's own value, which changes nothing on screen but stops
+  alphaTab carrying a bend across the tie. M2's vibrato tool should read vibrato from the
+  tie origin, and either refuse on a continuation or write to the origin.

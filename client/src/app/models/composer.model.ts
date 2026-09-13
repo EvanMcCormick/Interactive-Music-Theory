@@ -35,7 +35,7 @@ export type AccidentalMode = 'auto' | 'explicit';
  */
 export type AccentKind = 'none' | 'normal' | 'heavy' | 'tenuto';
 
-/** Vibrato width. alphaTab's `VibratoType`, which a boolean collapsed to slight. */
+/** Vibrato width, one-to-one with alphaTab's `VibratoType` - a boolean would save a wide vibrato as slight. */
 export type VibratoKind = 'none' | 'slight' | 'wide';
 
 export type KeySignatureMode = 'major' | 'minor';

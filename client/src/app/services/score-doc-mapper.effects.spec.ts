@@ -216,5 +216,19 @@ describe('ScoreDocMapperService effects round trip', () => {
     });
   }
 
+  it('keeps beat and note vibrato apart on one beat', () => {
+    // alphaTex writes both as `v`/`vw` and tells them apart only by position - a note
+    // property or a beat property - so a regression that let one overwrite the other would
+    // pass every spec that sets only one.
+    const doc = guitarBar(beats => {
+      beats[0].effects.vibrato = 'wide';
+      beats[0].notes[0].effects.vibrato = 'slight';
+    });
+
+    const back = beatsOf(throughTex(doc))[0];
+    expect(back.effects.vibrato).toBe('wide');
+    expect(back.notes[0].effects.vibrato).toBe('slight');
+  });
+
   // <!-- A6 -->
 });
