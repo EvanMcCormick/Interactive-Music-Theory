@@ -89,7 +89,8 @@ writes them generously; 1000 lines per file at most.
   a `displayDuration` of the master bar's length whatever its dots or tuplet, because
   `_calculateDuration` returns before reading them (~7694-7696). That length is
   `numerator * valueToTicks(denominator)` (`MasterBar.calculateDuration`, ~2685-2698; the model
-  has no anacrusis): the bar's capacity, in any meter.
+  has no anacrusis): the bar's capacity, in any meter. `isFullBarRest` reads the beat's own
+  voice, so a lone whole rest is full in any voice, not only the first.
 - Only `ComposerService` constructs a `ComposerState` (constructor and `reset`), and only
   the model and mapper touch `vibrato`, so the model changes below have no other callers.
 - A fermata is kept per bar and tick, not per beat: `Voice.finish` files it on the master
@@ -1258,6 +1259,13 @@ Two rules from the design shape every function here:
   rest fills its bar in any meter**, because alphaTab draws it as a full-bar rest - which is
   how an alphaTex `r.1` bar in 3/4 arrives from the library or the source panel.
 
+Every function here that measures one bar takes a `BarMeter` - the time signature in force
+and whether the bar is in free time - rather than a bare time signature, and `barMeterAt`
+reads one from the score, so no caller can drop free time on the way. A free-time bar is full
+whatever it holds, so nothing here fills or trims one. And since a grace takes no room,
+becoming or leaving a grace is a length change: Task C2's `setGrace` settles the bar for it,
+as a duration change does.
+
 Rests are spelled by the transcription quantizer's `slotsToDurations` at a 64th-note grid
 (60 ticks a slot), which already splits a span at beat and half-bar boundaries. A gap that is
 not a whole number of 64ths - what a lone tuplet leaves - is not spelled at all: the bar stays
@@ -1323,71 +1331,79 @@ function noteBeatOf(duration: DurationValue, grace: BeatDoc['effects']['grace'] 
   };
 }
 
-describe('beatTicks', () => {
+// One describe around the file, so its `beforeEach` covers every spec here and no others: a
+// `beforeEach` outside any describe would run before every spec in the whole suite.
+describe('bar-fill', () => {
   beforeEach(() => {
     TestBed.configureTestingModule({});
   });
 
-  it('gives a quarter 960 ticks', () => {
-    expect(beatTicks(beatOf(4))).toBe(960);
-  });
+  describe('beatTicks', () => {
+    it('gives a quarter 960 ticks', () => {
+      expect(beatTicks(beatOf(4))).toBe(960);
+    });
 
-  it('adds half again for a dot and three quarters again for two', () => {
-    expect(beatTicks(beatOf(4, 1))).toBe(1440);
-    expect(beatTicks(beatOf(4, 2))).toBe(1680);
-  });
+    it('adds half again for a dot and three quarters again for two', () => {
+      expect(beatTicks(beatOf(4, 1))).toBe(1440);
+      expect(beatTicks(beatOf(4, 2))).toBe(1680);
+    });
 
-  it('scales a triplet eighth to 320', () => {
-    expect(beatTicks(beatOf(8, 0, { numerator: 3, denominator: 2 }))).toBe(320);
-  });
+    it('scales a triplet eighth to 320', () => {
+      expect(beatTicks(beatOf(8, 0, { numerator: 3, denominator: 2 }))).toBe(320);
+    });
 
-  it('applies a tuplet only where alphaTab does', () => {
-    // alphaTab's guard is `tupletDenominator > 0 && tupletNumerator >= 0`. A numerator of 0
-    // passes and divides by zero, which `| 0` turns into 0.
-    expect(beatTicks(beatOf(4, 0, { numerator: 3, denominator: 0 }))).toBe(960);
-    expect(beatTicks(beatOf(4, 0, { numerator: -1, denominator: 2 }))).toBe(960);
-    expect(beatTicks(beatOf(4, 0, { numerator: 0, denominator: 2 }))).toBe(0);
-  });
+    it('applies a tuplet only where alphaTab does', () => {
+      // alphaTab's guard is `tupletDenominator > 0 && tupletNumerator >= 0`. A numerator of 0
+      // passes and divides by zero, which `| 0` turns into 0.
+      expect(beatTicks(beatOf(4, 0, { numerator: 3, denominator: 0 }))).toBe(960);
+      expect(beatTicks(beatOf(4, 0, { numerator: -1, denominator: 2 }))).toBe(960);
+      expect(beatTicks(beatOf(4, 0, { numerator: 0, denominator: 2 }))).toBe(0);
+    });
 
-  it('gives a grace beat no room in the bar', () => {
-    expect(beatTicks(noteBeatOf(8, 'onBeat'))).toBe(0);
-    expect(beatTicks(noteBeatOf(8, 'beforeBeat'))).toBe(0);
-  });
+    it('gives a grace beat no room in the bar', () => {
+      expect(beatTicks(noteBeatOf(8, 'onBeat'))).toBe(0);
+      expect(beatTicks(noteBeatOf(8, 'beforeBeat'))).toBe(0);
+    });
 
-  it('agrees with alphaTab\'s layout on every value, dot, tuplet and grace the palette can write', () => {
-    // Compared with `displayDuration`, the length alphaTab lays a bar out by. Three samples
-    // tell truncation from rounding: a quarter 7:4 is 548.57 (548 truncated, 549 rounded),
-    // a dotted quarter 7:4 822.86, a half 9:8 1706.67. Every other tuplet here lands on or
-    // below .5 and would pass either way. The graces sit before notes: a before-beat grace
-    // shortens the previous beat's playback and an on-beat grace its own beat's, and neither
-    // touches any beat's `displayDuration`. The voice has many beats, so the lone-whole-rest
-    // rule does not apply to the whole rest.
-    const mapper = TestBed.inject(ScoreDocMapperService);
-    const beats = [
-      beatOf(1), beatOf(2, 1), beatOf(4, 2), beatOf(64),
-      beatOf(8, 0, { numerator: 3, denominator: 2 }),
-      beatOf(16, 1, { numerator: 5, denominator: 4 }),
-      beatOf(16, 0, { numerator: 7, denominator: 4 }),
-      beatOf(32, 2, { numerator: 3, denominator: 2 }),
-      beatOf(4, 0, { numerator: 7, denominator: 4 }),
-      beatOf(4, 1, { numerator: 7, denominator: 4 }),
-      beatOf(2, 0, { numerator: 9, denominator: 8 }),
-      noteBeatOf(4),
-      noteBeatOf(8, 'onBeat'),
-      noteBeatOf(4),
-      noteBeatOf(8, 'beforeBeat'),
-      noteBeatOf(2)
-    ];
-    const doc = ComposerService.createEmptyScore();
-    doc.tracks[0].staves[0].bars[0].voices[0].beats = beats;
+    it('agrees with alphaTab\'s layout on every value, dot, tuplet and grace the palette can write', () => {
+      // Compared with `displayDuration`, the length alphaTab lays a bar out by. Three samples
+      // tell truncation from rounding: a quarter 7:4 is 548.57 (548 truncated, 549 rounded),
+      // a dotted quarter 7:4 822.86, a half 9:8 1706.67. Every other tuplet here lands on or
+      // below .5 and would pass either way. The graces sit before notes: a before-beat grace
+      // shortens the previous beat's playback and an on-beat grace its own beat's, and neither
+      // touches any beat's `displayDuration`. The voice has many beats, so the lone-whole-rest
+      // rule does not apply to the whole rest.
+      const mapper = TestBed.inject(ScoreDocMapperService);
+      const beats = [
+        beatOf(1), beatOf(2, 1), beatOf(4, 2), beatOf(64),
+        beatOf(8, 0, { numerator: 3, denominator: 2 }),
+        beatOf(16, 1, { numerator: 5, denominator: 4 }),
+        beatOf(16, 0, { numerator: 7, denominator: 4 }),
+        beatOf(32, 2, { numerator: 3, denominator: 2 }),
+        beatOf(4, 0, { numerator: 7, denominator: 4 }),
+        beatOf(4, 1, { numerator: 7, denominator: 4 }),
+        beatOf(2, 0, { numerator: 9, denominator: 8 }),
+        noteBeatOf(4),
+        noteBeatOf(8, 'onBeat'),
+        noteBeatOf(4),
+        noteBeatOf(8, 'beforeBeat'),
+        noteBeatOf(2)
+      ];
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = beats;
 
-    const score = mapper.toScore(doc, new alphaTab.Settings());
-    const laidOut = score.tracks[0].staves[0].bars[0].voices[0].beats.map(beat => beat.displayDuration);
+      const score = mapper.toScore(doc, new alphaTab.Settings());
+      const laidOut = score.tracks[0].staves[0].bars[0].voices[0].beats.map(beat => beat.displayDuration);
 
-    expect(beats.map(beatTicks)).toEqual(laidOut);
+      expect(beats.map(beatTicks)).toEqual(laidOut);
+    });
   });
 });
 ```
+
+The whole file sits inside one `describe('bar-fill')`, so its `beforeEach` covers every spec
+here and no others - a `beforeEach` outside any describe would run before every spec in the
+suite. Later tasks add their describes inside it, after the last one.
 
 **Step 2: Run** `--include=src/app/services/bar-fill.spec.ts`. Expected: compile error,
 `Cannot find module './bar-fill'`.
@@ -1454,85 +1470,185 @@ commit, leave it out here and add it there.
 
 ### Task B2: How full a bar is
 
+A bar is measured against a `BarMeter`: the time signature in force there and whether it is
+in free time. `barMeterAt` reads both from the score, and every per-bar function in this
+module takes one, so free time cannot be forgotten between the score and a bar. Two specs hold
+the module to alphaTab rather than to itself: bar capacities across a dozen meters, and which
+lone whole rests alphaTab lays out as a full bar.
+
 **Files:**
 - Modify: `client/src/app/services/bar-fill.ts`
 - Test: `client/src/app/services/bar-fill.spec.ts`
 
-**Step 1: Failing specs.** Add to `bar-fill.spec.ts` (extend its imports with `barFillOf`,
-`scoreBarFills`, `createDefaultBar`, `createDefaultMasterBar`, `ComposerService`; `noteBeatOf`
-is Task B1's helper):
+**Step 1: Failing specs.** Extend `bar-fill.spec.ts`'s imports with `BarMeter`,
+`barCapacityTicks`, `barFillAt`, `barFillOf`, `scoreBarFills`, `createDefaultBar`,
+`createDefaultBeatEffects` and `createDefaultMasterBar` (`ComposerService`,
+`ScoreDocMapperService`, `alphaTab` and `noteBeatOf` are Task B1's). Add this helper beside
+Task B1's, outside the outer describe:
 
 ```typescript
-describe('barFillOf', () => {
-  const FOUR_FOUR = { numerator: 4, denominator: 4, isCommon: true };
+/** A meter to measure a bar against. A function declaration, so every describe can use it. */
+function meterOf(numerator: number, denominator: number, isFreeTime = false): BarMeter {
+  return { timeSignature: { numerator, denominator, isCommon: false }, isFreeTime };
+}
+```
 
-  it('calls a bar of four quarters full in 4/4', () => {
-    expect(barFillOf(createDefaultBar(false, FOUR_FOUR), FOUR_FOUR)).toEqual({ kind: 'full' });
+and these inside `describe('bar-fill')`, after `beatTicks`:
+
+```typescript
+  describe('barCapacityTicks', () => {
+    it('agrees with alphaTab\'s bar length in every meter, truncating where alphaTab does', () => {
+      // One master bar per meter, each declaring it, and a default bar on every staff. 3/7,
+      // 5/12 and 11/6 have denominators that are no written value, so a seventh's 548.57
+      // ticks tells truncation from rounding; 1/128 and 2/1 are the ends of the range.
+      const mapper = TestBed.inject(ScoreDocMapperService);
+      const meters = [[4, 4], [3, 4], [2, 2], [6, 8], [7, 8], [5, 16], [12, 8], [3, 7], [5, 12], [11, 6], [1, 128], [2, 1]];
+      const signatures = meters.map(([numerator, denominator]) => ({ numerator, denominator, isCommon: false }));
+      const doc = ComposerService.createEmptyScore();
+      doc.masterBars = signatures.map(timeSignature => ({ ...createDefaultMasterBar(), timeSignature }));
+      for (const track of doc.tracks) {
+        for (const staff of track.staves) {
+          staff.bars = signatures.map(timeSignature => createDefaultBar(staff.showTablature, timeSignature));
+        }
+      }
+
+      const score = mapper.toScore(doc, new alphaTab.Settings());
+
+      expect(signatures.map(barCapacityTicks)).toEqual(score.masterBars.map(masterBar => masterBar.calculateDuration()));
+    });
   });
 
-  it('reports a short bar by how much', () => {
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    bar.voices[0].beats[0].duration = 8;
+  describe('barFillOf', () => {
+    const FOUR_FOUR = meterOf(4, 4);
 
-    expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'under', ticks: 480 });
+    it('calls a bar of four quarters full in 4/4', () => {
+      expect(barFillOf(createDefaultBar(false, FOUR_FOUR.timeSignature), FOUR_FOUR)).toEqual({ kind: 'full' });
+    });
+
+    it('reports a short bar by how much', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats[0].duration = 8;
+
+      expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'under', ticks: 480 });
+    });
+
+    it('reports an overfull bar by how much', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats[0].duration = 2;
+
+      expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'over', ticks: 960 });
+    });
+
+    it('measures 6/8 in its own units', () => {
+      const sixEight = meterOf(6, 8);
+
+      expect(barFillOf(createDefaultBar(false, sixEight.timeSignature), sixEight)).toEqual({ kind: 'full' });
+    });
+
+    it('calls a bar with no voices under by its whole capacity', () => {
+      const threeFour = meterOf(3, 4);
+      const bar = { ...createDefaultBar(false, threeFour.timeSignature), voices: [] };
+
+      expect(barFillOf(bar, threeFour)).toEqual({ kind: 'under', ticks: 2880 });
+    });
+
+    it('calls a bar holding only a whole rest full in any meter, as alphaTab draws it', () => {
+      // alphaTab's `isFullBarRest`: a lone whole rest is laid out as the bar's length, and its
+      // dots are never read. A lone whole note is not a rest, so it is measured, and is over.
+      const threeFour = meterOf(3, 4);
+      const bar = createDefaultBar(false, threeFour.timeSignature);
+
+      bar.voices[0].beats = [createRestBeat(1)];
+      expect(barFillOf(bar, threeFour)).toEqual({ kind: 'full' });
+
+      bar.voices[0].beats = [{ ...createRestBeat(1), dots: 1 }];
+      expect(barFillOf(bar, threeFour)).toEqual({ kind: 'full' });
+
+      bar.voices[0].beats = [noteBeatOf(1)];
+      expect(barFillOf(bar, threeFour)).toEqual({ kind: 'over', ticks: 960 });
+    });
+
+    it('calls four quarters and an on-beat grace note full in 4/4', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats.splice(2, 0, noteBeatOf(8, 'onBeat'));
+
+      expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'full' });
+    });
+
+    it('calls a free-time bar full whatever it holds', () => {
+      // Free time is the score saying the meter does not govern this bar.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats[0].duration = 1;
+
+      expect(barFillOf(bar, meterOf(4, 4, true))).toEqual({ kind: 'full' });
+    });
   });
 
-  it('reports an overfull bar by how much', () => {
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    bar.voices[0].beats[0].duration = 2;
+  describe('scoreBarFills', () => {
+    it('reads every bar of every staff against the meter in force there', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[2].voices[0].beats[0].duration = 2;
 
-    expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'over', ticks: 960 });
+      const fills = scoreBarFills(doc);
+
+      expect(fills[0][0].map(fill => fill.kind)).toEqual(['full', 'full', 'over', 'full']);
+    });
+
+    it('calls a free-time bar full whatever it holds', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.masterBars[1].isFreeTime = true;
+      doc.tracks[0].staves[0].bars[1].voices[0].beats[0].duration = 1;
+
+      expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'full' });
+    });
+
+    it('agrees with alphaTab about which lone whole rests fill their bar', () => {
+      // Bar 1 declares 6/8 and holds a whole beat marked as no rest but with no notes, which
+      // alphaTab reads as a rest. Bar 2 declares nothing; the mapper resolves it against the
+      // bar before (`previousTimeSignature`), so alphaTab measures it as 6/8, 2880 ticks. It
+      // holds an on-beat grace whole rest: `Beat.finish` rewrites a lone grace to an eighth
+      // and `updateDurations` gives any grace 0, so it fills nothing. Bar 3 declares 2/4 and
+      // holds a double-dotted whole rest, laid out as the bar's 1920 ticks, dots unread.
+      const mapper = TestBed.inject(ScoreDocMapperService);
+      const doc = ComposerService.createEmptyScore();
+      doc.masterBars[0].timeSignature = { numerator: 6, denominator: 8, isCommon: false };
+      doc.masterBars[2].timeSignature = { numerator: 2, denominator: 4, isCommon: false };
+      const bars = doc.tracks[0].staves[0].bars;
+      bars[0].voices[0].beats = [{ ...createRestBeat(1), isRest: false }];
+      bars[1].voices[0].beats = [{ ...createRestBeat(1), effects: { ...createDefaultBeatEffects(), grace: 'onBeat' } }];
+      bars[2].voices[0].beats = [{ ...createRestBeat(1), dots: 2 }];
+
+      const score = mapper.toScore(doc, new alphaTab.Settings());
+      const laidOut = [0, 1, 2].map(index => score.tracks[0].staves[0].bars[index].voices[0].beats[0].displayDuration);
+
+      expect(score.masterBars[1].calculateDuration()).toBe(2880);
+      expect(laidOut).toEqual([2880, 0, 1920]);
+      expect(scoreBarFills(doc)[0][0].slice(0, 3)).toEqual([
+        { kind: 'full' },
+        { kind: 'under', ticks: 2880 },
+        { kind: 'full' }
+      ]);
+    });
   });
 
-  it('measures 6/8 in its own units', () => {
-    const sixEight = { numerator: 6, denominator: 8, isCommon: false };
+  describe('barFillAt', () => {
+    it('reads one bar against its own meter and free time', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[2].voices[0].beats[0].duration = 2;
 
-    expect(barFillOf(createDefaultBar(false, sixEight), sixEight)).toEqual({ kind: 'full' });
+      expect(barFillAt(doc, 0, 0, 2)).toEqual({ kind: 'over', ticks: 960 });
+
+      doc.masterBars[2].isFreeTime = true;
+      expect(barFillAt(doc, 0, 0, 2)).toEqual({ kind: 'full' });
+    });
+
+    it('is undefined where there is no bar', () => {
+      const doc = ComposerService.createEmptyScore();
+
+      expect(barFillAt(doc, 0, 0, 9)).toBeUndefined();
+      expect(barFillAt(doc, 3, 0, 0)).toBeUndefined();
+    });
   });
-
-  it('calls a bar holding only a whole rest full in any meter, as alphaTab draws it', () => {
-    // alphaTab's `isFullBarRest`: a lone whole rest is laid out as the bar's length, and its
-    // dots are never read. A lone whole note is not a rest, so it is measured, and is over.
-    const threeFour = { numerator: 3, denominator: 4, isCommon: false };
-    const bar = createDefaultBar(false, threeFour);
-
-    bar.voices[0].beats = [createRestBeat(1)];
-    expect(barFillOf(bar, threeFour)).toEqual({ kind: 'full' });
-
-    bar.voices[0].beats = [{ ...createRestBeat(1), dots: 1 }];
-    expect(barFillOf(bar, threeFour)).toEqual({ kind: 'full' });
-
-    bar.voices[0].beats = [noteBeatOf(1)];
-    expect(barFillOf(bar, threeFour)).toEqual({ kind: 'over', ticks: 960 });
-  });
-
-  it('calls four quarters and an on-beat grace note full in 4/4', () => {
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    bar.voices[0].beats.splice(2, 0, noteBeatOf(8, 'onBeat'));
-
-    expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'full' });
-  });
-});
-
-describe('scoreBarFills', () => {
-  it('reads every bar of every staff against the meter in force there', () => {
-    const doc = ComposerService.createEmptyScore();
-    doc.tracks[0].staves[0].bars[2].voices[0].beats[0].duration = 2;
-
-    const fills = scoreBarFills(doc);
-
-    expect(fills[0][0].map(fill => fill.kind)).toEqual(['full', 'full', 'over', 'full']);
-  });
-
-  it('calls a free-time bar full whatever it holds', () => {
-    // Free time is the score saying the meter does not govern this bar.
-    const doc = ComposerService.createEmptyScore();
-    doc.masterBars[1].isFreeTime = true;
-    doc.tracks[0].staves[0].bars[1].voices[0].beats[0].duration = 1;
-
-    expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'full' });
-  });
-});
 ```
 
 **Step 2: Run** `--include=src/app/services/bar-fill.spec.ts`. Expected: compile error, the
@@ -1549,6 +1665,27 @@ export type BarFill =
   | { kind: 'over'; ticks: number };
 
 /**
+ * Everything a bar's length is measured against: the time signature in force there, and
+ * whether the bar is in free time.
+ *
+ * One value rather than a bare `TimeSignature`, so no per-bar function in this module can be
+ * called without saying whether the meter governs the bar. Free time is the score saying it
+ * does not, so a free-time bar is full whatever it holds - and nothing fills or trims it.
+ */
+export interface BarMeter {
+  timeSignature: TimeSignature;
+  isFreeTime: boolean;
+}
+
+/** The meter bar `barIndex` is measured against: the time signature in force, and free time. */
+export function barMeterAt(doc: ScoreDoc, barIndex: number): BarMeter {
+  return {
+    timeSignature: effectiveTimeSignature(doc.masterBars, barIndex),
+    isFreeTime: doc.masterBars[barIndex]?.isFreeTime ?? false
+  };
+}
+
+/**
  * A bar's capacity in ticks under `timeSignature`: alphaTab's `MasterBar.calculateDuration`
  * (~2685-2698), the numerator times one denominator value's ticks. The model has no anacrusis,
  * so alphaTab's pickup-bar branch never applies.
@@ -1558,19 +1695,27 @@ export function barCapacityTicks(timeSignature: TimeSignature): number {
 }
 
 /**
+ * Whether alphaTab reads `beat` as a rest: a beat with no notes (`Beat.isRest`, ~7275). The
+ * mapper writes notes only when `isRest` is false, so a beat is a rest to alphaTab when either
+ * says so - including a beat marked `isRest: false` that holds no notes.
+ */
+function isAlphaTabRest(beat: BeatDoc): boolean {
+  return beat.isRest || beat.notes.length === 0;
+}
+
+/**
  * Whether `voice` is one whole rest, which alphaTab lays out as exactly its bar in any meter.
  *
  * alphaTab's `Beat.isFullBarRest` (~7281-7283) is a rest, alone in its voice, whose value is a
  * whole. `_calculateDuration` returns the master bar's length for it before reading dots or a
  * tuplet (~7694-7696), so a dotted or tupleted lone whole rest still fills the bar. A grace
  * beat's `displayDuration` is 0 whatever `_calculateDuration` returned (~7726), so a lone whole
- * grace rest fills nothing. To alphaTab a rest is a beat with no notes (~7275); the mapper
- * writes notes only when `isRest` is false, so either one makes a rest here too.
+ * grace rest fills nothing.
  */
 function isLoneWholeRest(voice: VoiceDoc): boolean {
   if (voice.beats.length !== 1) return false;
   const beat = voice.beats[0];
-  return (beat.isRest || beat.notes.length === 0) && beat.duration === 1 && beat.effects.grace === 'none';
+  return isAlphaTabRest(beat) && beat.duration === 1 && beat.effects.grace === 'none';
 }
 
 /**
@@ -1584,34 +1729,43 @@ export function voiceTicks(voice: VoiceDoc): number {
 }
 
 /**
- * How full `bar` is under `timeSignature`, as alphaTab lays it out: a grace beat takes no
- * room, and a voice that is a lone whole rest is full in any meter.
+ * How full `bar` is under `meter`, as alphaTab lays it out: a grace beat takes no room, a
+ * voice that is a lone whole rest is full in any meter, and a free-time bar is full whatever
+ * it holds.
  *
  * Voice 1 only. It is the only voice the composer writes, and multiple voices are listed
- * beyond M4 in the design; when they arrive, this answers for the fullest voice.
+ * beyond M4 in the design. When they arrive each voice is measured on its own - alphaTab
+ * applies `isFullBarRest` per voice, so a lone whole rest is full in any voice, not just the
+ * first - and the bar answers for its fullest voice.
  */
-export function barFillOf(bar: BarDoc, timeSignature: TimeSignature): BarFill {
+export function barFillOf(bar: BarDoc, meter: BarMeter): BarFill {
+  if (meter.isFreeTime) return { kind: 'full' };
   const voice = bar.voices[0];
   if (voice && isLoneWholeRest(voice)) return { kind: 'full' };
-  const difference = (voice ? voiceTicks(voice) : 0) - barCapacityTicks(timeSignature);
+  const difference = (voice ? voiceTicks(voice) : 0) - barCapacityTicks(meter.timeSignature);
   if (difference === 0) return { kind: 'full' };
   return difference < 0 ? { kind: 'under', ticks: -difference } : { kind: 'over', ticks: difference };
 }
 
-/**
- * Every bar's fill, indexed `[track][staff][bar]`, each read against the meter in force
- * at that bar. A free-time bar is full by definition.
- */
+/** Every bar's fill, indexed `[track][staff][bar]`, each read against its own `barMeterAt`. */
 export function scoreBarFills(doc: ScoreDoc): BarFill[][][] {
   return doc.tracks.map(track =>
-    track.staves.map(staff =>
-      staff.bars.map((bar, index) =>
-        doc.masterBars[index]?.isFreeTime
-          ? { kind: 'full' }
-          : barFillOf(bar, effectiveTimeSignature(doc.masterBars, index))
-      )
-    )
+    track.staves.map(staff => staff.bars.map((bar, index) => barFillOf(bar, barMeterAt(doc, index))))
   );
+}
+
+/**
+ * One bar's fill, read against its own `barMeterAt` - or undefined when there is no such bar.
+ * For a caller asking about a few bars, which should not measure the whole score to do it.
+ */
+export function barFillAt(
+  doc: ScoreDoc,
+  trackIndex: number,
+  staffIndex: number,
+  barIndex: number
+): BarFill | undefined {
+  const bar = doc.tracks[trackIndex]?.staves[staffIndex]?.bars[barIndex];
+  return bar ? barFillOf(bar, barMeterAt(doc, barIndex)) : undefined;
 }
 ```
 
@@ -1625,87 +1779,99 @@ export function scoreBarFills(doc: ScoreDoc): BarFill[][][] {
 - Modify: `client/src/app/services/bar-fill.ts`
 - Test: `client/src/app/services/bar-fill.spec.ts`
 
-**Step 1: Failing specs.** Add (import `fillBarGaps`, `BarDoc` and `createDefaultBeatEffects`):
+**Step 1: Failing specs.** Add inside `describe('bar-fill')`, after the last describe (import
+`fillBarGaps` and `BarDoc`; `createDefaultBeatEffects` and `meterOf` are Task B2's):
 
 ```typescript
-describe('fillBarGaps', () => {
-  const FOUR_FOUR = { numerator: 4, denominator: 4, isCommon: true };
-  const shape = (bar: BarDoc): string[] =>
-    bar.voices[0].beats.map(beat => `${beat.isRest ? 'r' : 'n'}${beat.duration}${'.'.repeat(beat.dots)}`);
-  const graceRest = (): BeatDoc => ({
-    ...createRestBeat(8),
-    effects: { ...createDefaultBeatEffects(), grace: 'beforeBeat' }
+  describe('fillBarGaps', () => {
+    const FOUR_FOUR = meterOf(4, 4);
+    const shape = (bar: BarDoc): string[] =>
+      bar.voices[0].beats.map(beat => `${beat.isRest ? 'r' : 'n'}${beat.duration}${'.'.repeat(beat.dots)}`);
+    const graceRest = (): BeatDoc => ({
+      ...createRestBeat(8),
+      effects: { ...createDefaultBeatEffects(), grace: 'beforeBeat' }
+    });
+
+    it('fills a shortened beat\'s gap at the end of the bar', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats[0].duration = 8;
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(shape(bar)).toEqual(['r8', 'r4', 'r4', 'r4', 'r8']);
+    });
+
+    it('spells a long gap on the beat, not as one odd value', () => {
+      // Half a bar of 4/4 is a half rest, at the half-bar, where the ear expects it.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats = [createRestBeat(2)];
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(shape(bar)).toEqual(['r2', 'r2']);
+    });
+
+    it('fills 6/8 in dotted quarters', () => {
+      const sixEight = meterOf(6, 8);
+      const bar = createDefaultBar(false, sixEight.timeSignature);
+      bar.voices[0].beats = [{ ...createRestBeat(4), dots: 1 }];
+
+      fillBarGaps(bar, sixEight);
+
+      expect(shape(bar)).toEqual(['r4.', 'r4.']);
+    });
+
+    it('leaves a gap it cannot spell exactly, rather than guess', () => {
+      // One triplet eighth is 320 ticks, not a whole number of 64ths.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats = [{ ...createRestBeat(8), tuplet: { numerator: 3, denominator: 2 } }];
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(bar.voices[0].beats.length).toBe(1);
+      expect(barFillOf(bar, FOUR_FOUR).kind).toBe('under');
+    });
+
+    it('leaves a full or overfull bar alone', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats[0].duration = 2;
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(shape(bar)).toEqual(['r2', 'r4', 'r4', 'r4']);
+    });
+
+    it('leaves a short free-time bar alone, since the meter does not govern it', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats[0].duration = 8;
+
+      fillBarGaps(bar, meterOf(4, 4, true));
+
+      expect(shape(bar)).toEqual(['r8', 'r4', 'r4', 'r4']);
+    });
+
+    it('measures a grace beat as no room', () => {
+      // A quarter, a grace and a quarter leave half a bar, spelled from the half-bar.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats = [createRestBeat(4), graceRest(), createRestBeat(4)];
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(shape(bar)).toEqual(['r4', 'r8', 'r4', 'r2']);
+    });
+
+    it('puts the rests in front of a grace that ends the bar, keeping the order it was written in', () => {
+      // alphaTab groups a grace only with a beat after it in its own voice, so a grace that ends
+      // a bar leads into nothing. The rests go in front of it so it stays where it was written.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats = [createRestBeat(4), createRestBeat(4), createRestBeat(4), graceRest()];
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(shape(bar)).toEqual(['r4', 'r4', 'r4', 'r4', 'r8']);
+      expect(bar.voices[0].beats[4].effects.grace).toBe('beforeBeat');
+    });
   });
-
-  it('fills a shortened beat\'s gap at the end of the bar', () => {
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    bar.voices[0].beats[0].duration = 8;
-
-    fillBarGaps(bar, FOUR_FOUR);
-
-    expect(shape(bar)).toEqual(['r8', 'r4', 'r4', 'r4', 'r8']);
-  });
-
-  it('spells a long gap on the beat, not as one odd value', () => {
-    // Half a bar of 4/4 is a half rest, at the half-bar, where the ear expects it.
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    bar.voices[0].beats = [createRestBeat(2)];
-
-    fillBarGaps(bar, FOUR_FOUR);
-
-    expect(shape(bar)).toEqual(['r2', 'r2']);
-  });
-
-  it('fills 6/8 in dotted quarters', () => {
-    const sixEight = { numerator: 6, denominator: 8, isCommon: false };
-    const bar = createDefaultBar(false, sixEight);
-    bar.voices[0].beats = [{ ...createRestBeat(4), dots: 1 }];
-
-    fillBarGaps(bar, sixEight);
-
-    expect(shape(bar)).toEqual(['r4.', 'r4.']);
-  });
-
-  it('leaves a gap it cannot spell exactly, rather than guess', () => {
-    // One triplet eighth is 320 ticks, not a whole number of 64ths.
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    bar.voices[0].beats = [{ ...createRestBeat(8), tuplet: { numerator: 3, denominator: 2 } }];
-
-    fillBarGaps(bar, FOUR_FOUR);
-
-    expect(bar.voices[0].beats.length).toBe(1);
-    expect(barFillOf(bar, FOUR_FOUR).kind).toBe('under');
-  });
-
-  it('leaves a full or overfull bar alone', () => {
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    bar.voices[0].beats[0].duration = 2;
-
-    fillBarGaps(bar, FOUR_FOUR);
-
-    expect(shape(bar)).toEqual(['r2', 'r4', 'r4', 'r4']);
-  });
-
-  it('measures a grace beat as no room', () => {
-    // A quarter, a grace and a quarter leave half a bar, spelled from the half-bar.
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    bar.voices[0].beats = [createRestBeat(4), graceRest(), createRestBeat(4)];
-
-    fillBarGaps(bar, FOUR_FOUR);
-
-    expect(shape(bar)).toEqual(['r4', 'r8', 'r4', 'r2']);
-  });
-
-  it('puts the rests in front of a grace that ends the bar, so it still leads into what follows', () => {
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    bar.voices[0].beats = [createRestBeat(4), createRestBeat(4), createRestBeat(4), graceRest()];
-
-    fillBarGaps(bar, FOUR_FOUR);
-
-    expect(shape(bar)).toEqual(['r4', 'r4', 'r4', 'r4', 'r8']);
-    expect(bar.voices[0].beats[4].effects.grace).toBe('beforeBeat');
-  });
-});
 ```
 
 **Step 2: Run.** Expected: compile error.
@@ -1723,8 +1889,11 @@ const SLOT_TICKS = TICKS_PER_QUARTER / 16;
  * itself when the beat before it is not a grace.
  *
  * A grace beat is written in front of the beat after it, and alphaTab groups it with the next
- * non-grace beat (`Voice.finish`, ~3200-3216). Anything inserted or cut at `index` goes before
- * such a run, so the graces stay with what they lead into.
+ * non-grace beat in its own voice (`Voice.finish`, ~3200-3216). Anything inserted or cut at
+ * `index` goes before such a run, so the placement keeps what the user wrote in order: graces
+ * stay in front of the beat they lead into. A run that ends the voice leads into nothing -
+ * alphaTab leaves its group incomplete (`GraceGroup.isComplete` stays false) - and it stays
+ * last, where it was written.
  */
 function graceRunStart(voice: VoiceDoc, index: number): number {
   let start = index;
@@ -1736,17 +1905,19 @@ function graceRunStart(voice: VoiceDoc, index: number): number {
  * Adds rests at the end of `bar` until it is full, when that can be done exactly.
  *
  * The gap goes at the end because that is where shortening a beat leaves it: every later
- * beat moves earlier. The rests go in front of any grace beats that end the bar, which were
- * written before whatever follows them. A grace takes no room, so it moves no rest's start. Rests are spelled at a 64th grid, split at beat and half-bar lines by
- * the quantizer's own speller. Nothing happens when the bar is full or over, when the meter
- * has no 64th grid, or when the gap or its start is not a whole number of 64ths - a lone
- * tuplet's remainder - because a fill that is only nearly right is worse than a bar still
- * honestly reported as under.
+ * beat moves earlier. The rests go in front of any grace beats that end the bar, so those
+ * graces stay last, in the order they were written (`graceRunStart`). A grace takes no room,
+ * so it moves no rest's start. Rests are spelled at a 64th grid, split at beat and half-bar
+ * lines by the quantizer's own speller. Nothing happens when the bar is full or over - a
+ * free-time bar always is (`barFillOf`) - when the meter has no 64th grid, or when the gap or
+ * its start is not a whole number of 64ths - a lone tuplet's remainder - because a fill that
+ * is only nearly right is worse than a bar still honestly reported as under.
  */
-export function fillBarGaps(bar: BarDoc, timeSignature: TimeSignature): void {
-  const fill = barFillOf(bar, timeSignature);
+export function fillBarGaps(bar: BarDoc, meter: BarMeter): void {
+  const fill = barFillOf(bar, meter);
   const voice = bar.voices[0];
   if (fill.kind !== 'under' || !voice) return;
+  const { timeSignature } = meter;
   if (barGridFault(timeSignature, SLOT_DIVISION) !== null) return;
 
   const used = voiceTicks(voice);
@@ -1771,79 +1942,91 @@ allowed one dot. It is at the time of writing.
 - Modify: `client/src/app/services/bar-fill.ts`
 - Test: `client/src/app/services/bar-fill.spec.ts`
 
-**Step 1: Failing specs.** Add (import `absorbFollowingRests`, `NoteDoc`,
-`createDefaultNoteEffects`):
+**Step 1: Failing specs.** Add inside `describe('bar-fill')`, after the last describe (import
+`absorbFollowingRests` and `NoteDoc`, and `createDefaultNoteEffects` if not already imported):
 
 ```typescript
-describe('absorbFollowingRests', () => {
-  const FOUR_FOUR = { numerator: 4, denominator: 4, isCommon: true };
-  const note = (): NoteDoc => ({
-    pitch: { kind: 'pitched', noteValue: 0, octave: 4 },
-    isTied: false,
-    accidental: 'auto',
-    effects: createDefaultNoteEffects()
+  describe('absorbFollowingRests', () => {
+    const FOUR_FOUR = meterOf(4, 4);
+    const note = (): NoteDoc => ({
+      pitch: { kind: 'pitched', noteValue: 0, octave: 4 },
+      isTied: false,
+      accidental: 'auto',
+      effects: createDefaultNoteEffects()
+    });
+
+    it('removes the rests a lengthened beat now covers', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const [first] = bar.voices[0].beats;
+      first.duration = 2;
+
+      const left = absorbFollowingRests(bar.voices[0], first, 960, new Set());
+
+      expect(left).toBe(0);
+      expect(bar.voices[0].beats.length).toBe(3);
+    });
+
+    it('stops at a note and reports what it could not take', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const beats = bar.voices[0].beats;
+      beats[1] = { ...beats[1], isRest: false, notes: [note()] };
+      beats[0].duration = 2;
+
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set());
+
+      expect(left).toBe(960);
+      expect(bar.voices[0].beats.length).toBe(4);
+    });
+
+    it('takes a beat with no notes, which alphaTab draws as a rest, even when it is not marked one', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const beats = bar.voices[0].beats;
+      beats[1] = { ...beats[1], isRest: false };
+      beats[0].duration = 2;
+
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set());
+
+      expect(left).toBe(0);
+      expect(bar.voices[0].beats.length).toBe(3);
+    });
+
+    it('never takes a beat that is itself being changed', () => {
+      // Pressing a half on four selected quarters makes four halves, not one.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const beats = bar.voices[0].beats;
+
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set(beats));
+
+      expect(left).toBe(960);
+      expect(bar.voices[0].beats.length).toBe(4);
+    });
+
+    it('takes a longer rest whole, leaving the difference as a gap to fill', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats = [createRestBeat(4), createRestBeat(2), createRestBeat(4)];
+      bar.voices[0].beats[0].duration = 2;
+
+      const left = absorbFollowingRests(bar.voices[0], bar.voices[0].beats[0], 960, new Set());
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(left).toBe(0);
+      expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'full' });
+    });
+
+    it('stops at a grace beat, even a grace rest, and never takes it', () => {
+      // A grace takes no room, so taking one gains nothing, and it belongs to the beat after it.
+      // A grace rest is the case that matters: `isRest` alone would let the walk take it.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      const beats = bar.voices[0].beats;
+      beats.splice(2, 0, { ...createRestBeat(8), effects: { ...createDefaultBeatEffects(), grace: 'beforeBeat' } });
+      beats[0].duration = 1;
+
+      const left = absorbFollowingRests(bar.voices[0], beats[0], 2880, new Set());
+
+      expect(left).toBe(1920);
+      expect(bar.voices[0].beats.map(beat => beat.effects.grace)).toEqual(['none', 'beforeBeat', 'none', 'none']);
+    });
   });
-
-  it('removes the rests a lengthened beat now covers', () => {
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    const [first] = bar.voices[0].beats;
-    first.duration = 2;
-
-    const left = absorbFollowingRests(bar.voices[0], first, 960, new Set());
-
-    expect(left).toBe(0);
-    expect(bar.voices[0].beats.length).toBe(3);
-  });
-
-  it('stops at a note and reports what it could not take', () => {
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    const beats = bar.voices[0].beats;
-    beats[1] = { ...beats[1], isRest: false, notes: [note()] };
-    beats[0].duration = 2;
-
-    const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set());
-
-    expect(left).toBe(960);
-    expect(bar.voices[0].beats.length).toBe(4);
-  });
-
-  it('never takes a beat that is itself being changed', () => {
-    // Pressing a half on four selected quarters makes four halves, not one.
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    const beats = bar.voices[0].beats;
-
-    const left = absorbFollowingRests(bar.voices[0], beats[0], 960, new Set(beats));
-
-    expect(left).toBe(960);
-    expect(bar.voices[0].beats.length).toBe(4);
-  });
-
-  it('takes a longer rest whole, leaving the difference as a gap to fill', () => {
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    bar.voices[0].beats = [createRestBeat(4), createRestBeat(2), createRestBeat(4)];
-    bar.voices[0].beats[0].duration = 2;
-
-    const left = absorbFollowingRests(bar.voices[0], bar.voices[0].beats[0], 960, new Set());
-    fillBarGaps(bar, FOUR_FOUR);
-
-    expect(left).toBe(0);
-    expect(barFillOf(bar, FOUR_FOUR)).toEqual({ kind: 'full' });
-  });
-
-  it('stops at a grace beat, even a grace rest, and never takes it', () => {
-    // A grace takes no room, so taking one gains nothing, and it belongs to the beat after it.
-    // A grace rest is the case that matters: `isRest` alone would let the walk take it.
-    const bar = createDefaultBar(false, FOUR_FOUR);
-    const beats = bar.voices[0].beats;
-    beats.splice(2, 0, { ...createRestBeat(8), effects: { ...createDefaultBeatEffects(), grace: 'beforeBeat' } });
-    beats[0].duration = 1;
-
-    const left = absorbFollowingRests(bar.voices[0], beats[0], 2880, new Set());
-
-    expect(left).toBe(1920);
-    expect(bar.voices[0].beats.map(beat => beat.effects.grace)).toEqual(['none', 'beforeBeat', 'none', 'none']);
-  });
-});
 ```
 
 **Step 2: Run.** Expected: compile error.
@@ -1852,8 +2035,8 @@ describe('absorbFollowingRests', () => {
 
 ```typescript
 /**
- * Whether a walk that makes room may remove `voice.beats[index]`: a rest that is not a grace
- * beat, and that no grace beat leads into.
+ * Whether a walk that makes room may remove `voice.beats[index]`: a beat alphaTab reads as a
+ * rest (`isAlphaTabRest`) that is not a grace beat, and that no grace beat leads into.
  *
  * A grace beat takes no room, so removing one gains nothing, and it belongs to the beat after
  * it (see `graceRunStart`): removing the rest a grace leads into would leave the grace in front
@@ -1863,7 +2046,7 @@ describe('absorbFollowingRests', () => {
 function isTakeableRest(voice: VoiceDoc, index: number): boolean {
   const beat = voice.beats[index];
   const before = index > 0 ? voice.beats[index - 1] : null;
-  return beat.isRest && beat.effects.grace === 'none' && (before === null || before.effects.grace === 'none');
+  return isAlphaTabRest(beat) && beat.effects.grace === 'none' && (before === null || before.effects.grace === 'none');
 }
 
 /**
@@ -2037,166 +2220,220 @@ accent or a hammer-on on its continuation would be a second attack the player ne
 
 Grace beats take no room and belong to the beat after them. Graces just before the first
 whole beat past the line travel with it; graces before the crossing beat stay with its head,
-where the attack is. Making room in the next bar never takes a grace or a rest a grace leads
-into (Task B4's `isTakeableRest`), so such a bar stays over and the carry goes on. A bar that
-is only a whole rest is full in any meter, so Fix bar refuses it; a carry into one takes the
-whole rest as room and fills the gap behind what it carried.
+where the attack is. Graces after the crossing beat follow its tied tail, keeping the order
+they were written in: every beat after the crossing beat starts past the line, so such graces
+either lead into a beat carried with them or end the bar, where they led into nothing. So
+`n4 n4 n4 n2 g` fixes to `n4 n4 n4 n4 | n4~ g r4 r4 r4`.
+
+Making room in the next bar takes its trailing rests only while it is over, and never a grace
+or a rest a grace leads into (Task B4's `isTakeableRest`), so such a bar stays over and the
+carry goes on. A bar that is only a whole rest is full in any meter, so Fix bar refuses it. A
+carry into one takes the whole rest only if the bar is then over: in 3/4 a carried quarter
+and the whole rest are, so the rest goes and the gap fills behind the quarter; in 5/4 they
+fill the bar exactly, so the rest stays. A free-time bar is never over, so Fix bar refuses
+one, and a carry into one ends there without taking its rests.
 
 **Files:**
 - Modify: `client/src/app/services/bar-fill.ts`
 - Test: `client/src/app/services/bar-fill.spec.ts`
 
-**Step 1: Failing specs.** Add (import `fixBarOverflow`, `NoteDoc`, `createDefaultNoteEffects`):
+**Step 1: Failing specs.** Add inside `describe('bar-fill')`, after the last describe (import
+`fixBarOverflow` and `ScoreDoc`, and `NoteDoc` and `createDefaultNoteEffects` if not already
+imported):
 
 ```typescript
-describe('fixBarOverflow', () => {
-  const fretNote = (): NoteDoc => ({
-    pitch: { kind: 'fretted', string: 1, fret: 0 },
-    isTied: false,
-    accidental: 'auto',
-    effects: { ...createDefaultNoteEffects(), accent: 'normal' }
+  describe('fixBarOverflow', () => {
+    const fretNote = (): NoteDoc => ({
+      pitch: { kind: 'fretted', string: 1, fret: 0 },
+      isTied: false,
+      accidental: 'auto',
+      effects: { ...createDefaultNoteEffects(), accent: 'normal' }
+    });
+    const noteBeat = (duration: DurationValue): BeatDoc => ({
+      ...createRestBeat(duration),
+      isRest: false,
+      notes: [fretNote()]
+    });
+    const graceBeat = (): BeatDoc => {
+      const beat = noteBeat(8);
+      return { ...beat, effects: { ...beat.effects, grace: 'beforeBeat' } };
+    };
+    const shape = (doc: ScoreDoc, bar: number): string[] =>
+      doc.tracks[0].staves[0].bars[bar].voices[0].beats.map(beat =>
+        `${beat.isRest ? 'r' : 'n'}${beat.duration}${'.'.repeat(beat.dots)}${beat.notes[0]?.isTied ? '~' : ''}`);
+
+    it('splits a beat across the bar line and ties the rest into the next bar', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(2)];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n4~', 'r4', 'r4', 'r4']);
+    });
+
+    it('gives the tied continuation the pitch and not the attack', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(2)];
+
+      fixBarOverflow(doc, 0, 0, 0);
+
+      const tail = doc.tracks[0].staves[0].bars[1].voices[0].beats[0].notes[0];
+      expect(tail.pitch).toEqual({ kind: 'fretted', string: 1, fret: 0 });
+      expect(tail.effects.accent).toBe('none');
+    });
+
+    it('carries whole beats past the line without splitting them', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+
+      fixBarOverflow(doc, 0, 0, 0);
+
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n4', 'r4', 'r4', 'r4']);
+    });
+
+    it('carries on into the next bar when that one has no rests to give', () => {
+      const doc = ComposerService.createEmptyScore();
+      const bars = doc.tracks[0].staves[0].bars;
+      bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+      bars[1].voices[0].beats = [4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+
+      fixBarOverflow(doc, 0, 0, 0);
+
+      expect(scoreBarFills(doc)[0][0].map(fill => fill.kind)).toEqual(['full', 'full', 'full', 'full']);
+      expect(shape(doc, 2)).toEqual(['n4', 'r4', 'r4', 'r4']);
+    });
+
+    it('appends a bar only when the carry runs off the end', () => {
+      const doc = ComposerService.createEmptyScore();
+      const last = doc.tracks[0].staves[0].bars[3];
+      last.voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+
+      const result = fixBarOverflow(doc, 0, 0, 3);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 1 });
+      expect(doc.masterBars.length).toBe(5);
+      expect(shape(doc, 4)).toEqual(['n4', 'r4', 'r4', 'r4']);
+    });
+
+    it('refuses a bar that is not over', () => {
+      const doc = ComposerService.createEmptyScore();
+
+      expect(fixBarOverflow(doc, 0, 0, 0).kind).toBe('refused');
+    });
+
+    it('refuses a free-time bar however much it holds, since free time is never over', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.masterBars[0].isFreeTime = true;
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'refused', reason: jasmine.stringMatching(/not over/) });
+      expect(shape(doc, 0).length).toBe(5);
+    });
+
+    it('refuses to split a tuplet across the bar line', () => {
+      // Three quarters, a triplet eighth, then a quarter that starts 640 ticks before the
+      // line: 640 is not a whole number of 64ths, so no written value can be the head.
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [
+        noteBeat(4), noteBeat(4), noteBeat(4),
+        { ...noteBeat(8), tuplet: { numerator: 3, denominator: 2 } },
+        noteBeat(4)
+      ];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result.kind).toBe('refused');
+    });
+
+    it('carries a grace note with the beat it leads into', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [
+        noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(4), graceBeat(), noteBeat(4)
+      ];
+
+      fixBarOverflow(doc, 0, 0, 0);
+
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n8', 'n4', 'r4', 'r4', 'r4']);
+      expect(doc.tracks[0].staves[0].bars[1].voices[0].beats[0].effects.grace).toBe('beforeBeat');
+    });
+
+    it('carries a grace that ends the bar behind the tied tail, in the order it was written', () => {
+      // The grace follows the half that crosses the line, so it follows the whole half - head
+      // and tail. It led into nothing where it was, and leads into a rest now.
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(2), graceBeat()];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n4~', 'n8', 'r4', 'r4', 'r4']);
+      expect(doc.tracks[0].staves[0].bars[1].voices[0].beats[1].effects.grace).toBe('beforeBeat');
+    });
+
+    it('never takes a rest a grace leads into, and carries on instead', () => {
+      // Bar 2 cannot give up its last rest, so it goes over and passes the grace and that rest on.
+      const doc = ComposerService.createEmptyScore();
+      const bars = doc.tracks[0].staves[0].bars;
+      bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+      bars[1].voices[0].beats = [createRestBeat(4), createRestBeat(4), createRestBeat(4), graceBeat(), createRestBeat(4)];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+      expect(shape(doc, 1)).toEqual(['n4', 'r4', 'r4', 'r4']);
+      expect(shape(doc, 2)).toEqual(['n8', 'r4', 'r4', 'r4', 'r4']);
+    });
+
+    it('refuses a bar that is only a whole rest, which fills any meter', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.masterBars[0].timeSignature = { numerator: 3, denominator: 4, isCommon: false };
+      doc.tracks[0].staves[0].bars[1].voices[0].beats = [createRestBeat(1)];
+
+      expect(fixBarOverflow(doc, 0, 0, 1).kind).toBe('refused');
+    });
+
+    it('takes a lone whole rest as room when the bar is over with it, and fills behind what it carried', () => {
+      // Once the carried quarter joins it the whole rest is no longer alone, so it is measured
+      // at 3840: 4800 in a 3/4 bar of 2880 is over, so it is taken, the bar is one quarter,
+      // and the gap fills from beat 2.
+      const doc = ComposerService.createEmptyScore();
+      doc.masterBars[0].timeSignature = { numerator: 3, denominator: 4, isCommon: false };
+      const bars = doc.tracks[0].staves[0].bars;
+      bars[0].voices[0].beats = [4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+      bars[1].voices[0].beats = [createRestBeat(1)];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n4', 'r2']);
+    });
+
+    it('keeps a whole rest the carry leaves the bar exactly full with', () => {
+      // In 5/4 the carried quarter and the whole rest, measured at 3840 now it is not alone,
+      // are 4800 ticks: the bar's capacity. Rests are taken only while a bar is over, so the
+      // whole rest stays.
+      const doc = ComposerService.createEmptyScore();
+      doc.masterBars[1].timeSignature = { numerator: 5, denominator: 4, isCommon: false };
+      const bars = doc.tracks[0].staves[0].bars;
+      bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
+      bars[1].voices[0].beats = [createRestBeat(1)];
+
+      const result = fixBarOverflow(doc, 0, 0, 0);
+
+      expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
+      expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
+      expect(shape(doc, 1)).toEqual(['n4', 'r1']);
+      expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'full' });
+    });
   });
-  const noteBeat = (duration: DurationValue): BeatDoc => ({
-    ...createRestBeat(duration),
-    isRest: false,
-    notes: [fretNote()]
-  });
-  const graceBeat = (): BeatDoc => {
-    const beat = noteBeat(8);
-    return { ...beat, effects: { ...beat.effects, grace: 'beforeBeat' } };
-  };
-  const shape = (doc: ScoreDoc, bar: number): string[] =>
-    doc.tracks[0].staves[0].bars[bar].voices[0].beats.map(beat =>
-      `${beat.isRest ? 'r' : 'n'}${beat.duration}${'.'.repeat(beat.dots)}${beat.notes[0]?.isTied ? '~' : ''}`);
-
-  it('splits a beat across the bar line and ties the rest into the next bar', () => {
-    const doc = ComposerService.createEmptyScore();
-    doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(2)];
-
-    const result = fixBarOverflow(doc, 0, 0, 0);
-
-    expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
-    expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
-    expect(shape(doc, 1)).toEqual(['n4~', 'r4', 'r4', 'r4']);
-  });
-
-  it('gives the tied continuation the pitch and not the attack', () => {
-    const doc = ComposerService.createEmptyScore();
-    doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(2)];
-
-    fixBarOverflow(doc, 0, 0, 0);
-
-    const tail = doc.tracks[0].staves[0].bars[1].voices[0].beats[0].notes[0];
-    expect(tail.pitch).toEqual({ kind: 'fretted', string: 1, fret: 0 });
-    expect(tail.effects.accent).toBe('none');
-  });
-
-  it('carries whole beats past the line without splitting them', () => {
-    const doc = ComposerService.createEmptyScore();
-    doc.tracks[0].staves[0].bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
-
-    fixBarOverflow(doc, 0, 0, 0);
-
-    expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
-    expect(shape(doc, 1)).toEqual(['n4', 'r4', 'r4', 'r4']);
-  });
-
-  it('carries on into the next bar when that one has no rests to give', () => {
-    const doc = ComposerService.createEmptyScore();
-    const bars = doc.tracks[0].staves[0].bars;
-    bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
-    bars[1].voices[0].beats = [4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
-
-    fixBarOverflow(doc, 0, 0, 0);
-
-    expect(scoreBarFills(doc)[0][0].map(fill => fill.kind)).toEqual(['full', 'full', 'full', 'full']);
-    expect(shape(doc, 2)).toEqual(['n4', 'r4', 'r4', 'r4']);
-  });
-
-  it('appends a bar only when the carry runs off the end', () => {
-    const doc = ComposerService.createEmptyScore();
-    const last = doc.tracks[0].staves[0].bars[3];
-    last.voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
-
-    const result = fixBarOverflow(doc, 0, 0, 3);
-
-    expect(result).toEqual({ kind: 'fixed', appendedBars: 1 });
-    expect(doc.masterBars.length).toBe(5);
-    expect(shape(doc, 4)).toEqual(['n4', 'r4', 'r4', 'r4']);
-  });
-
-  it('refuses a bar that is not over', () => {
-    const doc = ComposerService.createEmptyScore();
-
-    expect(fixBarOverflow(doc, 0, 0, 0).kind).toBe('refused');
-  });
-
-  it('refuses to split a tuplet across the bar line', () => {
-    // Three quarters, a triplet eighth, then a quarter that starts 640 ticks before the
-    // line: 640 is not a whole number of 64ths, so no written value can be the head.
-    const doc = ComposerService.createEmptyScore();
-    doc.tracks[0].staves[0].bars[0].voices[0].beats = [
-      noteBeat(4), noteBeat(4), noteBeat(4),
-      { ...noteBeat(8), tuplet: { numerator: 3, denominator: 2 } },
-      noteBeat(4)
-    ];
-
-    const result = fixBarOverflow(doc, 0, 0, 0);
-
-    expect(result.kind).toBe('refused');
-  });
-
-  it('carries a grace note with the beat it leads into', () => {
-    const doc = ComposerService.createEmptyScore();
-    doc.tracks[0].staves[0].bars[0].voices[0].beats = [
-      noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(4), graceBeat(), noteBeat(4)
-    ];
-
-    fixBarOverflow(doc, 0, 0, 0);
-
-    expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4', 'n4']);
-    expect(shape(doc, 1)).toEqual(['n8', 'n4', 'r4', 'r4', 'r4']);
-    expect(doc.tracks[0].staves[0].bars[1].voices[0].beats[0].effects.grace).toBe('beforeBeat');
-  });
-
-  it('never takes a rest a grace leads into, and carries on instead', () => {
-    // Bar 2 cannot give up its last rest, so it goes over and passes the grace and that rest on.
-    const doc = ComposerService.createEmptyScore();
-    const bars = doc.tracks[0].staves[0].bars;
-    bars[0].voices[0].beats = [4, 4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
-    bars[1].voices[0].beats = [createRestBeat(4), createRestBeat(4), createRestBeat(4), graceBeat(), createRestBeat(4)];
-
-    const result = fixBarOverflow(doc, 0, 0, 0);
-
-    expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
-    expect(shape(doc, 1)).toEqual(['n4', 'r4', 'r4', 'r4']);
-    expect(shape(doc, 2)).toEqual(['n8', 'r4', 'r4', 'r4', 'r4']);
-  });
-
-  it('refuses a bar that is only a whole rest, which fills any meter', () => {
-    const doc = ComposerService.createEmptyScore();
-    doc.masterBars[0].timeSignature = { numerator: 3, denominator: 4, isCommon: false };
-    doc.tracks[0].staves[0].bars[1].voices[0].beats = [createRestBeat(1)];
-
-    expect(fixBarOverflow(doc, 0, 0, 1).kind).toBe('refused');
-  });
-
-  it('takes a lone whole rest as room, and fills behind what it carried', () => {
-    // Once the carried quarter joins it the whole rest is no longer alone, so it is measured
-    // at 3840 and taken; the 3/4 bar is then one quarter, and the gap fills from beat 2.
-    const doc = ComposerService.createEmptyScore();
-    doc.masterBars[0].timeSignature = { numerator: 3, denominator: 4, isCommon: false };
-    const bars = doc.tracks[0].staves[0].bars;
-    bars[0].voices[0].beats = [4, 4, 4, 4].map(d => noteBeat(d as DurationValue));
-    bars[1].voices[0].beats = [createRestBeat(1)];
-
-    const result = fixBarOverflow(doc, 0, 0, 0);
-
-    expect(result).toEqual({ kind: 'fixed', appendedBars: 0 });
-    expect(shape(doc, 0)).toEqual(['n4', 'n4', 'n4']);
-    expect(shape(doc, 1)).toEqual(['n4', 'r2']);
-  });
-});
 ```
 
 **Step 2: Run.** Expected: compile error.
@@ -2221,12 +2458,12 @@ function spelledTicks(ticks: number, startTicks: number, timeSignature: TimeSign
 and make `fillBarGaps` use it:
 
 ```typescript
-export function fillBarGaps(bar: BarDoc, timeSignature: TimeSignature): void {
-  const fill = barFillOf(bar, timeSignature);
+export function fillBarGaps(bar: BarDoc, meter: BarMeter): void {
+  const fill = barFillOf(bar, meter);
   const voice = bar.voices[0];
   if (fill.kind !== 'under' || !voice) return;
 
-  const units = spelledTicks(fill.ticks, voiceTicks(voice), timeSignature) ?? [];
+  const units = spelledTicks(fill.ticks, voiceTicks(voice), meter.timeSignature) ?? [];
   const rests = units.map(unit => ({ ...createRestBeat(unit.duration), dots: unit.dots }));
   voice.beats.splice(graceRunStart(voice, voice.beats.length), 0, ...rests);
 }
@@ -2234,8 +2471,9 @@ export function fillBarGaps(bar: BarDoc, timeSignature: TimeSignature): void {
 
 Run the spec file: the Task B3 specs must still pass.
 
-Then append (import `insertBarInto` from `./score-structure`, `createDefaultNoteEffects`
-from the model):
+Then append (import `insertBarInto` from `./score-structure`, and `createDefaultNoteEffects`
+from the model if not already imported). `takeTrailingRests` replaces nothing: it is new here,
+and takes the bar and its meter so it can stop the moment the bar is no longer over.
 
 ```typescript
 /** What Fix bar did: how many bars it had to add, or why it did nothing. */
@@ -2251,6 +2489,9 @@ const TUPLET_ACROSS_LINE =
  * a bar it reaches is no longer over. See the section comment above Task B6 in the M1 plan
  * for what a continuation carries.
  *
+ * Every bar is read against its own `barMeterAt`, so a free-time bar is never over: Fix bar
+ * refuses one, and a carry that reaches one stops there, taking none of its rests.
+ *
  * **May leave `doc` partly changed when it refuses.** Call it on a draft you can discard.
  */
 export function fixBarOverflow(
@@ -2264,22 +2505,21 @@ export function fixBarOverflow(
 
   let appendedBars = 0;
   for (let index = barIndex; index < staff.bars.length; index++) {
-    const timeSignature = effectiveTimeSignature(doc.masterBars, index);
+    const meter = barMeterAt(doc, index);
     const bar = staff.bars[index];
-    const over = !doc.masterBars[index].isFreeTime && barFillOf(bar, timeSignature).kind === 'over';
 
-    if (!over) {
+    if (barFillOf(bar, meter).kind !== 'over') {
       if (index === barIndex) {
         return { kind: 'refused', reason: 'That bar is not over its time signature.' };
       }
-      fillBarGaps(bar, timeSignature);
+      fillBarGaps(bar, meter);
       return { kind: 'fixed', appendedBars };
     }
 
     const carried = beatsPastBarLine(
       bar.voices[0],
-      timeSignature,
-      effectiveTimeSignature(doc.masterBars, index + 1)
+      meter.timeSignature,
+      barMeterAt(doc, index + 1).timeSignature
     );
     if (carried === null) return { kind: 'refused', reason: TUPLET_ACROSS_LINE };
 
@@ -2288,9 +2528,9 @@ export function fixBarOverflow(
       appendedBars++;
     }
 
-    const next = staff.bars[index + 1].voices[0];
-    next.beats.unshift(...carried);
-    takeTrailingRests(next, carried.reduce((sum, beat) => sum + beatTicks(beat), 0));
+    const next = staff.bars[index + 1];
+    next.voices[0].beats.unshift(...carried);
+    takeTrailingRests(next, barMeterAt(doc, index + 1));
   }
   return { kind: 'fixed', appendedBars };
 }
@@ -2301,7 +2541,9 @@ export function fixBarOverflow(
  * when the crossing beat cannot be split into written values.
  *
  * A grace beat is 0 ticks, so it never crosses the line. Graces just before the first whole
- * beat past it go with that beat; graces before a crossing beat stay with its head.
+ * beat past it go with that beat; graces before a crossing beat stay with its head. Graces
+ * after a crossing beat go behind its tied tail, keeping the order they were written in - so
+ * graces that ended the bar, which led into nothing there, follow the tail into the next bar.
  */
 function beatsPastBarLine(
   voice: VoiceDoc,
@@ -2356,15 +2598,21 @@ function piecesOf(beat: BeatDoc, units: DurationUnit[], isTail: boolean): BeatDo
 }
 
 /**
- * Removes rests from the end of `voice` until `ticks` are covered. It stops at a note, a grace
- * beat, or a rest a grace leads into (`isTakeableRest`); what it cannot take stays as overflow.
+ * Removes rests from the end of `bar` while it is over `meter`, and stops as soon as it is not.
+ *
+ * Stopping when the bar stops being over, rather than once some number of ticks is covered,
+ * is what keeps a whole rest that still fits: once the rests after it are gone a lone whole
+ * rest is full in any meter (`barFillOf`), and a carry can leave a whole rest exactly filling
+ * a bar beside it. It stops at a note, a grace beat, or a rest a grace leads into
+ * (`isTakeableRest`); what it cannot take stays as overflow. A free-time bar is never over, so
+ * nothing is taken from one.
  */
-function takeTrailingRests(voice: VoiceDoc, ticks: number): void {
-  let remaining = ticks;
-  while (remaining > 0 && voice.beats.length > 0) {
+function takeTrailingRests(bar: BarDoc, meter: BarMeter): void {
+  const voice = bar.voices[0];
+  if (!voice) return;
+  while (barFillOf(bar, meter).kind === 'over') {
     const last = voice.beats.length - 1;
-    if (!isTakeableRest(voice, last)) return;
-    remaining -= beatTicks(voice.beats[last]);
+    if (last < 0 || !isTakeableRest(voice, last)) return;
     voice.beats.pop();
   }
 }
@@ -2392,7 +2640,7 @@ The names Phase D relies on, so the two phases can be read in either order:
 | Module | Exports |
 |---|---|
 | `composer-selection.ts` | `BeatRef`, `selectionTargets`, `selectedBars`, `beatAt` |
-| `beat-edits.ts` | `toggledValue`, `beatsAt`, `toggleBeatEffect`, `setDynamics`, `setBeatDurations`, `setTuplet` |
+| `beat-edits.ts` | `toggledValue`, `beatsAt`, `toggleBeatEffect`, `setDynamics`, `setBeatDurations`, `setTuplet`, `setGrace` |
 | `note-edits.ts` | `notesAt`, `toggleNoteEffect`, `setAccidental`, `toggleTie` |
 | `edit-refusals.ts` | `EditScope`, `editRefusal` |
 | `bar-edits.ts` | `timeSignatureFault`, `keySignatureFault`, `setTimeSignature`, `setKeySignature`, `setClef`, `toggleMasterBarFlag`, `setMasterBarValue` |
@@ -2583,6 +2831,12 @@ function barRectangle(doc: ScoreDoc, a: EditCursor, b: EditCursor): BeatRef[] {
 
 ### Task C2: Beat edits, and the toggle rule
 
+A grace takes no room (Task B1), so making a beat a grace, or a grace an ordinary beat, changes
+how full its bar is. That is `setGrace`, which settles the bar through the same `relength` as a
+duration change; `toggleBeatEffect` cannot name `grace` at all. Grace beats' written values
+belong to alphaTab, which sets them by grace group size when the score is finished, so
+`setBeatDurations` skips grace beats.
+
 **Files:**
 - Create: `client/src/app/services/beat-edits.ts`
 - Create: `client/src/app/services/beat-edits.spec.ts`
@@ -2592,13 +2846,18 @@ function barRectangle(doc: ScoreDoc, a: EditCursor, b: EditCursor): BeatRef[] {
 ```typescript
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { setBeatDurations, setTuplet, toggleBeatEffect, toggledValue } from './beat-edits';
+import { setBeatDurations, setGrace, setTuplet, toggleBeatEffect, toggledValue } from './beat-edits';
 import { scoreBarFills } from './bar-fill';
-import { ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+import { ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
 
 const ref = (barIndex: number, beatIndex: number): BeatRef =>
   ({ trackIndex: 0, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex });
 const beats = (doc: ScoreDoc, bar = 0) => doc.tracks[0].staves[0].bars[bar].voices[0].beats;
+const withNote = (doc: ScoreDoc, bar: number, beat: number): void => {
+  const target = beats(doc, bar)[beat];
+  target.isRest = false;
+  target.notes = [{ pitch: { kind: 'fretted', string: 1, fret: 0 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+};
 
 describe('toggledValue', () => {
   it('turns on when any target lacks the value', () => {
@@ -2626,12 +2885,6 @@ describe('toggleBeatEffect', () => {
 });
 
 describe('setBeatDurations', () => {
-  const withNote = (doc: ScoreDoc, bar: number, beat: number): void => {
-    const target = beats(doc, bar)[beat];
-    target.isRest = false;
-    target.notes = [{ pitch: { kind: 'fretted', string: 1, fret: 0 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
-  };
-
   it('fills the gap when a beat gets shorter', () => {
     const doc = ComposerService.createEmptyScore();
 
@@ -2666,6 +2919,52 @@ describe('setBeatDurations', () => {
 
     expect(beats(doc).map(beat => beat.duration)).toEqual([2, 2, 2, 2]);
   });
+
+  it('leaves a grace beat\'s written value to alphaTab, and still settles the bar', () => {
+    // A quarter, a grace written as a quarter, and three quarters: full, since a grace takes no
+    // room. `Beat.finish` sets a grace's value from the size of its grace group, so a value set
+    // here would not survive a save; the grace keeps its quarter. The first beat becomes a
+    // sixteenth, and the three sixteenths it frees fill at the end as a dotted eighth.
+    const doc = ComposerService.createEmptyScore();
+    beats(doc).splice(1, 0, createRestBeat(4));
+    withNote(doc, 0, 1);
+    beats(doc)[1].effects.grace = 'beforeBeat';
+
+    setBeatDurations(doc, [ref(0, 0), ref(0, 1)], 16, 0);
+
+    expect(beats(doc).map(beat => `${beat.duration}${'.'.repeat(beat.dots)}`)).toEqual(['16', '4', '4', '4', '4', '8.']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+});
+
+describe('setGrace', () => {
+  it('fills the room a quarter frees by becoming a grace', () => {
+    // A grace takes no room, so a full 4/4 bar whose second quarter becomes a grace is a
+    // quarter short, and the gap fills at the end.
+    const doc = ComposerService.createEmptyScore();
+    withNote(doc, 0, 1);
+
+    setGrace(doc, [ref(0, 1)], 'beforeBeat');
+
+    expect(beats(doc).map(beat => beat.effects.grace)).toEqual(['none', 'beforeBeat', 'none', 'none', 'none']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+
+  it('takes the rest a grace led into when it becomes an ordinary beat again', () => {
+    // A note, an on-beat grace written as a quarter, and three quarter rests: full. As an
+    // ordinary beat the grace takes a quarter's room, and the rest after it is no longer led
+    // into by a grace, so it is the room taken.
+    const doc = ComposerService.createEmptyScore();
+    beats(doc).splice(1, 0, createRestBeat(4));
+    withNote(doc, 0, 0);
+    withNote(doc, 0, 1);
+    beats(doc)[1].effects.grace = 'onBeat';
+
+    setGrace(doc, [ref(0, 1)], 'none');
+
+    expect(beats(doc).map(beat => (beat.isRest ? 'r' : 'n'))).toEqual(['n', 'n', 'r', 'r']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
 });
 
 describe('setTuplet', () => {
@@ -2692,10 +2991,9 @@ import {
   DurationValue,
   DynamicValue,
   ScoreDoc,
-  Tuplet,
-  effectiveTimeSignature
+  Tuplet
 } from '../models/composer.model';
-import { absorbFollowingRests, beatTicks, fillBarGaps } from './bar-fill';
+import { absorbFollowingRests, barMeterAt, beatTicks, fillBarGaps } from './bar-fill';
 import { BeatRef, beatAt } from './composer-selection';
 
 /**
@@ -2721,8 +3019,13 @@ export function beatsAt(doc: ScoreDoc, refs: readonly BeatRef[]): BeatDoc[] {
   return refs.map(ref => beatAt(doc, ref)).filter((beat): beat is BeatDoc => beat !== null);
 }
 
-/** Presses a beat effect tool on `refs`, by the toggle rule. */
-export function toggleBeatEffect<K extends keyof BeatEffectsDoc>(
+/**
+ * Presses a beat effect tool on `refs`, by the toggle rule.
+ *
+ * Every effect but `grace`, which the type leaves out: a grace takes no room, so becoming or
+ * leaving one changes how full the bar is, and only `setGrace` settles the bar for it.
+ */
+export function toggleBeatEffect<K extends Exclude<keyof BeatEffectsDoc, 'grace'>>(
   doc: ScoreDoc,
   refs: readonly BeatRef[],
   key: K,
@@ -2739,7 +3042,15 @@ export function setDynamics(doc: ScoreDoc, refs: readonly BeatRef[], dynamics: D
   for (const beat of beatsAt(doc, refs)) beat.dynamics = dynamics;
 }
 
-/** Gives every beat in `refs` a written value, then keeps each bar honest. See `relength`. */
+/**
+ * Gives every beat in `refs` a written value, then keeps each bar honest. See `relength`.
+ *
+ * Grace beats keep theirs. alphaTab sets a grace's written value itself when the score is
+ * finished - an eighth, sixteenth or thirty-second by the size of its grace group
+ * (`Beat.finish`, `alphaTab.core.mjs` ~7772-7786) - so a value set here would be drawn as
+ * alphaTab's and lost on save. A grace takes no room either way, so skipping one changes no
+ * bar's fill.
+ */
 export function setBeatDurations(
   doc: ScoreDoc,
   refs: readonly BeatRef[],
@@ -2747,6 +3058,7 @@ export function setBeatDurations(
   dots: number
 ): void {
   relength(doc, refs, beat => {
+    if (beat.effects.grace !== 'none') return;
     beat.duration = duration;
     beat.dots = dots;
   });
@@ -2760,10 +3072,26 @@ export function setTuplet(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuple
 }
 
 /**
+ * Makes every beat in `refs` a grace of kind `grace`, or an ordinary beat again with `'none'`.
+ * See `relength`.
+ *
+ * A length change, not an effect: a grace takes no room (`beatTicks`), so a beat that becomes
+ * one frees its value's worth of the bar, which fills with rests, and a grace that becomes an
+ * ordinary beat takes room, which takes the rests after it or is left as overflow.
+ */
+export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEffectsDoc['grace']): void {
+  relength(doc, refs, beat => {
+    beat.effects.grace = grace;
+  });
+}
+
+/**
  * Applies a length change to beats and settles each bar they are in, by the design's rule:
- * a beat that grows takes the rests after it, never a note and never another beat being
+ * a beat that grows takes the rests after it, never a note, a grace, or another beat being
  * changed; whatever it cannot take is left as overflow for Fix bar; and any gap is filled
- * with rests.
+ * with rests. A beat's length is `beatTicks`, so becoming or leaving a grace is a change like
+ * any other. Each bar is settled against its own `barMeterAt`, so a free-time bar is left as
+ * the change made it.
  *
  * Beats are changed last to first within a bar, so absorbing the rests after one beat never
  * moves a beat still waiting its turn.
@@ -2789,7 +3117,7 @@ function relength(doc: ScoreDoc, refs: readonly BeatRef[], change: (beat: BeatDo
       const grown = beatTicks(beat) - before;
       if (grown > 0) absorbFollowingRests(voice, beat, grown, changing);
     }
-    fillBarGaps(bar, effectiveTimeSignature(doc.masterBars, barIndex));
+    fillBarGaps(bar, barMeterAt(doc, barIndex));
   }
 }
 ```
@@ -3300,8 +3628,8 @@ export function editRefusal(
 Key signature and clef live on every bar, with no inherit, so "set from this bar" means:
 from this bar forward, for as long as the bars still carry the value the first bar had -
 the next deliberate change stops it. A time signature inherits, so it is declared once and
-the bars under it are fitted: trailing rests that no longer fit go, gaps fill, and notes
-that no longer fit stay as overflow for Fix bar.
+the bars under it are fitted: trailing rests go while a bar is over, gaps fill, and notes
+that no longer fit stay as overflow for Fix bar. A free-time bar is left as it is.
 
 **Files:**
 - Modify: `client/src/app/services/bar-fill.ts` (export `fitBarToMeter`)
@@ -3388,6 +3716,28 @@ describe('setTimeSignature', () => {
     expect(doc.tracks[0].staves[0].bars[1].voices[0].beats.map(beat => beat.duration)).toEqual([1]);
     expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'full' });
   });
+
+  it('keeps a whole rest that fills the bar once the rests after it are gone', () => {
+    // 5/4's whole rest and quarter rest are 4800 ticks, over 3/4's 2880. Taking the quarter
+    // leaves the whole rest alone, which fills any meter, so the fit stops there.
+    const doc = ComposerService.createEmptyScore();
+    doc.masterBars[1].timeSignature = { numerator: 5, denominator: 4, isCommon: false };
+    doc.tracks[0].staves[0].bars[1].voices[0].beats = [createRestBeat(1), createRestBeat(4)];
+
+    setTimeSignature(doc, 1, THREE_FOUR);
+
+    expect(doc.tracks[0].staves[0].bars[1].voices[0].beats.map(beat => beat.duration)).toEqual([1]);
+    expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'full' });
+  });
+
+  it('leaves a free-time bar as it is, and fits the bars after it', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.masterBars[1].isFreeTime = true;
+
+    setTimeSignature(doc, 1, THREE_FOUR);
+
+    expect(doc.tracks[0].staves[0].bars.map(bar => bar.voices[0].beats.length)).toEqual([4, 4, 3, 3]);
+  });
 });
 
 describe('setKeySignature and setClef', () => {
@@ -3429,18 +3779,18 @@ describe('toggleMasterBarFlag', () => {
 
 ```typescript
 /**
- * Settles a bar after its meter changed: trailing rests it no longer has room for go, a gap
- * fills with rests, and notes that no longer fit stay as overflow for Fix bar.
+ * Settles a bar after its meter changed: trailing rests go while the bar is over, a gap fills
+ * with rests, and notes that no longer fit stay as overflow for Fix bar.
  *
- * A bar that is only a whole rest is full in any meter (`barFillOf`), so it is left as it is.
- * Trailing rests stop at a grace beat or a rest one leads into (`takeTrailingRests`), so a bar
- * ending that way can stay over.
+ * Rests go only while the bar is over (`takeTrailingRests`), so a whole rest left alone once
+ * the rests after it are gone stays, because that fills any meter (`barFillOf`): 5/4's
+ * `r1 r4` fitted to 3/4 keeps its whole rest. Trailing rests stop at a grace beat or a rest
+ * one leads into, so a bar ending that way can stay over. A free-time bar is never over or
+ * under, so nothing here changes one.
  */
-export function fitBarToMeter(bar: BarDoc, timeSignature: TimeSignature): void {
-  const fill = barFillOf(bar, timeSignature);
-  const voice = bar.voices[0];
-  if (fill.kind === 'over' && voice) takeTrailingRests(voice, fill.ticks);
-  fillBarGaps(bar, timeSignature);
+export function fitBarToMeter(bar: BarDoc, meter: BarMeter): void {
+  takeTrailingRests(bar, meter);
+  fillBarGaps(bar, meter);
 }
 ```
 
@@ -3456,7 +3806,7 @@ import {
   TimeSignature,
   effectiveTimeSignature
 } from '../models/composer.model';
-import { fitBarToMeter } from './bar-fill';
+import { barMeterAt, fitBarToMeter } from './bar-fill';
 import { toggledValue } from './beat-edits';
 
 /** Edits that act on bars. They change the document they are given. */
@@ -3492,7 +3842,9 @@ const sameMeter = (a: TimeSignature | null, b: TimeSignature | null): boolean =>
  *
  * Declarations stay in the declare-on-change shape the mapper reads a file into: nothing is
  * declared where the meter is already in force (bar 1 always declares), and a later bar
- * that declared this same meter drops its now-repeated declaration.
+ * that declared this same meter drops its now-repeated declaration. Each bar is fitted against
+ * its own `barMeterAt`, read after the declarations change, so a free-time bar keeps what it
+ * holds.
  */
 export function setTimeSignature(doc: ScoreDoc, first: number, timeSignature: TimeSignature): void {
   const masterBars = doc.masterBars;
@@ -3513,7 +3865,7 @@ export function setTimeSignature(doc: ScoreDoc, first: number, timeSignature: Ti
     for (const staff of track.staves) {
       for (let index = first; index < end; index++) {
         const bar = staff.bars[index];
-        if (bar) fitBarToMeter(bar, effectiveTimeSignature(masterBars, index));
+        if (bar) fitBarToMeter(bar, barMeterAt(doc, index));
       }
     }
   }
@@ -4022,6 +4374,19 @@ describe('ComposerService edits', () => {
     expect(refusal()).toBeNull();
   });
 
+  it('makes a grace by the toggle rule, settling the bar each way', () => {
+    // The caret's quarter rest becomes a grace, which takes no room, so a rest fills the bar's
+    // end. Pressed again it is a quarter, and takes the rest it led into.
+    const beats = () => service.doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    service.setCursor({ barIndex: 0, beatIndex: 1 });
+
+    service.toggleGrace('beforeBeat');
+    expect(beats().map(beat => beat.effects.grace)).toEqual(['none', 'beforeBeat', 'none', 'none', 'none']);
+
+    service.toggleGrace('beforeBeat');
+    expect(beats().map(beat => beat.effects.grace)).toEqual(['none', 'none', 'none', 'none']);
+  });
+
   it('marks a dynamic on every beat in a range, rests included', () => {
     service.selectAllInTrack();
 
@@ -4052,8 +4417,9 @@ beside the existing gate specs:
 
 **Step 2: Run** both files. Expected: compile errors for the new methods.
 
-**Step 3: Implement.** Import `selectionTargets`, `BeatRef`, the beat and note edits, and
-`editRefusal`/`EditScope`. Add to `ComposerService`:
+**Step 3: Implement.** Import `selectionTargets`, `BeatRef`, the beat and note edits (`beatsAt`,
+`setGrace` and `toggledValue` among them), and `editRefusal`/`EditScope`. Add to
+`ComposerService`:
 
 ```typescript
   // -------------------------------------------------------------------------
@@ -4073,9 +4439,24 @@ beside the existing gate specs:
     this.applyEdit({ family: 'note', key: 'tie' }, (draft, refs, focus) => toggleTie(draft, refs, focus));
   }
 
-  /** Presses a beat effect tool on the selection. */
-  toggleBeatEffect<K extends keyof BeatEffectsDoc>(key: K, on: BeatEffectsDoc[K], off: BeatEffectsDoc[K]): void {
+  /** Presses a beat effect tool on the selection. Not grace: see `toggleGrace`. */
+  toggleBeatEffect<K extends Exclude<keyof BeatEffectsDoc, 'grace'>>(
+    key: K,
+    on: BeatEffectsDoc[K],
+    off: BeatEffectsDoc[K]
+  ): void {
     this.applyEdit({ family: 'beat' }, (draft, refs) => toggleBeatEffect(draft, refs, key, on, off));
+  }
+
+  /**
+   * Presses Grace before or Grace on beat, by the toggle rule: when every target is already
+   * that grace, they become ordinary beats again. A grace takes no room, so this is a length
+   * change, and `setGrace` settles each bar as a duration change does.
+   */
+  toggleGrace(grace: Exclude<BeatEffectsDoc['grace'], 'none'>): void {
+    this.applyEdit({ family: 'beat' }, (draft, refs) =>
+      setGrace(draft, refs, toggledValue(beatsAt(draft, refs).map(beat => beat.effects.grace), grace, 'none'))
+    );
   }
 
   setDynamics(dynamics: DynamicValue | null): void {
@@ -4373,6 +4754,8 @@ The visible change in M1. `applyDurationAtCursor` acts on the selection through
 directly and go through it too. The generated-track behaviour documented on
 `applyDurationAtCursor` is kept exactly: the write is refused, the input duration is still
 remembered, and - because that half-refusal is deliberate - no refusal message is published.
+`setBeatDurations` leaves a grace beat's written value to alphaTab (Task C2), so a duration
+pressed on a grace, or a note written on one, keeps the grace's value.
 
 **Files:**
 - Modify: `client/src/app/services/composer.service.ts`
@@ -4560,7 +4943,7 @@ divergence specs:
 
 **Step 2: Run** both. Expected: compile error, `fixBar` does not exist.
 
-**Step 3: Implement** (import `fixBarOverflow`, `scoreBarFills`):
+**Step 3: Implement** (import `barFillAt` and `fixBarOverflow`):
 
 ```typescript
   /**
@@ -4571,7 +4954,9 @@ divergence specs:
    * part-way - a tuplet across a line - and a half-carried score is exactly the corruption
    * the refusal exists to prevent. Refused on a generated track like any content edit.
    * Appending a bar is score-wide, so it stamps generated tracks diverged; carrying within
-   * existing bars touches only this staff and does not.
+   * existing bars touches only this staff and does not. Each selected bar is read with
+   * `barFillAt`, against its own meter and free time, rather than measuring the whole score
+   * once per bar.
    */
   fixBar(): void {
     const state = this.stateSubject.getValue();
@@ -4585,7 +4970,7 @@ divergence specs:
     let appended = 0;
 
     for (let index = bars.first; index <= bars.last; index++) {
-      if (scoreBarFills(draft)[trackIndex]?.[staffIndex]?.[index]?.kind !== 'over') continue;
+      if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
       const result = fixBarOverflow(draft, trackIndex, staffIndex, index);
       if (result.kind === 'refused') return this.refuse(result.reason);
       fixed = true;

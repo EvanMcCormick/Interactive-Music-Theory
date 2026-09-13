@@ -87,7 +87,10 @@ Five choices were put to the user; each records what was rejected.
    consumes only following rests. Anything that would overwrite a note or cross the
    bar line leaves the bar red with a **Fix bar** command. Rejected: fully automatic
    (a slip overwrites earlier notes) and free-with-a-warning (every bar tidied by
-   hand).
+   hand). Bars are measured as alphaTab lays them out. Grace beats take no room, so
+   making or unmaking a grace settles the bar like any length change, and lengthening
+   stops at a grace. A lone whole rest fills a bar in any meter. A free-time bar is
+   never filled or trimmed.
 4. **Selection: ranges, like Guitar Pro.** Click, shift-click, drag; note tools act
    on a focused note in a chord. Rejected: caret only, and tools as sticky input
    modes.
@@ -167,7 +170,12 @@ rests inside the same commit. Overflow is never resolved automatically: a pure
 `barStatus(doc)` reports each bar as full or over by how much, and the track strip
 and score overlay read it. **Fix bar** is its own command on the selected bars: it
 splits the overflowing beat at the bar line, ties the remainder into the next bar,
-and appends a bar only when the carry runs off the end of the score.
+and appends a bar only when the carry runs off the end of the score. A grace beat
+takes no room, so making a beat a grace, or a grace an ordinary beat, settles the bar
+in the same commit as a duration change does, and a lengthened beat stops at a grace
+rather than take it. A bar holding only a whole rest is full in any meter, because
+alphaTab draws it as a full-bar rest. A free-time bar is full whatever it holds: nothing
+fills it, trims it, or carries out of it.
 
 **Pen** writes through the same note commands. Its hover notehead is rendering only
 and never touches the document.
@@ -494,5 +502,9 @@ Not rejected - not yet placed. Each needs its own design pass:
   a thirty-second for three or more - when the score is finished, so before anything is
   saved. A lone on-beat grace written as a half, quarter, sixteenth or thirty-second comes
   back from `toScore` as an eighth, and alphaTex exports it as one (`3.1.8{gr onbeat}`). A
-  duration the user sets on a grace does not survive a save. M2's grace tool should either
-  fix the grace's value to alphaTab's rule or refuse a duration edit on a grace.
+  duration the user sets on a grace does not survive a save. Adjacent before-beat and
+  on-beat graces merge into one group (`Voice.finish` groups every run of non-`None` grace
+  types, ~3200-3216) and are revalued together by that group's size. A bend grace is not
+  rewritten: `Beat.finish` revalues only on-beat and before-beat graces. M1 skips grace beats
+  when setting durations (`setBeatDurations`). M2's grace tool should either fix the grace's
+  value to alphaTab's rule or refuse a duration edit on a grace.
