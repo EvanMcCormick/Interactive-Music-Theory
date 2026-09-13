@@ -436,3 +436,9 @@ Not rejected - not yet placed. Each needs its own design pass:
   slides down and up read back as no slide, so alphaTex applied from the source panel
   loses them. Nothing the composer writes can produce them; widening
   `NoteEffectsDoc.slide` belongs with M2's slide tools.
+- **Bends are stored in Guitar Pro's shapes, not as drawn.** alphaTab's `Note.finish`
+  classifies a bend of two to four points as a standard bend type and rewrites the points
+  to fit - a redundant middle point goes, a bend-release gains one - before anything is
+  saved. M1 stores what alphaTab keeps and pins the rewrite. M4's bend curve editor should
+  offer Guitar Pro's shapes rather than free drawing, or show the simplified curve after
+  each edit. A pre-bend also resets a forced accidental; M1 pins that too.

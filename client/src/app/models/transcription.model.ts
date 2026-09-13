@@ -64,8 +64,9 @@ export interface DetectedNote {
    * Per-frame deviation in cents. Empty when the note has no bend.
    *
    * Sampled at the detector's own frame rate, which this model does not
-   * record. Converting these to `NoteEffectsDoc.bendPoints` — quarter tones,
-   * one value per bend point rather than per frame — therefore needs that rate
+   * record. Converting these to `NoteEffectsDoc.bendPoints` — offset and value
+   * pairs, a position through the note, 0 to 60, and a pitch in quarter tones,
+   * per bend point rather than per frame — therefore needs that rate
    * from the detector as well as the array itself.
    */
   bendCents: number[];
@@ -206,8 +207,9 @@ export interface TranscriptionSession {
    * detector, not of a note — so whoever hands the notes on has to hand the
    * rate on with them, and this is where they come to rest. Without it
    * `bendCents` is a list of numbers with no time axis: turning it into
-   * `NoteEffectsDoc.bendPoints`, which are positions through the note rather
-   * than frames, is not possible. `DetectionResult.bendFrameRateHz` produced
+   * `NoteEffectsDoc.bendPoints`, which are offset and value pairs — a position
+   * through the note, 0 to 60, and a pitch in quarter tones — rather than
+   * frames, is not possible. `DetectionResult.bendFrameRateHz` produced
    * it and crossed the worker boundary carrying it; this is the field that
    * stops it being dropped on arrival.
    */

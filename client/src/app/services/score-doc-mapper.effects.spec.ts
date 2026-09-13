@@ -159,5 +159,26 @@ describe('ScoreDocMapperService effects round trip', () => {
     });
   }
 
-  // <!-- A3 -->
+  it('keeps a bend as positioned points', () => {
+    const points = [{ offset: 0, value: 0 }, { offset: 60, value: 4 }];
+    const doc = guitarBar(beats => (beats[0].notes[0].effects.bendPoints = points));
+
+    expect(beatsOf(throughTex(doc))[0].notes[0].effects.bendPoints).toEqual(points);
+  });
+
+  it('stores a bend in the shape alphaTab keeps - a redundant middle point goes', () => {
+    // `Note.finish` classifies a custom bend of two to four points as one of Guitar Pro's
+    // bend types and rewrites its points to fit, before a character of alphaTex is written.
+    // A rising three-point bend whose middle already reached the top is a plain Bend, so
+    // the middle point is removed. Pinned so the model's contract is what alphaTab keeps,
+    // and so M4's bend curve editor knows it is drawing Guitar Pro's shapes.
+    const doc = guitarBar(beats => (beats[0].notes[0].effects.bendPoints = [
+      { offset: 0, value: 0 }, { offset: 30, value: 4 }, { offset: 60, value: 4 }
+    ]));
+
+    expect(beatsOf(throughTex(doc))[0].notes[0].effects.bendPoints)
+      .toEqual([{ offset: 0, value: 0 }, { offset: 60, value: 4 }]);
+  });
+
+  // <!-- A4 -->
 });

@@ -280,6 +280,16 @@ export interface NoteDoc {
   effects: NoteEffectsDoc;
 }
 
+/**
+ * One point of a bend curve, in alphaTab's own units so the mapper copies rather than
+ * converts: `offset` is the position through the note, 0 to 60, and `value` is the
+ * pitch in quarter tones, so 4 is a whole-tone bend.
+ */
+export interface BendPointDoc {
+  offset: number;
+  value: number;
+}
+
 export interface NoteEffectsDoc {
   isGhost: boolean;
   isDead: boolean;
@@ -290,8 +300,8 @@ export interface NoteEffectsDoc {
   vibrato: boolean;
   slide: 'none' | 'shiftSlide' | 'legatoSlide' | 'slideInBelow' | 'slideOutUp';
   harmonic: 'none' | 'natural' | 'artificial' | 'pinch' | 'tap' | 'semi';
-  /** Fret offset per bend point, in quarter tones. Empty = no bend. */
-  bendPoints: number[];
+  /** The bend curve, first point first. Empty = no bend. */
+  bendPoints: BendPointDoc[];
 }
 
 export interface ScoreDoc {

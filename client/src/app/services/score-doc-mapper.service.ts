@@ -411,6 +411,9 @@ export class ScoreDocMapperService {
     note.isPalmMute = doc.effects.isPalmMute;
     note.isStaccato = doc.effects.isStaccato;
     note.isHammerPullOrigin = doc.effects.isHammerPullOrigin;
+    for (const point of doc.effects.bendPoints) {
+      note.addBendPoint(new alphaTab.model.BendPoint(point.offset, point.value));
+    }
     note.vibrato = doc.effects.vibrato
       ? alphaTab.model.VibratoType.Slight
       : alphaTab.model.VibratoType.None;
@@ -561,6 +564,10 @@ export class ScoreDocMapperService {
     effects.vibrato = note.vibrato !== alphaTab.model.VibratoType.None;
     effects.harmonic = fromHarmonicType(note.harmonicType);
     effects.slide = slideOf(note);
+    effects.bendPoints = (note.bendPoints ?? []).map(point => ({
+      offset: point.offset,
+      value: point.value
+    }));
 
     const pitch: NotePitch = note.isStringed
       ? {

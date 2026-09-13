@@ -50,6 +50,13 @@ writes them generously; 1000 lines per file at most.
   hammer-on does not survive save. Task A1 pins that loss. It does the same to a shift
   or legato slide with no following note on its string (slide out up and slide in from
   below are unaffected); the review of Task A2 pins that loss.
+- `Note.finish` classifies a custom bend of two to four points as one of Guitar Pro's bend
+  types and rewrites its points to fit (`alphaTab.core.mjs` ~6326-6467 in 1.8): a rising
+  three-point bend loses its middle point, a three-point bend-release gains a repeated
+  middle, and four points with equal middles lose both. One point, or five or more, stay
+  custom. The model stores what alphaTab keeps, and Task A3 pins the rewrite. A pre-bend
+  (first point above 0) also resets a forced accidental to `Default` (~6469) - Task A8
+  pins that.
 - Forced accidentals survive alphaTex on fretted *and* pitched notes (`{acc b}`).
 - alphaTab's `Beat` has **no staccato**; only `Note.isStaccato` exists.
 - Accent, heavy accent and tenuto are one field, `Note.accentuated: AccentuationType`.
@@ -331,10 +338,24 @@ note - and nothing maps it. alphaTab's `BendPoint` is `{ offset: 0-60, value: qu
 
 ```typescript
   it('keeps a bend as positioned points', () => {
-    const points = [{ offset: 0, value: 0 }, { offset: 30, value: 4 }, { offset: 60, value: 4 }];
+    const points = [{ offset: 0, value: 0 }, { offset: 60, value: 4 }];
     const doc = guitarBar(beats => (beats[0].notes[0].effects.bendPoints = points));
 
     expect(beatsOf(throughTex(doc))[0].notes[0].effects.bendPoints).toEqual(points);
+  });
+
+  it('stores a bend in the shape alphaTab keeps - a redundant middle point goes', () => {
+    // `Note.finish` classifies a custom bend of two to four points as one of Guitar Pro's
+    // bend types and rewrites its points to fit, before a character of alphaTex is written.
+    // A rising three-point bend whose middle already reached the top is a plain Bend, so
+    // the middle point is removed. Pinned so the model's contract is what alphaTab keeps,
+    // and so M4's bend curve editor knows it is drawing Guitar Pro's shapes.
+    const doc = guitarBar(beats => (beats[0].notes[0].effects.bendPoints = [
+      { offset: 0, value: 0 }, { offset: 30, value: 4 }, { offset: 60, value: 4 }
+    ]));
+
+    expect(beatsOf(throughTex(doc))[0].notes[0].effects.bendPoints)
+      .toEqual([{ offset: 0, value: 0 }, { offset: 60, value: 4 }]);
   });
 
   // <!-- A4 -->
@@ -386,7 +407,8 @@ In `transcription.model.ts`, the two comments that describe `NoteEffectsDoc.bend
 through the note, 0 to 60, and a pitch in quarter tones". Keep the argument each comment
 makes about the frame rate; only the description of the target changes.
 
-**Step 4: Run.** Expected: 6 SUCCESS. Then the type check - expected: no output.
+**Step 4: Run.** Expected: 7 SUCCESS - the effects file gains two specs. Then the type
+check - expected: no output.
 
 **Step 5: Commit** the four files: `fix: Keep bends, positioned, through save and load`.
 
@@ -870,8 +892,23 @@ the one it forces. `letter` still decides first on a pitched note, exactly as to
     });
   }
 
+  it('loses a forced accidental on a pre-bent note - alphaTab resets it', () => {
+    // `Note.finish` sets `accidentalMode` back to `Default` when the first bend point is
+    // above zero, so a pre-bent note cannot keep a forced spelling through a save.
+    const doc = guitarBar(beats => {
+      beats[0].notes[0].accidental = 'flat';
+      beats[0].notes[0].effects.bendPoints = [{ offset: 0, value: 4 }, { offset: 60, value: 4 }];
+    });
+
+    expect(beatsOf(throughTex(doc))[0].notes[0].accidental).toBe('auto');
+  });
+
   // <!-- A9 -->
 ```
+
+The pre-bend spec pins a loss read from alphaTab's source, not yet run: it passes as soon
+as the task compiles. If it fails, the forced accidental survived and the fact is wrong -
+report it rather than change the assertion.
 
 **Step 2: Run.** Expected: compile error, `Type '"flat"' is not assignable to type 'AccidentalMode'`.
 
