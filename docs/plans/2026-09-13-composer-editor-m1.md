@@ -5762,3 +5762,17 @@ one to watch; if it passes 1000, move the bar and track command block (D3) into 
 4. Load a saved score and change the BPM: playback follows.
 
 **Step 5: Commit** the documents: `docs: Record M1 of the composer editor - what shipped and what it corrected`.
+
+**Checkpoint, 2026-09-13.** Both type checks clean; the whole suite **2,669 specs, 0 failures**.
+No file M1 touched passes 1000 lines: the largest are `bar-fill.spec.ts` (969) and
+`composer.service.ts` (940, after the bar and track commands moved to
+`composer-service-structure.ts`).
+
+**Hand check, 2026-09-13: passed**, against this worktree's dev server, reading the
+regenerated alphaTex from the source panel each time. (1) In an empty 4/4 bar, beat 1 made an
+eighth read `r.8 r.8 r.4 r.4 r.4`. (2) `5.3{h}.4 6.3.4 7.3.4 8.3.4` with beat 1 made a half read
+`5.3{h}.2 6.3.4 7.3.4 8.3.4`: nothing overwritten, the bar left over, the hammer-on kept. (3) That
+score saved to the library, the page reloaded and the score loaded still read the same. (4) On
+the loaded score, `\tempo 120` became `\tempo 90` when the BPM field was set to 90. Not exercised
+by hand: range selection, Fix bar, and the bar and track commands, which M1 gives no control -
+they arrive with M2's palette and are covered by specs only.

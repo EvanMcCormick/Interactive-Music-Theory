@@ -1,9 +1,9 @@
 # Outstanding
 
-What is known to be left, as of **2026-09-13**, after M4 of the progression composer
-shipped. Written because these items were spread across a design document, a roadmap
-paragraph and a plan's hand-check list, and no single place said "here is what is not
-done".
+What is known to be left, as of **2026-09-13**, after M4 of the progression composer and
+M1 of the composer editor shipped. Written because these items were spread across design
+documents, a roadmap paragraph and a plan's hand-check list, and no single place said
+"here is what is not done".
 
 This is not a backlog of ideas. Everything here is either a check nobody has performed
 or a defect somebody decided not to fix yet, and each says which.
@@ -25,6 +25,12 @@ by what they would cost us to be wrong about.
       **If it holds, it is an upstream report and a recorded limitation, not a change
       here.** See "Open: what `.gp` export does with a C♭" in the progression design doc.
 
+- [ ] **Open a composer score full of effects, exported as `.gp`, in real Guitar Pro.**
+      M1 of the composer editor proves hammer-ons, bends, slides, trills, fingering,
+      fermatas and forced accidentals survive a save, but its round-trip specs go through
+      alphaTex, which is what the library stores — not through the `.gp` exporter, which is
+      a different writer. The editor design lists this as a hand check for every milestone.
+
 - [ ] **Send a progression into a score loaded from a `.gp` file** — one with a bass
       staff, so its bars carry `f4` and a real key signature. `padStaff` carries clef,
       ottava and key signature forward from the staff's last bar; that is specced, but
@@ -37,8 +43,8 @@ by what they would cost us to be wrong about.
 
 ## Known limitations, recorded rather than fixed
 
-Each of these is argued in `docs/plans/2026-09-08-progression-composer-design.md` —
-the reasoning is there, not here.
+Each of these is argued in a design document — the reasoning is there, not here. The
+progression composer's are in `docs/plans/2026-09-08-progression-composer-design.md`.
 
 - **A score that changes meter mid-way.** A generated track is barred by the score's
   *first* time signature, so its bar lines disagree from the point the meter changes.
@@ -60,11 +66,56 @@ the reasoning is there, not here.
   evidence and the count are already written down in
   `progression-recognise.roundtrip.spec.ts`.
 
+The composer editor's are under "Found while designing" in
+`docs/plans/2026-09-13-composer-editor-design.md`. Most are alphaTab's rather than ours,
+and the ones a save causes are pinned in `score-doc-mapper.effects.spec.ts`, so an
+alphaTab upgrade that changes one turns a spec red rather than going unnoticed.
+
+- **A double bar does not survive a save.** M1 hands it to alphaTab, so it draws, but
+  alphaTab 1.8.0 reads `\db` and never writes it, and the library stores alphaTex. An
+  upstream gap: the fix is theirs, and the pinned spec is ours to retire when it lands.
+- **A hammer-on, or a shift or legato slide, with nothing to land on does not save.**
+  alphaTab's `Note.finish` clears it when no note follows on its string, so the editor can
+  show a technique that a reload loses. M2's tools decide whether to refuse it or allow it
+  and say so.
+- **Bends are stored in Guitar Pro's shapes, not as drawn.** alphaTab rewrites a bend of
+  two to four points to the nearest standard type before anything is saved, and a pre-bend
+  of 2 or more quarter tones resets a forced accidental. M4's bend curve editor has to write
+  those shapes.
+- **A fermata spreads to later tracks at the same tick**, on screen and in the saved file,
+  because alphaTab keeps fermatas per bar and tick; clearing the original leaves the
+  copies. M2's fermata tool decides whether a fermata belongs to a beat or to a bar.
+- **A grace beat's written value is alphaTab's, not the user's.** `Beat.finish` revalues an
+  on-beat or before-beat grace by the size of its group, so a duration set on one does not
+  survive a save. M1 skips graces when it sets durations; M2's grace tool should fix the
+  value to alphaTab's rule or refuse the edit.
+- **A tied note shows its origin's vibrato**, even when its own is none — which a Fix bar
+  continuation's is, by design. M2's vibrato tool should read the tie origin.
+- **Four slide types have no name in the model.** In from above, out down, and pick slides
+  down and up read back as no slide, so alphaTex applied from the source panel loses them.
+  Nothing the composer writes can produce them.
+
+## Bugs, recorded and not yet fixed
+
+Found while designing and building M1 of the composer editor, and left for the milestone
+that owns the control that reaches them. Each is in the same "Found while designing" list.
+
+- **A tuning, capo or transposition change can put a forced accidental on the wrong line.**
+  The accidental command refuses one that cannot name its pitch, but checks only when the
+  accidental is pressed; a later change moves the drawn pitch under it and nothing checks
+  again. M3's track controls should count the notes a change would affect and say so.
+- **Fix bar into a bar that was already short moves that bar's own beats later.** The whole
+  shortfall fills right after what Fix bar carried, including the part that was at the end
+  of the bar before.
+- **A pitched note imported as a natural harmonic cannot have its harmonic cleared.** The
+  harmonic is fretted-only, and the refusal meets the press that would turn it off as well as
+  one that would turn it on. M2's harmonic tool should let a clearing press through.
+- **The Bass instrument preset gets six guitar strings.** `createTrack` gives every fretted
+  track `STANDARD_GUITAR_TUNING`; `STANDARD_BASS_TUNING` exists and the composer never uses
+  it. M3.
+
 ## Smaller things noticed in passing
 
-- **`NoteDoc.accidental: 'explicit'` maps to `ForceSharp`**, which forces a sharp in a
-  flat key. `letter` routes around it for generated notes; composer-entered notes keep
-  the old path and the old bug.
 - **A `NaN` in `ProgressionDoc.revision` would poison the allocator permanently**, since
   `Math.max` propagates it. Only reachable from a corrupt document, and there is no
   loader yet — but there will be.
@@ -73,6 +124,11 @@ the reasoning is there, not here.
   adds a rename must write a resolved label through to `GeneratedOrigin.progressionName`
   via the exported `progressionLabel` — `revision` does not move on a rename, so a stale
   copy there would not even read as stale.
+- **Every call to `updateScoreInfo` is an undo step**, so each keystroke in the title field
+  would be its own, and retyping an unchanged title marks the score dirty. M3's inspector
+  should coalesce the edits or skip a commit that changes nothing.
+- **`KEY_SIGNATURES` in the mapper lists major keys only and omits ±7.** The key signature
+  popover M2 builds needs all fifteen, major and minor.
 - **Seven files still cite a "500-line guideline"** in their headers; `CLAUDE.md` raised
   it to 1000 on 2026-09-09. One was fixed in passing; the rest want a sweep.
 - **`((x % 12) + 12) % 12` is written about seven more times** across
@@ -85,11 +141,19 @@ the reasoning is there, not here.
 
 ## Next milestone, when there is one
 
-**Next up is the composer editor redesign**, designed on 2026-09-13 in
-`docs/plans/2026-09-13-composer-editor-design.md`: a Guitar Pro-style palette,
-selection and shortcuts over a model and mapper that stop losing data. It came first
-because the composer cannot set a time signature, which blocked a hand check of the
-`insertBar(0)` fix.
+**M1 of the composer editor redesign is implemented.** Designed on 2026-09-13 in
+`docs/plans/2026-09-13-composer-editor-design.md` and built to
+`docs/plans/2026-09-13-composer-editor-m1.md`: saving stops losing data, a selection with
+beat, note, bar and track commands over it, and bars that fill their gaps with rests and
+report their overflow. Almost none of it has a control yet — only today's duration, note and
+rest buttons, which now fill the gaps they open and leave overflow rather than overwrite a
+note. The redesign came first because the composer cannot
+set a time signature, which blocked a hand check of the `insertBar(0)` fix; M1 gives it the
+command, and the control is still to come.
+
+**Next up is M2**: the palette, the Select / Pen toggle, the tool table and a shortcut for
+every tool, which put M1's commands within reach. M3 (inspector and track strip) and M4
+(bend curve, custom tuplet and trill speed editors) follow.
 
 After that, the progression design doc's "Not in M4" names the one that unlocks the
 others: **a progression library**. It would give `GeneratedOrigin.progressionId` a far end worth persisting,

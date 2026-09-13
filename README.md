@@ -425,6 +425,18 @@ When you like it, **Send to Composer** puts it on a staff beside your own tracks
 
 ## Recent Updates
 
+### Composer Editor Foundations (September 2026)
+- 🐛 **Fixed**: Saving a composition keeps hammer-ons, bends, slides, wide vibrato,
+  fade-ins, fermatas, trills, fingering and forced accidentals — a forced flat comes back
+  a flat, not a sharp. alphaTab still drops a hammer-on or slide with no note after it to
+  land on, and keeps a bend in the nearest of Guitar Pro's shapes
+- 🐛 **Fixed**: The BPM field changes playback after a score is loaded, not only on a
+  score started in the page
+- ✨ **New**: Changing a duration fills the bar with rests where the gap opened, so the
+  beats after it keep their places, and never overwrites a note — a note that no longer
+  fits leaves the bar over instead
+- 🧪 **Tests**: 2,669 passing
+
 ### Progression to Composer (September 2026)
 - ✨ **New**: Send a progression to the Composer as a track of its own. It arrives
   barred in that score's meter, sitting among the tracks already there, and it stays

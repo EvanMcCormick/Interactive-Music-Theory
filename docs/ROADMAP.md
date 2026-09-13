@@ -1,6 +1,6 @@
 # MusicTheory SaaS Platform Roadmap
 
-**Last Updated:** 2026-09-10
+**Last Updated:** 2026-09-13
 
 This document tracks the progress of transforming MusicTheory from a standalone learning tool into a B2B SaaS platform for music education.
 
@@ -317,7 +317,18 @@ records the decisions and — where implementation disproved one — the correct
 | M3 | Shipped | The recogniser: a hand-edited slot reading its identity back, `literal` degradation and a way out of it, the alternates chip; suspensions sounded and each extension alterable; names composed from the chord; every note spelled by its degree's letter |
 | M4 | Shipped | Send a progression into the composer as a real track that knows where it came from, press again to update it, flatten it into an ordinary track; saving refuses while a track is still linked and offers to flatten first; MIDI and `.gp` export from either page, with no notation panel required; and a spelling letter on `NotePitch`, so an exported ♭II engraves on C♭ rather than B |
 
-Four things are recorded as known limitations rather than bugs, all in the design doc:
+**Composer editor redesign milestones** — a Guitar Pro-style editor for `/composer`,
+built bottom-up so each layer is proven before the next leans on it:
+
+| | | |
+|---|---|---|
+| M1 | Shipped | Foundations with no new controls: saving stops losing effects, a selection with beat, note, bar and track commands over it that refuse whole or apply whole, and bars that fill their gaps with rests and report overflow for a Fix bar command; today's duration buttons already fill gaps |
+| M2 | Planned | Palette, Select / Pen, the tool table and every shortcut, the new page grid |
+| M3 | Planned | Inspector and track strip: tuning presets (a real bass tuning), capo, transpose, staff views, mixer |
+| M4 | Planned | Tools that need their own editor: bend curve, custom tuplet, trill speed |
+
+Four things in the progression composer are recorded as known limitations rather than
+bugs, all in its design doc:
 `quantizeBar` is onset-driven and has no note-off, so a staccato roll engraves legato;
 `BeatDoc.dynamics: null` is documented as "inherit" but nothing implements it, which
 affects transcription as well as the progression preview; the recogniser takes the
@@ -327,7 +338,8 @@ generated track is barred by the score's *first* time signature, so its bar line
 disagree from the point a score changes meter mid-way.
 
 Those, and everything else known to be left, are collected in [TODO.md](TODO.md) —
-including three checks nobody has performed. The one real bug that list used to carry,
+including four checks nobody has performed, and what M1 of the composer editor recorded
+rather than fixed. The one real bug that list used to carry,
 `insertBar(0)` making a 3/4 score read as 4/4, was fixed on 2026-09-13.
 
 One hand-check is outstanding: alphaTab's Guitar Pro exporter appears, from reading its
@@ -349,7 +361,8 @@ a limitation or a bug.
 | Two-Tier Transcription | [plans/2026-09-07-two-tier-transcription-design.md](plans/2026-09-07-two-tier-transcription-design.md) | Implemented |
 | Circle of Fifths | [plans/2026-09-07-circle-of-fifths-design.md](plans/2026-09-07-circle-of-fifths-design.md) | Implemented |
 | Progression Composer | [plans/2026-09-08-progression-composer-design.md](plans/2026-09-08-progression-composer-design.md) | Implemented, M1-M4 |
-| Composer Editor Redesign | [plans/2026-09-13-composer-editor-design.md](plans/2026-09-13-composer-editor-design.md) | Designed |
+| Composer Editor Redesign | [plans/2026-09-13-composer-editor-design.md](plans/2026-09-13-composer-editor-design.md) | M1 implemented |
+| Composer Editor M1 Plan | [plans/2026-09-13-composer-editor-m1.md](plans/2026-09-13-composer-editor-m1.md) | Implemented, with the corrections review made recorded in it |
 
 Implementation plans, one per milestone, sit beside each design in `plans/`. The
 transcription investigations that produced *negative* results are kept too — the onset

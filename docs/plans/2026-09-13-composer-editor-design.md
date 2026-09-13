@@ -1,9 +1,17 @@
 # Composer Editor Redesign
 
 **Date:** 2026-09-13
-**Status:** Designed; M1 planned in [2026-09-13-composer-editor-m1.md](2026-09-13-composer-editor-m1.md)
+**Status:** M1 implemented, to [2026-09-13-composer-editor-m1.md](2026-09-13-composer-editor-m1.md); M2 not started
 **Replaces:** the "Still outstanding" list in
 [2026-09-04-sheet-music-composer-design.md](2026-09-04-sheet-music-composer-design.md)
+
+**M1 hand check, 2026-09-13: passed.** In the browser, reading the regenerated alphaTex:
+shortening beat 1 of an empty 4/4 bar to an eighth gave `r8 r8 r4 r4 r4`; lengthening the
+first of four notes to a half overwrote nothing, left the bar over, and kept its hammer-on;
+that hammer-on survived a library save, a page reload and a load; and the BPM field changed
+the tempo of the loaded score. Range selection, Fix bar and the bar and track commands have
+no control until M2, so they were not checked by hand and rest on their specs. The details
+are under Task D6 in the plan.
 
 The composer at `/composer` enters notes, durations, a single dot and rests, and very
 little else. This design turns it into an editor in the manner of Guitar Pro and
@@ -27,23 +35,34 @@ appending and removing bars, and the progression track commands, nothing in the 
 has a service command. Time and key signature, clef, repeats, endings, sections,
 triplet feel, tuplets, dynamics, every note effect, tuning, capo, transpose, staff
 views and the mixer are fields on `ScoreDoc` that nothing writes.
+*After M1:* each has a command on `ComposerService` - beat and note effect toggles, accidental,
+tie, grace, dynamics, tuplet, time and key signature, clef, the repeat, double bar and free-time
+flags, repeat count, endings, triplet feel, section, tuning, capo, transpose, staff views,
+playback and rename - and nothing in the page calls them yet. M2 and M3 give them controls.
 
 **The mapper loses data.** Saving stores alphaTex made from the mapper's output, so
 a mapper gap is permanent loss:
 
-| Field | What happens |
-|---|---|
-| `isHammerPullOrigin`, `bendPoints` | Neither written nor read |
-| `BeatEffectsDoc.fadeIn` | Neither written nor read |
-| `BeatEffectsDoc.isStaccato` | Nowhere to go: alphaTab's `Beat` has no staccato, only `Note.isStaccato`. Removed from the model in M1 |
-| `slide` | Written, never read back - gone after a reload |
-| `MasterBarDoc.isDoubleBar` | Read, never written |
-| `accidental: 'explicit'` | Always `ForceSharp`, so a forced flat returns as a sharp |
-| Tempo | Probable: `toDoc` fills `masterBars[0].tempoAutomation`, which `toMasterBar` prefers over `doc.tempo`, so after a load the BPM field may stop changing playback. Read, not reproduced |
+| Field | What happens | After M1 |
+|---|---|---|
+| `isHammerPullOrigin`, `bendPoints` | Neither written nor read | Fixed: both round-trip. alphaTab still clears a hammer-on with nothing to land on, and stores a bend in Guitar Pro's shapes - both pinned, see "Found while designing" |
+| `BeatEffectsDoc.fadeIn` | Neither written nor read | Fixed |
+| `BeatEffectsDoc.isStaccato` | Nowhere to go: alphaTab's `Beat` has no staccato, only `Note.isStaccato` | Removed from the model; staccato is a note effect |
+| `slide` | Written, never read back - gone after a reload | Fixed for every slide the model names. alphaTab still clears a shift or legato slide with nothing to land on - pinned |
+| `MasterBarDoc.isDoubleBar` | Read, never written | Written to alphaTab, so it draws. **Still lost through alphaTex**: alphaTab 1.8.0 does not export `\db`. Pinned as the upstream loss |
+| `accidental: 'explicit'` | Always `ForceSharp`, so a forced flat returns as a sharp | Fixed: `AccidentalMode` names the accidental it forces - double flat, flat, sharp, double sharp - and each round-trips. A pre-bent note still loses it to alphaTab - pinned |
+| Tempo | Probable: `toDoc` fills `masterBars[0].tempoAutomation`, which `toMasterBar` prefers over `doc.tempo`, so after a load the BPM field may stop changing playback. Read, not reproduced | Fixed: bar 1's tempo loads into `doc.tempo` alone, and the field wins over a bar 1 automation. Confirmed by hand |
+
+Alongside the fixes M1 added the fields alphaTab had and the model lacked - accent, heavy
+accent and tenuto; wide vibrato on a note and a beat; left-hand tap; trill; fingering for both
+hands; fermata; crescendo and decrescendo; pick stroke - each with its own round-trip spec in
+`score-doc-mapper.effects.spec.ts`.
 
 **Bars do not fill.** New bars are rests to the meter, and nothing afterwards keeps
 them so. Lengthening a beat overfills its bar; shortening leaves a hole; neither is
-reported.
+reported. *After M1:* a length change fills gaps and takes following rests, overflow is
+measured by `scoreBarFills` and left for Fix bar, and today's duration, note and rest buttons
+already go through it - Part 2 says how.
 
 Smaller things found on the way are listed at the end.
 
@@ -157,13 +176,18 @@ transport loops.
 state, in four modules: `beat-edits`, `note-edits`, `bar-edits`, `track-edits`. They
 change the draft `commit()` hands them rather than returning a copy - `commit()` has
 already cloned, and a second clone would buy nothing. The service wraps each call in a
-single `commit()`, so one press over a forty-beat range is one undo.
+single `commit()`, so one press over a forty-beat range is one undo. The bar and track
+commands and Fix bar sit in `composer-service-structure.ts`, which `ComposerService` delegates
+to unchanged, to keep the service under the 1000-line cap; the service still owns the state,
+the history and the selection.
 
 **Toggles on a mixed range.** If any target lacks the effect, the press turns it on
 for all; if all have it, the press turns it off. A button therefore has three states -
 on, off, mixed - read from a pure `toolStates(doc, selection)`. The rule never
 depends on which end of the selection was clicked first, and the button shows what a
-press will do before it is pressed.
+press will do before it is pressed. A structured value - a fermata, a trill - counts as
+the same by content, whatever order its fields were written in, since one read back through
+the mapper and one a tool built can list them differently.
 
 **Refusals are whole.** A selection touching a progression-generated track refuses the
 entire command with a status message; nothing is applied to half a range. The
@@ -189,10 +213,17 @@ are no notes at all. Overflow is never resolved automatically: a pure
 reads one bar - and the track strip and score overlay read it. **Fix bar** is its own
 command on the selected bars: it splits the overflowing beat at the bar line, ties the
 remainder into the next bar - carrying what goes on sounding, the dynamic, palm mute, let
-ring, a harmonic, vibrato and a crescendo, and nothing that attacks - makes room there by
+ring, a harmonic, beat vibrato and a crescendo, and nothing that attacks - makes room there by
 taking trailing rests, putting any it took beyond the need right after what it carried, and
 appends a bar only when the carry runs off the end of the score. It refuses, saying why, a
-tuplet across the line, a split between 64th notes, and a meter with no room. A grace beat
+tuplet across the line, a split between 64th notes, and a meter with no room. Implementation
+corrected three details of the carry. Note vibrato and a trill are not carried: alphaTab
+already draws and plays a tie destination with its origin's vibrato and plays the origin's
+trill through the tie, so a continuation's own trill would sound a second one. A continuation's
+accidental resets to automatic, since the tie already says the pitch goes on. And what connects
+the note to the next one - a hammer-on, a shift or legato slide, a slide out - moves from the
+head to the last tied piece, because after the split the next note on the string is the note's
+own continuation; a slide in from below stays on the head. A grace beat
 takes no room, so making a beat a grace, or a grace an ordinary beat, settles the bar
 in the same commit as a duration change does, and a lengthened beat stops at a grace
 or a rest a grace leads into rather than take it. A bar holding only a whole rest is
@@ -500,8 +531,17 @@ Not rejected - not yet placed. Each needs its own design pass:
   it matters if M3 lets a pitched staff carry one.
 - **A trill's target does not follow its note.** `TrillDoc.value` is a pitch, so moving a
   trilled note by a fret, string, capo or tuning change leaves the trill aimed where it
-  was, and the interval silently changes. M2's pitch tools and M3's capo and tuning
-  controls must move it with the note.
+  was, and the interval silently changes. *Partly corrected in M1:* the tuning and capo
+  commands move every trill on the staff by how far its string moved, so M3's controls get
+  that for free; a transposition moves none, because alphaTex saves a trill relative to the
+  string and capo, not the transposition. M2's pitch tools must still move it with the note.
+  The same review made the capo command refuse a pitched staff, and the staff views command
+  refuse only turning tablature *on* for one, so a loaded file that shows tablature on a
+  pitched staff can still turn it off.
+- **Common time is its own meter.** alphaTab draws common time as its symbol and 4/4 as
+  numbers, and the mapper writes `isCommon`, so the bar edits compare it: a change from one
+  to the other is a meter change, and a bar that declares one is not redundant under the
+  other. Found in review of M1.
 - **A fermata spreads to later tracks and voices at the same tick.** alphaTab keeps
   fermatas per bar and tick (`Voice.finish` ~3294, `MasterBar.getFermata` ~2728): a
   fermata on one track appears on every later track's beat at that tick, on screen at once
