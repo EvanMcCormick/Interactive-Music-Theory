@@ -202,5 +202,19 @@ describe('ScoreDocMapperService effects round trip', () => {
     expect(effects.accent).toBe('heavy');
   });
 
-  // <!-- A5 -->
+  for (const vibrato of ['slight', 'wide'] as const) {
+    it(`keeps a ${vibrato} vibrato on a note`, () => {
+      const doc = guitarBar(beats => (beats[0].notes[0].effects.vibrato = vibrato));
+
+      expect(beatsOf(throughTex(doc))[0].notes[0].effects.vibrato).toBe(vibrato);
+    });
+
+    it(`keeps a ${vibrato} vibrato on a beat`, () => {
+      const doc = guitarBar(beats => (beats[0].effects.vibrato = vibrato));
+
+      expect(beatsOf(throughTex(doc))[0].effects.vibrato).toBe(vibrato);
+    });
+  }
+
+  // <!-- A6 -->
 });

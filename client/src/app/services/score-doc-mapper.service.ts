@@ -38,7 +38,9 @@ import {
   toGraceType,
   toHarmonicType,
   toOttavia,
-  toTripletFeel
+  toTripletFeel,
+  toVibratoType,
+  vibratoOf
 } from './alpha-tab-enum.bridge';
 import { alterFor, reduceToOctave } from './note-spelling';
 import { STEP_SEMITONES } from './staff-pitch';
@@ -369,9 +371,7 @@ export class ScoreDocMapperService {
     beat.slap = doc.effects.slap;
     beat.pop = doc.effects.pop;
     beat.tap = doc.effects.tap;
-    beat.vibrato = doc.effects.vibrato
-      ? alphaTab.model.VibratoType.Slight
-      : alphaTab.model.VibratoType.None;
+    beat.vibrato = toVibratoType(doc.effects.vibrato);
     beat.brushType = toBrushType(doc.effects.brush);
     beat.graceType = toGraceType(doc.effects.grace);
 
@@ -417,9 +417,7 @@ export class ScoreDocMapperService {
       note.addBendPoint(new alphaTab.model.BendPoint(point.offset, point.value));
     }
     note.accentuated = toAccentuation(doc.effects.accent);
-    note.vibrato = doc.effects.vibrato
-      ? alphaTab.model.VibratoType.Slight
-      : alphaTab.model.VibratoType.None;
+    note.vibrato = toVibratoType(doc.effects.vibrato);
     note.harmonicType = toHarmonicType(doc.effects.harmonic);
     applySlide(note, doc.effects.slide);
 
@@ -536,7 +534,7 @@ export class ScoreDocMapperService {
     effects.slap = beat.slap;
     effects.pop = beat.pop;
     effects.tap = beat.tap;
-    effects.vibrato = beat.vibrato !== alphaTab.model.VibratoType.None;
+    effects.vibrato = vibratoOf(beat.vibrato);
     effects.brush = fromBrushType(beat.brushType);
     effects.grace = fromGraceType(beat.graceType);
 
@@ -564,7 +562,7 @@ export class ScoreDocMapperService {
     effects.isPalmMute = note.isPalmMute;
     effects.isStaccato = note.isStaccato;
     effects.isHammerPullOrigin = note.isHammerPullOrigin;
-    effects.vibrato = note.vibrato !== alphaTab.model.VibratoType.None;
+    effects.vibrato = vibratoOf(note.vibrato);
     effects.harmonic = fromHarmonicType(note.harmonicType);
     effects.slide = slideOf(note);
     effects.bendPoints = (note.bendPoints ?? []).map(point => ({

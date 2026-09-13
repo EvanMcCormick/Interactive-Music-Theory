@@ -6,7 +6,8 @@ import {
   DynamicValue,
   NoteDoc,
   OttaviaKind,
-  TripletFeelKind
+  TripletFeelKind,
+  VibratoKind
 } from '../models/composer.model';
 
 /**
@@ -218,6 +219,22 @@ export function accentOf(accentuated: alphaTab.model.AccentuationType): AccentKi
     case alphaTab.model.AccentuationType.Normal: return 'normal';
     case alphaTab.model.AccentuationType.Heavy: return 'heavy';
     case alphaTab.model.AccentuationType.Tenuto: return 'tenuto';
+    default: return 'none';
+  }
+}
+
+export function toVibratoType(vibrato: VibratoKind): alphaTab.model.VibratoType {
+  switch (vibrato) {
+    case 'slight': return alphaTab.model.VibratoType.Slight;
+    case 'wide': return alphaTab.model.VibratoType.Wide;
+    default: return alphaTab.model.VibratoType.None;
+  }
+}
+
+export function vibratoOf(vibrato: alphaTab.model.VibratoType): VibratoKind {
+  switch (vibrato) {
+    case alphaTab.model.VibratoType.Slight: return 'slight';
+    case alphaTab.model.VibratoType.Wide: return 'wide';
     default: return 'none';
   }
 }

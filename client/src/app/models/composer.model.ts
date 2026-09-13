@@ -35,6 +35,9 @@ export type AccidentalMode = 'auto' | 'explicit';
  */
 export type AccentKind = 'none' | 'normal' | 'heavy' | 'tenuto';
 
+/** Vibrato width. alphaTab's `VibratoType`, which a boolean collapsed to slight. */
+export type VibratoKind = 'none' | 'slight' | 'wide';
+
 export type KeySignatureMode = 'major' | 'minor';
 
 export type TripletFeelKind =
@@ -246,7 +249,7 @@ export interface BeatEffectsDoc {
   pop: boolean;
   tap: boolean;
   fadeIn: boolean;
-  vibrato: boolean;
+  vibrato: VibratoKind;
   /** Strum direction across the chord. */
   brush: 'none' | 'brushUp' | 'brushDown' | 'arpeggioUp' | 'arpeggioDown';
   grace: 'none' | 'onBeat' | 'beforeBeat';
@@ -305,7 +308,7 @@ export interface NoteEffectsDoc {
   isPalmMute: boolean;
   isStaccato: boolean;
   accent: AccentKind;
-  vibrato: boolean;
+  vibrato: VibratoKind;
   slide: 'none' | 'shiftSlide' | 'legatoSlide' | 'slideInBelow' | 'slideOutUp';
   harmonic: 'none' | 'natural' | 'artificial' | 'pinch' | 'tap' | 'semi';
   /**
@@ -388,7 +391,7 @@ export function createDefaultBeatEffects(): BeatEffectsDoc {
     pop: false,
     tap: false,
     fadeIn: false,
-    vibrato: false,
+    vibrato: 'none',
     brush: 'none',
     grace: 'none'
   };
@@ -403,7 +406,7 @@ export function createDefaultNoteEffects(): NoteEffectsDoc {
     isPalmMute: false,
     isStaccato: false,
     accent: 'none',
-    vibrato: false,
+    vibrato: 'none',
     slide: 'none',
     harmonic: 'none',
     bendPoints: []
