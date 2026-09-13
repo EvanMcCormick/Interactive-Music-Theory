@@ -132,6 +132,41 @@ writes them generously; 1000 lines per file at most.
    alphaTab draws it at the open string's harmonic pitch, not its fret's. Recorded in the
    design doc's "Found while designing".
 
+### Corrections during implementation
+
+Two reviews of Tasks B1-D5 changed the code after it was written to the tasks below. **For
+the tasks named here, the plan's code blocks are superseded by the committed code**; they are
+left as written, as the record of what was planned.
+
+- **Two-pass `relength`** (Tasks C2, D4). Settled one beat at a time, a range reported
+  overflow its new lengths did not have: a later beat that shrank spent its room on rests at
+  once, and an earlier beat that grew could not take it. Beats now all change last to first,
+  freed room fills first to last while the bar is short, and growth only a changing neighbour
+  blocked takes the rests after the range. Grouped by voice, not bar.
+- **The selection follows its beats** (Tasks D2, D4, D5). Every edit path commits through
+  `commitFollowing`, which finds each end's beat again after the edit, so a range made shorter
+  still covers its notes. It replaces `toggleGrace`'s own caret follow.
+- **A beat `EditScope` names its key** (Tasks C4, D2):
+  `{ family: 'beat'; key: keyof BeatEffectsDoc | 'duration' | 'dynamics' | 'tuplet' }`. Tap,
+  slap and pop are refused on a pitched staff; palm mute and let ring are not.
+- **Voice 1 only** (Task C4). Any ref in a later voice refuses the press.
+- **A split note's hammer-on and slides** (Task B6). A hammer-on, shift and legato slide and
+  slide out move from the head to the tail's last piece, since after the split the next note on
+  the string is the note's own continuation. A slide in from below stays on the head.
+- **Tie carry** (Task B6). A continuation's accidental resets to `auto`. Note vibrato is not
+  carried, because alphaTab inherits it from the tie origin. A trill was considered and not
+  carried: alphaTab already plays the origin's trill through the tie, and a trilled
+  continuation plays a second trill over it.
+- **Trills move with capo and tuning** (Task C6); transposition moves none. A capo on a
+  pitched staff is refused, and staff views refuse only turning tablature on for one.
+- **Common time is its own meter** (Task C5): `sameMeter` compares `isCommon`.
+- **`toggledValue` compares by content**, whatever order a value's keys are in (Task C2).
+- **The service split** (Task D6's step, taken during review). The bar and track commands and
+  Fix bar moved to `composer-service-structure.ts`, which `ComposerService` delegates to.
+- **Refusal wording.** Fix bar's grid and meter refusals end with what to do and say which
+  only a loaded file can produce; the accidental refusal reads for a range; the time signature
+  fault names the numerator.
+
 ---
 
 ## Phase A: the model and mapper stop losing data

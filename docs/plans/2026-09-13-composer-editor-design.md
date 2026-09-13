@@ -89,8 +89,9 @@ Five choices were put to the user; each records what was rejected.
    (a slip overwrites earlier notes) and free-with-a-warning (every bar tidied by
    hand). Gap rests go where the gap opened, so the beats after it keep their places, as
    Guitar Pro writes them: after a beat that shrank, after a beat that grew by taking a
-   longer rest than it needed, and after what Fix bar carried; only a meter change fills at
-   the end of the bar. Bars are measured as alphaTab lays them out. Grace beats take no room, so
+   longer rest than it needed, and after what Fix bar carried. A meter change, and any gap
+   with no spellable position of its own - a tuplet's remainder, a bar that arrived short -
+   fills at the end of the bar. Bars are measured as alphaTab lays them out. Grace beats take no room, so
    making or unmaking a grace settles the bar like any length change, and lengthening
    stops at a grace or a rest a grace leads into. A lone whole rest fills a bar in any
    meter. A free-time bar is never filled or trimmed; taking a bar out of free time fits
@@ -175,7 +176,15 @@ it keep their places. A beat that shrinks gets its rests right after it: an empt
 whose first quarter becomes an eighth is `r8 r8 r4 r4 r4`. A beat that grows takes the rests
 after it, and when the last one it took was longer than it needed the spare goes back right
 after it: `n4 r4 r4 r4` dotted is `n4. r8 r4 r4`. Rests never go between a grace and the beat
-it leads into. Overflow is never resolved automatically: a pure
+it leads into. A range edit settles in two passes: every beat changes first, last to first,
+taking rests as it grows; then the room the shrinking beats freed fills with rests, first to
+last, only while the bar is short; and growth that only a changing neighbour blocked takes the
+rests after the range. So a range edit never reports overflow its new lengths do not have -
+`n4 n8 n8 n2` set to quarters is four quarters, not a bar over and holding rests. Growth a
+note blocks is still overflow. The selection's ends follow their beats through the rests an
+edit inserts, so a range of four notes made eighths still covers all four. A note tool on a
+range of notes and rests applies to the notes and skips the rests, refusing only when there
+are no notes at all. Overflow is never resolved automatically: a pure
 `scoreBarFills(doc)` reports each bar as full, under or over by how much - `barFillAt`
 reads one bar - and the track strip and score overlay read it. **Fix bar** is its own
 command on the selected bars: it splits the overflowing beat at the bar line, ties the
@@ -264,7 +273,8 @@ well under the 1000-line cap.
 `aria-disabled` and a tooltip reason, and the command still refuses when it arrives
 by another route - the M4 rule that the gate is a refusal, not a disabled button.
 Cases: a selection touching a generated track; a note tool on a rest; fretted-only
-techniques (bend, slide, tap, harmonics) on a pitched staff. Refusals, Fix bar
+techniques (bend, slide, tap, harmonics - and slap and pop, which M1 refuses with tap) on a
+pitched staff; until multiple voices are designed, any edit that reaches a second voice. Refusals, Fix bar
 outcomes and paste results share one polite live region.
 
 **Popover values** are validated before anything commits: time signature numerator 1
@@ -276,8 +286,8 @@ refused inline.
 are over. A linked progression track stays a refusal because it loses data; an
 overflowing bar does not - alphaTex stores and renders it.
 
-**Paste** writes from the caret for the copied length and then fills gaps. Overflow is
-flagged, never pushed on.
+**Paste** writes from the caret for the copied length and then fills gaps, each where it
+opens, as a duration change does. Overflow is flagged, never pushed on.
 
 **Older saves need nothing.** The library stores alphaTex, not a serialised `ScoreDoc` -
 `composer-library.service.ts` says so, for exactly this reason - and every load goes
@@ -524,3 +534,27 @@ Not rejected - not yet placed. Each needs its own design pass:
   rewritten: `Beat.finish` revalues only on-beat and before-beat graces. M1 skips grace beats
   when setting durations (`setBeatDurations`). M2's grace tool should either fix the grace's
   value to alphaTab's rule or refuse a duration edit on a grace.
+- **Palm mute and let ring stay allowed on a pitched staff.** Part 4 names bend, slide, tap
+  and harmonics as the fretted-only techniques, and alphaTab draws both marks from their flags
+  alone, with no string needed (`PalmMuteEffectInfo` reads `note.isPalmMute`,
+  `LetRingEffectInfo` reads `beat.isLetRing`, `alphaTab.core.mjs` ~60249 and ~59704 in 1.8).
+  M1 refuses tap, slap and pop on a pitched staff, and nothing else at beat level.
+- **A tuning, capo or transposition change can leave a forced accidental unspellable.** The
+  accidental refusal reads the pitch as drawn - tuning, capo, transposition and display
+  transposition included - but only when the accidental is pressed. A later change to any of
+  those moves the drawn pitch under an accidental that stays, and can put the note on a line
+  chosen by the key signature. M1 does not check. M3's track controls should count the notes a
+  change would affect, the way the save warning counts bars over, and say so.
+- **A pitched note imported as a natural harmonic cannot be cleared with the harmonic tool.**
+  The harmonic is fretted-only, so the refusal meets the press that would turn it off as well as
+  one that would turn it on. An alphaTex import can produce such a note. M2's harmonic tool
+  should let a press that clears the harmonic through.
+- **Fix bar into a bar that was already short puts the fill after the carried beats.** The
+  carry's spare room opens right after what it carried, and Fix bar fills the bar's whole
+  shortfall there. A bar that arrived short had part of that gap at its end, so its own beats
+  move later than they were written. Recorded, not changed in M1.
+- **A selection's tick-bounded end takes a whole grace run.** When a range's ends are in
+  different voices, an end in the other voice bounds the range by its start tick, and a grace
+  starts at the tick of the beat it leads into. So at the earlier end every grace in a run at
+  that tick is taken with its beat, and at the later end the beat the run leads into is taken
+  too. No edit reaches it in M1, which refuses a second voice; multiple voices must decide it.
