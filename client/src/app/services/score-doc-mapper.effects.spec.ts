@@ -263,5 +263,33 @@ describe('ScoreDocMapperService effects round trip', () => {
     expect(effects.rightHandFinger).toBe('index');
   });
 
-  // <!-- A7 -->
+  it('keeps a fade in', () => {
+    const doc = guitarBar(beats => (beats[0].effects.fadeIn = true));
+
+    expect(beatsOf(throughTex(doc))[0].effects.fadeIn).toBeTrue();
+  });
+
+  it('keeps a fermata with its type and length', () => {
+    const doc = guitarBar(beats => (beats[0].effects.fermata = { type: 'long', length: 1 }));
+
+    expect(beatsOf(throughTex(doc))[0].effects.fermata).toEqual({ type: 'long', length: 1 });
+  });
+
+  for (const crescendo of ['crescendo', 'decrescendo'] as const) {
+    it(`keeps a ${crescendo}`, () => {
+      const doc = guitarBar(beats => (beats[0].effects.crescendo = crescendo));
+
+      expect(beatsOf(throughTex(doc))[0].effects.crescendo).toBe(crescendo);
+    });
+  }
+
+  for (const pickStroke of ['up', 'down'] as const) {
+    it(`keeps a pick stroke ${pickStroke}`, () => {
+      const doc = guitarBar(beats => (beats[0].effects.pickStroke = pickStroke));
+
+      expect(beatsOf(throughTex(doc))[0].effects.pickStroke).toBe(pickStroke);
+    });
+  }
+
+  // <!-- A8 -->
 });

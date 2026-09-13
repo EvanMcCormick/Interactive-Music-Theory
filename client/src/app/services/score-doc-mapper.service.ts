@@ -23,6 +23,8 @@ import {
 import {
   accentOf,
   applySlide,
+  crescendoOf,
+  fermataOf,
   fingerOf,
   fromBrushType,
   fromClef,
@@ -31,15 +33,19 @@ import {
   fromHarmonicType,
   fromOttavia,
   fromTripletFeel,
+  pickStrokeOf,
   slideOf,
   toAccentuation,
   toBrushType,
   toClef,
+  toCrescendoType,
   toDynamicValue,
+  toFermata,
   toFingers,
   toGraceType,
   toHarmonicType,
   toOttavia,
+  toPickStroke,
   toTripletFeel,
   toVibratoType,
   trillSpeedOf,
@@ -377,6 +383,10 @@ export class ScoreDocMapperService {
     beat.vibrato = toVibratoType(doc.effects.vibrato);
     beat.brushType = toBrushType(doc.effects.brush);
     beat.graceType = toGraceType(doc.effects.grace);
+    beat.fade = doc.effects.fadeIn ? alphaTab.model.FadeType.FadeIn : alphaTab.model.FadeType.None;
+    beat.fermata = doc.effects.fermata ? toFermata(doc.effects.fermata) : null;
+    beat.crescendo = toCrescendoType(doc.effects.crescendo);
+    beat.pickStroke = toPickStroke(doc.effects.pickStroke);
 
     // An empty note list is how alphaTab represents a rest.
     if (!doc.isRest) {
@@ -547,6 +557,11 @@ export class ScoreDocMapperService {
     effects.vibrato = vibratoOf(beat.vibrato);
     effects.brush = fromBrushType(beat.brushType);
     effects.grace = fromGraceType(beat.graceType);
+    // Fade out and volume swell read as no fade in: the model has neither yet.
+    effects.fadeIn = beat.fade === alphaTab.model.FadeType.FadeIn;
+    effects.fermata = fermataOf(beat.fermata);
+    effects.crescendo = crescendoOf(beat.crescendo);
+    effects.pickStroke = pickStrokeOf(beat.pickStroke);
 
     return {
       duration: (beat.duration as number) as DurationValue,

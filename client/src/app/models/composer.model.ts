@@ -265,14 +265,23 @@ export interface BeatDoc {
   effects: BeatEffectsDoc;
 }
 
+/** A fermata. alphaTab's `Fermata`: a type and a length multiplier. */
+export interface FermataDoc {
+  type: 'short' | 'medium' | 'long';
+  length: number;
+}
+
 export interface BeatEffectsDoc {
   isLetRing: boolean;
   isPalmMute: boolean;
-  isStaccato: boolean;
   slap: boolean;
   pop: boolean;
   tap: boolean;
   fadeIn: boolean;
+  /** null = no fermata. */
+  fermata: FermataDoc | null;
+  crescendo: 'none' | 'crescendo' | 'decrescendo';
+  pickStroke: 'none' | 'up' | 'down';
   vibrato: VibratoKind;
   /** Strum direction across the chord. */
   brush: 'none' | 'brushUp' | 'brushDown' | 'arpeggioUp' | 'arpeggioDown';
@@ -415,11 +424,13 @@ export function createDefaultBeatEffects(): BeatEffectsDoc {
   return {
     isLetRing: false,
     isPalmMute: false,
-    isStaccato: false,
     slap: false,
     pop: false,
     tap: false,
     fadeIn: false,
+    fermata: null,
+    crescendo: 'none',
+    pickStroke: 'none',
     vibrato: 'none',
     brush: 'none',
     grace: 'none'

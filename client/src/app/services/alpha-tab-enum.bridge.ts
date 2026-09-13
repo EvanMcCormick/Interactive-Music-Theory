@@ -4,6 +4,7 @@ import {
   BeatDoc,
   ClefKind,
   DynamicValue,
+  FermataDoc,
   FingerKind,
   NoteDoc,
   OttaviaKind,
@@ -267,4 +268,55 @@ export function trillSpeedOf(speed: alphaTab.model.Duration): TrillDoc['speed'] 
   return speed === alphaTab.model.Duration.Sixteenth || speed === alphaTab.model.Duration.SixtyFourth
     ? speed
     : 32;
+}
+
+export function toFermata(fermata: FermataDoc): alphaTab.model.Fermata {
+  const result = new alphaTab.model.Fermata();
+  result.type =
+    fermata.type === 'short' ? alphaTab.model.FermataType.Short
+      : fermata.type === 'long' ? alphaTab.model.FermataType.Long
+        : alphaTab.model.FermataType.Medium;
+  result.length = fermata.length;
+  return result;
+}
+
+export function fermataOf(fermata: alphaTab.model.Fermata | null): FermataDoc | null {
+  if (!fermata) return null;
+  const type =
+    fermata.type === alphaTab.model.FermataType.Short ? 'short'
+      : fermata.type === alphaTab.model.FermataType.Long ? 'long'
+        : 'medium';
+  return { type, length: fermata.length };
+}
+
+export function toCrescendoType(kind: BeatDoc['effects']['crescendo']): alphaTab.model.CrescendoType {
+  switch (kind) {
+    case 'crescendo': return alphaTab.model.CrescendoType.Crescendo;
+    case 'decrescendo': return alphaTab.model.CrescendoType.Decrescendo;
+    default: return alphaTab.model.CrescendoType.None;
+  }
+}
+
+export function crescendoOf(type: alphaTab.model.CrescendoType): BeatDoc['effects']['crescendo'] {
+  switch (type) {
+    case alphaTab.model.CrescendoType.Crescendo: return 'crescendo';
+    case alphaTab.model.CrescendoType.Decrescendo: return 'decrescendo';
+    default: return 'none';
+  }
+}
+
+export function toPickStroke(kind: BeatDoc['effects']['pickStroke']): alphaTab.model.PickStroke {
+  switch (kind) {
+    case 'up': return alphaTab.model.PickStroke.Up;
+    case 'down': return alphaTab.model.PickStroke.Down;
+    default: return alphaTab.model.PickStroke.None;
+  }
+}
+
+export function pickStrokeOf(stroke: alphaTab.model.PickStroke): BeatDoc['effects']['pickStroke'] {
+  switch (stroke) {
+    case alphaTab.model.PickStroke.Up: return 'up';
+    case alphaTab.model.PickStroke.Down: return 'down';
+    default: return 'none';
+  }
 }
