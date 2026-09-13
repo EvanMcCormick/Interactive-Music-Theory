@@ -261,6 +261,7 @@ export class ScoreDocMapperService {
     masterBar.alternateEndings = doc.alternateEndings;
     masterBar.tripletFeel = toTripletFeel(doc.tripletFeel);
     masterBar.isFreeTime = doc.isFreeTime;
+    masterBar.isDoubleBar = doc.isDoubleBar;
 
     if (doc.section) {
       const section = new alphaTab.model.Section();

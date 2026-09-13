@@ -357,5 +357,22 @@ describe('ScoreDocMapperService effects round trip', () => {
     expect(beatsOf(throughTex(doc))[0].notes[0].accidental).toBe('auto');
   });
 
-  // <!-- A9 -->
+  it('hands a double bar to alphaTab', () => {
+    const doc = guitarBar(() => undefined);
+    doc.masterBars[0].isDoubleBar = true;
+
+    expect(mapper.toDoc(mapper.toScore(doc, settings)).masterBars[0].isDoubleBar).toBeTrue();
+  });
+
+  it('still loses a double bar through alphaTex - an upstream gap', () => {
+    // alphaTab 1.8.0 parses `\db` and does not export it. Pinned so that the upgrade which
+    // fixes it turns this red, and the known limitation in the design doc gets retired
+    // rather than outliving the bug.
+    const doc = guitarBar(() => undefined);
+    doc.masterBars[0].isDoubleBar = true;
+
+    expect(throughTex(doc).masterBars[0].isDoubleBar).toBeFalse();
+  });
+
+  // <!-- A10 -->
 });
