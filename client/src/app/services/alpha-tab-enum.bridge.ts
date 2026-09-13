@@ -1,5 +1,6 @@
 import * as alphaTab from '@coderline/alphatab';
 import {
+  AccentKind,
   BeatDoc,
   ClefKind,
   DynamicValue,
@@ -201,4 +202,22 @@ export function slideOf(note: alphaTab.model.Note): NoteDoc['effects']['slide'] 
     case alphaTab.model.SlideOutType.OutUp: return 'slideOutUp';
   }
   return note.slideInType === alphaTab.model.SlideInType.IntoFromBelow ? 'slideInBelow' : 'none';
+}
+
+export function toAccentuation(accent: AccentKind): alphaTab.model.AccentuationType {
+  switch (accent) {
+    case 'normal': return alphaTab.model.AccentuationType.Normal;
+    case 'heavy': return alphaTab.model.AccentuationType.Heavy;
+    case 'tenuto': return alphaTab.model.AccentuationType.Tenuto;
+    default: return alphaTab.model.AccentuationType.None;
+  }
+}
+
+export function accentOf(accentuated: alphaTab.model.AccentuationType): AccentKind {
+  switch (accentuated) {
+    case alphaTab.model.AccentuationType.Normal: return 'normal';
+    case alphaTab.model.AccentuationType.Heavy: return 'heavy';
+    case alphaTab.model.AccentuationType.Tenuto: return 'tenuto';
+    default: return 'none';
+  }
 }

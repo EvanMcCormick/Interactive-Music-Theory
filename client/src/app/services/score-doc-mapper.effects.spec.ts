@@ -181,5 +181,13 @@ describe('ScoreDocMapperService effects round trip', () => {
       .toEqual([{ offset: 0, value: 0 }, { offset: 60, value: 4 }]);
   });
 
-  // <!-- A4 -->
+  for (const accent of ['normal', 'heavy', 'tenuto'] as const) {
+    it(`keeps a ${accent} accent`, () => {
+      const doc = guitarBar(beats => (beats[0].notes[0].effects.accent = accent));
+
+      expect(beatsOf(throughTex(doc))[0].notes[0].effects.accent).toBe(accent);
+    });
+  }
+
+  // <!-- A5 -->
 });

@@ -21,6 +21,7 @@ import {
   createDefaultNoteEffects
 } from '../models/composer.model';
 import {
+  accentOf,
   applySlide,
   fromBrushType,
   fromClef,
@@ -30,6 +31,7 @@ import {
   fromOttavia,
   fromTripletFeel,
   slideOf,
+  toAccentuation,
   toBrushType,
   toClef,
   toDynamicValue,
@@ -414,6 +416,7 @@ export class ScoreDocMapperService {
     for (const point of doc.effects.bendPoints) {
       note.addBendPoint(new alphaTab.model.BendPoint(point.offset, point.value));
     }
+    note.accentuated = toAccentuation(doc.effects.accent);
     note.vibrato = doc.effects.vibrato
       ? alphaTab.model.VibratoType.Slight
       : alphaTab.model.VibratoType.None;
@@ -568,6 +571,7 @@ export class ScoreDocMapperService {
       offset: point.offset,
       value: point.value
     }));
+    effects.accent = accentOf(note.accentuated);
 
     const pitch: NotePitch = note.isStringed
       ? {

@@ -28,6 +28,12 @@ export type DynamicValue = 'ppp' | 'pp' | 'p' | 'mp' | 'mf' | 'f' | 'ff' | 'fff'
 
 export type AccidentalMode = 'auto' | 'explicit';
 
+/**
+ * An accent mark. One field for three marks because alphaTab's `AccentuationType` holds
+ * them in one, so a note carries at most one of them.
+ */
+export type AccentKind = 'none' | 'normal' | 'heavy' | 'tenuto';
+
 export type KeySignatureMode = 'major' | 'minor';
 
 export type TripletFeelKind =
@@ -297,6 +303,7 @@ export interface NoteEffectsDoc {
   isLetRing: boolean;
   isPalmMute: boolean;
   isStaccato: boolean;
+  accent: AccentKind;
   vibrato: boolean;
   slide: 'none' | 'shiftSlide' | 'legatoSlide' | 'slideInBelow' | 'slideOutUp';
   harmonic: 'none' | 'natural' | 'artificial' | 'pinch' | 'tap' | 'semi';
@@ -394,6 +401,7 @@ export function createDefaultNoteEffects(): NoteEffectsDoc {
     isLetRing: false,
     isPalmMute: false,
     isStaccato: false,
+    accent: 'none',
     vibrato: false,
     slide: 'none',
     harmonic: 'none',
