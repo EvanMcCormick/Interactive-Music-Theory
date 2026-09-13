@@ -28,7 +28,6 @@ import {
   createDefaultMasterBar,
   createDefaultNoteEffects,
   createDefaultPlaybackInfo,
-  createRestBeat,
   STANDARD_GUITAR_TUNING
 } from '../models/composer.model';
 import {

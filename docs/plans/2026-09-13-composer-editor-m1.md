@@ -5780,7 +5780,7 @@ one to watch; if it passes 1000, move the bar and track command block (D3) into 
 
 **Step 5: Commit** the documents: `docs: Record M1 of the composer editor - what shipped and what it corrected`.
 
-**Checkpoint, 2026-09-13.** Both type checks clean; the whole suite **2,669 specs, 0 failures**.
+**Checkpoint, 2026-09-13.** Both type checks clean; the whole suite **2,677 specs, 0 failures**.
 No file M1 touched passes 1000 lines: the largest are `bar-fill.spec.ts` (969) and
 `composer.service.ts` (940, after the bar and track commands moved to
 `composer-service-structure.ts`).

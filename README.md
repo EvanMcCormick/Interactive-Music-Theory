@@ -435,7 +435,7 @@ When you like it, **Send to Composer** puts it on a staff beside your own tracks
 - ✨ **New**: Changing a duration fills the bar with rests where the gap opened, so the
   beats after it keep their places, and never overwrites a note — a note that no longer
   fits leaves the bar over instead
-- 🧪 **Tests**: 2,669 passing
+- 🧪 **Tests**: 2,677 passing
 
 ### Progression to Composer (September 2026)
 - ✨ **New**: Send a progression to the Composer as a track of its own. It arrives

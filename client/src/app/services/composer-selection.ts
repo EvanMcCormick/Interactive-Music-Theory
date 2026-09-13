@@ -1,5 +1,5 @@
 import { BeatDoc, EditCursor, ScoreDoc } from '../models/composer.model';
-import { beatTicks } from './bar-fill';
+import { beatTicks, voiceTicks } from './bar-fill';
 
 /** One beat, addressed: the parts of an `EditCursor` that name a beat. */
 export interface BeatRef {
@@ -96,7 +96,7 @@ function positionOf(doc: ScoreDoc, cursor: EditCursor): TimelinePosition {
     barIndex: cursor.barIndex,
     voiceIndex: cursor.voiceIndex,
     beatIndex: cursor.beatIndex,
-    ticks: beats.slice(0, cursor.beatIndex).reduce((sum, beat) => sum + beatTicks(beat), 0)
+    ticks: voiceTicks({ beats: beats.slice(0, cursor.beatIndex) })
   };
 }
 

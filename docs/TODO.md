@@ -113,6 +113,20 @@ that owns the control that reaches them. Each is in the same "Found while design
 - **The Bass instrument preset gets six guitar strings.** `createTrack` gives every fretted
   track `STANDARD_GUITAR_TUNING`; `STANDARD_BASS_TUNING` exists and the composer never uses
   it. M3.
+- **A whole tuplet group moves the notes after it earlier.** In `relength`'s phase 2 each
+  triplet beat frees 160 or 320 ticks, which is off the 64th grid, so `insertRestsAt` cannot
+  spell a rest after any one of them and the bar fills at its end instead — even though the
+  group's total gap spells cleanly right after the group. `n8 n8 n8 n8 n2` with its first three
+  beats made a triplet puts the fourth eighth at 960 rather than 1440. The fix is to carry room
+  that could not be placed forward through a contiguous run of changing beats and place it after
+  the run. It must land before M2's tuplet tool. Phase 2 also counts a beat's room as `placed`
+  when `insertRestsAt` returns false — harmless today, since phase 4 fills the bar anyway, but
+  fragile.
+- **Refusals are not displayed yet.** `ComposerState.refusal` has no binding in the composer
+  UI, though design Part 4 promises a polite live region. So in a loaded file with a second
+  voice, clicking a voice-2 beat and typing a fret is now refused silently, where it used to
+  write. A refusal also outlives a caret move: `setCursor`, `extendSelectionTo`, `undo` and
+  `redo` do not clear it. M2 gives refusals their live region and settles when they clear.
 
 ## Smaller things noticed in passing
 
