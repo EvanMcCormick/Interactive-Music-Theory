@@ -64,9 +64,9 @@ export interface DetectedNote {
    * Per-frame deviation in cents. Empty when the note has no bend.
    *
    * Sampled at the detector's own frame rate, which this model does not
-   * record. Converting these to `NoteEffectsDoc.bendPoints` — offset and value
-   * pairs, a position through the note, 0 to 60, and a pitch in quarter tones,
-   * per bend point rather than per frame — therefore needs that rate
+   * record. Converting these to `NoteEffectsDoc.bendPoints`, which are offset
+   * and value pairs — a position through the note, 0 to 60, and a pitch in
+   * quarter tones — per bend point rather than per frame, therefore needs that rate
    * from the detector as well as the array itself.
    */
   bendCents: number[];

@@ -283,7 +283,7 @@ export interface NoteDoc {
 /**
  * One point of a bend curve, in alphaTab's own units so the mapper copies rather than
  * converts: `offset` is the position through the note, 0 to 60, and `value` is the
- * pitch in quarter tones, so 4 is a whole-tone bend.
+ * pitch in quarter tones, 0 to 12 (`BendPoint.MaxValue`), so 4 is a whole-tone bend.
  */
 export interface BendPointDoc {
   offset: number;
@@ -300,7 +300,16 @@ export interface NoteEffectsDoc {
   vibrato: boolean;
   slide: 'none' | 'shiftSlide' | 'legatoSlide' | 'slideInBelow' | 'slideOutUp';
   harmonic: 'none' | 'natural' | 'artificial' | 'pinch' | 'tap' | 'semi';
-  /** The bend curve, first point first. Empty = no bend. */
+  /**
+   * The bend curve, points in ascending `offset`. Empty = no bend.
+   *
+   * alphaTab neither sorts nor checks what it is given - playback times each segment by
+   * the difference in offsets, so an out-of-order pair gets a negative length - and
+   * `Note.finish` rewrites a bend of two to four points into one of Guitar Pro's shapes.
+   * A document holds that shape only once read back through `toDoc`; until then it holds
+   * the points as written. Whatever writes bends must write Guitar Pro's shapes or
+   * normalise, for example by reading the note back through the mapper.
+   */
   bendPoints: BendPointDoc[];
 }
 

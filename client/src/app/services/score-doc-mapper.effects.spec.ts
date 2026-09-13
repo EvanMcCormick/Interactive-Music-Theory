@@ -166,14 +166,15 @@ describe('ScoreDocMapperService effects round trip', () => {
     expect(beatsOf(throughTex(doc))[0].notes[0].effects.bendPoints).toEqual(points);
   });
 
-  it('stores a bend in the shape alphaTab keeps - a redundant middle point goes', () => {
+  it("stores a bend in the shape alphaTab keeps - a rising bend's middle point goes", () => {
     // `Note.finish` classifies a custom bend of two to four points as one of Guitar Pro's
     // bend types and rewrites its points to fit, before a character of alphaTex is written.
-    // A rising three-point bend whose middle already reached the top is a plain Bend, so
-    // the middle point is removed. Pinned so the model's contract is what alphaTab keeps,
-    // and so M4's bend curve editor knows it is drawing Guitar Pro's shapes.
+    // This curve reaches a semitone three quarters of the way through and a whole tone at
+    // the end. alphaTab calls it a plain Bend and keeps only its ends, so the curve's timing
+    // is lost - a real point, not a redundant one. Pinned because the model's contract is
+    // alphaTab's shape, not the curve as drawn, and so M4's bend curve editor knows it.
     const doc = guitarBar(beats => (beats[0].notes[0].effects.bendPoints = [
-      { offset: 0, value: 0 }, { offset: 30, value: 4 }, { offset: 60, value: 4 }
+      { offset: 0, value: 0 }, { offset: 45, value: 2 }, { offset: 60, value: 4 }
     ]));
 
     expect(beatsOf(throughTex(doc))[0].notes[0].effects.bendPoints)

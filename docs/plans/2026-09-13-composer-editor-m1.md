@@ -50,13 +50,19 @@ writes them generously; 1000 lines per file at most.
   hammer-on does not survive save. Task A1 pins that loss. It does the same to a shift
   or legato slide with no following note on its string (slide out up and slide in from
   below are unaffected); the review of Task A2 pins that loss.
-- `Note.finish` classifies a custom bend of two to four points as one of Guitar Pro's bend
-  types and rewrites its points to fit (`alphaTab.core.mjs` ~6326-6467 in 1.8): a rising
-  three-point bend loses its middle point, a three-point bend-release gains a repeated
-  middle, and four points with equal middles lose both. One point, or five or more, stay
-  custom. The model stores what alphaTab keeps, and Task A3 pins the rewrite. A pre-bend
-  (first point above 0) also resets a forced accidental to `Default` (~6469) - Task A8
-  pins that.
+- `Note.finish` (`alphaTab.core.mjs` ~6326-6467 in 1.8) classifies a custom bend of two to
+  four points as one of Guitar Pro's bend types - from its first and last values, and the
+  middle for three or four points - and rewrites the points to fit. A bend-release (middle
+  above both ends, end not below start) ends as four points with a repeated middle; every
+  other classified type - bend, release, hold, pre-bend, pre-bend bend, pre-bend release -
+  ends as two, so a middle point and its timing go. Four points with differing middles,
+  one point, and five or more stay custom. `addBendPoint` only appends: nothing sorts or
+  checks the points. The renderer draws classified types at fixed offsets - 0 and 60, plus
+  30 for a bend-release's middle (~63236-63262) - whatever is stored. The model stores
+  what alphaTab keeps, and Task A3 pins a rewrite. A forced accidental resets to `Default`
+  when `initialBendValue` is above 0 (~6469): a first bend value of 2 or more quarter
+  tones, or a bend carried over a tie, or a whammy bar (~6157-6170). Task A8 pins the
+  pre-bend case.
 - Forced accidentals survive alphaTex on fretted *and* pitched notes (`{acc b}`).
 - alphaTab's `Beat` has **no staccato**; only `Note.isStaccato` exists.
 - Accent, heavy accent and tenuto are one field, `Note.accentuated: AccentuationType`.
@@ -344,14 +350,15 @@ note - and nothing maps it. alphaTab's `BendPoint` is `{ offset: 0-60, value: qu
     expect(beatsOf(throughTex(doc))[0].notes[0].effects.bendPoints).toEqual(points);
   });
 
-  it('stores a bend in the shape alphaTab keeps - a redundant middle point goes', () => {
+  it("stores a bend in the shape alphaTab keeps - a rising bend's middle point goes", () => {
     // `Note.finish` classifies a custom bend of two to four points as one of Guitar Pro's
     // bend types and rewrites its points to fit, before a character of alphaTex is written.
-    // A rising three-point bend whose middle already reached the top is a plain Bend, so
-    // the middle point is removed. Pinned so the model's contract is what alphaTab keeps,
-    // and so M4's bend curve editor knows it is drawing Guitar Pro's shapes.
+    // This curve reaches a semitone three quarters of the way through and a whole tone at
+    // the end. alphaTab calls it a plain Bend and keeps only its ends, so the curve's timing
+    // is lost - a real point, not a redundant one. Pinned because the model's contract is
+    // alphaTab's shape, not the curve as drawn, and so M4's bend curve editor knows it.
     const doc = guitarBar(beats => (beats[0].notes[0].effects.bendPoints = [
-      { offset: 0, value: 0 }, { offset: 30, value: 4 }, { offset: 60, value: 4 }
+      { offset: 0, value: 0 }, { offset: 45, value: 2 }, { offset: 60, value: 4 }
     ]));
 
     expect(beatsOf(throughTex(doc))[0].notes[0].effects.bendPoints)
@@ -370,7 +377,7 @@ assignable to type 'number'`. That is the red.
 /**
  * One point of a bend curve, in alphaTab's own units so the mapper copies rather than
  * converts: `offset` is the position through the note, 0 to 60, and `value` is the
- * pitch in quarter tones, so 4 is a whole-tone bend.
+ * pitch in quarter tones, 0 to 12 (`BendPoint.MaxValue`), so 4 is a whole-tone bend.
  */
 export interface BendPointDoc {
   offset: number;
@@ -381,7 +388,16 @@ export interface BendPointDoc {
 and replace the `bendPoints` member:
 
 ```typescript
-  /** The bend curve, first point first. Empty = no bend. */
+  /**
+   * The bend curve, points in ascending `offset`. Empty = no bend.
+   *
+   * alphaTab neither sorts nor checks what it is given - playback times each segment by
+   * the difference in offsets, so an out-of-order pair gets a negative length - and
+   * `Note.finish` rewrites a bend of two to four points into one of Guitar Pro's shapes.
+   * A document holds that shape only once read back through `toDoc`; until then it holds
+   * the points as written. Whatever writes bends must write Guitar Pro's shapes or
+   * normalise, for example by reading the note back through the mapper.
+   */
   bendPoints: BendPointDoc[];
 ```
 
@@ -407,10 +423,13 @@ In `transcription.model.ts`, the two comments that describe `NoteEffectsDoc.bend
 through the note, 0 to 60, and a pitch in quarter tones". Keep the argument each comment
 makes about the frame rate; only the description of the target changes.
 
-**Step 4: Run.** Expected: 7 SUCCESS - the effects file gains two specs. Then the type
-check - expected: no output.
+**Step 4: Run.** Expected: 10 SUCCESS - the effects file had 8 specs before this task (A1,
+A2 and their reviews) and gains two. Then the type check - expected: no output.
 
-**Step 5: Commit** the four files: `fix: Keep bends, positioned, through save and load`.
+**Step 5: Commit** six files: the four above, plus this plan and
+`docs/plans/2026-09-13-composer-editor-design.md`, which pinning alphaTab's bend rewrite
+added (the facts above, and a "Found while designing" entry):
+`fix: Keep bends through save and load, in the shapes alphaTab stores`.
 
 ### Task A4: Accent, heavy accent and tenuto
 
