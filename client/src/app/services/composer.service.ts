@@ -40,7 +40,15 @@ import {
   timeSignatureFault,
   toggleMasterBarFlag
 } from './bar-edits';
-import { beatsAt, setDynamics, setGrace, setTuplet, toggleBeatEffect, toggledValue } from './beat-edits';
+import {
+  beatsAt,
+  setBeatDurations,
+  setDynamics,
+  setGrace,
+  setTuplet,
+  toggleBeatEffect,
+  toggledValue
+} from './beat-edits';
 import { BeatRef, selectedBars, selectionTargets } from './composer-selection';
 import { EditScope, editRefusal } from './edit-refusals';
 import { setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
@@ -381,9 +389,10 @@ export class ComposerService {
       const beat = this.beatAt(draft, cursor);
       if (!beat) return;
 
+      // Length first, so the bar settles before the note lands. Settling only removes or
+      // inserts beats after this one, so `beat` is still the caret's beat.
+      setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
       beat.isRest = false;
-      beat.duration = state.inputDuration;
-      beat.dots = state.inputDots;
 
       const note: NoteDoc = {
         pitch,
@@ -432,8 +441,7 @@ export class ComposerService {
       if (!beat) return;
       beat.notes = [];
       beat.isRest = true;
-      beat.duration = state.inputDuration;
-      beat.dots = state.inputDots;
+      setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
     });
 
     if (advance) this.moveCursorByBeat(1);
@@ -490,18 +498,17 @@ export class ComposerService {
    * left is the honest half: a toolbar showing a duration the score under the
    * caret does not have, which is what a toolbar showing an *input* duration
    * means everywhere else in the editor.
+   *
+   * It acts on the selection, not only the caret, and keeps each bar honest through
+   * `setBeatDurations`: a gap fills with rests where it opened, and a beat that grows takes
+   * only rests.
    */
   applyDurationAtCursor(duration: DurationValue, dots: number): void {
     const state = this.stateSubject.getValue();
-    const cursor = state.cursor;
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
 
-    if (!this.isGenerated(state.doc, cursor.trackIndex)) {
-      this.commit(draft => {
-        const beat = this.beatAt(draft, cursor);
-        if (!beat) return;
-        beat.duration = duration;
-        beat.dots = dots;
-      });
+    if (!editRefusal(state.doc, refs, { family: 'beat' }, null)) {
+      this.commit(draft => setBeatDurations(draft, refs, duration, dots));
     }
 
     this.setInputDuration(duration, dots);

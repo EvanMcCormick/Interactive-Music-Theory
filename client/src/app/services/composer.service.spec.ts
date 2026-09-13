@@ -440,3 +440,55 @@ describe('ComposerService bar and track edits', () => {
     expect(service.doc.tracks[0].playback.isMute).toBeTrue();
   });
 });
+
+describe('ComposerService durations and bar filling', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  const firstBar = () => service.doc.tracks[0].staves[0].bars[0].voices[0].beats;
+  const note = (string = 1) => ({ kind: 'fretted' as const, string, fret: 0 });
+
+  it('fills the bar when a shorter duration is applied, right after the beat', () => {
+    // The caret's quarter becomes an eighth, and the eighth rest goes where its gap opened, at
+    // 480, so the three quarter rests keep their places.
+    service.applyDurationAtCursor(8, 0);
+
+    expect(firstBar().map(beat => beat.duration)).toEqual([8, 8, 4, 4, 4]);
+  });
+
+  it('applies a duration to every beat of a range', () => {
+    service.setCursor({ barIndex: 0, beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 3 });
+
+    service.applyDurationAtCursor(8, 0);
+
+    // Each quarter becomes an eighth with its eighth rest right after it, settled last to first
+    // so no settled rest moves.
+    expect(firstBar().map(beat => beat.duration)).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
+  });
+
+  it('writes a longer note by taking the rests after it', () => {
+    // The half needs 960 more ticks and the quarter rest after it is exactly that, so nothing is
+    // over-taken and nothing goes back.
+    service.setInputDuration(2, 0);
+
+    service.setNoteAtCursor(note(), false);
+
+    expect(firstBar().map(beat => beat.duration)).toEqual([2, 4, 4]);
+  });
+
+  it('leaves overflow for Fix bar rather than overwrite a note', () => {
+    service.setCursor({ beatIndex: 1 });
+    service.setNoteAtCursor(note(), false);
+    service.setCursor({ beatIndex: 0 });
+
+    service.applyDurationAtCursor(2, 0);
+
+    expect(firstBar().length).toBe(4);
+    expect(firstBar()[1].isRest).toBeFalse();
+  });
+});
