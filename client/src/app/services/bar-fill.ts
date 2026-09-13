@@ -4,8 +4,10 @@ import {
   ScoreDoc,
   TimeSignature,
   VoiceDoc,
+  createRestBeat,
   effectiveTimeSignature
 } from '../models/composer.model';
+import { barGridFault, metricFrame, slotsToDurations } from './transcription-quantize';
 
 /**
  * Bar arithmetic for the composer: how full a bar is, filling its gaps with rests, and
@@ -162,4 +164,53 @@ export function barFillAt(
 ): BarFill | undefined {
   const bar = doc.tracks[trackIndex]?.staves[staffIndex]?.bars[barIndex];
   return bar ? barFillOf(bar, barMeterAt(doc, barIndex)) : undefined;
+}
+
+/** A 64th note: the finest value the rest speller writes. */
+const SLOT_DIVISION = 64;
+const SLOT_TICKS = TICKS_PER_QUARTER / 16;
+
+/**
+ * Where the run of grace beats that ends just before `voice.beats[index]` begins - `index`
+ * itself when the beat before it is not a grace.
+ *
+ * A grace beat is written in front of the beat after it, and alphaTab groups it with the next
+ * non-grace beat in its own voice (`Voice.finish`, ~3200-3216). Anything inserted or cut at
+ * `index` goes before such a run, so the placement keeps what the user wrote in order: graces
+ * stay in front of the beat they lead into. A run that ends the voice leads into nothing -
+ * alphaTab leaves its group incomplete (`GraceGroup.isComplete` stays false) - and it stays
+ * last, where it was written.
+ */
+function graceRunStart(voice: VoiceDoc, index: number): number {
+  let start = index;
+  while (start > 0 && voice.beats[start - 1].effects.grace !== 'none') start--;
+  return start;
+}
+
+/**
+ * Adds rests at the end of `bar` until it is full, when that can be done exactly.
+ *
+ * The gap goes at the end because that is where shortening a beat leaves it: every later
+ * beat moves earlier. The rests go in front of any grace beats that end the bar, so those
+ * graces stay last, in the order they were written (`graceRunStart`). A grace takes no room,
+ * so it moves no rest's start. Rests are spelled at a 64th grid, split at beat and half-bar
+ * lines by the quantizer's own speller. Nothing happens when the bar is full or over - a
+ * free-time bar always is (`barFillOf`) - when the meter has no 64th grid, or when the gap or
+ * its start is not a whole number of 64ths - a lone tuplet's remainder - because a fill that
+ * is only nearly right is worse than a bar still honestly reported as under.
+ */
+export function fillBarGaps(bar: BarDoc, meter: BarMeter): void {
+  const fill = barFillOf(bar, meter);
+  const voice = bar.voices[0];
+  if (fill.kind !== 'under' || !voice) return;
+  const { timeSignature } = meter;
+  if (barGridFault(timeSignature, SLOT_DIVISION) !== null) return;
+
+  const used = voiceTicks(voice);
+  if (used % SLOT_TICKS !== 0 || fill.ticks % SLOT_TICKS !== 0) return;
+
+  const frame = metricFrame(timeSignature, SLOT_DIVISION / timeSignature.denominator);
+  const units = slotsToDurations(fill.ticks / SLOT_TICKS, SLOT_DIVISION, used / SLOT_TICKS, frame);
+  const rests = units.map(unit => ({ ...createRestBeat(unit.duration), dots: unit.dots }));
+  voice.beats.splice(graceRunStart(voice, voice.beats.length), 0, ...rests);
 }

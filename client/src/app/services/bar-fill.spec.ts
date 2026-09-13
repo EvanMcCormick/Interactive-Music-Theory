@@ -3,8 +3,9 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerService } from './composer.service';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
-import { BarMeter, barCapacityTicks, barFillAt, barFillOf, beatTicks, scoreBarFills } from './bar-fill';
+import { BarMeter, barCapacityTicks, barFillAt, barFillOf, beatTicks, fillBarGaps, scoreBarFills } from './bar-fill';
 import {
+  BarDoc,
   BeatDoc,
   DurationValue,
   Tuplet,
@@ -258,6 +259,96 @@ describe('bar-fill', () => {
 
       expect(barFillAt(doc, 0, 0, 9)).toBeUndefined();
       expect(barFillAt(doc, 3, 0, 0)).toBeUndefined();
+    });
+  });
+
+  describe('fillBarGaps', () => {
+    const FOUR_FOUR = meterOf(4, 4);
+    const shape = (bar: BarDoc): string[] =>
+      bar.voices[0].beats.map(beat => `${beat.isRest ? 'r' : 'n'}${beat.duration}${'.'.repeat(beat.dots)}`);
+    const graceRest = (): BeatDoc => ({
+      ...createRestBeat(8),
+      effects: { ...createDefaultBeatEffects(), grace: 'beforeBeat' }
+    });
+
+    it('fills a shortened beat\'s gap at the end of the bar', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats[0].duration = 8;
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(shape(bar)).toEqual(['r8', 'r4', 'r4', 'r4', 'r8']);
+    });
+
+    it('spells a long gap on the beat, not as one odd value', () => {
+      // Half a bar of 4/4 is a half rest, at the half-bar, where the ear expects it.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats = [createRestBeat(2)];
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(shape(bar)).toEqual(['r2', 'r2']);
+    });
+
+    it('fills 6/8 in dotted quarters', () => {
+      const sixEight = meterOf(6, 8);
+      const bar = createDefaultBar(false, sixEight.timeSignature);
+      bar.voices[0].beats = [{ ...createRestBeat(4), dots: 1 }];
+
+      fillBarGaps(bar, sixEight);
+
+      expect(shape(bar)).toEqual(['r4.', 'r4.']);
+    });
+
+    it('leaves a gap it cannot spell exactly, rather than guess', () => {
+      // One triplet eighth is 320 ticks, not a whole number of 64ths.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats = [{ ...createRestBeat(8), tuplet: { numerator: 3, denominator: 2 } }];
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(bar.voices[0].beats.length).toBe(1);
+      expect(barFillOf(bar, FOUR_FOUR).kind).toBe('under');
+    });
+
+    it('leaves a full or overfull bar alone', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats[0].duration = 2;
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(shape(bar)).toEqual(['r2', 'r4', 'r4', 'r4']);
+    });
+
+    it('leaves a short free-time bar alone, since the meter does not govern it', () => {
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats[0].duration = 8;
+
+      fillBarGaps(bar, meterOf(4, 4, true));
+
+      expect(shape(bar)).toEqual(['r8', 'r4', 'r4', 'r4']);
+    });
+
+    it('measures a grace beat as no room', () => {
+      // A quarter, a grace and a quarter leave half a bar, spelled from the half-bar.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats = [createRestBeat(4), graceRest(), createRestBeat(4)];
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(shape(bar)).toEqual(['r4', 'r8', 'r4', 'r2']);
+    });
+
+    it('puts the rests in front of a grace that ends the bar, keeping the order it was written in', () => {
+      // alphaTab groups a grace only with a beat after it in its own voice, so a grace that ends
+      // a bar leads into nothing. The rests go in front of it so it stays where it was written.
+      const bar = createDefaultBar(false, FOUR_FOUR.timeSignature);
+      bar.voices[0].beats = [createRestBeat(4), createRestBeat(4), createRestBeat(4), graceRest()];
+
+      fillBarGaps(bar, FOUR_FOUR);
+
+      expect(shape(bar)).toEqual(['r4', 'r4', 'r4', 'r4', 'r8']);
+      expect(bar.voices[0].beats[4].effects.grace).toBe('beforeBeat');
     });
   });
 });
