@@ -259,7 +259,14 @@ departs from the design".
     popover reads the first selected bar**, where every bar command writes, not the head, and shows a value the selected
     bars do not share - key, clef, section, endings, triplet feel - as mixed; Apply leaves a field still mixed as each
     bar has it. The Tuplet popover says the selection's ratio, or mixed, and a press the service refuses keeps a popover
-    open with the reason inline, as well as in the status line.
+    open with the reason inline, as well as in the status line. *Settled in a third review of the committed M2 code:*
+    **a range's clef, ottava and key are written over the whole range.** With more than one bar selected, a field changed
+    is written to every selected bar and a field still mixed keeps each bar's own; from one bar - the caret, or a range
+    inside a bar - the write runs on until a bar holds something else, as a key or clef change does. Before, Apply ran
+    from the first bar only until a bar differed, so bars in g2 and f4 with the ottava changed became g2/8va and
+    f4/regular. Key signature reads mixed over every staff, since it writes every staff. **A popover closes when the
+    score changes under it** by anything but its own Apply - Ctrl+Z pressed from one of its buttons, which reaches the
+    page - and applies nothing, since its fields were read from the score as it was.
 18. **Commands with no service method go in new modules** - `composer-entry-commands.ts`, delegated
     like `composer-service-structure.ts`, and pure edit functions - keeping `composer.service.ts`
     under the cap: rest over a range, insert and delete beats, semitone and string moves, cut, copy
@@ -288,7 +295,20 @@ departs from the design".
     moves on for both, and the panel drops the queued saves and names no entry, so Save writes a new one. Deleting the
     entry being edited forgets it too, and the delete waits for a write under way to it, which would put it back. Flatten
     and save pressed mid-write is queued as Save is, and a queued save compares the alphaTex it would write with what the
-    write before held, since undo gives back a copy of the document.
+    write before held, since undo gives back a copy of the document. *Settled in a third review of the committed M2
+    code:* **which composition is open is kept apart from whether it is saved.** `replaceDocument` takes `markClean` and
+    `newComposition`: a load is both; a transcription opened in the composer is a new composition that is not saved, so
+    Save writes a new entry rather than over the one open before; and **an applied alphaTex draft is neither - it is an
+    edit**, on the undo stack, of the composition open. **Opening a different composition starts a fresh history**, as
+    opening a file does in Guitar Pro: an undo across a load put the composition before back while the panel named the
+    one loaded, and Save wrote it over that entry. The dirty-load confirm is what protects unsaved work. **A deleted
+    entry is forgotten only once the delete succeeds**, so a failed delete leaves it current and the next Save updates
+    it; a Save pressed while the delete is under way writes a new entry, and a copy that lands after the delete is still
+    adopted, though not one a load or New overtook. Flatten and save pressed mid-write whose queued save never writes -
+    the write before fails, or the queued save is refused or fails - reports the flatten in the alert, as a failure of
+    its own write does. *Settled in a review of the page:* **what the library did is said in the status line**
+    (`ComposerService.announce`), the page's one polite live region (Part 4) - saved, loaded, deleted, exported, or why
+    one failed. The save refusal stays an alert beside it, since it is a question with its remedy inside, not a report.
 21. **macOS**: see "macOS" under Shortcuts. Nobody has checked the bindings on a Mac. Tooltips and the shortcut sheet
     write Ctrl as ⌘ and Alt as ⌥ on a Mac, and Ctrl and Alt elsewhere, from the browser's platform, read once.
 22. **Score interaction.** In Select a notation click moves the caret and never writes; in Pen it
@@ -306,7 +326,10 @@ departs from the design".
 23. **The page grid** is sized to the viewport minus the app header, whose height the shell
     publishes as `--app-header-height`: a top bar, the palette, the score, a status line, and the
     track strip under a draggable separator. There is no inspector column until M3. Composer colours
-    are CSS custom properties on the page host.
+    are CSS custom properties on the page host. *Settled in a review of the page:* the strip's height is clamped
+    against the page, not the window - from one row up to what leaves the score 160px - and again whenever the page or
+    its top bar resizes; the separator announces that range and takes Home and End. The shell's header wraps rather
+    than widen the body, and publishes its height to the fraction of a pixel.
 24. **Palette buttons are Bravura glyphs** by SMuFL code point, from `/font/Bravura.woff2`, with text
     where SMuFL has no symbol. Each has an `aria-label`, a tooltip with its shortcut, `aria-pressed`
     with `mixed`, and `aria-disabled` with the reason when refusing.
@@ -331,12 +354,21 @@ departs from the design".
 28. **Tie chains move whole.** A semitone or string move takes every note tied to or from a note it
     moves, since alphaTab copies a tie origin's fret and pitch onto the notes tied from it. A string move
     that would break a landing, change a tie's origin or put a natural harmonic off a node is refused.
-29. **Space and Enter press a focused button.** Without Ctrl, Alt or Cmd, Space or Enter on a focused
-    button, link, checkbox or radio is the browser's, and the composer's keyboard is not asked - so Space
-    plays only when no button has the focus. Settled when review found the keyboard would claim them.
+29. **Space and Enter press a control focused from the keyboard, with the keys the browser presses it with.**
+    Without Ctrl, Alt or Cmd, on a control that matches `:focus-visible`: Space or Enter on a button, a `<summary>` or a
+    `role="button"`; Enter alone on a link or `role="link"`; Space alone on a checkbox, a radio, or a `role` of
+    checkbox, radio or switch. The composer's keyboard is not asked for those. A key the browser does nothing with on
+    the control - Space on a link, Enter on a checkbox - stays the composer's, and so does Space after a mouse click
+    left the focus on a button: it plays, rather than pressing that button again. A held Enter presses a palette button
+    once, unless its tool's key repeats. Settled when review found the keyboard would claim them; narrowed in a review
+    of the page, which found Space swallowed on a clicked nav link and a clicked Delete bar deleting again on Space.
 30. **A save is refused while the alphaTex panel holds a draft that is not applied**, from Ctrl+S - which
     runs in the textarea - or the Library menu's Save, and the status line says "Apply or revert the
-    alphaTex draft before saving." A save writes the document, not the draft. Settled in review.
+    alphaTex draft before saving." A save writes the document, not the draft. Settled in review. *Settled in a
+    review of the page:* **only a draft that has been typed into refuses.** An untouched draft follows the score as it
+    changes, so it never stands in the way of a save; an edited draft that the score has since moved past says "The
+    alphaTex draft was written against an earlier score; revert it, or apply it to replace the changes made since." in
+    the status line and the panel, and Apply asks before replacing those changes.
 31. **The shortcut sheet is modal.** Opening it moves the focus into it, Tab stays inside it, and closing it - its close
     button or Escape - gives the focus back, or to the score when what had it is gone. While it is open no key but its
     own and Escape reaches the score behind it, and Escape closes the sheet alone, as it closes a popover. Its note says
@@ -714,6 +746,7 @@ Guitar Pro's trill.
 | | Free time | \| † | GP |
 | | Fix bar | F4 | GP's "check bar durations" |
 | | Insert / delete bar | Ctrl+Insert or Ctrl+Enter / Ctrl+Delete | GP, new (macOS) |
+| | Add bar at the end | Ctrl+Alt+Insert, Ctrl+Alt+Enter | new (M2 review; the palette's Add bar before M2) |
 | Tracks | Add track | Ctrl+Shift+Insert, Ctrl+Shift+Enter | GP, Tux, new (macOS) |
 | | Delete track | Ctrl+Shift+Backspace | new (Ctrl+Shift+Delete is the browser's) |
 | Accidentals | Flat / sharp | Alt+- / Alt+= | new |

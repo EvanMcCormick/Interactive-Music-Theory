@@ -856,6 +856,82 @@ to apply were re-proven on top (see "The re-proof of Phases 3 and 4").
 - **Task 3.10 replaces the page's `.ts`, `.html` and `.scss` whole** (`create`), so the old Tracks panel, the duration
   buttons and the generated-track methods go with them; the re-proof's clean type checks confirm nothing reaches them.
 
+**A review of the committed M2 code - which composition is open, Flatten and save, and the bar popovers** found five
+faults in composition identity and deleting, one in Flatten and save and three in the popovers, fixed in `374e79b` and
+`72d373c`. Whole suite after them: **3,215 SUCCESS** (3,204 after the first). **A review of the page (Tasks 3.9 to
+3.11)** found six important faults and eleven minor items, fixed in `bebbb9c`: **3,232 SUCCESS**. Task 5.2's Steps 13,
+14 and 25 are corrected for both.
+
+- **Task 3.1, undo across a load.** A open, load C: Ctrl+Z put A back while the panel named C, and Save wrote A over C.
+  Opening a different composition starts a fresh history, as opening a file does in Guitar Pro (design decision 20).
+  `replaceDocument(doc, { markClean, newComposition })` replaces the boolean: `newComposition` moves `documentId` on and
+  clears the undo and redo stacks; `markClean` only says it is saved. Its callers: the panel's load passes both; the
+  transcription's Open in Composer passes `newComposition` alone, since it is unsaved; the page's alphaTex Apply and the
+  spec helper `withFirstBar` pass neither, an edit. `reset` (the page's New) already cleared both stacks. No GP viewer or
+  import path calls either; the comment in `progression-track.ts` naming a `.gp` file is about the mapper.
+- **An opened transcription kept the old identity.** `openInComposer` replaced the document unmarked, so `documentId`
+  stayed and Save overwrote the entry open before. `transcription.component.spec.ts` and the save-queue spec pin it.
+- **Task 3.1, a delete that fails.** `remove` forgot the entry before `library.delete` resolved, so a failed delete left
+  the next Save writing a new entry beside the one still there. It forgets only once the delete succeeds, and only if the
+  entry is still current. While it is under way, a queued plain Save is dropped - it would write the entry back - and a
+  Save pressed then writes a new entry (`deleting`).
+- **Task 3.1, a copy writing while its original is deleted.** Forgetting moved `loadGeneration` on, so a Save as copy
+  landing after the delete was not adopted and the next Save made a third entry. A delete now moves `deletions` on
+  instead, and a write that made a new entry is adopted across it; one a load or New overtook is not.
+- **Task 3.8, `#saveButton`** was a template reference nothing read. Gone.
+- **Task 3.1, Flatten and save pressed mid-write.** The flatten ran, and when the write before failed, or its queued save
+  was refused or failed, nothing said the tracks were flattened and unsaved. A queued save records the tracks a flatten
+  detached for it (`QueuedSave.flattened`), and dropping it unsaved reports them in the alert, as the direct path does
+  (`dropQueuedSaves`).
+- **Task 3.5, clef, ottava and key over a range.** Apply wrote from the first bar until a bar differed, so bars in g2 and
+  f4 with only the ottava changed became g2/8va and f4/regular, and a key over a range stopped at a key change inside it.
+  With more than one bar selected, `setClef` and `setKeySignature` (`bar-edits.ts`, `writtenBarsOf`) write every selected
+  bar, a null field keeping each bar's own; from one bar they run on as before. The Clef popover sends a field still
+  mixed as null, so `PopoverValues.firstClef` and `firstOttava` are gone: `composer-popover-values.spec.ts` pinned
+  `firstClef` twice, and the first now pins `clef`. `bar-edits.spec.ts` calls take `{ first, last }`.
+- **Task 3.2, Key signature's Mixed** read the caret's staff and the command writes every staff. It reads every staff.
+- **Task 3.5, a popover the score changed under.** Ctrl+Z from a popover's button reaches the page, and the popover kept
+  fields read from the score before. It hears the service and closes, applying nothing, when the document changes by
+  anything but its own Apply (`closeOnOutsideChange`).
+- **Task 3.11, Space and Enter** (design decision 29). `pressesFocusedControl` claimed Space on a link and Enter on a
+  checkbox, which the browser does nothing with: after clicking Composer in the shell's nav, Space no longer played. It
+  is key-specific now, and only for a control matching `:focus-visible`: a Delete bar clicked with the mouse kept the
+  focus, and Space deleted another bar. A held Enter presses a palette button once unless its tool repeats.
+  `editable-target.spec.ts` pinned Space and Enter both on a link and a checkbox; that case is replaced by one per kind
+  of control, with `:focus-visible` faked, as Chrome headless does not set it from a script's `focus()`.
+- **Task 3.10, the alphaTex draft guard** refused a save whenever the draft differed from the score's alphaTex, so an
+  untouched draft refused every save after an edit and pointed at Apply, which would throw the edit away. The page keeps
+  the tex the draft was seeded from (`texDraftBase`): a draft equal to it follows the score, re-seeded when the document
+  changes; an edited draft refuses as before, and once the score has moved on it says "The alphaTex draft was written
+  against an earlier score; revert it, or apply it to replace the changes made since." in the status line and the panel,
+  and Apply asks first. No alphaTex is built to answer a Ctrl+S.
+- **Task 3.10, the strip's height** was clamped against the window, not the page, and never on resize.
+  `stripHeightRangeOf(pageHeight, fixedRowsHeight)` leaves the score 160px; a `ResizeObserver` on the page and its top
+  bar clamps again and is disconnected on destroy; the separator binds `aria-valuemin` and `aria-valuemax` from the same
+  range and takes Home and End. `clampedStripHeight` takes the range, and its spec is the new function's.
+- **Tasks 3.3 and 3.10, one live region.** The panel had a polite region of its own beside the status line's.
+  `ComposerService.announce(message, failed)` publishes a notice or a refusal with a new `messageId`, and the panel's
+  saved, loaded, deleted, exported and failure messages go through it; `statusMessage`, its timer and the region are gone.
+  The save refusal stays `role="alert"`: it holds its remedy and is a question, not a report. The panel spec's timer case
+  became one for `announce`, and the two cases that read its polite region read `ComposerState.notice`. The page spec's
+  `region()` reads the status line's `.messages`, and a spec with the real panel finds one `[aria-live]`.
+- **Task 3.10, parts the old page had.** Add bar returns as a palette tool in Bar, `appendBar`, face `+end`, keys
+  Ctrl+Alt+Insert and Ctrl+Alt+Enter (free on all four layouts the tool spec presses; design Shortcuts table). The
+  status line shows the score's bar count beside the caret ("Bar 3 of 4"). The ⌫ delete button and the entry-hints
+  paragraph are removed on purpose: Delete clears a beat, and the shortcut sheet lists every key.
+- **Task 3.10, small items.** `.tex-panel` scrolls within itself (`overflow: auto; min-height: 0`) and the score keeps
+  `10rem`; the editor's `#11181f` is `--composer-editor-surface`. The palette is a named `role="region"` with each group
+  labelled by its name, not a `<nav>` with `<h2>`s: `role="toolbar"` promises arrow keys, as `role="menu"` did (decision
+  20), and the shell's `<h1>` already heads the route. Plain keys in the saved list stop there, as in a popover.
+- **Task 3.9, the shell.** Its header wraps (`flex-wrap` on the header row and the nav), so a 375px window does not scroll
+  the body sideways, and it publishes `getBoundingClientRect().height`, which `offsetHeight` rounded. Its spec removes
+  `--app-header-height` after each case and drives a fake `ResizeObserver`.
+- **Specs added for the page:** Shift+Enter on a focused Section… opens it once; a held Enter; Space after a mouse click
+  plays; the separator's keys leave the caret; destroying the page takes its save guard off; Ctrl+C with the text
+  selection inside the score copies, which proves `#score` reaches the key handler.
+- **`deep-frozen.ts`** is `deep-frozen.spec-helper.ts`, which `tsconfig.app.json` excludes, so the production build no
+  longer compiles it. `edit-refusals.spec.ts`'s `toThrow()` case is titled for what it pins: that clearing notes makes no draft.
+
 ---
 
 
@@ -14553,11 +14629,20 @@ Flatten the track, Ctrl+S: "Saved". Library, Saved compositions…: the drawer o
 button; Tab to a saved row and press Enter: it loads, the drawer closes and the focus is on Library. Export,
 alphaTex: the focus is on Export. New, then Save: a new entry, and the composition loaded before is unchanged. Open the alphaTex panel, type a space into the draft, and press Ctrl+S with the focus in the
 textarea: nothing is saved, and the status line says "Apply or revert the alphaTex draft before saving."
-Do the same with Save in the Library menu. Revert, Ctrl+S: "Saved". Click Save twice quickly: one entry.
+Do the same with Save in the Library menu. Revert, Ctrl+S: "Saved". Click Save twice quickly: one entry. Every
+"Saved", "Loaded", "Deleted" and "Exported" is in the status line, and nowhere else. With the panel open and its draft
+untouched, type a fret into the score: the draft shows the fret, and Ctrl+S saves. Type into the draft, then type a fret
+into the score: the panel says the draft was written against an earlier score, Ctrl+S says so in the status line, and
+Apply asks before it replaces the fret. Save, type a fret, and load another composition: Undo is unavailable, and Save
+writes the composition loaded. Open a transcription in the composer (Transcribe, then Open in Composer) and Save: a new
+entry, and the composition open before is unchanged. Delete the open composition from the saved list, then Save: a new
+entry.
 
-**Step 14: Narrow width.** Resize the window to 1000px, 768px and 480px wide. The palette scrolls
-vertically with no horizontal scrollbar; the top bar wraps; the page never scrolls sideways; the track
-strip's separator drags with the mouse and moves with ↑ and ↓ when focused.
+**Step 14: Narrow width.** Resize the window to 1000px, 768px, 480px and 375px wide. The palette scrolls
+vertically with no horizontal scrollbar; the shell's navigation and the top bar wrap; the page never scrolls sideways; the
+track strip's separator drags with the mouse and moves with ↑ and ↓ when focused, and Home and End take it to its
+shortest and tallest. Drag the strip tall, then make the window shorter: the strip shrinks with it, and the score keeps
+about 160px. Open the alphaTex panel on a short window: the panel scrolls within itself, and the score keeps its room.
 
 **Step 15: Firefox.** Repeat Steps 2, 4, 5, 6 and 12 in Firefox, then press each symbol key - `?` `}` `|`
 `:` `!` `_` `)` `(` `$` `%` `<` `[` `]` `;` `/` `.` `+` `=` `-` - and Alt+-, Alt+=, Alt+0, Alt+/, Ctrl+/,
@@ -14616,9 +14701,15 @@ highlighted, and the focus is on the Clef button. Tab to the Library button, Ent
 the mode is still Pen and the focus is on Library. Click the Export menu open, then click the score: it
 closes. Tab to a track row's Update and press Space: it presses Update. Open Clef and click the Clef button: it
 closes; open it and click the score: it closes, and the focus stays where the click put it. Open Tuplet, Tab to 3:2,
-and press 5, R, → and Space: the score does not change and nothing plays; press `?`: no sheet opens. Open a popover,
-then the Library menu: the popover closes. Select bars 2 to 4 with a key change at bar 3 and open Key signature: it
-says Mixed, and Apply leaves both keys. With one track, Tab to its Remove: it is announced as unavailable, with the
+and press 5, R and →: the score does not change and nothing plays; press `?`: no sheet opens. Press Space: it presses
+the focused 3:2, as Space presses any focused button - applied, or refused with the reason inline - and nothing plays.
+Open a popover, then the Library menu: the popover closes. Open Clef and press Ctrl+Z: the popover closes, and the undo
+is all that changed. Select bars 2 to 4 with a key change at bar 3 and open Key signature: it says Mixed, and Apply
+leaves both keys; choose D major and Apply: bars 2 to 4 are in D major and bar 5 keeps its key. With a second track in
+another key at bar 2, a caret on bar 2 shows Key signature as Mixed. Select a treble bar and a bass bar, open Clef and
+change only the ottava to 8va: each bar keeps its clef and both are 8va. Click Delete bar with the mouse, then press
+Space: playback starts and no second bar is deleted. Click Composer in the shell's navigation, then press Space:
+playback starts. Tab to Fix bar and hold Enter: it runs once. With one track, Tab to its Remove: it is announced as unavailable, with the
 reason; Space: the status line says "A score needs at least one track." Open the shortcut sheet and click its
 backdrop: the sheet closes and the focus is back where it was; open it, press Ctrl+A and Ctrl+End: the sheet's text
 is selected and scrolled, and the score is unchanged.

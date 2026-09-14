@@ -4,7 +4,7 @@ import * as alphaTab from '@coderline/alphatab';
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
 import { toolStates } from './composer-tool-states';
-import { deepFrozen } from './deep-frozen';
+import { deepFrozen } from './deep-frozen.spec-helper';
 import { noteEffectRefusal, tieRefusal } from './edit-refusals';
 import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieChainOf, tieOriginOf } from './note-landing';
 import { ScoreDocMapperService } from './score-doc-mapper.service';

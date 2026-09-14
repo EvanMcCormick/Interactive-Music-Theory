@@ -1,6 +1,6 @@
 import { ComposerService } from './composer.service';
 import * as tools from './composer-tool-states';
-import { deepFrozen } from './deep-frozen';
+import { deepFrozen } from './deep-frozen.spec-helper';
 import { writtenBeats } from './written-beats.spec-helper';
 import { EditCursor, EntryMode, NoteDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
 

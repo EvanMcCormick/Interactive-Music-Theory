@@ -1,6 +1,6 @@
 import { ComposerService } from './composer.service';
 import { MIXED, popoverValuesOf } from './composer-popover-values';
-import { deepFrozen } from './deep-frozen';
+import { deepFrozen } from './deep-frozen.spec-helper';
 import { writtenBeats } from './written-beats.spec-helper';
 import { EditCursor, ScoreDoc, createDefaultCursor } from '../models/composer.model';
 

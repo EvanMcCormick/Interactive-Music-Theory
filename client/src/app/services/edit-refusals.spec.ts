@@ -1,6 +1,6 @@
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { deepFrozen } from './deep-frozen';
+import { deepFrozen } from './deep-frozen.spec-helper';
 import * as refusals from './edit-refusals';
 import { EditScope } from './edit-refusals';
 import { writtenBeats } from './written-beats.spec-helper';
@@ -414,7 +414,7 @@ describe('an edit that would leave a tuplet group open', () => {
       expect(clearRefusal(barOf(group), beatsAt(1))).toBeNull();
     });
 
-    it('drafts nothing to clear notes, since only removing a grace can leave a group open', () => {
+    it('pins that clearing notes makes no draft, by a bar a draft throws on copying, which only removing the grace copies', () => {
       // A bar a draft cannot copy: `structuredClone` throws on a function. Clearing notes alone never reads a draft, so
       // the Rest reader over a long range does no copying for it; clearing the grace still does.
       const bar = barOf('n4 g o n4t3 n8t3 n2');
