@@ -249,3 +249,39 @@ describe('ComposerService note effects that must land', () => {
     expect(beatsIn(service)[0].notes[0].effects.isHammerPullOrigin).toBeTrue();
   });
 });
+
+describe('ComposerService pitch and string moves', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('moves the caret\'s note to the string above, and the caret with it', () => {
+    writeFret(service, 0, 0, 5, 2);
+
+    service.moveNotesToString(-1);
+
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual({ kind: 'fretted', string: 1, fret: 0 });
+    expect(stateOf(service).cursor.stringIndex).toBe(0);
+  });
+
+  it('refuses a move that does not fit, publishing why and leaving the caret', () => {
+    writeFret(service, 0, 0, 3, 2);
+
+    service.moveNotesToString(-1);
+
+    expect(stateOf(service).refusal).toMatch(/fret -2/);
+    expect(stateOf(service).cursor.stringIndex).toBe(1);
+  });
+
+  it('moves a semitone as one undo step', () => {
+    writeFret(service, 0, 0, 5);
+
+    service.shiftSemitone(1);
+    service.undo();
+
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual({ kind: 'fretted', string: 1, fret: 5 });
+  });
+});

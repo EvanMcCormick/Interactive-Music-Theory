@@ -46,6 +46,7 @@ import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-comma
 import { ComposerStructureCommands } from './composer-service-structure';
 import { EditScope, durationRefusal, editRefusal, noteEffectRefusal } from './edit-refusals';
 import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
+import { moveNotesToString, shiftSemitone } from './note-moves';
 import { respellNotes, respellRefusal } from './note-respell';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 import { insertBarInto } from './score-structure';
@@ -501,6 +502,21 @@ export class ComposerService {
   /** Respell: each note to its next spelling. See note-respell.ts. */
   respell(): void {
     this.applyEdit(respellRefusal, (draft, refs, focus) => respellNotes(draft, refs, focus));
+  }
+
+  /** Moves the selection's notes a semitone up (+1) or down (-1). See `shiftSemitone`. */
+  shiftSemitone(delta: 1 | -1): void {
+    this.applyEdit({ family: 'note', key: 'notes' }, (draft, refs, focus) => shiftSemitone(draft, refs, focus, delta));
+  }
+
+  /**
+   * Moves the selection's notes to the string above (-1) or below (+1), keeping their pitch. See
+   * `moveNotesToString`. On the caret alone, the caret's string follows the note.
+   */
+  moveNotesToString(delta: 1 | -1): void {
+    const before = this.doc;
+    this.applyEdit({ family: 'note', key: 'notes' }, (draft, refs, focus) => moveNotesToString(draft, refs, focus, delta));
+    if (this.doc !== before && !this.stateSubject.getValue().anchor) this.moveCursor({ kind: 'string', delta });
   }
 
   /**
