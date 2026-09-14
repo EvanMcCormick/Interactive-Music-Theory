@@ -1,5 +1,5 @@
 import { BeatDoc, NoteDoc, ScoreDoc } from '../models/composer.model';
-import { BeatRef } from './composer-selection';
+import { BeatRef, beatAt } from './composer-selection';
 
 /**
  * Where a note's technique lands, asked of a `ScoreDoc` the way alphaTab 1.8 asks it of a finished
@@ -113,18 +113,94 @@ export function slideTargetOf(doc: ScoreDoc, ref: BeatRef, note: NoteDoc): NoteD
  * the nearest earlier note of the same pitch.
  */
 export function tieOriginOf(doc: ScoreDoc, ref: BeatRef, note: NoteDoc): NoteDoc | null {
-  if (!note.isTied) return null;
-  const pitch = note.pitch;
+  return note.isTied ? tieCandidateOf(doc, ref, note) : null;
+}
+
+/**
+ * The note a tie on `note` would be tied from, tied or not: what `tieOriginOf` finds once `note` is tied.
+ * With none, alphaTab clears the tie (`Note.finish`, `alphaTab.core.mjs` ~6612), so a tie tool refuses it.
+ */
+export function tieCandidateOf(doc: ScoreDoc, ref: BeatRef, note: NoteDoc): NoteDoc | null {
   for (const beat of beatsBefore(doc, ref)) {
-    if (pitch.kind === 'fretted') {
-      const same = noteOnString(beat, pitch.string);
-      if (same) return same;
-    } else if (!beat.isRest) {
-      const same = beat.notes.find(
-        other => other.pitch.kind === 'pitched' && other.pitch.noteValue === pitch.noteValue && other.pitch.octave === pitch.octave
-      );
-      if (same) return same;
-    }
+    const same = sameLineNote(beat, note);
+    if (same) return same;
+  }
+  return null;
+}
+
+/** The note on `beat` alphaTab would take for `note`'s line: the same string, or pitched, the same pitch. */
+function sameLineNote(beat: BeatDoc, note: NoteDoc): NoteDoc | null {
+  const pitch = note.pitch;
+  if (pitch.kind === 'fretted') return noteOnString(beat, pitch.string);
+  if (beat.isRest) return null;
+  return (
+    beat.notes.find(
+      other => other.pitch.kind === 'pitched' && other.pitch.noteValue === pitch.noteValue && other.pitch.octave === pitch.octave
+    ) ?? null
+  );
+}
+
+/** A note, and the beat it is on. The shape of `note-edits.ts`'s `NoteTarget`, which imports this module. */
+export interface PlacedNote {
+  ref: BeatRef;
+  note: NoteDoc;
+}
+
+/** Every beat of `ref`'s staff and voice in bars `firstBar` to `lastBar`, in order. */
+function beatRefsIn(doc: ScoreDoc, ref: BeatRef, firstBar: number, lastBar: number): BeatRef[] {
+  const bars = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars ?? [];
+  const refs: BeatRef[] = [];
+  for (let barIndex = Math.max(0, firstBar); barIndex <= Math.min(lastBar, bars.length - 1); barIndex++) {
+    (bars[barIndex]?.voices[ref.voiceIndex]?.beats ?? []).forEach((_, beatIndex) => refs.push({ ...ref, barIndex, beatIndex }));
+  }
+  return refs;
+}
+
+const isBefore = (a: BeatRef, b: BeatRef): boolean => a.barIndex < b.barIndex || (a.barIndex === b.barIndex && a.beatIndex < b.beatIndex);
+
+/**
+ * Every note of the tie chain `note` is in, first to last: the notes it is tied from, back to one that is
+ * not tied, and the notes tied onward from it. A note in no tie is a chain of one.
+ *
+ * `Note.finish` (~6619) copies a tie origin's `fret`, `octave` and `tone` onto its destination, so a
+ * move of one end alone is overwritten on the next save, or - moved to another string - loses the tie.
+ * Guitar Pro moves the whole chain, and the moves here do too.
+ */
+export function tieChainOf(doc: ScoreDoc, ref: BeatRef, note: NoteDoc): PlacedNote[] {
+  const chain: PlacedNote[] = [{ ref, note }];
+  const seen = new Set<NoteDoc>([note]);
+
+  for (let current = chain[0]; ; ) {
+    const origin = tieOriginOf(doc, current.ref, current.note);
+    const originRef = origin
+      ? beatRefsIn(doc, current.ref, current.ref.barIndex - SAME_LINE_BAR_REACH, current.ref.barIndex)
+          .filter(candidate => isBefore(candidate, current.ref))
+          .reverse()
+          .find(candidate => beatAt(doc, candidate)?.notes.includes(origin))
+      : undefined;
+    if (!origin || !originRef || seen.has(origin)) break;
+    current = { ref: originRef, note: origin };
+    seen.add(origin);
+    chain.unshift(current);
+  }
+
+  for (let current: PlacedNote = { ref, note }; ; ) {
+    const next = nextOnLine(doc, current);
+    if (!next || !next.note.isTied || seen.has(next.note) || tieOriginOf(doc, next.ref, next.note) !== current.note) break;
+    seen.add(next.note);
+    chain.push(next);
+    current = next;
+  }
+  return chain;
+}
+
+/** The first note after `placed` on its line - its string, or its pitch - within the bars a tie reaches. */
+function nextOnLine(doc: ScoreDoc, placed: PlacedNote): PlacedNote | null {
+  for (const candidate of beatRefsIn(doc, placed.ref, placed.ref.barIndex, placed.ref.barIndex + SAME_LINE_BAR_REACH)) {
+    if (!isBefore(placed.ref, candidate)) continue;
+    const beat = beatAt(doc, candidate);
+    const same = beat ? sameLineNote(beat, placed.note) : null;
+    if (same) return { ref: candidate, note: same };
   }
   return null;
 }

@@ -77,6 +77,34 @@ describe('toggleTie', () => {
     toggleTie(doc, [ref(1)], null);
     expect(notesAt(doc, [ref(1)], null)[0].isTied).toBeFalse();
   });
+
+  it('ties the notes of a range that have a note to tie from, skipping the rest, and a second press unties them', () => {
+    // Beat 0's two notes are the first on their strings; beat 1's string-1 note has beat 0's before it.
+    // alphaTab clears a tie with no origin, so the first notes are skipped rather than tied for nothing.
+    const doc = chordDoc();
+    const beats = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+
+    toggleTie(doc, [ref(0), ref(1)], null);
+    expect([...beats[0].notes, ...beats[1].notes].map(note => note.isTied)).toEqual([false, false, true]);
+
+    toggleTie(doc, [ref(0), ref(1)], null);
+    expect([...beats[0].notes, ...beats[1].notes].map(note => note.isTied)).toEqual([false, false, false]);
+  });
+});
+
+describe('toggleNoteEffect clearing a range', () => {
+  it('clears only the notes holding the value pressed, leaving another value alone', () => {
+    // Beat 0's string-1 note shift-slides into beat 1's, which slides out and lands nowhere. Shift slide
+    // reads beat 0's note alone, which has it, so the press clears - and must not wipe the slide out.
+    const doc = chordDoc();
+    const beats = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    beats[0].notes[0].effects.slide = 'shiftSlide';
+    beats[1].notes[0].effects.slide = 'slideOutUp';
+
+    toggleNoteEffect(doc, [ref(0), ref(1)], null, 'slide', 'shiftSlide', 'none');
+
+    expect([...beats[0].notes, ...beats[1].notes].map(note => note.effects.slide)).toEqual(['none', 'none', 'slideOutUp']);
+  });
 });
 
 describe('toggleNoteEffect with a hammer-on', () => {

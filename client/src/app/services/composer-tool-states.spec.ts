@@ -36,6 +36,38 @@ describe('toolStates', () => {
     expect(state.refusal).toMatch(/tied from/i);
   });
 
+  it('reads vibrato over a range past a tied note, as the command sets it, and lets the press through', () => {
+    const doc = ComposerService.createEmptyScore();
+    put(doc, 0, 0).effects.vibrato = 'slight';
+    put(doc, 0, 1).isTied = true;
+    put(doc, 0, 2, 1, 5).effects.vibrato = 'slight';
+
+    const state = toolStateOf(doc, at(0, 0), at(0, 2), 'vibrato');
+
+    expect(state).toEqual({ pressed: true, refusal: null });
+  });
+
+  it('refuses a tie with nothing to tie from, and a trill past the MIDI range, as the commands do', () => {
+    const doc = ComposerService.createEmptyScore();
+    put(doc, 0, 0);
+
+    expect(toolStateOf(doc, null, at(0, 0), 'tie').refusal).toMatch(/tie from/i);
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    const piano = doc.tracks[1].staves[0].bars[0].voices[0].beats[0];
+    piano.isRest = false;
+    piano.notes = [{ pitch: { kind: 'pitched', noteValue: 6, octave: 9 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+    expect(toolStateOf(doc, null, at(0, 0, 1, null), 'trill').refusal).toMatch(/trill/i);
+  });
+
+  it('lets a tap already on a pitched staff be cleared', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    doc.tracks[1].staves[0].bars[0].voices[0].beats[0].effects.tap = true;
+
+    expect(toolStateOf(doc, null, at(0, 0, 1, null), 'tap')).toEqual({ pressed: true, refusal: null });
+    expect(toolStateOf(doc, null, at(0, 1, 1, null), 'tap').refusal).toMatch(/fretted/i);
+  });
+
   it('explains a hammer-on with nothing to land on before it is pressed', () => {
     const doc = ComposerService.createEmptyScore();
     put(doc, 0, 0);

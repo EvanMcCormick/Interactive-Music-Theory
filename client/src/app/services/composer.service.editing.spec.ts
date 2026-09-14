@@ -274,6 +274,61 @@ describe('ComposerService fermata', () => {
   });
 });
 
+describe('ComposerService vibrato and ties over a range', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  /** Frets 5, 5 tied to it, and 7 on string 1, with the three beats selected. */
+  const tiedPhrase = (): void => {
+    writeFret(service, 0, 0, 5);
+    writeFret(service, 0, 1, 5);
+    service.toggleTie();
+    writeFret(service, 0, 2, 7);
+    service.setCursor({ beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 2 });
+  };
+  const vibratos = (): string[] => beatsIn(service).slice(0, 3).map(beat => beat.notes[0].effects.vibrato);
+
+  it('puts vibrato on a phrase\'s notes past a tied continuation, which draws its origin\'s', () => {
+    tiedPhrase();
+    expect(beatsIn(service)[1].notes[0].isTied).toBeTrue();
+
+    service.toggleNoteEffect('vibrato', 'slight', 'none');
+
+    expect(stateOf(service).refusal).toBeNull();
+    expect(vibratos()).toEqual(['slight', 'none', 'slight']);
+  });
+
+  it('clears vibrato from the phrase, a continuation\'s own stale copy included', () => {
+    tiedPhrase();
+    service.toggleNoteEffect('vibrato', 'slight', 'none');
+    const stale = structuredClone(service.doc);
+    stale.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0].effects.vibrato = 'slight';
+    service.replaceDocument(stale);
+    service.setCursor({ beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 2 });
+
+    service.toggleNoteEffect('vibrato', 'slight', 'none');
+
+    expect(stateOf(service).refusal).toBeNull();
+    expect(vibratos()).toEqual(['none', 'none', 'none']);
+  });
+
+  it('refuses a tie with nothing before it to tie from, committing nothing', () => {
+    writeFret(service, 0, 0, 5);
+    const before = JSON.stringify(service.doc);
+
+    service.toggleTie();
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(stateOf(service).refusal).toMatch(/tie from/i);
+  });
+});
+
 describe('ComposerService pitch and string moves', () => {
   let service: ComposerService;
 

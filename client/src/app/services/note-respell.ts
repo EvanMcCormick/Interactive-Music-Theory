@@ -49,10 +49,13 @@ export function respellingsOf(pitchClass: number, fretted: boolean): AccidentalM
  * The spelling `note` is drawn with now: a pitched note's letter, else its forced accidental, else what
  * alphaTab draws for `Default` - a white key's natural, or a black key sharp when the key signature has
  * no flats and flat when it has (`ModelUtils.computeAccidental`, `alphaTab.core.mjs` ~4571).
+ *
+ * A letter is read against the note's stored pitch, as the mapper reads it (`accidentalModeFor`), which
+ * is the drawn pitch too unless the staff is transposed.
  */
 function spellingOf(note: NoteDoc, pitchClass: number, fifths: number): AccidentalMode {
   if (note.pitch.kind === 'pitched' && note.pitch.letter) {
-    return MODE_BY_ALTER.get(alterFor(pitchClass, LETTERS.indexOf(note.pitch.letter))) ?? 'auto';
+    return MODE_BY_ALTER.get(alterFor(note.pitch.noteValue, LETTERS.indexOf(note.pitch.letter))) ?? 'auto';
   }
   if (note.accidental !== 'auto') return note.accidental;
   if (STEP_SEMITONES.includes(reduceToOctave(pitchClass))) return 'auto';
@@ -63,12 +66,23 @@ function spellingOf(note: NoteDoc, pitchClass: number, fifths: number): Accident
  * `note`'s next spelling - its pitch and accidental - drawn from `pitchClass` in a key of `fifths`, or
  * null when it has none to move to. A pitched note gets the letter as well as the accidental, since the
  * mapper reads a letter first.
+ *
+ * On a `transposed` staff - one whose transpositions do not come to whole octaves - a pitched note gets
+ * the accidental and no letter, as `setAccidental` does. The mapper reads a letter against the stored
+ * pitch, so a letter chosen for the drawn pitch would name the wrong one; the accidental alone is checked
+ * against the drawn pitch, as the accidental refusal checks it.
  */
-export function respelledNote(note: NoteDoc, pitchClass: number, fifths: number): Pick<NoteDoc, 'pitch' | 'accidental'> | null {
+export function respelledNote(
+  note: NoteDoc,
+  pitchClass: number,
+  fifths: number,
+  transposed = false
+): Pick<NoteDoc, 'pitch' | 'accidental'> | null {
   const options = respellingsOf(pitchClass, note.pitch.kind === 'fretted');
   if (options.length === 0) return null;
   const next = options[(options.indexOf(spellingOf(note, pitchClass, fifths)) + 1) % options.length];
   if (note.pitch.kind === 'fretted') return { pitch: note.pitch, accidental: next };
+  if (transposed) return { pitch: { kind: 'pitched', noteValue: note.pitch.noteValue, octave: note.pitch.octave }, accidental: next };
 
   const letter = next === 'auto' ? LETTERS[STEP_SEMITONES.indexOf(reduceToOctave(pitchClass))] : forcedLetterOf(next, pitchClass);
   return { pitch: { kind: 'pitched', noteValue: note.pitch.noteValue, octave: note.pitch.octave, letter }, accidental: next };
@@ -80,7 +94,8 @@ function respellingOf(doc: ScoreDoc, target: NoteTarget): Pick<NoteDoc, 'pitch' 
   const bar = staff?.bars[target.ref.barIndex];
   if (!staff || !bar) return null;
   if (target.note.pitch.kind === 'fretted' && target.note.effects.harmonic === 'natural') return null;
-  return respelledNote(target.note, drawnPitchClassOf(staff, target.note.pitch), bar.keySignature.fifths);
+  const transposed = reduceToOctave(staff.transpose + staff.displayTranspose) !== 0;
+  return respelledNote(target.note, drawnPitchClassOf(staff, target.note.pitch), bar.keySignature.fifths, transposed);
 }
 
 /** Why a respell cannot apply to `refs`, or null: any note edit's refusal, or no note that can be respelled. */

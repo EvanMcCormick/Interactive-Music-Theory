@@ -44,7 +44,16 @@ import { defaultFermata } from './composer-tool-defaults';
 import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
 import { ComposerStructureCommands } from './composer-service-structure';
-import { EditScope, durationRefusal, editRefusal, fermataRefusal, noteEffectRefusal } from './edit-refusals';
+import {
+  EditScope,
+  beatEffectRefusal,
+  durationRefusal,
+  editRefusal,
+  fermataRefusal,
+  noteEffectRefusal,
+  tieRefusal,
+  trillRefusal
+} from './edit-refusals';
 import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
 import { moveNotesToString, shiftSemitone } from './note-moves';
 import { respellNotes, respellRefusal } from './note-respell';
@@ -488,8 +497,9 @@ export class ComposerService {
     this.applyEdit({ family: 'note', key: 'accidental', accidental }, (draft, refs, focus) => setAccidental(draft, refs, focus, accidental));
   }
 
+  /** Presses Tie on the notes with a note to tie from. See `toggleTie` and `tieRefusal`. */
   toggleTie(): void {
-    this.applyEdit({ family: 'note', key: 'tie' }, (draft, refs, focus) => toggleTie(draft, refs, focus));
+    this.applyEdit(tieRefusal, (draft, refs, focus) => toggleTie(draft, refs, focus));
   }
 
   /** Presses a beat effect tool on the selection. Not grace: see `toggleGrace`. */
@@ -498,7 +508,10 @@ export class ComposerService {
     on: BeatEffectsDoc[K],
     off: BeatEffectsDoc[K]
   ): void {
-    this.applyEdit({ family: 'beat', key }, (draft, refs) => toggleBeatEffect(draft, refs, key, on, off));
+    this.applyEdit(
+      (doc, refs) => beatEffectRefusal(doc, refs, key, on, off),
+      (draft, refs) => toggleBeatEffect(draft, refs, key, on, off)
+    );
   }
 
   /**
@@ -528,7 +541,7 @@ export class ComposerService {
 
   /** Presses Trill: each note a whole step above itself at the default speed, or none. See `toggleTrill`. */
   toggleTrill(): void {
-    this.applyEdit({ family: 'note', key: 'trill' }, (draft, refs, focus) => toggleTrill(draft, refs, focus));
+    this.applyEdit(trillRefusal, (draft, refs, focus) => toggleTrill(draft, refs, focus));
   }
 
   /** Presses Fermata: at the selection's positions, on every track. See `toggleFermata`. */

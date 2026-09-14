@@ -1,8 +1,8 @@
 import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc } from '../models/composer.model';
-import { fermataPositionsOf, toggledValue } from './beat-edits';
+import { beatsAt, fermataPositionsOf, toggledValue } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
-import { noteEffectTargets, noteTargetsAt, notesAt } from './note-edits';
-import { hammerDestinationOf, slideTargetOf, tieOriginOf } from './note-landing';
+import { noteEffectTargets, noteTargetsAt, notesAt, tieTargetsOf, trillTargetOf } from './note-edits';
+import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieOriginOf } from './note-landing';
 import { forcedLetterOf, reduceToOctave } from './note-spelling';
 
 /**
@@ -185,6 +185,68 @@ export function fermataRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): string 
   return fermataPositionsOf(doc, refs).length === 0 ? GRACE_FERMATA : null;
 }
 
+const NOTHING_TO_TIE_FROM =
+  'A tie needs an earlier note to tie from - on the same string, or of the same pitch on a pitched staff - within ' +
+  'three bars. There is nothing there to tie from, so it would not save.';
+
+/**
+ * Why a tie press cannot apply to `refs`, or null: any tie edit's refusal, or - when the press would tie -
+ * no note it means having a note to tie from (`tieTargetsOf`).
+ *
+ * alphaTab looks for a tie's origin up to three bars back on the same string, or the same pitch, and
+ * clears the tie when it finds none (`Note.finish` and `findTieOrigin`, `alphaTab.core.mjs` ~6530,
+ * ~6612) - earlier bars are already chained when a note finishes, so the reach is the whole three bars,
+ * as `note-landing.spec.ts` pins. An untie is never refused for it.
+ */
+export function tieRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'note', key: 'tie' }, focus);
+  if (refusal) return refusal;
+  const targets = tieTargetsOf(doc, refs, focus);
+  if (!toggledValue(targets.map(target => target.note.isTied), true, false)) return null;
+  return targets.some(target => tieCandidateOf(doc, target.ref, target.note) !== null) ? null : NOTHING_TO_TIE_FROM;
+}
+
+/** The highest MIDI note, which `Note.trillValue` must not pass. */
+const MIDI_TOP = 127;
+
+const TRILL_OUT_OF_RANGE =
+  'A trill a whole step above a note in the selection would pass the top of the MIDI range, and alphaTab would drop it.';
+
+/**
+ * Why a trill press cannot apply to `refs`, or null: any trill edit's refusal, or - when the press would
+ * set trills - one aimed past MIDI 127 (`trillTargetOf`), which alphaTab does not keep. A clear is never
+ * refused for it.
+ */
+export function trillRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'note', key: 'trill' }, focus);
+  if (refusal) return refusal;
+  const targets = noteTargetsAt(doc, refs, focus);
+  if (targets.every(target => target.note.effects.trill !== null)) return null;
+  const tooHigh = targets.some(({ ref, note }) => {
+    const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
+    return staff !== undefined && trillTargetOf(staff, note) > MIDI_TOP;
+  });
+  return tooHigh ? TRILL_OUT_OF_RANGE : null;
+}
+
+/**
+ * Why pressing a beat effect tool - `key` set to `on`, by the toggle rule, or cleared to `off` - cannot
+ * apply to `refs`, or null. A clear is refused only where any beat edit is, so a tap, slap or pop already
+ * on a pitched staff - which an alphaTex import can leave - can be taken off; only setting one there is
+ * refused, as `noteEffectRefusal` treats the fretted-only note techniques.
+ */
+export function beatEffectRefusal<K extends Exclude<keyof BeatEffectsDoc, 'grace'>>(
+  doc: ScoreDoc,
+  refs: readonly BeatRef[],
+  key: K,
+  on: BeatEffectsDoc[K],
+  off: BeatEffectsDoc[K]
+): string | null {
+  const clears = toggledValue(beatsAt(doc, refs).map(beat => beat.effects[key]), on, off) !== on;
+  // 'duration' stands for any beat edit: the scope with no technique of its own to check.
+  return editRefusal(doc, refs, { family: 'beat', key: clears ? 'duration' : key }, null);
+}
+
 const GRACE_DURATION =
   "A grace note's written value is set by alphaTab from how many graces are in its group, so it cannot be changed.";
 
@@ -226,9 +288,10 @@ const VIBRATO_ON_TIE = 'Vibrato on a tied note belongs to the note it is tied fr
  * - Turning an effect on is refused as `editRefusal` refuses it, and also when no note it means can
  *   hold it: a hammer-on, or a shift or legato slide, with nothing to land on. A range skips the notes
  *   that cannot land (`noteEffectTargets`).
- * - Vibrato on a tied note is refused either way. alphaTab draws and plays a tie destination with its
- *   origin's vibrato (`tieOriginOf`), so a continuation's own value changes nothing anyone can see or
- *   hear - and writing one stops alphaTab carrying a bend across the tie.
+ * - Vibrato on tied notes alone is refused either way. alphaTab draws and plays a tie destination with
+ *   its origin's vibrato (`tieOriginOf`), so a continuation's own value changes nothing anyone can see or
+ *   hear - and writing one stops alphaTab carrying a bend across the tie. A range with other notes in it
+ *   skips its continuations (`noteEffectTargets`), as a hammer-on skips notes that cannot land.
  */
 export function noteEffectRefusal<K extends keyof NoteEffectsDoc>(
   doc: ScoreDoc,
@@ -242,7 +305,9 @@ export function noteEffectRefusal<K extends keyof NoteEffectsDoc>(
   if (refusal) return refusal;
 
   const all = noteTargetsAt(doc, refs, focus);
-  if (key === 'vibrato' && all.some(target => tieOriginOf(doc, target.ref, target.note) !== null)) return VIBRATO_ON_TIE;
+  if (key === 'vibrato' && all.length > 0 && all.every(target => tieOriginOf(doc, target.ref, target.note) !== null)) {
+    return VIBRATO_ON_TIE;
+  }
 
   const targets = noteEffectTargets(doc, refs, focus, key, on);
   if (toggledValue(targets.map(target => target.note.effects[key]), on, off) !== on) return null;

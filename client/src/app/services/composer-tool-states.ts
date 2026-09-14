@@ -13,8 +13,16 @@ import { barFillAt } from './bar-fill';
 import { beatsAt, fermataPositionsOf, toggledValue } from './beat-edits';
 import { BeatRef, selectedBars, selectionTargets } from './composer-selection';
 import { defaultFermata, fullBendPoints } from './composer-tool-defaults';
-import { durationRefusal, editRefusal, fermataRefusal, noteEffectRefusal } from './edit-refusals';
-import { noteEffectTargets, noteTargetsAt } from './note-edits';
+import {
+  beatEffectRefusal,
+  durationRefusal,
+  editRefusal,
+  fermataRefusal,
+  noteEffectRefusal,
+  tieRefusal,
+  trillRefusal
+} from './edit-refusals';
+import { noteEffectTargets, noteTargetsAt, tieTargetsOf } from './note-edits';
 import { tieOriginOf } from './note-landing';
 import { respellRefusal } from './note-respell';
 
@@ -80,10 +88,10 @@ function dots(count: number): Reader {
   });
 }
 
-function beatEffect<K extends Exclude<keyof BeatEffectsDoc, 'grace'>>(key: K, on: BeatEffectsDoc[K]): Reader {
+function beatEffect<K extends Exclude<keyof BeatEffectsDoc, 'grace'>>(key: K, on: BeatEffectsDoc[K], off: BeatEffectsDoc[K]): Reader {
   return reading => ({
     pressed: share(beats(reading).map(beat => sameValue(beat.effects[key], on))),
-    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key }, null)
+    refusal: beatEffectRefusal(reading.doc, reading.refs, key, on, off)
   });
 }
 
@@ -174,8 +182,8 @@ const READERS: Readonly<Record<string, Reader>> = {
     refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'tuplet' }, null)
   }),
   tie: reading => ({
-    pressed: share(noteTargetsAt(reading.doc, reading.refs, reading.focus).map(({ note }) => note.isTied)),
-    refusal: editRefusal(reading.doc, reading.refs, { family: 'note', key: 'tie' }, reading.focus)
+    pressed: share(tieTargetsOf(reading.doc, reading.refs, reading.focus).map(({ note }) => note.isTied)),
+    refusal: tieRefusal(reading.doc, reading.refs, reading.focus)
   }),
   rest: reading => ({
     pressed: share(beats(reading).map(beat => beat.isRest)),
@@ -210,8 +218,8 @@ const READERS: Readonly<Record<string, Reader>> = {
   f: dynamic('f'),
   ff: dynamic('ff'),
   fff: dynamic('fff'),
-  crescendo: beatEffect('crescendo', 'crescendo'),
-  decrescendo: beatEffect('crescendo', 'decrescendo'),
+  crescendo: beatEffect('crescendo', 'crescendo', 'none'),
+  decrescendo: beatEffect('crescendo', 'decrescendo', 'none'),
   accent: noteEffect('accent', 'normal', 'none'),
   heavyAccent: noteEffect('accent', 'heavy', 'none'),
   staccato: noteEffect('isStaccato', true, false),
@@ -239,17 +247,17 @@ const READERS: Readonly<Record<string, Reader>> = {
   dead: noteEffect('isDead', true, false),
   trill: reading => ({
     pressed: share(noteTargetsAt(reading.doc, reading.refs, reading.focus).map(({ note }) => note.effects.trill !== null)),
-    refusal: editRefusal(reading.doc, reading.refs, { family: 'note', key: 'trill' }, reading.focus)
+    refusal: trillRefusal(reading.doc, reading.refs, reading.focus)
   }),
-  tap: beatEffect('tap', true),
+  tap: beatEffect('tap', true, false),
   leftHandTap: noteEffect('isLeftHandTapped', true, false),
-  slap: beatEffect('slap', true),
-  pop: beatEffect('pop', true),
+  slap: beatEffect('slap', true, false),
+  pop: beatEffect('pop', true, false),
   graceBefore: grace('beforeBeat'),
   graceOnBeat: grace('onBeat'),
-  pickDown: beatEffect('pickStroke', 'down'),
-  pickUp: beatEffect('pickStroke', 'up'),
-  fadeIn: beatEffect('fadeIn', true)
+  pickDown: beatEffect('pickStroke', 'down', 'none'),
+  pickUp: beatEffect('pickStroke', 'up', 'none'),
+  fadeIn: beatEffect('fadeIn', true, false)
 };
 
 /** The ids of every tool `toolStates` has something to say about. */

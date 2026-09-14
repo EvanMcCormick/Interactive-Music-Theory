@@ -68,6 +68,19 @@ describe('respellNotes', () => {
     expect(letters).toEqual(['D:flat', 'B:doubleSharp', 'C:sharp']);
   });
 
+  it('sets the accidental and drops the letter on a transposed staff, where a letter names the stored pitch', () => {
+    // Stored C sharp, transposed by 2, is drawn as B. Its spellings are A double sharp, B and C flat,
+    // and the next after B is C flat. A letter is read against the stored pitch by the mapper, so a
+    // letter chosen from the drawn one would be wrong; `setAccidental` drops it, and so does this.
+    const score = doc(C_SHARP_FRET, C_SHARP);
+    score.tracks[1].staves[0].transpose = 2;
+
+    respellNotes(score, [ref(1)], null);
+
+    expect(noteOf(score, 1).pitch).toEqual({ kind: 'pitched', noteValue: 1, octave: 4 });
+    expect(noteOf(score, 1).accidental).toBe('flat');
+  });
+
   it('reads a written letter as the current spelling', () => {
     const score = doc(C_SHARP_FRET, { ...C_SHARP, letter: 'D' });
 

@@ -1,6 +1,6 @@
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { EditScope, durationRefusal, editRefusal, noteEffectRefusal } from './edit-refusals';
+import { EditScope, beatEffectRefusal, durationRefusal, editRefusal, noteEffectRefusal, tieRefusal, trillRefusal } from './edit-refusals';
 import { AccidentalMode, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
 
 const ref = (trackIndex: number, beatIndex = 0): BeatRef =>
@@ -194,6 +194,49 @@ describe('durationRefusal', () => {
   });
 });
 
+describe('tieRefusal', () => {
+  it('refuses a tie on a note with nothing before it on its string to tie from, and allows one that has', () => {
+    const score = doc();
+    const second = score.tracks[0].staves[0].bars[0].voices[0].beats[1];
+    second.isRest = false;
+    second.notes = [{ pitch: { kind: 'fretted', string: 1, fret: 0 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+
+    expect(tieRefusal(score, [ref(0)], null)).toMatch(/nothing .*to tie from/i);
+    expect(tieRefusal(score, [ref(0, 1)], null)).toBeNull();
+    expect(tieRefusal(score, [ref(0), ref(0, 1)], null)).toBeNull();
+  });
+
+  it('lets a press that unties a note through, origin or not', () => {
+    const score = doc();
+    score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].isTied = true;
+
+    expect(tieRefusal(score, [ref(0)], null)).toBeNull();
+  });
+});
+
+describe('trillRefusal', () => {
+  it('refuses a trill whose whole step above would pass the top of the MIDI range', () => {
+    const score = doc();
+    const piano = score.tracks[1].staves[0].bars[0].voices[0].beats[0].notes[0];
+
+    expect(trillRefusal(score, [ref(1)], null)).toBeNull();
+    piano.pitch = { kind: 'pitched', noteValue: 6, octave: 9 };
+    expect(trillRefusal(score, [ref(1)], null)).toMatch(/trill/i);
+  });
+});
+
+describe('beatEffectRefusal', () => {
+  it('lets a press that clears a tap, slap or pop through on a pitched staff, and refuses one that sets it', () => {
+    for (const key of ['tap', 'slap', 'pop'] as const) {
+      const score = doc();
+      score.tracks[1].staves[0].bars[0].voices[0].beats[0].effects[key] = true;
+
+      expect(beatEffectRefusal(score, [ref(1)], key, true, false)).withContext(key).toBeNull();
+      expect(beatEffectRefusal(doc(), [ref(1)], key, true, false)).withContext(key).toMatch(/fretted/i);
+    }
+  });
+});
+
 describe('noteEffectRefusal', () => {
   /** The guitar note at beat 0 followed, at beat 1, by a note on string 1 too. */
   function withFollower(): ScoreDoc {
@@ -244,6 +287,17 @@ describe('noteEffectRefusal', () => {
 
     expect(noteEffectRefusal(score, [ref(0, 1)], null, 'vibrato', 'slight', 'none')).toMatch(/tied from/i);
     tied.effects.vibrato = 'slight';
+    expect(noteEffectRefusal(score, [ref(0, 1)], null, 'vibrato', 'slight', 'none')).toMatch(/tied from/i);
+  });
+
+  it('lets vibrato onto a range with a tied note in it, refusing only a press on tied notes alone', () => {
+    const score = withFollower();
+    score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0].isTied = true;
+    const third = score.tracks[0].staves[0].bars[0].voices[0].beats[2];
+    third.isRest = false;
+    third.notes = [{ pitch: { kind: 'fretted', string: 1, fret: 4 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+
+    expect(noteEffectRefusal(score, [ref(0, 0), ref(0, 1), ref(0, 2)], null, 'vibrato', 'slight', 'none')).toBeNull();
     expect(noteEffectRefusal(score, [ref(0, 1)], null, 'vibrato', 'slight', 'none')).toMatch(/tied from/i);
   });
 

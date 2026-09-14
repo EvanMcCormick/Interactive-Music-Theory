@@ -48,7 +48,7 @@ export function toggledValue<T>(current: readonly T[], on: T, off: T): T {
 }
 
 /** `value` as JSON with every object's keys sorted, so equal values always print alike. */
-function canonicalJsonOf(value: unknown): string {
+export function canonicalJsonOf(value: unknown): string {
   return JSON.stringify(value, (_key, inner: unknown) =>
     inner !== null && typeof inner === 'object' && !Array.isArray(inner)
       ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))

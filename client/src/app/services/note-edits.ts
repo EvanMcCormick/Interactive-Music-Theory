@@ -1,8 +1,8 @@
 import { AccidentalMode, NoteDoc, NoteEffectsDoc, ScoreDoc, StaffDoc } from '../models/composer.model';
-import { toggledValue } from './beat-edits';
+import { canonicalJsonOf, toggledValue } from './beat-edits';
 import { DEFAULT_TRILL_SPEED, TRILL_INTERVAL } from './composer-tool-defaults';
 import { BeatRef, beatAt } from './composer-selection';
-import { hammerDestinationOf, slideTargetOf } from './note-landing';
+import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieOriginOf } from './note-landing';
 
 /**
  * Edits that act on notes: effects, accidentals and ties.
@@ -58,6 +58,9 @@ function landingOf<K extends keyof NoteEffectsDoc>(key: K, value: NoteEffectsDoc
 /**
  * The notes a press of `key` with `on` reads and sets: the notes it means that can hold `on`, or all
  * of them when none can - which `noteEffectRefusal` refuses unless the press clears.
+ *
+ * Vibrato skips a tied continuation, whose own vibrato alphaTab never draws or plays - it takes its
+ * origin's (`tieOriginOf`) - so a phrase with a tie in it takes vibrato on the notes that carry it.
  */
 export function noteEffectTargets<K extends keyof NoteEffectsDoc>(
   doc: ScoreDoc,
@@ -67,10 +70,17 @@ export function noteEffectTargets<K extends keyof NoteEffectsDoc>(
   on: NoteEffectsDoc[K]
 ): NoteTarget[] {
   const all = noteTargetsAt(doc, refs, focus);
-  const lands = landingOf(key, on);
-  if (!lands) return all;
-  const landing = all.filter(target => lands(doc, target.ref, target.note) !== null);
-  return landing.length > 0 ? landing : all;
+  const holds = holdingOf(key, on);
+  if (!holds) return all;
+  const holding = all.filter(target => holds(doc, target.ref, target.note));
+  return holding.length > 0 ? holding : all;
+}
+
+/** Which notes can hold `value` for `key`, or null when any note can. */
+function holdingOf<K extends keyof NoteEffectsDoc>(key: K, value: NoteEffectsDoc[K]): ((doc: ScoreDoc, ref: BeatRef, note: NoteDoc) => boolean) | null {
+  if (key === 'vibrato') return (doc, ref, note) => tieOriginOf(doc, ref, note) === null;
+  const lands = landingOf(key, value);
+  return lands ? (doc, ref, note) => lands(doc, ref, note) !== null : null;
 }
 
 /**
@@ -78,7 +88,10 @@ export function noteEffectTargets<K extends keyof NoteEffectsDoc>(
  *
  * The rule reads the notes that can hold the value (`noteEffectTargets`), so a range ending on a note
  * with nothing to land on still turns a hammer-on off once every other note has one. Turning on writes
- * only those notes; a clear writes every note the press means.
+ * only those notes. A clear writes those, and every other note the press means that holds exactly the
+ * value pressed - a stale hammer-on with nothing to land on, a tied continuation's own vibrato - but
+ * never a note holding a different value: Shift slide over a phrase that ends in a slide out leaves the
+ * slide out.
  */
 export function toggleNoteEffect<K extends keyof NoteEffectsDoc>(
   doc: ScoreDoc,
@@ -90,8 +103,17 @@ export function toggleNoteEffect<K extends keyof NoteEffectsDoc>(
 ): void {
   const targets = noteEffectTargets(doc, refs, focus, key, on);
   const value = toggledValue(targets.map(target => target.note.effects[key]), on, off);
-  const written = value === on ? targets : noteTargetsAt(doc, refs, focus);
-  for (const { note } of written) note.effects[key] = structuredClone(value);
+  const pressed = canonicalJsonOf(on);
+  const written =
+    value === on
+      ? targets.map(target => target.note)
+      : [
+          ...new Set([
+            ...targets.map(target => target.note),
+            ...notesAt(doc, refs, focus).filter(note => canonicalJsonOf(note.effects[key]) === pressed)
+          ])
+        ];
+  for (const note of written) note.effects[key] = structuredClone(value);
 }
 
 /**
@@ -115,11 +137,26 @@ export function setAccidental(
   }
 }
 
-/** Presses the tie tool: `isTied` marks the note a tie arrives at. */
+/**
+ * The notes a tie press reads and sets: the notes it means that have a note to tie from
+ * (`tieCandidateOf`), or all of them when none has - which `tieRefusal` refuses unless the press unties.
+ * alphaTab clears a tie with no origin, so a range skips its first notes as a hammer-on skips its last.
+ */
+export function tieTargetsOf(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): NoteTarget[] {
+  const all = noteTargetsAt(doc, refs, focus);
+  const tying = all.filter(target => tieCandidateOf(doc, target.ref, target.note) !== null);
+  return tying.length > 0 ? tying : all;
+}
+
+/**
+ * Presses the tie tool: `isTied` marks the note a tie arrives at. By the toggle rule over `tieTargetsOf`;
+ * an untie also reaches every other tied note the press means.
+ */
 export function toggleTie(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): void {
-  const notes = notesAt(doc, refs, focus);
-  const value = toggledValue(notes.map(note => note.isTied), true, false);
-  for (const note of notes) note.isTied = value;
+  const targets = tieTargetsOf(doc, refs, focus).map(target => target.note);
+  const value = toggledValue(targets.map(note => note.isTied), true, false);
+  const written = value ? targets : [...new Set([...targets, ...notesAt(doc, refs, focus).filter(note => note.isTied)])];
+  for (const note of written) note.isTied = value;
 }
 
 /**
