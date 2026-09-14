@@ -16,6 +16,7 @@ import { BeatRef, selectedBars, selectionTargets } from './composer-selection';
 import { defaultFermata, fullBendPoints } from './composer-tool-defaults';
 import {
   beatEffectRefusal,
+  clearRefusal,
   dotsRefusal,
   durationRefusal,
   editRefusal,
@@ -68,6 +69,8 @@ interface Reading {
   refs: BeatRef[];
   focus: number | null;
   bars: { first: number; last: number };
+  /** Whether the selection is a range, not the caret alone. */
+  ranged: boolean;
   /** Select or Pen - or null from `toolStateOf`, which is not told and answers nothing for either. */
   entryMode: EntryMode | null;
   /** The notes a press means (`noteTargetsAt`), read the first time a reader asks and kept for the rest. */
@@ -214,9 +217,10 @@ const READERS: Readonly<Record<string, Reader>> = {
     pressed: share(tieTargetsOf(reading.doc, reading.refs, reading.focus, reading.notes()).map(({ note }) => note.isTied)),
     refusal: tieRefusal(reading.doc, reading.refs, reading.focus, reading.notes())
   }),
+  // Over a range Rest clears the beats (`clearSelectionToRests`), so it is refused as that clear is.
   rest: reading => ({
     pressed: share(beats(reading).map(beat => beat.isRest)),
-    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'duration' }, null)
+    refusal: reading.ranged ? clearRefusal(reading.doc, reading.refs) : editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'duration' }, null)
   }),
   repeatOpen: barFlag(bar => bar.isRepeatStart),
   repeatClose: barFlag(bar => bar.repeatCount > 0),
@@ -303,6 +307,7 @@ function readingOf(doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor,
     refs,
     focus,
     bars: selectedBars(anchor, cursor),
+    ranged: anchor !== null,
     entryMode,
     notes: () => (notes ??= noteTargetsAt(doc, refs, focus))
   };

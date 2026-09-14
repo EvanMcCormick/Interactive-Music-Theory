@@ -3,7 +3,7 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { deleteBeats, insertBeatAt, setBeatDurations, setGrace } from './beat-edits';
+import { clearToRests, deleteBeats, insertBeatAt, setBeatDurations, setGrace } from './beat-edits';
 import { playbackStartsOf } from './bar-fill';
 import { fermataNoticeOf } from './fermata-settling';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
@@ -171,6 +171,40 @@ describe('fermata positions and carrying', () => {
 
     expect(shapesOf(doc)).toEqual(['n4 n4F n4 n8 r8', 'n4 n4F n4 n4']);
     expect(shapesOf(saved(doc))).toEqual(shapesOf(doc));
+  });
+
+  describe('when a clear removes a grace', () => {
+    // A clear keeps every beat's value but removes a grace, and a grace moves where beats play: an on-beat grace
+    // takes its length from the start of the beat it leads into (`playbackStartsOf`).
+
+    it('gives a beat that now plays at a fermata\'s position that fermata, so a save adds none', () => {
+      // The second guitar's quarter played at 120, after the grace. Now at 0, it took the first guitar's fermata on save.
+      const doc = scoreOf('n4F n4 n4 n4', 'oF n4 n4 n4 n4');
+
+      expect(clearToRests(doc, [ref(0, 1)])).toEqual([]);
+
+      expect(shapesOf(doc)).toEqual(['n4F n4 n4 n4', 'n4F n4 n4 n4']);
+      expect(shapesOf(saved(doc))).toEqual(shapesOf(doc));
+    });
+
+    it('gives the grace left playing at a fermata\'s position that fermata', () => {
+      // Two graces before the beat play at 960 and 1020; with the first gone, the second plays at 960.
+      const doc = scoreOf('n4 gF g n4F n2');
+
+      clearToRests(doc, [ref(1)]);
+
+      expect(shapesOf(doc)).toEqual(['n4 gF n4F n2']);
+      expect(shapesOf(saved(doc))).toEqual(shapesOf(doc));
+    });
+
+    it('says why it removed a fermata whose note moved where it would reach another track', () => {
+      const doc = scoreOf('n4 n4 n4 n4', 'o n4F n4 n4 n4');
+
+      expect(clearToRests(doc, [ref(0, 1)])).toEqual(['otherTracks']);
+
+      expect(shapesOf(doc)).toEqual(['n4 n4 n4 n4', 'n4 n4 n4 n4']);
+      expect(shapesOf(saved(doc))).toEqual(shapesOf(doc));
+    });
   });
 });
 

@@ -13,6 +13,7 @@ import { hasTuplet } from './bar-fill';
 import {
   OpenTupletGroup,
   beatsAt,
+  clearToRests,
   deleteBeats,
   fermataPositionsOf,
   insertBeatAt,
@@ -374,6 +375,24 @@ export function deleteBeatsRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): str
   const refusal = editRefusal(doc, refs, { family: 'beat', key: 'duration' }, null);
   if (refusal) return refusal;
   return tupletGroupOpenedBy(doc, refs, (draft, drafted) => deleteBeats(draft, drafted), null) ? BREAKS_A_GROUP : null;
+}
+
+const CLEAR_BREAKS_A_GROUP =
+  'Removing a grace note there would leave a tuplet group unfinished, since graces before a group take their time from its first beat.';
+
+/**
+ * Why clearing the beats `refs` name to rests cannot apply, or null: any beat edit's refusal, or a tuplet group the
+ * clear would leave open (`tupletGroupOpenedBy`). Delete at the caret, a clear over a range and Cut ask it.
+ *
+ * A clear keeps every beat's value and tuplet, so part of a group can be cleared. But it removes a grace
+ * (`clearToRests`), and graces before a group's first beat take their playback lengths from it, by the kind and size
+ * of their run (`tupletGroupsOf`). So `n4 g o n4t3 n8t3 n2` without its before-beat grace has an on-beat grace leading
+ * the run, which shortens the mixed group, and alphaTab never closes it.
+ */
+export function clearRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'beat', key: 'duration' }, null);
+  if (refusal) return refusal;
+  return tupletGroupOpenedBy(doc, refs, (draft, drafted) => clearToRests(draft, drafted), null) ? CLEAR_BREAKS_A_GROUP : null;
 }
 
 /**

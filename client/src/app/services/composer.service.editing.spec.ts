@@ -338,6 +338,53 @@ describe('ComposerService tuplets', () => {
       expect(JSON.stringify(service.doc)).withContext(name).toBe(before);
     }
   });
+
+  it('refuses Delete at the caret, a clear and a cut that remove a grace a tuplet group needs, committing nothing', () => {
+    // Without the before-beat grace, the on-beat grace takes its 32nd from the mixed group's first beat, and alphaTab
+    // never closes the group.
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[0].voices[0].beats = writtenBeats('n4 g o n4t3 n8t3 n2');
+    service.replaceDocument(doc);
+    const before = JSON.stringify(service.doc);
+    const presses: [string, () => void][] = [
+      ['deleteAtCursor', () => (service.setCursor({ barIndex: 0, beatIndex: 1 }), service.deleteAtCursor())],
+      ['clearSelectionToRests', () => (service.setCursor({ barIndex: 0, beatIndex: 0 }), service.extendSelectionTo({ beatIndex: 1 }), service.clearSelectionToRests())],
+      ['cut', () => (service.setCursor({ barIndex: 0, beatIndex: 0 }), service.extendSelectionTo({ beatIndex: 1 }), service.cut())]
+    ];
+
+    for (const [name, press] of presses) {
+      press();
+
+      expect(stateOf(service).refusal).withContext(name).toMatch(/leave a tuplet group unfinished/i);
+      expect(JSON.stringify(service.doc)).withContext(name).toBe(before);
+    }
+  });
+});
+
+describe('ComposerService clearing a grace at a fermata', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('says Delete at the caret removed a fermata, when the grace it cleared moved the fermata\'s note', () => {
+    // The second guitar's quarter plays at 120, after its on-beat grace, and holds the fermata there. With the grace
+    // gone it plays at 0, where the first guitar has a quarter the fermata would reach.
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Guitar 2', 'gt2', 25, true, doc.masterBars));
+    doc.tracks[1].staves[0].bars[0].voices[0].beats = writtenBeats('o n4 n4 n4 n4');
+    doc.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata = { type: 'medium', length: 1 };
+    service.replaceDocument(doc);
+    service.setCursor({ trackIndex: 1, barIndex: 0, beatIndex: 0 });
+
+    service.deleteAtCursor();
+
+    expect(writtenOf(service.doc.tracks[1].staves[0].bars[0].voices[0].beats)).toBe('n4 n4 n4 n4');
+    expect(service.doc.tracks[1].staves[0].bars[0].voices[0].beats[0].effects.fermata).toBeNull();
+    expect(stateOf(service).notice).toBe('1 fermata removed: its note moved where it would reach other tracks.');
+  });
 });
 
 describe('ComposerService vibrato and ties over a range', () => {

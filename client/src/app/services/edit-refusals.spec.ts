@@ -32,6 +32,7 @@ const graceRefusal = (score: ScoreDoc, refs: readonly BeatRef[], grace: 'beforeB
 const insertBeatRefusal = (score: ScoreDoc, at: BeatRef, duration: DurationValue, dots: number): string | null =>
   refusals.insertBeatRefusal(frozen(score), at, duration, dots);
 const deleteBeatsRefusal = (score: ScoreDoc, refs: readonly BeatRef[]): string | null => refusals.deleteBeatsRefusal(frozen(score), refs);
+const clearRefusal = (score: ScoreDoc, refs: readonly BeatRef[]): string | null => refusals.clearRefusal(frozen(score), refs);
 const noteEntryRefusal = (score: ScoreDoc, at: BeatRef, duration: DurationValue, dots: number): string | null =>
   refusals.noteEntryRefusal(frozen(score), at, duration, dots);
 const tieRefusal = (score: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null =>
@@ -379,6 +380,18 @@ describe('an edit that would leave a tuplet group open', () => {
     it('refuses deleting part of a group, and not the whole group', () => {
       expect(deleteBeatsRefusal(barOf(group), beatsAt(1))).toMatch(/break a tuplet group; select the whole group/i);
       expect(deleteBeatsRefusal(barOf(group), beatsAt(0, 1, 2))).toBeNull();
+    });
+
+    it('refuses a clear that removes a grace a group after it needs, and not one that keeps every group closed', () => {
+      // With the before-beat grace gone, the on-beat grace leads the run and takes its 32nd from the mixed group's
+      // first beat, so 520 and 320 no longer add up to a whole group.
+      const graces = 'n4 g o n4t3 n8t3 n2';
+      expect(clearRefusal(barOf(graces), beatsAt(1))).toMatch(/removing a grace note there would leave a tuplet group unfinished/i);
+      // The on-beat grace alone, or both, leave the before-beat grace leading, or none.
+      expect(clearRefusal(barOf(graces), beatsAt(2))).toBeNull();
+      expect(clearRefusal(barOf(graces), beatsAt(1, 2))).toBeNull();
+      // A clear keeps a beat's value and its tuplet, so part of a group can be cleared.
+      expect(clearRefusal(barOf(group), beatsAt(1))).toBeNull();
     });
 
     it('writes a note into a closed group at the beat\'s own value where the palette\'s would break it', () => {

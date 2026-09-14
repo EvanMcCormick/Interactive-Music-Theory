@@ -38,6 +38,14 @@ describe('toolStates', () => {
     expect(toolStateOf(doc, null, at(0, 1), 'palmMute').pressed).toBeFalse();
   });
 
+  it('refuses Rest over a range as the clear it runs does, where removing a grace would leave a tuplet group open', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[0].voices[0].beats = writtenBeats('n4 g o n4t3 n8t3 n2');
+
+    expect(toolStateOf(doc, at(0, 0), at(0, 1), 'rest').refusal).toMatch(/leave a tuplet group unfinished/i);
+    expect(toolStateOf(doc, at(0, 0), at(0, 2), 'rest').refusal).toBeNull();
+  });
+
   it('reads a tied note\'s vibrato from the note it is tied from, and says why a press there is refused', () => {
     const doc = ComposerService.createEmptyScore();
     put(doc, 0, 0).effects.vibrato = 'slight';

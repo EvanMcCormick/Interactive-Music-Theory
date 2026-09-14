@@ -505,23 +505,29 @@ export function tupletGroupEndOf(beats: readonly BeatDoc[], index: number): numb
  *
  * A grace beat is removed rather than left as a grace rest. It takes no room, so the bar's fill is
  * unchanged, and a rest that leads into the beat after it is nothing a score writes.
+ *
+ * But a grace moves where beats play: an on-beat grace takes its length from the start of the beat it leads
+ * into, and a grace run's lengths depend on its size (`playbackStartsOf`). So when a clear removes one, every
+ * fermata in those bars goes with its note or stays at its bar position, on every track (`settleFermatas`), and
+ * what it returns is why each one it could keep neither way went. A clear that removes no grace moves nothing
+ * and returns none. Removing a grace can also leave a tuplet group open, which `clearRefusal` refuses first.
  */
-export function clearToRests(doc: ScoreDoc, refs: readonly BeatRef[]): void {
-  const graces = new Set<BeatDoc>();
-  for (const beat of beatsAt(doc, refs)) {
-    if (beat.effects.grace !== 'none') {
-      graces.add(beat);
-      continue;
-    }
+export function clearToRests(doc: ScoreDoc, refs: readonly BeatRef[]): FermataDrops {
+  const targets = beatsAt(doc, refs);
+  const graces = new Set(targets.filter(beat => beat.effects.grace !== 'none'));
+  const fermatas = graces.size > 0 ? fermataSnapshotOf(doc, refs.map(ref => ref.barIndex)) : null;
+  for (const beat of targets) {
+    if (graces.has(beat)) continue;
     beat.notes = [];
     beat.isRest = true;
     beat.effects = { ...createDefaultBeatEffects(), fermata: beat.effects.fermata };
   }
-  if (graces.size === 0) return;
+  if (!fermatas) return [];
   for (const ref of refs) {
     const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
     if (voice) voice.beats = voice.beats.filter(beat => !graces.has(beat));
   }
+  return settleFermatas(doc, fermatas);
 }
 
 /**

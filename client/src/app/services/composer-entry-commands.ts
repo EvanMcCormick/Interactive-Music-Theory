@@ -5,7 +5,7 @@ import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { BeatRef, beatAt, selectionTargets } from './composer-selection';
 import { ComposerCommandHost, EditOutcome } from './composer-service-structure';
 import { pasteNoticeOf } from './composer-text';
-import { deleteBeatsRefusal, dotsRefusal, editRefusal, entryValueOf, insertBeatRefusal, noteEntryRefusal } from './edit-refusals';
+import { clearRefusal, deleteBeatsRefusal, dotsRefusal, editRefusal, entryValueOf, insertBeatRefusal, noteEntryRefusal } from './edit-refusals';
 import { FermataDrops } from './fermata-settling';
 
 /**
@@ -118,12 +118,13 @@ export class ComposerEntryCommands {
    * Clears the beat at the caret back to a rest, as a clear over a range does (`clearToRests`).
    *
    * The slot is kept rather than removed: bars are pre-filled with a full measure of rests, so
-   * deleting a note should empty its position, not shorten the bar.
+   * deleting a note should empty its position, not shorten the bar. Refused as a clear is (`clearRefusal`).
    */
   deleteAtCursor(): void {
     const state = this.host.state();
     const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor)) return;
+    const refusal = clearRefusal(state.doc, [cursor]);
+    if (refusal) return this.host.refuse(refusal);
 
     this.host.commit(draft => clearToRests(draft, [cursor]));
   }
@@ -142,11 +143,11 @@ export class ComposerEntryCommands {
     this.host.setInputDuration(this.host.state().inputDuration, dots);
   }
 
-  /** Clears every beat in the selection to a rest, keeping their values: R and Delete over a range. */
+  /** Clears every beat in the selection to a rest, keeping their values: R and Delete over a range. See `clearRefusal`. */
   clearSelectionToRests(): void {
     const state = this.host.state();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
-    const refusal = editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null);
+    const refusal = clearRefusal(state.doc, refs);
     if (refusal) return this.host.refuse(refusal);
     this.host.commitFollowing(draft => clearToRests(draft, refs));
   }
@@ -193,11 +194,11 @@ export class ComposerEntryCommands {
     this.clipboard = copied;
   }
 
-  /** Copies the selection's beats and clears them to rests, as one undo step. */
+  /** Copies the selection's beats and clears them to rests, as one undo step. Refused as a clear is (`clearRefusal`). */
   cut(): void {
     const state = this.host.state();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
-    const refusal = editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null);
+    const refusal = clearRefusal(state.doc, refs);
     if (refusal) return this.host.refuse(refusal);
     const copied = copiedBeatsOf(state.doc, refs);
     if (!copied) return this.host.refuse('Cut takes beats from one staff at a time.');
@@ -236,12 +237,12 @@ export class ComposerEntryCommands {
   }
 
   /**
-   * Whether note entry, rest entry, a delete or a paste at `at` is refused - on a generated track, or in
-   * a second voice, which a click can reach in a loaded bar and bar filling cannot measure. Publishes
-   * the reason and commits nothing, so a refusal costs no undo step and the caret does not advance. A
-   * beat scope, not a note one: a delete on a rest clears nothing, and a note scope would refuse it as
-   * a note tool on a rest. A press that `writes` a value - a note or a rest - is also refused where that value
-   * would break a tuplet group (`noteEntryRefusal`).
+   * Whether note entry, rest entry or a paste at `at` is refused - on a generated track, or in a second
+   * voice, which a click can reach in a loaded bar and bar filling cannot measure. Publishes the reason and
+   * commits nothing, so a refusal costs no undo step and the caret does not advance. A beat scope, not a note
+   * one: a paste can land on a rest, and a note scope would refuse it as a note tool on a rest. A press that
+   * `writes` a value - a note or a rest - is also refused where that value would break a tuplet group
+   * (`noteEntryRefusal`).
    */
   private refusesEntryAt(doc: ScoreDoc, at: BeatRef, writes?: { duration: DurationValue; dots: number }): boolean {
     const refusal = writes
