@@ -317,16 +317,16 @@ export class TranscriptionComponent implements OnInit, OnDestroy {
   /**
    * Hands the clean document to the composer and goes there.
    *
-   * `replaceDocument` is already wrapped by the composer's undo stack, so
-   * arriving with a transcription and pressing undo gives back whatever was
-   * open before - which is the reason this is a document replacement rather
-   * than a new score.
+   * As a new composition, not saved: the composer's library panel forgets the
+   * entry that was open, so Save writes the transcription as a new entry rather
+   * than over it, and the history starts again, so undo cannot put back the
+   * composition before under the transcription's name.
    */
   openInComposer(): void {
     const doc = this.state?.derived?.doc;
     if (!doc) return;
 
-    this.composer.replaceDocument(doc);
+    this.composer.replaceDocument(doc, { newComposition: true });
     void this.router.navigate(['/composer']);
   }
 

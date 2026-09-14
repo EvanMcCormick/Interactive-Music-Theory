@@ -90,7 +90,7 @@ describe('ComposerLibraryPanelComponent', () => {
     spyOn(exporter, 'downloadMidiFile');
 
     composer = TestBed.inject(ComposerService);
-    composer.replaceDocument(ComposerService.createEmptyScore(), true);
+    composer.replaceDocument(ComposerService.createEmptyScore(), { markClean: true, newComposition: true });
 
     fixture = TestBed.createComponent(ComposerLibraryPanelComponent);
     panel = fixture.componentInstance;

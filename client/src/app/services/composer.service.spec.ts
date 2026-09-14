@@ -672,3 +672,58 @@ describe('ComposerService note entry in a second voice', () => {
     expect(state().refusal).toBeNull();
   });
 });
+
+/**
+ * Which composition the document is (`ComposerState.documentId`), apart from whether it is saved. Opening a different
+ * composition starts a fresh history, as opening a file does in Guitar Pro: an undo across it would put back the
+ * composition before while the library panel names the one opened, and Save would write the one over the other.
+ */
+describe('ComposerService composition identity', () => {
+  let service: ComposerService;
+  const state = (): ComposerState => service.state;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+    service.setTempo(140);
+  });
+
+  it('starts a fresh history for a composition that is loaded, marked clean', () => {
+    const before = state().documentId;
+
+    service.replaceDocument({ ...ComposerService.createEmptyScore(), tempo: 90 }, { markClean: true, newComposition: true });
+
+    expect(state().documentId).toBe(before + 1);
+    expect(state().isDirty).toBeFalse();
+    expect(state().canUndo).toBeFalse();
+    service.undo();
+    expect(service.doc.tempo).withContext('undo put back the composition before').toBe(90);
+  });
+
+  it('starts a fresh history for a new composition that is not saved, and leaves it unsaved', () => {
+    service.undo();
+    expect(state().canRedo).toBeTrue();
+    const before = state().documentId;
+
+    service.replaceDocument({ ...ComposerService.createEmptyScore(), tempo: 90 }, { newComposition: true });
+
+    expect(state().documentId).toBe(before + 1);
+    expect(state().isDirty).toBeTrue();
+    expect(state().canUndo).toBeFalse();
+    expect(state().canRedo).toBeFalse();
+    service.undo();
+    service.redo();
+    expect(service.doc.tempo).toBe(90);
+  });
+
+  it('keeps the composition and its history for a replacement that is an edit, as an applied alphaTex draft is', () => {
+    const before = state().documentId;
+
+    service.replaceDocument({ ...ComposerService.createEmptyScore(), tempo: 90 });
+
+    expect(state().documentId).toBe(before);
+    expect(state().isDirty).toBeTrue();
+    service.undo();
+    expect(service.doc.tempo).toBe(140);
+  });
+});

@@ -128,18 +128,31 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
    * `save` and its refusals - a plain Save over the entry the write left current. Each runs only if it still has
    * something to write: a plain Save when the document moved on since the write before it began, a copy unless
    * that write was a copy of the same document, so a double click on Save as copy makes one copy. Dropped when
-   * the write failed, which has been reported and would only fail again; when a load or New replaces the document, or
-   * its entry is deleted, since they were pressed for what is gone (`forgetEntry`); and when the panel is destroyed,
-   * since the page's guards are gone.
+   * the write failed, which has been reported and would only fail again; when another composition replaces the document,
+   * since they were pressed for what is gone (`forgetEntry`); a plain Save when its entry is deleted, which it would
+   * write back (`remove`); and when the panel is destroyed, since the page's guards are gone.
    */
   private queuedSaves: Array<'save' | 'copy'> = [];
 
   /**
-   * Bumped whenever the panel forgets its entry - a load or New replacing the document, or the entry deleted
-   * (`forgetEntry`). A write that began before it still lands in the entry it was writing, but leaves `currentId` as it
-   * now is: otherwise the next Save would write the new document over the entry that write was for.
+   * Bumped whenever another composition replaces the document - a load, New, an opened transcription (`forgetEntry`). A
+   * write that began before it still lands in the entry it was writing, but leaves `currentId` as it now is: otherwise
+   * the next Save would write the new document over the entry that write was for.
    */
   private loadGeneration = 0;
+
+  /**
+   * Bumped when the entry being edited is deleted (`forgetDeletedEntry`). The document stays, so a write that began
+   * before it and made a new entry - Save as copy, or a Save pressed while the delete was under way - is adopted when it
+   * lands; one that wrote the deleted entry is not.
+   */
+  private deletions = 0;
+
+  /**
+   * The entry being edited while its delete is under way, or null. A Save meanwhile writes a new entry, not this one,
+   * which the delete could not then remove, and which would put the entry back if it landed after the delete.
+   */
+  private deleting: string | null = null;
 
   /** The write under way, settled either way, or a settled promise. A delete of an entry waits for it (`remove`). */
   private writing: Promise<void> = Promise.resolve();
@@ -189,7 +202,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
       .getState()
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
-        // Another composition - New, or a load - is not the entry last loaded or saved (`forgetEntry`).
+        // Another composition - New, a load, an opened transcription - is not the entry last loaded or saved (`forgetEntry`).
         if (this.state && state.documentId !== this.state.documentId) this.forgetEntry();
         this.state = state;
 
@@ -539,8 +552,11 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     // The document this write holds. Only it is marked saved, and a queued save runs after it only when it still has
     // something to write (`runQueuedSave`).
     const doc = this.state.doc;
-    // A load, New or a delete of the entry while this write is under way leaves `currentId` as they left it (`loadGeneration`).
+    // A load or New while this write is under way leaves `currentId` as they left it (`loadGeneration`), and so does a
+    // delete of the entry, unless this write made a new one (`deletions`).
     const generation = this.loadGeneration;
+    const deletions = this.deletions;
+    const target = asNew || this.currentId === this.deleting ? undefined : this.currentId ?? undefined;
     // What this write holds, as alphaTex: a queued save runs after it only when the document would write something else.
     let written: string | null = null;
     let landed = false;
@@ -556,7 +572,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
           trackCount: doc.tracks.length,
           barCount: doc.masterBars.length
         },
-        asNew ? undefined : this.currentId ?? undefined
+        target
       );
       this.writing = write.then(
         () => undefined,
@@ -564,7 +580,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
       );
       const id = await write;
 
-      if (generation === this.loadGeneration) this.currentId = id;
+      if (generation === this.loadGeneration && (deletions === this.deletions || target === undefined)) this.currentId = id;
       this.composer.markSaved(doc);
       this.pendingSave = null;
       this.report(`Saved "${doc.title || 'Untitled'}"`);
@@ -616,9 +632,9 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
         return;
       }
 
-      // Marked clean, the loaded document is another composition (`documentId`), so the panel forgets the one it replaces
-      // as the state arrives - dropping the saves queued for it - and then names the loaded entry.
-      this.composer.replaceDocument(this.mapper.toDoc(parsed.score), true);
+      // A new composition (`documentId`), with a fresh history, so the panel forgets the one it replaces as the state
+      // arrives - dropping the saves queued for it - and then names the loaded entry. Clean: it is what the entry holds.
+      this.composer.replaceDocument(this.mapper.toDoc(parsed.score), { markClean: true, newComposition: true });
       this.currentId = id;
       this.closeDrawer();
       this.report(`Loaded "${entry.title}"`);
@@ -628,10 +644,10 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   }
 
   /**
-   * Forgets the composition the document was, when a load or New replaces it (`ComposerState.documentId`) or its entry
-   * is deleted. Saves queued for it were pressed for it and are dropped; a write still under way for it lands in its
-   * entry but does not make that entry current again (`loadGeneration`); and the next Save writes a new entry, until a
-   * load or a save names one.
+   * Forgets the composition the document was, when another replaces it - a load, New, an opened transcription
+   * (`ComposerState.documentId`). Saves queued for it were pressed for it and are dropped; a write still under way for it
+   * lands in its entry but does not make that entry current again (`loadGeneration`); and the next Save writes a new
+   * entry, until a load or a save names one.
    */
   private forgetEntry(): void {
     this.loadGeneration++;
@@ -640,19 +656,37 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     this.cdr.markForCheck();
   }
 
+  /**
+   * Forgets the entry being edited once its delete has succeeded. The document stays open, so the next Save writes a new
+   * entry, and a write that already made one is still adopted when it lands (`deletions`).
+   */
+  private forgetDeletedEntry(): void {
+    this.deletions++;
+    this.currentId = null;
+    this.cdr.markForCheck();
+  }
+
   async remove(id: string, title: string, event: Event): Promise<void> {
     event.stopPropagation();
     if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
 
+    // Deleting the entry being edited: a queued Save would write it again, so it is dropped, and a Save pressed while the
+    // delete is under way writes a new entry (`deleting`). A write under way to it would put it back, so the delete waits
+    // for that write. The entry is forgotten only once the delete succeeds: a failed one leaves it current, to be saved.
+    const editing = this.currentId === id;
+    if (editing) {
+      this.queuedSaves = this.queuedSaves.filter(intent => intent === 'copy');
+      this.deleting = id;
+    }
     try {
-      // Deleting the entry being edited forgets it, as New does: a write under way to it does not make it current again,
-      // and no queued save writes it back. That write would put the entry back itself, so the delete waits for it.
-      if (this.currentId === id) this.forgetEntry();
       await this.writing;
       await this.library.delete(id);
+      if (this.currentId === id) this.forgetDeletedEntry();
       this.report(`Deleted "${title}"`);
     } catch (error) {
       this.reportError(error);
+    } finally {
+      if (editing && this.deleting === id) this.deleting = null;
     }
   }
 

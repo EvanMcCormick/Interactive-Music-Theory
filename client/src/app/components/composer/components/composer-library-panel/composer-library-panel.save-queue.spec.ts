@@ -41,7 +41,7 @@ describe('ComposerLibraryPanelComponent queued saves', () => {
     );
 
     composer = TestBed.inject(ComposerService);
-    composer.replaceDocument(ComposerService.createEmptyScore(), true);
+    composer.replaceDocument(ComposerService.createEmptyScore(), { markClean: true, newComposition: true });
 
     fixture = TestBed.createComponent(ComposerLibraryPanelComponent);
     panel = fixture.componentInstance;
@@ -98,6 +98,30 @@ describe('ComposerLibraryPanelComponent queued saves', () => {
       expect(temposWritten()).withContext('the follow-up wrote A as it stood, into A').toEqual([140, 150]);
     });
 
+    it('starts the loaded composition with no history, so an undo cannot put A back under C\'s name', async () => {
+      composer.setTempo(140);
+      expect(composer.state.canUndo).toBeTrue();
+
+      await panel.load('c-id');
+      composer.undo();
+      void panel.save();
+      await settle();
+
+      expect(composer.state.canUndo).toBeFalse();
+      expect(idsWritten()).toEqual(['c-id']);
+      expect(temposWritten()).toEqual([90]);
+    });
+
+    it('does not make a copy of A current when the load came while the copy was writing', async () => {
+      void panel.save(true);
+
+      await panel.load('c-id');
+      writes[0].land('copy-id');
+      await settle();
+
+      expect(panel.currentId).toBe('c-id');
+    });
+
     it('runs a Save pressed after the load, for the loaded composition, once the earlier write lands', async () => {
       composer.setTempo(140);
       void panel.save();
@@ -142,10 +166,86 @@ describe('ComposerLibraryPanelComponent queued saves', () => {
     });
   });
 
+  describe('and a transcription opened in the composer', () => {
+    // The transcription page hands over its document as a new composition, not saved.
+
+    it('writes it as a new entry, not over the entry open before', async () => {
+      composer.replaceDocument({ ...ComposerService.createEmptyScore(), tempo: 100 }, { newComposition: true });
+      void panel.save();
+      await settle();
+
+      expect(idsWritten()).toEqual([undefined]);
+      expect(temposWritten()).toEqual([100]);
+    });
+  });
+
   describe('and deleting the entry', () => {
+    /** Each delete the library was asked for, to resolve or reject. */
+    let deletes: Array<{ resolve: () => void; reject: (error: Error) => void }>;
+
     beforeEach(() => {
       spyOn(window, 'confirm').and.returnValue(true);
-      spyOn(library, 'delete').and.resolveTo();
+      deletes = [];
+      spyOn(library, 'delete').and.callFake(() => new Promise<void>((resolve, reject) => deletes.push({ resolve, reject })));
+    });
+
+    /** Resolves every delete asked for so far, as each arrives. */
+    async function deleteSucceeds(): Promise<void> {
+      await settle();
+      for (const pending of deletes) pending.resolve();
+      await settle();
+    }
+
+    it('keeps the entry current when the delete fails, so the next Save updates it', async () => {
+      const removing = panel.remove('a-id', 'A', new Event('click'));
+      await settle();
+      expect(panel.currentId).withContext('forgotten before the delete was known to succeed').toBe('a-id');
+
+      deletes[0].reject(new Error('Blocked'));
+      await removing;
+      void panel.save();
+      await settle();
+
+      expect(panel.errorMessage).toBe('Blocked');
+      expect(panel.currentId).toBe('a-id');
+      expect(idsWritten()).toEqual(['a-id']);
+    });
+
+    it('adopts a copy of the entry that was writing when the delete was pressed', async () => {
+      void panel.save(true);
+      const removing = panel.remove('a-id', 'A', new Event('click'));
+      writes[0].land('copy-id');
+      await deleteSucceeds();
+      await removing;
+
+      expect(library.delete).toHaveBeenCalledOnceWith('a-id');
+      expect(panel.currentId).toBe('copy-id');
+    });
+
+    it('adopts a copy pressed while the delete was under way, which landed after it', async () => {
+      const removing = panel.remove('a-id', 'A', new Event('click'));
+      await settle();
+      void panel.save(true);
+      await deleteSucceeds();
+      await removing;
+      writes[0].land('copy-id');
+      await settle();
+
+      expect(panel.currentId).toBe('copy-id');
+    });
+
+    it('writes a Save pressed while the delete is under way as a new entry, which cannot put the deleted one back', async () => {
+      const removing = panel.remove('a-id', 'A', new Event('click'));
+      await settle();
+      composer.setTempo(140);
+      void panel.save();
+      await deleteSucceeds();
+      await removing;
+      writes[0].land('b-id');
+      await settle();
+
+      expect(idsWritten()).toEqual([undefined]);
+      expect(panel.currentId).toBe('b-id');
     });
 
     it('deletes it once a write under way to it lands, and neither that write nor a queued Save brings it back', async () => {
@@ -158,6 +258,7 @@ describe('ComposerLibraryPanelComponent queued saves', () => {
       expect(library.delete).withContext('the write under way would put the entry back').not.toHaveBeenCalled();
 
       writes[0].land('a-id');
+      await deleteSucceeds();
       await removing;
       await settle();
 

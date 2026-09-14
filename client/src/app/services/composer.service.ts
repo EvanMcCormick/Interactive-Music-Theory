@@ -7,6 +7,7 @@ import {
   BeatEffectsDoc,
   ClefKind,
   ComposerState,
+  DocumentReplacement,
   DurationValue,
   DynamicValue,
   EditCursor,
@@ -342,10 +343,14 @@ export class ComposerService {
     });
   }
 
-  /** Replaces the whole document, e.g. after importing edited alphaTex. */
-  replaceDocument(doc: ScoreDoc, markClean = false): void {
+  /**
+   * Replaces the whole document: by default an edit of this composition, as an applied alphaTex draft is, on the undo
+   * stack. A new composition - a load, an opened transcription - moves `documentId` on and starts a fresh history.
+   */
+  replaceDocument(doc: ScoreDoc, { markClean = false, newComposition = false }: DocumentReplacement = {}): void {
     const state = this.stateSubject.getValue();
-    this.undoStack.push(structuredClone(state.doc));
+    if (newComposition) this.undoStack = [];
+    else this.undoStack.push(structuredClone(state.doc));
     this.redoStack = [];
 
     this.stateSubject.next({
@@ -355,10 +360,9 @@ export class ComposerService {
       anchor: null,
       refusal: null,
       notice: null,
-      // Marked clean is a load: another composition, whose entry the library panel then names.
-      documentId: markClean ? state.documentId + 1 : state.documentId,
+      documentId: newComposition ? state.documentId + 1 : state.documentId,
       isDirty: !markClean,
-      canUndo: true,
+      canUndo: this.undoStack.length > 0,
       canRedo: false
     });
   }

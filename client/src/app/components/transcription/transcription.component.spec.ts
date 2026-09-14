@@ -407,6 +407,27 @@ describe('TranscriptionComponent', () => {
     expect(navigate).toHaveBeenCalledWith(['/composer']);
   });
 
+  it('opens the transcription as a new composition, unsaved, with no history from the one open before', () => {
+    composer.setTempo(140);
+    const before = composer.state.documentId;
+    push({
+      phase: 'ready',
+      progress: 1,
+      session: makeSession(),
+      derived: deriveScore(makeSession()),
+      suppressed: [],
+      declarationRemovals: NO_DECLARATION_REMOVALS,
+      error: null,
+      refusal: null
+    });
+
+    component.openInComposer();
+
+    expect(composer.state.documentId).withContext('the library panel would still name the entry open before').toBe(before + 1);
+    expect(composer.state.isDirty).toBeTrue();
+    expect(composer.state.canUndo).toBeFalse();
+  });
+
   it('does nothing when there is no score to open', () => {
     component.openInComposer();
 

@@ -444,10 +444,10 @@ export interface ComposerState {
    */
   messageId: number;
   /**
-   * Which composition the document is. Bumped when `reset` starts a new one and when `replaceDocument` puts in one marked
-   * clean - a load - and by nothing that changes the same composition: an edit, undo, redo, an applied alphaTex draft.
-   * The library panel forgets the entry it last loaded or saved when this changes, so Save never writes a new score
-   * over it.
+   * Which composition the document is, apart from whether it is saved. Bumped when `reset` starts a new one and when
+   * `replaceDocument` puts in a new composition - a load, a transcription opened in the composer - and by nothing that
+   * changes the same composition: an edit, undo, redo, an applied alphaTex draft. The library panel forgets the entry
+   * it last loaded or saved when this changes, so Save never writes a new score over it.
    */
   documentId: number;
   /** Select or Pen. See `EntryMode`. */
@@ -458,6 +458,20 @@ export interface ComposerState {
   isDirty: boolean;
   canUndo: boolean;
   canRedo: boolean;
+}
+
+/**
+ * What a document handed to `ComposerService.replaceDocument` is. Identity and cleanliness are separate: a transcription
+ * opened in the composer is a new composition that is not saved, and an applied alphaTex draft is neither.
+ */
+export interface DocumentReplacement {
+  /** It is what the library holds: a load. */
+  markClean?: boolean;
+  /**
+   * It is another composition, not an edit of this one: `documentId` moves on and the history starts again, as opening
+   * a file does in Guitar Pro, so no undo puts back the composition before under the name of the one opened.
+   */
+  newComposition?: boolean;
 }
 
 // ---------------------------------------------------------------------------

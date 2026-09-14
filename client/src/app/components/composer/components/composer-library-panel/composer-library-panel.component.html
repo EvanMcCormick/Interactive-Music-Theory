@@ -14,7 +14,7 @@
     >Library</button>
     <div id="composer-library-menu" class="menu-panel" [class.open]="libraryMenuOpen" role="group" aria-label="Library">
       <div class="save-actions">
-        <button class="text-btn" #saveButton (click)="save()">
+        <button class="text-btn" (click)="save()">
           {{ currentId ? 'Save' : 'Save to library' }}
         </button>
         <button class="text-btn" (click)="save(true)" *ngIf="currentId">Save as copy</button>
