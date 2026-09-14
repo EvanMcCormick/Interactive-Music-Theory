@@ -23,7 +23,7 @@ import {
   timeSignatureFault,
   toggleMasterBarFlag
 } from './bar-edits';
-import { barFillAt, fixBarOverflow } from './bar-fill';
+import { NO_BAR_OVER, barFillAt, fixBarOverflow } from './bar-fill';
 import { newOpenTupletGroup, openTupletGroupsOf } from './beat-edits';
 import { selectedBars } from './composer-selection';
 import { fixBarNoticeOf } from './composer-text';
@@ -183,7 +183,7 @@ export class ComposerStructureCommands {
         // Counted before anything is carried: carrying one bar's overflow can mend a later selected bar on the way,
         // and the loop below then finds that bar no longer over and skips it, though Fix bar mended it.
         const overBefore = Array.from({ length: bars.last - bars.first + 1 }, (_, offset) => bars.first + offset).filter(isOver);
-        if (overBefore.length === 0) return 'No selected bar is over its time signature.';
+        if (overBefore.length === 0) return NO_BAR_OVER;
 
         for (let index = bars.first; index <= bars.last; index++) {
           if (!isOver(index)) continue;

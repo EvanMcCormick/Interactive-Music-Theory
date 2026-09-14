@@ -1,4 +1,5 @@
 import { PlaybackInfoDoc, ScoreDoc, StaffDoc } from '../models/composer.model';
+import { MAX_FRET } from './pitch-on-strings';
 
 /**
  * Edits that act on a track or one of its staves.
@@ -83,7 +84,8 @@ export function setStaffNumber(
   if (!staff) return NO_STAFF;
   if (key === 'capo' && staff.tuning.length === 0) return 'A pitched staff has no strings for a capo.';
   if (!Number.isInteger(value)) return 'That must be a whole number.';
-  if (key === 'capo' && (value < 0 || value > 24)) return 'A capo sits from fret 0 to 24.';
+  // At most the last fret but one, so a fret is left in front of the capo to play (`maxFretOf`).
+  if (key === 'capo' && (value < 0 || value > MAX_FRET - 1)) return `A capo sits from fret 0 to ${MAX_FRET - 1}.`;
   if (key !== 'capo' && Math.abs(value) > 24) return 'Transpose by at most two octaves either way.';
 
   if (key === 'capo') {

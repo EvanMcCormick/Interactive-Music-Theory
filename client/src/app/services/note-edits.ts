@@ -3,6 +3,7 @@ import { canonicalJsonOf, toggledValue } from './beat-edits';
 import { DEFAULT_TRILL_SPEED, TRILL_INTERVAL } from './composer-tool-defaults';
 import { BeatRef, beatAt } from './composer-selection';
 import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieOriginOf } from './note-landing';
+import { soundingMidiOf } from './pitch-on-strings';
 
 /**
  * Edits that act on notes: effects, accidentals and ties.
@@ -170,12 +171,7 @@ export function toggleTie(doc: ScoreDoc, refs: readonly BeatRef[], focus: number
  * string with the capo included (`trillFret`); on a pitched staff, the note's own pitch.
  */
 export function trillTargetOf(staff: StaffDoc, note: NoteDoc): number {
-  const pitch = note.pitch;
-  const sounding =
-    pitch.kind === 'fretted'
-      ? (staff.tuning[pitch.string - 1] ?? 0) + staff.capo + pitch.fret
-      : (pitch.octave + 1) * 12 + pitch.noteValue;
-  return sounding + TRILL_INTERVAL;
+  return soundingMidiOf(staff, note.pitch) + TRILL_INTERVAL;
 }
 
 /**

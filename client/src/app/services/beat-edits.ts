@@ -495,7 +495,7 @@ export function newOpenTupletGroup(before: readonly OpenTupletGroup[], after: re
  * The index of the last of `beats` in the tuplet group `beats[index]` is in - where alphaTab closes it, or
  * where the bar ends it unclosed - or `index` itself when it is in none (`tupletGroupsOf`).
  */
-export function tupletGroupEndOf(beats: readonly BeatDoc[], index: number): number {
+function tupletGroupEndOf(beats: readonly BeatDoc[], index: number): number {
   const groups = tupletGroupsOf(beats);
   const group = groups[index];
   let end = index;

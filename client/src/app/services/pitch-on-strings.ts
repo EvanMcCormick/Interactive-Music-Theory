@@ -114,21 +114,23 @@ export function outOfReachNoticeOf(dropped: number): string {
 }
 
 /**
- * `doc` with every pitched note on a staff with a tuning fretted, and how many notes no free string reached, which are
- * left out - a beat left with none becomes a rest. The same document when there is nothing to fret; otherwise a copy.
+ * `doc` with every pitched note on a staff with a tuning fretted, how many it fretted (`converted`), and how many notes no
+ * free string reached, which are left out - a beat left with none becomes a rest. The same document when there is nothing
+ * to fret; otherwise a copy.
  *
  * Each note takes the lowest free fret (`frettedPlacementOf`), in the beat's order, after the fretted notes already
  * there. For a document that arrives from outside the entry commands: a load, an applied alphaTex draft, a document
  * saved before Pen wrote frets. The mapper asks it too, so nothing pitched reaches alphaTab on a string.
  */
-export function frettedDocOf(doc: ScoreDoc): { doc: ScoreDoc; dropped: number } {
+export function frettedDocOf(doc: ScoreDoc): { doc: ScoreDoc; converted: number; dropped: number } {
   const needsFretting = doc.tracks.some(track =>
     track.staves.some(staff => staff.tuning.length > 0 && staff.bars.some(bar => bar.voices.some(voice => voice.beats.some(beat => beat.notes.some(note => note.pitch.kind === 'pitched')))))
   );
-  if (!needsFretting) return { doc, dropped: 0 };
+  if (!needsFretting) return { doc, converted: 0, dropped: 0 };
 
   const copy = structuredClone(doc);
   let dropped = 0;
+  let converted = 0;
   for (const staff of copy.tracks.flatMap(track => track.staves)) {
     if (staff.tuning.length === 0) continue;
     for (const beat of staff.bars.flatMap(bar => bar.voices.flatMap(voice => voice.beats))) {
@@ -143,10 +145,11 @@ export function frettedDocOf(doc: ScoreDoc): { doc: ScoreDoc; dropped: number } 
         }
         taken.add(placed.string);
         note.pitch = placed;
+        converted++;
         return true;
       });
       if (beat.notes.length === 0) beat.isRest = true;
     }
   }
-  return { doc: copy, dropped };
+  return { doc: copy, converted, dropped };
 }

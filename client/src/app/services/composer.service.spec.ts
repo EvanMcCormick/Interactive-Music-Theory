@@ -719,6 +719,32 @@ describe('ComposerService composition identity', () => {
     expect(service.doc.tempo).withContext('undo put back the composition before').toBe(90);
   });
 
+  /** An empty score whose first guitar beat holds `pitch` as a pitched note, as a document saved before Pen wrote frets. */
+  const withPitchOnStrings = (noteValue: number, octave: number): ScoreDoc => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[0].voices[0].beats[0] = {
+      ...createRestBeat(4),
+      isRest: false,
+      notes: [{ pitch: { kind: 'pitched', noteValue, octave }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }]
+    };
+    return doc;
+  };
+
+  it('leaves a load unsaved when it left out a note no string reaches, so the unsaved marker shows', () => {
+    // E1 is below the guitar's low E.
+    service.replaceDocument(withPitchOnStrings(4, 1), { markClean: true, newComposition: true });
+
+    expect(service.doc.tracks[0].staves[0].bars[0].voices[0].beats[0].isRest).toBeTrue();
+    expect(state().isDirty).toBeTrue();
+  });
+
+  it('keeps a load clean when its pitched notes were fretted and none was left out', () => {
+    service.replaceDocument(withPitchOnStrings(2, 5), { markClean: true, newComposition: true });
+
+    expect(service.doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes.map(note => note.pitch.kind)).toEqual(['fretted']);
+    expect(state().isDirty).toBeFalse();
+  });
+
   it('starts a fresh history for a new composition that is not saved, and leaves it unsaved', () => {
     service.undo();
     expect(state().canRedo).toBeTrue();

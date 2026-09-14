@@ -30,6 +30,7 @@ import { BeatRef, beatAt } from './composer-selection';
 import { NoteTarget, noteEffectTargets, noteTargetsAt, tieTargetsOf, trillTargetOf } from './note-edits';
 import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieOriginOf } from './note-landing';
 import { forcedLetterOf, reduceToOctave } from './note-spelling';
+import { soundingMidiOf } from './pitch-on-strings';
 
 /**
  * What kind of edit is being asked about.
@@ -102,11 +103,8 @@ const NATURAL_HARMONIC = "A natural harmonic's accidental cannot be forced yet."
  * and is read correctly here.
  */
 export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
-  const sounding =
-    pitch.kind === 'fretted'
-      ? (staff.tuning[pitch.string - 1] ?? 0) + staff.capo + pitch.fret
-      : pitch.noteValue;
-  return reduceToOctave(sounding - staff.transpose - staff.displayTranspose);
+  // A pitched note's octave adds whole octaves, which the reduction takes off again.
+  return reduceToOctave(soundingMidiOf(staff, pitch) - staff.transpose - staff.displayTranspose);
 }
 
 /**

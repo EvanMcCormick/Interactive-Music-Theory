@@ -119,7 +119,7 @@ describe('frettedDocOf', () => {
     doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
     doc.tracks[1].staves[0].bars[0].voices[0].beats[0].notes = [noteOf({ kind: 'pitched', noteValue: 0, octave: 4 })];
 
-    expect(frettedDocOf(doc)).toEqual({ doc, dropped: 0 });
+    expect(frettedDocOf(doc)).toEqual({ doc, converted: 0, dropped: 0 });
   });
 
   it('frets every pitched note on a staff with a tuning, on a copy, and leaves out a note no string reaches', () => {
@@ -134,6 +134,7 @@ describe('frettedDocOf', () => {
 
     expect(doc).toEqual(before);
     expect(result.dropped).toBe(1);
+    expect(result.converted).toBe(1);
     expect(beats[0].notes.map(note => note.pitch)).toEqual([{ kind: 'fretted', string: 1, fret: 10 }]);
     expect(beats[1].notes).toEqual([]);
     expect(beats[1].isRest).toBeTrue();

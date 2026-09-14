@@ -101,7 +101,7 @@ export interface ComposerTool {
 export const KEYLESS_TOOLS: readonly string[] = ['select', 'pen', 'whole', 'half', 'quarter', 'eighth', 'sixteenth', 'thirtySecond', 'sixtyFourth'];
 
 /** The note values, longest first, as `+` and `-` step through them. */
-export const DURATION_ORDER: readonly DurationValue[] = [1, 2, 4, 8, 16, 32, 64];
+const DURATION_ORDER: readonly DurationValue[] = [1, 2, 4, 8, 16, 32, 64];
 
 const key = (value: string, modifiers: Omit<KeyBinding, 'key' | 'code'> = {}): KeyBinding => ({ key: value, ...modifiers });
 const code = (value: string, modifiers: Omit<KeyBinding, 'key' | 'code'>): KeyBinding => ({ code: value, ...modifiers });

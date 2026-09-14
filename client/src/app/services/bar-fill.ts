@@ -15,6 +15,9 @@ import {
 import { insertBarInto } from './score-structure';
 import { DurationUnit, barGridFault, metricFrame, slotsToDurations } from './transcription-quantize';
 
+/** Fix bar's refusal when no selected bar is over: said by the command and by its palette button's state. */
+export const NO_BAR_OVER = 'No selected bar is over its time signature.';
+
 /**
  * Bar arithmetic for the composer: how full a bar is, filling its gaps with rests, and
  * carrying its overflow into the next bar when the user asks.

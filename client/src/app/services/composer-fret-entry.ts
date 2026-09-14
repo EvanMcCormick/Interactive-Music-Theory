@@ -1,7 +1,7 @@
 import type { ComposerService } from './composer.service';
 import { EditCursor, ScoreDoc } from '../models/composer.model';
 import { writeSounds } from './composer-score-interaction';
-import { MAX_FRET } from './pitch-on-strings';
+import { MAX_FRET, soundingMidiOf } from './pitch-on-strings';
 
 /**
  * Fret digits typed onto the caret's string, as in Guitar Pro.
@@ -57,7 +57,7 @@ export class FretDigitEntry {
       const string = (typing.target.stringIndex ?? 0) + 1;
       this.composer.retypeNote(typing.target, { kind: 'fretted', string, fret: combined });
       this.typing = { ...typing, digits: String(combined), doc: this.composer.state.doc, at: now };
-      if (writeSounds(before, this.composer.state.doc)) this.audition((staff.tuning[string - 1] ?? 0) + staff.capo + combined);
+      if (writeSounds(before, this.composer.state.doc)) this.audition(soundingMidiOf(staff, { kind: 'fretted', string, fret: combined }));
       return;
     }
 
@@ -65,7 +65,7 @@ export class FretDigitEntry {
     const string = (target.stringIndex ?? 0) + 1;
     this.composer.setNoteAtCursor({ kind: 'fretted', string, fret: digit }, true);
     this.typing = { digits: String(digit), target, leftAt: this.composer.state.cursor, doc: this.composer.state.doc, at: now };
-    if (writeSounds(before, this.composer.state.doc)) this.audition((staff.tuning[string - 1] ?? 0) + staff.capo + digit);
+    if (writeSounds(before, this.composer.state.doc)) this.audition(soundingMidiOf(staff, { kind: 'fretted', string, fret: digit }));
   }
 }
 

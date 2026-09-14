@@ -10,7 +10,8 @@ import {
   NoteEffectsDoc,
   ScoreDoc
 } from '../models/composer.model';
-import { barFillAt } from './bar-fill';
+import { SCORE_NEEDS_A_BAR } from './bar-edits';
+import { NO_BAR_OVER, barFillAt } from './bar-fill';
 import { beatsAt, fermataPositionsOf, toggledValue } from './beat-edits';
 import { BeatRef, selectedBars, selectionTargets } from './composer-selection';
 import { defaultFermata, fullBendPoints } from './composer-tool-defaults';
@@ -175,7 +176,7 @@ function fixBarRefusal(reading: Reading): string | null {
   for (let bar = reading.bars.first; bar <= reading.bars.last; bar++) {
     if (barFillAt(reading.doc, trackIndex, staffIndex, bar)?.kind === 'over') return null;
   }
-  return 'No selected bar is over its time signature.';
+  return NO_BAR_OVER;
 }
 
 const TRIPLET = { numerator: 3, denominator: 2 };
@@ -233,7 +234,7 @@ const READERS: Readonly<Record<string, Reader>> = {
   fixBar: reading => ({ pressed: false, refusal: fixBarRefusal(reading) }),
   deleteBar: reading => ({
     pressed: false,
-    refusal: reading.bars.last - reading.bars.first + 1 >= reading.doc.masterBars.length ? 'A score needs at least one bar.' : null
+    refusal: reading.bars.last - reading.bars.first + 1 >= reading.doc.masterBars.length ? SCORE_NEEDS_A_BAR : null
   }),
   doubleFlat: accidental('doubleFlat'),
   flat: accidental('flat'),

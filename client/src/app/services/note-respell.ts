@@ -72,7 +72,7 @@ function spellingOf(note: NoteDoc, pitchClass: number, fifths: number): Accident
  * pitch, so a letter chosen for the drawn pitch would name the wrong one; the accidental alone is checked
  * against the drawn pitch, as the accidental refusal checks it.
  */
-export function respelledNote(
+function respelledNote(
   note: NoteDoc,
   pitchClass: number,
   fifths: number,

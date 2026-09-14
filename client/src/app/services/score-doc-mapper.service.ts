@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, isDevMode } from '@angular/core';
 import * as alphaTab from '@coderline/alphatab';
 import {
   AccidentalMode,
@@ -186,10 +186,18 @@ export class ScoreDocMapperService {
   /**
    * A pitched note on a staff with a tuning is fretted first (`frettedDocOf`), and one no string reaches is not
    * drawn: alphaTab's tablature reads `note.string`, which a pitched note leaves at -1, and the render throws.
-   * The entry commands and `replaceDocument` never leave one there; this is the last guard.
+   * The entry commands and `replaceDocument` never leave one there; this is the last guard, and in dev mode it warns,
+   * naming the counts, whenever it frets or leaves out a note - which means some path skipped `replaceDocument`'s fretting.
    */
   toScore(written: ScoreDoc, settings: alphaTab.Settings): alphaTab.model.Score {
-    const doc = frettedDocOf(written).doc;
+    const fretted = frettedDocOf(written);
+    if (isDevMode() && (fretted.converted > 0 || fretted.dropped > 0)) {
+      console.warn(
+        `ScoreDocMapperService.toScore fretted ${fretted.converted} pitched note(s) on strings and left out ${fretted.dropped} no string reaches. ` +
+          'replaceDocument frets a document before it is stored, so no edit path should leave one.'
+      );
+    }
+    const doc = fretted.doc;
     const score = new alphaTab.model.Score();
     score.title = doc.title;
     score.subTitle = doc.subTitle;

@@ -239,11 +239,13 @@ export class ComposerService {
    * stack. A new composition - a load, an opened transcription - moves `documentId` on and starts a fresh history.
    *
    * A pitched note on a staff with a tuning is fretted first, and one no string reaches is left out and said
-   * (`frettedDocOf`): alphaTab cannot draw a note on tablature without a string.
+   * (`frettedDocOf`): alphaTab cannot draw a note on tablature without a string. A load that left a note out is not
+   * marked clean, whatever `markClean` says, so the unsaved marker shows that the stored file still holds it. One whose
+   * notes were only fretted stays clean: every note is kept and sounds as it did, and nothing is said.
    */
   replaceDocument(doc: ScoreDoc, replacement: DocumentReplacement = {}): void {
     const fretted = frettedDocOf(doc);
-    this.history.replaceDocument(fretted.doc, replacement);
+    this.history.replaceDocument(fretted.doc, fretted.dropped > 0 ? { ...replacement, markClean: false } : replacement);
     if (fretted.dropped > 0) this.announce(outOfReachNoticeOf(fretted.dropped));
   }
 

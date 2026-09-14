@@ -18,7 +18,7 @@ export const TOOLS_OVER_A_MODAL: ReadonlySet<string> = new Set(['shortcutSheet',
  * end, Ctrl+Insert copies on Windows, and Option+↑ and Option+↓ scroll on a Mac. Ctrl+S and Ctrl+K are not among them:
  * the browser's Save dialog and search box would open over the modal.
  */
-export const TOOLS_LEFT_TO_A_MODAL: ReadonlySet<string> = new Set(['selectAll', 'firstBar', 'lastBar', 'insertBar', 'semitoneUp', 'semitoneDown']);
+const TOOLS_LEFT_TO_A_MODAL: ReadonlySet<string> = new Set(['selectAll', 'firstBar', 'lastBar', 'insertBar', 'semitoneUp', 'semitoneDown']);
 
 /**
  * The composer's keyboard, as a class the page calls from its one `document:keydown` listener.

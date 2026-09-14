@@ -196,6 +196,9 @@ export function insertBarsBefore(doc: ScoreDoc, first: number, count: number): v
   for (let inserted = 0; inserted < count; inserted++) insertBarInto(doc, first);
 }
 
+/** Delete bar's refusal when the selection holds every bar: said by the command and by its palette button's state. */
+export const SCORE_NEEDS_A_BAR = 'A score needs at least one bar.';
+
 /**
  * Removes bars `first` to `last` from every track, or returns why not: a score keeps at least one bar.
  *
@@ -206,7 +209,7 @@ export function insertBarsBefore(doc: ScoreDoc, first: number, count: number): v
  */
 export function deleteBars(doc: ScoreDoc, bars: { first: number; last: number }): string | null {
   const count = bars.last - bars.first + 1;
-  if (count >= doc.masterBars.length) return 'A score needs at least one bar.';
+  if (count >= doc.masterBars.length) return SCORE_NEEDS_A_BAR;
 
   const hasFollowing = bars.last + 1 < doc.masterBars.length;
   const following = effectiveTimeSignature(doc.masterBars, bars.last + 1);

@@ -43,6 +43,14 @@ describe('setStaffNumber', () => {
     expect(score.tracks[0].staves[0].capo).toBe(2);
   });
 
+  it('caps a capo at the neck\'s last fret less one, so a fret is left in front of it', () => {
+    const score = doc();
+
+    expect(setStaffNumber(score, 0, 0, 'capo', 23)).toBeNull();
+    expect(setStaffNumber(score, 0, 0, 'capo', 24)).toMatch(/0 to 23/);
+    expect(score.tracks[0].staves[0].capo).toBe(23);
+  });
+
   it('refuses a capo on a pitched staff, and changes nothing', () => {
     const score = doc();
 

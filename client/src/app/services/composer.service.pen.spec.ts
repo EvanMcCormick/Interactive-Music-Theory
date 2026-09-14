@@ -2,8 +2,8 @@ import { TestBed } from '@angular/core/testing';
 
 import { ComposerService } from './composer.service';
 import { stateOf } from './composer.service.spec-helper';
-import { soundingMidiOf } from './pitch-on-strings';
-import { NotePitch, createDefaultNoteEffects } from '../models/composer.model';
+import { frettedDocOf, soundingMidiOf } from './pitch-on-strings';
+import { NotePitch, ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
 
 /**
  * Pen's click on a notation staff hands the service a pitch. On a staff with a tuning the note is written as a
@@ -107,5 +107,49 @@ describe('ComposerService Pen on a staff with a tuning', () => {
     expect(beatAt(0, 0).notes.map(note => note.pitch)).toEqual([{ kind: 'fretted', string: 1, fret: 10 }]);
     expect(beatAt(0, 1).isRest).toBeTrue();
     expect(stateOf(service).notice).toBe("1 note was out of reach of its staff's strings, and was left out.");
+  });
+});
+
+/**
+ * The mapper frets a pitched note on strings as its last guard, and warns when it has to (`ScoreDocMapperService.toScore`).
+ * The composer's own paths must never leave it one: Pen writes frets, and `replaceDocument` frets a document put in whole.
+ */
+describe('ComposerService edit paths leave the mapper nothing to fret', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  const leftToFret = (doc: ScoreDoc): { converted: number; dropped: number } => {
+    const { converted, dropped } = frettedDocOf(doc);
+    return { converted, dropped };
+  };
+  const none = { converted: 0, dropped: 0 };
+
+  it('on a new score, after Pen on a guitar, after a paste, and after a load of pitched notes on a tuned staff', () => {
+    expect(leftToFret(service.doc)).withContext('new score').toEqual(none);
+
+    service.setEntryMode('pen');
+    service.setCursor({ barIndex: 0, beatIndex: 0 });
+    service.setNoteAtCursor({ kind: 'pitched', noteValue: 2, octave: 5 }, false);
+    expect(service.doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes.length).toBe(1);
+    expect(leftToFret(service.doc)).withContext('Pen').toEqual(none);
+
+    service.setCursor({ barIndex: 0, beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 1 });
+    service.copy();
+    service.setCursor({ barIndex: 2, beatIndex: 0 });
+    service.paste();
+    expect(service.doc.tracks[0].staves[0].bars[2].voices[0].beats[0].notes.length).toBe(1);
+    expect(leftToFret(service.doc)).withContext('paste').toEqual(none);
+
+    const loaded = ComposerService.createEmptyScore();
+    const beats = loaded.tracks[0].staves[0].bars[0].voices[0].beats;
+    beats[0] = { ...createRestBeat(4), isRest: false, notes: [{ pitch: { kind: 'pitched', noteValue: 2, octave: 5 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }] };
+    expect(leftToFret(loaded).converted).withContext('the loaded document holds a pitched note on strings').toBe(1);
+    service.replaceDocument(loaded, { markClean: true, newComposition: true });
+    expect(leftToFret(service.doc)).withContext('load').toEqual(none);
   });
 });
