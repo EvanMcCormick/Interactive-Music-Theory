@@ -638,15 +638,17 @@ export class ComposerService {
   addTrack(name: string, program: number, fretted: boolean): void {
     this.history.commit(draft => {
       const fermatas = fermataSnapshotOf(draft, draft.masterBars.keys());
-      draft.tracks.push(
-        ComposerService.createTrack(
-          name,
-          name.slice(0, 3).toLowerCase(),
-          program,
-          fretted,
-          draft.masterBars
-        )
-      );
+      const track = ComposerService.createTrack(name, name.slice(0, 3).toLowerCase(), program, fretted, draft.masterBars);
+      // The key is the music's, and a key command writes it to every staff; so the new staff reads each bar's key from
+      // the first track's, copied. Its clef stays the instrument's own: a clef belongs to the staff.
+      const keys = draft.tracks[0]?.staves[0]?.bars ?? [];
+      for (const staff of track.staves) {
+        staff.bars.forEach((bar, index) => {
+          const key = keys[index]?.keySignature;
+          if (key) bar.keySignature = { ...key };
+        });
+      }
+      draft.tracks.push(track);
       settleFermatas(draft, fermatas);
     });
   }

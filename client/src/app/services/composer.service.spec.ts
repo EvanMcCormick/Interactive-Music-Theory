@@ -451,6 +451,25 @@ describe('ComposerService bar and track edits', () => {
     }
   });
 
+  it("gives a track added later the score's key signatures, bar by bar, and keeps its own clef", () => {
+    service.setCursor({ barIndex: 3 });
+    service.setKeySignature({ fifths: 7, mode: 'minor' });
+
+    service.addTrack('Piano', 0, false);
+
+    const piano = service.doc.tracks[1].staves[0].bars;
+    expect(piano.map(bar => bar.keySignature)).toEqual(service.doc.tracks[0].staves[0].bars.map(bar => bar.keySignature));
+    expect(piano[3].keySignature).toEqual({ fifths: 7, mode: 'minor' });
+    // Copied, not shared: a later key on the guitar alone cannot move the piano's.
+    expect(piano[3].keySignature).not.toBe(service.doc.tracks[0].staves[0].bars[3].keySignature);
+    expect(piano.map(bar => bar.clef)).toEqual(['g2', 'g2', 'g2', 'g2']);
+
+    const settings = new alphaTab.Settings();
+    const mapper = new ScoreDocMapperService();
+    const readBack = mapper.toDoc(mapper.toScore(service.doc, settings));
+    expect(readBack.tracks[1].staves[0].bars[3].keySignature).toEqual({ fifths: 7, mode: 'minor' });
+  });
+
   it('toggles a repeat start across the selected bars as one undo step', () => {
     service.setCursor({ barIndex: 0 });
     service.extendSelectionTo({ barIndex: 1 });
