@@ -1096,6 +1096,32 @@ popover's field did not apply (`fe1775f`). Then two more, each its own commit:
   and an empty live region claims no line. Checked in the pane at 375px with a short, a long and an unbroken message: no
   sideways scroll. Whole suite after it: **3,336 SUCCESS**.
 
+The final M2 review, before the merge, found more, fixed in two commits:
+
+- **Tasks 2.2, 2.4, 3.4 and 3.6: Mac keys the system takes (`9cd030e`).** The dynamics were bound to Ctrl+Shift+1 to 8, which a
+  Mac's tooltips wrote as ⌘+Shift+3 and so on, and macOS takes ⌘+Shift+3, 4, 5 and 6 for screenshots before the browser
+  sees them. Every Ctrl binding was audited against what macOS and Chrome and Safari on a Mac take with ⌘, now
+  `MAC_RESERVED` beside `BROWSER_RESERVED`, and four clashed. A binding says how it is held on a Mac (`KeyBinding.mac`):
+  the dynamics and Delete track (⌘+Shift+Delete clears Chrome's browsing data) take `control`, written ⌃ and matched
+  from the Control key alone; Ctrl+Space (Spotlight) and Ctrl+Y (History) take `none`, still matching but left out of a
+  Mac's labels by `bindingLabelsOf`, which the palette, the sheet and `shortcutTitleOf` now use. ⌘+← and ⌘+→, Back
+  and Forward in Chrome on a Mac, already have `preventDefault` from the handler, which a new spec pins; they, ⌘+/ and
+  the ⌃ keys are owed a check on a Mac in `docs/TODO.md`. Delete bar and Delete beats on a Mac keyboard are Step 28 of
+  Task 5.2 already. The design's macOS notes and table record it. Whole suite after it: **3,345 SUCCESS**.
+- **Tasks 1.15, 2.3 and 3.8, and the hand check's Pen fix: the mapper's last guard, the capo, a load that dropped
+  notes, and shared wording (`3524e72`).** `toScore` frets a pitched note on strings, as the last guard, and discarded what it dropped: in dev
+  mode it now warns, naming how many it fretted (`frettedDocOf` returns `converted`) and left out, and a spec runs
+  `frettedDocOf` over a new score, Pen on a guitar, a paste and a load to show no edit path leaves it any. The capo
+  check read `value > 24`: it takes `MAX_FRET` and stops at 23, so a fret is left in front of it. A load that left
+  notes out was still marked clean, hiding that it no longer matched the stored file; `replaceDocument` now leaves it
+  unsaved. A load whose notes were only fretted stays clean - every note is kept, sounds the same and nothing is said.
+  `trillTargetOf`, the fret entry's audition and `drawnPitchClassOf` use `soundingMidiOf` rather than its formula;
+  the last read only a pitched note's letter, and the octave the shared formula adds is reduced away. Fix bar's and
+  Delete bar's refusals, each written twice, are `NO_BAR_OVER` in `bar-fill.ts` and `SCORE_NEEDS_A_BAR` in
+  `bar-edits.ts`, used by the command and the tool state alike; no other refusal was duplicated. `tupletGroupEndOf`,
+  `respelledNote`, `DURATION_ORDER` and `TOOLS_LEFT_TO_A_MODAL` are no longer exported. Whole suite after it:
+  **3,351 SUCCESS**.
+
 ---
 
 
