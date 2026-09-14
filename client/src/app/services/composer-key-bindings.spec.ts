@@ -3,6 +3,7 @@ import {
   KeyPress,
   bindingLabelOf,
   bindingMatches,
+  bindingMatchesSymbol,
   bindingMatchesTyped,
   bindingSignatureOf
 } from './composer-key-bindings';
@@ -60,16 +61,19 @@ describe('bindingMatches', () => {
     expect(bindingMatches({ code: 'Slash', ctrl: true }, press({ key: '/', code: 'Slash', ctrlKey: true }))).toBeTrue();
   });
 
-  it('matches a Ctrl symbol binding by the symbol typed where the layout moves that symbol', () => {
-    // Dvorak types . on the key a US keyboard calls KeyE, and / on BracketLeft, so by physical key its Ctrl+Shift+.
-    // (diminuendo) and Ctrl+/ (triplet feel) could not be pressed at all.
-    expect(bindingMatches({ code: 'Period', ctrl: true, shift: true }, press({ key: '>', code: 'KeyE', ctrlKey: true, shiftKey: true }))).toBeTrue();
-    expect(bindingMatches({ code: 'Period', ctrl: true, shift: true }, press({ key: '.', code: 'KeyE', ctrlKey: true, shiftKey: true }))).toBeTrue();
-    expect(bindingMatches({ code: 'Slash', ctrl: true }, press({ key: '/', code: 'BracketLeft', ctrlKey: true }))).toBeTrue();
+  it('matches a Ctrl symbol binding by the symbol typed where the layout moves that symbol, only as a fallback', () => {
+    // Dvorak types . and > on the key a US keyboard calls KeyE, , and < on KeyW, and / on BracketLeft, so by
+    // physical key its Ctrl+Shift+. (diminuendo), Ctrl+Shift+, (crescendo) and Ctrl+/ (triplet feel) were out of reach.
+    expect(bindingMatchesSymbol({ code: 'Period', ctrl: true, shift: true }, press({ key: '>', code: 'KeyE', ctrlKey: true, shiftKey: true }))).toBeTrue();
+    expect(bindingMatchesSymbol({ code: 'Comma', ctrl: true, shift: true }, press({ key: '<', code: 'KeyW', ctrlKey: true, shiftKey: true }))).toBeTrue();
+    expect(bindingMatchesSymbol({ code: 'Slash', ctrl: true }, press({ key: '/', code: 'BracketLeft', ctrlKey: true }))).toBeTrue();
+    // Asked only after every binding's own key: AZERTY types . with Shift on Comma, which is crescendo's.
+    expect(bindingMatches({ code: 'Period', ctrl: true, shift: true }, press({ key: '.', code: 'Comma', ctrlKey: true, shiftKey: true }))).toBeFalse();
+    expect(bindingMatches({ code: 'Comma', ctrl: true, shift: true }, press({ key: '.', code: 'Comma', ctrlKey: true, shiftKey: true }))).toBeTrue();
     // Still exact about Shift, and a letter typed on the US symbol's key is that letter's.
-    expect(bindingMatches({ code: 'Period', ctrl: true, shift: true }, press({ key: '.', code: 'KeyE', ctrlKey: true }))).toBeFalse();
-    expect(bindingMatches({ code: 'Period', ctrl: true, shift: true }, press({ key: 'V', code: 'Period', ctrlKey: true, shiftKey: true }))).toBeFalse();
-    expect(bindingMatches({ code: 'Slash', ctrl: true }, press({ key: 'z', code: 'Slash', ctrlKey: true }))).toBeFalse();
+    expect(bindingMatchesSymbol({ code: 'Period', ctrl: true, shift: true }, press({ key: '.', code: 'KeyE', ctrlKey: true }))).toBeFalse();
+    expect(bindingMatchesSymbol({ code: 'Period', ctrl: true, shift: true }, press({ key: 'V', code: 'Period', ctrlKey: true, shiftKey: true }))).toBeFalse();
+    expect(bindingMatchesSymbol({ code: 'Slash', ctrl: true }, press({ key: 'z', code: 'Slash', ctrlKey: true }))).toBeFalse();
     expect(bindingMatches({ code: 'KeyZ', ctrl: true }, press({ key: 'z', code: 'Slash', ctrlKey: true }))).toBeTrue();
   });
 

@@ -17,7 +17,7 @@ import {
   toggledValue,
   tupletGroupsOf
 } from './beat-edits';
-import { writtenBeats, writtenOf } from './written-beats';
+import { writtenBeats, writtenOf } from './written-beats.spec-helper';
 import { scoreBarFills } from './bar-fill';
 import { fermataRefusal } from './edit-refusals';
 import { ScoreDocMapperService } from './score-doc-mapper.service';

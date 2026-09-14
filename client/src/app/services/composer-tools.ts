@@ -1,7 +1,7 @@
 import type { ComposerService } from './composer.service';
 import { DurationValue, DynamicValue, EntryMode } from '../models/composer.model';
 import { beatsAt } from './beat-edits';
-import { KeyBinding, KeyPress, bindingMatches, bindingMatchesTyped } from './composer-key-bindings';
+import { KeyBinding, KeyPress, bindingMatches, bindingMatchesSymbol, bindingMatchesTyped } from './composer-key-bindings';
 import { selectionTargets } from './composer-selection';
 import { toolStateOf } from './composer-tool-states';
 import { fullBendPoints } from './composer-tool-defaults';
@@ -368,13 +368,15 @@ export const COMPOSER_TOOLS: readonly ComposerTool[] = [
 ];
 
 /**
- * The tool `press` runs, or null. Exact bindings first, over the whole table; only then a symbol typed
- * through AltGr or Option (`bindingMatchesTyped`), so an exact Alt binding always wins.
+ * The tool `press` runs, or null. Three questions, each asked of the whole table before the next: a binding's own key
+ * (`bindingMatches`); a Ctrl symbol typed on another key (`bindingMatchesSymbol`); a symbol typed through AltGr or
+ * Option (`bindingMatchesTyped`). So an exact binding always wins: AZERTY's Ctrl+Shift on `Comma`, which types `.`, is
+ * crescendo's, and an exact Alt binding beats a typed symbol.
  */
 export function toolForPress(press: KeyPress, tools: readonly ComposerTool[] = COMPOSER_TOOLS): ComposerTool | null {
-  return (
-    tools.find(tool => tool.keys.some(binding => bindingMatches(binding, press))) ??
-    tools.find(tool => tool.keys.some(binding => bindingMatchesTyped(binding, press))) ??
-    null
-  );
+  for (const matches of [bindingMatches, bindingMatchesSymbol, bindingMatchesTyped]) {
+    const tool = tools.find(entry => entry.keys.some(binding => matches(binding, press)));
+    if (tool) return tool;
+  }
+  return null;
 }

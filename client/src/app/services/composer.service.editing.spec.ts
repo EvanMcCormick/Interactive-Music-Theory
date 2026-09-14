@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 
 import { ComposerService } from './composer.service';
 import { toolStateOf } from './composer-tool-states';
-import { writtenBeats, writtenOf } from './written-beats';
+import { writtenBeats, writtenOf } from './written-beats.spec-helper';
 import { ComposerState } from '../models/composer.model';
 
 /**

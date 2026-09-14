@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 
 import { ComposerService } from './composer.service';
-import { BROWSER_RESERVED, KeyPress, bindingMatches, bindingSignatureOf } from './composer-key-bindings';
+import { BROWSER_RESERVED, KeyBinding, KeyPress, bindingMatches, bindingMatchesSymbol, bindingMatchesTyped, bindingSignatureOf } from './composer-key-bindings';
 import { TOOLS_WITH_STATE } from './composer-tool-states';
 import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, KEYLESS_TOOLS, PALETTE_GROUPS, toolForPress } from './composer-tools';
 
@@ -161,10 +161,82 @@ describe('toolForPress', () => {
     expect(id({ key: '}', code: 'Digit0', ctrlKey: true, altKey: true })).toBe('alternateEnding');
   });
 
+  it('prefers the key a binding names to a symbol typed on it, so AZERTY Ctrl+Shift on Comma is crescendo alone', () => {
+    // AZERTY types . with Shift on the key a US keyboard calls Comma, which is crescendo's; diminuendo's . is only a
+    // fallback, for a layout that moves the symbol to a key no binding names.
+    expect(id({ key: '.', code: 'Comma', ctrlKey: true, shiftKey: true })).toBe('crescendo');
+    // Dvorak's symbols, on keys no binding names.
+    expect(id({ key: '>', code: 'KeyE', ctrlKey: true, shiftKey: true })).toBe('decrescendo');
+    expect(id({ key: '<', code: 'KeyW', ctrlKey: true, shiftKey: true })).toBe('crescendo');
+    expect(id({ key: '/', code: 'BracketLeft', ctrlKey: true })).toBe('tripletFeel');
+  });
+
   it('finds nothing for a press the browser or the table does not give the composer', () => {
     expect(id({ key: '1', code: 'Digit1', ctrlKey: true })).toBeNull();
     expect(id({ key: '1', code: 'Digit1', altKey: true })).toBeNull();
     expect(id({ key: 'z', code: 'KeyZ', ctrlKey: true, altKey: true })).toBeNull();
+  });
+});
+
+/** What a layout types on each physical key, without Shift and with it, held with Ctrl or Alt on Windows. */
+type Layout = Readonly<Record<string, readonly [string, string]>>;
+
+const lettersOf = (typed: (letter: string) => readonly [string, string]): Layout =>
+  Object.fromEntries('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(letter => [`Key${letter}`, typed(letter)]));
+const QWERTY: Layout = {
+  ...lettersOf(letter => [letter.toLowerCase(), letter]),
+  Digit1: ['1', '!'], Digit2: ['2', '@'], Digit3: ['3', '#'], Digit4: ['4', '$'], Digit5: ['5', '%'],
+  Digit6: ['6', '^'], Digit7: ['7', '&'], Digit8: ['8', '*'], Digit9: ['9', '('], Digit0: ['0', ')'],
+  Minus: ['-', '_'], Equal: ['=', '+'], BracketLeft: ['[', '{'], BracketRight: [']', '}'], Backslash: ['\\', '|'],
+  Semicolon: [';', ':'], Quote: ["'", '"'], Comma: [',', '<'], Period: ['.', '>'], Slash: ['/', '?'], Backquote: ['`', '~']
+};
+const QWERTZ: Layout = {
+  ...QWERTY, KeyY: ['z', 'Z'], KeyZ: ['y', 'Y'],
+  Digit2: ['2', '"'], Digit3: ['3', '\u00a7'], Digit6: ['6', '&'], Digit7: ['7', '/'], Digit8: ['8', '('], Digit9: ['9', ')'], Digit0: ['0', '='],
+  Minus: ['\u00df', '?'], Equal: ['Dead', 'Dead'], BracketLeft: ['\u00fc', '\u00dc'], BracketRight: ['+', '*'], Backslash: ['#', "'"],
+  Semicolon: ['\u00f6', '\u00d6'], Quote: ['\u00e4', '\u00c4'], Comma: [',', ';'], Period: ['.', ':'], Slash: ['-', '_'],
+  Backquote: ['Dead', '\u00b0'], IntlBackslash: ['<', '>']
+};
+const AZERTY: Layout = {
+  ...QWERTY, KeyQ: ['a', 'A'], KeyA: ['q', 'Q'], KeyW: ['z', 'Z'], KeyZ: ['w', 'W'], KeyM: [',', '?'], Semicolon: ['m', 'M'],
+  Digit1: ['&', '1'], Digit2: ['\u00e9', '2'], Digit3: ['"', '3'], Digit4: ["'", '4'], Digit5: ['(', '5'],
+  Digit6: ['-', '6'], Digit7: ['\u00e8', '7'], Digit8: ['_', '8'], Digit9: ['\u00e7', '9'], Digit0: ['\u00e0', '0'],
+  Minus: [')', '\u00b0'], Equal: ['=', '+'], BracketLeft: ['Dead', 'Dead'], BracketRight: ['$', '\u00a3'], Backslash: ['*', '\u00b5'],
+  Quote: ['\u00f9', '%'], Comma: [';', '.'], Period: [':', '/'], Slash: ['!', '\u00a7'], Backquote: ['\u00b2', '\u00b2'], IntlBackslash: ['<', '>']
+};
+const DVORAK: Layout = {
+  ...QWERTY, Minus: ['[', '{'], Equal: [']', '}'],
+  KeyQ: ["'", '"'], KeyW: [',', '<'], KeyE: ['.', '>'], KeyR: ['p', 'P'], KeyT: ['y', 'Y'], KeyY: ['f', 'F'], KeyU: ['g', 'G'],
+  KeyI: ['c', 'C'], KeyO: ['r', 'R'], KeyP: ['l', 'L'], BracketLeft: ['/', '?'], BracketRight: ['=', '+'],
+  KeyA: ['a', 'A'], KeyS: ['o', 'O'], KeyD: ['e', 'E'], KeyF: ['u', 'U'], KeyG: ['i', 'I'], KeyH: ['d', 'D'], KeyJ: ['h', 'H'],
+  KeyK: ['t', 'T'], KeyL: ['n', 'N'], Semicolon: ['s', 'S'], Quote: ['-', '_'],
+  KeyZ: [';', ':'], KeyX: ['q', 'Q'], KeyC: ['j', 'J'], KeyV: ['k', 'K'], KeyB: ['x', 'X'], KeyN: ['b', 'B'], KeyM: ['m', 'M'],
+  Comma: ['w', 'W'], Period: ['v', 'V'], Slash: ['z', 'Z']
+};
+
+describe('toolForPress on four layouts', () => {
+  // `toolForPress` asks three questions in turn, over the whole table: a binding's own key, then a Ctrl symbol typed
+  // on another key, then a symbol typed through AltGr or Option. Whichever first finds a binding decides, so that
+  // question must find one binding only.
+  const questions: readonly ((binding: KeyBinding, press: KeyPress) => boolean)[] = [bindingMatches, bindingMatchesSymbol, bindingMatchesTyped];
+  const modifiers: readonly Partial<KeyPress>[] = [{ ctrlKey: true }, { ctrlKey: true, shiftKey: true }, { altKey: true }, { altKey: true, shiftKey: true }];
+
+  it('never lets one press match two bindings, with Ctrl, Ctrl+Shift, Alt or Alt+Shift, on QWERTY, QWERTZ, AZERTY or Dvorak', () => {
+    const doubles: string[] = [];
+    for (const [name, layout] of Object.entries({ QWERTY, QWERTZ, AZERTY, DVORAK })) {
+      for (const [code, [plain, shifted]] of Object.entries(layout)) {
+        for (const held of modifiers) {
+          const typed = press({ ...held, code, key: held.shiftKey ? shifted : plain });
+          for (const matches of questions) {
+            const found = COMPOSER_TOOLS.flatMap(entry => entry.keys.filter(binding => matches(binding, typed)).map(() => entry.id));
+            if (found.length > 1) doubles.push(`${name} ${JSON.stringify(held)} ${code} (${typed.key}): ${found.join(', ')}`);
+            if (found.length > 0) break;
+          }
+        }
+      }
+    }
+
+    expect(doubles).toEqual([]);
   });
 });
 

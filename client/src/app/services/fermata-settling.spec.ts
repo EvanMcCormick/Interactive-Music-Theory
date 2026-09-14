@@ -7,7 +7,7 @@ import { deleteBeats, insertBeatAt, setBeatDurations, setGrace } from './beat-ed
 import { playbackStartsOf } from './bar-fill';
 import { fermataNoticeOf } from './fermata-settling';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
-import { writtenBeats, writtenOf } from './written-beats';
+import { writtenBeats, writtenOf } from './written-beats.spec-helper';
 import { ScoreDoc } from '../models/composer.model';
 
 /**

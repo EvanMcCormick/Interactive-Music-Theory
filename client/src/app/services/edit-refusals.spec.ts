@@ -3,7 +3,7 @@ import { BeatRef } from './composer-selection';
 import { deepFrozen } from './deep-frozen';
 import * as refusals from './edit-refusals';
 import { EditScope } from './edit-refusals';
-import { writtenBeats } from './written-beats';
+import { writtenBeats } from './written-beats.spec-helper';
 import {
   AccidentalMode,
   BeatEffectsDoc,

@@ -6,7 +6,7 @@ import { barMeterAt, fillBarGaps, scoreBarFills } from './bar-fill';
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
-import { writtenBeats } from './written-beats';
+import { writtenBeats } from './written-beats.spec-helper';
 import { BeatDoc, FermataDoc, ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
 
 const ref = (barIndex: number, beatIndex: number, trackIndex = 0): BeatRef =>

@@ -5,8 +5,8 @@
  * The rules are the design's, under "Shortcuts": modifiers exactly, with Cmd read as Ctrl; an Alt
  * combination by physical key, because macOS Option rewrites `key`; a Ctrl letter by the letter typed,
  * so Ctrl+Z is undo on QWERTZ and Ctrl+A select all on AZERTY, falling back to the physical key only
- * when no Latin letter was typed (a Cyrillic layout), and a Ctrl symbol by the symbol typed as well as by
- * its key (Dvorak moves `.` and `/`); a letter in either case with Shift exactly, by the
+ * when no Latin letter was typed (a Cyrillic layout), and a Ctrl symbol by its key, then by the symbol typed
+ * once no binding's own key matched (`bindingMatchesSymbol`: Dvorak moves `.` and `/`); a letter in either case with Shift exactly, by the
  * physical key on a layout with no Latin letters; a digit or symbol whatever Shift says, because which
  * symbols need Shift depends on the layout; a named key with Shift exactly. And one the design did not
  * state: a symbol typed through AltGr or Option (`bindingMatchesTyped`), asked only after every exact
@@ -67,10 +67,8 @@ const isShiftFree = (key: string): boolean => key.length === 1 && !isLetter(key)
  * physical key: Dvorak types z on the key a US keyboard calls `Slash`, so its Ctrl+Z would otherwise be
  * undo by the letter and Ctrl+/ (triplet feel) by the key.
  *
- * A Ctrl binding on a symbol key is also matched by the symbol a US keyboard types there
- * (`US_SYMBOLS`), when the press typed it on another key. Dvorak types `.` on `KeyE` and `/` on
- * `BracketLeft`, so by physical key alone its Ctrl+Shift+. (diminuendo) and Ctrl+/ were out of reach.
- * Shift is still exact, and the symbol is compared only with what was typed, so a letter never matches it.
+ * A symbol typed on another key is not asked here: see `bindingMatchesSymbol`, which is asked only after this has
+ * failed for every binding.
  */
 export function bindingMatches(binding: KeyBinding, press: KeyPress): boolean {
   if ((press.ctrlKey || press.metaKey) !== !!binding.ctrl || press.altKey !== !!binding.alt) return false;
@@ -78,9 +76,7 @@ export function bindingMatches(binding: KeyBinding, press: KeyPress): boolean {
     if (press.shiftKey !== !!binding.shift) return false;
     const letter = /^Key([A-Z])$/.exec(binding.code)?.[1];
     if (binding.ctrl && !binding.alt && isLetter(press.key)) return letter !== undefined && press.key.toUpperCase() === letter;
-    if (press.code === binding.code) return true;
-    const symbols = binding.ctrl && !binding.alt ? US_SYMBOLS[binding.code] : undefined;
-    return symbols !== undefined && press.key.length === 1 && symbols.includes(press.key);
+    return press.code === binding.code;
   }
 
   const key = binding.key ?? '';
@@ -90,6 +86,22 @@ export function bindingMatches(binding: KeyBinding, press: KeyPress): boolean {
   }
   if (isShiftFree(key)) return press.key === key;
   return press.key === key && press.shiftKey === !!binding.shift;
+}
+
+/**
+ * Whether `press` typed, on another key, the symbol a US keyboard types on `binding`'s key (`US_SYMBOLS`), with Ctrl and
+ * Shift exactly as bound. Dvorak types `.` on `KeyE`, `,` on `KeyW` and `/` on `BracketLeft`, so by physical key alone
+ * its Ctrl+Shift+. (diminuendo), Ctrl+Shift+, (crescendo) and Ctrl+/ (triplet feel) were out of reach.
+ *
+ * Ask it only after `bindingMatches` has failed for every binding. AZERTY types `.` with Shift on `Comma`, which is
+ * crescendo's own key, so asked beside the exact bindings it would be diminuendo's as well. A letter typed is that
+ * letter's (`bindingMatches`), so it never matches a symbol.
+ */
+export function bindingMatchesSymbol(binding: KeyBinding, press: KeyPress): boolean {
+  if (binding.code === undefined || !binding.ctrl || binding.alt || press.code === binding.code) return false;
+  if (!(press.ctrlKey || press.metaKey) || press.altKey || press.shiftKey !== !!binding.shift) return false;
+  const symbols = US_SYMBOLS[binding.code];
+  return symbols !== undefined && press.key.length === 1 && !isLetter(press.key) && symbols.includes(press.key);
 }
 
 /**

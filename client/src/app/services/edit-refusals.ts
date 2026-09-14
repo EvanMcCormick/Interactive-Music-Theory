@@ -250,33 +250,62 @@ interface OpenedGroup {
  * a broken bracket, and the room its beats free is off the 64th grid, so the bar is left short with nothing to say
  * why. The whole voice is read, not only the beats `refs` name, since an edit can break a group beside them.
  *
- * `edit` runs on a copy of those bars, on every track - an edit settles fermatas across tracks - so `doc`, frozen or
- * published, is left as it was. No edit but one that `writesTuplets` can open a group in a voice with no beat under a
- * tuplet, so for any other edit the copy is skipped when there is none.
+ * `edit` runs on a copy, and only on the voices it could open a group in, so `doc`, frozen or published, is left as it
+ * was, and a press over a long selection drafts only what it must - `toolStates` asks this of several tools on every
+ * selection. The edit is given the refs in those voices:
+ * - A voice with a beat under a tuplet is drafted.
+ * - A voice with none can gain a group only from an edit that `writes` a tuplet, and whether that group closes is read
+ *   without the edit: the named beats under `writes`, grouped as alphaTab groups them (`openTupletGroupsOf`). The rests
+ *   the edit inserts or takes go only where a group already ends (`relength`), so they change no group. A voice whose
+ *   group would stay open is drafted, for the words that say why.
+ * The copy holds the drafted bars of the drafted tracks, and no bar of any other track: an edit settles fermatas across
+ * the tracks it can reach, which has no bearing on a group.
  */
 function tupletGroupOpenedBy(
   doc: ScoreDoc,
   refs: readonly BeatRef[],
-  edit: (draft: ScoreDoc) => void,
-  writesTuplets: boolean
+  edit: (draft: ScoreDoc, refs: readonly BeatRef[]) => void,
+  writes: Tuplet | null
 ): OpenedGroup | null {
-  const voices = new Map<string, BeatRef>();
-  for (const ref of refs) if (ref.voiceIndex === 0) voices.set(`${ref.trackIndex}:${ref.staffIndex}:${ref.barIndex}`, ref);
+  const voices = new Map<string, BeatRef[]>();
+  for (const ref of refs) {
+    if (ref.voiceIndex !== 0) continue;
+    const key = `${ref.trackIndex}:${ref.staffIndex}:${ref.barIndex}`;
+    voices.set(key, [...(voices.get(key) ?? []), ref]);
+  }
   const beatsOf = (score: ScoreDoc, at: BeatRef): BeatDoc[] =>
     score.tracks[at.trackIndex]?.staves[at.staffIndex]?.bars[at.barIndex]?.voices[0]?.beats ?? [];
-  if (!writesTuplets && ![...voices.values()].some(at => beatsOf(doc, at).some(hasTuplet))) return null;
+  const drafted: BeatRef[] = [];
+  for (const voiceRefs of voices.values()) {
+    const beats = beatsOf(doc, voiceRefs[0]);
+    if (beats.some(hasTuplet)) {
+      drafted.push(...voiceRefs);
+    } else if (writes && hasTuplet({ tuplet: writes })) {
+      const named = new Set(voiceRefs.map(ref => beats[ref.beatIndex]));
+      const written = beats.map(beat => (named.has(beat) && beat.effects.grace === 'none' ? { ...beat, tuplet: writes } : beat));
+      if (openTupletGroupsOf(written).length > 0) drafted.push(...voiceRefs);
+    }
+  }
+  if (drafted.length === 0) return null;
 
-  const bars = new Set([...voices.values()].map(at => at.barIndex));
+  const tracks = new Set(drafted.map(ref => ref.trackIndex));
+  const bars = new Set(drafted.map(ref => ref.barIndex));
   const draft: ScoreDoc = {
     ...doc,
-    tracks: doc.tracks.map(track => ({
+    tracks: doc.tracks.map((track, trackIndex) => ({
       ...track,
-      staves: track.staves.map(staff => ({ ...staff, bars: staff.bars.map((bar, index) => (bars.has(index) ? structuredClone(bar) : bar)) }))
+      staves: track.staves.map(staff => ({
+        ...staff,
+        bars: tracks.has(trackIndex) ? staff.bars.map((bar, index) => (bars.has(index) ? structuredClone(bar) : bar)) : []
+      }))
     }))
   };
-  const named = new Set(beatsAt(draft, refs));
-  const before = [...voices.values()].map(at => ({ at, open: openTupletGroupsOf(beatsOf(draft, at)) }));
-  edit(draft);
+  const named = new Set(beatsAt(draft, drafted));
+  const before = [...new Map(drafted.map(ref => [`${ref.trackIndex}:${ref.staffIndex}:${ref.barIndex}`, ref])).values()].map(at => ({
+    at,
+    open: openTupletGroupsOf(beatsOf(draft, at))
+  }));
+  edit(draft, drafted);
   for (const { at, open } of before) {
     const after = beatsOf(draft, at);
     const group = newOpenTupletGroup(open, after);
@@ -332,7 +361,7 @@ export function tupletRefusal(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: T
   const setting = tuplet !== null && hasTuplet({ tuplet });
   const targets = beatsAt(doc, refs);
   if (setting && targets.length > 0 && targets.every(beat => beat.effects.grace !== 'none')) return GRACE_TUPLET;
-  const opened = tupletGroupOpenedBy(doc, refs, draft => setTuplet(draft, refs, tuplet), setting);
+  const opened = tupletGroupOpenedBy(doc, refs, (draft, drafted) => setTuplet(draft, drafted, tuplet), setting ? tuplet : null);
   if (!opened) return null;
   return setting && tuplet ? openedByTupletPress(opened, tuplet) : BREAKS_A_GROUP;
 }
@@ -344,7 +373,7 @@ export function tupletRefusal(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: T
 export function deleteBeatsRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): string | null {
   const refusal = editRefusal(doc, refs, { family: 'beat', key: 'duration' }, null);
   if (refusal) return refusal;
-  return tupletGroupOpenedBy(doc, refs, draft => deleteBeats(draft, refs), false) ? BREAKS_A_GROUP : null;
+  return tupletGroupOpenedBy(doc, refs, (draft, drafted) => deleteBeats(draft, drafted), null) ? BREAKS_A_GROUP : null;
 }
 
 /**
@@ -354,7 +383,7 @@ export function deleteBeatsRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): str
 export function insertBeatRefusal(doc: ScoreDoc, at: BeatRef, duration: DurationValue, dots: number): string | null {
   const refusal = editRefusal(doc, [at], { family: 'beat', key: 'duration' }, null);
   if (refusal) return refusal;
-  return tupletGroupOpenedBy(doc, [at], draft => void insertBeatAt(draft, at, duration, dots), false) ? INSERT_BREAKS_A_GROUP : null;
+  return tupletGroupOpenedBy(doc, [at], draft => void insertBeatAt(draft, at, duration, dots), null) ? INSERT_BREAKS_A_GROUP : null;
 }
 
 /**
@@ -365,7 +394,7 @@ export function insertBeatRefusal(doc: ScoreDoc, at: BeatRef, duration: Duration
 export function noteEntryRefusal(doc: ScoreDoc, at: BeatRef, duration: DurationValue, dots: number): string | null {
   const refusal = editRefusal(doc, [at], { family: 'beat', key: 'duration' }, null);
   if (refusal) return refusal;
-  return tupletGroupOpenedBy(doc, [at], draft => setBeatDurations(draft, [at], duration, dots), false) ? NOTE_BREAKS_A_GROUP : null;
+  return tupletGroupOpenedBy(doc, [at], draft => setBeatDurations(draft, [at], duration, dots), null) ? NOTE_BREAKS_A_GROUP : null;
 }
 
 /**
@@ -393,7 +422,7 @@ export function graceRefusal(doc: ScoreDoc, refs: readonly BeatRef[], grace: Exc
   const refusal = editRefusal(doc, refs, { family: 'beat', key: 'grace' }, null);
   if (refusal) return refusal;
   const value = toggledValue(beatsAt(doc, refs).map(beat => beat.effects.grace), grace, 'none');
-  const opened = tupletGroupOpenedBy(doc, refs, draft => setGrace(draft, refs, value), false);
+  const opened = tupletGroupOpenedBy(doc, refs, (draft, drafted) => setGrace(draft, drafted, value), null);
   return opened ? shortenedByOnBeatGrace(opened.group, opened.after) ?? BREAKS_A_GROUP : null;
 }
 
@@ -452,7 +481,7 @@ const GRACE_DURATION =
  * so it says why nothing happened. A range with some graces in it changes the rest.
  */
 export function durationRefusal(doc: ScoreDoc, refs: readonly BeatRef[], duration: DurationValue, dots: number): string | null {
-  return lengthRefusal(doc, refs, draft => setBeatDurations(draft, refs, duration, dots));
+  return lengthRefusal(doc, refs, (draft, drafted) => setBeatDurations(draft, drafted, duration, dots));
 }
 
 /**
@@ -460,16 +489,16 @@ export function durationRefusal(doc: ScoreDoc, refs: readonly BeatRef[], duratio
  * (`durationRefusal`), with `setBeatDots` as the edit a tuplet group is checked against.
  */
 export function dotsRefusal(doc: ScoreDoc, refs: readonly BeatRef[], dots: number): string | null {
-  return lengthRefusal(doc, refs, draft => setBeatDots(draft, refs, dots));
+  return lengthRefusal(doc, refs, (draft, drafted) => setBeatDots(draft, drafted, dots));
 }
 
 /** `durationRefusal` and `dotsRefusal`, for the length change `edit` makes. */
-function lengthRefusal(doc: ScoreDoc, refs: readonly BeatRef[], edit: (draft: ScoreDoc) => void): string | null {
+function lengthRefusal(doc: ScoreDoc, refs: readonly BeatRef[], edit: (draft: ScoreDoc, refs: readonly BeatRef[]) => void): string | null {
   const refusal = editRefusal(doc, refs, { family: 'beat', key: 'duration' }, null);
   if (refusal) return refusal;
   const allGraces = refs.every(ref => (beatAt(doc, ref)?.effects.grace ?? 'none') !== 'none');
   if (allGraces) return GRACE_DURATION;
-  return tupletGroupOpenedBy(doc, refs, edit, false) ? BREAKS_A_GROUP : null;
+  return tupletGroupOpenedBy(doc, refs, edit, null) ? BREAKS_A_GROUP : null;
 }
 
 const HAMMER_ON_NOTHING_FOLLOWS =
