@@ -323,8 +323,9 @@ built bottom-up so each layer is proven before the next leans on it:
 | | | |
 |---|---|---|
 | M1 | Shipped | Foundations with no new controls: saving stops losing effects, a selection with beat, note, bar and track commands over it that refuse whole or apply whole, and bars that fill their gaps with rests and report overflow for a Fix bar command; today's duration buttons already fill gaps |
-| M2 | Planned | Palette, Select / Pen, the tool table and every shortcut, the new page grid |
-| M3 | Planned | Inspector and track strip: tuning presets (a real bass tuning), capo, transpose, staff views, mixer |
+| M2 | Planned | Palette, Select / Pen, the tool table and every shortcut, the new page grid and a minimal track strip; planned in [plans/2026-09-13-composer-editor-m2.md](plans/2026-09-13-composer-editor-m2.md) |
+| After M2 | Planned | The GP Viewer page becomes the composer: a `.gp` file opens and plays as alphaTab reads it, the first edit converts it after a prompt listing what the model cannot hold, and the viewer route goes |
+| M3 | Planned | Inspector, and the track strip's mixer and bar grid: tuning presets (a real bass tuning), capo, transpose, staff views, mixer |
 | M4 | Planned | Tools that need their own editor: bend curve, custom tuplet, trill speed |
 
 Four things in the progression composer are recorded as known limitations rather than

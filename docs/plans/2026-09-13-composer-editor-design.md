@@ -1,7 +1,7 @@
 # Composer Editor Redesign
 
 **Date:** 2026-09-13
-**Status:** M1 implemented, to [2026-09-13-composer-editor-m1.md](2026-09-13-composer-editor-m1.md); M2 not started
+**Status:** M1 implemented, to [2026-09-13-composer-editor-m1.md](2026-09-13-composer-editor-m1.md); M2 planned, to [2026-09-13-composer-editor-m2.md](2026-09-13-composer-editor-m2.md), with its decisions under "M2 decisions" below
 **Replaces:** the "Still outstanding" list in
 [2026-09-04-sheet-music-composer-design.md](2026-09-04-sheet-music-composer-design.md)
 
@@ -125,6 +125,96 @@ Five choices were put to the user; each records what was rejected.
 And one that was proposed and accepted without a question: **a shortcut for every
 tool**, following Guitar Pro's bindings where they are unambiguous.
 
+## M2 decisions
+
+Settled on 2026-09-13 while planning M2. The first three were put to the user; the rest were
+decided in planning. Where the code or alphaTab disagreed with a decision as first written, the
+decision below is the corrected one, and the M2 plan says what changed under "Where this plan
+departs from the design".
+
+1. **A hammer-on, or a shift or legato slide, with nothing to land on is refused**, with a reason,
+   where alphaTab would drop it. A range puts it on the notes that can land and skips the rest,
+   refusing only when none can. The rule is alphaTab's as measured: the note to land on must be
+   later in the bar or on the next bar's first beat - not within three bars, as
+   `Note.nextNoteOnSameLine` is written, because a later bar's beats are not yet chained when a
+   note finishes. A pitched note never lands, since alphaTab files only stringed notes by string.
+2. **A fermata belongs to a bar position across all tracks**, as in alphaTab and Guitar Pro. A
+   press sets it on every staff's voice-1 beat that starts at that tick in that bar, on every track
+   but a generated one, and a second press clears them all; the button reads all of them. M1's
+   pinned spread specs now pin the rule.
+3. **M2 brings a minimal track strip forward**: a row per track with its name, remove, and the
+   progression badge, status, Update and Flatten; add track with an instrument; and "Add
+   progression track", keeping every selector and label the M4 specs pin, which move with the
+   markup. Library and Export move into top-bar menus, with the saved list in a drawer. Mixer, bar
+   grid and inspector stay M3.
+4. **`+` and `=` are longer, `-` shorter** - today's direction. The shortcut table below had them
+   the other way round and is corrected.
+5. **Escape.** With the circle-of-fifths drawer open, Escape closes it and the composer ignores it;
+   with the drawer closed, Escape is back to Select and clear the range. The shell claims the key
+   (`preventDefault`) only when it closes the drawer, and the composer ignores a claimed press. A
+   shared "drawer open" flag would not work: the shell's listener runs first, so the flag would read
+   closed by the time the composer asked.
+6. **Modifiers match exactly.** Ctrl, Alt or Cmd with a digit writes no fret and is left to the
+   browser; Ctrl or Shift with an arrow does its own table meaning; undo rejects Alt (AltGr on
+   Windows); `r` and `R` both rest; form fields include `contentEditable`, through one helper shared
+   with the progression page. One refinement: a symbol typed through AltGr or Option still matches,
+   but only after every exact binding has failed, so `}` and `[` are reachable on German keyboards.
+7. **A two-digit fret is one undo step.** The second digit replaces the first digit's commit when
+   nothing was committed in between.
+8. **Refusals are displayed** in one polite live region, in the status line, which shows a failed
+   alphaTex apply too. A refusal clears on a caret move, a selection change, undo and redo, as well
+   as on the next edit. A duration press publishes its refusal; on a generated track it still
+   remembers the input duration, and now also says why the beat did not change.
+9. **A whole tuplet group's freed room goes after the group**, fixed before the tuplet tool:
+   `n8 n8 n8 n8 n2` with its first three beats made a triplet keeps the fourth eighth at 1440.
+10. **Natural clears a forced accidental** (`auto`), because alphaTab 1.8 draws `ForceNatural` as
+    `Default`, and its label says so.
+11. **Respell** cycles a pitched note's letter through every spelling `forcedLetterOf` allows for its
+    drawn pitch class, and a fretted note's forced accidental between the sharp and the flat of a
+    black key. A fretted white key has nothing to cycle and is refused with a reason, as is a fretted
+    natural harmonic; a range respells what it can.
+12. **Palm mute and let ring are note-level tools.**
+13. **Vibrato is note-level.** Its button reads a tied note's vibrato from the note it is tied from,
+    and a press on a tied note is refused: "Vibrato on a tied note belongs to the note it is tied from."
+14. **A duration press on nothing but grace beats is refused**, since alphaTab sets a grace's value;
+    a range with some graces keeps skipping them.
+15. **A press that clears a fretted-only technique is allowed on a pitched staff**; only turning one
+    on is refused. Made general in planning: every fretted-only note technique, not only the harmonic.
+16. **Defaults until M4's editors**: a full bend of two points, `[{offset:0,value:0},{offset:60,value:4}]`,
+    which alphaTab keeps exactly; a trill a whole step above each note, at sixteenths; tuplets 3:2,
+    5:4, 6:4 and 7:4; a medium fermata of length 1.
+17. **Tools that take a value open a small anchored popover**: time signature, key signature (all
+    fifteen keys, major and minor), clef, section, alternate ending, tuplet, and triplet feel.
+    Validation reuses `timeSignatureFault` and `keySignatureFault`, and an invalid entry is refused
+    inline.
+18. **Commands with no service method go in new modules** - `composer-entry-commands.ts`, delegated
+    like `composer-service-structure.ts`, and pure edit functions - keeping `composer.service.ts`
+    under the cap: rest over a range, insert and delete beats, semitone and string moves, cut, copy
+    and paste, every navigation move and its Shift form, play from start, repeat close as a toggle,
+    and inserting and deleting the selected bars.
+19. **Ctrl+S reaches the library panel's own save** through a small request service, so a keyboard
+    save refuses, announces and returns focus exactly as a click does.
+20. **The library's menus and drawer are hidden with CSS**, never `*ngIf`, and its announced regions
+    sit outside them.
+21. **macOS**: see "macOS" under Shortcuts. Nobody has checked the bindings on a Mac.
+22. **Score interaction.** In Select a notation click moves the caret and never writes; in Pen it
+    writes the clicked pitch; digits write on tablature in both. Mouse-down sets the caret, moving
+    with the button held extends the range, and Shift-click extends. The highlight is drawn from
+    state with `highlightPlaybackRange` after every render; alphaTab's own interaction is turned off,
+    because with it on alphaTab's mouse-up sets the playback range. Pen shows a hover notehead, and
+    the caret is drawn from state before the first click.
+23. **The page grid** is sized to the viewport minus the app header, whose height the shell
+    publishes as `--app-header-height`: a top bar, the palette, the score, a status line, and the
+    track strip under a draggable separator. There is no inspector column until M3. Composer colours
+    are CSS custom properties on the page host.
+24. **Palette buttons are Bravura glyphs** by SMuFL code point, from `/font/Bravura.woff2`, with text
+    where SMuFL has no symbol. Each has an `aria-label`, a tooltip with its shortcut, `aria-pressed`
+    with `mixed`, and `aria-disabled` with the reason when refusing.
+25. **The tool table's spec** checks every tool for a command, a glyph or text, a label and a group,
+    and every binding - macOS alternates included - for uniqueness and against the browser's keys.
+    The note values and the Select and Pen buttons have no key of their own, as the design's table
+    gives them none; the spec names them.
+
 ---
 
 ## Part 1: Architecture and milestones
@@ -148,12 +238,26 @@ under it, so each layer is proven before the next leans on it.
 | | Delivers | Visible change |
 |---|---|---|
 | **M1** | Model additions, mapper fixes and round-trip specs, selection, commands, bar filling | Saving stops losing data, and today's duration buttons fill gaps and leave overflow for Fix bar |
-| **M2** | Palette, Select / Pen, the tool table and every shortcut, the new page grid | The editor |
-| **M3** | Inspector and track strip: tuning presets (a real bass tuning), capo, transpose, staff views, mixer | Track setup |
+| **M2** | Palette, Select / Pen, the tool table and every shortcut, the new page grid, and a minimal track strip | The editor |
+| **After M2** | The GP Viewer page becomes the composer - see below | One page opens, plays and edits a `.gp` file |
+| **M3** | Inspector, and the track strip's mixer and bar grid: tuning presets (a real bass tuning), capo, transpose, staff views, mixer | Track setup |
 | **M4** | Tools that need their own editor: bend curve, custom tuplet, trill speed | The long tail |
 
 M2 can ship its palette with bend, tuplet and trill applying fixed defaults (a full
 bend, a triplet, a 16th trill); M4 replaces the defaults with editors.
+
+### After M2: the GP Viewer becomes the composer
+
+Decided by the user on 2026-09-13: a milestone of its own, directly after M2 and before M3. Its
+tasks are not planned yet.
+
+Opening a `.gp` file in the composer shows and plays alphaTab's own reading of the file, as the
+viewer does today. The first edit converts the file to the composer's model, after a prompt
+listing what that file would lose, so nothing is dropped silently. The model cannot yet hold
+everything a Guitar Pro file can - multiple voices, lyric lines beyond the first, tremolo bar and
+wah, chord diagrams, tempo automations beyond bar 1, and the four slide types with no name - so
+the prompt has real entries. After the merge, the GP Library's Open goes to the composer and the
+separate viewer route is removed.
 
 ---
 
@@ -170,7 +274,9 @@ whole bars on every track between them - Guitar Pro's multitrack selection.
 
 The highlight uses alphaTab's `highlightPlaybackRange(startBeat, endBeat)`, which draws
 the markers without setting `playbackRange`, so selecting does not change what the
-transport loops.
+transport loops. Planning M2 found that alphaTab's own interaction undoes this: with
+`player.enableUserInteraction` on, its mouse-up sets the playback range. So the composer turns
+that interaction off and draws the highlight itself, after every render.
 
 **Commands are edit functions** of a draft document and the selection, free of service
 state, in four modules: `beat-edits`, `note-edits`, `bar-edits`, `track-edits`. They
@@ -378,12 +484,18 @@ The rules, in order:
 Matching: unmodified symbols match on `KeyboardEvent.key`; combinations with Alt or
 Ctrl match on `KeyboardEvent.code`, because macOS Option rewrites `key` (Option+- is
 an en dash). Keys marked † produce a symbol through Shift and need the non-US layout
-hand check.
+hand check. M2's plan settles the rest: modifiers match exactly, with Cmd read as Ctrl; a
+letter matches in either case, with Shift exactly as bound; a digit or symbol matches whatever
+Shift says; and a symbol typed through AltGr or Option still matches once every exact binding
+has failed, since `}` is AltGr+0 on a German keyboard.
 
-**macOS is open.** Two things the table does not settle yet, both for M2 to decide
-with a Mac in front of it: Mac keyboards have no Insert key, so insert beat, section,
-insert bar and add track each need a second binding; and if Ctrl is read as Cmd,
-Play from start becomes Cmd+Space, which is Spotlight.
+**macOS**, settled in M2's plan without a Mac to hand - nobody has checked these on one. Mac
+keyboards have no Insert key, so each Insert binding also gets the Enter key with the same
+modifiers: section Shift+Enter, insert bar Ctrl+Enter (Cmd+Return), add track Ctrl+Shift+Enter.
+Insert beat, whose Insert is unmodified, gets Alt+Enter (Option+Return), because plain Enter must
+still press a focused button. Enter is in no other binding of the table, and the browser's only
+use of it on a page is activating the focused control. Play from start keeps Ctrl+Space and gains
+Shift+Space, since Cmd+Space is Spotlight and Ctrl+Space switches input source.
 
 The Select / Pen toggle is **Q**, not the `N` shown in the design question: `N` is
 Guitar Pro's trill.
@@ -402,19 +514,19 @@ Guitar Pro's trill.
 | | Save | Ctrl+S | GP, Tux |
 | Navigation | Previous / next beat | ← / → | today |
 | | Previous / next string | ↑ / ↓ | today |
-| | Extend selection | Shift+← → ↑ ↓ | new |
+| | Extend selection | Shift+← → (a beat), Shift+↑ ↓ (a track) | new |
 | | First / last beat of bar | Home / End | new |
 | | Previous / next bar | Ctrl+← / Ctrl+→ | Tux |
 | | First / last bar | Ctrl+Home / Ctrl+End | GP |
 | | Previous / next track | Ctrl+Shift+↑ / Ctrl+Shift+↓ | Tux |
 | Playback | Play / pause | Space | today |
-| | Play from start | Ctrl+Space | GP |
+| | Play from start | Ctrl+Space, Shift+Space | GP, new (macOS) |
 | Beats | Fret | 0-9 | today |
-| | Rest | R | today, GP |
+| | Rest | R, Shift+R | today, GP |
 | | Clear beat to rest | Delete, Backspace | today |
-| | Insert beat | Insert | GP |
+| | Insert beat | Insert, Alt+Enter | GP, new (macOS) |
 | | Delete beats | Shift+Delete | GP |
-| Duration | Shorter / longer | + or = / - | today, GP, Tux |
+| Duration | Longer / shorter | + or = / - | today, GP, Tux |
 | | Dot | . | new |
 | | Double dot | Alt+. | new |
 | | Triplet | / | GP, Tux |
@@ -425,16 +537,16 @@ Guitar Pro's trill.
 | | Clef… | K | GP |
 | | Repeat open / close | [ / ] | GP |
 | | Alternate ending… | } † | new |
-| | Section… | Shift+Insert | GP, Tux |
+| | Section… | Shift+Insert, Shift+Enter | GP, Tux, new (macOS) |
 | | Double bar | Shift+B | new |
 | | Triplet feel… | Ctrl+/ | GP |
 | | Free time | \| † | GP |
 | | Fix bar | F4 | GP's "check bar durations" |
-| | Insert / delete bar | Ctrl+Insert / Ctrl+Delete | GP |
-| Tracks | Add track | Ctrl+Shift+Insert | GP, Tux |
+| | Insert / delete bar | Ctrl+Insert or Ctrl+Enter / Ctrl+Delete | GP, new (macOS) |
+| Tracks | Add track | Ctrl+Shift+Insert, Ctrl+Shift+Enter | GP, Tux, new (macOS) |
 | | Delete track | Ctrl+Shift+Backspace | new (Ctrl+Shift+Delete is the browser's) |
 | Accidentals | Flat / sharp | Alt+- / Alt+= | new |
-| | Natural | Alt+0 | new |
+| | Natural (clears a forced accidental) | Alt+0 | new |
 | | Double flat / double sharp | Alt+Shift+- / Alt+Shift+= | new |
 | | Respell | E | Tux |
 | | Semitone down / up | Alt+↓ / Alt+↑ | new |
@@ -491,24 +603,35 @@ Not rejected - not yet placed. Each needs its own design pass:
   coalesce the edits, or skip a commit that changes nothing, as `flattenTrack` already
   does by returning before it commits.
 - **`KEY_SIGNATURES` in the mapper** lists major keys only and omits ±7. The key
-  signature popover needs all fifteen, major and minor.
+  signature popover needs all fifteen, major and minor. *Planned in M2 (Task 3.2):
+  `composer-bar-choices.ts` lists all thirty, and the mapper's list is left as it was.*
 - **Sidebar clipping.** A user saw headings lose their first letter ("RACKS", "ARS",
   "IBRARY") at about 1870px. Not reproduced on an empty score; consistent with the
   panel scrolled sideways, which its styles permit. The M2 grid removes the panel.
+  *Planned in M2 (Tasks 3.7 and 3.10).*
 - **Before the first click, the caret box is not drawn** - it needs a click to learn
   which staff it is on - so arrow keys move an invisible caret. The selection
-  highlight in M2 draws from state rather than from the last click.
+  highlight in M2 draws from state rather than from the last click. *Planned in M2 (Task
+  4.3): the caret is drawn from state as well, before any click.*
 - **A hammer-on or a shift or legato slide with nothing to land on does not save.**
   alphaTab's `Note.finish` clears `isHammerPullOrigin` when no note follows on the same
   string, or on another string as a left-hand tap, within three bars, and resets a shift
   or legato slide when no note follows on its string - so the editor can show a
   technique that a reload loses. M1 pins both losses in
   `score-doc-mapper.effects.spec.ts`. M2 decides what the hammer-on and slide tools do:
-  refuse where there is nothing to land on, or allow it and say so.
+  refuse where there is nothing to land on, or allow it and say so. *Settled in M2's plan
+  (Tasks 1.7 and 1.8): refused, with a reason. The reach was measured, not read: the note to
+  land on must be later in the bar or on the next bar's first beat, not within three bars.
+  `Note.nextNoteOnSameLine` is written to search three bars, but `Staff.finish` finishes bars
+  in order and `Voice.finish` chains a bar's beats only when that bar finishes, so a note's
+  walk ends at the next bar's first beat. The three-bar bound does apply backwards, to a tie's
+  origin.*
 - **Four slide types have no name in the model.** In from above, out down, and pick
   slides down and up read back as no slide, so alphaTex applied from the source panel
   loses them. Nothing the composer writes can produce them; widening
-  `NoteEffectsDoc.slide` belongs with M2's slide tools.
+  `NoteEffectsDoc.slide` belongs with M2's slide tools. *Still open after M2's plan: its slide
+  tools are the legato and shift slides the model already names, so nothing yet needs the other
+  four. The GP Viewer milestone's conversion prompt will list them.*
 - **Bends are stored in Guitar Pro's shapes, not as drawn.** alphaTab's `Note.finish`
   classifies a bend of two to four points as a standard bend type and rewrites the points
   to fit - a rising bend's middle point goes and the curve's timing with it, a bend-release
@@ -523,7 +646,9 @@ Not rejected - not yet placed. Each needs its own design pass:
   from the selected note would show it off on a note with a visible wave, and pressing it
   would write the continuation's own value, which changes nothing on screen but stops
   alphaTab carrying a bend across the tie. M2's vibrato tool should read vibrato from the
-  tie origin, and either refuse on a continuation or write to the origin.
+  tie origin, and either refuse on a continuation or write to the origin. *Settled in M2's
+  plan (Tasks 1.8 and 2.3): the button reads the tie origin, and a press on a continuation is
+  refused.*
 - **A pitched note on a staff with a tuning loses its trill.** alphaTex carries a trill as
   a fret relative to the string's tuning, and a pitched note has no string, so on a staff
   that has a tuning it exports as `tr (NaN 16)` and reads back as no trill. Unreachable
@@ -538,6 +663,8 @@ Not rejected - not yet placed. Each needs its own design pass:
   commands move every trill on the staff by how far its string moved, so M3's controls get
   that for free; a transposition moves none, because alphaTex saves a trill relative to the
   string and capo, not the transposition. M2's pitch tools must still move it with the note.
+  *Planned in M2 (Task 1.12): a semitone move moves the trill with the note, and a string move
+  keeps the note's pitch and so the trill's.*
   The same review made the capo command refuse a pitched staff, and the staff views command
   refuse only turning tablature *on* for one, so a loaded file that shows tablature on a
   pitched staff can still turn it off.
@@ -551,7 +678,8 @@ Not rejected - not yet placed. Each needs its own design pass:
   and in the saved file, while an earlier track is untouched - so clearing the original
   leaves the copies. M1 pins it. M2's fermata tool decides whether a fermata belongs to a
   beat or to a bar and tick; the latter matches alphaTab and Guitar Pro and would make the
-  spread correct rather than surprising.
+  spread correct rather than surprising. *Settled in M2's plan (Task 1.10): a fermata belongs
+  to a bar position on every track, so the spread is the rule.*
 - **A forced accidental that cannot name its pitch is drawn on the wrong line.** alphaTab
   shifts the note by the forced amount and picks the staff line from the key signature, so
   whenever the pitch minus the forced alteration is not a white key - a sharp on D, a flat
@@ -576,7 +704,8 @@ Not rejected - not yet placed. Each needs its own design pass:
   types, ~3200-3216) and are revalued together by that group's size. A bend grace is not
   rewritten: `Beat.finish` revalues only on-beat and before-beat graces. M1 skips grace beats
   when setting durations (`setBeatDurations`). M2's grace tool should either fix the grace's
-  value to alphaTab's rule or refuse a duration edit on a grace.
+  value to alphaTab's rule or refuse a duration edit on a grace. *Settled in M2's plan (Task
+  1.4): a duration press on nothing but graces is refused, saying why; a range skips them.*
 - **Palm mute and let ring stay allowed on a pitched staff.** Part 4 names bend, slide, tap
   and harmonics as the fretted-only techniques, and alphaTab draws both marks from their flags
   alone, with no string needed (`PalmMuteEffectInfo` reads `note.isPalmMute`,
@@ -591,7 +720,8 @@ Not rejected - not yet placed. Each needs its own design pass:
 - **A pitched note imported as a natural harmonic cannot be cleared with the harmonic tool.**
   The harmonic is fretted-only, so the refusal meets the press that would turn it off as well as
   one that would turn it on. An alphaTex import can produce such a note. M2's harmonic tool
-  should let a press that clears the harmonic through.
+  should let a press that clears the harmonic through. *Planned in M2 (Task 1.8), for every
+  fretted-only note technique.*
 - **Fix bar into a bar that was already short puts the fill after the carried beats.** The
   carry's spare room opens right after what it carried, and Fix bar fills the bar's whole
   shortfall there. A bar that arrived short had part of that gap at its end, so its own beats
@@ -605,9 +735,19 @@ Not rejected - not yet placed. Each needs its own design pass:
   the gap opened, and the rests already in the bar keep their places, so two rests that could be
   written as one stay two: `n8 n2 r4 r8` with its first two beats set to quarters is
   `n4 n4 r8 r4 r8`, not `n4 n4 r4. r8`. The beats after the edit keep their ticks, which is what
-  the rule is for. M2 may merge them.
+  the rule is for. M2 may merge them. *M2's plan does not.*
 - **Redo does not restore a followed selection.** An edit that commits through
   `commitFollowing` moves the selection's ends onto the beats they named, but undo and redo only
   clamp whatever selection is current into the document they restore. So after undo then redo,
   a range made shorter no longer covers its notes, as it did straight after the edit. Recorded,
-  not changed in M1.
+  not changed in M1, nor in M2's plan.
+- **With `player.enableUserInteraction` on, alphaTab's own mouse-up sets the playback range**
+  (`_onBeatMouseUp` calls `applyPlaybackRangeFromHighlight`, `alphaTab.core.mjs` ~53124 in 1.8), so
+  a drag across the score changed what the transport played. M2's plan turns alphaTab's interaction
+  off and draws the highlight itself (Task 4.3). Found while planning M2.
+- **`removeBar(0)` turned a 3/4 score into 4/4**, the fault M1 fixed for `insertBar(0)`: the new bar 1
+  declared nothing. M2's plan removes bars through `deleteBars`, which keeps the meter (Task 1.15).
+  Found while planning M2.
+- **The shell's Escape closed the circle-of-fifths drawer without saying so**, so a page could not
+  tell an Escape the shell had used from one it had not. M2's plan has the shell claim Escape only
+  when it closes the drawer (Task 2.7). Found while planning M2.
