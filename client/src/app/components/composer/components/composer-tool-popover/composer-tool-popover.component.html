@@ -9,14 +9,18 @@
   <ng-container [ngSwitch]="kind">
     <form *ngSwitchCase="'timeSignature'" (ngSubmit)="applyTimeSignature()">
       <div class="fields">
-        <label>Top <input type="number" min="1" max="32" name="numerator" [(ngModel)]="numerator" /></label>
+        <label>Top <input type="number" min="1" max="32" name="numerator" [ngModel]="numerator" (ngModelChange)="numerator = $event; followMeterNumbers()" /></label>
         <label>Bottom
-          <select name="denominator" [(ngModel)]="denominator">
+          <select name="denominator" [ngModel]="denominator" (ngModelChange)="denominator = $event; followMeterNumbers()">
             <option *ngFor="let value of [1, 2, 4, 8, 16, 32]" [ngValue]="value">{{ value }}</option>
           </select>
         </label>
       </div>
-      <label class="check"><input type="checkbox" name="isCommon" [(ngModel)]="isCommon" /> Draw as common or cut time</label>
+      <!-- Follows Top and Bottom (`followMeterNumbers`): only 4/4 and 2/2 are drawn as a C. -->
+      <label class="check">
+        <input type="checkbox" name="isCommon" [(ngModel)]="isCommon" [disabled]="!commonTimeApplies" />
+        Draw as common or cut time<ng-container *ngIf="!commonTimeApplies"> - only for 4/4 and 2/2</ng-container>
+      </label>
       <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
     </form>
 

@@ -14747,9 +14747,12 @@ its mark appear and `aria-pressed` change (Elements panel): Quarter, Dot, Triple
 Double bar; Flat on a B flat; mf, Crescendo; Accent, Staccato; Palm mute, Vibrato. On a range where some
 notes have staccato and some do not, the Staccato button shows the mixed state.
 
-**Step 8: Popovers.** Shift+T, set 3/4, Apply: bar 1 re-bars. Shift+T, type 40 in Top, Apply: the popover
-says why inline and stays open. Ctrl+K: the list has C♭ major to C♯ major and A♭ minor to A♯ minor; pick
-A♯ minor: seven sharps. K: set bass clef. Alt+/: 5:4. Shift+Insert: a section named Chorus.
+**Step 8: Popovers.** Shift+T on the empty score's common-time bar, type 3 in Top: the common-time box unticks
+and greys, its label saying it applies only to 4/4 and 2/2; type 4 again and it is ticked again. Set 3, Apply: bar 1
+re-bars as 3/4, with no refusal. Shift+T, type 40 in Top, Apply: the popover says why inline and stays open. Ctrl+K: the
+list has C♭ major to C♯ major and A♭ minor to A♯ minor; pick A♯ minor: seven sharps. K: set bass clef. Alt+/: 5:4.
+Shift+Insert, type Chorus, press Enter: the section is applied and the popover closes; Shift+Insert, clear the name,
+Enter: the popover says why inline and stays open.
 
 **Step 9: Refusals are displayed and announced.** Put a note on the last beat, press H: the status line
 says there is nothing to land on. With Narrator (Windows) or NVDA running, repeat: the reason is read out.

@@ -19,7 +19,8 @@ import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 
 import { ClefKind, ComposerState, OttaviaKind, ScoreDoc, TripletFeelKind, Tuplet } from '../../../../models/composer.model';
-import { keySignatureFault, timeSignatureFault } from '../../../../services/bar-edits';
+import { commonTimeAppliesTo, keySignatureFault, timeSignatureFault } from '../../../../services/bar-edits';
+import { isEditableTarget } from '../../../../services/editable-target';
 import {
   CLEF_CHOICES,
   KEY_SIGNATURE_CHOICES,
@@ -136,6 +137,10 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
   numerator = 4;
   denominator = 4;
   isCommon = false;
+  /** Whether the common-time box was ticked when the popover opened: what it goes back to at 4/4 or 2/2 (`followMeterNumbers`). */
+  private commonAtOpening = false;
+  /** Whether the numbers were 4/4 or 2/2 when last read. */
+  private commonApplied = false;
   /** The key chosen, by its index in `keyChoices`, or null while the selected bars' keys differ and none is chosen. */
   keyIndex: number | null = KEY_SIGNATURE_CHOICES.findIndex(choice => choice.value.fifths === 0 && choice.value.mode === 'major');
   /** Null while the selected bars differ and nothing is chosen; Apply then leaves each bar's own (`setClef`). */
@@ -255,6 +260,21 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
   onPanelKey(event: KeyboardEvent): void {
     if (KEYS_LEAVING_A_POPOVER.has(event.key) || event.ctrlKey || event.altKey || event.metaKey) return;
     event.stopPropagation();
+    this.submitOnEnter(event);
+  }
+
+  /**
+   * Enter in a field typed into applies, as Apply does - a dialog's default button - including a refusal, which keeps the
+   * popover open. Claimed and submitted here rather than left to the browser's implicit submission, which a key event
+   * without its text never starts. A held Enter applies once. Enter on a checkbox or a `<select>` is left to the
+   * browser, and on a button it presses that button, as the page leaves a focused button's Enter alone
+   * (`pressesFocusedControl`).
+   */
+  private submitOnEnter(event: KeyboardEvent): void {
+    const field = event.target;
+    if (event.key !== 'Enter' || event.defaultPrevented || !(field instanceof HTMLInputElement) || !isEditableTarget(field) || !field.form) return;
+    event.preventDefault();
+    if (!event.repeat) field.form.requestSubmit();
   }
 
   /**
@@ -268,13 +288,29 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
     this.closed.emit();
   }
 
+  /** Whether Top and Bottom are a meter drawn as a C: 4/4 as common time, 2/2 as cut time. */
+  get commonTimeApplies(): boolean {
+    return commonTimeAppliesTo(Number(this.numerator), Number(this.denominator));
+  }
+
+  /**
+   * Keeps the common-time box with the numbers: unticked, and disabled by the template, while they are not 4/4 or 2/2;
+   * back to how it opened when they return to one. So a common-time bar becomes 3/4 by typing 3, with no box to untick
+   * first and no refusal to learn it from.
+   */
+  followMeterNumbers(): void {
+    const applies = this.commonTimeApplies;
+    if (!applies) this.isCommon = false;
+    else if (!this.commonApplied) this.isCommon = this.commonAtOpening;
+    this.commonApplied = applies;
+  }
+
   applyTimeSignature(): void {
-    const timeSignature = { numerator: Number(this.numerator), denominator: Number(this.denominator), isCommon: this.isCommon };
-    const commonFault =
-      timeSignature.isCommon && !((timeSignature.numerator === 4 && timeSignature.denominator === 4) || (timeSignature.numerator === 2 && timeSignature.denominator === 2))
-        ? 'Common time is drawn only for 4/4, and cut time only for 2/2.'
-        : null;
-    if (this.refuse(timeSignatureFault(timeSignature) ?? commonFault)) return;
+    const numerator = Number(this.numerator);
+    const denominator = Number(this.denominator);
+    // Never a combination the service refuses (`timeSignatureFault`): the box only means anything at 4/4 and 2/2.
+    const timeSignature = { numerator, denominator, isCommon: this.isCommon && commonTimeAppliesTo(numerator, denominator) };
+    if (this.refuse(timeSignatureFault(timeSignature))) return;
     this.commit(() => this.composer.setTimeSignature(timeSignature));
   }
 
@@ -433,6 +469,8 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
     this.numerator = values.timeSignature.numerator;
     this.denominator = values.timeSignature.denominator;
     this.isCommon = values.timeSignature.isCommon;
+    this.commonAtOpening = this.isCommon;
+    this.commonApplied = this.commonTimeApplies;
 
     const key = values.keySignature;
     const index = key === MIXED ? -1 : this.keyChoices.findIndex(choice => choice.value.fifths === key.fifths && choice.value.mode === key.mode);

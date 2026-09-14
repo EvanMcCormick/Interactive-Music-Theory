@@ -16,7 +16,15 @@ import { insertBarInto } from './score-structure';
 
 const DENOMINATORS: readonly number[] = [1, 2, 4, 8, 16, 32];
 
-/** Why no score could have `timeSignature`, or null. */
+/** Whether a meter is drawn as a C when asked: 4/4 as common time, 2/2 as cut time. */
+export function commonTimeAppliesTo(numerator: number, denominator: number): boolean {
+  return (numerator === 4 && denominator === 4) || (numerator === 2 && denominator === 2);
+}
+
+/**
+ * Why no score could have `timeSignature`, or null. Common time on any meter but 4/4 and 2/2 is refused here, in the
+ * service's guard; the popover's box follows the numbers so it never asks for it.
+ */
 export function timeSignatureFault(timeSignature: TimeSignature): string | null {
   const { numerator, denominator } = timeSignature;
   if (!Number.isInteger(numerator) || numerator < 1 || numerator > 32) {
@@ -24,6 +32,9 @@ export function timeSignatureFault(timeSignature: TimeSignature): string | null 
   }
   if (!DENOMINATORS.includes(denominator)) {
     return 'The bottom number (the denominator) must be 1, 2, 4, 8, 16 or 32.';
+  }
+  if (timeSignature.isCommon && !commonTimeAppliesTo(numerator, denominator)) {
+    return 'Common time is drawn only for 4/4, and cut time only for 2/2.';
   }
   return null;
 }

@@ -27,6 +27,12 @@ describe('timeSignatureFault and keySignatureFault', () => {
     expect(timeSignatureFault({ numerator: 0, denominator: 4, isCommon: false })).toMatch(/top[\s\S]*numerator/i);
     expect(keySignatureFault({ fifths: 8, mode: 'major' })).toMatch(/7/);
   });
+
+  it('draws a C only for 4/4 and 2/2, and refuses common time on any other meter', () => {
+    expect(timeSignatureFault({ numerator: 4, denominator: 4, isCommon: true })).toBeNull();
+    expect(timeSignatureFault({ numerator: 2, denominator: 2, isCommon: true })).toBeNull();
+    expect(timeSignatureFault({ numerator: 3, denominator: 4, isCommon: true })).toBe('Common time is drawn only for 4/4, and cut time only for 2/2.');
+  });
 });
 
 describe('setTimeSignature', () => {

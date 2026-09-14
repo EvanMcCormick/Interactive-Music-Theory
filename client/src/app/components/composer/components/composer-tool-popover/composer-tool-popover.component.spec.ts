@@ -373,15 +373,86 @@ describe('ComposerToolPopoverComponent', () => {
     expect(closed).toBe(1);
   });
 
-  it('refuses common time for a meter alphaTab does not draw with a C', () => {
+  /** Types `value` into the time signature's Top field, as a keyboard does, so the popover hears it change. */
+  function typeTop(value: string): void {
+    const top = panel().querySelector('input[name="numerator"]') as HTMLInputElement;
+    top.value = value;
+    top.dispatchEvent(new Event('input', { bubbles: true }));
+    fixture.detectChanges();
+  }
+
+  const commonBox = (): HTMLInputElement => panel().querySelector('input[name="isCommon"]') as HTMLInputElement;
+
+  it('turns a common-time bar into 3/4 when Top is set to 3 and Apply pressed, with no refusal', async () => {
     open('timeSignature');
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(commonBox().checked).toBeTrue();
 
-    popover.numerator = 3;
-    popover.denominator = 4;
-    popover.isCommon = true;
-    popover.applyTimeSignature();
+    typeTop('3');
+    await fixture.whenStable();
+    fixture.detectChanges();
+    (panel().querySelector('button[type="submit"]') as HTMLButtonElement).click();
 
-    expect(popover.fault).toMatch(/4\/4/);
+    expect(composer.scoreMeter).toEqual({ numerator: 3, denominator: 4, isCommon: false });
+    expect(popover.fault).toBeNull();
+    expect(composer.state.refusal).toBeNull();
+    expect(closed).toBe(1);
+  });
+
+  it('keeps the common-time box to 4/4 and 2/2, unticked and disabled otherwise, and gives back its first value on return', async () => {
+    open('timeSignature');
+    await fixture.whenStable();
+
+    typeTop('3');
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(commonBox().checked).toBeFalse();
+    expect(commonBox().disabled).toBeTrue();
+    expect(panel().querySelector('label.check')?.textContent).toMatch(/only for 4\/4 and 2\/2/);
+
+    typeTop('4');
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(commonBox().disabled).toBeFalse();
+    expect(commonBox().checked).toBeTrue();
+  });
+
+  it('applies on Enter in a text field, as Apply does, and closes', async () => {
+    open('section');
+    // A form's `ngModel` joins the form a tick later, and hears no typing before it has.
+    await fixture.whenStable();
+    const name = panel().querySelector('input[name="sectionText"]') as HTMLInputElement;
+    name.value = 'Chorus';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    fixture.detectChanges();
+
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
+    name.dispatchEvent(enter);
+
+    expect(enter.defaultPrevented).toBeTrue();
+    expect(composer.doc.masterBars[0].section).toEqual({ marker: '', text: 'Chorus' });
+    expect(closed).toBe(1);
+  });
+
+  it('keeps an inline refusal open on Enter, and leaves Enter on a checkbox or a select to the browser', () => {
+    open('section');
+    const name = panel().querySelector('input[name="sectionText"]') as HTMLInputElement;
+    name.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    expect(alert().textContent).toMatch(/name/i);
+    expect(closed).toBe(0);
+
+    open('alternateEnding');
+    const box = panel().querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const onBox = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    box.dispatchEvent(onBox);
+    open('clef');
+    const select = panel().querySelector('select') as HTMLSelectElement;
+    const onSelect = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    select.dispatchEvent(onSelect);
+
+    expect([onBox.defaultPrevented, onSelect.defaultPrevented]).toEqual([false, false]);
     expect(closed).toBe(0);
   });
 
