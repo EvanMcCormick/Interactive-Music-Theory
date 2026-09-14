@@ -518,10 +518,79 @@ describe('ComposerComponent', () => {
 
     expect(score.ignoredPresses).toBe(1);
   });
+
+  /** The page made tall, so the strip's range is not held at one row, and the separator whose End measures it again. */
+  function tallPage(): HTMLElement {
+    (fixture.nativeElement.querySelector('.composer-page') as HTMLElement).style.height = '1200px';
+    return fixture.nativeElement.querySelector('.strip-resize');
+  }
+
+  it('leaves the score the minimum height the page styles give it, as measured rather than assumed', () => {
+    const separator = tallPage();
+    press({ key: 'End' }, separator);
+    const tallest = component.stripRange.max;
+
+    // As a larger root font makes the score's 10rem taller.
+    (fixture.nativeElement.querySelector('app-composer-score') as HTMLElement).style.minHeight = '300px';
+    press({ key: 'End' }, separator);
+
+    expect(tallest - component.stripRange.max).toBe(140);
+  });
+
+  it('counts the open alphaTex panel as a row the strip leaves room for', () => {
+    const separator = tallPage();
+    press({ key: 'End' }, separator);
+    const tallest = component.stripRange.max;
+    press({ key: 'Home' }, separator);
+
+    component.toggleTexPanel();
+    fixture.detectChanges();
+    const panel: HTMLElement = fixture.nativeElement.querySelector('.tex-panel');
+    const panelHeight = panel.offsetHeight;
+    press({ key: 'End' }, separator);
+
+    expect(panelHeight).toBeGreaterThan(0);
+    expect(tallest - component.stripRange.max).toBe(panelHeight);
+  });
+
+  it('fits the strip again when the status line or the open alphaTex panel changes height, as a long message wraps', () => {
+    const observed: Element[] = [];
+    const original = window.ResizeObserver;
+    class RecordingObserver {
+      observe(target: Element): void {
+        observed.push(target);
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    window.ResizeObserver = RecordingObserver as unknown as typeof ResizeObserver;
+    try {
+      const page = TestBed.createComponent(ComposerComponent);
+      page.detectChanges();
+      page.componentInstance.toggleTexPanel();
+      page.detectChanges();
+
+      expect(observed).toContain(page.nativeElement.querySelector('app-composer-status-line'));
+      expect(observed).toContain(page.nativeElement.querySelector('.tex-panel'));
+      page.destroy();
+    } finally {
+      window.ResizeObserver = original;
+    }
+  });
+
+  it('presses any other control focused from the keyboard once for a held Enter, as a menu item or a saved row is', () => {
+    const toggle: HTMLButtonElement = fixture.nativeElement.querySelector('.shortcuts-toggle');
+    toggle.focus();
+    spyOn(toggle, 'matches').and.callFake((selector: string) => selector === ':focus-visible');
+
+    const held = press({ key: 'Enter', code: 'Enter', repeat: true }, toggle);
+
+    expect(held.defaultPrevented).withContext('a held Enter would open and close the sheet on every repeat').toBeTrue();
+  });
 });
 
 describe('ComposerComponent with its Library panel', () => {
-  it('has one live region: the library says what it did in the status line', async () => {
+  it('has one polite live region: the library says what it did in the status line', async () => {
     await TestBed.configureTestingModule({ imports: [ComposerComponent] })
       .overrideComponent(ComposerComponent, { remove: { imports: [ComposerScoreComponent] }, add: { imports: [StubScoreComponent] } })
       .compileComponents();
@@ -551,5 +620,10 @@ describe('stripHeightRangeOf and clampedStripHeight', () => {
 
   it('keeps one row on a page too short for both the score\'s minimum and a strip', () => {
     expect(stripHeightRangeOf(300, 140)).toEqual({ min: 72, max: 72 });
+  });
+
+  it('leaves the score the minimum it is given, which follows the root font size', () => {
+    // At a 20px root font the score's 10rem is 200.
+    expect(stripHeightRangeOf(700, 140, 200)).toEqual({ min: 72, max: 360 });
   });
 });

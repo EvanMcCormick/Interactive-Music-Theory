@@ -44,7 +44,10 @@ const TEX_DRAFT_OUT_OF_DATE =
 /** The shortest the track strip can be dragged, in pixels: about one row and the add-track controls. */
 const STRIP_MIN_HEIGHT = 72;
 
-/** The least height the strip leaves the score, in pixels, as the page's styles give the score (`10rem`). */
+/**
+ * The least height the strip leaves the score, in pixels, where the score's own minimum cannot be read: `10rem` at a 16px
+ * root font. `fitStrip` reads the minimum the page's styles give the score, which follows the root font size.
+ */
 const SCORE_MIN_HEIGHT = 160;
 
 /** How far one arrow key moves the strip's separator, in pixels. */
@@ -57,12 +60,12 @@ export interface StripHeightRange {
 }
 
 /**
- * The heights the strip may take in a page `pageHeight` tall whose other fixed rows - the top bar, the status line and
- * the separator - take `fixedRowsHeight`: from one row up to what leaves the score its minimum, and never less than one
- * row, however short the page.
+ * The heights the strip may take in a page `pageHeight` tall whose other fixed rows - the top bar, the status line, the
+ * separator, and the alphaTex panel while it is open - take `fixedRowsHeight`: from one row up to what leaves the score
+ * `scoreMinHeight`, and never less than one row, however short the page.
  */
-export function stripHeightRangeOf(pageHeight: number, fixedRowsHeight: number): StripHeightRange {
-  return { min: STRIP_MIN_HEIGHT, max: Math.max(STRIP_MIN_HEIGHT, Math.floor(pageHeight - fixedRowsHeight - SCORE_MIN_HEIGHT)) };
+export function stripHeightRangeOf(pageHeight: number, fixedRowsHeight: number, scoreMinHeight = SCORE_MIN_HEIGHT): StripHeightRange {
+  return { min: STRIP_MIN_HEIGHT, max: Math.max(STRIP_MIN_HEIGHT, Math.floor(pageHeight - fixedRowsHeight - scoreMinHeight)) };
 }
 
 /** `height` clamped to `range`, in whole pixels. */
@@ -105,6 +108,15 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('topBar') private topBar?: ElementRef<HTMLElement>;
   @ViewChild('statusLine', { read: ElementRef }) private statusLine?: ElementRef<HTMLElement>;
   @ViewChild('stripSeparator') private stripSeparator?: ElementRef<HTMLElement>;
+  /** The alphaTex panel while it is open: a row the strip leaves room for, watched as its diagnostics grow (`fitStrip`). */
+  @ViewChild('texPanel') private set texPanelRef(ref: ElementRef<HTMLElement> | undefined) {
+    const panel = ref?.nativeElement ?? null;
+    if (panel === this.texPanel) return;
+    if (this.texPanel) this.pageObserver?.unobserve(this.texPanel);
+    this.texPanel = panel;
+    if (panel) this.pageObserver?.observe(panel);
+  }
+  private texPanel: HTMLElement | null = null;
 
   private readonly destroy$ = new Subject<void>();
 
@@ -253,8 +265,10 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   /**
-   * Watches the page and its top bar, which wraps on a narrow window, and fits the strip to the room they leave. The
-   * observer's first report comes after layout, outside any template pass, so the bound height and range change there.
+   * Watches the page and the rows it leaves the strip less room for - the top bar, which wraps on a narrow window; the
+   * status line, which wraps on a long message; and the alphaTex panel while it is open (`texPanelRef`) - and fits the
+   * strip to the room they leave. The observer's first report comes after layout, outside any template pass, so the bound
+   * height and range change there.
    */
   ngAfterViewInit(): void {
     const page = this.page?.nativeElement;
@@ -265,7 +279,9 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       if (`${this.stripHeight}:${this.stripRange.max}` !== before) this.cdr.detectChanges();
     });
     this.pageObserver.observe(page);
-    if (this.topBar) this.pageObserver.observe(this.topBar.nativeElement);
+    for (const row of [this.topBar?.nativeElement, this.statusLine?.nativeElement, this.texPanel]) {
+      if (row) this.pageObserver.observe(row);
+    }
   }
 
   ngOnDestroy(): void {
@@ -279,8 +295,9 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   /**
    * The page's one keyboard listener. See `ComposerKeyHandler` for what it takes and what it leaves. Space
    * and Enter on a button focused from the keyboard - a palette tool, a menu item, a track row's Update - press
-   * that button, so the handler is not asked (`pressesFocusedControl`). A held Enter presses it again on every
-   * repeat, so a repeat is dropped unless the button is a tool whose key repeats (`ComposerTool.repeatable`).
+   * that button, so the handler is not asked (`pressesFocusedControl`). A held Enter would press it again on every
+   * repeat - a menu's Save, a saved row's load, a track's Remove - so a repeat is dropped on every such control, and let
+   * through only on a palette button whose tool's key repeats (`ComposerTool.repeatable`).
    */
   @HostListener('document:keydown', ['$event'])
   onKeyDown(event: KeyboardEvent): void {
@@ -414,15 +431,24 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   /**
-   * Measures the strip's range from the page as it is laid out - its height, less the top bar, the status line and the
-   * separator (`stripHeightRangeOf`) - and clamps the strip to it.
+   * Measures the strip's range from the page as it is laid out - its height, less the top bar, the status line, the
+   * separator and the open alphaTex panel, and less the score's minimum as its styles compute it (`stripHeightRangeOf`) -
+   * and clamps the strip to it.
    */
   private fitStrip(): void {
     const page = this.page?.nativeElement;
     if (!page) return;
-    const fixedRows = [this.topBar, this.statusLine, this.stripSeparator].reduce((sum, row) => sum + (row?.nativeElement.offsetHeight ?? 0), 0);
-    this.stripRange = stripHeightRangeOf(page.clientHeight, fixedRows);
+    const rows = [this.topBar?.nativeElement, this.statusLine?.nativeElement, this.stripSeparator?.nativeElement, this.texPanel];
+    const fixedRows = rows.reduce((sum, row) => sum + (row?.offsetHeight ?? 0), 0);
+    this.stripRange = stripHeightRangeOf(page.clientHeight, fixedRows, this.scoreMinHeight());
     this.stripHeight = clampedStripHeight(this.stripHeight, this.stripRange);
+  }
+
+  /** The least height the page's styles give the score, in pixels: `10rem`, so it follows the root font size. */
+  private scoreMinHeight(): number {
+    const score = this.scoreElement?.nativeElement;
+    const minHeight = score ? parseFloat(getComputedStyle(score).minHeight) : Number.NaN;
+    return Number.isFinite(minHeight) ? minHeight : SCORE_MIN_HEIGHT;
   }
 
   // -------------------------------------------------------------------------

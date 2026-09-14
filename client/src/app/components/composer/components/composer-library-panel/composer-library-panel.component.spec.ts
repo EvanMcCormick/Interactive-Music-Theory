@@ -258,11 +258,11 @@ describe('ComposerLibraryPanelComponent', () => {
       expect(drawer.getAttribute('aria-hidden')).toBe('true');
     });
 
-    it('keeps its alert outside the menus and the drawer, and holds no live region of its own', () => {
+    it('keeps its alert outside the menus and the drawer, and holds no polite live region of its own', () => {
       const alert: HTMLElement = fixture.nativeElement.querySelector('[role="alert"]');
 
       expect(alert.closest('.menu-panel, .library-drawer')).toBeNull();
-      expect(fixture.nativeElement.querySelector('[aria-live]')).withContext('the page\'s status line is its one live region').toBeNull();
+      expect(fixture.nativeElement.querySelector('[aria-live]')).withContext('the page\'s status line is its one polite live region').toBeNull();
     });
 
     it('keeps a plain key pressed in the saved list from the score behind it, and lets Tab and Ctrl through', () => {

@@ -282,6 +282,23 @@ describe('toolForPress on four layouts', () => {
     expect(toolForPress(press({ code: 'Digit8', key: '[', ctrlKey: true, altKey: true }))?.id).toBe('repeatOpen');
     expect(toolForPress(press({ code: 'Digit6', key: ']', altKey: true }))?.id).toBe('repeatClose');
   });
+
+  it('runs Add bar alone from Ctrl+Alt+Enter and Ctrl+Alt+Insert on every layout, and from Cmd+Option+Enter on a Mac', () => {
+    // Enter and Insert type no symbol, so each layout reports them alike; each press must find one binding, Add bar's.
+    const presses = Object.keys({ QWERTY, QWERTZ, AZERTY, DVORAK }).flatMap(name =>
+      ['Enter', 'Insert'].map(key => ({ name: `${name} Ctrl+Alt+${key}`, typed: press({ code: key, key, ctrlKey: true, altKey: true }) }))
+    );
+    // A Mac has no Insert key; Cmd is its Ctrl (`bindingMatches`).
+    presses.push({ name: 'Mac Cmd+Option+Enter', typed: press({ code: 'Enter', key: 'Enter', metaKey: true, altKey: true }) });
+
+    for (const { name, typed } of presses) {
+      const found = questions
+        .map(matches => COMPOSER_TOOLS.flatMap(entry => entry.keys.filter(binding => matches(binding, typed)).map(() => entry.id)))
+        .find(ids => ids.length > 0);
+      expect(found).withContext(name).toEqual(['appendBar']);
+      expect(toolForPress(typed)?.id).withContext(name).toBe('appendBar');
+    }
+  });
 });
 
 describe('COMPOSER_TOOLS commands', () => {

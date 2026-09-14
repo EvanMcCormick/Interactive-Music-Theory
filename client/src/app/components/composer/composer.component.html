@@ -76,7 +76,7 @@
     <!-- Focusable by script only, for the shortcut sheet to give the focus back to. -->
     <app-composer-score #score tabindex="-1"></app-composer-score>
 
-    <section class="tex-panel" *ngIf="showTexPanel">
+    <section #texPanel class="tex-panel" *ngIf="showTexPanel">
       <div class="tex-header">
         <h2 class="panel-heading">alphaTex source</h2>
         <div class="tex-actions">
