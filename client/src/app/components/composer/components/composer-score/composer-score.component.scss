@@ -28,6 +28,8 @@
 // non-text element, and after a click the score still takes the keys - and focus moved by keyboard, or by
 // the page after a keyboard action, a full one. Drawn inset on the area, under the engraving.
 :host(:focus) .score-area {
+  // Each `color-mix` has a plain fallback before it: the build's browser baseline includes Firefox 112, which has none.
+  box-shadow: inset 0 0 0 1px rgba(52, 152, 219, 0.45);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--composer-accent, #3498db) 45%, transparent);
 }
 
@@ -55,6 +57,7 @@
   position: absolute;
   pointer-events: none;
   border-radius: 2px;
+  background-color: rgba(52, 152, 219, 0.25);
   background-color: color-mix(in srgb, var(--composer-accent, #3498db) 25%, transparent);
   box-shadow: 0 0 0 1px var(--composer-accent, #3498db) inset;
   transition: left 0.08s ease, top 0.08s ease;
@@ -75,6 +78,7 @@
 .render-error {
   margin: 0;
   padding: 0.6rem 1rem;
+  background-color: rgba(231, 76, 60, 0.15);
   background-color: color-mix(in srgb, var(--composer-error, #e74c3c) 15%, transparent);
   border-top: 1px solid var(--composer-error, #e74c3c);
   color: var(--composer-error, #e74c3c);

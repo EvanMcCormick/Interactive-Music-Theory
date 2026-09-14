@@ -7,6 +7,7 @@ import {
   SystemBands,
   highlightBeatsOf,
   measuredStaffOfSlot,
+  pressSystemIndexOf,
   slotIndexAt,
   systemBandsOf,
   systemIndexAt,
@@ -36,11 +37,22 @@ const systemAt = (top: number): SystemBands => ({
 const systems: SystemBands[] = [systemAt(0), systemAt(300)];
 
 describe('systemIndexAt', () => {
-  it('finds the system whose band holds a y, or none past the last', () => {
+  it('finds the system whose band holds a y, or else the nearest, and none on a page with no systems', () => {
     expect(systemIndexAt(systems, 10)).toBe(0);
     expect(systemIndexAt(systems, 350)).toBe(1);
-    expect(systemIndexAt(systems, 700)).toBeNull();
+    expect(systemIndexAt(systems, 700)).toBe(1);
+    expect(systemIndexAt(systems, -5)).toBe(0);
+    // A system's band starts below the top of its partial, so a pointer can fall between two bands.
+    expect(systemIndexAt([systemAt(0), systemAt(320)], 312)).toBe(1);
     expect(systemIndexAt([], 10)).toBeNull();
+  });
+});
+
+describe('pressSystemIndexOf', () => {
+  it('takes the system of the staff under the pointer, and the pointer\'s own only off every staff', () => {
+    // A ledger line above system 2's first staff lies inside system 1's band.
+    expect(pressSystemIndexOf(systems, 350, 295)).toBe(1);
+    expect(pressSystemIndexOf(systems, null, 295)).toBe(0);
   });
 });
 
@@ -267,5 +279,60 @@ describe('staff systems on a real engraving', () => {
     const y = clientY - origin.top;
     expect(systemIndexAt(bands, y)).toBe(1);
     expect(slotIndexAt(bands[1], y, docSlots)).toBe(1);
+  });
+
+  it('puts a press on a ledger line above a later system\'s first staff on that staff\'s system, above where its band starts', () => {
+    const doc = ComposerService.createEmptyScore();
+    for (let bar = 0; bar < 16; bar++) insertBarInto(doc, doc.masterBars.length);
+    const lookup = engrave(doc, 500);
+    const hitTest = new StaffHitTestService();
+    const docSlots = staffSlotsOf(doc);
+
+    expect(lookup).not.toBeNull();
+    if (!lookup || !host) return;
+    const bands = systemBandsOf(lookup);
+    const staves = hitTest.allStaves(host);
+    const centres = hitTest.staffCentresIn(host, staves);
+    const origin = hitTest.surfaceOriginOf(host);
+    expect(bands.length).toBeGreaterThan(2);
+    expect(origin).not.toBeNull();
+    if (!origin) return;
+
+    for (const systemIndex of [1, 2]) {
+      // The system's notation staff, two line spacings above its top line.
+      const notation = systemIndex * docSlots.length;
+      const lines = staves[notation];
+      const box = lines.surface.getBoundingClientRect();
+      const clientX = box.left + box.width / 2;
+      const clientY = box.top + lines.lineY[0] - 2 * lines.spacing;
+      const y = clientY - origin.top;
+
+      expect(y).withContext(`system ${systemIndex + 1}: the pointer is above its band`).toBeLessThan(bands[systemIndex].top);
+      const index = hitTest.staffIndexAt(host, clientX, clientY, staves);
+      expect(index).toBe(notation);
+      if (index === null) continue;
+      expect(pressSystemIndexOf(bands, centres[index], y)).toBe(systemIndex);
+      expect(slotIndexAt(bands[systemIndex], centres[index], docSlots)).toBe(0);
+    }
+  });
+
+  it('measures a slash staff as its one line, and ranks it and a numbered staff where alphaTab draws them', () => {
+    const doc = ComposerService.createEmptyScore();
+    Object.assign(doc.tracks[0].staves[0], { showSlash: true, showNumbered: true });
+    const lookup = engrave(doc, 900);
+    const hitTest = new StaffHitTestService();
+    const docSlots = staffSlotsOf(doc);
+
+    expect(lookup).not.toBeNull();
+    if (!lookup || !host) return;
+    const bands = systemBandsOf(lookup);
+    const staves = hitTest.allStaves(host);
+    const centres = hitTest.staffCentresIn(host, staves);
+
+    expect(bands[0].staves.length).withContext('slash, notation, numbered and tablature each have a band').toBe(4);
+    // A numbered staff draws no lines, so a system measures the slash staff's line, notation's five and tablature's six.
+    expect(staves.slice(0, 3).map(staff => staff.lineY.length)).toEqual([1, 5, 6]);
+    expect(centres.slice(0, 3).map(y => slotIndexAt(bands[0], y, docSlots))).toEqual([0, 1, 3]);
+    expect(docSlots.map(slot => slot.kind)).toEqual(['slash', 'notation', 'numbered', 'tab']);
   });
 });

@@ -22,7 +22,7 @@ export interface Band {
   bottom: number;
 }
 
-/** One stave a system draws - standard notation or tablature - and the track and staff it belongs to. */
+/** One stave a system draws - slash, standard notation, numbered or tablature - and the track and staff it belongs to. */
 export interface StaveBand extends Band {
   trackIndex: number;
   staffIndex: number;
@@ -69,15 +69,29 @@ export function systemBandsOf(lookup: BoundsLookupShape): SystemBands[] {
   }));
 }
 
-/** The index of the system whose band holds `y`, or null when none does. */
+/**
+ * The index of the system whose band holds `y`, or else of the nearest band - null only when there are none. A system's
+ * band starts `systemPaddingTop` below the top of its partial, about 14 pixels above its first staff's top line at scale
+ * 1, so a pointer on a ledger line above that staff, or between two systems, is in no band.
+ */
 export function systemIndexAt(systems: readonly Band[], y: number): number | null {
-  const index = systems.findIndex(system => y >= system.top && y < system.bottom);
-  return index >= 0 ? index : null;
+  const nearest = nearestBand(systems, y);
+  return nearest ? systems.indexOf(nearest) : null;
+}
+
+/**
+ * The system a press reads its beat on: the system of the staff under the pointer, found by that staff's middle line
+ * (`staffCentreY`), so a press's staff and its beat come from one system - or, with no staff under the pointer, the
+ * system under the pointer itself. A ledger line above a later system's first staff lies inside the band of the system
+ * above, so a beat read at the pointer put the caret, and a Pen note under its clef, in the other system's bar.
+ */
+export function pressSystemIndexOf(systems: readonly Band[], staffCentreY: number | null, pointerY: number): number | null {
+  return systemIndexAt(systems, staffCentreY ?? pointerY);
 }
 
 /**
  * The index in `slots` of the staff drawn at `y` on `system`: the stave band holding `y`, or the nearest, is
- * matched to its track and staff, and its place among that staff's bands - notation before tablature, as
+ * matched to its track and staff, and its place among that staff's bands - slash, notation, numbered, tablature, as
  * `staffSlotsOf` lists them - picks the slot. Null when the system draws no staves, or the document lists no
  * slot for that band.
  */

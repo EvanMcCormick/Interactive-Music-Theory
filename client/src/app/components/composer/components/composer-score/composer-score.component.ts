@@ -31,6 +31,7 @@ import {
   sameCaret,
   scorePressOf,
   scoreRedrawOf,
+  scoreTakesPress,
   seeksOnPress,
   snappedHoverX,
   staffSlotsOf,
@@ -40,6 +41,7 @@ import {
   SystemBands,
   highlightBeatsOf,
   measuredStaffOfSlot,
+  pressSystemIndexOf,
   slotIndexAt,
   systemBandsOf,
   systemIndexAt,
@@ -66,6 +68,8 @@ interface StaffUnderPointer {
   slotIndex: number;
   slot: StaffSlot;
   lines: StaffLines;
+  /** Its middle line, in bounds lookup pixels: its system, which the press's beat is read on too (`pressSystemIndexOf`). */
+  centre: number;
 }
 
 /**
@@ -135,6 +139,10 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   private hoverKey: string | null = null;
   /** Whether the press under way closed a popover, and so does nothing here. See `pressGuardAfter`. */
   private pressGuard: PressGuard = 'none';
+  /** Set from a render's `renderFinished` to its `postRenderFinished`, while the bounds lookup is still the last render's. */
+  private boundsPending = false;
+  /** Whether a caret update is already waiting for its frames (`scheduleCaretUpdate`). */
+  private caretUpdateScheduled = false;
 
   constructor(
     private readonly composer: ComposerService,
@@ -299,9 +307,15 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
     // A render replaces the page's systems, so the measure goes at once. The highlight and the caret read
     // bounds, which with workers are still the last render's at `renderFinished`: they wait for post-render.
-    this.alphaTabService.onRenderFinished(() => (this.measured = null));
+    // Presses, drags and hover wait for post-render as well (`scoreTakesPress`): until then they would read the new
+    // page's staves against the last render's systems and beats.
+    this.alphaTabService.onRenderFinished(() => {
+      this.measured = null;
+      this.boundsPending = true;
+    });
     this.alphaTabService.onPostRenderFinished(() => {
       this.measured = null;
+      this.boundsPending = false;
       this.drawHighlight();
       this.scheduleCaretUpdate();
     });
@@ -336,8 +350,12 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
    * render, a resize or a system attached or detached drops it, never a caret move.
    */
   private scheduleCaretUpdate(): void {
+    // One update per pair of frames, however many state changes, renders and attached systems ask for one before it runs.
+    if (this.caretUpdateScheduled) return;
+    this.caretUpdateScheduled = true;
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
+        this.caretUpdateScheduled = false;
         if (this.destroyed) return;
         this.updateCaretOverlay();
         this.cdr.detectChanges();
@@ -410,7 +428,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
   /**
    * The staff under the pointer: its index among the measured staves, the slot it draws - found through the
-   * system it sits in (`slotIndexAt`) - and its lines.
+   * system it sits in (`slotIndexAt`) - its lines, and its middle line, which names that system for the beat too.
    */
   private staffUnderPointer(): StaffUnderPointer | null {
     const element = this.alphaTabContainer?.nativeElement;
@@ -426,7 +444,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     const slots = this.slots(this.state.doc);
     const slotIndex = slotIndexAt(systems[systemIndex], y, slots);
     const slot = slotIndex === null ? undefined : slots[slotIndex];
-    return slotIndex !== null && slot ? { index, slotIndex, slot, lines: staves[index] } : null;
+    return slotIndex !== null && slot ? { index, slotIndex, slot, lines: staves[index], centre: y } : null;
   }
 
   /** The pointer in the bounds lookup's pixels - from the top left of `.at-surface` - or null before a surface exists. */
@@ -437,15 +455,16 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   /**
-   * The beat under the pointer on one track and staff: in the system and master bar under the pointer, that
-   * staff's beat (`targetTrackBeat`). Not alphaTab's hit beat, which may belong to another track.
+   * The beat under the pointer on one track and staff: on the system of the staff under the pointer (`under`) - or, off
+   * every staff, the system under the pointer (`pressSystemIndexOf`) - in the master bar under the pointer, that staff's
+   * beat (`targetTrackBeat`). Not alphaTab's hit beat, which may belong to another track.
    */
-  private beatUnderPointerOn(trackIndex: number, staffIndex: number): alphaTab.model.Beat | null {
+  private beatUnderPointerOn(trackIndex: number, staffIndex: number, under: StaffUnderPointer | null): alphaTab.model.Beat | null {
     const element = this.alphaTabContainer?.nativeElement;
     const lookup = this.alphaTabService.getBoundsLookup();
     const at = element ? this.pointerOnSurface(element) : null;
     if (!lookup || !at) return null;
-    const systemIndex = systemIndexAt(this.systems(), at.y);
+    const systemIndex = pressSystemIndexOf(this.systems(), under?.centre ?? null, at.y);
     const masterBar = systemIndex === null ? null : lookup.staffSystems[systemIndex]?.findBarAtPos(at.x);
     return masterBar ? targetTrackBeat(masterBar, at.x, trackIndex, staffIndex) : null;
   }
@@ -457,7 +476,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   private cursorUnderPointer(under: StaffUnderPointer | null, current: EditCursor): EditCursor | null {
     const stringIndex = under?.slot.kind === 'tab' && this.pointer ? this.hitTest.stringIn(under.lines, this.pointer.y) - 1 : null;
     const target = dragTargetOf(under ? { slot: under.slot, stringIndex } : null, current);
-    const beat = this.beatUnderPointerOn(target.trackIndex, target.staffIndex);
+    const beat = this.beatUnderPointerOn(target.trackIndex, target.staffIndex, under);
     return beat ? { ...target, barIndex: beat.voice.bar.index, voiceIndex: beat.voice.index, beatIndex: beat.index } : null;
   }
 
@@ -466,8 +485,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
    * beat under the pointer (`cursorUnderPointer`); off every staff, to the beat alphaTab hit, on its own track.
    */
   private pressBeat(beat: alphaTab.model.Beat): void {
-    // The press that closed a popover only closed it (`ignoreNextPress`).
-    if (!this.state || this.pressGuard === 'ignoring') return;
+    // A press waits for the render's bounds, and the press that closed a popover only closed it (`scoreTakesPress`).
+    if (!this.state || !scoreTakesPress(this.boundsPending, this.pressGuard)) return;
     const under = this.staffUnderPointer();
     const mode = this.state.entryMode;
     const cursor = under ? this.cursorUnderPointer(under, this.state.cursor) : beatCursorOf(beat);
@@ -497,7 +516,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
    * to extend to a caret that differs from the current one.
    */
   private dragOverBeat(): void {
-    if (!this.state) return;
+    if (!this.state || this.boundsPending) return;
     if (!dragContinues(this.dragging, this.pointer?.buttons ?? 0)) {
       this.dragging = false;
       return;
@@ -582,11 +601,11 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     const element = this.alphaTabContainer?.nativeElement;
     const state = this.state;
     const pointer = this.pointer;
-    if (!element || !state || !pointer || state.entryMode !== 'pen') return null;
+    if (!element || !state || !pointer || state.entryMode !== 'pen' || this.boundsPending) return null;
     const under = this.staffUnderPointer();
     if (!under) return null;
 
-    const hovered = this.beatUnderPointerOn(under.slot.trackIndex, under.slot.staffIndex);
+    const hovered = this.beatUnderPointerOn(under.slot.trackIndex, under.slot.staffIndex, under);
     const bar = hovered ? state.doc.tracks[under.slot.trackIndex]?.staves[under.slot.staffIndex]?.bars[hovered.voice.bar.index] : undefined;
     const diatonic = bar ? this.hitTest.diatonicIn(under.lines, bar.clef, pointer.y) : null;
     const halfSteps = bar ? penHoverHalfStepsOf(state.entryMode, under.slot.kind, diatonic, bar.clef) : null;

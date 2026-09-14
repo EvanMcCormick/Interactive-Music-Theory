@@ -11,7 +11,12 @@ import { bottomLineDiatonic } from './staff-pitch';
  * only measures the page and calls these.
  */
 
-export type StaffKind = 'notation' | 'tab';
+/**
+ * A staff alphaTab draws: standard notation, tablature, and the two views a loaded file or an applied alphaTex draft can
+ * turn on - slash notation, one line of rhythm slashes, and numbered notation, which draws no lines. Those two only take
+ * the caret: a Pen click writes no pitch there, and they have no string.
+ */
+export type StaffKind = 'slash' | 'notation' | 'numbered' | 'tab';
 
 /** One staff as alphaTab draws it, tied back to the track and staff it came from. */
 export interface StaffSlot {
@@ -22,17 +27,23 @@ export interface StaffSlot {
 
 /**
  * The staves alphaTab draws on one system, in render order, described from the document. alphaTab lays out
- * each track's staves in order, standard notation before tablature, and draws all of them again on every
- * system. So this lists one system's staves, not the page's: `StaffHitTestService.allStaves` measures every
+ * each track's staves in its default stave profile's order - slash, standard notation, numbered, tablature
+ * (`Environment._createDefaultStaveProfiles`, ~75665 in 1.8), one bounds band each - and draws all of them again on
+ * every system. A view left out here would shift the rank of every band after it (`slotIndexAt`). So this lists one system's staves, not the page's: `StaffHitTestService.allStaves` measures every
  * attached system, and a measured staff is matched to its slot through the system it sits in
  * (`slotIndexAt` in `composer-score-systems.ts`), never by its index on the page.
  */
 export function staffSlotsOf(doc: ScoreDoc): StaffSlot[] {
   return doc.tracks.flatMap((track, trackIndex) =>
-    track.staves.flatMap((staff, staffIndex) => [
-      ...(staff.showStandardNotation ? [{ trackIndex, staffIndex, kind: 'notation' as const }] : []),
-      ...(staff.showTablature && staff.tuning.length > 0 ? [{ trackIndex, staffIndex, kind: 'tab' as const }] : [])
-    ])
+    track.staves.flatMap((staff, staffIndex) => {
+      const kinds: StaffKind[] = [
+        ...(staff.showSlash ? ['slash' as const] : []),
+        ...(staff.showStandardNotation ? ['notation' as const] : []),
+        ...(staff.showNumbered ? ['numbered' as const] : []),
+        ...(staff.showTablature && staff.tuning.length > 0 ? ['tab' as const] : [])
+      ];
+      return kinds.map(kind => ({ trackIndex, staffIndex, kind }));
+    })
   );
 }
 
@@ -50,11 +61,11 @@ export function scorePressOf(mode: EntryMode, staff: StaffKind | null, shiftKey:
 
 /**
  * Whether moving with the button held extends the range from where the mouse-down put the caret:
- * anywhere in Select, and on tablature in Pen. A notation drag in Pen would extend from the caret a write
- * just advanced.
+ * anywhere in Select, and in Pen on any staff whose press wrote nothing - tablature, slash, numbered. A notation
+ * drag in Pen would extend from the caret a write just advanced, and a Pen press on no staff starts no drag.
  */
 export function dragExtends(mode: EntryMode, staff: StaffKind | null): boolean {
-  return mode === 'select' || staff === 'tab';
+  return mode === 'select' || (staff !== null && staff !== 'notation');
 }
 
 /**
@@ -122,7 +133,8 @@ export function caretSlotIndexOf(slots: readonly StaffSlot[], cursor: EditCursor
 
   const own = slots.map((slot, index) => ({ slot, index })).filter(({ slot }) => isCaretStaff(slot));
   const wanted: StaffKind = cursor.stringIndex !== null ? 'tab' : 'notation';
-  const found = own.find(({ slot }) => slot.kind === wanted) ?? own[0];
+  // A numbered staff draws no lines to measure a caret against, so any other kind comes before it.
+  const found = own.find(({ slot }) => slot.kind === wanted) ?? own.find(({ slot }) => slot.kind !== 'numbered') ?? own[0];
   return found ? found.index : null;
 }
 
@@ -134,6 +146,8 @@ export function caretSlotIndexOf(slots: readonly StaffSlot[], cursor: EditCursor
  */
 export function caretHalfStepsOf(staff: StaffKind, stringCount: number, stringIndex: number | null, clickedHalfSteps: number | null): number {
   if (staff === 'tab') return Math.max(0, (stringCount - ((stringIndex ?? 0) + 1)) * 2);
+  // A slash staff's one line is its bottom line, and a notation click there says nothing about it.
+  if (staff === 'slash') return 0;
   return clickedHalfSteps ?? 4;
 }
 
@@ -231,4 +245,13 @@ export function pressGuardAfter(guard: PressGuard, event: PressGuardEvent): Pres
   if (event === 'popoverClosedByPress') return 'armed';
   if (event === 'release') return 'none';
   return guard === 'none' ? 'none' : 'ignoring';
+}
+
+/**
+ * Whether a press on the score acts: not while alphaTab's bounds are still the last render's - between `renderFinished`
+ * and `postRenderFinished`, when the lookup describes beats the render has replaced and the systems have moved - and not
+ * the press that closed a popover (`pressGuardAfter`).
+ */
+export function scoreTakesPress(boundsPending: boolean, guard: PressGuard): boolean {
+  return !boundsPending && guard !== 'ignoring';
 }

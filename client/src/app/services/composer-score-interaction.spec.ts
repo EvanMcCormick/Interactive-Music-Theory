@@ -12,6 +12,7 @@ import {
   penHoverHalfStepsOf,
   pressGuardAfter,
   sameCaret,
+  scoreTakesPress,
   scorePressOf,
   scoreRedrawOf,
   seeksOnPress,
@@ -19,7 +20,7 @@ import {
   staffSlotsOf,
   writeSounds
 } from './composer-score-interaction';
-import { EditCursor } from '../models/composer.model';
+import { EditCursor, StaffDoc } from '../models/composer.model';
 
 const at = (trackIndex: number, barIndex: number, beatIndex: number, stringIndex: number | null = 0): EditCursor =>
   ({ trackIndex, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex, stringIndex });
@@ -288,5 +289,59 @@ describe('pressGuardAfter', () => {
 
     expect(released).toBe('none');
     expect(pressGuardAfter(released, 'press')).toBe('none');
+  });
+});
+
+describe('scoreTakesPress', () => {
+  it('takes a press once the last render\'s bounds have arrived, and never the press that closed a popover', () => {
+    expect(scoreTakesPress(false, 'none')).toBeTrue();
+    expect(scoreTakesPress(true, 'none')).withContext('between renderFinished and postRenderFinished').toBeFalse();
+    expect(scoreTakesPress(false, 'ignoring')).toBeFalse();
+  });
+});
+
+describe('slash and numbered staves', () => {
+  /** A guitar score whose one staff shows the views given. */
+  function scoreShowing(views: Partial<Pick<StaffDoc, 'showSlash' | 'showStandardNotation' | 'showNumbered' | 'showTablature'>>) {
+    const doc = ComposerService.createEmptyScore();
+    Object.assign(doc.tracks[0].staves[0], views);
+    return doc;
+  }
+
+  it('are listed where alphaTab\'s default profile draws them: slash, notation, numbered, tablature', () => {
+    expect(staffSlotsOf(scoreShowing({ showSlash: true, showNumbered: true })).map(slot => slot.kind)).toEqual([
+      'slash',
+      'notation',
+      'numbered',
+      'tab'
+    ]);
+    expect(staffSlotsOf(scoreShowing({ showStandardNotation: false, showNumbered: true })).map(slot => slot.kind)).toEqual(['numbered', 'tab']);
+  });
+
+  it('only take the caret: Pen writes nothing there, and a drag from one extends, since nothing was written', () => {
+    expect(scorePressOf('pen', 'slash', false)).toBe('caret');
+    expect(scorePressOf('pen', 'numbered', false)).toBe('caret');
+    expect(dragExtends('pen', 'slash')).toBeTrue();
+    expect(dragExtends('pen', 'numbered')).toBeTrue();
+    expect(dragExtends('pen', 'notation')).toBeFalse();
+    expect(dragExtends('pen', null)).toBeFalse();
+  });
+
+  it('give no string and no hover notehead', () => {
+    const slash: StaffSlot = { trackIndex: 0, staffIndex: 0, kind: 'slash' };
+
+    expect(dragTargetOf({ slot: slash, stringIndex: 1 }, at(0, 0, 0, 3)).stringIndex).toBe(3);
+    expect(penHoverHalfStepsOf('pen', 'slash', 4, 'g2')).toBeNull();
+    expect(penHoverHalfStepsOf('pen', 'numbered', 4, 'g2')).toBeNull();
+  });
+
+  it('draw the caret on a slash staff on its one line, whatever notation last clicked', () => {
+    expect(caretHalfStepsOf('slash', 6, null, 7)).toBe(0);
+  });
+
+  it('put a caret with no string on a staff that draws lines before a numbered one, which draws none', () => {
+    const slots = staffSlotsOf(scoreShowing({ showStandardNotation: false, showNumbered: true }));
+
+    expect(caretSlotIndexOf(slots, at(0, 0, 0, null), null)).toBe(1);
   });
 });

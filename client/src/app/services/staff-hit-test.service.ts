@@ -211,28 +211,46 @@ export class StaffHitTestService {
     return box.width / viewBoxWidth;
   }
 
-  /** Staves on one surface, found by clustering line positions on their gap. */
+  /**
+   * Staves on one surface, found by clustering line positions on their gap.
+   *
+   * A slash staff draws one line. Paired with the line after it, it took the top line of the staff below: a slash
+   * staff above notation measured as a staff of two lines 33 apart, and the notation as four. So a line that is the
+   * last on its surface, or is followed by a run of three or more lines at another gap, is a staff of its own, and
+   * borrows the spacing of the staff after it - or else before it - for how far a press still reaches it. A numbered
+   * staff draws no lines and is not measured; its band still counts in `slotIndexAt`, which ranks bands, not lines.
+   */
   private staffGroups(surface: SVGSVGElement): StaffLines[] {
     const ys = this.lineYs(surface);
     const groups: StaffLines[] = [];
 
     let start = 0;
-    while (start < ys.length - 1) {
-      const spacing = ys[start + 1] - ys[start];
-      let end = start + 1;
-
-      while (
-        end + 1 < ys.length &&
-        Math.abs(ys[end + 1] - ys[end] - spacing) <= StaffHitTestService.SPACING_TOLERANCE
-      ) {
-        end++;
+    while (start < ys.length) {
+      const run = this.runFrom(ys, start);
+      if (run === 1 || (run === 2 && this.runFrom(ys, start + 1) >= 3)) {
+        groups.push({ surface, lineY: [ys[start]], spacing: 0 });
+        start += 1;
+        continue;
       }
-
-      groups.push({ surface, lineY: ys.slice(start, end + 1), spacing });
-      start = end + 1;
+      groups.push({ surface, lineY: ys.slice(start, start + run), spacing: ys[start + 1] - ys[start] });
+      start += run;
     }
 
+    groups.forEach((group, index) => {
+      if (group.lineY.length > 1) return;
+      const beside = [...groups.slice(index + 1), ...groups.slice(0, index).reverse()].find(other => other.lineY.length > 1);
+      group.spacing = beside?.spacing ?? 0;
+    });
     return groups;
+  }
+
+  /** How many lines from `ys[start]` on are evenly spaced at the gap after it: 1 for the last line. */
+  private runFrom(ys: readonly number[], start: number): number {
+    if (start + 1 >= ys.length) return 1;
+    const spacing = ys[start + 1] - ys[start];
+    let end = start + 1;
+    while (end + 1 < ys.length && Math.abs(ys[end + 1] - ys[end] - spacing) <= StaffHitTestService.SPACING_TOLERANCE) end++;
+    return end - start + 1;
   }
 
   /** Distinct y values of the thin, wide rects alphaTab uses for staff lines. */
