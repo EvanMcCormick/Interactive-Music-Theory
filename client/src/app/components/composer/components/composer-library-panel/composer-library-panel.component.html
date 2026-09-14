@@ -1,11 +1,44 @@
-<section class="library-panel">
-  <h2 class="panel-heading">Library</h2>
+<div class="library-panel">
+  <!--
+    The menus and the drawer are hidden with CSS, never removed: see the regions below for why nothing
+    announced may live inside them.
+  -->
+  <div class="menu">
+    <button
+      #libraryToggle
+      type="button"
+      class="text-btn menu-toggle"
+      aria-controls="composer-library-menu"
+      [attr.aria-expanded]="libraryMenuOpen"
+      (click)="toggleLibraryMenu()"
+    >Library</button>
+    <div id="composer-library-menu" class="menu-panel" [class.open]="libraryMenuOpen" role="group" aria-label="Library">
+      <div class="save-actions">
+        <button class="text-btn" #saveButton (click)="save()">
+          {{ currentId ? 'Save' : 'Save to library' }}
+        </button>
+        <button class="text-btn" (click)="save(true)" *ngIf="currentId">Save as copy</button>
+        <button class="text-btn open-drawer" (click)="openDrawer()">Saved compositions…</button>
+      </div>
+    </div>
+  </div>
 
-  <div class="save-actions">
-    <button class="text-btn" #saveButton (click)="save()">
-      {{ currentId ? 'Save' : 'Save to library' }}
-    </button>
-    <button class="text-btn" (click)="save(true)" *ngIf="currentId">Save as copy</button>
+  <div class="menu">
+    <button
+      #exportToggle
+      type="button"
+      class="text-btn menu-toggle"
+      aria-controls="composer-export-menu"
+      [attr.aria-expanded]="exportMenuOpen"
+      (click)="toggleExportMenu()"
+    >Export</button>
+    <div id="composer-export-menu" class="menu-panel" [class.open]="exportMenuOpen" role="group" aria-label="Export">
+      <div class="export-actions">
+        <button class="text-btn" (click)="exportGuitarPro()" title="Guitar Pro 7 file">Guitar Pro (.gp)</button>
+        <button class="text-btn" (click)="exportAlphaTex()" title="Plain alphaTex source">alphaTex</button>
+        <button class="text-btn" (click)="exportMidi()" title="Standard MIDI file">MIDI</button>
+      </div>
+    </div>
   </div>
 
   <!--
@@ -24,6 +57,10 @@
     tree - so the empty region simply has no content and no chrome, which
     collapses it to nothing without removing it. The chrome arrives with the
     content, on `.showing`.
+
+    It sits outside both menus and the drawer for the same reason: they are
+    hidden with `display: none` while closed, which would take it out of the
+    tree with them.
   -->
   <div class="save-blocked" role="alert" [class.showing]="pendingSave">
     <ng-container *ngIf="pendingSave as pending">
@@ -43,42 +80,6 @@
     </ng-container>
   </div>
 
-  <ul class="composition-list" *ngIf="entries.length > 0; else emptyLibrary">
-    <li
-      *ngFor="let entry of entries; trackBy: trackById"
-      class="composition-item"
-      [class.current]="entry.id === currentId"
-      (click)="load(entry.id)"
-      [title]="'Load ' + entry.title"
-    >
-      <span class="composition-title">{{ entry.title }}</span>
-      <span class="composition-meta">
-        {{ entry.trackCount }} track{{ entry.trackCount === 1 ? '' : 's' }} ·
-        {{ entry.barCount }} bar{{ entry.barCount === 1 ? '' : 's' }}
-      </span>
-      <button
-        class="composition-remove"
-        (click)="remove(entry.id, entry.title, $event)"
-        title="Delete composition"
-      >×</button>
-    </li>
-  </ul>
-
-  <ng-template #emptyLibrary>
-    <p class="hint">Nothing saved yet.</p>
-  </ng-template>
-
-  <h2 class="panel-heading">Export</h2>
-  <div class="export-actions">
-    <button class="text-btn" (click)="exportGuitarPro()" title="Guitar Pro 7 file">
-      Guitar Pro (.gp)
-    </button>
-    <button class="text-btn" (click)="exportAlphaTex()" title="Plain alphaTex source">
-      alphaTex
-    </button>
-    <button class="text-btn" (click)="exportMidi()" title="Standard MIDI file">MIDI</button>
-  </div>
-
   <!--
     Announced for the same reason the refusal is, and always present for the
     same reason its region is. Without this a keyboard user hears the objection
@@ -88,4 +89,36 @@
     <p class="status" *ngIf="statusMessage">{{ statusMessage }}</p>
     <p class="status error" *ngIf="errorMessage">{{ errorMessage }}</p>
   </div>
-</section>
+
+  <aside class="library-drawer" [class.open]="drawerOpen" [attr.aria-hidden]="!drawerOpen" aria-label="Saved compositions">
+    <header class="drawer-header">
+      <h2 class="panel-heading">Saved compositions</h2>
+      <button type="button" class="drawer-close" aria-label="Close saved compositions" (click)="closeDrawer()">×</button>
+    </header>
+
+    <ul class="composition-list" *ngIf="entries.length > 0; else emptyLibrary">
+      <li
+        *ngFor="let entry of entries; trackBy: trackById"
+        class="composition-item"
+        [class.current]="entry.id === currentId"
+        (click)="load(entry.id)"
+        [title]="'Load ' + entry.title"
+      >
+        <span class="composition-title">{{ entry.title }}</span>
+        <span class="composition-meta">
+          {{ entry.trackCount }} track{{ entry.trackCount === 1 ? '' : 's' }} ·
+          {{ entry.barCount }} bar{{ entry.barCount === 1 ? '' : 's' }}
+        </span>
+        <button
+          class="composition-remove"
+          (click)="remove(entry.id, entry.title, $event)"
+          title="Delete composition"
+        >×</button>
+      </li>
+    </ul>
+
+    <ng-template #emptyLibrary>
+      <p class="hint">Nothing saved yet.</p>
+    </ng-template>
+  </aside>
+</div>

@@ -4,6 +4,7 @@ import {
   Component,
   ElementRef,
   OnDestroy,
+  HostListener,
   OnInit,
   ViewChild
 } from '@angular/core';
@@ -46,11 +47,12 @@ interface PendingSave {
 }
 
 /**
- * Save, load and export for the composer.
+ * Save, load and export for the composer: the top bar's Library and Export menus, and the saved list
+ * in a drawer.
  *
- * Kept out of ComposerComponent so neither file outgrows the project's
- * 1000-line guideline. Every dependency is a root service, so this needs no
- * inputs or outputs.
+ * Kept out of ComposerComponent so neither file outgrows the project's 1000-line guideline. Every
+ * dependency is a root service, so this needs no inputs or outputs; the keyboard's Ctrl+S reaches
+ * `save` through `ComposerSaveRequests`.
  */
 @Component({
   selector: 'app-composer-library-panel',
@@ -88,6 +90,15 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   pendingSave: PendingSave | null = null;
 
   /**
+   * Which of the top bar's menus is open, and whether the saved list's drawer is. Presentation only:
+   * the three are hidden with CSS rather than removed, so the announced regions beside them stay in the
+   * accessibility tree whichever is open.
+   */
+  libraryMenuOpen = false;
+  exportMenuOpen = false;
+  drawerOpen = false;
+
+  /**
    * Whether a write to the library is under way. A second trigger while it is - Ctrl+S just after a click,
    * a double click - is dropped: the first write's id is not known until it lands, so letting the second
    * through would create a second entry rather than overwrite the first.
@@ -114,6 +125,10 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
    */
   @ViewChild('saveButton') private saveButton?: ElementRef<HTMLButtonElement>;
 
+  /** The Library and Export menu buttons, which take focus back when Escape closes their menu. */
+  @ViewChild('libraryToggle') private libraryToggle?: ElementRef<HTMLButtonElement>;
+  @ViewChild('exportToggle') private exportToggle?: ElementRef<HTMLButtonElement>;
+
   constructor(
     private readonly composer: ComposerService,
     private readonly library: ComposerLibraryService,
@@ -121,7 +136,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
     private readonly mapper: ScoreDocMapperService,
     private readonly tex: AlphaTexService,
     private readonly saveRequests: ComposerSaveRequests,
-    private readonly cdr: ChangeDetectorRef
+    private readonly cdr: ChangeDetectorRef,
+    private readonly host: ElementRef<HTMLElement>
   ) {}
 
   ngOnInit(): void {
@@ -166,6 +182,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
         this.cdr.markForCheck();
       });
 
+    document.addEventListener('keydown', this.escapeListener, true);
+
     // Ctrl+S. The same `save()` as the button, so a keyboard save is refused, announced and followed by
     // focus exactly as a click is.
     this.saveRequests.requested$.pipe(takeUntil(this.destroy$)).subscribe(() => void this.save());
@@ -174,9 +192,72 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    document.removeEventListener('keydown', this.escapeListener, true);
     this.destroy$.next();
     this.destroy$.complete();
   }
+
+  // -------------------------------------------------------------------------
+  // Menus and drawer
+  // -------------------------------------------------------------------------
+
+  toggleLibraryMenu(): void {
+    this.libraryMenuOpen = !this.libraryMenuOpen;
+    this.exportMenuOpen = false;
+  }
+
+  toggleExportMenu(): void {
+    this.exportMenuOpen = !this.exportMenuOpen;
+    this.libraryMenuOpen = false;
+  }
+
+  /** Opens the saved list, closing the menu it was opened from. */
+  openDrawer(): void {
+    this.drawerOpen = true;
+    this.libraryMenuOpen = false;
+  }
+
+  closeDrawer(): void {
+    this.drawerOpen = false;
+  }
+
+  /** A click anywhere outside the panel closes its menus and its drawer, as a menu is expected to. */
+  @HostListener('document:click', ['$event'])
+  onDocumentClick(event: MouseEvent): void {
+    if (!this.anyOpen || (event.target instanceof Node && this.host.nativeElement.contains(event.target))) return;
+    this.closeMenus();
+  }
+
+  /** Whether a menu or the drawer is open. */
+  private get anyOpen(): boolean {
+    return this.libraryMenuOpen || this.exportMenuOpen || this.drawerOpen;
+  }
+
+  private closeMenus(): void {
+    this.libraryMenuOpen = false;
+    this.exportMenuOpen = false;
+    this.drawerOpen = false;
+    this.cdr.markForCheck();
+  }
+
+  /**
+   * Escape closes an open menu or the drawer, and claims the key - and gives focus back to the menu's
+   * button when it was inside what closed, since a focused element that is hidden drops focus to the page.
+   *
+   * On the document in the capture phase, for the reason the shell's Escape is (`AppComponent.onEscape`):
+   * the page's keyboard handler listens on the document too, and was added before this panel existed, so a
+   * bubbling listener here would run after it had gone back to Select and dropped the range. A press
+   * something earlier claimed - the shell closing the circle-of-fifths drawer - is left alone, and with
+   * nothing open nothing is claimed, so Escape stays the page's.
+   */
+  private readonly escapeListener = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || event.defaultPrevented || !this.anyOpen) return;
+    event.preventDefault();
+    const focusWasInside = this.host.nativeElement.contains(document.activeElement);
+    const toggle = this.exportMenuOpen && !this.libraryMenuOpen ? this.exportToggle : this.libraryToggle;
+    this.closeMenus();
+    if (focusWasInside) toggle?.nativeElement.focus();
+  };
 
   // -------------------------------------------------------------------------
   // Save / load
@@ -284,6 +365,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
    * by the browser when it does.
    */
   private returnFocusToSave(): void {
+    // Save lives in the Library menu, and a button in a hidden menu cannot take focus.
+    this.libraryMenuOpen = true;
     this.cdr.detectChanges();
     this.saveButton?.nativeElement.focus();
   }
@@ -405,6 +488,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
 
       this.composer.replaceDocument(this.mapper.toDoc(parsed.score), true);
       this.currentId = id;
+      this.drawerOpen = false;
       this.report(`Loaded "${entry.title}"`);
     } catch (error) {
       this.reportError(error);
@@ -429,6 +513,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   // -------------------------------------------------------------------------
 
   exportGuitarPro(): void {
+    this.exportMenuOpen = false;
     if (!this.state) return;
     try {
       const settings = new alphaTab.Settings();
@@ -445,6 +530,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   }
 
   exportAlphaTex(): void {
+    this.exportMenuOpen = false;
     if (!this.state) return;
     try {
       this.exporter.downloadAlphaTex(
@@ -458,6 +544,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   }
 
   exportMidi(): void {
+    this.exportMenuOpen = false;
     if (!this.state) return;
     try {
       // Same three steps as the Guitar Pro export: build the score, hand it to

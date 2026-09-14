@@ -137,6 +137,83 @@ describe('ComposerLibraryPanelComponent', () => {
     });
   });
 
+  /**
+   * Menus and a drawer in the top bar, hidden with CSS rather than removed - and the announced regions
+   * outside them, since a region inside a hidden menu is out of the accessibility tree.
+   */
+  describe('as top-bar menus', () => {
+    it('keeps both menus and the drawer in the page while closed', () => {
+      const menus: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.menu-panel'));
+      const drawer: HTMLElement = fixture.nativeElement.querySelector('.library-drawer');
+
+      expect(menus.length).toBe(2);
+      expect(menus.every(menu => getComputedStyle(menu).display === 'none')).toBeTrue();
+      expect(drawer.getAttribute('aria-hidden')).toBe('true');
+    });
+
+    it('keeps the announced regions outside the menus and the drawer', () => {
+      const alert: HTMLElement = fixture.nativeElement.querySelector('[role="alert"]');
+      const polite: HTMLElement = fixture.nativeElement.querySelector('[aria-live="polite"]');
+
+      expect(alert.closest('.menu-panel, .library-drawer')).toBeNull();
+      expect(polite.closest('.menu-panel, .library-drawer')).toBeNull();
+    });
+
+    it('opens a menu from its button, and the saved list in a drawer', () => {
+      (fixture.nativeElement.querySelector('[aria-controls="composer-library-menu"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      const library: HTMLElement = fixture.nativeElement.querySelector('#composer-library-menu');
+      expect(getComputedStyle(library).display).not.toBe('none');
+
+      (fixture.nativeElement.querySelector('.open-drawer') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('.library-drawer').getAttribute('aria-hidden')).toBe('false');
+      expect(panel.libraryMenuOpen).toBeFalse();
+    });
+
+    it('closes the Export menu when an export is chosen', () => {
+      panel.toggleExportMenu();
+
+      panel.exportMidi();
+
+      expect(panel.exportMenuOpen).toBeFalse();
+    });
+
+    it('closes a menu and the drawer on Escape, claiming it so the page\'s own Escape does not also act', () => {
+      panel.toggleExportMenu();
+      panel.openDrawer();
+      let claimedBeforeThePage = false;
+      const page = (event: KeyboardEvent): void => void (claimedBeforeThePage = event.defaultPrevented);
+      document.addEventListener('keydown', page);
+
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      document.removeEventListener('keydown', page);
+
+      expect(panel.exportMenuOpen).toBeFalse();
+      expect(panel.drawerOpen).toBeFalse();
+      expect(claimedBeforeThePage).toBeTrue();
+    });
+
+    it('leaves Escape to the page while nothing is open', () => {
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+
+      document.body.dispatchEvent(escape);
+
+      expect(escape.defaultPrevented).toBeFalse();
+    });
+
+    it('closes on a click outside the panel, and not on a click inside it', () => {
+      panel.toggleLibraryMenu();
+      fixture.detectChanges();
+
+      (fixture.nativeElement.querySelector('#composer-library-menu') as HTMLElement).click();
+      expect(panel.libraryMenuOpen).toBeTrue();
+
+      document.body.click();
+      expect(panel.libraryMenuOpen).toBeFalse();
+    });
+  });
+
   describe('with a generated track linked', () => {
     beforeEach(() => link('Verse'));
 

@@ -1,42 +1,65 @@
-// Library and export panel, matching the composer's dark theme.
-@use 'sass:color';
+// Library and Export menus in the composer's top bar, and the saved list in a drawer.
+//
+// Colours are the page host's custom properties, with the composer's values as fallbacks for the
+// component's own spec, which has no page host.
 
-$nav-bg-secondary: #34495e;
-$accent-color: #3498db;
-$accent-hover: #2980b9;
-$text-primary: #ecf0f1;
-$text-secondary: #bdc3c7;
-$border-color: #465666;
-$error-color: #e74c3c;
-$warning-color: #f39c12;
-$success-color: #27ae60;
+:host {
+  display: block;
+}
 
 .library-panel {
-  margin-top: 1.5rem;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.menu {
+  position: relative;
+}
+
+// Hidden with `display: none` while closed, never removed - and so nothing announced lives inside.
+.menu-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  z-index: 60;
+  min-width: 12rem;
+  padding: 0.4rem;
+  background-color: var(--composer-nav, #2c3e50);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+
+  &.open {
+    display: block;
+  }
 }
 
 .panel-heading {
-  margin: 0 0 0.6rem;
+  margin: 0;
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: $text-secondary;
+  color: var(--composer-text-secondary, #bdc3c7);
 }
 
 .text-btn {
-  background-color: $nav-bg-secondary;
-  border: 1px solid $border-color;
+  background-color: var(--composer-nav-secondary, #34495e);
+  border: 1px solid var(--composer-border, #465666);
   border-radius: 4px;
-  color: $text-primary;
+  color: var(--composer-text, #ecf0f1);
   cursor: pointer;
   padding: 0.4rem 0.75rem;
   font-size: 0.8rem;
+  text-align: left;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 
   &:hover:not(:disabled) {
-    background-color: $accent-color;
-    border-color: $accent-hover;
+    background-color: var(--composer-accent, #3498db);
+    border-color: var(--composer-accent-hover, #2980b9);
   }
 
   &:disabled {
@@ -49,32 +72,31 @@ $success-color: #27ae60;
 .export-actions {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  margin-bottom: 1rem;
+  gap: 0.3rem;
 }
 
-// The refusal, and the offer that resolves it. Warned rather than errored:
-// nothing has gone wrong, the panel is asking for a decision.
-//
-// The element is in the DOM whether or not there is anything to say, so that
-// the live region is already in the accessibility tree when its content
-// changes. That rules out `display: none` for the empty state, which would take
-// it back out again - so the chrome is what toggles, and an empty box with no
-// padding, border or margin occupies no height on its own.
+// The refusal, and the offer that resolves it, dropped below the top bar. The element is in the DOM
+// whether or not there is anything to say; the chrome is what toggles, so an empty region takes no space.
 .save-blocked {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  z-index: 70;
+  width: min(26rem, 80vw);
+
   &.showing {
-    margin: -0.5rem 0 1rem;
     padding: 0.6rem;
-    border: 1px solid $warning-color;
+    border: 1px solid var(--composer-warning, #f39c12);
     border-radius: 4px;
-    background-color: rgba($warning-color, 0.12);
+    background-color: var(--composer-nav, #2c3e50);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
   }
 
   .save-blocked-reason {
     margin: 0 0 0.5rem;
     font-size: 0.75rem;
     line-height: 1.4;
-    color: $text-primary;
+    color: var(--composer-text, #ecf0f1);
   }
 
   .save-blocked-actions {
@@ -84,11 +106,66 @@ $success-color: #27ae60;
   }
 }
 
+.status-region {
+  min-width: 0;
+}
+
+.status {
+  margin: 0;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  color: var(--composer-success, #27ae60);
+
+  &.error {
+    color: var(--composer-error, #e74c3c);
+  }
+}
+
+// The saved list slides in from the right, over the page. Hidden with CSS while closed.
+.library-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
+  width: min(22rem, 90vw);
+  display: flex;
+  flex-direction: column;
+  background-color: var(--composer-nav, #2c3e50);
+  color: var(--composer-text, #ecf0f1);
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.35);
+  visibility: hidden;
+  transform: translateX(100%);
+  transition: transform 0.2s ease-out, visibility 0s linear 0.2s;
+
+  &.open {
+    visibility: visible;
+    transform: translateX(0);
+    transition: transform 0.2s ease-out;
+  }
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--composer-border, #465666);
+}
+
+.drawer-close {
+  background: none;
+  border: none;
+  color: var(--composer-text-secondary, #bdc3c7);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .composition-list {
   list-style: none;
-  margin: 0 0 1.25rem;
-  padding: 0;
-  max-height: 12rem;
+  margin: 0;
+  padding: 0.5rem;
   overflow-y: auto;
 }
 
@@ -101,11 +178,13 @@ $success-color: #27ae60;
   border-radius: 4px;
   cursor: pointer;
 
-  &:hover { background-color: rgba(255, 255, 255, 0.06); }
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+  }
 
   &.current {
-    background-color: rgba($accent-color, 0.25);
-    box-shadow: inset 2px 0 0 $accent-color;
+    background-color: rgba(52, 152, 219, 0.25);
+    box-shadow: inset 2px 0 0 var(--composer-accent, #3498db);
   }
 
   .composition-title {
@@ -117,7 +196,7 @@ $success-color: #27ae60;
 
   .composition-meta {
     font-size: 0.7rem;
-    color: $text-secondary;
+    color: var(--composer-text-secondary, #bdc3c7);
   }
 
   .composition-remove {
@@ -126,26 +205,27 @@ $success-color: #27ae60;
     right: 0.3rem;
     background: none;
     border: none;
-    color: $text-secondary;
+    color: var(--composer-text-secondary, #bdc3c7);
     cursor: pointer;
     font-size: 1rem;
     line-height: 1;
     padding: 0 0.2rem;
 
-    &:hover { color: $error-color; }
+    &:hover {
+      color: var(--composer-error, #e74c3c);
+    }
   }
 }
 
 .hint {
-  margin: 0 0 1.25rem;
+  margin: 0.75rem 1rem;
   font-size: 0.75rem;
-  color: $text-secondary;
+  color: var(--composer-text-secondary, #bdc3c7);
 }
 
-.status {
-  margin: 0.5rem 0 0;
-  font-size: 0.75rem;
-  color: $success-color;
-
-  &.error { color: $error-color; }
+@media (prefers-reduced-motion: reduce) {
+  .library-drawer,
+  .library-drawer.open {
+    transition: none;
+  }
 }
