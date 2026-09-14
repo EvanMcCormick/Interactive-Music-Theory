@@ -122,6 +122,11 @@ export class ComposerService {
     return this.stateSubject.getValue().doc;
   }
 
+  /** The current state, for a command that decides what to do from it - a toggle, a caret step. */
+  get state(): ComposerState {
+    return this.stateSubject.getValue();
+  }
+
   /**
    * The meter a projection must be barred in to be merged into this score.
    *
