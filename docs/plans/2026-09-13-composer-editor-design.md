@@ -192,7 +192,9 @@ departs from the design".
    remembers the input duration, and now also says why the beat did not change. Fix bar and paste say
    what they did in the same region (`ComposerState.notice`, cleared as a refusal is), as Part 4 asks,
    and the status line counts the bars over their time signature on a plain line outside the region, so
-   ordinary duration edits are not announced. The alphaTex panel's message goes when the panel closes.
+   ordinary duration edits are not announced. The alphaTex panel's message goes when the panel closes. *Settled in review:* each refusal or notice published is a
+   new message (`ComposerState.messageId`), so the same words said twice are read out twice; and a typed fret or rest
+   that removes a fermata says so, since entry moves the caret on in the commit that writes.
 9. **A whole tuplet group's freed room goes after the group**, fixed before the tuplet tool:
    `n8 n8 n8 n8 n2` with its first three beats made a triplet keeps the fourth eighth at 1440. Room is held
    until alphaTab would close the group, even past the pressed beats, so no rest splits one. *Settled in
@@ -249,9 +251,12 @@ departs from the design".
     save refuses, announces and returns focus exactly as a click does.
 20. **The library's menus and drawer are hidden with CSS**, never `*ngIf`, and its announced regions
     sit outside them. Each closes on Escape - claimed in the capture phase, so the composer's own Escape
-    does not also act - and on a click outside. A save already writing drops a second trigger, so a click
-    and Ctrl+S together make one library entry.
-21. **macOS**: see "macOS" under Shortcuts. Nobody has checked the bindings on a Mac.
+    does not also act - and on a click outside. A save asked for while one is writing is remembered, however
+    many times, and runs once after that write lands, over the same entry - when the document has moved on since the
+    write began, or it was Save as copy - so a click and Ctrl+S together make one library entry, and an edit made
+    mid-save is saved rather than marked saved. Only the document a write held is marked saved.
+21. **macOS**: see "macOS" under Shortcuts. Nobody has checked the bindings on a Mac. Tooltips and the shortcut sheet
+    write Ctrl as ⌘ and Alt as ⌥ on a Mac, and Ctrl and Alt elsewhere, from the browser's platform, read once.
 22. **Score interaction.** In Select a notation click moves the caret and never writes; in Pen it
     writes the clicked pitch; digits write on tablature in both. Mouse-down sets the caret, moving
     with the button held extends the range, and Shift-click extends. The highlight is drawn from
@@ -298,6 +303,11 @@ departs from the design".
 30. **A save is refused while the alphaTex panel holds a draft that is not applied**, from Ctrl+S - which
     runs in the textarea - or the Library menu's Save, and the status line says "Apply or revert the
     alphaTex draft before saving." A save writes the document, not the draft. Settled in review.
+31. **The shortcut sheet is modal.** Opening it moves the focus into it, Tab stays inside it, and closing it - its close
+    button or Escape - gives the focus back, or to the score when what had it is gone. While it is open no key but its
+    own and Escape reaches the score behind it, and Escape closes the sheet alone, as it closes a popover. Its note says
+    keys are ignored while typing in a field except those that still run there - Ctrl+S - read from the tool table.
+    Settled in review of Task 3.4.
 
 ---
 

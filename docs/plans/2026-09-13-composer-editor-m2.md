@@ -121,6 +121,24 @@ selecting the second track, and `writeFret` keeps the caret's track, so no note 
 | Phase 3 (Task 3.12) | both clean | **3,069 SUCCESS** |
 | Phase 4 (Task 4.4) | both clean | **3,086 SUCCESS** |
 
+After a review of Tasks 3.1 to 3.4 as committed and its three fix commits (see "Corrections during implementation",
+the last entry), the blocks still to apply - Tasks 3.9 to 3.12 and 4.1 to 4.4 - were applied again, in task order, on
+top of `94fbf86` (whole suite there: 3,078 SUCCESS). Tasks 3.1 to 3.8 are committed code by then, so their blocks were
+not applied. No find text had stopped matching, and no spec failed. Task 3.10's blocks were corrected for the fixes
+themselves: the key handler's fourth argument is `() => this.sheetOpen`; Escape closes the open sheet alone; the sheet's
+`fallbackFocus` is the score's host, focusable through `tabindex="-1"`; the status line takes `messageId`; and the page's
+spec has "Escape closes it alone" in place of "Escape closes it and goes back to Select", and gains "Delete clears nothing
+until the sheet closes" and the focus going back to the `?` button. Its Step 2 red is unchanged.
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 3 (Task 3.12) | both clean | **3,096 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **3,113 SUCCESS** |
+
+Line counts after it, largest first: `composer.service.ts` 966; `composer.service.editing.spec.ts` 932;
+`composer-library-panel.component.ts` 614; `composer-library-panel.component.spec.ts` 610; `composer-score.component.ts` 530;
+`composer.component.ts` 373.
+
 Each task's Step 2 red was captured the same way - the plan applied through that task's Step 1, then the
 spec type check - and its text updated to what was seen. The client code was then reverted.
 
@@ -201,7 +219,7 @@ Numbered as in the design's "M2 decisions", where each is argued.
 | 17 | Popovers with inline validation, in the top layer beside their button, reachable by keyboard | 3.2, 3.5, 3.6 |
 | 18 | New commands in new modules; the service under the cap | 1.2-1.15 |
 | 19 | Ctrl+S through a save-request channel | 3.1 |
-| 20 | Menus and drawer hidden with CSS, closed by Escape and an outside click; one save per trigger | 3.1, 3.8 |
+| 20 | Menus and drawer hidden with CSS, closed by Escape and an outside click; one save per trigger, and one follow-up for triggers mid-write | 3.1, 3.8 |
 | 21 | macOS alternates | 2.4 |
 | 22 | Score interaction, click-to-seek, drags that end anywhere, engraving only a new document | 4.1-4.3 |
 | 23 | The page grid | 3.9, 3.10 |
@@ -212,6 +230,7 @@ Numbered as in the design's "M2 decisions", where each is argued.
 | 28 | Tie chains move whole | 1.12 |
 | 29 | Space and Enter press a focused button | 3.11 |
 | 30 | A save is refused while an alphaTex draft is unapplied | 3.1, 3.10 |
+| 31 | The shortcut sheet is modal: the focus goes in and back, Tab stays inside, and no key but its own and Escape reaches the score | 3.4, 3.10 |
 
 ### Where this plan departs from the design
 
@@ -276,8 +295,8 @@ Numbered as in the design's "M2 decisions", where each is argued.
 24. **The count of bars over is not announced** (Part 4 asked for "a status warning naming how many bars
     are over"): it is a plain line outside the live region, which would otherwise speak on nearly every
     duration edit. Task 3.3.
-25. **Escape closes an open popover, or an open Library or Export menu, and nothing else** (decision 5 named
-    the circle-of-fifths drawer, then Select). Tasks 3.5, 3.8, 3.10.
+25. **Escape closes an open popover, the open shortcut sheet, or an open Library or Export menu, and nothing else** (decision 5 named
+    the circle-of-fifths drawer, then Select). Tasks 3.4, 3.5, 3.8, 3.10.
 26. **Space and Enter on a focused button are the browser's**, not only plain Enter as the design's macOS
     paragraph says, so Space plays only when no button has the focus. Task 3.11.
 27. **A save is refused while the alphaTex panel holds an unapplied draft.** Not in the design. Tasks 3.1,
@@ -584,6 +603,57 @@ removed a fermata.
   `toolStates` was already memoized on the document, the anchor, the cursor and the entry mode.
 - **`written-beats.ts`** is `written-beats.spec-helper.ts`. Karma's `**/*.spec.ts` does not load it as a spec, the
   specs compile it through their imports, and `tsconfig.app.json` excludes it.
+
+**A review of Tasks 3.1 to 3.4 as committed** found five faults in saving and the status line, three in the shortcut
+sheet, and three small items, fixed in three commits: `6eebeda`, `ecfa4a4` and `94fbf86`. Whole suite after them:
+**3,078 SUCCESS**. The blocks still to apply were re-proven on top (see "The re-proof of Phases 3 and 4"), and Task
+3.10's corrected.
+
+- **Task 3.3, Fix bar's count.** Carrying one bar's overflow can mend a later selected bar, which the loop then found
+  not over and skipped: bars 0 and 1 both over and both selected said "Fixed 1 bar." Fix bar counts the selected bars
+  over before it carries anything, and says that count.
+- **Task 3.3, a message said twice.** The live region tracked its spans by their words, so a second identical refusal - two
+  presses of Fix bar with nothing over - or the same paste twice kept the node, and a screen reader said nothing.
+  `ComposerState.messageId` is bumped whenever a refusal or a notice is published, and the status line keys a refusal's
+  and a notice's span by it, so the node is replaced. A failed alphaTex apply, which the page holds, is still keyed by its
+  words.
+- **Task 3.3, a fermata's notice through note entry.** The second digit of a fret amends the first digit's commit, and
+  cleared its notice. Keeping it was not enough on its own: the first digit's advance was a publish of its own, and a caret
+  move clears the notice, so a typed fret or R that removed a fermata never said so. Entry now advances the caret in the
+  commit that writes (`commitEntry`), which also no longer advances past an entry the edit itself refused. An amend whose
+  own edit says nothing keeps the notice before it, and does not announce it again.
+- **Task 3.3, paste's count** was the clipboard's length, which counts graces and counts a beat split at a bar line once.
+  `pasteBeats` returns `beatsWritten`: the beats laid down, graces aside, a split beat as its pieces. The seven
+  `toEqual`s of its result in `beat-clipboard.spec.ts` gain the field.
+- **Task 3.1, a save asked for during a save.** A dropped trigger could mark an unsaved edit saved: Ctrl+S starts a write,
+  an edit, Ctrl+S is dropped, the write lands, and `markSaved()` cleared the newer document. `markSaved(saved)` marks the
+  document clean only if it is still the one written. A trigger that arrives mid-write - Save, Save as copy or Ctrl+S, any
+  number of them - is remembered, and one follow-up save runs after the write lands, through `save()` and its refusals,
+  over the same entry by the id the write returned. It runs only if the document moved on since the write began, or a
+  trigger was Save as copy, so a click and Ctrl+S with nothing between still write once; and not at all if the write
+  failed, which has been reported and would only fail again.
+- **Task 3.4, the shortcut sheet is a modal.** Opening it focuses its heading and remembers what had the focus; Tab goes
+  round inside it; closing it, by its close button or by Escape, gives the focus back, or to `fallbackFocus` - the score -
+  when that element has left the page. `aria-modal="true"`, and named by its `<h2>` through `aria-labelledby`. Built by
+  hand rather than with `<dialog>` and `showModal()`: the page closes the sheet by setting `open` whichever way it closes,
+  so a native dialog's own Escape would be a second path beside the shell's capture-phase listener and the key handler's.
+- **Task 3.4, keys behind the sheet.** Every key reached the score hidden behind it: Delete, R, a digit, Ctrl+V.
+  `ComposerKeyHandler` takes a fourth argument, `modalOpen`, and while it answers true only `TOOLS_OVER_A_MODAL` run - the
+  sheet's own key and Escape. Every other press is left to the browser, as a press in a text field is, so the arrow keys
+  and Space scroll the sheet's list, which is focusable for it. Ctrl+S (`inTextFields`) is claimed and dropped instead, so
+  the browser's Save dialog does not open over the sheet. Task 3.10 wires `() => this.sheetOpen`, and Escape closes the
+  open sheet alone, as it closes a popover alone.
+- **Task 3.4, the sheet's note and the Mac's modifiers.** The note said keys are ignored in a field and not that Ctrl+S
+  still runs; it names the `inTextFields` tools' keys now, read from the table (`textFieldKeysOf`). Its "Ctrl is Cmd on a
+  Mac" is gone: `bindingLabelOf` takes a `KeyPlatform` and writes ⌘ for Ctrl and ⌥ for Alt on a Mac, Ctrl and Alt
+  elsewhere. The platform is read once, as `KEY_PLATFORM` (`composer-key-platform.ts`), from `userAgentData.platform` or
+  else `navigator.platform`, and injected into the sheet and the palette, whose tooltips (Task 3.6) use it too.
+- **Task 3.4, `SHEET_ORDER`** is a hand copy of `ToolGroup`. The spec checks the sheet's rows are every tool with a key,
+  so a group left out of the order fails it.
+- **Task 3.2, `endingBitsOf`** leaves out an ending outside 1 to `MAX_ENDING`: 0 set bit 31, making the field negative,
+  and 9 set bit 8. `OTTAVA_CHOICES` is specced.
+- **Task 3.3, the status line's words** - `countOf`, `fixBarNoticeOf`, `pasteNoticeOf` - are in `composer-text.ts`; the
+  status line imported `countOf` from the structure commands.
 
 ---
 
@@ -11535,7 +11605,7 @@ The page implements `ComposerToolHost` - popovers, the sheet, transport, the sav
 through the strip - and hands every key press to `ComposerKeyHandler` and every palette press to the same
 tool's `run`, so a button and its key cannot differ.
 
-Four things the page owns were corrected before this task was applied:
+Five things the page owns were corrected before this task was applied:
 
 - **The key handler is built with the score's element** (its third argument), a `#score` view query on
   `<app-composer-score>`. Without it every text selection counts as outside the score, and Ctrl+C and
@@ -11548,8 +11618,14 @@ Four things the page owns were corrected before this task was applied:
   through the guard `ComposerSaveRequests` carries - is refused, and the status line says "Apply or revert
   the alphaTex draft before saving."
 - **A failed apply's message goes when the alphaTex panel closes**, whichever way it closes.
+- **The shortcut sheet is a modal.** While it is open only its own key and Escape reach the key handler, whose
+  fourth argument is `() => this.sheetOpen`, so Delete, R, a digit or Ctrl+V cannot edit the score hidden behind
+  it. Escape closes the sheet alone, as it closes a popover alone. The sheet gives the focus back to what had it,
+  or to the score when that is gone: its `fallbackFocus` is the score's host, which takes the focus through
+  `tabindex="-1"`.
 
-The status line also takes the notice and the document, for Task 3.3's outcomes and count of bars over. The old keyboard `switch`, the fret buffer, the
+The status line also takes the notice, its message id and the document, for Task 3.3's outcomes, a message said
+twice in the same words, and the count of bars over. The old keyboard `switch`, the fret buffer, the
 duration buttons and the Tracks panel go: the key handler, `FretDigitEntry`, the palette and the track
 strip now hold them. Composer colours become CSS custom properties on the page host (design Part 3,
 "Styling"), and the child components read them with fallbacks.
@@ -11644,14 +11720,44 @@ describe('ComposerComponent', () => {
     expect(composer.state.entryMode).toBe('pen');
   });
 
-  it('opens the shortcut sheet on ?, and Escape closes it and goes back to Select', () => {
+  it('opens the shortcut sheet on ?, and Escape closes it alone - still Pen, still a range - until the next Escape', () => {
     press({ key: 'q', code: 'KeyQ' });
+    composer.extendSelectionTo({ beatIndex: 2 });
     press({ key: '?', code: 'Slash', shiftKey: true });
     expect(component.sheetOpen).toBeTrue();
 
     press({ key: 'Escape' });
     expect(component.sheetOpen).toBeFalse();
+    expect(composer.state.entryMode).toBe('pen');
+    expect(composer.state.anchor).not.toBeNull();
+
+    press({ key: 'Escape' });
     expect(composer.state.entryMode).toBe('select');
+  });
+
+  it('leaves the score alone behind the open shortcut sheet: Delete clears nothing until the sheet closes', () => {
+    composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
+    const doc = composer.doc;
+    press({ key: '?', code: 'Slash', shiftKey: true });
+
+    press({ key: 'Delete' });
+    expect(composer.doc).toBe(doc);
+
+    press({ key: 'Escape' });
+    press({ key: 'Delete' });
+    expect(composer.doc).not.toBe(doc);
+  });
+
+  it('gives the focus back to the ? button when Escape closes the sheet it opened', () => {
+    const toggle: HTMLButtonElement = fixture.nativeElement.querySelector('.shortcuts-toggle');
+    toggle.focus();
+    toggle.click();
+    fixture.detectChanges();
+    const sheet: HTMLElement = fixture.nativeElement.querySelector('app-composer-shortcut-sheet [role="dialog"]');
+    expect(sheet.contains(document.activeElement)).toBeTrue();
+
+    press({ key: 'Escape' }, document.activeElement ?? document);
+    expect(document.activeElement).toBe(toggle);
   });
 
   it('runs a palette button through the same command as its key', () => {
@@ -11886,13 +11992,16 @@ export class ComposerComponent implements OnInit, OnDestroy {
       toggleShortcutSheet: () => this.present(() => (this.sheetOpen = !this.sheetOpen)),
       escape: () =>
         this.present(() => {
-          // An open popover takes Escape alone - as the popover itself does when it has the focus - so the
-          // press that closes it does not also drop the range.
+          // An open popover takes Escape alone - as the popover itself does when it has the focus - and so does the
+          // open shortcut sheet, a modal over the score: the press that closes either does not also drop the range.
           if (this.popover) {
             this.popover = null;
             return;
           }
-          this.sheetOpen = false;
+          if (this.sheetOpen) {
+            this.sheetOpen = false;
+            return;
+          }
           composer.setEntryMode('select');
           composer.setCursor({});
         }),
@@ -11909,7 +12018,14 @@ export class ComposerComponent implements OnInit, OnDestroy {
       typeFretDigit: digit => this.fretEntry.type(digit)
     };
     // The score's element, so a text selection inside the score does not stop Ctrl+C and Ctrl+X copying beats.
-    this.keyHandler = new ComposerKeyHandler(this.host, COMPOSER_TOOLS, () => this.scoreElement?.nativeElement ?? null);
+    // And the sheet's state: while it is open, only its own key and Escape reach the tools, so no key edits the score
+    // hidden behind it (`TOOLS_OVER_A_MODAL`).
+    this.keyHandler = new ComposerKeyHandler(
+      this.host,
+      COMPOSER_TOOLS,
+      () => this.scoreElement?.nativeElement ?? null,
+      () => this.sheetOpen
+    );
   }
 
   ngOnInit(): void {
@@ -11961,6 +12077,11 @@ export class ComposerComponent implements OnInit, OnDestroy {
 
   closeShortcutSheet(): void {
     this.sheetOpen = false;
+  }
+
+  /** The score's host, where the shortcut sheet gives the focus back when what had it before is gone. */
+  get scoreHost(): HTMLElement | null {
+    return this.scoreElement?.nativeElement ?? null;
   }
 
   /** The program of the caret's track, for auditioning a typed fret on its own sound. */
@@ -12181,7 +12302,8 @@ Replace `composer.component.html`:
   ></app-composer-palette>
 
   <div class="score-column">
-    <app-composer-score #score></app-composer-score>
+    <!-- Focusable by script only, for the shortcut sheet to give the focus back to. -->
+    <app-composer-score #score tabindex="-1"></app-composer-score>
 
     <section class="tex-panel" *ngIf="showTexPanel">
       <div class="tex-header">
@@ -12212,6 +12334,7 @@ Replace `composer.component.html`:
     class="status"
     [refusal]="s.refusal"
     [notice]="s.notice"
+    [messageId]="s.messageId"
     [texError]="texApplyError"
     [cursor]="s.cursor"
     [entryMode]="s.entryMode"
@@ -12235,7 +12358,7 @@ Replace `composer.component.html`:
 
   <app-composer-track-strip class="strip" [style.height.px]="stripHeight"></app-composer-track-strip>
 
-  <app-composer-shortcut-sheet [open]="sheetOpen" (closed)="closeShortcutSheet()"></app-composer-shortcut-sheet>
+  <app-composer-shortcut-sheet [open]="sheetOpen" [fallbackFocus]="scoreHost" (closed)="closeShortcutSheet()"></app-composer-shortcut-sheet>
 </div>
 ```
 
