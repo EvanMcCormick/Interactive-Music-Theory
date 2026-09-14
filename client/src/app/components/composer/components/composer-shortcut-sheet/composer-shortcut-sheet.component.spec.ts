@@ -39,6 +39,15 @@ describe('shortcutSectionsOf', () => {
     expect(keysOf('Undo')).toBe('Ctrl+Z');
     expect(keysOf('Flat')).toBe('Alt+-');
   });
+
+  it('writes on a Mac only keys that reach the page there', () => {
+    const mac = shortcutSectionsOf(COMPOSER_TOOLS, 'mac');
+
+    expect(keysOf('Dynamic p', mac)).toBe('⌃+Shift+3');
+    expect(keysOf('Play from the start', mac)).toBe('Shift+Space');
+    expect(keysOf('Redo', mac)).toBe('⌘+Shift+Z');
+    expect(keysOf('Play from the start')).toBe('Ctrl+Space or Shift+Space');
+  });
 });
 
 describe('textFieldKeysOf', () => {

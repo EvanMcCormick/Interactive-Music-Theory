@@ -25,6 +25,14 @@ export interface KeyBinding {
   ctrl?: boolean;
   alt?: boolean;
   shift?: boolean;
+  /**
+   * How a Ctrl binding is held on a Mac, where Ctrl is otherwise Cmd - written ⌘ and matched from `metaKey`:
+   * - `control`: the Control key itself, written ⌃ there and never matched from Cmd. For a press whose ⌘ form macOS or a
+   *   Mac browser takes before the page sees it, such as ⌘+Shift+3, a screenshot.
+   * - `none`: left out of a Mac's labels, since neither its ⌘ nor its ⌃ form reaches the page there - ⌘+Space is
+   *   Spotlight, ⌃+Space the input source. Another binding of the same tool stands in. Matched as any Ctrl binding is.
+   */
+  mac?: 'control' | 'none';
 }
 
 /** The parts of a `KeyboardEvent` a binding is matched against. */
@@ -74,6 +82,7 @@ const isShiftFree = (key: string): boolean => key.length === 1 && !isLetter(key)
  */
 export function bindingMatches(binding: KeyBinding, press: KeyPress): boolean {
   if ((press.ctrlKey || press.metaKey) !== !!binding.ctrl || press.altKey !== !!binding.alt) return false;
+  if (binding.mac === 'control' && (!press.ctrlKey || press.metaKey)) return false;
   if (binding.code !== undefined) {
     if (press.shiftKey !== !!binding.shift) return false;
     const letter = /^Key([A-Z])$/.exec(binding.code)?.[1];
@@ -102,6 +111,7 @@ export function bindingMatches(binding: KeyBinding, press: KeyPress): boolean {
 export function bindingMatchesSymbol(binding: KeyBinding, press: KeyPress): boolean {
   if (binding.code === undefined || !binding.ctrl || binding.alt || press.code === binding.code) return false;
   if (!(press.ctrlKey || press.metaKey) || press.altKey || press.shiftKey !== !!binding.shift) return false;
+  if (binding.mac === 'control' && (!press.ctrlKey || press.metaKey)) return false;
   const symbols = US_SYMBOLS[binding.code];
   return symbols !== undefined && press.key.length === 1 && !isLetter(press.key) && symbols.includes(press.key);
 }
@@ -149,10 +159,14 @@ const MODIFIER_NAMES: Readonly<Record<KeyPlatform, { ctrl: string; alt: string }
   other: { ctrl: 'Ctrl', alt: 'Alt' }
 };
 
-/** How `binding` is written in a tooltip and on the shortcut sheet: `Ctrl+Shift+Z`, `Alt+-`, `?` - or `⌘+Shift+Z` and `⌥+-` on a Mac. */
+/**
+ * How `binding` is written in a tooltip and on the shortcut sheet: `Ctrl+Shift+Z`, `Alt+-`, `?` - or `⌘+Shift+Z` and `⌥+-`
+ * on a Mac, and `⌃+Shift+3` there for a binding held with Control (`KeyBinding.mac`).
+ */
 export function bindingLabelOf(binding: KeyBinding, platform: KeyPlatform = 'other'): string {
   const names = MODIFIER_NAMES[platform];
-  const modifiers = [binding.ctrl ? names.ctrl : '', binding.alt ? names.alt : '', binding.shift ? 'Shift' : ''].filter(Boolean);
+  const ctrl = platform === 'mac' && binding.mac === 'control' ? '⌃' : names.ctrl;
+  const modifiers = [binding.ctrl ? ctrl : '', binding.alt ? names.alt : '', binding.shift ? 'Shift' : ''].filter(Boolean);
   let key: string;
   if (binding.code !== undefined) {
     const code = binding.code;
@@ -162,6 +176,14 @@ export function bindingLabelOf(binding: KeyBinding, platform: KeyPlatform = 'oth
     key = KEY_LABELS[raw] ?? (isLetter(raw) ? raw.toUpperCase() : raw);
   }
   return [...modifiers, key].join('+');
+}
+
+/**
+ * Every binding's label (`bindingLabelOf`), in order, as a tooltip or the sheet lists a tool's keys - leaving out, on a
+ * Mac, a binding that does not reach the page there (`mac: 'none'`), so a Mac user is never shown ⌘+Space.
+ */
+export function bindingLabelsOf(bindings: readonly KeyBinding[], platform: KeyPlatform = 'other'): string[] {
+  return bindings.filter(binding => platform !== 'mac' || binding.mac !== 'none').map(binding => bindingLabelOf(binding, platform));
 }
 
 /**
@@ -195,4 +217,27 @@ export const BROWSER_RESERVED: readonly KeyBinding[] = [
   { key: 'F11' },
   { key: 'F12' },
   { key: 'Delete', ctrl: true, shift: true }
+];
+
+/**
+ * What a Mac takes with ⌘ before the page can claim it, written as Ctrl bindings, since Cmd is read as Ctrl. macOS:
+ * ⌘+Space (Spotlight), ⌘+Tab and ⌘+` (switching apps and windows), ⌘+Q, ⌘+H, ⌘+M, ⌘+⌥+H and ⌘+⌥+M (quit, hide,
+ * minimise), ⌘+, (settings), ⌘+Shift+/ (the Help menu's search), ⌘+⌥+Esc (Force Quit), ⌘+⌥+D (the Dock), and ⌘+Shift+3,
+ * 4, 5 and 6 (screenshots). Chrome and Safari: ⌘+Y (history), ⌘+Shift+A (Chrome's tab search), ⌘+⌥+I and ⌘+⌥+J (developer
+ * tools), and ⌘+Shift+Delete - `Backspace` to the browser, the key a Mac labels delete - which clears Chrome's browsing
+ * data. ⌘+W, ⌘+T and ⌘+N are `BROWSER_RESERVED` already. The tool table's spec checks no binding pressed with ⌘ on a Mac is
+ * one of them; a binding that needs one takes `mac: 'control'` or `mac: 'none'`.
+ */
+export const MAC_RESERVED: readonly KeyBinding[] = [
+  { key: ' ', ctrl: true },
+  { key: 'Tab', ctrl: true },
+  { code: 'Backquote', ctrl: true },
+  ...['KeyQ', 'KeyH', 'KeyM', 'KeyY'].map(code => ({ code, ctrl: true })),
+  ...['KeyH', 'KeyM', 'KeyD', 'KeyI', 'KeyJ'].map(code => ({ code, ctrl: true, alt: true })),
+  { key: 'Escape', ctrl: true, alt: true },
+  { code: 'Comma', ctrl: true },
+  { code: 'Slash', ctrl: true, shift: true },
+  ...[3, 4, 5, 6].map(digit => ({ code: `Digit${digit}`, ctrl: true, shift: true })),
+  { code: 'KeyA', ctrl: true, shift: true },
+  { key: 'Backspace', ctrl: true, shift: true }
 ];

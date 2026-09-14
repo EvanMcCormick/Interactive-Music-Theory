@@ -75,6 +75,14 @@ describe('paletteGroupsOf', () => {
     expect(flatTooltip('mac')).toContain('(⌥+-)');
     expect(flatTooltip('other')).toContain('(Alt+-)');
   });
+
+  it('names the Control key for a dynamic on a Mac, whose ⌘+Shift+3 takes a screenshot', () => {
+    const tooltipOf = (platform: KeyPlatform): string =>
+      paletteGroupsOf(composer.state, COMPOSER_TOOLS, platform).flatMap(group => group.buttons).find(button => button.tool.id === 'p')?.tooltip ?? '';
+
+    expect(tooltipOf('mac')).toContain('(⌃+Shift+3)');
+    expect(tooltipOf('other')).toContain('(Ctrl+Shift+3)');
+  });
 });
 
 describe('ComposerPaletteComponent on a Mac', () => {

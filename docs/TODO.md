@@ -50,6 +50,9 @@ by what they would cost us to be wrong about.
         an earlier score, Open in Composer, and deleting the open composition.
       - Step 14: the strip's separator by drag, ↑, ↓, Home and End; a shorter window; the alphaTex panel on a short
         window; Very large font size; a refusal wrapping the status line.
+      - On a Mac, in Chrome and in Safari (from the final M2 review): ⌘+← and ⌘+→ move a bar and do not go Back or
+        Forward (the key handler calls `preventDefault` on them); ⌘+/ opens Triplet feel, not Safari's status bar;
+        ⌃+Shift+1 to 8 set a dynamic and ⌃+Shift+Backspace deletes a track; the tooltips show neither ⌘+Space nor ⌘+Y.
       - Steps 15 to 19, 22, 27, 28 and 32: Firefox, German and French layouts, macOS, operating system hotkeys and a Mac
         keyboard.
       - Step 20, a drag released outside the score; Step 21, click-to-seek.

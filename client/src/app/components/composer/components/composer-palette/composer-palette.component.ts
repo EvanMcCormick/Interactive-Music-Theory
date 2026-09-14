@@ -13,7 +13,7 @@ import { CommonModule } from '@angular/common';
 
 import { ComposerToolPopoverComponent } from '../composer-tool-popover/composer-tool-popover.component';
 import { ComposerState } from '../../../../models/composer.model';
-import { bindingLabelOf } from '../../../../services/composer-key-bindings';
+import { bindingLabelsOf } from '../../../../services/composer-key-bindings';
 import { KEY_PLATFORM, KeyPlatform } from '../../../../services/composer-key-platform';
 import { IDLE_TOOL, ToolState, toolStates } from '../../../../services/composer-tool-states';
 import { COMPOSER_TOOLS, ComposerTool, PALETTE_GROUPS, PopoverKind, ToolGroup } from '../../../../services/composer-tools';
@@ -47,7 +47,7 @@ function buttonOf(tool: ComposerTool, states: ReadonlyMap<string, ToolState>, pl
   const toolState = states.get(tool.id) ?? IDLE_TOOL;
   // Select and Pen have no key of their own; the key that reaches them is Q.
   const isMode = tool.id === 'select' || tool.id === 'pen';
-  const shortcut = isMode ? 'Q toggles Select and Pen' : tool.keys.map(binding => bindingLabelOf(binding, platform)).join(' or ');
+  const shortcut = isMode ? 'Q toggles Select and Pen' : bindingLabelsOf(tool.keys, platform).join(' or ');
   const pressable = tool.kind === 'toggle' || tool.kind === 'radio';
   const pressed = toolState.pressed === 'mixed' ? 'mixed' : toolState.pressed ? 'true' : 'false';
 

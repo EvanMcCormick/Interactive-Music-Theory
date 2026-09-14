@@ -1,7 +1,7 @@
 import type { ComposerService } from './composer.service';
 import { DurationValue, DynamicValue, EntryMode } from '../models/composer.model';
 import { beatsAt } from './beat-edits';
-import { bindingLabelOf, bindingMatches, bindingMatchesSymbol, bindingMatchesTyped, KeyBinding, KeyPress } from './composer-key-bindings';
+import { bindingLabelsOf, bindingMatches, bindingMatchesSymbol, bindingMatchesTyped, KeyBinding, KeyPress } from './composer-key-bindings';
 import { KeyPlatform } from './composer-key-platform';
 import { selectionTargets } from './composer-selection';
 import { toolStateOf } from './composer-tool-states';
@@ -149,7 +149,8 @@ function dotTool(id: string, label: string, count: number, keys: KeyBinding[], g
 function dynamicTool(value: DynamicValue, digit: number, codePoint: number): ComposerTool {
   return {
     id: value, kind: 'toggle', label: `Dynamic ${value}`, group: 'Dynamics', glyph: smufl(codePoint),
-    keys: [code(`Digit${digit}`, { ctrl: true, shift: true })], inPalette: true,
+    // Control, not Cmd, on a Mac: macOS takes ⌘+Shift+3, 4, 5 and 6 for screenshots before the browser sees them.
+    keys: [code(`Digit${digit}`, { ctrl: true, shift: true, mac: 'control' })], inPalette: true,
     run: host => host.composer.setDynamics(pressedNowOf(host.composer, value) ? null : value)
   };
 }
@@ -202,7 +203,8 @@ export const COMPOSER_TOOLS: readonly ComposerTool[] = [
 
   // Edit
   keyTool('undo', 'Undo', 'Edit', [code('KeyZ', { ctrl: true })], host => host.composer.undo()),
-  keyTool('redo', 'Redo', 'Edit', [code('KeyZ', { ctrl: true, shift: true }), code('KeyY', { ctrl: true })], host => host.composer.redo()),
+  // ⌘+Y is History in Chrome and Safari on a Mac, so a Mac is shown ⌘+Shift+Z alone.
+  keyTool('redo', 'Redo', 'Edit', [code('KeyZ', { ctrl: true, shift: true }), code('KeyY', { ctrl: true, mac: 'none' })], host => host.composer.redo()),
   { ...keyTool('cut', 'Cut', 'Edit', [code('KeyX', { ctrl: true })], host => host.composer.cut()), yieldsToTextSelection: true },
   { ...keyTool('copy', 'Copy', 'Edit', [code('KeyC', { ctrl: true })], host => host.composer.copy()), yieldsToTextSelection: true },
   keyTool('paste', 'Paste', 'Edit', [code('KeyV', { ctrl: true })], host => host.composer.paste()),
@@ -241,7 +243,8 @@ export const COMPOSER_TOOLS: readonly ComposerTool[] = [
 
   // Playback
   keyTool('playPause', 'Play / pause', 'Playback', [key(' ')], host => host.playPause()),
-  keyTool('playFromStart', 'Play from the start', 'Playback', [key(' ', { ctrl: true }), key(' ', { shift: true })], host => host.playFromStart()),
+  // ⌘+Space is Spotlight and ⌃+Space the input source, so a Mac is shown Shift+Space alone.
+  keyTool('playFromStart', 'Play from the start', 'Playback', [key(' ', { ctrl: true, mac: 'none' }), key(' ', { shift: true })], host => host.playFromStart()),
 
   // Beats
   keyTool('fret', 'Fret', 'Beats', ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].map(digit => key(digit)), (host, press) =>
@@ -299,7 +302,8 @@ export const COMPOSER_TOOLS: readonly ComposerTool[] = [
 
   // Tracks
   keyTool('addTrack', 'Add track', 'Tracks', [key('Insert', { ctrl: true, shift: true }), key('Enter', { ctrl: true, shift: true })], host => host.addTrack()),
-  keyTool('deleteTrack', 'Delete track', 'Tracks', [key('Backspace', { ctrl: true, shift: true })], host =>
+  // Control, not Cmd, on a Mac: ⌘+Shift+Delete, the Backspace key, clears Chrome's browsing data there.
+  keyTool('deleteTrack', 'Delete track', 'Tracks', [key('Backspace', { ctrl: true, shift: true, mac: 'control' })], host =>
     host.composer.removeTrack(host.composer.state.cursor.trackIndex)
   ),
 
@@ -397,6 +401,6 @@ export function toolForPress(press: KeyPress, tools: readonly ComposerTool[] = C
 export function shortcutTitleOf(id: string, platform: KeyPlatform = 'other', tools: readonly ComposerTool[] = COMPOSER_TOOLS): string {
   const tool = tools.find(entry => entry.id === id);
   if (!tool) return id;
-  const keys = tool.keys.map(binding => bindingLabelOf(binding, platform)).join(' or ');
+  const keys = bindingLabelsOf(tool.keys, platform).join(' or ');
   return keys ? `${tool.label} (${keys})` : tool.label;
 }

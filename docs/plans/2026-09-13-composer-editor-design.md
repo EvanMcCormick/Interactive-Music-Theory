@@ -408,7 +408,8 @@ departs from the design" and, once built, under "Corrections during implementati
     as unsaved work, and when another composition opens it is thrown away with the one it was written for, so it can
     never be applied to the next.
 21. **macOS**: see "macOS" under Shortcuts. Nobody has checked the bindings on a Mac. Tooltips and the shortcut sheet
-    write Ctrl as ⌘ and Alt as ⌥ on a Mac, and Ctrl and Alt elsewhere, from the browser's platform, read once.
+    write Ctrl as ⌘ and Alt as ⌥ on a Mac, and Ctrl and Alt elsewhere, from the browser's platform, read once - except
+    where a binding says it is held with Control on a Mac, or not shown there (`KeyBinding.mac`; see "macOS").
 22. **Score interaction.** In Select a notation click moves the caret and never writes; in Pen it
     writes the clicked pitch; digits write on tablature in both. Mouse-down sets the caret, moving
     with the button held extends the range, and Shift-click extends. The highlight is drawn from
@@ -836,6 +837,25 @@ still press a focused button. Enter is in no other binding of the table, and the
 use of it on a page is activating the focused control. Play from start keeps Ctrl+Space and gains
 Shift+Space, since Cmd+Space is Spotlight and Ctrl+Space switches input source.
 
+*Settled in the final M2 review, still without a Mac:* every Ctrl binding was checked against what macOS, and Chrome and
+Safari on a Mac, take with ⌘ before the page can claim it (`MAC_RESERVED`): ⌘+Space, ⌘+Tab, ⌘+\`, ⌘+Q, ⌘+H, ⌘+M, ⌘+,,
+⌘+Shift+/ (Help), ⌘+⌥+Esc, ⌘+⌥+D, H, M, I and J, ⌘+Shift+3 to 6 (screenshots), ⌘+Y (History), ⌘+Shift+A (Chrome's tab
+search) and ⌘+Shift+Delete. The tool table's spec keeps it so. Four clashed, and a binding now says how it is held on a
+Mac (`KeyBinding.mac`):
+- **The dynamics** (⌘+Shift+3, 4, 5 and 6 are screenshots) and **Delete track** (⌘+Shift+Delete - the key a Mac labels
+  delete, which the browser calls Backspace - clears Chrome's browsing data) are held with the Control key itself on a
+  Mac: written ⌃+Shift+3 and ⌃+Shift+Backspace there, and matched from Control alone, so ⌘+Shift+1 is left to the
+  browser. Elsewhere they are Ctrl as before. Control with Shift and a digit, or with Shift and delete, is no macOS
+  shortcut; Control with a digit alone switches desktop in Mission Control.
+- **Ctrl+Space** (Spotlight with ⌘, the input source with ⌃) and **Ctrl+Y** (History with ⌘) still run where they
+  arrive, but a Mac's tooltips and sheet leave them out, and show Shift+Space and ⌘+Shift+Z.
+
+The rest stand. ⌘+← and ⌘+→ are Back and Forward in Chrome on a Mac; the key handler claims every press it runs with
+`preventDefault`, so they move a bar and should not navigate - and in a text field they are not run, and move the text
+caret. ⌘+/ is Safari's status bar, claimed the same way. Both are owed a check on a Mac (`docs/TODO.md`). A Mac keyboard
+has no forward Delete, Home or End: fn+delete for Delete beats (Shift) and Delete bar (Cmd), and fn+← and → for Home and
+End, are Step 28 of M2's hand check.
+
 The Select / Pen toggle is **Q**, not the `N` shown in the design question: `N` is
 Guitar Pro's trill.
 
@@ -847,7 +867,7 @@ Guitar Pro's trill.
 | | Close the open popover, sheet or menu; with none open, back to Select and clear the range | Esc | new |
 | | Shortcut sheet | ? † | new |
 | Edit | Undo | Ctrl+Z | today |
-| | Redo | Ctrl+Shift+Z, Ctrl+Y | today, Tux |
+| | Redo | Ctrl+Shift+Z, Ctrl+Y (not shown on a Mac) | today, Tux |
 | | Cut / copy / paste | Ctrl+X / Ctrl+C / Ctrl+V | GP, Tux |
 | | Select all in track | Ctrl+A | GP, Tux |
 | | Save | Ctrl+S | GP, Tux |
@@ -859,7 +879,7 @@ Guitar Pro's trill.
 | | First / last bar | Ctrl+Home / Ctrl+End | GP |
 | | Previous / next track | Ctrl+Shift+↑ / Ctrl+Shift+↓ | Tux |
 | Playback | Play / pause | Space | today |
-| | Play from start | Ctrl+Space, Shift+Space | GP, new (macOS) |
+| | Play from start | Ctrl+Space (not shown on a Mac), Shift+Space | GP, new (macOS) |
 | Beats | Fret | 0-9 | today |
 | | Clear beat to rest | Delete, Backspace | today |
 | | Insert beat | Insert, Alt+Enter | GP, new (macOS) |
@@ -884,14 +904,14 @@ Guitar Pro's trill.
 | | Insert / delete bar | Ctrl+Insert or Ctrl+Enter / Ctrl+Delete | GP, new (macOS) |
 | | Add bar at the end | Ctrl+Alt+Insert, Ctrl+Alt+Enter | new (M2 review; the palette's Add bar before M2) |
 | Tracks | Add track | Ctrl+Shift+Insert, Ctrl+Shift+Enter | GP, Tux, new (macOS) |
-| | Delete track | Ctrl+Shift+Backspace | new (Ctrl+Shift+Delete is the browser's) |
+| | Delete track | Ctrl+Shift+Backspace (⌃, not ⌘, on a Mac) | new (Ctrl+Shift+Delete is the browser's) |
 | Accidentals | Flat / sharp | Alt+- / Alt+= | new |
 | | Natural (clears a forced accidental) | Alt+0 | new |
 | | Double flat / double sharp | Alt+Shift+- / Alt+Shift+= | new |
 | | Respell | E | Tux |
 | | Semitone down / up | Alt+↓ / Alt+↑ | new |
 | | Note to string below / above | Ctrl+Alt+↓ / Ctrl+Alt+↑ | new |
-| Dynamics | ppp … fff | Ctrl+Shift+1 … Ctrl+Shift+8 | new |
+| Dynamics | ppp … fff | Ctrl+Shift+1 … Ctrl+Shift+8 (⌃, not ⌘, on a Mac) | new |
 | | Crescendo / diminuendo | Ctrl+Shift+, / Ctrl+Shift+. | new |
 | Articulation | Accent | ; | GP |
 | | Heavy accent | : † | GP |

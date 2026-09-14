@@ -1,7 +1,16 @@
 import { TestBed } from '@angular/core/testing';
 
 import { ComposerService } from './composer.service';
-import { BROWSER_RESERVED, KeyBinding, KeyPress, bindingMatches, bindingMatchesSymbol, bindingMatchesTyped, bindingSignatureOf } from './composer-key-bindings';
+import {
+  BROWSER_RESERVED,
+  KeyBinding,
+  KeyPress,
+  MAC_RESERVED,
+  bindingMatches,
+  bindingMatchesSymbol,
+  bindingMatchesTyped,
+  bindingSignatureOf
+} from './composer-key-bindings';
 import { TOOLS_WITH_STATE } from './composer-tool-states';
 import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, KEYLESS_TOOLS, PALETTE_GROUPS, shortcutTitleOf, toolForPress } from './composer-tools';
 
@@ -107,6 +116,29 @@ describe('COMPOSER_TOOLS', () => {
     expect(repeatable.sort()).toEqual(
       [...navigation, 'undo', 'redo', 'semitoneUp', 'semitoneDown', 'stringAbove', 'stringBelow', 'longer', 'shorter'].sort()
     );
+  });
+
+  it('binds nothing with ⌘ that macOS or a Mac browser takes before the page', () => {
+    // A binding held with Control on a Mac, or left off a Mac's labels, is not pressed with ⌘ there.
+    const reserved = new Set(MAC_RESERVED.map(bindingSignatureOf));
+    for (const entry of COMPOSER_TOOLS) {
+      for (const binding of entry.keys.filter(candidate => candidate.ctrl && candidate.mac === undefined)) {
+        expect(reserved.has(bindingSignatureOf(binding))).withContext(`${entry.id}: ${bindingSignatureOf(binding)}`).toBeFalse();
+      }
+    }
+  });
+
+  it('runs the dynamics and Delete track from Control on a Mac, and leaves their Cmd forms to the system', () => {
+    const mac = (init: Partial<KeyPress>): string | null => toolForPress(press(init))?.id ?? null;
+
+    expect(mac({ key: '#', code: 'Digit3', ctrlKey: true, shiftKey: true })).toBe('p');
+    expect(mac({ key: '*', code: 'Digit8', ctrlKey: true, shiftKey: true })).toBe('fff');
+    expect(mac({ key: '!', code: 'Digit1', metaKey: true, shiftKey: true })).toBeNull();
+    expect(mac({ key: 'Backspace', code: 'Backspace', ctrlKey: true, shiftKey: true })).toBe('deleteTrack');
+    expect(mac({ key: 'Backspace', code: 'Backspace', metaKey: true, shiftKey: true })).toBeNull();
+    for (const entry of COMPOSER_TOOLS.filter(candidate => candidate.group === 'Dynamics' && candidate.keys.some(binding => binding.code?.startsWith('Digit')))) {
+      expect(entry.keys.every(binding => binding.mac === 'control')).withContext(entry.id).toBeTrue();
+    }
   });
 
   it('offers the macOS alternates', () => {
@@ -410,6 +442,15 @@ describe('shortcutTitleOf', () => {
     expect(shortcutTitleOf('undo')).toBe('Undo (Ctrl+Z)');
     expect(shortcutTitleOf('redo')).toBe('Redo (Ctrl+Shift+Z or Ctrl+Y)');
     expect(shortcutTitleOf('undo', 'mac')).toBe('Undo (⌘+Z)');
-    expect(shortcutTitleOf('redo', 'mac')).toBe('Redo (⌘+Shift+Z or ⌘+Y)');
+    expect(shortcutTitleOf('redo', 'other')).toBe('Redo (Ctrl+Shift+Z or Ctrl+Y)');
+  });
+
+  it('writes on a Mac the keys that reach the page there: Control for the dynamics and Delete track, and no ⌘+Space or ⌘+Y', () => {
+    expect(shortcutTitleOf('p', 'mac')).toBe('Dynamic p (⌃+Shift+3)');
+    expect(shortcutTitleOf('p')).toBe('Dynamic p (Ctrl+Shift+3)');
+    expect(shortcutTitleOf('deleteTrack', 'mac')).toBe('Delete track (⌃+Shift+Backspace)');
+    expect(shortcutTitleOf('playFromStart', 'mac')).toBe('Play from the start (Shift+Space)');
+    expect(shortcutTitleOf('playFromStart')).toBe('Play from the start (Ctrl+Space or Shift+Space)');
+    expect(shortcutTitleOf('redo', 'mac')).toBe('Redo (⌘+Shift+Z)');
   });
 });

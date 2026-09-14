@@ -13,7 +13,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
-import { bindingLabelOf } from '../../../../services/composer-key-bindings';
+import { bindingLabelsOf } from '../../../../services/composer-key-bindings';
 import { KEY_PLATFORM, KeyPlatform } from '../../../../services/composer-key-platform';
 import { COMPOSER_TOOLS, ComposerTool, ToolGroup } from '../../../../services/composer-tools';
 
@@ -39,7 +39,7 @@ const SHEET_ORDER: readonly ToolGroup[] = [
 
 /** A tool's keys as the sheet writes them: every binding, joined with "or", and the ten digits as a range. */
 function keysOf(tool: ComposerTool, platform: KeyPlatform): string {
-  const labels = tool.keys.map(binding => bindingLabelOf(binding, platform));
+  const labels = bindingLabelsOf(tool.keys, platform);
   return labels.length === 10 && labels.every((label, index) => label === String(index)) ? '0-9' : labels.join(' or ');
 }
 
@@ -58,7 +58,7 @@ export function shortcutSectionsOf(tools: readonly ComposerTool[], platform: Key
  * "Ctrl+S" - or null when no tool does. From the table, so the note cannot go on naming a key that no longer runs.
  */
 export function textFieldKeysOf(tools: readonly ComposerTool[], platform: KeyPlatform = 'other'): string | null {
-  const labels = tools.filter(tool => tool.inTextFields).flatMap(tool => tool.keys.map(binding => bindingLabelOf(binding, platform)));
+  const labels = tools.filter(tool => tool.inTextFields).flatMap(tool => bindingLabelsOf(tool.keys, platform));
   return labels.length > 0 ? labels.join(' or ') : null;
 }
 

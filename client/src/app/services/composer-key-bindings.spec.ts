@@ -2,6 +2,7 @@ import {
   BROWSER_RESERVED,
   KeyPress,
   bindingLabelOf,
+  bindingLabelsOf,
   bindingMatches,
   bindingMatchesSymbol,
   bindingMatchesTyped,
@@ -38,6 +39,16 @@ describe('bindingMatches', () => {
     expect(bindingMatches({ code: 'KeyZ', ctrl: true }, press({ key: 'z', code: 'KeyZ', ctrlKey: true, altKey: true }))).toBeFalse();
     expect(bindingMatches({ key: '1' }, press({ key: '1', code: 'Digit1', ctrlKey: true }))).toBeFalse();
     expect(bindingMatches({ key: 'ArrowRight' }, press({ key: 'ArrowRight', ctrlKey: true }))).toBeFalse();
+  });
+
+  it('matches a binding held with Control on a Mac from the Control key only, never Cmd', () => {
+    const dynamic = { code: 'Digit3', ctrl: true, shift: true, mac: 'control' } as const;
+
+    expect(bindingMatches(dynamic, press({ key: '#', code: 'Digit3', ctrlKey: true, shiftKey: true }))).toBeTrue();
+    expect(bindingMatches(dynamic, press({ key: '#', code: 'Digit3', metaKey: true, shiftKey: true }))).toBeFalse();
+    expect(bindingMatches(dynamic, press({ key: '#', code: 'Digit3', ctrlKey: true, metaKey: true, shiftKey: true }))).toBeFalse();
+    // One the Mac leaves out of its labels still matches as a Ctrl binding does.
+    expect(bindingMatches({ key: ' ', ctrl: true, mac: 'none' }, press({ key: ' ', code: 'Space', metaKey: true }))).toBeTrue();
   });
 
   it('matches a Ctrl or Alt combination by physical key, whatever the key produced', () => {
@@ -117,6 +128,21 @@ describe('bindingLabelOf', () => {
     expect(bindingLabelOf({ key: 'ArrowUp', ctrl: true, alt: true }, 'mac')).toBe('⌘+⌥+↑');
     expect(bindingLabelOf({ key: 's', shift: true }, 'mac')).toBe('Shift+S');
     expect(bindingLabelOf({ key: 'ArrowUp', ctrl: true, alt: true }, 'other')).toBe('Ctrl+Alt+↑');
+  });
+
+  it('writes a binding held with Control on a Mac as ⌃ there, and as Ctrl elsewhere', () => {
+    expect(bindingLabelOf({ code: 'Digit3', ctrl: true, shift: true, mac: 'control' }, 'mac')).toBe('⌃+Shift+3');
+    expect(bindingLabelOf({ code: 'Digit3', ctrl: true, shift: true, mac: 'control' }, 'other')).toBe('Ctrl+Shift+3');
+  });
+});
+
+describe('bindingLabelsOf', () => {
+  it('writes every binding, leaving out on a Mac those a Mac takes before the page', () => {
+    const bindings = [{ key: ' ', ctrl: true, mac: 'none' }, { key: ' ', shift: true }] as const;
+
+    expect(bindingLabelsOf(bindings, 'mac')).toEqual(['Shift+Space']);
+    expect(bindingLabelsOf(bindings, 'other')).toEqual(['Ctrl+Space', 'Shift+Space']);
+    expect(bindingLabelsOf(bindings)).toEqual(['Ctrl+Space', 'Shift+Space']);
   });
 });
 

@@ -149,6 +149,19 @@ describe('ComposerKeyHandler', () => {
     expect(composer.state.cursor.beatIndex).toBe(1);
   });
 
+  it('claims Cmd+← and Cmd+→ with preventDefault as it moves a bar, so a Mac browser does not go Back or Forward', () => {
+    composer.moveCursor({ kind: 'bar', delta: 1 });
+    const back = press({ key: 'ArrowLeft', code: 'ArrowLeft', metaKey: true });
+    const forward = press({ key: 'ArrowRight', code: 'ArrowRight', metaKey: true });
+
+    expect(handler.handle(back)).toBeTrue();
+    expect(back.preventDefault).toHaveBeenCalled();
+    expect(composer.state.cursor.barIndex).toBe(0);
+    expect(handler.handle(forward)).toBeTrue();
+    expect(forward.preventDefault).toHaveBeenCalled();
+    expect(composer.state.cursor.barIndex).toBe(1);
+  });
+
   it('undoes on Ctrl+Z and not on Ctrl+Alt+Z, which is AltGr+Z on Windows', () => {
     composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
 
