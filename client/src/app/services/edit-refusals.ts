@@ -1,5 +1,5 @@
 import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc } from '../models/composer.model';
-import { BeatRef } from './composer-selection';
+import { BeatRef, beatAt } from './composer-selection';
 import { notesAt } from './note-edits';
 import { forcedLetterOf, reduceToOctave } from './note-spelling';
 
@@ -164,4 +164,24 @@ export function editRefusal(
     return UNSPELLABLE;
   }
   return null;
+}
+
+const GRACE_DURATION =
+  "A grace note's written value is set by alphaTab from how many graces are in its group, so it cannot be changed.";
+
+/**
+ * Why a duration press cannot apply to `refs`, or null when it can: any beat edit's refusal, or
+ * every target a grace beat.
+ *
+ * `Beat.finish` (`alphaTab.core.mjs` ~7772-7786 in 1.8) rewrites an on-beat or before-beat grace's
+ * value by the size of its group - an eighth for one grace, a sixteenth for two, a thirty-second for
+ * three or more - so a value set on one is drawn as alphaTab's and lost on save. `setBeatDurations`
+ * skips graces for that reason; a press with nothing else to change is refused rather than skipped,
+ * so it says why nothing happened. A range with some graces in it changes the rest.
+ */
+export function durationRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'beat', key: 'duration' }, null);
+  if (refusal) return refusal;
+  const allGraces = refs.every(ref => (beatAt(doc, ref)?.effects.grace ?? 'none') !== 'none');
+  return allGraces ? GRACE_DURATION : null;
 }

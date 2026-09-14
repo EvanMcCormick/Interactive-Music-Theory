@@ -1,6 +1,6 @@
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { EditScope, editRefusal } from './edit-refusals';
+import { EditScope, durationRefusal, editRefusal } from './edit-refusals';
 import { AccidentalMode, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
 
 const ref = (trackIndex: number, beatIndex = 0): BeatRef =>
@@ -168,5 +168,28 @@ describe('editRefusal', () => {
 
       expect(editRefusal(score, [ref(1)], accidental('sharp'), null)).toBeNull();
     });
+  });
+});
+
+describe('durationRefusal', () => {
+  it('refuses a press on nothing but grace beats, saying alphaTab sets their value', () => {
+    const score = doc();
+    score.tracks[0].staves[0].bars[0].voices[0].beats[1].effects.grace = 'beforeBeat';
+
+    expect(durationRefusal(score, [ref(0, 1)])).toMatch(/grace/i);
+  });
+
+  it('lets a range with some graces through, since those are skipped', () => {
+    const score = doc();
+    score.tracks[0].staves[0].bars[0].voices[0].beats[1].effects.grace = 'beforeBeat';
+
+    expect(durationRefusal(score, [ref(0, 0), ref(0, 1)])).toBeNull();
+  });
+
+  it('refuses a generated track as any beat edit does', () => {
+    const score = doc();
+    score.tracks[0].generated = { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision', revision: 1 } };
+
+    expect(durationRefusal(score, [ref(0)])).toMatch(/progression/i);
   });
 });

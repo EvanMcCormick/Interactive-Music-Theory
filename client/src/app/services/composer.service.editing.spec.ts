@@ -121,3 +121,24 @@ describe('ComposerService refusals clear', () => {
     expect(stateOf(service).refusal).toBeNull();
   });
 });
+
+describe('ComposerService duration refusals', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('says why a duration press on a grace did nothing, and still remembers the choice', () => {
+    service.setCursor({ beatIndex: 1 });
+    service.toggleGrace('beforeBeat');
+    const before = JSON.stringify(service.doc);
+
+    service.applyDurationAtCursor(8, 0);
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(stateOf(service).refusal).toMatch(/grace/i);
+    expect(stateOf(service).inputDuration).toBe(8);
+  });
+});

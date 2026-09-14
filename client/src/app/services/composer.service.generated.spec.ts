@@ -258,6 +258,8 @@ describe('ComposerService generated tracks', () => {
     expect(JSON.stringify(service.doc.tracks)).toBe(before);
     expect(state().inputDuration).toBe(8);
     expect(state().inputDots).toBe(1);
+    // And it says why the beat did not change, since M2 shows refusals.
+    expect(state().refusal).toMatch(/progression/i);
   });
 
   it('spends no undo step on the half of that command it refused', () => {

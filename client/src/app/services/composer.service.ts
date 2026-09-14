@@ -42,7 +42,7 @@ import {
 import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
 import { ComposerStructureCommands } from './composer-service-structure';
-import { EditScope, editRefusal } from './edit-refusals';
+import { EditScope, durationRefusal, editRefusal } from './edit-refusals';
 import { setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 import { insertBarInto } from './score-structure';
@@ -474,42 +474,25 @@ export class ComposerService {
   }
 
   /**
-   * Applies the current input duration to the beat under the caret, and
-   * remembers it as the choice for the next note.
+   * Applies a duration to the selection, and remembers it as the choice for the next note.
    *
-   * The gate covers the write and stops there, because these are two effects
-   * and only one of them is the generated track's business. The score is the
-   * track's; the input duration is the *toolbar's*, and the toolbar belongs to
-   * whichever track the caret moves to next.
+   * The refusal covers the write and stops there, because these are two effects and only one of
+   * them is the score's business. The input duration is the palette's, and the palette belongs to
+   * whichever track the caret moves to next: refusing both would freeze it while the caret rests on a
+   * generated track, and take away choosing a duration there to carry back to your own. So a refused
+   * press still remembers the choice - and says why the beat did not change (`durationRefusal`),
+   * since a palette that moves while the score does not needs a reason beside it.
    *
-   * Refusing both is what a read of the gate suggests and it is wrong twice
-   * over. Every route to the input duration runs through here - the palette,
-   * the dot toggle, and the `+`/`-` keys all call this method, and nothing else
-   * in the app calls `setInputDuration` - so a blanket refusal freezes the
-   * palette outright for as long as the caret rests on a generated track, which
-   * the design explicitly permits and which is how a user reads one. It also
-   * takes away the pre-selection: choose a duration while looking at the
-   * generated track, move back to your own, and type.
-   *
-   * Nor is there an atomicity to protect. `commit()` runs its callback against
-   * a draft, so a caret on an empty beat already returns early and lands an
-   * empty commit with the choice remembered anyway - "write the beat and
-   * remember the choice, always together" was never the invariant. What is
-   * left is the honest half: a toolbar showing a duration the score under the
-   * caret does not have, which is what a toolbar showing an *input* duration
-   * means everywhere else in the editor.
-   *
-   * It acts on the selection, not only the caret, and keeps each bar honest through
-   * `setBeatDurations`: a gap fills with rests where it opened, and a beat that grows takes
-   * only rests. The selection follows its beats past the rests that inserts (`commitFollowing`).
+   * It keeps each bar honest through `setBeatDurations`: a gap fills with rests where it opened, and
+   * a beat that grows takes only rests. The selection follows its beats past the rests that inserts.
    */
   applyDurationAtCursor(duration: DurationValue, dots: number): void {
     const state = this.stateSubject.getValue();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const refusal = durationRefusal(state.doc, refs);
 
-    if (!editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null)) {
-      this.commitFollowing(draft => setBeatDurations(draft, refs, duration, dots));
-    }
+    if (refusal) this.refuse(refusal);
+    else this.commitFollowing(draft => setBeatDurations(draft, refs, duration, dots));
 
     this.setInputDuration(duration, dots);
   }
