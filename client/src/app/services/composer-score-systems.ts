@@ -121,6 +121,22 @@ export function measuredStaffOfSlot(
 }
 
 /**
+ * The index in `slots` of the numbered staff whose band on `system` holds `y`, or null when `y` is in no band, or in a
+ * band of another kind. A numbered staff draws no lines, so `StaffHitTestService` never measures it and a press over it
+ * would go to the nearest staff that draws lines; its band is what says the pointer is on it.
+ */
+export function numberedSlotAt(system: SystemBands, y: number, slots: readonly StaffSlot[]): number | null {
+  if (!system.staves.some(band => y >= band.top && y < band.bottom)) return null;
+  const slotIndex = slotIndexAt(system, y, slots);
+  return slotIndex !== null && slots[slotIndex]?.kind === 'numbered' ? slotIndex : null;
+}
+
+/** The band on `system` that draws `slots[slotIndex]`, or null when the system draws no such staff: where a numbered staff's caret goes. */
+export function staveBandOfSlot(system: SystemBands, slotIndex: number, slots: readonly StaffSlot[]): StaveBand | null {
+  return system.staves.find(band => slotIndexAt(system, (band.top + band.bottom) / 2, slots) === slotIndex) ?? null;
+}
+
+/**
  * The range's end beats to hand alphaTab's highlight, or null to clear it: both beats must exist and the bounds
  * lookup must know both. alphaTab's `_cursorSelectRange` reads `startBeat.bounds.realBounds` without a check
  * (~53458), and while a render is in flight the lookup is still the last render's, whose beats the mapper has

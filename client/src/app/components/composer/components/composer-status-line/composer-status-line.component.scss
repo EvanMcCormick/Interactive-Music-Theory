@@ -7,8 +7,11 @@
 
 .status-line {
   display: flex;
+  // On a narrow window the messages take a line of their own rather than being clipped at the right edge.
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.9rem;
+  column-gap: 0.9rem;
+  row-gap: 0.15rem;
   min-height: 1.9rem;
   padding: 0.25rem 0.9rem;
   background-color: var(--composer-nav, #2c3e50);
@@ -33,10 +36,21 @@
 }
 
 .messages {
-  flex: 1;
+  // Beside the readout while 12rem is left for it, and on a line of its own below that.
+  flex: 1 1 12rem;
   min-width: 0;
   margin: 0;
   color: var(--composer-text, #ecf0f1);
+}
+
+.messages:empty {
+  // With nothing to say it claims no line of its own. Angular's comment nodes do not count against `:empty`.
+  flex-basis: 0;
+}
+
+.message {
+  // A long name in quotes, or a word wider than the line, breaks rather than running off the edge.
+  overflow-wrap: anywhere;
 }
 
 .message + .message::before {

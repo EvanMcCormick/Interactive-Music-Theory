@@ -187,6 +187,23 @@ export class StaffHitTestService {
     };
   }
 
+  /**
+   * Caret box centred at `centreY`, in the bounds lookup's pixels (from the top of `.at-surface`): for a staff with no
+   * lines to measure, a numbered staff, whose caret sits in the middle of its band. Null before a surface exists.
+   */
+  bandCaretRect(container: HTMLElement, beatX: number, beatWidth: number, centreY: number): Rect | null {
+    const origin = this.surfaceOriginOf(container);
+    if (!origin) return null;
+    const containerBox = container.getBoundingClientRect();
+    const height = 10;
+    return {
+      left: origin.left - containerBox.left + beatX,
+      top: origin.top - containerBox.top + centreY - height / 2 + container.scrollTop,
+      width: Math.max(10, beatWidth),
+      height
+    };
+  }
+
   /** `surface`'s box, measured once per call that holds `boxes`. */
   private boxOf(boxes: Map<SVGSVGElement, DOMRect>, surface: SVGSVGElement): DOMRect {
     let box = boxes.get(surface);

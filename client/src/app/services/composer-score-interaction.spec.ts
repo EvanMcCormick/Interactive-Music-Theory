@@ -154,6 +154,29 @@ describe('caretSlotIndexOf and caretHalfStepsOf', () => {
     expect(caretSlotIndexOf([slots[1], slots[2]], at(0, 0, 0, null), null)).toBe(0);
   });
 
+  it("keeps a clicked slash or numbered staff while the caret is where the click left it, and goes back to notation or tablature after a move", () => {
+    const allKinds: StaffSlot[] = [
+      { trackIndex: 0, staffIndex: 0, kind: 'slash' },
+      { trackIndex: 0, staffIndex: 0, kind: 'notation' },
+      { trackIndex: 0, staffIndex: 0, kind: 'numbered' },
+      { trackIndex: 0, staffIndex: 0, kind: 'tab' }
+    ];
+
+    expect(caretSlotIndexOf(allKinds, at(0, 1, 2), 0, at(0, 1, 2))).toBe(0);
+    expect(caretSlotIndexOf(allKinds, at(0, 1, 2, null), 2, at(0, 1, 2, null))).toBe(2);
+    // An arrow key moved the caret on a beat: with a string it goes to tablature, without one to notation.
+    expect(caretSlotIndexOf(allKinds, at(0, 1, 3), 0, at(0, 1, 2))).toBe(3);
+    expect(caretSlotIndexOf(allKinds, at(0, 1, 3, null), 2, at(0, 1, 2, null))).toBe(1);
+    expect(caretSlotIndexOf(allKinds, at(0, 1, 2), 0, null)).toBe(3);
+    // A clicked notation staff is kept wherever the caret goes on its staff, as before.
+    expect(caretSlotIndexOf(allKinds, at(0, 1, 3), 1, at(0, 1, 2))).toBe(1);
+  });
+
+  it("puts a slash staff's caret on its one line", () => {
+    expect(caretHalfStepsOf('slash', 6, 0, null)).toBe(0);
+    expect(caretHalfStepsOf('slash', 6, 0, 7)).toBe(0);
+  });
+
   it('puts a tablature caret on a staff with no strings on the bottom line, not below it', () => {
     expect(caretHalfStepsOf('tab', 0, 0, null)).toBe(0);
     expect(caretHalfStepsOf('tab', 0, null, null)).toBe(0);

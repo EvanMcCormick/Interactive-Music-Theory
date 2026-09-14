@@ -364,7 +364,10 @@ departs from the design" and, once built, under "Corrections during implementati
     interaction is mouse only: a tap or stylus press acts as a click, a touch drag scrolls, and there is no touch hover.
     *Settled in review of the score fixes:* a press reads its beat on the system of the staff under it, not the system
     under the pointer, and waits until a render's bounds have arrived. Slash and numbered staves, which a loaded file or
-    an applied draft can show, take the caret and nothing else. A press, a drag or Pen's hover does nothing between a
+    an applied draft can show, take the caret and nothing else. *Settled in the M2 hand check:* a click on one draws the
+    caret box on that staff - a slash staff's one line, a numbered staff's middle, found by its band since it draws no
+    lines - while the caret stays where the click or its drag left it; a key that moves the caret takes it back to
+    notation or tablature, the staves notes are entered on. A press, a drag or Pen's hover does nothing between a
     render and its bounds arriving, and a refused Pen note or fret digit sounds nothing.
 23. **The page grid** is sized to the viewport minus the app header, whose height the shell
     publishes as `--app-header-height`: a top bar, the palette, the score, a status line, and the

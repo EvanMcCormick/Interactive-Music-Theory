@@ -7,8 +7,10 @@ import {
   SystemBands,
   highlightBeatsOf,
   measuredStaffOfSlot,
+  numberedSlotAt,
   pressSystemIndexOf,
   slotIndexAt,
+  staveBandOfSlot,
   systemBandsOf,
   systemIndexAt,
   targetTrackBeat
@@ -91,6 +93,30 @@ describe('measuredStaffOfSlot', () => {
 
   it('finds none when the system is not attached', () => {
     expect(measuredStaffOfSlot(systems[1], [50, 115, 185], 1, slots)).toBeNull();
+  });
+});
+
+describe('numberedSlotAt and staveBandOfSlot', () => {
+  /** The guitar's second band is a numbered staff here, in place of its tablature's rank. */
+  const numberedSlots: StaffSlot[] = [
+    { trackIndex: 0, staffIndex: 0, kind: 'notation' },
+    { trackIndex: 0, staffIndex: 0, kind: 'numbered' },
+    { trackIndex: 1, staffIndex: 0, kind: 'notation' }
+  ];
+
+  it('names the numbered staff whose band holds a y, on any system, and nothing on another band or outside every band', () => {
+    expect(numberedSlotAt(systems[0], 100, numberedSlots)).toBe(1);
+    expect(numberedSlotAt(systems[1], 400, numberedSlots)).toBe(1);
+    expect(numberedSlotAt(systems[0], 50, numberedSlots)).toBeNull();
+    // Below every band, where the nearest is the piano's notation, and just above the numbered band.
+    expect(numberedSlotAt(systems[0], 250, numberedSlots)).toBeNull();
+    expect(numberedSlotAt(systems[0], 79, slots)).toBeNull();
+  });
+
+  it('finds the band that draws a slot on a system, and none for a slot it does not draw', () => {
+    expect(staveBandOfSlot(systems[1], 1, numberedSlots)).toEqual({ trackIndex: 0, staffIndex: 0, top: 380, bottom: 450 });
+    expect(staveBandOfSlot(systems[0], 2, numberedSlots)).toEqual({ trackIndex: 1, staffIndex: 0, top: 150, bottom: 220 });
+    expect(staveBandOfSlot(systems[0], 3, numberedSlots)).toBeNull();
   });
 });
 
@@ -341,6 +367,14 @@ describe('staff systems on a real engraving', () => {
     expect(staves.slice(0, 3).map(staff => staff.lineY.length)).toEqual([1, 5, 6]);
     expect(centres.slice(0, 3).map(y => slotIndexAt(bands[0], y, docSlots))).toEqual([0, 1, 3]);
     expect(docSlots.map(slot => slot.kind)).toEqual(['slash', 'notation', 'numbered', 'tab']);
+
+    // A caret on the clicked slash staff is drawn on its measured line; one on the numbered staff, which has no lines, in its band.
+    expect(measuredStaffOfSlot(bands[0], centres, 0, docSlots)).toBe(0);
+    const numbered = staveBandOfSlot(bands[0], 2, docSlots);
+    expect(numbered).toEqual(bands[0].staves[2]);
+    if (!numbered) return;
+    expect(numberedSlotAt(bands[0], (numbered.top + numbered.bottom) / 2, docSlots)).toBe(2);
+    expect(numberedSlotAt(bands[0], centres[1], docSlots)).toBeNull();
   });
 
   it('engraves a guitar track whose bar holds a note Pen wrote on its notation staff', () => {

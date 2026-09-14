@@ -122,14 +122,18 @@ export function scoreRedrawOf(lastRenderedDoc: ScoreDoc | null, doc: ScoreDoc): 
 /**
  * The index in `slots` of the staff the caret is drawn on, or null when its track draws none.
  *
- * The staff last clicked (`clicked`), while it is still the caret's; otherwise the caret's tablature when
- * the caret has a string, and its notation when it has not - which is what draws the caret before the
- * first click, when nothing has been clicked to learn a staff from.
+ * The staff last clicked (`clicked`), while it is still the caret's - a slash or numbered staff only while the caret
+ * is where that click, or the drag from it, left it (`clickedAt`), so it is drawn on the staff clicked but a key that
+ * moves the caret takes it back to the staves notes are entered on. Otherwise the caret's tablature when the caret has
+ * a string, and its notation when it has not - which is what draws the caret before the first click, when nothing has
+ * been clicked to learn a staff from.
  */
-export function caretSlotIndexOf(slots: readonly StaffSlot[], cursor: EditCursor, clicked: number | null): number | null {
+export function caretSlotIndexOf(slots: readonly StaffSlot[], cursor: EditCursor, clicked: number | null, clickedAt: EditCursor | null = null): number | null {
   const isCaretStaff = (slot: StaffSlot | undefined): boolean =>
     slot !== undefined && slot.trackIndex === cursor.trackIndex && slot.staffIndex === cursor.staffIndex;
-  if (clicked !== null && isCaretStaff(slots[clicked])) return clicked;
+  const clickedSlot = clicked === null ? undefined : slots[clicked];
+  const caretOnly = clickedSlot?.kind === 'slash' || clickedSlot?.kind === 'numbered';
+  if (clicked !== null && isCaretStaff(clickedSlot) && (!caretOnly || (clickedAt !== null && sameCaret(clickedAt, cursor)))) return clicked;
 
   const own = slots.map((slot, index) => ({ slot, index })).filter(({ slot }) => isCaretStaff(slot));
   const wanted: StaffKind = cursor.stringIndex !== null ? 'tab' : 'notation';

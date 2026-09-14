@@ -41,8 +41,10 @@ import {
   SystemBands,
   highlightBeatsOf,
   measuredStaffOfSlot,
+  numberedSlotAt,
   pressSystemIndexOf,
   slotIndexAt,
+  staveBandOfSlot,
   systemBandsOf,
   systemIndexAt,
   targetTrackBeat
@@ -62,12 +64,15 @@ interface Pointer {
   buttons: number;
 }
 
-/** A staff under the pointer: its index among the measured staves, the slot it draws, and its lines. */
+/**
+ * A staff under the pointer: its index among the measured staves, the slot it draws, and its lines - neither of which a
+ * numbered staff has, since it draws no lines (`numberedSlotAt`).
+ */
 interface StaffUnderPointer {
-  index: number;
+  index: number | null;
   slotIndex: number;
   slot: StaffSlot;
-  lines: StaffLines;
+  lines: StaffLines | null;
   /** Its middle line, in bounds lookup pixels: its system, which the press's beat is read on too (`pressSystemIndexOf`). */
   centre: number;
 }
@@ -123,6 +128,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   private lastRenderedDoc: ScoreDoc | null = null;
   /** The slot (`staffSlotsOf`) last clicked, on whichever system, which the caret stays on while it is the caret's. */
   private clickedSlotIndex: number | null = null;
+  /** Where that click, or the drag from it, left the caret: a slash or numbered staff keeps the caret only there (`caretSlotIndexOf`). */
+  private clickedAt: EditCursor | null = null;
   /** Where on notation the last click landed, in half line-spacings above the bottom line. */
   private clickedHalfSteps: number | null = null;
   /** Whether moving with the button held extends the range, for the drag the last mouse-down started. */
@@ -429,10 +436,17 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   /**
    * The staff under the pointer: its index among the measured staves, the slot it draws - found through the
    * system it sits in (`slotIndexAt`) - its lines, and its middle line, which names that system for the beat too.
+   * Inside a numbered staff's band, that staff, with no lines and the pointer's own y (`numberedSlotAt`).
    */
   private staffUnderPointer(): StaffUnderPointer | null {
     const element = this.alphaTabContainer?.nativeElement;
     if (!element || !this.state || !this.pointer) return null;
+    const onSurface = this.pointerOnSurface(element);
+    const pointerSystem = onSurface ? systemIndexAt(this.systems(), onSurface.y) : null;
+    const numbered = onSurface && pointerSystem !== null ? numberedSlotAt(this.systems()[pointerSystem], onSurface.y, this.slots(this.state.doc)) : null;
+    const numberedSlot = numbered === null ? undefined : this.slots(this.state.doc)[numbered];
+    if (onSurface && numbered !== null && numberedSlot) return { index: null, slotIndex: numbered, slot: numberedSlot, lines: null, centre: onSurface.y };
+
     const { staves, centres } = this.measure(element);
     const index = this.hitTest.staffIndexAt(element, this.pointer.x, this.pointer.y, staves);
     const y = index === null ? undefined : centres[index];
@@ -474,7 +488,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
    * caret's own (`dragTargetOf`) - at that track's beat under the pointer. Null over no beat of that track.
    */
   private cursorUnderPointer(under: StaffUnderPointer | null, current: EditCursor): EditCursor | null {
-    const stringIndex = under?.slot.kind === 'tab' && this.pointer ? this.hitTest.stringIn(under.lines, this.pointer.y) - 1 : null;
+    const stringIndex = under?.slot.kind === 'tab' && under.lines && this.pointer ? this.hitTest.stringIn(under.lines, this.pointer.y) - 1 : null;
     const target = dragTargetOf(under ? { slot: under.slot, stringIndex } : null, current);
     const beat = this.beatUnderPointerOn(target.trackIndex, target.staffIndex, under);
     return beat ? { ...target, barIndex: beat.voice.bar.index, voiceIndex: beat.voice.index, beatIndex: beat.index } : null;
@@ -501,9 +515,12 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       // Before any write, which engraves again: the caret's beat is still in the score alphaTab holds.
       if (seeksOnPress(press, this.alphaTabService.getCurrentState().isPlaying)) this.seekToCaret();
       this.dragging = dragExtends(mode, under?.slot.kind ?? null);
-      if (under) this.clickedSlotIndex = under.slotIndex;
-      if (under?.slot.kind === 'notation') this.rememberNotationClick(under.lines);
-      if (press === 'write' && under) this.placeClickedPitch(under.lines);
+      if (under) {
+        this.clickedSlotIndex = under.slotIndex;
+        this.clickedAt = this.composer.state.cursor;
+      }
+      if (under?.slot.kind === 'notation' && under.lines) this.rememberNotationClick(under.lines);
+      if (press === 'write' && under?.lines) this.placeClickedPitch(under.lines);
     }
 
     this.scheduleCaretUpdate();
@@ -522,9 +539,13 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       return;
     }
     const current = this.state.cursor;
-    const cursor = this.cursorUnderPointer(this.staffUnderPointer(), current);
+    const under = this.staffUnderPointer();
+    const cursor = this.cursorUnderPointer(under, current);
     // A move to another string or voice of the same beat is a new caret too.
-    if (cursor && !sameCaret(cursor, current)) this.ngZone.run(() => this.composer.extendSelectionTo(cursor));
+    if (!cursor || sameCaret(cursor, current)) return;
+    this.ngZone.run(() => this.composer.extendSelectionTo(cursor));
+    // A drag along the slash or numbered staff it began on keeps the caret drawn there (`caretSlotIndexOf`).
+    if (under?.slotIndex === this.clickedSlotIndex) this.clickedAt = this.composer.state.cursor;
   }
 
   /**
@@ -605,21 +626,23 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     const pointer = this.pointer;
     if (!element || !state || !pointer || state.entryMode !== 'pen' || this.boundsPending) return null;
     const under = this.staffUnderPointer();
-    if (!under) return null;
+    const lines = under?.lines;
+    const index = under?.index;
+    if (!under || !lines || index === null || index === undefined) return null;
 
     const hovered = this.beatUnderPointerOn(under.slot.trackIndex, under.slot.staffIndex, under);
     const bar = hovered ? state.doc.tracks[under.slot.trackIndex]?.staves[under.slot.staffIndex]?.bars[hovered.voice.bar.index] : undefined;
-    const diatonic = bar ? this.hitTest.diatonicIn(under.lines, bar.clef, pointer.y) : null;
+    const diatonic = bar ? this.hitTest.diatonicIn(lines, bar.clef, pointer.y) : null;
     const halfSteps = bar ? penHoverHalfStepsOf(state.entryMode, under.slot.kind, diatonic, bar.clef) : null;
     if (halfSteps === null) return null;
 
-    const surface = under.lines.surface.getBoundingClientRect();
-    const scale = this.hitTest.scaleOf(under.lines.surface, surface);
-    const spacing = under.lines.spacing;
+    const surface = lines.surface.getBoundingClientRect();
+    const scale = this.hitTest.scaleOf(lines.surface, surface);
+    const spacing = lines.spacing;
     const x = snappedHoverX((pointer.x - surface.left) / scale, spacing);
     return {
-      key: hoverKeyOf(under.index, halfSteps, x, spacing, element.scrollTop),
-      rect: () => this.hitTest.caretRect(element, under.index, x - spacing * 0.65, spacing * 1.3, halfSteps, this.measure(element).staves)
+      key: hoverKeyOf(index, halfSteps, x, spacing, element.scrollTop),
+      rect: () => this.hitTest.caretRect(element, index, x - spacing * 0.65, spacing * 1.3, halfSteps, this.measure(element).staves)
     };
   }
 
@@ -643,7 +666,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
   /**
    * Measures the caret box from state: its slot (`caretSlotIndexOf`), drawn on the system that holds its beat
-   * (`measuredStaffOfSlot`), its beat, and its string or pitch. None while that system is not attached.
+   * (`measuredStaffOfSlot`), its beat, and its string or pitch - or, on a numbered staff, which has no lines, in the
+   * middle of its band (`staveBandOfSlot`). None while that system is not attached.
    */
   private updateCaretOverlay(): void {
     const element = this.alphaTabContainer?.nativeElement;
@@ -658,11 +682,17 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
     const cursor = state.cursor;
     const slots = this.slots(state.doc);
-    const slotIndex = caretSlotIndexOf(slots, cursor, this.clickedSlotIndex);
+    const slotIndex = caretSlotIndexOf(slots, cursor, this.clickedSlotIndex, this.clickedAt);
     const beat = this.engravedBeatOf(cursor);
     const bounds = beat ? lookup.findBeat(beat) : null;
     const system = bounds?.barBounds.masterBarBounds.staffSystemBounds ?? null;
     const systemBands = system ? this.systems()[system.index] : undefined;
+    const numberedBand = slotIndex !== null && systemBands && slots[slotIndex]?.kind === 'numbered' ? staveBandOfSlot(systemBands, slotIndex, slots) : null;
+    if (bounds && numberedBand) {
+      const centre = (numberedBand.top + numberedBand.bottom) / 2;
+      this.caretRect = this.hitTest.bandCaretRect(element, bounds.visualBounds.x, bounds.visualBounds.w, centre);
+      return;
+    }
     const { staves, centres } = this.measure(element);
     const staffIndex = slotIndex !== null && systemBands ? measuredStaffOfSlot(systemBands, centres, slotIndex, slots) : null;
 

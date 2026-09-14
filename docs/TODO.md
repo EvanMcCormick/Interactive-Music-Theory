@@ -133,8 +133,8 @@ rather than going unnoticed.
   button let go over another window - leaves the guard on, and the next press on the score is ignored as well, once.
 - **A slash staff is measured as one line, and a two-line staff next to another staff can be read as lone lines.** The
   hit test tells a staff's lines by their even gaps, so a single line followed by a run of three or more lines at another
-  gap is a staff of its own. A numbered staff draws no lines and is never under the pointer: a press over it goes to the
-  staff nearest it.
+  gap is a staff of its own. A numbered staff draws no lines, so it is found by its band instead, and its caret is drawn
+  in the middle of that band rather than on a line.
 
 ## Bugs, recorded and not yet fixed
 
