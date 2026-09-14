@@ -1,4 +1,4 @@
-import { isEditableTarget } from './editable-target';
+import { isEditableTarget, pressesFocusedControl } from './editable-target';
 
 describe('isEditableTarget', () => {
   const attached: HTMLElement[] = [];
@@ -51,5 +51,47 @@ describe('isEditableTarget', () => {
     expect(isEditableTarget(element('button'))).toBeFalse();
     expect(isEditableTarget(document.body)).toBeFalse();
     expect(isEditableTarget(null)).toBeFalse();
+  });
+});
+
+describe('pressesFocusedControl', () => {
+  const attached: HTMLElement[] = [];
+
+  function element<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
+    const created = document.createElement(tag);
+    document.body.appendChild(created);
+    attached.push(created);
+    return created;
+  }
+
+  afterEach(() => attached.splice(0).forEach(node => node.remove()));
+
+  const press = (key: string, target: EventTarget, modifiers: Partial<KeyboardEvent> = {}) => ({
+    key, target, ctrlKey: false, altKey: false, metaKey: false, ...modifiers
+  });
+
+  it('is true for Space and Enter, Shift or not, on a button, a link, a checkbox and a role="button"', () => {
+    const link = element('a');
+    link.href = '#';
+    const checkbox = element('input');
+    checkbox.type = 'checkbox';
+    const custom = element('div');
+    custom.setAttribute('role', 'button');
+
+    for (const target of [element('button'), link, checkbox, custom]) {
+      expect(pressesFocusedControl(press(' ', target))).withContext(target.tagName).toBeTrue();
+      expect(pressesFocusedControl(press('Enter', target, { shiftKey: true }))).withContext(target.tagName).toBeTrue();
+    }
+  });
+
+  it('is false with Ctrl, Alt or Cmd, for any other key, and off a control', () => {
+    const button = element('button');
+
+    expect(pressesFocusedControl(press(' ', button, { ctrlKey: true }))).toBeFalse();
+    expect(pressesFocusedControl(press('Enter', button, { altKey: true }))).toBeFalse();
+    expect(pressesFocusedControl(press('Enter', button, { metaKey: true }))).toBeFalse();
+    expect(pressesFocusedControl(press('q', button))).toBeFalse();
+    expect(pressesFocusedControl(press(' ', document.body))).toBeFalse();
+    expect(pressesFocusedControl(press(' ', element('a')))).toBeFalse();
   });
 });

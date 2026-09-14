@@ -5,6 +5,7 @@ import { By } from '@angular/platform-browser';
 import { ComposerComponent, clampedStripHeight } from './composer.component';
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
 import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
+import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerService } from '../../services/composer.service';
 import { KEY_PLATFORM } from '../../services/composer-key-platform';
@@ -300,6 +301,17 @@ describe('ComposerComponent', () => {
 
     expect(composer.doc.tracks.length).toBe(2);
     expect(composer.doc.tracks[1].name).toBe('Piano');
+  });
+  it('leaves Space on a focused button to press it, and plays on Space anywhere else', () => {
+    const playPause = spyOn(TestBed.inject(AlphaTabService), 'playPause');
+    const rest: HTMLButtonElement = fixture.nativeElement.querySelector('[data-tool="rest"]');
+    rest.focus();
+
+    press({ key: ' ', code: 'Space' }, rest);
+    expect(playPause).not.toHaveBeenCalled();
+
+    press({ key: ' ', code: 'Space' });
+    expect(playPause).toHaveBeenCalledTimes(1);
   });
 });
 

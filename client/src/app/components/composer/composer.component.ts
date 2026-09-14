@@ -29,6 +29,7 @@ import { FretDigitEntry } from '../../services/composer-fret-entry';
 import { ComposerKeyHandler } from '../../services/composer-key-handler';
 import { KEY_PLATFORM } from '../../services/composer-key-platform';
 import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
+import { pressesFocusedControl } from '../../services/editable-target';
 import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, PopoverKind, shortcutTitleOf } from '../../services/composer-tools';
 import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
 
@@ -205,9 +206,14 @@ export class ComposerComponent implements OnInit, OnDestroy {
     this.destroy$.complete();
   }
 
-  /** The page's one keyboard listener. See `ComposerKeyHandler` for what it takes and what it leaves. */
+  /**
+   * The page's one keyboard listener. See `ComposerKeyHandler` for what it takes and what it leaves. Space
+   * and Enter on a focused button - a palette tool, a menu item, a track row's Update - press that button,
+   * so the handler is not asked (`pressesFocusedControl`).
+   */
   @HostListener('document:keydown', ['$event'])
   onKeyDown(event: KeyboardEvent): void {
+    if (pressesFocusedControl(event)) return;
     this.keyHandler.handle(event);
   }
 
