@@ -99,20 +99,33 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   drawerOpen = false;
 
   /**
-   * Whether a write to the library is under way. A second trigger while it is - Ctrl+S just after a click,
-   * a double click, Ctrl+S after an edit made mid-write - does not start a second write: the first write's
-   * id is not known until it lands, so letting the second through would create a second entry rather than
-   * overwrite the first. It is remembered instead, in `saveAfterWrite`.
+   * Whether a write to the library is under way. A trigger while it is - Ctrl+S just after a click, a double
+   * click, Ctrl+S after an edit made mid-write - does not start a second write at once: the first write's id is
+   * not known until it lands, so letting the second through would create a second entry rather than overwrite
+   * the first. It is queued instead, in `queuedSaves`.
    */
   private saving = false;
 
   /**
-   * A save asked for while a write was under way, however many times, run once after that write lands - by the
-   * id it returned, so over the same entry. Run only if it still has something to write: the document changed
-   * since the write began, or it was Save as copy. Dropped if the write failed, which has been reported and
-   * would only fail again; the user can press Save once they have read why.
+   * The saves asked for while a write was under way, in the order first pressed: at most one plain Save and one
+   * Save as copy, however many times each was pressed. They run one at a time after that write lands, through
+   * `save` and its refusals - a plain Save over the entry the write left current. Each runs only if it still has
+   * something to write: a plain Save when the document moved on since the write before it began, a copy unless
+   * that write was a copy of the same document, so a double click on Save as copy makes one copy. Dropped when
+   * the write failed, which has been reported and would only fail again; when a composition is loaded, since they
+   * were pressed for the one it replaced; and when the panel is destroyed, since the page's guards are gone.
    */
-  private saveAfterWrite: { asNew: boolean } | null = null;
+  private queuedSaves: Array<'save' | 'copy'> = [];
+
+  /**
+   * Bumped whenever a load replaces the document. A write that began before it still lands in the entry it was
+   * writing, but leaves `currentId` as the load set it: otherwise the next Save would write the loaded composition
+   * over the entry that write was for.
+   */
+  private loadGeneration = 0;
+
+  /** Set on destroy: a queued save must not run against a page that has gone, whose guards are no longer asked. */
+  private destroyed = false;
 
   /**
    * Why the last press of Save was refused, or `null` if it was not.
@@ -201,6 +214,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
+    this.queuedSaves = [];
     document.removeEventListener('keydown', this.escapeListener, true);
     this.destroy$.next();
     this.destroy$.complete();
@@ -298,10 +313,11 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
    */
   async save(asNew = false): Promise<void> {
     // A guard that refuses has said why where its own state is shown - the alphaTex draft, in the status line.
-    if (!this.state || this.saveRequests.refused()) return;
+    if (!this.state || this.destroyed || this.saveRequests.refused()) return;
 
     if (this.saving) {
-      this.saveAfterWrite = { asNew: (this.saveAfterWrite?.asNew ?? false) || asNew };
+      const intent = asNew ? 'copy' : 'save';
+      if (!this.queuedSaves.includes(intent)) this.queuedSaves.push(intent);
       return;
     }
 
@@ -336,7 +352,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
    * already listening to, having just pressed a button inside it.
    */
   async flattenAndSave(): Promise<void> {
-    if (this.saving || this.saveRequests.refused()) return;
+    if (this.saving || this.destroyed || this.saveRequests.refused()) return;
     const asNew = this.pendingSave?.asNew ?? false;
     const flattened = this.flattenEveryLinkedTrack();
     this.pendingSave = null;
@@ -453,9 +469,11 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
     if (!this.state || this.saving) return false;
 
     this.saving = true;
-    // The document this write holds. Only it is marked saved, and a request that arrived mid-write runs after it
-    // only when the document has moved on from it.
+    // The document this write holds. Only it is marked saved, and a queued save runs after it only when it still has
+    // something to write (`runQueuedSave`).
     const doc = this.state.doc;
+    // A load while this write is under way leaves the loaded composition current (`loadGeneration`).
+    const generation = this.loadGeneration;
     let landed = false;
     try {
       const score = this.buildScore();
@@ -472,7 +490,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
         asNew ? undefined : this.currentId ?? undefined
       );
 
-      this.currentId = id;
+      if (generation === this.loadGeneration) this.currentId = id;
       this.composer.markSaved(doc);
       this.pendingSave = null;
       this.report(`Saved "${doc.title || 'Untitled'}"`);
@@ -483,10 +501,26 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
       this.saving = false;
     }
 
-    const after = this.saveAfterWrite;
-    this.saveAfterWrite = null;
-    if (landed && after && (after.asNew || this.state?.doc !== doc)) void this.save(after.asNew);
+    if (landed && !this.destroyed) this.runQueuedSave(doc, asNew);
+    else this.queuedSaves = [];
     return landed;
+  }
+
+  /**
+   * Runs the first queued save that still has something to write, after a write of `written` - a copy when
+   * `wroteCopy` - has landed. The rest stay queued behind the write it starts. A plain Save with the document as
+   * written would write it again, and so would a copy after a copy of it; both are skipped. A save that starts no
+   * write has been refused, and said why, and the rest would be refused the same way, so they are dropped.
+   */
+  private runQueuedSave(written: ComposerState['doc'], wroteCopy: boolean): void {
+    while (this.queuedSaves.length > 0) {
+      const asNew = this.queuedSaves.shift() === 'copy';
+      const moved = this.state?.doc !== written;
+      if (!moved && (!asNew || wroteCopy)) continue;
+      void this.save(asNew);
+      if (!this.saving) this.queuedSaves = [];
+      return;
+    }
   }
 
   async load(id: string): Promise<void> {
@@ -507,6 +541,10 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
         return;
       }
 
+      // Saves queued for the composition this replaces were pressed for it, and a write still under way for it must
+      // not make it current again.
+      this.loadGeneration++;
+      this.queuedSaves = [];
       this.composer.replaceDocument(this.mapper.toDoc(parsed.score), true);
       this.currentId = id;
       this.drawerOpen = false;
