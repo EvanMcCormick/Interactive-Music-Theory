@@ -1,6 +1,6 @@
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { notesAt, setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
+import { notesAt, setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
 import { NoteDoc, NotePitch, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
 
 const ref = (beatIndex: number): BeatRef =>
@@ -91,5 +91,30 @@ describe('toggleNoteEffect with a hammer-on', () => {
 
     toggleNoteEffect(doc, [ref(0), ref(1)], null, 'isHammerPullOrigin', true, false);
     expect(beats[0].notes[0].effects.isHammerPullOrigin).toBeFalse();
+  });
+});
+
+describe('toggleTrill', () => {
+  it('aims each note of a chord a whole step above itself, capo included, and a second press clears them', () => {
+    // String 1 (E, 64) at fret 0 and string 2 (B, 59) at fret 1, under a capo at 2.
+    const doc = chordDoc();
+    doc.tracks[0].staves[0].capo = 2;
+    const notes = doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes;
+
+    toggleTrill(doc, [ref(0)], null);
+    expect(notes.map(note => note.effects.trill?.value)).toEqual([68, 64]);
+
+    toggleTrill(doc, [ref(0)], null);
+    expect(notes.map(note => note.effects.trill)).toEqual([null, null]);
+  });
+
+  it('gives every note a trill when some already have one', () => {
+    const doc = chordDoc();
+    const notes = doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes;
+    notes[0].effects.trill = { value: 70, speed: 32 };
+
+    toggleTrill(doc, [ref(0)], null);
+
+    expect(notes.map(note => note.effects.trill)).toEqual([{ value: 66, speed: 16 }, { value: 62, speed: 16 }]);
   });
 });

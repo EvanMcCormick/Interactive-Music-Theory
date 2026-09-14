@@ -1,5 +1,6 @@
-import { AccidentalMode, NoteDoc, NoteEffectsDoc, ScoreDoc } from '../models/composer.model';
+import { AccidentalMode, NoteDoc, NoteEffectsDoc, ScoreDoc, StaffDoc } from '../models/composer.model';
 import { toggledValue } from './beat-edits';
+import { DEFAULT_TRILL_SPEED, TRILL_INTERVAL } from './composer-tool-defaults';
 import { BeatRef, beatAt } from './composer-selection';
 import { hammerDestinationOf, slideTargetOf } from './note-landing';
 
@@ -119,4 +120,34 @@ export function toggleTie(doc: ScoreDoc, refs: readonly BeatRef[], focus: number
   const notes = notesAt(doc, refs, focus);
   const value = toggledValue(notes.map(note => note.isTied), true, false);
   for (const note of notes) note.isTied = value;
+}
+
+/**
+ * The pitch a default trill on `note` alternates with, as `TrillDoc.value` stores it - alphaTab's
+ * `Note.trillValue`, a MIDI number: a whole step above the note as it sounds. On a string that is the
+ * open string plus the capo plus the fret, since alphaTex saves a trill as a fret relative to the
+ * string with the capo included (`trillFret`); on a pitched staff, the note's own pitch.
+ */
+export function trillTargetOf(staff: StaffDoc, note: NoteDoc): number {
+  const pitch = note.pitch;
+  const sounding =
+    pitch.kind === 'fretted'
+      ? (staff.tuning[pitch.string - 1] ?? 0) + staff.capo + pitch.fret
+      : (pitch.octave + 1) * 12 + pitch.noteValue;
+  return sounding + TRILL_INTERVAL;
+}
+
+/**
+ * Presses the trill tool, by the toggle rule: when every note the press means has a trill they all lose
+ * it; otherwise each gets a trill a whole step above itself (`trillTargetOf`) at the default speed.
+ *
+ * Not `toggleNoteEffect`, whose one value for every note would trill a chord's notes to one pitch.
+ */
+export function toggleTrill(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): void {
+  const targets = noteTargetsAt(doc, refs, focus);
+  const allOn = targets.length > 0 && targets.every(target => target.note.effects.trill !== null);
+  for (const { ref, note } of targets) {
+    const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
+    note.effects.trill = allOn || !staff ? null : { value: trillTargetOf(staff, note), speed: DEFAULT_TRILL_SPEED };
+  }
 }

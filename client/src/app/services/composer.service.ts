@@ -43,7 +43,7 @@ import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
 import { ComposerStructureCommands } from './composer-service-structure';
 import { EditScope, durationRefusal, editRefusal, noteEffectRefusal } from './edit-refusals';
-import { setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
+import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 import { insertBarInto } from './score-structure';
 
@@ -483,6 +483,11 @@ export class ComposerService {
 
   setTuplet(tuplet: Tuplet | null): void {
     this.applyEdit({ family: 'beat', key: 'tuplet' }, (draft, refs) => setTuplet(draft, refs, tuplet));
+  }
+
+  /** Presses Trill: each note a whole step above itself at the default speed, or none. See `toggleTrill`. */
+  toggleTrill(): void {
+    this.applyEdit({ family: 'note', key: 'trill' }, (draft, refs, focus) => toggleTrill(draft, refs, focus));
   }
 
   /**
