@@ -118,8 +118,6 @@ alphaTab upgrade that changes one turns a spec red rather than going unnoticed.
 - **Fix bar's button does not show its tuplet refusals** before it is pressed. The command refuses a tuplet across
   the bar line and a line inside a tuplet group, but `toolStates` reads only a generated track and whether a selected
   bar is over; showing the rest would run the carry on a copy for every selection.
-- **Fermata settling reads voice 1 only.** Carrying a fermata checks every voice for a beat it would reach, but a
-  second voice's own fermatas are never settled. The editor cannot edit a second voice yet.
 
 ## Bugs, recorded and not yet fixed
 

@@ -655,6 +655,46 @@ sheet, and three small items, fixed in three commits: `6eebeda`, `ecfa4a4` and `
 - **Task 3.3, the status line's words** - `countOf`, `fixBarNoticeOf`, `pasteNoticeOf` - are in `composer-text.ts`; the
   status line imported `countOf` from the structure commands.
 
+**A review of the fermata and tuplet work in committed M2 code** found one important fault and six minor items, fixed
+in two commits: `7c21dc0` and `950f8ba`. Whole suite after them: **3,092 SUCCESS**. No signature a Phase 3 or 4 block
+still to apply uses has changed.
+
+- **Tasks 1.6 and 1.13, a clear that removes a grace.** Delete at the caret, a clear over a range and Cut remove graces
+  (`clearToRests`), and a grace moves where beats play: an on-beat grace takes its length from the start of the beat it
+  leads into. The commands asked only `editRefusal`, so they opened tuplet groups and moved fermatas with nothing
+  settled. Delete on beat 1 of `n4 g o n4t3 n8t3 n2` left the group open. On a second track's `oF n4 n4 n4 n4` beside
+  `n4F n4 n4 n4`, Delete on the grace left the quarter that now plays at 0 without the fermata, and it saved as `n4F`.
+  In `n4 gF g n4F n2`, the grace left playing at 960 held none. `clearToRests` now snapshots and settles fermatas when
+  it removes a grace and returns the drops, which reach the notice through the edit's outcome. `clearRefusal` refuses a
+  clear that would leave a group open - "Removing a grace note there would leave a tuplet group unfinished, since graces
+  before a group take their time from its first beat." - and the three commands and the Rest reader over a range ask
+  it. The review's service fuzz through alphaTex, seeds 505 and 606, 29,837 commands: 0 accepted open groups, and 1 save
+  difference, the second voice below.
+- **Task 1.10, one fermata became two.** Settling carried each note holding a fermata on its own. `n4. n8 n2F` over
+  `n2 n2F`, dotted from the first track's beat 0 to the second's, carried it to 2160 on one and 2880 on the other, with
+  no report; and two tracks' notes moved alike each reached the other, so the fermata was dropped. The notes holding a
+  position's fermata are now read together, with their own voices set aside, and carry it only when they all land on
+  one tick. Otherwise it stays where a beat still plays, or goes as `notesApart`: "1 fermata removed: the notes holding
+  it moved apart."
+- **Task 1.10, a fermata whose note became a grace** said "no note starts at its place any more" while the grace still
+  played there: `n4. n4 n16 n16F n8 n8 n8` with beat 3 an on-beat grace. It goes as `becameGrace`: "its note became a
+  grace note, which cannot hold a fermata of its own."
+- **Task 1.13, a grace press on a whole group.** Beats 0 to 2 of `n4t3 n4t3 n4t3 n2` made graces said "select the whole
+  group", which they were. When the selection names every beat of each group it touches, `graceRefusal` says "A grace
+  note takes no room in its bar, so a tuplet group cannot be made of grace notes."
+- **Task 2.2, AltGr and Option.** The layout spec also presses AltGr symbols on QWERTZ and AZERTY, reported with Ctrl
+  and Alt, and Option symbols on German and French Macs, and finds no press that matches two bindings. No binding
+  changed.
+- **Task 1.10, a second voice.** `toggleFermata` wrote voice 1 only, so a loaded bar's second voice took the fermata at
+  its tick on save, and settling read voice 1 only. `fermataPositionsOf`, the snapshot and the settling now read every
+  voice of every staff (`FermataHolder.voiceIndex`), since alphaTab files and hands on a fermata by tick in all of them,
+  and a fermata only a second voice holds is its position's. After both commits, the same fuzz over 29,840 commands: 0
+  accepted open groups and 0 save differences.
+- **A grace carrying a tuplet** (`docs/TODO.md`). alphaTex keeps it, a grace-only run's included: `o ot3 ot3 ot3 o n2 n2`
+  round-trips with its tuplets. The review's fuzz case lost its group because alphaTab joins a bar's leading graces to
+  the triplet the bar before ends in, which the one-bar reading already recorded misses. `setGrace` keeps a beat's
+  tuplet, so the grace tool does give a grace one where that leaves no group open; the entry said it never did.
+
 ---
 
 
@@ -7682,9 +7722,12 @@ Design Part 4 puts two more things in that region and one beside it:
   `ComposerState.notice`, published in the same commit as the edit (`commitFollowing`'s new `notice`),
   and cleared wherever a refusal is: the next edit, a selection change, undo, redo, and a refusal.
 - **A fermata an edit removed.** An edit that moves beats carries each fermata with its note, or leaves it at its
-  bar position, and removes one only where it can do neither (`settleFermatas`): its note moved where the fermata
-  would reach another track's beat, or onto another fermata's place, or no note starts at its place any more. The
-  edit returns a reason for each, and the commit that removed it says so in the same region:
+  bar position, and removes one only where it can do neither (`settleFermatas`), for one of these reasons
+  (`FermataDropReason`): its note moved where the fermata would reach other tracks (`otherTracks`), or another staff or
+  voice of its track (`otherVoices`); its note moved onto another fermata's place (`ontoAnotherFermata`); the notes
+  holding it moved apart (`notesApart`); its note became a grace note, which cannot hold a fermata of its own
+  (`becameGrace`); or no note starts at its place any more (`noNoteThere`). The edit returns a reason for each, and the
+  commit that removed it says so in the same region:
   `1 fermata removed: its note moved where it would reach other tracks.` (`fermataNoticeOf`, joined to any other
   words by `noticeOfOutcome`).
 - **How many bars are over their time signature**, counted with `scoreBarFills`. Part 4 lets a score with
