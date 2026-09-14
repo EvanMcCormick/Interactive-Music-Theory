@@ -1,0 +1,23 @@
+<section class="sheet" [class.open]="open" role="dialog" aria-label="Keyboard shortcuts" [attr.aria-hidden]="!open">
+  <header class="sheet-header">
+    <h2>Keyboard shortcuts</h2>
+    <button type="button" class="sheet-close" aria-label="Close keyboard shortcuts" (click)="closed.emit()">×</button>
+  </header>
+
+  <p class="sheet-note">
+    Ctrl is Cmd on a Mac. A key written as a symbol - <kbd>?</kbd>, <kbd>&#125;</kbd> - is pressed however your keyboard
+    layout types that symbol. Keys are ignored while you type in a field.
+  </p>
+
+  <div class="sections">
+    <section class="section" *ngFor="let section of sections; trackBy: trackByGroup">
+      <h3>{{ section.group }}</h3>
+      <dl>
+        <ng-container *ngFor="let row of section.rows">
+          <dt>{{ row.label }}</dt>
+          <dd><kbd>{{ row.keys }}</kbd></dd>
+        </ng-container>
+      </dl>
+    </section>
+  </div>
+</section>
