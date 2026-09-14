@@ -36,6 +36,8 @@ const PART_OF_A_GROUP = 'The copy holds part of a tuplet group. Copy the whole g
 
 const PAST_THE_LINE = 'That beat is past the bar line; Fix bar first.';
 
+const GRACE_ON_THE_LINE = "That grace ends a full bar, so a paste there would land in the next bar; paste at the next bar's first beat.";
+
 const SPLITS_A_GROUP =
   'The paste would split a tuplet group, leaving part of it unfinished. Paste over the whole group, or where the copy fits in one bar.';
 
@@ -63,7 +65,10 @@ const SPLITS_A_GROUP =
  *
  * Refused before anything changes: a copy holding part of a tuplet group (`tupletGroupsOf`), which would
  * start a group alphaTab never closes and leave room off the 64th grid; and a paste at a beat that starts at
- * or past the line of a bar already over, which would land in the next bar while the caret stayed put. Refused
+ * or past its bar's line, which would land in the next bar while the caret stayed put. In a bar already over
+ * that is a beat past the line, for Fix bar; in a full bar it can only be a grace that ends the bar, leading
+ * into nothing there. Refused rather than moved to the next bar, as the over bar's case is, so the caret and
+ * the paste never disagree about where it went and no press writes somewhere other than where it was aimed. Refused
  * once laid down: a paste that leaves a bar holding a tuplet group open that it did not already hold open
  * (`newOpenTupletGroup`) - over part of a group, or a whole group cut by a bar line.
  *
@@ -95,7 +100,7 @@ export function pasteBeats(doc: ScoreDoc, at: BeatRef, copied: CopiedBeats): { a
 
   const startMeter = barMeterAt(doc, at.barIndex);
   const startCapacity = startMeter.isFreeTime ? Number.POSITIVE_INFINITY : barCapacityTicks(startMeter.timeSignature);
-  if (startCapacity > 0 && tick >= startCapacity && barFillOf(startBar, startMeter).kind === 'over') return PAST_THE_LINE;
+  if (startCapacity > 0 && tick >= startCapacity) return barFillOf(startBar, startMeter).kind === 'over' ? PAST_THE_LINE : GRACE_ON_THE_LINE;
   for (let barIndex = at.barIndex; pending.length > 0; barIndex++, tick = 0) {
     while (barIndex >= staff.bars.length) {
       insertBarInto(doc, doc.masterBars.length);

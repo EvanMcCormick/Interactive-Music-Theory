@@ -193,6 +193,15 @@ describe('pasteBeats', () => {
     expect(shape(doc, 2)).toEqual(['r4', 'r4', 'r4', 'r4']);
     expect(pasteBeats(doc, ref(1, 2), copied!)).toEqual({ appendedBars: 0, at: ref(1, 2) });
   });
+
+  it('refuses a paste at a grace that ends a full bar, which would land in the next bar while the caret stayed put', () => {
+    // The grace starts at 3840, on the line of a bar that is not over, so Fix bar has nothing to do there.
+    const doc = ComposerService.createEmptyScore();
+    beats(doc, 0).splice(0, 4, ...writtenBeats('n1 g'));
+
+    expect(pasteBeats(doc, ref(0, 1), { fretted: true, beats: writtenBeats('n4') })).toMatch(/grace.*full bar.*next bar/i);
+    expect(shape(doc, 1)).toEqual(['r4', 'r4', 'r4', 'r4']);
+  });
 });
 
 describe('pasteBeats, a grace and a fermata', () => {

@@ -5,7 +5,8 @@
  * The rules are the design's, under "Shortcuts": modifiers exactly, with Cmd read as Ctrl; an Alt
  * combination by physical key, because macOS Option rewrites `key`; a Ctrl letter by the letter typed,
  * so Ctrl+Z is undo on QWERTZ and Ctrl+A select all on AZERTY, falling back to the physical key only
- * when no Latin letter was typed (a Cyrillic layout); a letter in either case with Shift exactly, by the
+ * when no Latin letter was typed (a Cyrillic layout), and a Ctrl symbol by the symbol typed as well as by
+ * its key (Dvorak moves `.` and `/`); a letter in either case with Shift exactly, by the
  * physical key on a layout with no Latin letters; a digit or symbol whatever Shift says, because which
  * symbols need Shift depends on the layout; a named key with Shift exactly. And one the design did not
  * state: a symbol typed through AltGr or Option (`bindingMatchesTyped`), asked only after every exact
@@ -27,6 +28,25 @@ export interface KeyBinding {
 /** The parts of a `KeyboardEvent` a binding is matched against. */
 export type KeyPress = Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>;
 
+/**
+ * What a US keyboard types on each physical symbol key, without Shift and with it. A `code` binding names a key
+ * by where a US keyboard has it, so these are the symbols it stands for wherever another layout moves them.
+ * Browsers report `key` with Shift applied, so a Shift binding is typed as the second.
+ */
+const US_SYMBOLS: Readonly<Record<string, string>> = {
+  Backquote: '`~',
+  Minus: '-_',
+  Equal: '=+',
+  BracketLeft: '[{',
+  BracketRight: ']}',
+  Backslash: '\\|',
+  Semicolon: ';:',
+  Quote: '\'"',
+  Comma: ',<',
+  Period: '.>',
+  Slash: '/?'
+};
+
 /** A Latin letter, the only letters a binding names. */
 const isLetter = (key: string): boolean => /^[a-z]$/i.test(key);
 const isDigit = (key: string): boolean => /^[0-9]$/.test(key);
@@ -46,6 +66,11 @@ const isShiftFree = (key: string): boolean => key.length === 1 && !isLetter(key)
  * A Ctrl press that typed a Latin letter is that letter's, and matches no other Ctrl binding by its
  * physical key: Dvorak types z on the key a US keyboard calls `Slash`, so its Ctrl+Z would otherwise be
  * undo by the letter and Ctrl+/ (triplet feel) by the key.
+ *
+ * A Ctrl binding on a symbol key is also matched by the symbol a US keyboard types there
+ * (`US_SYMBOLS`), when the press typed it on another key. Dvorak types `.` on `KeyE` and `/` on
+ * `BracketLeft`, so by physical key alone its Ctrl+Shift+. (diminuendo) and Ctrl+/ were out of reach.
+ * Shift is still exact, and the symbol is compared only with what was typed, so a letter never matches it.
  */
 export function bindingMatches(binding: KeyBinding, press: KeyPress): boolean {
   if ((press.ctrlKey || press.metaKey) !== !!binding.ctrl || press.altKey !== !!binding.alt) return false;
@@ -53,7 +78,9 @@ export function bindingMatches(binding: KeyBinding, press: KeyPress): boolean {
     if (press.shiftKey !== !!binding.shift) return false;
     const letter = /^Key([A-Z])$/.exec(binding.code)?.[1];
     if (binding.ctrl && !binding.alt && isLetter(press.key)) return letter !== undefined && press.key.toUpperCase() === letter;
-    return press.code === binding.code;
+    if (press.code === binding.code) return true;
+    const symbols = binding.ctrl && !binding.alt ? US_SYMBOLS[binding.code] : undefined;
+    return symbols !== undefined && press.key.length === 1 && symbols.includes(press.key);
   }
 
   const key = binding.key ?? '';

@@ -60,6 +60,19 @@ describe('bindingMatches', () => {
     expect(bindingMatches({ code: 'Slash', ctrl: true }, press({ key: '/', code: 'Slash', ctrlKey: true }))).toBeTrue();
   });
 
+  it('matches a Ctrl symbol binding by the symbol typed where the layout moves that symbol', () => {
+    // Dvorak types . on the key a US keyboard calls KeyE, and / on BracketLeft, so by physical key its Ctrl+Shift+.
+    // (diminuendo) and Ctrl+/ (triplet feel) could not be pressed at all.
+    expect(bindingMatches({ code: 'Period', ctrl: true, shift: true }, press({ key: '>', code: 'KeyE', ctrlKey: true, shiftKey: true }))).toBeTrue();
+    expect(bindingMatches({ code: 'Period', ctrl: true, shift: true }, press({ key: '.', code: 'KeyE', ctrlKey: true, shiftKey: true }))).toBeTrue();
+    expect(bindingMatches({ code: 'Slash', ctrl: true }, press({ key: '/', code: 'BracketLeft', ctrlKey: true }))).toBeTrue();
+    // Still exact about Shift, and a letter typed on the US symbol's key is that letter's.
+    expect(bindingMatches({ code: 'Period', ctrl: true, shift: true }, press({ key: '.', code: 'KeyE', ctrlKey: true }))).toBeFalse();
+    expect(bindingMatches({ code: 'Period', ctrl: true, shift: true }, press({ key: 'V', code: 'Period', ctrlKey: true, shiftKey: true }))).toBeFalse();
+    expect(bindingMatches({ code: 'Slash', ctrl: true }, press({ key: 'z', code: 'Slash', ctrlKey: true }))).toBeFalse();
+    expect(bindingMatches({ code: 'KeyZ', ctrl: true }, press({ key: 'z', code: 'Slash', ctrlKey: true }))).toBeTrue();
+  });
+
   it('matches an unmodified letter by its physical key when the layout typed no Latin letter', () => {
     expect(bindingMatches({ key: 'r' }, press({ key: 'к', code: 'KeyR' }))).toBeTrue();
     expect(bindingMatches({ key: 'r' }, press({ key: 'к', code: 'KeyT' }))).toBeFalse();

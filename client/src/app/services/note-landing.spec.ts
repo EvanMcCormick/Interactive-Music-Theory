@@ -4,6 +4,7 @@ import * as alphaTab from '@coderline/alphatab';
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
 import { toolStates } from './composer-tool-states';
+import { deepFrozen } from './deep-frozen';
 import { noteEffectRefusal, tieRefusal } from './edit-refusals';
 import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieChainOf, tieOriginOf } from './note-landing';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
@@ -168,12 +169,15 @@ describe('note landing', () => {
       { name: 'noteEffectRefusal for vibrato', read: doc => noteEffectRefusal(doc, [ref(1, 0)], 1, 'vibrato', 'slight', 'none') }
     ];
 
+    // Read deep-frozen, so a reader that changes the document throws. A JSON comparison alone is not enough:
+    // `toolStates` and the vibrato refusal look a tie up an even number of times, and an in-place reverse run twice
+    // puts the bar back before the comparison sees it.
     for (const reader of readers) {
       it(`leaves an uneven earlier bar in order after ${reader.name}`, () => {
         const { doc, tied } = uneven();
         const before = JSON.stringify(doc);
 
-        reader.read(doc, tied);
+        expect(() => reader.read(deepFrozen(doc), tied)).not.toThrow();
 
         expect(JSON.stringify(doc)).toBe(before);
       });
