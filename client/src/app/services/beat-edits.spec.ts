@@ -344,4 +344,18 @@ describe('setTuplet', () => {
     expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
     expect(beats(doc).length).toBe(5);
   });
+
+  it('puts a whole group\'s freed room right after the group, so the beats after it keep their ticks', () => {
+    // `n8 n8 n8 n8 n2`. Each eighth made a triplet eighth frees 160 ticks - off the 64th grid, so no
+    // rest can go after any one of them. Together they free 480, an eighth rest right after the
+    // group, and the fourth eighth stays at 1440 rather than moving to 960.
+    const doc = ComposerService.createEmptyScore();
+    beats(doc).splice(0, beats(doc).length, ...([8, 8, 8, 8, 2] as DurationValue[]).map(value => createRestBeat(value)));
+    [0, 1, 2, 3, 4].forEach(index => withNote(doc, 0, index));
+
+    setTuplet(doc, [ref(0, 0), ref(0, 1), ref(0, 2)], { numerator: 3, denominator: 2 });
+
+    expect(shape(doc)).toEqual(['n8', 'n8', 'n8', 'r8', 'n8', 'n2']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
 });

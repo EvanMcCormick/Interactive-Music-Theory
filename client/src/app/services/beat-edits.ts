@@ -148,6 +148,9 @@ export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEff
  *    as much as it is short. So room a shrinking beat frees pays for growth elsewhere in the
  *    range first, and a beat that shrinks in an overflowing bar uses up the overflow. Four
  *    quarters set to eighths are `n8 r8 n8 r8 n8 r8 n8 r8`; `n4 r4 r4 r4` dotted is `n4. r8 r4 r4`.
+ *    Room no rest can spell where it opened - a tuplet's remainder, off the 64th grid - carries to
+ *    the next beat while that beat is changing too and directly follows, and is placed after the
+ *    run: `n8 n8 n8 n8 n2` with its first three beats made a triplet is `n8 n8 n8 r8 n8 n2`.
  * 3. **Blocked growth takes the rests after the range.** A beat blocked only by its changing
  *    neighbour is still owed room when the bar is over - less whatever room phase 2 freed and
  *    did not place, which has paid for it already. So a bar that arrived over keeps exactly its
@@ -210,16 +213,30 @@ function settleRange(
     }
   }
 
-  // Room freed but not placed, because the bar was not short when its turn came. That room has
-  // already paid for growth within the range, so phase 3 must not take rests for it again.
+  // Room freed but not placed, because the bar was not short when its turn came or no rest could
+  // spell it. That room has already paid for growth within the range, so phase 3 must not take
+  // rests for it again.
+  //
+  // Room no rest can spell where it opened - a tuplet's remainder is off the 64th grid - is carried
+  // to the next beat when that beat is changing too and directly follows, and placed after the run:
+  // three eighths made a triplet each free 160 ticks, which nothing can spell, and together free 480,
+  // an eighth rest right after the group. So the beats after a whole group keep their ticks.
   let unplaced = 0;
-  for (const beat of inOrder) {
-    const room = freed.get(beat) ?? 0;
+  let carried = 0;
+  inOrder.forEach((beat, order) => {
+    const room = carried + (freed.get(beat) ?? 0);
+    carried = 0;
     const fill = barFillOf(bar, meter);
-    const placed = room > 0 && fill.kind === 'under' ? Math.min(room, fill.ticks) : 0;
-    if (placed > 0) insertRestsAt(voice, voice.beats.indexOf(beat) + 1, placed, meter);
-    unplaced += room - placed;
-  }
+    const wanted = room > 0 && fill.kind === 'under' ? Math.min(room, fill.ticks) : 0;
+    const after = voice.beats.indexOf(beat) + 1;
+    if (wanted > 0 && insertRestsAt(voice, after, wanted, meter)) {
+      unplaced += room - wanted;
+    } else if (wanted > 0 && voice.beats[after] === inOrder[order + 1]) {
+      carried = room;
+    } else {
+      unplaced += room;
+    }
+  });
 
   // Blocked growth the unplaced room did not pay for. Capped by the bar's overflow below, but the
   // overflow alone is no measure of it: a bar can arrive over, and that overflow is not owed.
