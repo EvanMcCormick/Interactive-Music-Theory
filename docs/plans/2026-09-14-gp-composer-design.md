@@ -96,7 +96,8 @@ older entry is corrected the first time it is opened.
 `toDoc(score)` / `toScore(written, settings)` (`services/score-doc-mapper.service.ts:471`,
 `:192`). Conversion is one call to `toDoc`, and one to `frettedDocOf`
 (`services/pitch-on-strings.ts`) after it, so a gap in either is what the prompt has to name.
-Part 2 is the full list.
+Part 2 is the full list, less the one gap this milestone closes: **percussion**, which is
+decision 12 and Part 3, because a drum track did not convert short - it converted wrong.
 
 One entry of the M2 design's own GP paragraph is wrong and is corrected here. It says the
 model cannot hold **multiple voices**. It can: `BarDoc.voices` is an unbounded `VoiceDoc[]`
@@ -140,8 +141,12 @@ Settled with the user on 2026-09-14, before planning. Written as decided.
    in both states, still reading `MusicTheoryService`.
 10. **The transport gains loop, tempo percent (25-200), volume, and a seek bar with a time
     readout**, all through `AlphaTabService`, in both states.
-11. **Build order** is Part 7.
-12. **Out of scope**: growing the model to hold what it drops, writing `.gp` back, and M3's
+11. **Build order** is Part 8.
+12. **Percussion joins the model in this milestone.** A drum track was the one thing in Part 2's
+    tables that converted *wrong* rather than short. `NotePitch` gains a third kind, `TrackDoc`
+    gains the articulation list and `StaffDoc` gains `isPercussion`, so a kit converts, plays,
+    saves and reloads as itself. Writing a new drum note is not part of it. Part 3.
+13. **Out of scope**: growing the model past percussion, writing `.gp` back, and M3's
     inspector, mixer and bar grid.
 
 Three readings the decisions leave open, settled here and repeated in the table at the end:
@@ -307,7 +312,6 @@ field exists on a `*Doc`. A bare line number is `models/composer.model.ts` where
 | Lyric lines past the first | `Beat.lyrics: string[]` | one line: `BeatDoc.lyrics: string \| null` (`:274`); read as `beat.lyrics[0]` (`:601`), written as `[doc.lyrics]` (`:396`) | beats whose array is longer than one |
 | Tempo changes past a bar's first, and any on bar 1 | `MasterBar.tempoAutomations` | one BPM per bar from `index > 0` (`:505-508`); `ratioPosition`, `isLinear` and the marking's text go too | automations not kept |
 | The slides with no name | `SlideOutType.OutDown`, `PickSlideDown`, `PickSlideUp`; `SlideInType.IntoFromAbove`; and a slide-in on a note that also slides out | `slideOf` (`services/alpha-tab-enum.bridge.ts:202-209`) names `Shift`, `Legato`, `OutUp` and `IntoFromBelow` only, and reads the slide-in only when the slide-out is `None` | notes per kind |
-| Percussion articulations | `Note.percussionArticulation`, `Track.percussionArticulations`, `Staff.isPercussion`, `Staff.standardNotationLineCount` | no - and worse than lost: `fromNote` reads a percussion note's tone and octave as a pitch (`:631-642`) and `toStaff` never sets `isPercussion`, so a drum track comes back as a pitched staff on five lines | notes on a percussion staff |
 | Directions | `MasterBar.directions` - nineteen kinds, D.C., D.S., Coda, Fine | no - `MasterBarDoc` has nine fields (`:100-120`) | markings |
 | Sync points | `MasterBar.syncPoints`, `Score.backingTrack` | no | sync points |
 | Stylesheet and systems layout | `Score.stylesheet` (22 settings, multi-bar rests among them), `Score.defaultSystemsLayout`, `Score.systemsLayout`, `Track.systemsLayout`, `Track.lineBreaks`, `MasterBar.displayScale`/`displayWidth`, `Bar.displayScale`/`displayWidth` | none of it | one item, reported when any setting differs from alphaTab's default |
@@ -338,17 +342,25 @@ of the conversion outside the mapper, and each reads back as nothing:
 | Beaming | `MasterBar.beamingRules`, `Beat.beamingMode`, `invertBeamDirection`, `preferredBeamDirection` | |
 | Brush speed | `Beat.brushDuration` | the strum direction survives, its speed does not |
 | Forced natural, forced none | `AccidentalMode.ForceNatural`, `ForceNone` | both read as `auto` (`:122-127`), for the reason argued at `:62-86` |
-| Notes no string can reach | - | not the mapper's: `frettedDocOf` (`services/pitch-on-strings.ts`) frets every pitched note on a staff with a tuning and leaves out the ones no free string reaches, because alphaTab cannot draw a pitched note on tablature (M2 decision 33). Reachable here through a percussion staff, which arrives pitched. Counted by running it on the converted document |
+| Notes no string can reach | - | not the mapper's: `frettedDocOf` (`services/pitch-on-strings.ts`) frets every pitched note on a staff with a tuning and leaves out the ones no free string reaches, because alphaTab cannot draw a pitched note on tablature (M2 decision 33). Counted by running it on the converted document. A percussion staff never meets it: a drum note is its own kind of pitch, and a percussion staff has no tuning to fret it on |
 | Score credits | `Score.copyright`, `music`, `words`, `tab`, `notices`, `instructions`, `tempoLabel` | `ScoreDoc` holds title, subtitle, artist and album only (`:379-388`) |
-| MIDI channels | `PlaybackInformation.primaryChannel`, `secondaryChannel`, `port` | a drum track loses channel 9 |
+| MIDI channels | `PlaybackInformation.primaryChannel`, `secondaryChannel`, `port` | `PlaybackInfoDoc` (`:127-138`) has program, bank, volume, balance, mute and solo, and no channel. A drum track is the exception and gets its channel back for nothing: `Score.finish` puts a track whose single staff is percussion on channel 9, primary and secondary (`alphaTab.core.mjs:4316-4321`) |
 | Custom styles | `Score.style`, `Track.style`, `Bar.style`, `Beat.style`, `Note.style` | per-element colour and notehead choices |
 
-### Two it must not report, and one it reports differently
+### What it must not report, and what belongs to the save
 
 - **Multiple voices convert whole.** The correction under "What the composer's model cannot
   hold" above. What the checker reports instead, as a *save* item rather than a conversion one,
   is a **second voice holding only rests**: conversion keeps it and the save after it does not
   (`:376-378`).
+- **A drum track converts whole**, from this milestone on - decision 12 and Part 3. What the
+  checker reports, and again as a save item, is **a kit the file invents**: percussion notes
+  whose articulation indexes into a non-empty `Track.percussionArticulations`. alphaTex names a
+  drum note from Guitar Pro's standard table, and an articulation that table does not name is
+  written `"unknown"` and cannot be read back. The count is the exposure, not the loss - the
+  table is internal to alphaTab, so nothing outside it can say which names will be found - and
+  the detail says so. Part 3's "alphaTex carries percussion" has the mechanism, and the
+  conversion proves the save rather than trusting this count.
 - **A double bar** survives conversion and is lost by the save, because alphaTab 1.8 reads
   `\db` and never writes it - already pinned in `score-doc-mapper.effects.spec.ts` and recorded
   in `docs/TODO.md`. It is reported in the same save group.
@@ -361,7 +373,237 @@ the same sentence.
 
 ---
 
-## Part 3: The prompt, and converting
+## Part 3: Percussion in the model
+
+Decision 12. A drum track was the one row of Part 2 that converted *wrong* rather than short:
+`fromNote` read a percussion note's `tone` and `octave` as a pitch
+(`services/score-doc-mapper.service.ts:631-642`) and `toStaff` never set `isPercussion`, so a
+kit came back as pitched notes on a five-line staff. It is also the smallest row to fix.
+alphaTab keeps a drum note in one number, a drum kit in one list and a drum staff in one flag,
+and the model can copy all three verbatim.
+
+Every line number below is `client/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs`
+in 1.8.0 unless it is given a file.
+
+### What alphaTab keeps
+
+| Field | What it is |
+|---|---|
+| `Note.percussionArticulation` | one number, default -1. Below `Track.percussionArticulations.length` it is an **index into that list**; at or above it, an **id** looked up in alphaTab's own table (`PercussionMapper.getArticulation`, `:5401-5412`) |
+| `Note.isPercussion` | derived, not stored: `!isStringed && percussionArticulation >= 0` (`:5705`). Such a note leaves `string`, `fret`, `tone` and `octave` at -1 |
+| `Note.realValue` | the articulation number itself on a percussion note (`:6067-6069`) |
+| `Track.percussionArticulations` | `InstrumentArticulation[]` (`:12911`). Empty unless the file declares its own kit |
+| `Staff.isPercussion` | a boolean, with alphaTab's own comment that it belongs on the track (`:12693`) |
+| `Staff.standardNotationLineCount` | 5 by default (`:12698`); a one-line cowbell part or a three-line kit sets it |
+| `InstrumentArticulation` | `id`, `elementType`, `staffLine`, `noteHeadDefault`, `noteHeadHalf`, `noteHeadWhole`, `techniqueSymbol`, `techniqueSymbolPlacement`, `outputMidiNumber`, and `uniqueId`, which is `` `${elementType}.${id}` `` (`:5065-5143`). `staffLine` counts steps - lines and spaces - downwards from the top line, so 1 is the top line and a negative number is above the staff |
+| The default table | 95 articulations, generated from GP7 (`PercussionMapper.instrumentArticulations`, `:5153-5248`): kick is `Acoustic Kick Drum.35` on line 8, snare `Snare.38` on line 3, closed hi-hat `Charley.42` on line -1, ride bell `Ride.53` on line 0. A names table beside it (`:5250-5346`) maps `Snare (hit)` - and `snarehit`, which is the same name with the punctuation taken out - onto those unique ids, and is what alphaTex reads and writes |
+
+What alphaTab then does for itself, so the mapper does not have to:
+
+- `Staff.finish` clears the tuning, turns tablature off and zeroes the display transposition on
+  a percussion staff (`:12708-12712`), and `Track.finish` sets `playbackInfo.program = 0`
+  (`:12935-12937`).
+- `Score.finish` puts a track whose single staff is percussion on MIDI channel 9, primary and
+  secondary (`:4316-4321`).
+- Playback takes the articulation's `outputMidiNumber` as the note's key
+  (`MidiFileGenerator._generateNote`, `:48288-48292`).
+- The renderer draws the articulation's notehead at its `staffLine`, with its technique symbol
+  beside it (`:72027-72033`, `:72093-72105`), and warns to the console when no articulation is
+  found (`:72032`).
+
+So `toScore` writes three things and `score.finish(settings)` - which it already calls
+(`services/score-doc-mapper.service.ts:218`) - does the rest.
+
+**`PercussionMapper` is not reachable from application code.** It is in neither
+`alphaTab.d.ts` nor the runtime namespace: `alphaTab.model.PercussionMapper` is `undefined`,
+checked against the shipped bundle. `alphaTab.model.InstrumentArticulation` *is* exported
+(`alphaTab.d.ts:9645`, `:11558`), with its static `create`. So the model has to carry the
+articulation list itself; it cannot ask alphaTab to look one up or name one.
+
+### What the model gains
+
+Three additions, and nothing else in `models/composer.model.ts` moves.
+
+```ts
+export type NotePitch =
+  | { kind: 'fretted'; string: number; fret: number }
+  | { kind: 'pitched'; noteValue: number; octave: number; letter?: NoteLetter }
+  | { kind: 'percussion'; articulation: number };   // Note.percussionArticulation, verbatim
+
+/** One entry of a track's own kit, in alphaTab's own fields so the mapper copies rather than converts. */
+export interface ArticulationDoc {
+  id: number;
+  elementType: string;
+  staffLine: number;
+  noteHeadDefault: number;        // MusicFontSymbol
+  noteHeadHalf: number;
+  noteHeadWhole: number;
+  techniqueSymbol: number;        // MusicFontSymbol
+  techniqueSymbolPlacement: number;
+  outputMidiNumber: number;
+}
+
+// TrackDoc gains
+percussionArticulations: ArticulationDoc[];   // [] on a pitched track
+
+// StaffDoc gains
+isPercussion: boolean;
+lineCount: number;                            // Staff.standardNotationLineCount
+```
+
+Why a third kind of `NotePitch` rather than a flag on the staff: `pitched` promises a
+`noteValue` and an `octave`, and a drum hit has neither. Today's mapper reads one anyway and
+gets `noteValue: -1, octave: -2`, which is not a pitch that went wrong but a pitch that was
+never there. A kind that says what the number is - and is the only kind that carries it - makes
+the wrong read impossible rather than unlikely.
+
+Why the list lives on `TrackDoc`: alphaTab keeps it there, and a note's number is an index into
+it. Splitting them would mean renumbering, which is the one thing that must not happen.
+
+Why `lineCount` is on `StaffDoc` and not in the percussion fields: it is a staff property in
+alphaTab too, and a pitched staff can use it. It also closes a loss Part 2 never listed, because
+nothing had noticed it.
+
+**The third kind is the audit trail.** `NotePitch` is a discriminated union, read in ten modules
+under `strict`, and almost every read is `kind === 'fretted' ? … : (so it is pitched)`. Adding a
+third member turns each of those else-branches into a compile error at the first `.noteValue`,
+so the build lists the work rather than a reviewer having to: `beat-clipboard.ts`,
+`composer-entry-commands.ts`, `composer-fret-entry.ts`, `edit-refusals.ts`, `note-edits.ts`,
+`note-landing.ts`, `note-moves.ts`, `note-respell.ts`, `pitch-on-strings.ts` and
+`score-doc-mapper.service.ts`. The two new `StaffDoc` fields and the new `TrackDoc` field do the
+same for the four places that build one by hand: `composer.service.ts:202-225` (the default
+track and staff), `progression-score.ts:840-868` (the piano staff),
+`score-derivation.ts:603-630` (transcription) and the mapper.
+
+`soundingMidiOf` (`services/pitch-on-strings.ts:43`) returns `number | null`: a drum hit has no
+sounding pitch. Its callers are all already on a pitched path - the fret digits pass a `fretted`
+literal, `drawnPitchClassOf` and `trillTargetOf` are behind refusals a percussion staff fails,
+and `frettedDocOf` reads only `kind === 'pitched'` - so the one that gains a branch is
+`staffEntryOf` (`:90`), which refuses before it measures. Nothing auditions a drum note:
+`AlphaTabService.auditionAfterRender(midiKey, program)` (`services/alpha-tab.service.ts:240`)
+plays a pitch through a program and has no channel, and channel 9 is what a drum key means.
+
+### Both directions of the mapper
+
+`services/score-doc-mapper.service.ts`, and the two directions stay symmetrical.
+
+| | `toDoc` | `toScore` |
+|---|---|---|
+| Note | `fromNote` (`:607`) tests `note.isPercussion` **before** `note.isStringed` and returns `{ kind: 'percussion', articulation: note.percussionArticulation }`. Nothing else about the note changes: the effects it already reads are the same fields | `toNote` (`:424`) gains the third branch: `note.percussionArticulation = doc.pitch.articulation`, and it writes no string, no fret, no tone and no octave, so `isPercussion` comes out true |
+| Staff | `fromStaff` (`:543`) adds `isPercussion: staff.isPercussion` and `lineCount: staff.standardNotationLineCount`. `tuning` is already `[]` on a percussion staff, because `Staff.finish` cleared it | `toStaff` (`:298`) sets `staff.isPercussion` and `staff.standardNotationLineCount` **before** the bars, and the order matters: `score.finish` is what clears the tuning, turns tablature off and forces program 0 and channel 9, and it runs last |
+| Track | `fromTrack` (`:521`) copies `track.percussionArticulations` field by field into `ArticulationDoc[]` | `toTrack` (`:279`) rebuilds each with `alphaTab.model.InstrumentArticulation.create(id, elementType, staffLine, outputMidiNumber, …)` and pushes them in order, so every note's index still points where it pointed |
+| Accidental | `forcedLetterOf` is asked of a pitch class, and a drum hit has none, so `accidental` stays `'auto'` and `toNote` leaves `accidentalMode` at alphaTab's default. alphaTab agrees: `AccidentalHelper` takes the percussion branch and never computes one (`:24980-24996`) | |
+
+A percussion staff's bar clef is `Clef.Neutral`, which the model already holds as `'n'` and the
+bridge already maps both ways (`services/alpha-tab-enum.bridge.ts:27`, `:37`). Nothing there
+changes.
+
+### alphaTex carries percussion
+
+The composer's library stores alphaTex (`ComposerLibraryService`, `tex: string`), written and
+read by alphaTab's own exporter and importer through `AlphaTexService`
+(`services/alpha-tex.service.ts:25`, `:31`). Both carry percussion, and this was run rather
+than read:
+
+- The exporter writes `instrument percussion` as a track property (`:15428`),
+  `\articulation defaults` as the staff's meta (`:15216`), `\staff{score(<lines>)}` when the
+  line count is not 5 (`:15376-15385`), and each note's value as the articulation's **name**, in
+  quotes (`AlphaTexExporter._note`, `:76713-76726`).
+- The importer's `instrument percussion` sets every staff of the track to percussion and puts it
+  on channel 9 (`:13853-13858`); `\articulation defaults` fills the name table
+  (`:13284-13292`); a quoted name resolves to a `uniqueId`, whose articulation is pushed onto
+  `track.percussionArticulations` and indexed by the note (`:16480-16500`).
+
+A kit written as alphaTex, exported and parsed back gives the same articulation indices, the
+same staff flag and line count, the same neutral clef, channel 9 and program 0 - and a second
+export is byte-identical to the first, which is the property `AlphaTexService`'s own comment
+claims for the pitched case.
+
+**What it does not carry is a kit the file invents.** The exporter writes `\articulation
+defaults` and never the track's own list, and it names each note through the default table
+(`PercussionMapper.getArticulationName`, `:5380-5400`). An articulation that table cannot name
+is written `"unknown"` - and the reload does not merely lose that note. The importer raises
+AT209, `AlphaTexImporter.readScore` throws, and `AlphaTexService.parse` returns `score: null`
+(`services/alpha-tex.service.ts:41`), so the **whole composition** fails to open. Checked by
+building a track with one invented articulation, exporting it and parsing it back.
+
+How likely that is: a GP7 file's articulation `id` is its first `InputMidiNumbers` entry and its
+`elementType` is the instrument element's name (`GpifParser._parseArticulation`, `:22169-22190`)
+- which is where alphaTab's table came from - so a standard kit matches. A gp3-gp5 file has no
+list at all: the importer moves the note's fret into `percussionArticulation` and clears string
+and fret (`:20608-20612`), so every note resolves through the default table. The exposure is a
+file with a hand-built or non-General-MIDI kit.
+
+**The conversion proves the save rather than trusting a count.** Part 4's step 2 already builds
+the composition's alphaTex and refuses the whole conversion if the write fails. It gains one
+line: parse that same string back with `AlphaTexService.parse`, and refuse the same way if it
+does not parse. The `.gp` has not been deleted at that point, so nothing is lost, and the status
+line says the drum track uses articulations alphaTex cannot name. One extra parse of a string
+the conversion had already made. The checker's save item (Part 2) is what the prompt says
+beforehand; this is what the conversion does about it.
+
+### Editing a percussion track
+
+Small on purpose, and the line is drawn at what the model can already say.
+
+| Works | Why |
+|---|---|
+| The caret, the selection, a drag, click-to-seek | `EditCursor` is an address, and a percussion staff draws one standard-notation band like any other staff |
+| Playback | `Staff.isPercussion` puts the track on channel 9 and the articulation supplies the key |
+| Duration, dots, tuplets, rest, clear to rest, insert and delete beat | none of them reads a note's pitch |
+| Cut, copy and paste within a percussion staff | with the clipboard's staff check widened, below |
+| Dynamics, accent, heavy accent, tenuto, staccato, ghost | alphaTab draws each of them on a percussion notehead (`:72070-72085`) and ghost quietens it (`:48572-48576`) |
+| Fermata, and every bar and score command | they belong to the master bar |
+| Tie | `Beat.chain` keys its lookup by `realValue` (`:8086`), which on a percussion note is the articulation (`:6067`), so a tie between two hits of the same drum resolves |
+| Rename, colour, mute, solo, show/hide, remove | `TrackDoc` fields, untouched |
+
+**Writing a new drum note is out of scope, and so is an articulation picker.** alphaTab does not
+make either trivial: the palette would have to offer the 95-entry table to choose from, and the
+table is internal, so the picker would mean a second copy of alphaTab's reference data living in
+this app - which is a design of its own, and the sort of duplication `CLAUDE.md` warns about
+under scale and chord data. What this milestone promises is what the milestone is about: a file
+with drums opens, converts, plays right, lets its guitar part be edited, saves and reloads
+unchanged, and its drum notes keep the articulation they arrived with.
+
+### What a percussion staff refuses
+
+One predicate, in the one place every press already asks. `editRefusal`
+(`services/edit-refusals.ts:145-190`) is the gate: `toolStates` asks it for every row of
+`COMPOSER_TOOLS`, and every specific refusal beside it - `fermataRefusal`, `tieRefusal`,
+`tupletRefusal`, `beatEffectRefusal`, `noteEffectRefusal`, `durationRefusal`, `graceRefusal`,
+`clearRefusal`, `deleteBeatsRefusal` - calls it first. It already reads the staff for exactly
+this kind of question: `onPitchedStaff` is `tuning.length === 0`, and `FRETTED_ONLY_NOTE` and
+`FRETTED_ONLY_BEAT` refuse there. Percussion joins as a third staff test:
+
+```ts
+const onPercussionStaff = refs.some(
+  ref => doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.isPercussion === true
+);
+```
+
+with one message: `PERCUSSION = 'A percussion staff has no strings and no pitch, so that belongs to a pitched staff.'`
+
+| Refused | Tool ids, and where it is caught |
+|---|---|
+| Everything fretted-only | `bend`, `legatoSlide`, `shiftSlide`, `naturalHarmonic`, `artificialHarmonic`, `leftHandTap`, `tap`, `slap`, `pop` - already refused, because a percussion staff has no tuning and `FRETTED_ONLY_*` tests exactly that. They get the percussion message instead of the fretted one, because it is the truer reason |
+| Pitch and spelling | `doubleFlat`, `flat`, `natural`, `sharp`, `doubleSharp`, `respell`, `semitoneDown`, `semitoneUp`. A drum hit has no pitch class to force a letter on or to shift, and alphaTab computes no accidental for one (`:24980-24996`) |
+| Strings | `stringBelow`, `stringAbove`. `previousString` and `nextString` are navigation, not edits, and clamp to the staff's one slot as they do on any staff with no tuning |
+| What alphaTab drops on a percussion staff at playback | `hammerOn` (`:48571`), `trill` (`:48336`) |
+| Fret digits | `fret`. `FretDigitEntry.type` already returns on `staff.tuning.length === 0` (`services/composer-fret-entry.ts:36-38`) - silently. It gains the refusal so the status line says why, which is M2's rule that a press either acts or explains |
+| A Pen click | `scorePressOf` writes on a `'notation'` staff (`services/composer-score-interaction.ts:59`). `StaffKind` gains a fourth member, `'percussion'`, so Pen's press moves the caret and writes nothing, and a drag from it extends the range as a tablature drag does (`dragExtends`, `:68`). The band count does not move: a percussion staff draws the same one standard-notation band, and `staffSlotsOf`'s tablature test is already `showTablature && tuning.length > 0`, so `slotIndexAt`'s ranks are unchanged. `staffSlotsOfScore` (Part 1) reads `Staff.isPercussion` for the same answer |
+| Tuning and capo | `setStaffTuning` and `setStaffNumber('capo', …)` (`services/composer.service.ts:580-586`). Neither has a caller in any template today - swept - so this is a guard on the service and on the document an alphaTex apply can put in, not a button to grey out. `maxFretOf` and `fretRangeOf` are never asked of a percussion staff, because nothing writes a fret there |
+| Paste across staff kinds | `CopiedBeats.fretted`, a boolean (`services/beat-clipboard.ts:17-18`, `:31`, `:87-91`), becomes a staff kind of three - fretted, pitched, percussion - and `pasteRefusal` names the mismatch. Today a drum bar and a piano bar are both "not fretted", so a kit pastes onto a piano staff and the notes go in |
+
+Left alone, because nothing in them reads a string or a pitch and alphaTab draws them from flags:
+`palmMute`, `letRing`, `vibrato`, `wideVibrato`, `pickDown`, `pickUp`, `fadeIn`, `graceBefore`,
+`graceOnBeat`, `dead`, `crescendo` and `decrescendo`.
+
+`changesDocument` (Part 4) is unaffected: it answers whether a tool *would* change the document,
+not whether it may, and a refused press changes nothing either way.
+
+---
+
+## Part 4: The prompt, and converting
 
 ### What asks
 
@@ -420,9 +662,13 @@ In order, and the order is the error handling:
    than a notice after the fact. `replaceDocument` runs it again at step 4 and, on an
    already-fretted document, drops nothing - so its `markClean` survives.
 2. Write the composition: `ComposerLibraryService.save({ title, artist, tex, tempo, trackCount, barCount })`,
-   the alphaTex from the same exporter every save uses. **A failure here refuses the
-   conversion**: the page stays in Original, the edit that asked is not applied, and the status
-   line says why. Nothing has been lost.
+   the alphaTex from the same exporter every save uses - but parse that alphaTex back first
+   (`AlphaTexService.parse`), and treat a parse that returns no score exactly as a failed write.
+   The one thing known to fail that parse is a drum kit the file invents, which alphaTex writes
+   as `"unknown"` (Part 3); the check is general, and costs one parse of a string already built.
+   **A failure here refuses the conversion**: the page stays in Original, the edit that asked is
+   not applied, and the status line says why - naming the track when the diagnostic does.
+   Nothing has been lost.
 3. Delete the `.gp` entry: `GpLibraryService.deleteEntry(entryId)`. **This is the one
    irreversible step.** A failure here leaves both rows, and the status line says the original
    is still in the library - which is a better outcome than the reverse order, where a failed
@@ -440,7 +686,7 @@ were, and the status line says nothing: the prompt was the message.
 
 ---
 
-## Part 4: The page
+## Part 5: The page
 
 ### The track strip
 
@@ -527,7 +773,7 @@ milestone extends that check rather than leaving M3 to find it.
 
 ---
 
-## Part 5: Error handling
+## Part 6: Error handling
 
 | What goes wrong | What happens |
 |---|---|
@@ -547,7 +793,7 @@ question with its remedy inside.
 
 ---
 
-## Part 6: Testing
+## Part 7: Testing
 
 The whole GP feature has no specs today. A repo-wide sweep of `*.spec.ts` for
 `GpLibraryService`, `GpViewerComponent`, `GpLibraryComponent`, `GpFileCardComponent`,
@@ -573,8 +819,30 @@ methods do not throw before an api exists. This milestone brings specs for what 
   disabled, the palette live, a palette press opening the prompt, Cancel changing nothing, and
   Convert leaving one composition, no `.gp` entry, an empty history and the edit applied.
 - **`staffSlotsOfScore`** against `staffSlotsOf` on a document and a score that mean the same
-  thing, and over a hidden track.
+  thing, over a hidden track, and over a percussion staff, whose slot is `'percussion'` and not
+  `'notation'`.
 - **`trackRowsOf`** from both sources, and `renderedTracksOf` refusing to hide the last row.
+- **Percussion, through the mapper** (`score-doc-mapper.percussion.spec.ts`, beside the mapper's
+  existing specs): a `Score` → `ScoreDoc` → `Score` round trip of a drum track asserting the
+  articulation number on each note, the track's articulation list field by field, the staff's
+  `isPercussion` and line count, the neutral clef, program 0 and channel 9 after `score.finish`,
+  and that no note comes back `isStringed` or `isPiano`. One case with a **non-empty** track list
+  where the notes are indices into it, and one with an **empty** list where the notes are ids
+  into alphaTab's own table - the gp3-gp5 shape - because they take different branches of
+  `PercussionMapper.getArticulation` and the mapper must not care which.
+- **Percussion, through alphaTex** (`composer-export.service.percussion.spec.ts` or beside
+  `alpha-tex.service`): export a converted drum score, parse it back, and assert the same
+  articulations, staff flag, line count and channel; assert a second export is byte-identical to
+  the first; and assert that an **invented** articulation exports `"unknown"` and that parsing it
+  back returns `score: null` with an AT209 diagnostic - which is the behaviour the conversion's
+  parse-back step exists to catch, so the spec is what stops it being designed away.
+- **The refusals on a percussion staff**: `editRefusal` returns the percussion message for every
+  fretted-only, pitch, spelling, string, hammer-on and trill tool, and `null` for duration, dots,
+  tuplet, rest, dynamics, accents, staccato, ghost, tie and fermata. Asserted over
+  `COMPOSER_TOOLS` through `toolStates`, so a tool added later cannot arrive without an answer -
+  the same shape the ask-first predicate's spec takes. Plus: a fret digit on a percussion staff
+  writes nothing and says why, a Pen press on one moves the caret and writes nothing, and
+  `pasteRefusal` refuses a drum copy onto a pitched staff and a pitched copy onto a drum staff.
 
 **Where geometry or render selection matters, Karma renders a real alphaTab score**, as
 `services/composer-score-systems.spec.ts` already does - it builds a `Settings`, maps a
@@ -584,16 +852,38 @@ bounds. The two that need it here are the note-bounds overlay behind the scale p
 has to be checked against real `BeatBounds.notes`, and show/hide, which has to be checked
 against what `renderTracks` actually draws.
 
+**There is no `.gp` fixture anywhere in the repo**, and this milestone does not add one: a sweep
+for `*.gp`, `*.gp3`, `*.gp4`, `*.gp5`, `*.gpx` and `*.gp7` outside `node_modules` finds nothing,
+and `client/src/assets` does not exist. So every spec builds its score in memory, which is what
+the mapper's specs already do. A percussion score is built the two ways the importers build one,
+and the cheapest way to build the first is alphaTex, since the importer is in the bundle and the
+composer already wraps it:
+
+```ts
+const { score } = texService.parse([
+  '\\track "Drums" {instrument percussion}',
+  '\\articulation defaults',
+  '("Kick (hit)" "Hi-Hat (closed)").4 "Snare (hit)".4 |'
+].join('\n'));
+```
+
+That gives a track with its own articulation list and notes indexing into it. The other shape -
+an empty list and notes carrying ids, which is what a gp3-gp5 file produces - is built straight
+from `alphaTab.model`: a `Staff` with `isPercussion = true`, a `Note` with
+`percussionArticulation = 38`, and `score.finish(settings)`. Neither needs a file, and both
+exercise the branch the other does not.
+
 Not tested, per `CLAUDE.md`: visual styling and DOM layout.
 
 **Hand checks**, which the suite cannot settle: a real multi-track `.gp` file opening with every
 staff drawn; the prompt's counts against what Guitar Pro shows for the same file; the saved
-original opening in Guitar Pro, and matching the file that went in byte for byte; and a drum
-track, which Part 2 says converts wrong rather than converting short.
+original opening in Guitar Pro, and matching the file that went in byte for byte; and a real
+drum track from a `.gp` file - drawn on the right staff lines with the right noteheads,
+sounding the right kit, and still doing both after a save and a reload.
 
 ---
 
-## Part 7: Build order
+## Part 8: Build order
 
 Each step leaves the app working, and the viewer is deleted last so there is always a way to
 open a file.
@@ -602,24 +892,37 @@ open a file.
    goes. The viewer gets it too, for this one step.
 2. **The two states and the status line.** `ComposerGpService`, the render branch,
    `staffSlotsOfScore`, and what Part 1's last table disables.
-3. **The loss checker**, with its specs, reporting into nothing yet.
-4. **The prompt and Save the original first**, with `changesDocument` behind it. Convert is not
+3. **Percussion in the model** (Part 3), in two commits that each leave the app working. First
+   the model and the mapper: the third `NotePitch` kind, `ArticulationDoc`,
+   `TrackDoc.percussionArticulations`, `StaffDoc.isPercussion` and `lineCount`, the four
+   hand-built literals, the compile errors the new kind raises in ten modules, and both mapper
+   directions with their specs. Then the editing edges: `editRefusal`'s percussion test, the
+   `'percussion'` staff kind, the fret-digit and paste refusals, and their specs. It comes before
+   the checker because the checker's tables are written against the final model, and long before
+   Convert, which is the first step that produces a document from a file.
+4. **The loss checker**, with its specs, reporting into nothing yet.
+5. **The prompt and Save the original first**, with `changesDocument` behind it. Convert is not
    wired: the prompt's Convert is disabled and says so.
-5. **Convert and replace**, in Part 3's order.
-6. **The entry points**: `?gp=<id>`, Import .gp…, the drop, the Library menu's `.gp` rows, and
+6. **Convert and replace**, in Part 4's order, including the parse-back that proves the save.
+7. **The entry points**: `?gp=<id>`, Import .gp…, the drop, the Library menu's `.gp` rows, and
    the gallery's Open.
-7. **The strip's show/hide, mute and solo**, and `composer-track-rows.ts`.
-8. **Scale highlighting**, the panel and the note-bounds overlay.
-9. **The transport**: loop, tempo percent, volume, the seek bar.
-10. **Delete the viewer**: the route (`main.ts:21-25`), the nav link
+8. **The strip's show/hide, mute and solo**, and `composer-track-rows.ts`.
+9. **Scale highlighting**, the panel and the note-bounds overlay.
+10. **The transport**: loop, tempo percent, volume, the seek bar.
+11. **Delete the viewer**: the route (`main.ts:21-25`), the nav link
     (`app.component.html:10`), `components/gp-viewer/` and its scale highlighter.
 
 ---
 
 ## Out of scope
 
-- **Growing the model to hold what it drops.** Part 2's tables are a list of features, and each
-  is its own design. The milestone's job is to say what goes, not to stop it going.
+- **Growing the model past percussion.** Percussion is in, because a drum track converted wrong
+  rather than short and the fix is three fields (decision 12, Part 3). What is left in Part 2's
+  tables is a list of features, and each is its own design. The milestone's job is to say what
+  goes, not to stop it going.
+- **Writing a new drum note, and an articulation picker.** Part 3's last two sections. A
+  converted kit keeps and plays what it arrived with; choosing a new one needs alphaTab's
+  internal articulation table copied into this app, which is a design of its own.
 - **Writing `.gp` back.** Export already writes one (`services/composer-export.service.ts`);
   round-tripping a file into the model and out again is a different promise.
 - **M3's inspector, mixer and bar grid.** The strip's rows are built so the mixer lands on them.
@@ -633,7 +936,8 @@ open a file.
 | Risk | What holds it |
 |---|---|
 | **The replace-and-drop-bytes step is the one irreversible action in the milestone.** A user converts, dislikes it, and the file is gone | Write the composition before deleting the `.gp`, so a failure leaves both. Save the original first, offered in the prompt itself. The prompt says it cannot be undone, in its own paragraph |
-| A drum track converts to a wrong score rather than a short one - pitched notes on a five-line staff | The heaviest row of Part 2's table, and a hand check of its own. Refusing to convert a percussion staff was considered; see "Found while designing" |
+| Percussion is the one thing this milestone *adds* to the model, and a third kind of `NotePitch` reaches ten modules | The kind is a discriminated union under `strict`, so the compiler lists the work rather than a reviewer (Part 3). Every one of those modules already branches on `kind === 'fretted'`; what changes is that the else-branch has to say which of the other two it means |
+| A converted drum track saves as alphaTex the composer cannot read back, and the whole composition is lost with it | Only for a kit the file invents, and the conversion proves the save before it deletes anything: it parses the alphaTex it just built and refuses the conversion whole if it does not parse (Part 3, Part 4 step 2). The prompt says it beforehand as a save item, and a spec pins the failure so it cannot be designed away |
 | The prompt is long enough to be dismissed unread | It shows only what *this* file has, with counts and bars. Most files will show two or three lines |
 | A file large enough that the checker's walk is felt | It runs once, on load, off the rendering path, and its result is kept on `ComposerGpService`. alphaTab has already walked the same score to lay it out |
 | `includeNoteBounds` costs a rectangle per note | Off until the scale panel is first opened, and only then for the life of the page |
@@ -656,12 +960,13 @@ open a file.
 | 8 | Every track is listed in both states; each row gains show/hide, mute and solo | A sidebar that names tracks it does not draw, which is what the viewer does today |
 | 9 | Scale highlighting becomes a composer panel, in both states, reading `MusicTheoryService` | Leaving it on a page that is being deleted - and leaving it broken |
 | 10 | The transport gains loop, tempo percent 25-200, volume and a seek bar with a readout | Losing the viewer's transport with the viewer |
-| 11 | Build order: bytes and every track; the states; the checker; the prompt; convert; the entry points; the strip; highlighting; the transport; delete the viewer | Deleting the viewer before the composer can open a file |
-| 12 | Out of scope: growing the model, writing `.gp` back, M3's inspector, mixer and bar grid | A milestone that never ends |
-| 13 | *Settled here:* a file that converts whole still prompts, reading "Nothing in this file would change" | Converting without asking, when the step cannot be undone whatever the checker found |
-| 14 | *Settled here:* show/hide is a page setting, never an edit, in both states | A `TrackDoc` field, and a document change for something that is only a view |
-| 15 | *Settled here:* mute and solo in Original are the player's; Convert takes the file's own mixer and re-applies the strip's mutes on top | Pretending a player mute was an edit of a file that has not been converted |
-| 16 | *Settled here:* every route into Original writes or updates a `gp-library` entry before the state starts | A converted file with no entry to replace, and a failed parse leaving a half-imported row |
+| 11 | Build order: bytes and every track; the states; percussion in the model; the checker; the prompt; convert; the entry points; the strip; highlighting; the transport; delete the viewer | Deleting the viewer before the composer can open a file |
+| 12 | Percussion joins the model: a third `NotePitch` kind carrying `Note.percussionArticulation`, the articulation list on `TrackDoc`, `isPercussion` and the line count on `StaffDoc`. A percussion staff refuses frets, strings, pitch, spelling, hammer-ons, trills, Pen, tuning and capo, and a cross-kind paste. Writing a new drum note and an articulation picker stay out | Three worse answers: leaving a drum track to convert into pitched notes on a five-line staff; refusing to convert a file that has drums, which would leave its guitar part unreachable; and copying alphaTab's 95-entry articulation table into this app so the palette could write a kit |
+| 13 | Out of scope: growing the model past percussion, writing `.gp` back, M3's inspector, mixer and bar grid | A milestone that never ends |
+| 14 | *Settled here:* a file that converts whole still prompts, reading "Nothing in this file would change" | Converting without asking, when the step cannot be undone whatever the checker found |
+| 15 | *Settled here:* show/hide is a page setting, never an edit, in both states | A `TrackDoc` field, and a document change for something that is only a view |
+| 16 | *Settled here:* mute and solo in Original are the player's; Convert takes the file's own mixer and re-applies the strip's mutes on top | Pretending a player mute was an edit of a file that has not been converted |
+| 17 | *Settled here:* every route into Original writes or updates a `gp-library` entry before the state starts | A converted file with no entry to replace, and a failed parse leaving a half-imported row |
 
 ---
 
@@ -674,7 +979,7 @@ open a file.
   `::ng-deep` rules at `gp-viewer.component.scss:363-376` are dead with it, and nothing calls
   the method after a render in any case. It is also direct DOM manipulation, which `CLAUDE.md`
   names in its table of common mistakes. Decision 9 therefore builds rather than moves, through
-  the bounds lookup (Part 4).
+  the bounds lookup (Part 5).
 - **The library's key, scale and chord filters can never match.** `GpLibraryFiltersComponent`
   offers all three, and nothing in the app ever writes `key`, `detectedScales` or
   `detectedChords`: the gallery passes `{}` (`components/gp-library/gp-library.component.ts:152`)
@@ -711,7 +1016,7 @@ open a file.
   and its promise is not kept (`:17`), so `addFile` (`:87-89`) and `getEntry` (`:196-198`) call
   it again when `this.db` is still null, while `updateEntry` (`:137`), `deleteEntry` (`:174`)
   and `clearLibrary` (`:316`) silently resolve instead. `ComposerLibraryService.ensureDb`
-  (`:48-72`) memoises one promise and is the model to copy. The spec work in Part 6 will meet
+  (`:48-72`) memoises one promise and is the model to copy. The spec work in Part 7 will meet
   this.
 - **Its four indexes are never used.** `title`, `artist`, `dateAdded` and `key`
   (`services/gp-library.service.ts:53-56`); every read is `getAll()` or `get(id)` and the
@@ -720,13 +1025,29 @@ open a file.
   `isInLibrary` is in-memory only, so a file dropped into the viewer that the library already
   holds still offers "Save to Library". The milestone's own routes write through one path, so
   it does not meet this; the gallery still can.
-- **Refusing to convert a percussion track was considered and not chosen.** A drum track
-  converts to something wrong rather than something less - `fromNote` reads its tone and octave
-  as a pitch (`services/score-doc-mapper.service.ts:631-642`) and `toStaff` never sets
-  `isPercussion`. Refusing would be honest, and would leave a user whose file has a drum track
-  no way to edit the guitar part. So it converts, loudly: the heaviest row of the prompt, and a
-  hand check.
-  When the model learns percussion, that row goes.
+- **A drum note read back as a pitch was never a wrong pitch - it was no pitch at all.** The
+  first reading of this was that `fromNote` read a percussion note's tone and octave as a pitch.
+  It is worse and simpler than that: alphaTab leaves `tone` and `octave` at -1 on a percussion
+  note, so `fromNote` produced `{ kind: 'pitched', noteValue: -1, octave: -2 }` for every drum
+  hit in the file, and `toStaff` never set `isPercussion`. Whatever the staff then drew, it was
+  not a reading of the file. Decision 12 fixes it rather than reporting it; Part 3 is the design.
+- **alphaTab's percussion table is real, generated from GP7, and completely out of reach.**
+  `PercussionMapper` holds 95 articulations, their staff lines, their noteheads and their MIDI
+  numbers, and the names alphaTex reads and writes. It is in neither `alphaTab.d.ts` nor the
+  runtime namespace - `alphaTab.model.PercussionMapper` is `undefined` - so nothing outside
+  alphaTab can look one up, name one, or offer a list of them. `InstrumentArticulation` itself
+  *is* exported, so a kit can be carried and rebuilt; it just cannot be browsed. That single
+  fact is what puts an articulation picker out of scope and what makes the model carry the
+  track's list verbatim instead of an id it could resolve later.
+- **alphaTex carries percussion, and a file's own kit is the hole in it.** The exporter writes
+  `instrument percussion`, `\articulation defaults` and each note's articulation by name; the
+  importer reads all three back, indices and channel included, and a second export is
+  byte-identical. But the exporter never writes the track's own articulation list, so an
+  articulation the default table cannot name is written `"unknown"` - and reading that back does
+  not lose one note, it throws, and `AlphaTexService.parse` returns no score at all. A
+  composition saved that way cannot be opened again. Part 3 has the mechanism and the answer; it
+  is the one place in this milestone where a save could be silently unrecoverable, and it is now
+  the reason the conversion parses its own output before it deletes anything.
 - **The M2 design's GP paragraph names multiple voices as a loss and they are not.** Corrected
   under "What the composer's model cannot hold". The real limit is the save, not the
   conversion, and it is already recorded in `docs/TODO.md`.
