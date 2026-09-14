@@ -1,5 +1,5 @@
 import { CommonModule, DOCUMENT } from '@angular/common';
-import { Component, OnDestroy, OnInit, inject } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
 import { Subject, filter, takeUntil } from 'rxjs';
 
@@ -30,8 +30,11 @@ import { CircleOfFifthsComponent } from './components/circle-of-fifths/circle-of
   standalone: true,
   imports: [CommonModule, RouterModule, CircleOfFifthsComponent]
 })
-export class AppComponent implements OnInit, OnDestroy {
+export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
   title = 'MusicTheory';
+
+  @ViewChild('appHeader') private header?: ElementRef<HTMLElement>;
+  private headerObserver: ResizeObserver | null = null;
 
   /**
    * Routes whose view reads `selectedKey`.
@@ -84,10 +87,33 @@ export class AppComponent implements OnInit, OnDestroy {
       .subscribe(event => this.onNavigated(event.urlAfterRedirects));
   }
 
+  ngAfterViewInit(): void {
+    this.publishHeaderHeight();
+    const header = this.header?.nativeElement;
+    if (header && typeof ResizeObserver !== 'undefined') {
+      this.headerObserver = new ResizeObserver(() => this.publishHeaderHeight());
+      this.headerObserver.observe(header);
+    }
+  }
+
   ngOnDestroy(): void {
     this.document.removeEventListener('keydown', this.escapeListener, true);
     this.destroy$.next();
     this.destroy$.complete();
+    this.headerObserver?.disconnect();
+  }
+
+  /**
+   * Publishes the header's height as `--app-header-height` on the document root.
+   *
+   * A page that fills the viewport under the header - the composer's grid - reads it, because the
+   * header's height is not a constant: its navigation wraps on a narrow window. A CSS custom property is
+   * the contract between the shell and such a page, so this is the one place a component sets a style
+   * on the document. Re-published whenever the header resizes.
+   */
+  publishHeaderHeight(): void {
+    const height = this.header?.nativeElement.offsetHeight;
+    if (height !== undefined) this.document.documentElement.style.setProperty('--app-header-height', `${height}px`);
   }
 
   /**

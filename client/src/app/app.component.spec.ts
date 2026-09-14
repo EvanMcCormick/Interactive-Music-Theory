@@ -64,6 +64,15 @@ describe('AppComponent', () => {
     });
   });
 
+  describe('the header\'s height', () => {
+    it('is published for a page that fills the rest of the viewport', () => {
+      component.publishHeaderHeight();
+
+      const header: HTMLElement = fixture.nativeElement.querySelector('header');
+      expect(document.documentElement.style.getPropertyValue('--app-header-height')).toBe(`${header.offsetHeight}px`);
+    });
+  });
+
   describe('opening and closing', () => {
     it('starts closed', () => {
       expect(component.circleOpen).toBeFalse();
