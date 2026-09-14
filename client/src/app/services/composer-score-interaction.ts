@@ -21,9 +21,11 @@ export interface StaffSlot {
 }
 
 /**
- * The staves alphaTab draws, in render order, described from the document. alphaTab lays out each
- * track's staves in order, standard notation before tablature, so this lines up index for index with
- * `StaffHitTestService.allStaves` and says which track a measured staff belongs to.
+ * The staves alphaTab draws on one system, in render order, described from the document. alphaTab lays out
+ * each track's staves in order, standard notation before tablature, and draws all of them again on every
+ * system. So this lists one system's staves, not the page's: `StaffHitTestService.allStaves` measures every
+ * attached system, and a measured staff is matched to its slot through the system it sits in
+ * (`slotIndexAt` in `composer-score-systems.ts`), never by its index on the page.
  */
 export function staffSlotsOf(doc: ScoreDoc): StaffSlot[] {
   return doc.tracks.flatMap((track, trackIndex) =>

@@ -63,6 +63,30 @@ export class StaffHitTestService {
   }
 
   /**
+   * alphaTab's `.at-surface` on screen: the origin of every bounds lookup coordinate, which the partials are
+   * placed in. Null before alphaTab has made one.
+   */
+  surfaceOriginOf(container: HTMLElement): DOMRect | null {
+    return container.querySelector('.at-surface')?.getBoundingClientRect() ?? null;
+  }
+
+  /**
+   * The y of each staff's middle line, in the bounds lookup's pixels (from the top of `.at-surface`), index for
+   * index with `staves` - or empty before a surface exists. Both boxes move together as the score scrolls, so
+   * this holds until alphaTab lays the page out again. Each surface is measured once.
+   */
+  staffCentresIn(container: HTMLElement, staves: readonly StaffLines[]): number[] {
+    const origin = this.surfaceOriginOf(container);
+    if (!origin) return [];
+    const boxes = new Map<SVGSVGElement, DOMRect>();
+    return staves.map(staff => {
+      const box = this.boxOf(boxes, staff.surface);
+      const middle = (staff.lineY[0] + staff.lineY[staff.lineY.length - 1]) / 2;
+      return box.top - origin.top + middle * this.scaleOf(staff.surface, box);
+    });
+  }
+
+  /**
    * Index into `allStaves` of the staff the pointer is over, if any. `staves` is a measure the caller
    * already holds, for a caller asking on every pointer move; by default the page is measured now.
    */
@@ -164,6 +188,16 @@ export class StaffHitTestService {
   /** Half-steps above the bottom line for a tab string on an N-line staff. */
   stringToHalfSteps(stringNumber: number, lineCount: number): number {
     return (lineCount - stringNumber) * 2;
+  }
+
+  /** `surface`'s box, measured once per call that holds `boxes`. */
+  private boxOf(boxes: Map<SVGSVGElement, DOMRect>, surface: SVGSVGElement): DOMRect {
+    let box = boxes.get(surface);
+    if (!box) {
+      box = surface.getBoundingClientRect();
+      boxes.set(surface, box);
+    }
+    return box;
   }
 
   private toLocalY(staff: StaffLines, box: DOMRect, clientY: number): number {

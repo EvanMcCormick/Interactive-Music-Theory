@@ -30,6 +30,14 @@ import {
   snappedHoverX,
   staffSlotsOf
 } from '../../../../services/composer-score-interaction';
+import {
+  SystemBands,
+  highlightBeatsOf,
+  measuredStaffOfSlot,
+  slotIndexAt,
+  systemBandsOf,
+  systemIndexAt
+} from '../../../../services/composer-score-systems';
 import { BeatRef } from '../../../../services/composer-selection';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { Rect, StaffHitTestService, StaffLines } from '../../../../services/staff-hit-test.service';
@@ -89,14 +97,18 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
   /** The document last handed to alphaTab. See `scoreRedrawOf`. */
   private lastRenderedDoc: ScoreDoc | null = null;
-  /** The rendered staff last clicked, which the caret stays on while it is the caret's. */
+  /** The slot (`staffSlotsOf`) last clicked, on whichever system, which the caret stays on while it is the caret's. */
   private clickedSlotIndex: number | null = null;
   /** Where on notation the last click landed, in half line-spacings above the bottom line. */
   private clickedHalfSteps: number | null = null;
   /** Whether moving with the button held extends the range, for the drag the last mouse-down started. */
   private dragging = false;
-  /** The staves as last measured, dropped whenever alphaTab replaces its surface. See `staves`. */
-  private stavesMeasured: StaffLines[] | null = null;
+  /** The staves as last measured, with their middle lines in bounds lookup pixels. See `measure`. */
+  private measured: { staves: StaffLines[]; centres: number[] } | null = null;
+  /** The systems of the bounds lookup they were read from. See `systems`. */
+  private systemsRead: { lookup: alphaTab.rendering.BoundsLookup; systems: SystemBands[] } | null = null;
+  /** Drops the measure when lazy loading attaches or detaches a system. See `observeSurface`. */
+  private surfaceObserver: MutationObserver | null = null;
   /** The staves the document draws, for the document they were read from. */
   private slotsRead: { doc: ScoreDoc; slots: StaffSlot[] } | null = null;
   /** What the hover notehead last drew, by `hoverKeyOf`, or null for none. */
@@ -162,6 +174,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     this.destroy$.complete();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.surfaceObserver?.disconnect();
+    this.surfaceObserver = null;
     const element = this.alphaTabContainer?.nativeElement;
     element?.removeEventListener('mousedown', this.onScorePointerDown, { capture: true });
     element?.removeEventListener('mousemove', this.onScorePointerMove, { capture: true });
@@ -223,7 +237,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
         this.alphaTabService.render();
       }
       this.lastRenderedWidth = width;
-      this.stavesMeasured = null;
+      this.measured = null;
       this.scheduleCaretUpdate();
     });
     this.resizeObserver.observe(element);
@@ -237,7 +251,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
    * The pointer is read on the container in the capture phase, so its position, Shift and buttons are
    * current when alphaTab's own beat events fire, and outside Angular's zone, since it runs on every move.
    * A mouse-up anywhere on the page ends a drag: alphaTab hears mouse-up only on its own surface. Every
-   * render moves the beats, so the highlight is redrawn and the caret re-measured after each one.
+   * render moves the beats, so the highlight is redrawn and the caret re-measured once its bounds lookup is
+   * in place (`onPostRenderFinished`), and whenever lazy loading attaches a system (`observeSurface`).
    */
   private wireScoreInteraction(): void {
     const element = this.alphaTabContainer?.nativeElement;
@@ -253,12 +268,33 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     this.alphaTabService.onBeatMouseMove(beat => this.dragOverBeat(beat));
     this.alphaTabService.onBeatMouseUp(() => (this.dragging = false));
 
-    // alphaTab attaches the rendered surface after this event, so measuring
-    // has to wait for the DOM to settle.
-    this.alphaTabService.onRenderFinished(() => {
-      this.stavesMeasured = null;
+    // A render replaces the page's systems, so the measure goes at once. The highlight and the caret read
+    // bounds, which with workers are still the last render's at `renderFinished`: they wait for post-render.
+    this.alphaTabService.onRenderFinished(() => (this.measured = null));
+    this.alphaTabService.onPostRenderFinished(() => {
+      this.measured = null;
       this.drawHighlight();
       this.scheduleCaretUpdate();
+    });
+    this.observeSurface(element);
+  }
+
+  /**
+   * Lazy loading (`core.enableLazyLoading`, on by default) attaches a system's partial as it scrolls into view
+   * and detaches it as it leaves (`BrowserUiFacade._onElementVisibilityChanged`), with no render event. So any
+   * change of children under `.at-surface` drops the measure, and the caret - which may sit on the system just
+   * attached - is measured again. The caret and hover boxes, and alphaTab's cursors and highlight, sit outside
+   * `.at-surface` and are not counted, so drawing them does not come back here.
+   */
+  private observeSurface(element: HTMLElement): void {
+    if (typeof MutationObserver === 'undefined') return;
+    this.ngZone.runOutsideAngular(() => {
+      this.surfaceObserver = new MutationObserver(records => {
+        if (!records.some(record => isUnderSurface(record.target))) return;
+        this.measured = null;
+        this.scheduleCaretUpdate();
+      });
+      this.surfaceObserver.observe(element, { childList: true, subtree: true });
     });
   }
 
@@ -274,7 +310,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
         if (this.destroyed) return;
-        this.stavesMeasured = null;
+        this.measured = null;
         this.updateCaretOverlay();
         this.cdr.detectChanges();
       })
@@ -305,15 +341,25 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   };
 
   /**
-   * The rendered staves, measured once and kept until alphaTab replaces its surface - a render, a resize, a
-   * settled caret update - rather than measured on every pointer move. An empty measure, before a surface is
-   * attached, is not kept.
+   * The rendered staves and their middle lines in bounds lookup pixels, measured once and kept until alphaTab
+   * lays the page out again or attaches or detaches a system, rather than measured on every pointer move. An
+   * empty measure, before a surface is attached, is not kept.
    */
-  private staves(element: HTMLElement): StaffLines[] {
-    if (this.stavesMeasured) return this.stavesMeasured;
-    const measured = this.hitTest.allStaves(element);
-    if (measured.length > 0) this.stavesMeasured = measured;
+  private measure(element: HTMLElement): { staves: StaffLines[]; centres: number[] } {
+    if (this.measured) return this.measured;
+    const staves = this.hitTest.allStaves(element);
+    const measured = { staves, centres: this.hitTest.staffCentresIn(element, staves) };
+    if (staves.length > 0 && measured.centres.length === staves.length) this.measured = measured;
     return measured;
+  }
+
+  /** The systems of the bounds lookup alphaTab holds now (`systemBandsOf`), read once per lookup. */
+  private systems(): SystemBands[] {
+    const lookup = this.alphaTabService.getBoundsLookup();
+    if (!lookup) return [];
+    let read = this.systemsRead;
+    if (!read || read.lookup !== lookup) read = this.systemsRead = { lookup, systems: systemBandsOf(lookup) };
+    return read.systems;
   }
 
   /** The staves `doc` draws (`staffSlotsOf`), read once per document. */
@@ -323,16 +369,25 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     return read.slots;
   }
 
-  /** The staff under the pointer: its index among the rendered staves, what it is, and its lines. */
-  private staffUnderPointer(): { index: number; slot: StaffSlot; lines: StaffLines } | null {
+  /**
+   * The staff under the pointer: its index among the measured staves, the slot it draws - found through the
+   * system it sits in (`slotIndexAt`) - and its lines.
+   */
+  private staffUnderPointer(): { index: number; slotIndex: number; slot: StaffSlot; lines: StaffLines } | null {
     const element = this.alphaTabContainer?.nativeElement;
     if (!element || !this.state || !this.pointer) return null;
-    const staves = this.staves(element);
+    const { staves, centres } = this.measure(element);
     const index = this.hitTest.staffIndexAt(element, this.pointer.x, this.pointer.y, staves);
-    if (index === null) return null;
-    const slot = this.slots(this.state.doc)[index];
-    const lines = staves[index];
-    return slot && lines ? { index, slot, lines } : null;
+    const y = index === null ? undefined : centres[index];
+    if (index === null || y === undefined) return null;
+
+    const systems = this.systems();
+    const systemIndex = systemIndexAt(systems, y);
+    if (systemIndex === null) return null;
+    const slots = this.slots(this.state.doc);
+    const slotIndex = slotIndexAt(systems[systemIndex], y, slots);
+    const slot = slotIndex === null ? undefined : slots[slotIndex];
+    return slotIndex !== null && slot ? { index, slotIndex, slot, lines: staves[index] } : null;
   }
 
   /**
@@ -371,7 +426,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     } else {
       this.composer.setCursor(cursor);
       this.dragging = dragExtends(mode, under?.slot.kind ?? null);
-      if (under) this.clickedSlotIndex = under.index;
+      if (under) this.clickedSlotIndex = under.slotIndex;
       if (under?.slot.kind === 'notation') this.rememberNotationClick(under.lines);
       if (press === 'write' && under) this.placeClickedPitch(under.lines);
     }
@@ -464,13 +519,15 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     const x = snappedHoverX((pointer.x - surface.left) / scale, spacing);
     return {
       key: hoverKeyOf(under.index, halfSteps, x, spacing, element.scrollTop),
-      rect: () => this.hitTest.caretRect(element, under.index, x - spacing * 0.65, spacing * 1.3, halfSteps, this.staves(element))
+      rect: () => this.hitTest.caretRect(element, under.index, x - spacing * 0.65, spacing * 1.3, halfSteps, this.measure(element).staves)
     };
   }
 
   /**
    * Draws the range from state with alphaTab's highlight, or clears it. Called for every selection change,
-   * and after every render, since a render replaces the beats the highlight was drawn on.
+   * and after every render's bounds arrive, since a render replaces the beats the highlight was drawn on. While
+   * a render is in flight the lookup does not know the new beats, so it clears rather than let alphaTab throw
+   * (`highlightBeatsOf`); post-render draws it again.
    */
   private drawHighlight(): void {
     const api = this.alphaTabService.getApi();
@@ -480,13 +537,19 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     const beatOf = (ref: BeatRef): alphaTab.model.Beat | undefined =>
       score?.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex]?.beats[ref.beatIndex];
 
-    const first = ends ? beatOf(ends.first) : undefined;
-    const last = ends ? beatOf(ends.last) : undefined;
-    if (first && last) this.alphaTabService.highlightRange(first, last);
+    const beats = highlightBeatsOf(
+      ends ? beatOf(ends.first) : undefined,
+      ends ? beatOf(ends.last) : undefined,
+      this.alphaTabService.getBoundsLookup()
+    );
+    if (beats) this.alphaTabService.highlightRange(beats.first, beats.last);
     else this.alphaTabService.clearHighlight();
   }
 
-  /** Measures the caret box from state: its staff (`caretSlotIndexOf`), its beat, its string or pitch. */
+  /**
+   * Measures the caret box from state: its slot (`caretSlotIndexOf`), drawn on the system that holds its beat
+   * (`measuredStaffOfSlot`), its beat, and its string or pitch. None while that system is not attached.
+   */
   private updateCaretOverlay(): void {
     const element = this.alphaTabContainer?.nativeElement;
     const api = this.alphaTabService.getApi();
@@ -507,8 +570,12 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       ?.voices[cursor.voiceIndex]
       ?.beats[cursor.beatIndex];
     const bounds = beat ? lookup.findBeat(beat) : null;
+    const system = bounds?.barBounds.masterBarBounds.staffSystemBounds ?? null;
+    const systemBands = system ? this.systems()[system.index] : undefined;
+    const { staves, centres } = this.measure(element);
+    const staffIndex = slotIndex !== null && systemBands ? measuredStaffOfSlot(systemBands, centres, slotIndex, slots) : null;
 
-    if (slotIndex === null || !bounds) {
+    if (slotIndex === null || !bounds || staffIndex === null) {
       this.caretRect = null;
       return;
     }
@@ -520,11 +587,17 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
     this.caretRect = this.hitTest.caretRect(
       element,
-      slotIndex,
+      staffIndex,
       bounds.visualBounds.x,
       bounds.visualBounds.w,
       halfSteps,
-      this.staves(element)
+      staves
     );
   }
+}
+
+/** Whether a mutation's target is alphaTab's `.at-surface` or inside it: a system's partial attached or detached. */
+function isUnderSurface(target: Node): boolean {
+  const element = target instanceof Element ? target : target.parentElement;
+  return element?.closest('.at-surface') != null;
 }

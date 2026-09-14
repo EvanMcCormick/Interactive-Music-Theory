@@ -481,9 +481,21 @@ export class AlphaTabService {
     this.api?.noteMouseDown.on(note => this.ngZone.run(() => handler(note)));
   }
 
-  /** Notify once each render pass finishes, when bounds become valid. */
+  /**
+   * Notify once each render pass finishes. The bounds lookup is not yet the new render's: with workers,
+   * `renderFinished` fires before `BoundsLookup.fromJson` replaces it (`alphaTab.core.mjs` ~55561-55567 in
+   * 1.8). Anything that reads bounds waits for `onPostRenderFinished`.
+   */
   onRenderFinished(handler: () => void): void {
     this.api?.renderFinished.on(() => this.ngZone.run(() => handler()));
+  }
+
+  /**
+   * Notify once a render's bounds lookup is in place - after `renderFinished`, and after a resize re-layout -
+   * so beats of the score just rendered can be found in it.
+   */
+  onPostRenderFinished(handler: () => void): void {
+    this.api?.postRenderFinished.on(() => this.ngZone.run(() => handler()));
   }
 
   /** Positions of rendered beats and notes, valid after a render completes. */
