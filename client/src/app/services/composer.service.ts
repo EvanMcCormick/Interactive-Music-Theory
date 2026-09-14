@@ -97,6 +97,9 @@ import { insertBarInto } from './score-structure';
 export class ComposerService {
   private readonly stateSubject = new BehaviorSubject<ComposerState>(ComposerService.initialState(0));
 
+  /** Unsaved work outside the document that a new composition would throw away, each asked when one is about to. */
+  private readonly unsavedElsewhere = new Set<() => boolean>();
+
   /** Commits, undo and redo, and the refusals and notices beside them. See composer-history.ts. */
   private readonly history = new ComposerHistory({
     state: () => this.stateSubject.getValue(),
@@ -255,16 +258,21 @@ export class ComposerService {
   }
 
   /**
-   * Whether a new composition may replace this one, asking "Discard unsaved changes and `action`?" when anything is
-   * unsaved. Every path that starts a new composition asks it first. See `ComposerHistory.confirmDiscard`.
+   * Whether the composition open may be replaced by a new one - a load, New, an opened transcription - which starts a
+   * fresh history, so its unsaved work would be gone past undo. With nothing unsaved, in the document or held elsewhere
+   * (`holdUnsavedWork`), yes without asking; otherwise the user is asked, "Discard unsaved changes and `action`?". Every
+   * path that starts a new composition asks it first. Asking changes nothing: a caller that is told no leaves the
+   * document, its history and the route as they are.
    */
   confirmDiscard(action: string): boolean {
-    return this.history.confirmDiscard(action);
+    const unsaved = this.state.isDirty || [...this.unsavedElsewhere].some(held => held());
+    return !unsaved || window.confirm(`Discard unsaved changes and ${action}?`);
   }
 
-  /** Counts unsaved work held outside the document in `confirmDiscard`, until the returned release. */
+  /** Counts `unsaved` as unsaved work in `confirmDiscard` - the page's edited alphaTex draft - until the returned release. */
   holdUnsavedWork(unsaved: () => boolean): () => void {
-    return this.history.holdUnsavedWork(unsaved);
+    this.unsavedElsewhere.add(unsaved);
+    return () => void this.unsavedElsewhere.delete(unsaved);
   }
 
   /**

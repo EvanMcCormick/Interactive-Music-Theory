@@ -313,6 +313,15 @@ describe('pressGuardAfter', () => {
     expect(released).toBe('none');
     expect(pressGuardAfter(released, 'press')).toBe('none');
   });
+
+  it('ends on a press the browser cancelled - one become a native drag, or a touch become a scroll - which sends no release', () => {
+    const armed = pressGuardAfter('none', 'popoverClosedByPress');
+
+    expect(pressGuardAfter(armed, 'cancel')).withContext('a closing press dragged from a link, never reaching the score').toBe('none');
+    expect(pressGuardAfter(pressGuardAfter(armed, 'press'), 'cancel')).withContext('a closing press on the score become a drag').toBe('none');
+    expect(pressGuardAfter('none', 'cancel')).toBe('none');
+    expect(pressGuardAfter(pressGuardAfter(armed, 'cancel'), 'press')).withContext('the next press on the score acts').toBe('none');
+  });
 });
 
 describe('scoreTakesPress', () => {

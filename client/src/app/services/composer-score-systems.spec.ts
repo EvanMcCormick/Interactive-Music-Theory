@@ -375,6 +375,20 @@ describe('staff systems on a real engraving', () => {
     if (!numbered) return;
     expect(numberedSlotAt(bands[0], (numbered.top + numbered.bottom) / 2, docSlots)).toBe(2);
     expect(numberedSlotAt(bands[0], centres[1], docSlots)).toBeNull();
+
+    // Every y across the band names it, top to bottom: the band is the only thing that can, and a press anywhere on a
+    // numbered staff has to reach it rather than the staff the measured lines put nearest.
+    const page = host;
+    const origin = hitTest.surfaceOriginOf(page);
+    expect(origin).not.toBeNull();
+    if (!origin) return;
+    const ys = [numbered.top, (numbered.top + numbered.bottom) / 2, numbered.bottom - 1];
+    expect(ys.map(y => numberedSlotAt(bands[0], y, docSlots))).toEqual([2, 2, 2]);
+
+    // The tablature below reaches three line spacings past its top line, so measured lines alone take the band's lower half.
+    const tabBox = staves[2].surface.getBoundingClientRect();
+    const measured = ys.map(y => hitTest.staffIndexAt(page, tabBox.left + tabBox.width / 2, origin.top + y, staves));
+    expect(measured).withContext('why the band decides, not the nearest measured staff').toContain(2);
   });
 
   it('engraves a guitar track whose bar holds a note Pen wrote on its notation staff', () => {

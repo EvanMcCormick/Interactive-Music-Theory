@@ -6,9 +6,9 @@ import { bottomLineDiatonic } from './staff-pitch';
  * What the mouse means on the engraved score, as pure functions of the entry mode, the staff under the
  * pointer and the selection.
  *
- * `ComposerScoreComponent` owns alphaTab and has no spec, so every decision it makes about a click, a
- * drag, the caret, the highlight and what to redraw is made here, where it can be specced; the component
- * only measures the page and calls these.
+ * `ComposerScoreComponent` owns alphaTab, and its spec stubs alphaTab to pin only how the page's events reach the press
+ * guard, so every decision it makes about a click, a drag, the caret, the highlight and what to redraw is made here,
+ * where it can be specced; the component only measures the page and calls these.
  */
 
 /**
@@ -234,8 +234,11 @@ export function writeSounds(before: ScoreDoc, after: ScoreDoc): boolean {
  */
 export type PressGuard = 'none' | 'armed' | 'ignoring';
 
-/** What the guard hears: a popover closed by a press outside it, a mouse-down on the score, a mouse-up anywhere. */
-export type PressGuardEvent = 'popoverClosedByPress' | 'press' | 'release';
+/**
+ * What the guard hears: a popover closed by a press outside it, a mouse-down on the score, a mouse-up anywhere, and a press
+ * the browser cancelled - a `pointercancel`, or the `dragend` of a drag the press became.
+ */
+export type PressGuardEvent = 'popoverClosedByPress' | 'press' | 'release' | 'cancel';
 
 /**
  * The guard after `event`. The press that closes a popover only closes it (design decision 17): it moves no caret, seeks
@@ -244,10 +247,15 @@ export type PressGuardEvent = 'popoverClosedByPress' | 'press' | 'release';
  * `pointerdown` stops neither. So the popover says it closed from a press, which arms the guard; the score's mouse-down
  * turns an armed guard into `ignoring`; and a release anywhere on the page ends it - a closing press that never reached
  * the score included, so the next press on the score acts.
+ *
+ * A press the browser takes over sends no release: one dragged from a link becomes a native drag (`pointerdown`,
+ * `mousedown`, `dragstart`, `pointercancel`, `dragend`), and a touch that scrolls ends in `pointercancel` alone. So a
+ * cancel ends the guard too, or the next press on the score was ignored as well. Never `pointerup`: on a touch tap it
+ * comes before the compatibility `mousedown`, so the closing tap would reach the score.
  */
 export function pressGuardAfter(guard: PressGuard, event: PressGuardEvent): PressGuard {
   if (event === 'popoverClosedByPress') return 'armed';
-  if (event === 'release') return 'none';
+  if (event === 'release' || event === 'cancel') return 'none';
   return guard === 'none' ? 'none' : 'ignoring';
 }
 

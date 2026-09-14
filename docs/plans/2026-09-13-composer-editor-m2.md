@@ -1122,6 +1122,41 @@ The final M2 review, before the merge, found more, fixed in two commits:
   `respelledNote`, `DURATION_ORDER` and `TOOLS_LEFT_TO_A_MODAL` are no longer exported. Whole suite after it:
   **3,351 SUCCESS**.
 
+**A review after the merge** found the press guard left armed by a press the browser cancels, and three smaller items,
+fixed in two commits on `fix/composer-press-guard`.
+
+- **Tasks 3.5 and 4.3: the guard ends on a press that sends no mouse-up (`1de28dc`).** The guard that makes a press
+  closing a popover do nothing else was ended by a `mouseup` alone, and Chrome sends none when a press becomes a native
+  drag: pressing a nav link with the Key popover open and dragging it onto the score gives pointerdown, mousedown,
+  dragstart, pointercancel, dragend, so the popover closed and the guard stayed `armed`. The next click on the score was
+  swallowed, and only the one after it moved the caret. A touch that becomes a scroll ends in `pointercancel` too, with
+  no compatibility mouse events at all. `pressGuardAfter` takes a `'cancel'` event, which ends the guard from `armed` and
+  from `ignoring` alike, and the score listens for `pointercancel` and `dragend` on the injected `DOCUMENT`, in the
+  capture phase, removing both on destroy. `dragend` is belt and braces: it comes after the `pointercancel` that already
+  ended the guard, and covers a browser that sends no cancel. Never `pointerup`, which on a touch tap comes before the
+  compatibility `mousedown`, so the tap that closed a popover would reach the score. `ComposerScoreComponent` has its
+  first spec, `composer-score.component.spec.ts`: alphaTab is stubbed, and it pins that a cancelled or drag-ended closing
+  press leaves the next press acting, that a closing press is still ignored until it ends, and that the listeners go on
+  destroy. Whole suite after it: **3,356 SUCCESS**.
+- **Tasks 3.10 and 3.12, and `ComposerHistory`: the strip, the numbered staff and the discard prompt (`ff8a94c`).** Three
+  items:
+  - **Closing the alphaTex panel did not re-fit the strip.** The panel that opens is observed, and that first report fits
+    the strip; the panel that closes is reported by nothing, since the page and the rows left are the size they were. So
+    `stripRange.max` and the separator's `aria-valuemax` stayed at the value they had with the panel open. The view query
+    that finds the panel gone now fits the strip on a microtask, past the template pass, through `refitStrip` - the
+    observer's own body, which draws only when the range or the height changed, and does nothing once the page is
+    destroyed. The structural spec that recorded `observe()` targets is a behaviour check: the status line wrapped and the
+    panel grown each take the strip's room, and closing the panel gives it back.
+  - **A numbered staff was already found by its band**, in `7a20ace` before the merge (`numberedSlotAt`,
+    `staveBandOfSlot`, `bandCaretRect`), which the review's snapshot of the code predated. The engraved spec now walks the
+    whole band, top to bottom, and records why the band decides: the reviewer's probe put the tablature's ledger reach
+    over the band's lower half, so measured lines alone take a press there to the tablature.
+  - **`ComposerHistory` held non-history.** `confirmDiscard` called `window.confirm` and the class held the
+    `unsavedElsewhere` set, so the history reached the page. Both are `ComposerService`'s now, with the same public API
+    and behaviour and no spec changed; the history is asked only what the document holds. `MAX_HISTORY` is `private`
+    again - nothing outside the class read it.
+  Whole suite after it: **3,357 SUCCESS**.
+
 ---
 
 
