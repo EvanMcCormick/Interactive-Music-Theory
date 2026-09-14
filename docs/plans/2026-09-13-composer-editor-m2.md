@@ -549,8 +549,8 @@ removed a fermata.
   fermata on another note. Otherwise the fermata stays at its position, and is removed only where it can do neither.
   Each edit returns why (`FermataDropReason`), and Task 3.3's notice says it: "1 fermata removed: its note moved where it
   would reach other tracks." Fuzzed through alphaTex with the refined guard: 0 save differences and 0 disagreements
-  between staves over 10,000 random edits on one to three tracks - lengths, dots, inserts, deletes, graces before and
-  on the beat, pastes and Fix bar - about 250 of which carried a fermata. The review's fuzz drew its choices from an LCG
+  between staves over 14,565 random edits on one to three tracks - lengths, dots, inserts, deletes, graces before and
+  on the beat, pastes and Fix bar. Where it was counted, a note that moved kept a fermata in 658 of 6,856 runs. The review's fuzz drew its choices from an LCG
   that lost precision past 2^53, so nearly every choice was the first.
 - **Task 1.15, Fix bar splitting a tuplet group.** `splitAtBarLine` refuses only a tuplet beat that crosses the line.
   So `n2 n8` and six 6:4 sixteenths and `r8`, with beat 1 dotted - accepted, over by 960 - was fixed into two open
