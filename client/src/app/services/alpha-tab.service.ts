@@ -410,10 +410,54 @@ export class AlphaTabService {
   /**
    * Notify when a rendered beat is clicked. alphaTab does the hit testing, so
    * the caller gets the exact beat without any pixel maths of its own.
-   * Requires `player.enableUserInteraction`.
+   *
+   * Fires whatever `player.enableUserInteraction` says: `_setupClickHandling` wires the beat mouse events
+   * either way, and the flag only decides whether alphaTab also runs its own selection - which sets the
+   * playback range on mouse-up.
    */
   onBeatMouseDown(handler: (beat: alphaTab.model.Beat) => void): void {
     this.api?.beatMouseDown.on(beat => this.ngZone.run(() => handler(beat)));
+  }
+
+  /**
+   * Notify when the pointer crosses a beat after a `beatMouseDown`, until alphaTab sees the mouse-up. alphaTab
+   * hears that mouse-up only on its own surface, so after a release outside the score this goes on firing;
+   * a caller checks the move's own `MouseEvent.buttons`.
+   */
+  onBeatMouseMove(handler: (beat: alphaTab.model.Beat) => void): void {
+    this.api?.beatMouseMove.on(beat => this.ngZone.run(() => handler(beat)));
+  }
+
+  /** Notify when the button is released over alphaTab's surface after a `beatMouseDown`, with the beat under the pointer or null. */
+  onBeatMouseUp(handler: (beat: alphaTab.model.Beat | null) => void): void {
+    this.api?.beatMouseUp.on(beat => this.ngZone.run(() => handler(beat)));
+  }
+
+  /**
+   * Draws alphaTab's selection markers from `startBeat` to `endBeat` without setting the playback range,
+   * so selecting never changes what the transport plays. alphaTab does not redraw it after a render while
+   * `enableUserInteraction` is off, so a caller redraws after `renderFinished`.
+   */
+  highlightRange(startBeat: alphaTab.model.Beat, endBeat: alphaTab.model.Beat): void {
+    this.api?.highlightPlaybackRange(startBeat, endBeat);
+  }
+
+  /** Removes the selection markers. */
+  clearHighlight(): void {
+    this.api?.clearPlaybackRangeHighlight();
+  }
+
+  /**
+   * Moves the playback position to the start of `beat`, as a click did while alphaTab's own interaction was
+   * on - and nothing more: no playback range is set. The start comes from the tick cache, which counts
+   * repeats (`MidiTickLookup.getBeatStart`, the beat's first playing). Does nothing before the player has
+   * built a tick cache.
+   */
+  seekToBeat(beat: alphaTab.model.Beat): void {
+    const api = this.api;
+    const cache = api?.tickCache;
+    if (!api || !cache) return;
+    api.tickPosition = cache.getBeatStart(beat);
   }
 
   /**
