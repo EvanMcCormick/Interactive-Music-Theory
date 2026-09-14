@@ -7,9 +7,10 @@ import {
   NgZone,
   OnDestroy,
   OnInit,
-  ViewChild
+  ViewChild,
+  inject
 } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { CommonModule, DOCUMENT } from '@angular/common';
 import { Subject, debounceTime, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
@@ -91,7 +92,8 @@ interface StaffUnderPointer {
  * Mouse only. alphaTab listens for mouse events alone (`HtmlElementContainer`, `mousedown`/`mousemove`/
  * `mouseup`), and so does this. A tap or a stylus press reaches both as the browser's compatibility mouse
  * events, so it moves the caret, seeks, and in Pen writes; but a touch drag scrolls the score rather than
- * selecting, and a touch has no hover notehead. Pointer events are recorded as a follow-up, not built.
+ * selecting, and a touch has no hover notehead. Pointer events are recorded as a follow-up, not built - bar
+ * `pointercancel`, which says a press will send no mouse-up (`onPressCancelled`).
  */
 @Component({
   selector: 'app-composer-score',
@@ -150,6 +152,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   private boundsPending = false;
   /** Whether a caret update is already waiting for its frames (`scheduleCaretUpdate`). */
   private caretUpdateScheduled = false;
+  /** The page the drag and press listeners are on. */
+  private readonly document = inject(DOCUMENT);
 
   constructor(
     private readonly composer: ComposerService,
@@ -223,7 +227,9 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     element?.removeEventListener('mousedown', this.onScorePointerDown, { capture: true });
     element?.removeEventListener('mousemove', this.onScorePointerMove, { capture: true });
     element?.removeEventListener('mouseleave', this.onScorePointerLeave);
-    document.removeEventListener('mouseup', this.onDocumentMouseUp, { capture: true });
+    this.document.removeEventListener('mouseup', this.onDocumentMouseUp, { capture: true });
+    this.document.removeEventListener('pointercancel', this.onPressCancelled, { capture: true });
+    this.document.removeEventListener('dragend', this.onPressCancelled, { capture: true });
     this.alphaTabService.dispose();
   }
 
@@ -306,7 +312,14 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       element.addEventListener('mousemove', this.onScorePointerMove, { capture: true });
       element.addEventListener('mouseleave', this.onScorePointerLeave);
       // In the capture phase, so a control that stops a release cannot leave a drag or a closing press running.
-      document.addEventListener('mouseup', this.onDocumentMouseUp, { capture: true });
+      this.document.addEventListener('mouseup', this.onDocumentMouseUp, { capture: true });
+      // A press the browser takes over sends no mouse-up at all, so a release alone would leave the guard armed and the
+      // next press on the score ignored: a press dragged from a nav link becomes a native drag - pointerdown, mousedown,
+      // dragstart, pointercancel, dragend - and a touch that turns into a scroll ends in pointercancel with no
+      // compatibility mouse events. `dragend` as well, in case the cancel is missed. Never `pointerup`, which on a touch
+      // tap comes before the compatibility `mousedown` (`pressGuardAfter`).
+      this.document.addEventListener('pointercancel', this.onPressCancelled, { capture: true });
+      this.document.addEventListener('dragend', this.onPressCancelled, { capture: true });
     });
     this.alphaTabService.onBeatMouseDown(beat => this.pressBeat(beat));
     this.alphaTabService.onBeatMouseMove(() => this.dragOverBeat());
@@ -402,6 +415,15 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   private readonly onDocumentMouseUp = (): void => {
     this.dragging = false;
     this.pressGuard = pressGuardAfter(this.pressGuard, 'release');
+  };
+
+  /**
+   * The press was taken over and will send no release: a `pointercancel` - a press become a native drag, a touch become a
+   * scroll - or the `dragend` that ends such a drag. It ends a drag here and the popover's guard, as a release does.
+   */
+  private readonly onPressCancelled = (): void => {
+    this.dragging = false;
+    this.pressGuard = pressGuardAfter(this.pressGuard, 'cancel');
   };
 
   /**
