@@ -102,7 +102,8 @@ export class ComposerService {
     commitFollowing: (edit, place) => this.commitFollowing(edit, place),
     refuse: reason => this.refuse(reason),
     markDiverged: draft => this.markDiverged(draft),
-    moveCursor: move => this.moveCursor(move)
+    moveCursor: move => this.moveCursor(move),
+    setInputDuration: (duration, dots) => this.setInputDuration(duration, dots)
   };
   private readonly structure = new ComposerStructureCommands(this.host);
   private readonly entry = new ComposerEntryCommands(this.host);
@@ -483,6 +484,11 @@ export class ComposerService {
     else this.commitFollowing(draft => setBeatDurations(draft, refs, duration, dots));
 
     this.setInputDuration(duration, dots);
+  }
+
+  /** Dots the selection's beats at their own values, and remembers the dots. See `applyDotsAtCursor` in composer-entry-commands.ts. */
+  applyDotsAtCursor(dots: number): void {
+    this.entry.applyDotsAtCursor(dots);
   }
 
   // -------------------------------------------------------------------------

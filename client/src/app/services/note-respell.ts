@@ -98,11 +98,14 @@ function respellingOf(doc: ScoreDoc, target: NoteTarget): Pick<NoteDoc, 'pitch' 
   return respelledNote(target.note, drawnPitchClassOf(staff, target.note.pitch), bar.keySignature.fifths, transposed);
 }
 
-/** Why a respell cannot apply to `refs`, or null: any note edit's refusal, or no note that can be respelled. */
-export function respellRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null {
-  const refusal = editRefusal(doc, refs, { family: 'note', key: 'notes' }, focus);
+/**
+ * Why a respell cannot apply to `refs`, or null: any note edit's refusal, or no note that can be respelled.
+ * `notes`, when given, are `noteTargetsAt(doc, refs, focus)` already read.
+ */
+export function respellRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null, notes?: readonly NoteTarget[]): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'note', key: 'notes' }, focus, notes);
   if (refusal) return refusal;
-  const targets = noteTargetsAt(doc, refs, focus);
+  const targets = notes ?? noteTargetsAt(doc, refs, focus);
   if (targets.some(target => respellingOf(doc, target) !== null)) return null;
   return targets.every(target => target.note.effects.harmonic === 'natural') ? NATURAL_HARMONIC : WHITE_KEY;
 }

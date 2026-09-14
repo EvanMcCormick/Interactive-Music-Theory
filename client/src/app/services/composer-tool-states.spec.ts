@@ -133,9 +133,26 @@ describe('toolStates', () => {
     expect(toolStateOf(doc, null, at(0, 0), 'natural').pressed).toBeFalse();
   });
 
+  it('returns the same states for the same state, so a template reading them on every check reads the score once', () => {
+    const doc = ComposerService.createEmptyScore();
+    const cursor = at(0, 0);
+    const first = toolStates(doc, null, cursor, 'select');
+
+    expect(toolStates(doc, null, cursor, 'select')).toBe(first);
+    expect(toolStates(doc, null, { ...cursor }, 'select')).not.toBe(first);
+    expect(toolStates(doc, null, cursor, 'pen')).not.toBe(first);
+  });
+
+  it('shows Select or Pen pressed from the entry mode', () => {
+    const doc = ComposerService.createEmptyScore();
+    const pen = toolStates(doc, null, at(0, 0), 'pen');
+
+    expect([pen.get('select')?.pressed, pen.get('pen')?.pressed]).toEqual([false, true]);
+  });
+
   it('answers every tool it knows at once, and idle for one it does not', () => {
     const doc = ComposerService.createEmptyScore();
-    const states = toolStates(doc, null, at(0, 0));
+    const states = toolStates(doc, null, at(0, 0), 'select');
 
     expect(states.get('quarter')?.pressed).toBeTrue();
     expect(toolStateOf(doc, null, at(0, 0), 'no-such-tool')).toEqual({ pressed: false, refusal: null });

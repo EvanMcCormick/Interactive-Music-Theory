@@ -41,7 +41,9 @@
       </text>
 
       <!-- Majors. The enharmonic position is cut in half so F sharp and G flat
-           are two targets rather than one ambiguous one. -->
+           are two targets rather than one ambiguous one. Every wedge is a button, so
+           Space and Enter choose it and claim the press: a page listening on the
+           document - the composer's Space is play and pause - leaves it alone. -->
       <ng-container *ngIf="position.majorEnharmonic === null">
         <path
           class="wedge major"
@@ -51,8 +53,8 @@
           [attr.aria-label]="majorLabel(position)"
           [attr.d]="wedge(i, rings.major)"
           (click)="selectMajor(position)"
-          (keydown.enter)="selectMajor(position)"
-          (keydown.space)="selectMajor(position)" />
+          (keydown.enter)="$event.preventDefault(); selectMajor(position)"
+          (keydown.space)="$event.preventDefault(); selectMajor(position)" />
         <text
           class="label major-label"
           [attr.x]="labelPoint(i, rings.major).x"
@@ -70,7 +72,8 @@
           [attr.aria-label]="majorLabel(position)"
           [attr.d]="wedge(i, rings.major, 'top')"
           (click)="selectMajor(position)"
-          (keydown.enter)="selectMajor(position)" />
+          (keydown.enter)="$event.preventDefault(); selectMajor(position)"
+          (keydown.space)="$event.preventDefault(); selectMajor(position)" />
         <text
           class="label major-label enharmonic"
           [attr.x]="labelPoint(i, rings.major, 12).x"
@@ -86,7 +89,8 @@
           [attr.aria-label]="majorLabel(position, true)"
           [attr.d]="wedge(i, rings.major, 'bottom')"
           (click)="selectMajor(position, true)"
-          (keydown.enter)="selectMajor(position, true)" />
+          (keydown.enter)="$event.preventDefault(); selectMajor(position, true)"
+          (keydown.space)="$event.preventDefault(); selectMajor(position, true)" />
         <text
           class="label major-label enharmonic"
           [attr.x]="labelPoint(i, rings.major, -12).x"
@@ -104,8 +108,8 @@
         [attr.aria-label]="minorLabel(position)"
         [attr.d]="wedge(i, rings.minor)"
         (click)="selectMinor(position)"
-        (keydown.enter)="selectMinor(position)"
-        (keydown.space)="selectMinor(position)" />
+        (keydown.enter)="$event.preventDefault(); selectMinor(position)"
+        (keydown.space)="$event.preventDefault(); selectMinor(position)" />
       <text
         class="label minor-label"
         [attr.x]="labelPoint(i, rings.minor).x"

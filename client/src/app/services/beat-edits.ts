@@ -166,6 +166,18 @@ export function setBeatDurations(
   });
 }
 
+/**
+ * Gives every beat in `refs` `dots` augmentation dots at its own written value, then keeps each bar
+ * honest. See `relength`. What the dot tool does, so dotting a half makes a dotted half whatever note
+ * value the palette holds. Grace beats keep theirs, as `setBeatDurations` leaves them.
+ */
+export function setBeatDots(doc: ScoreDoc, refs: readonly BeatRef[], dots: number): void {
+  relength(doc, refs, beat => {
+    if (beat.effects.grace !== 'none') return;
+    beat.dots = dots;
+  });
+}
+
 /** Puts every beat in `refs` under `tuplet`, or out of any tuplet with null. See `relength`. */
 export function setTuplet(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuplet | null): void {
   relength(doc, refs, beat => {

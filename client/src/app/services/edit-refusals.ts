@@ -1,7 +1,7 @@
 import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc } from '../models/composer.model';
 import { beatsAt, fermataPositionsOf, toggledValue } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
-import { noteEffectTargets, noteTargetsAt, notesAt, tieTargetsOf, trillTargetOf } from './note-edits';
+import { NoteTarget, noteEffectTargets, noteTargetsAt, tieTargetsOf, trillTargetOf } from './note-edits';
 import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieOriginOf } from './note-landing';
 import { forcedLetterOf, reduceToOctave } from './note-spelling';
 
@@ -84,26 +84,13 @@ export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
 }
 
 /**
- * Whether forcing `accidental` would leave any note a press means without a letter.
- *
- * One ref at a time, because the pitch class depends on each note's staff. The focus
- * narrows only a single-beat selection, as it does in `notesAt`.
+ * Whether forcing `accidental` would leave any of `targets` - the notes a press means - without a letter.
+ * Each note is read on its own staff, because the pitch class depends on it.
  */
-function anyNoteUnspellable(
-  doc: ScoreDoc,
-  refs: readonly BeatRef[],
-  focus: number | null,
-  accidental: AccidentalMode
-): boolean {
-  const narrowed = refs.length === 1 ? focus : null;
-  return refs.some(ref => {
+function anyNoteUnspellable(doc: ScoreDoc, targets: readonly NoteTarget[], accidental: AccidentalMode): boolean {
+  return targets.some(({ ref, note }) => {
     const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
-    return (
-      staff !== undefined &&
-      notesAt(doc, [ref], narrowed).some(
-        note => forcedLetterOf(accidental, drawnPitchClassOf(staff, note.pitch)) === undefined
-      )
-    );
+    return staff !== undefined && forcedLetterOf(accidental, drawnPitchClassOf(staff, note.pitch)) === undefined;
   });
 }
 
@@ -126,12 +113,17 @@ function anyNoteUnspellable(
  * transposition and display transposition included. The two agree whenever a staff's
  * transpositions come to a whole number of octaves. A natural harmonic is refused outright:
  * see `drawnPitchClassOf`.
+ *
+ * `notes`, when given, are the notes the press means (`noteTargetsAt` for `refs` and `focus`), already
+ * read - so `toolStates`, asking every tool's refusal of one selection, reads them once. The refusals
+ * below that look at notes take the same optional argument.
  */
 export function editRefusal(
   doc: ScoreDoc,
   refs: readonly BeatRef[],
   scope: EditScope,
-  focus: number | null
+  focus: number | null,
+  notes?: readonly NoteTarget[]
 ): string | null {
   if (scope.family === 'track') {
     return doc.tracks[scope.trackIndex]?.generated ? GENERATED : null;
@@ -147,8 +139,8 @@ export function editRefusal(
     return FRETTED_ONLY_BEAT.has(scope.key) && onPitchedStaff ? FRETTED : null;
   }
   if (FRETTED_ONLY_NOTE.has(scope.key) && onPitchedStaff) return FRETTED;
-  const notes = notesAt(doc, refs, focus);
-  if (notes.length === 0) return 'There is no note there to change.';
+  const targets = notes ?? noteTargetsAt(doc, refs, focus);
+  if (targets.length === 0) return 'There is no note there to change.';
   // Fretted notes only. alphaTab moves a natural harmonic off its fret only on a stringed
   // note: `calculateRealValue`'s harmonic branch and `harmonicPitch` both test `isStringed`
   // (`Note.string >= 0`, ~5677; ~6053-6090), and the mapper sets `string` only for a fretted
@@ -158,14 +150,14 @@ export function editRefusal(
   if (
     scope.key === 'accidental' &&
     scope.accidental !== 'auto' &&
-    notes.some(note => note.pitch.kind === 'fretted' && note.effects.harmonic === 'natural')
+    targets.some(({ note }) => note.pitch.kind === 'fretted' && note.effects.harmonic === 'natural')
   ) {
     return NATURAL_HARMONIC;
   }
   if (
     scope.key === 'accidental' &&
     scope.accidental !== 'auto' &&
-    anyNoteUnspellable(doc, refs, focus, scope.accidental)
+    anyNoteUnspellable(doc, targets, scope.accidental)
   ) {
     return UNSPELLABLE;
   }
@@ -198,10 +190,10 @@ const NOTHING_TO_TIE_FROM =
  * ~6612) - earlier bars are already chained when a note finishes, so the reach is the whole three bars,
  * as `note-landing.spec.ts` pins. An untie is never refused for it.
  */
-export function tieRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null {
-  const refusal = editRefusal(doc, refs, { family: 'note', key: 'tie' }, focus);
+export function tieRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null, notes?: readonly NoteTarget[]): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'note', key: 'tie' }, focus, notes);
   if (refusal) return refusal;
-  const targets = tieTargetsOf(doc, refs, focus);
+  const targets = tieTargetsOf(doc, refs, focus, notes);
   if (!toggledValue(targets.map(target => target.note.isTied), true, false)) return null;
   return targets.some(target => tieCandidateOf(doc, target.ref, target.note) !== null) ? null : NOTHING_TO_TIE_FROM;
 }
@@ -217,10 +209,10 @@ const TRILL_OUT_OF_RANGE =
  * set trills - one aimed past MIDI 127 (`trillTargetOf`), which alphaTab does not keep. A clear is never
  * refused for it.
  */
-export function trillRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null {
-  const refusal = editRefusal(doc, refs, { family: 'note', key: 'trill' }, focus);
+export function trillRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null, notes?: readonly NoteTarget[]): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'note', key: 'trill' }, focus, notes);
   if (refusal) return refusal;
-  const targets = noteTargetsAt(doc, refs, focus);
+  const targets = notes ?? noteTargetsAt(doc, refs, focus);
   if (targets.every(target => target.note.effects.trill !== null)) return null;
   const tooHigh = targets.some(({ ref, note }) => {
     const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
@@ -299,20 +291,21 @@ export function noteEffectRefusal<K extends keyof NoteEffectsDoc>(
   focus: number | null,
   key: K,
   on: NoteEffectsDoc[K],
-  off: NoteEffectsDoc[K]
+  off: NoteEffectsDoc[K],
+  notes?: readonly NoteTarget[]
 ): string | null {
-  const refusal = editRefusal(doc, refs, { family: 'note', key: 'notes' }, focus);
+  const all = notes ?? noteTargetsAt(doc, refs, focus);
+  const refusal = editRefusal(doc, refs, { family: 'note', key: 'notes' }, focus, all);
   if (refusal) return refusal;
 
-  const all = noteTargetsAt(doc, refs, focus);
   if (key === 'vibrato' && all.length > 0 && all.every(target => tieOriginOf(doc, target.ref, target.note) !== null)) {
     return VIBRATO_ON_TIE;
   }
 
-  const targets = noteEffectTargets(doc, refs, focus, key, on);
+  const targets = noteEffectTargets(doc, refs, focus, key, on, all);
   if (toggledValue(targets.map(target => target.note.effects[key]), on, off) !== on) return null;
 
-  const scoped = editRefusal(doc, refs, { family: 'note', key }, focus);
+  const scoped = editRefusal(doc, refs, { family: 'note', key }, focus, all);
   if (scoped) return scoped;
 
   // Nothing to land on: no note the press means has a destination, so `noteEffectTargets` fell back to

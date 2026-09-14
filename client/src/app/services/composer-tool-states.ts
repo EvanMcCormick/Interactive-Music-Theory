@@ -5,6 +5,7 @@ import {
   DurationValue,
   DynamicValue,
   EditCursor,
+  EntryMode,
   MasterBarDoc,
   NoteEffectsDoc,
   ScoreDoc
@@ -22,7 +23,7 @@ import {
   tieRefusal,
   trillRefusal
 } from './edit-refusals';
-import { noteEffectTargets, noteTargetsAt, tieTargetsOf } from './note-edits';
+import { NoteTarget, noteEffectTargets, noteTargetsAt, tieTargetsOf } from './note-edits';
 import { tieOriginOf } from './note-landing';
 import { respellRefusal } from './note-respell';
 
@@ -36,9 +37,19 @@ import { respellRefusal } from './note-respell';
  * do, so a press turns it on for all.
  */
 
-/** What a palette button shows. */
+/**
+ * What a palette button shows. What `pressed` means depends on the tool's `kind` (`ToolKind` in
+ * composer-tools.ts), and only a toggle's and a radio's is shown as `aria-pressed`:
+ * - **toggle**: true when every target has what a press sets, so a press clears it; 'mixed' when some do,
+ *   so a press sets it on all; false when none do, or nothing is selected.
+ * - **radio**: true when every target has this value - the note value, or the entry mode in force for
+ *   Select and Pen; 'mixed' when some do. A press sets the value and never clears it.
+ * - **popover**: whether the selection already carries a value of this kind - a section, a tuplet, an
+ *   alternate ending. A cue for styling, not a pressed state.
+ * - **action**: false, except Rest, which says every target is already a rest. Not a pressed state either.
+ */
 export interface ToolState {
-  /** true: every target has it, and a press clears. 'mixed': some do. false: none do, or nothing is selected. */
+  /** See `ToolState`: what it means depends on the tool's kind. */
   pressed: boolean | 'mixed';
   /** Why a press would be refused, or null. The command still refuses by itself; this only says so first. */
   refusal: string | null;
@@ -54,6 +65,10 @@ interface Reading {
   refs: BeatRef[];
   focus: number | null;
   bars: { first: number; last: number };
+  /** Select or Pen - or null from `toolStateOf`, which is not told and answers nothing for either. */
+  entryMode: EntryMode | null;
+  /** The notes a press means (`noteTargetsAt`), read the first time a reader asks and kept for the rest. */
+  notes: () => readonly NoteTarget[];
 }
 
 type Reader = (reading: Reading) => ToolState;
@@ -115,23 +130,29 @@ function dynamic(value: DynamicValue): Reader {
  */
 function noteEffect<K extends keyof NoteEffectsDoc>(key: K, on: NoteEffectsDoc[K], off: NoteEffectsDoc[K]): Reader {
   return reading => {
-    const targets = noteEffectTargets(reading.doc, reading.refs, reading.focus, key, on);
+    const notes = reading.notes();
+    const targets = noteEffectTargets(reading.doc, reading.refs, reading.focus, key, on, notes);
     const values = targets.map(({ ref, note }) => {
       const origin = key === 'vibrato' ? tieOriginOf(reading.doc, ref, note) : null;
       return (origin ?? note).effects[key];
     });
     return {
       pressed: share(values.map(value => sameValue(value, on))),
-      refusal: noteEffectRefusal(reading.doc, reading.refs, reading.focus, key, on, off)
+      refusal: noteEffectRefusal(reading.doc, reading.refs, reading.focus, key, on, off, notes)
     };
   };
 }
 
 function accidental(mode: Exclude<AccidentalMode, 'auto'>): Reader {
   return reading => ({
-    pressed: share(noteTargetsAt(reading.doc, reading.refs, reading.focus).map(({ note }) => note.accidental === mode)),
-    refusal: editRefusal(reading.doc, reading.refs, { family: 'note', key: 'accidental', accidental: mode }, reading.focus)
+    pressed: share(reading.notes().map(({ note }) => note.accidental === mode)),
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'note', key: 'accidental', accidental: mode }, reading.focus, reading.notes())
   });
+}
+
+/** Select or Pen: pressed when it is the entry mode in force. */
+function entryModeTool(mode: EntryMode): Reader {
+  return reading => (reading.entryMode === null ? IDLE_TOOL : { pressed: reading.entryMode === mode, refusal: null });
 }
 
 function barFlag(read: (bar: MasterBarDoc) => boolean): Reader {
@@ -160,6 +181,8 @@ const idle: Reader = () => IDLE_TOOL;
 
 /** One reader per palette tool, by tool id. */
 const READERS: Readonly<Record<string, Reader>> = {
+  select: entryModeTool('select'),
+  pen: entryModeTool('pen'),
   timeSignature: idle,
   keySignature: idle,
   clef: idle,
@@ -182,8 +205,8 @@ const READERS: Readonly<Record<string, Reader>> = {
     refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'tuplet' }, null)
   }),
   tie: reading => ({
-    pressed: share(tieTargetsOf(reading.doc, reading.refs, reading.focus).map(({ note }) => note.isTied)),
-    refusal: tieRefusal(reading.doc, reading.refs, reading.focus)
+    pressed: share(tieTargetsOf(reading.doc, reading.refs, reading.focus, reading.notes()).map(({ note }) => note.isTied)),
+    refusal: tieRefusal(reading.doc, reading.refs, reading.focus, reading.notes())
   }),
   rest: reading => ({
     pressed: share(beats(reading).map(beat => beat.isRest)),
@@ -205,11 +228,11 @@ const READERS: Readonly<Record<string, Reader>> = {
   flat: accidental('flat'),
   natural: reading => ({
     pressed: false,
-    refusal: editRefusal(reading.doc, reading.refs, { family: 'note', key: 'accidental', accidental: 'auto' }, reading.focus)
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'note', key: 'accidental', accidental: 'auto' }, reading.focus, reading.notes())
   }),
   sharp: accidental('sharp'),
   doubleSharp: accidental('doubleSharp'),
-  respell: reading => ({ pressed: false, refusal: respellRefusal(reading.doc, reading.refs, reading.focus) }),
+  respell: reading => ({ pressed: false, refusal: respellRefusal(reading.doc, reading.refs, reading.focus, reading.notes()) }),
   ppp: dynamic('ppp'),
   pp: dynamic('pp'),
   p: dynamic('p'),
@@ -246,8 +269,8 @@ const READERS: Readonly<Record<string, Reader>> = {
   ghost: noteEffect('isGhost', true, false),
   dead: noteEffect('isDead', true, false),
   trill: reading => ({
-    pressed: share(noteTargetsAt(reading.doc, reading.refs, reading.focus).map(({ note }) => note.effects.trill !== null)),
-    refusal: trillRefusal(reading.doc, reading.refs, reading.focus)
+    pressed: share(reading.notes().map(({ note }) => note.effects.trill !== null)),
+    refusal: trillRefusal(reading.doc, reading.refs, reading.focus, reading.notes())
   }),
   tap: beatEffect('tap', true, false),
   leftHandTap: noteEffect('isLeftHandTapped', true, false),
@@ -263,25 +286,62 @@ const READERS: Readonly<Record<string, Reader>> = {
 /** The ids of every tool `toolStates` has something to say about. */
 export const TOOLS_WITH_STATE: readonly string[] = Object.keys(READERS);
 
-function readingOf(doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor): Reading {
+function readingOf(doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor, entryMode: EntryMode | null): Reading {
+  const refs = selectionTargets(doc, anchor, cursor);
+  // The same focus the service's edits use: the caret's string, only when there is no range.
+  const focus = anchor ? null : cursor.stringIndex;
+  let notes: readonly NoteTarget[] | null = null;
   return {
     doc,
     cursor,
-    refs: selectionTargets(doc, anchor, cursor),
-    // The same focus the service's edits use: the caret's string, only when there is no range.
-    focus: anchor ? null : cursor.stringIndex,
-    bars: selectedBars(anchor, cursor)
+    refs,
+    focus,
+    bars: selectedBars(anchor, cursor),
+    entryMode,
+    notes: () => (notes ??= noteTargetsAt(doc, refs, focus))
   };
 }
 
-/** Every palette tool's state for the selection from `anchor` to `cursor`. */
-export function toolStates(doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor): ReadonlyMap<string, ToolState> {
-  const reading = readingOf(doc, anchor, cursor);
-  return new Map(Object.entries(READERS).map(([id, read]) => [id, read(reading)]));
+/** What `toolStates` was last asked, and its answer. */
+let lastStates: {
+  doc: ScoreDoc;
+  anchor: EditCursor | null;
+  cursor: EditCursor;
+  entryMode: EntryMode;
+  states: ReadonlyMap<string, ToolState>;
+} | null = null;
+
+/**
+ * Every palette tool's state for the selection from `anchor` to `cursor`, with `entryMode` in force.
+ *
+ * Memoized on the identity of its arguments. A page reading this in its template asks on every change
+ * detection, and over a select-all each reading walks every note of the track for every tool; asked again
+ * with the same state, the same map comes back without reading anything. One entry is enough - there is
+ * one composer - and identity is the right test because `ComposerService` replaces the document and the
+ * selection whenever they change and never mutates a published one. Within one reading, the notes the
+ * selection means are read once and shared by every tool (`Reading.notes`).
+ */
+export function toolStates(
+  doc: ScoreDoc,
+  anchor: EditCursor | null,
+  cursor: EditCursor,
+  entryMode: EntryMode
+): ReadonlyMap<string, ToolState> {
+  const last = lastStates;
+  if (last && last.doc === doc && last.anchor === anchor && last.cursor === cursor && last.entryMode === entryMode) {
+    return last.states;
+  }
+  const reading = readingOf(doc, anchor, cursor, entryMode);
+  const states: ReadonlyMap<string, ToolState> = new Map(Object.entries(READERS).map(([id, read]) => [id, read(reading)]));
+  lastStates = { doc, anchor, cursor, entryMode, states };
+  return states;
 }
 
-/** One tool's state, or `IDLE_TOOL` for a tool with nothing to show. For a command deciding a toggle. */
+/**
+ * One tool's state, or `IDLE_TOOL` for a tool with nothing to show. For a command deciding a toggle, so it
+ * is not told the entry mode: Select and Pen come back idle here, and `toolStates` answers for them.
+ */
 export function toolStateOf(doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor, toolId: string): ToolState {
   const read = READERS[toolId];
-  return read ? read(readingOf(doc, anchor, cursor)) : IDLE_TOOL;
+  return read ? read(readingOf(doc, anchor, cursor, null)) : IDLE_TOOL;
 }

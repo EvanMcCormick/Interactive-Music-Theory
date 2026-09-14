@@ -73,11 +73,40 @@ describe('COMPOSER_TOOLS', () => {
     expect(keyless.sort()).toEqual([...KEYLESS_TOOLS].sort());
   });
 
-  it('gives every palette button but Select and Pen a state, and puts it in a palette group', () => {
+  it('gives every palette button a state, Select and Pen included, and puts it in a palette group', () => {
     for (const entry of COMPOSER_TOOLS.filter(candidate => candidate.inPalette)) {
       expect(PALETTE_GROUPS).withContext(entry.id).toContain(entry.group);
-      if (entry.id !== 'select' && entry.id !== 'pen') expect(TOOLS_WITH_STATE).withContext(entry.id).toContain(entry.id);
+      expect(TOOLS_WITH_STATE).withContext(entry.id).toContain(entry.id);
     }
+  });
+
+  it('says what kind of button each tool is, so only toggles and radios are drawn pressed', () => {
+    const kindOf = (id: string): string | undefined => tool(id).kind;
+    for (const entry of COMPOSER_TOOLS) {
+      expect(['toggle', 'radio', 'popover', 'action']).withContext(entry.id).toContain(entry.kind ?? 'none');
+    }
+    expect(['select', 'pen', 'whole', 'quarter', 'sixtyFourth'].map(kindOf)).toEqual(['radio', 'radio', 'radio', 'radio', 'radio']);
+    expect(['timeSignature', 'keySignature', 'clef', 'section', 'alternateEnding', 'tuplet', 'tripletFeel'].map(kindOf))
+      .toEqual(Array(7).fill('popover'));
+    expect(['fixBar', 'insertBar', 'deleteBar', 'natural', 'respell', 'rest', 'undo', 'fret'].map(kindOf)).toEqual(Array(8).fill('action'));
+    expect(['vibrato', 'fermata', 'sharp', 'repeatOpen', 'dot', 'triplet', 'tie', 'mf'].map(kindOf)).toEqual(Array(8).fill('toggle'));
+  });
+
+  it('gives no two palette buttons the same face', () => {
+    const faces = COMPOSER_TOOLS.filter(entry => entry.inPalette).map(entry =>
+      entry.glyph.kind === 'smufl' ? `smufl:${entry.glyph.codePoint.toString(16)}` : `text:${entry.glyph.text}`
+    );
+
+    expect(faces.filter((face, index) => faces.indexOf(face) !== index)).toEqual([]);
+  });
+
+  it('lets a held key repeat only a move, undo and redo, and a step of duration', () => {
+    const navigation = COMPOSER_TOOLS.filter(entry => entry.group === 'Navigation').map(entry => entry.id);
+    const repeatable = COMPOSER_TOOLS.filter(entry => entry.repeatable).map(entry => entry.id);
+
+    expect(repeatable.sort()).toEqual(
+      [...navigation, 'undo', 'redo', 'semitoneUp', 'semitoneDown', 'stringAbove', 'stringBelow', 'longer', 'shorter'].sort()
+    );
   });
 
   it('offers the macOS alternates', () => {
@@ -103,6 +132,19 @@ describe('toolForPress', () => {
     expect(id({ key: 'Enter', altKey: true })).toBe('insertBeat');
     expect(id({ key: ' ', shiftKey: true })).toBe('playFromStart');
     expect(id({ key: '7', code: 'Digit7' })).toBe('fret');
+  });
+
+  it('matches Ctrl with a letter by the letter typed, so undo, redo and select all survive QWERTZ and AZERTY', () => {
+    // A German keyboard types z on the key a US one calls KeyY, and y on KeyZ; French types a on KeyQ.
+    expect(id({ key: 'z', code: 'KeyY', ctrlKey: true })).toBe('undo');
+    expect(id({ key: 'y', code: 'KeyZ', ctrlKey: true })).toBe('redo');
+    expect(id({ key: 'a', code: 'KeyQ', ctrlKey: true })).toBe('selectAll');
+    expect(id({ key: 'q', code: 'KeyA', ctrlKey: true })).toBeNull();
+  });
+
+  it('falls back to the physical key for a letter when the layout typed no Latin letter', () => {
+    expect(id({ key: 'к', code: 'KeyR' })).toBe('rest');
+    expect(id({ key: 'я', code: 'KeyZ', ctrlKey: true })).toBe('undo');
   });
 
   it('prefers an exact binding to a symbol typed through Alt', () => {
@@ -141,6 +183,36 @@ describe('COMPOSER_TOOLS commands', () => {
     run('longer');
     run('longer');
     expect(firstBeat().duration).toBe(2);
+  });
+
+  it('dots the selected beat at its own value, not the input duration', () => {
+    composer.applyDurationAtCursor(2, 0);
+    composer.setInputDuration(4, 0);
+    composer.setCursor({ beatIndex: 0 });
+
+    run('dot');
+
+    expect([firstBeat().duration, firstBeat().dots]).toEqual([2, 1]);
+  });
+
+  it('steps + from the value the selection shares, and from the input duration when it shares none', () => {
+    // Two quarters made eighths: with the rests that fill after them, the range is three eighths.
+    composer.setCursor({ beatIndex: 0 });
+    composer.extendSelectionTo({ beatIndex: 1 });
+    composer.applyDurationAtCursor(8, 0);
+    composer.setInputDuration(4, 0);
+
+    run('longer');
+    expect(firstBeat().duration).toBe(4);
+
+    // A half and a quarter share no value, so + steps from the input duration, an eighth, to a quarter.
+    composer.reset();
+    composer.applyDurationAtCursor(2, 0);
+    composer.setInputDuration(8, 0);
+    composer.setCursor({ beatIndex: 0 });
+    composer.extendSelectionTo({ beatIndex: 1 });
+    run('longer');
+    expect(composer.doc.tracks[0].staves[0].bars[0].voices[0].beats.slice(0, 2).map(beat => beat.duration)).toEqual([4, 4]);
   });
 
   it('dots the selection, and takes the dot off when every beat has one', () => {

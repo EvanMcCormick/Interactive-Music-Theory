@@ -1,6 +1,8 @@
 import type { ComposerService } from './composer.service';
 import { DurationValue, DynamicValue, EntryMode } from '../models/composer.model';
+import { beatsAt } from './beat-edits';
 import { KeyBinding, KeyPress, bindingMatches, bindingMatchesTyped } from './composer-key-bindings';
+import { selectionTargets } from './composer-selection';
 import { toolStateOf } from './composer-tool-states';
 import { fullBendPoints } from './composer-tool-defaults';
 
@@ -55,8 +57,30 @@ export interface ComposerToolHost {
   typeFretDigit(digit: number): void;
 }
 
+/**
+ * What kind of control a tool is, so the page gives it the semantics it has:
+ * - `toggle`: a press turns what it shows on, or off when every target has it - `aria-pressed`, `mixed` included.
+ * - `radio`: one of a set of exclusive values - the note values, Select and Pen - pressed when it is the one in force.
+ * - `popover`: opens a popover to choose a value. Never `aria-pressed`; its state only says a value is set.
+ * - `action`: does something once - Fix bar, Insert bar, Respell, Natural, Rest, every key-only command. Never `aria-pressed`.
+ */
+export type ToolKind = 'toggle' | 'radio' | 'popover' | 'action';
+
 export interface ComposerTool {
   id: string;
+  /** What kind of control it is. See `ToolKind`. */
+  kind: ToolKind;
+  /**
+   * Whether a held key's auto-repeat runs it again. Only moves - navigation, extending, semitone and string
+   * moves - undo and redo, and `+` and `-`, where holding the key means doing it again. Anything else - a
+   * toggle, a save, a fret digit, Delete - runs once per press: held, a toggle would flicker on and off,
+   * a digit would write a run of notes, and Delete would add an undo step per repeat that changed nothing.
+   */
+  repeatable?: boolean;
+  /** Whether it runs with the focus in a text field too: Ctrl+S, so the browser's own Save dialog never opens. */
+  inTextFields?: boolean;
+  /** Whether it leaves the press to the browser while text outside the score is selected: Ctrl+C and Ctrl+X. */
+  yieldsToTextSelection?: boolean;
   /** The button's accessible name, and the start of its tooltip. */
   label: string;
   group: ToolGroup;
@@ -81,64 +105,85 @@ const smufl = (codePoint: number): ToolGlyph => ({ kind: 'smufl', codePoint });
 const text = (value: string): ToolGlyph => ({ kind: 'text', text: value });
 
 /** Whether the tool `id`'s press would clear what every target has. */
-function pressedNow(host: ComposerToolHost, id: string): boolean {
-  const { doc, anchor, cursor } = host.composer.state;
+function pressedNowOf(composer: ComposerService, id: string): boolean {
+  const { doc, anchor, cursor } = composer.state;
   return toolStateOf(doc, anchor, cursor, id).pressed === true;
 }
 
-/** The value `steps` along `DURATION_ORDER` from the input duration: -1 longer, +1 shorter. */
+/**
+ * Presses `+` (-1, longer) or `-` (+1, shorter): one step along `DURATION_ORDER` from the value the
+ * selection's beats share, graces aside, keeping the dots they share - or, when they share none, from the
+ * input duration and its dots. So `+` on eighths makes quarters whatever the palette last held.
+ */
 function steppedDuration(host: ComposerToolHost, steps: -1 | 1): void {
   const state = host.composer.state;
-  const index = DURATION_ORDER.indexOf(state.inputDuration);
+  const beats = beatsAt(state.doc, selectionTargets(state.doc, state.anchor, state.cursor)).filter(beat => beat.effects.grace === 'none');
+  const first = beats[0];
+  const sharedValue = first !== undefined && beats.every(beat => beat.duration === first.duration);
+  const sharedDots = first !== undefined && beats.every(beat => beat.dots === first.dots);
+  const from = sharedValue ? first.duration : state.inputDuration;
+  const index = DURATION_ORDER.indexOf(from);
   const next = DURATION_ORDER[Math.max(0, Math.min(DURATION_ORDER.length - 1, (index < 0 ? 2 : index) + steps))];
-  host.composer.applyDurationAtCursor(next, state.inputDots);
+  host.composer.applyDurationAtCursor(next, sharedDots ? first.dots : state.inputDots);
 }
 
 function durationTool(id: string, label: string, value: DurationValue, codePoint: number): ComposerTool {
   return {
-    id, label, group: 'Duration', glyph: smufl(codePoint), keys: [], inPalette: true,
+    id, kind: 'radio', label, group: 'Duration', glyph: smufl(codePoint), keys: [], inPalette: true,
     run: host => host.composer.applyDurationAtCursor(value, 0)
   };
 }
 
+/** A dot tool: the selected beats' own values dotted, or undotted when every one already has `count`. */
 function dotTool(id: string, label: string, count: number, keys: KeyBinding[], glyph: ToolGlyph): ComposerTool {
   return {
-    id, label, group: 'Duration', glyph, keys, inPalette: true,
-    run: host => host.composer.applyDurationAtCursor(host.composer.state.inputDuration, pressedNow(host, id) ? 0 : count)
+    id, kind: 'toggle', label, group: 'Duration', glyph, keys, inPalette: true,
+    run: host => host.composer.applyDotsAtCursor(pressedNowOf(host.composer, id) ? 0 : count)
   };
 }
 
 function dynamicTool(value: DynamicValue, digit: number, codePoint: number): ComposerTool {
   return {
-    id: value, label: `Dynamic ${value}`, group: 'Dynamics', glyph: smufl(codePoint),
+    id: value, kind: 'toggle', label: `Dynamic ${value}`, group: 'Dynamics', glyph: smufl(codePoint),
     keys: [code(`Digit${digit}`, { ctrl: true, shift: true })], inPalette: true,
-    run: host => host.composer.setDynamics(pressedNow(host, value) ? null : value)
+    run: host => host.composer.setDynamics(pressedNowOf(host.composer, value) ? null : value)
   };
 }
 
 function accidentalTool(id: 'doubleFlat' | 'flat' | 'sharp' | 'doubleSharp', label: string, keys: KeyBinding[], codePoint: number): ComposerTool {
   return {
-    id, label, group: 'Accidentals', glyph: smufl(codePoint), keys, inPalette: true,
-    run: host => host.composer.setAccidental(pressedNow(host, id) ? 'auto' : id)
+    id, kind: 'toggle', label, group: 'Accidentals', glyph: smufl(codePoint), keys, inPalette: true,
+    run: host => host.composer.setAccidental(pressedNowOf(host.composer, id) ? 'auto' : id)
   };
 }
 
 function popoverTool(id: PopoverKind, label: string, group: ToolGroup, glyph: ToolGlyph, keys: KeyBinding[]): ComposerTool {
-  return { id, label, group, glyph, keys, inPalette: true, run: host => host.openPopover(id) };
+  return { id, kind: 'popover', label, group, glyph, keys, inPalette: true, run: host => host.openPopover(id) };
 }
 
 function modeTool(id: EntryMode, label: string, glyph: ToolGlyph): ComposerTool {
-  return { id, label, group: 'Tools', glyph, keys: [], inPalette: true, run: host => host.composer.setEntryMode(id) };
+  return { id, kind: 'radio', label, group: 'Tools', glyph, keys: [], inPalette: true, run: host => host.composer.setEntryMode(id) };
 }
+
+/** The key-only commands whose auto-repeat runs them again, beside every navigation move. See `ComposerTool.repeatable`. */
+const REPEATING: ReadonlySet<string> = new Set(['undo', 'redo', 'semitoneUp', 'semitoneDown', 'stringAbove', 'stringBelow', 'longer', 'shorter']);
 
 /** A tool with no button, for the keyboard and the shortcut sheet. */
 function keyTool(id: string, label: string, group: ToolGroup, keys: KeyBinding[], run: ComposerTool['run']): ComposerTool {
-  return { id, label, group, glyph: text(label), keys, inPalette: false, run };
+  return { id, kind: 'action', label, group, glyph: text(label), keys, inPalette: false, repeatable: group === 'Navigation' || REPEATING.has(id), run };
 }
 
-/** A palette tool that runs a service command. */
-function button(id: string, label: string, group: ToolGroup, glyph: ToolGlyph, keys: KeyBinding[], run: (composer: ComposerService) => void): ComposerTool {
-  return { id, label, group, glyph, keys, inPalette: true, run: host => run(host.composer) };
+/** A palette tool that runs a service command: a toggle, unless it is said to be an action. */
+function button(
+  id: string,
+  label: string,
+  group: ToolGroup,
+  glyph: ToolGlyph,
+  keys: KeyBinding[],
+  run: (composer: ComposerService) => void,
+  kind: ToolKind = 'toggle'
+): ComposerTool {
+  return { id, kind, label, group, glyph, keys, inPalette: true, run: host => run(host.composer) };
 }
 
 export const COMPOSER_TOOLS: readonly ComposerTool[] = [
@@ -154,11 +199,11 @@ export const COMPOSER_TOOLS: readonly ComposerTool[] = [
   // Edit
   keyTool('undo', 'Undo', 'Edit', [code('KeyZ', { ctrl: true })], host => host.composer.undo()),
   keyTool('redo', 'Redo', 'Edit', [code('KeyZ', { ctrl: true, shift: true }), code('KeyY', { ctrl: true })], host => host.composer.redo()),
-  keyTool('cut', 'Cut', 'Edit', [code('KeyX', { ctrl: true })], host => host.composer.cut()),
-  keyTool('copy', 'Copy', 'Edit', [code('KeyC', { ctrl: true })], host => host.composer.copy()),
+  { ...keyTool('cut', 'Cut', 'Edit', [code('KeyX', { ctrl: true })], host => host.composer.cut()), yieldsToTextSelection: true },
+  { ...keyTool('copy', 'Copy', 'Edit', [code('KeyC', { ctrl: true })], host => host.composer.copy()), yieldsToTextSelection: true },
   keyTool('paste', 'Paste', 'Edit', [code('KeyV', { ctrl: true })], host => host.composer.paste()),
   keyTool('selectAll', 'Select all in track', 'Edit', [code('KeyA', { ctrl: true })], host => host.composer.selectAllInTrack()),
-  keyTool('save', 'Save', 'Edit', [code('KeyS', { ctrl: true })], host => host.requestSave()),
+  { ...keyTool('save', 'Save', 'Edit', [code('KeyS', { ctrl: true })], host => host.requestSave()), inTextFields: true },
 
   // Navigation
   keyTool('previousBeat', 'Previous beat', 'Navigation', [key('ArrowLeft')], host => host.composer.moveCursor({ kind: 'beat', delta: -1 })),
@@ -222,13 +267,14 @@ export const COMPOSER_TOOLS: readonly ComposerTool[] = [
   popoverTool('tuplet', 'Tuplet…', 'Duration', text('n:m'), [code('Slash', { alt: true })]),
   button('tie', 'Tie', 'Duration', text('‿'), [key('l')], composer => composer.toggleTie()),
   {
-    id: 'rest', label: 'Rest', group: 'Duration', glyph: smufl(0xe4e5), keys: [key('r'), key('r', { shift: true })], inPalette: true,
+    id: 'rest', kind: 'action', label: 'Rest', group: 'Duration', glyph: smufl(0xe4e5), keys: [key('r'), key('r', { shift: true })], inPalette: true,
     run: host => (host.composer.state.anchor ? host.composer.clearSelectionToRests() : host.composer.setRestAtCursor())
   },
 
   // Bar
   popoverTool('timeSignature', 'Time signature…', 'Bar', smufl(0xe08a), [key('t', { shift: true })]),
-  popoverTool('keySignature', 'Key signature…', 'Bar', smufl(0xe262), [code('KeyK', { ctrl: true })]),
+  // Text, not a sharp: SMuFL has no key-signature symbol, and U+E262 is already the Sharp button's face.
+  popoverTool('keySignature', 'Key signature…', 'Bar', text('Key'), [code('KeyK', { ctrl: true })]),
   popoverTool('clef', 'Clef…', 'Bar', smufl(0xe050), [key('k')]),
   button('repeatOpen', 'Repeat open', 'Bar', smufl(0xe040), [key('[')], composer => composer.toggleMasterBarFlag('isRepeatStart')),
   button('repeatClose', 'Repeat close', 'Bar', smufl(0xe041), [key(']')], composer => composer.toggleRepeatClose()),
@@ -237,11 +283,11 @@ export const COMPOSER_TOOLS: readonly ComposerTool[] = [
   button('doubleBar', 'Double bar', 'Bar', smufl(0xe031), [key('b', { shift: true })], composer => composer.toggleMasterBarFlag('isDoubleBar')),
   popoverTool('tripletFeel', 'Triplet feel…', 'Bar', text('3♪'), [code('Slash', { ctrl: true })]),
   button('freeTime', 'Free time', 'Bar', text('free'), [key('|')], composer => composer.toggleMasterBarFlag('isFreeTime')),
-  button('fixBar', 'Fix bar', 'Bar', text('Fix'), [key('F4')], composer => composer.fixBar()),
+  button('fixBar', 'Fix bar', 'Bar', text('Fix'), [key('F4')], composer => composer.fixBar(), 'action'),
   button('insertBar', 'Insert bar', 'Bar', text('+bar'), [key('Insert', { ctrl: true }), key('Enter', { ctrl: true })], composer =>
-    composer.insertBarsBeforeSelection()
+    composer.insertBarsBeforeSelection(), 'action'
   ),
-  button('deleteBar', 'Delete bar', 'Bar', text('−bar'), [key('Delete', { ctrl: true })], composer => composer.deleteSelectedBars()),
+  button('deleteBar', 'Delete bar', 'Bar', text('−bar'), [key('Delete', { ctrl: true })], composer => composer.deleteSelectedBars(), 'action'),
 
   // Tracks
   keyTool('addTrack', 'Add track', 'Tracks', [key('Insert', { ctrl: true, shift: true }), key('Enter', { ctrl: true, shift: true })], host => host.addTrack()),
@@ -253,11 +299,11 @@ export const COMPOSER_TOOLS: readonly ComposerTool[] = [
   accidentalTool('doubleFlat', 'Double flat', [code('Minus', { alt: true, shift: true })], 0xe264),
   accidentalTool('flat', 'Flat', [code('Minus', { alt: true })], 0xe260),
   button('natural', 'Natural (clears a forced accidental)', 'Accidentals', smufl(0xe261), [code('Digit0', { alt: true })], composer =>
-    composer.setAccidental('auto')
+    composer.setAccidental('auto'), 'action'
   ),
   accidentalTool('sharp', 'Sharp', [code('Equal', { alt: true })], 0xe262),
   accidentalTool('doubleSharp', 'Double sharp', [code('Equal', { alt: true, shift: true })], 0xe263),
-  button('respell', 'Respell', 'Accidentals', text('E♯/F'), [key('e')], composer => composer.respell()),
+  button('respell', 'Respell', 'Accidentals', text('E♯/F'), [key('e')], composer => composer.respell(), 'action'),
   keyTool('semitoneDown', 'Semitone down', 'Accidentals', [key('ArrowDown', { alt: true })], host => host.composer.shiftSemitone(-1)),
   keyTool('semitoneUp', 'Semitone up', 'Accidentals', [key('ArrowUp', { alt: true })], host => host.composer.shiftSemitone(1)),
   keyTool('stringBelow', 'Note to the string below', 'Accidentals', [key('ArrowDown', { ctrl: true, alt: true })], host =>
@@ -320,12 +366,6 @@ export const COMPOSER_TOOLS: readonly ComposerTool[] = [
   ),
   button('fadeIn', 'Fade in', 'Techniques', text('<'), [key('<')], composer => composer.toggleBeatEffect('fadeIn', true, false))
 ];
-
-/** `pressedNow` for a command that has only the service. */
-function pressedNowOf(composer: ComposerService, id: string): boolean {
-  const { doc, anchor, cursor } = composer.state;
-  return toolStateOf(doc, anchor, cursor, id).pressed === true;
-}
 
 /**
  * The tool `press` runs, or null. Exact bindings first, over the whole table; only then a symbol typed

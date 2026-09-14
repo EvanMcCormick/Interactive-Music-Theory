@@ -20,15 +20,64 @@ describe('ComposerKeyHandler', () => {
     handler = new ComposerKeyHandler(host);
   });
 
-  afterEach(() => attached.splice(0).forEach(node => node.remove()));
+  afterEach(() => {
+    document.getSelection()?.removeAllRanges();
+    attached.splice(0).forEach(node => node.remove());
+  });
 
   /** A key event with no modifiers, and `init` over it, whose `preventDefault` is a spy. */
   function press(init: Partial<KeyEventLike>): KeyEventLike & { preventDefault: jasmine.Spy } {
     return {
-      key: '', code: '', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false,
+      key: '', code: '', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, repeat: false,
       target: document.body, defaultPrevented: false, ...init, preventDefault: jasmine.createSpy('preventDefault')
     };
   }
+
+  it('runs a held key\'s repeats only for moves and the like: a held toggle toggles once, a held Ctrl+S saves once', () => {
+    handler.handle(press({ key: 'q', code: 'KeyQ' }));
+    const held = press({ key: 'q', code: 'KeyQ', repeat: true });
+    expect(handler.handle(held)).toBeTrue();
+    expect(held.preventDefault).toHaveBeenCalled();
+    expect(composer.state.entryMode).toBe('pen');
+
+    handler.handle(press({ key: 's', code: 'KeyS', ctrlKey: true }));
+    handler.handle(press({ key: 's', code: 'KeyS', ctrlKey: true, repeat: true }));
+    expect(host.requestSave).toHaveBeenCalledTimes(1);
+
+    handler.handle(press({ key: 'ArrowRight' }));
+    handler.handle(press({ key: 'ArrowRight', repeat: true }));
+    expect(composer.state.cursor.beatIndex).toBe(2);
+  });
+
+  it('leaves Ctrl+C and Ctrl+X to the browser while text outside the score is selected', () => {
+    const words = attach('p');
+    words.textContent = 'Some words on the page';
+    const score = attach('div');
+    score.textContent = 'The score';
+    const scored = new ComposerKeyHandler(host, undefined, () => score);
+    const copy = spyOn(composer, 'copy');
+    const cut = spyOn(composer, 'cut');
+
+    document.getSelection()?.selectAllChildren(words);
+    const copyPress = press({ key: 'c', code: 'KeyC', ctrlKey: true });
+    expect(scored.handle(copyPress)).toBeFalse();
+    expect(copyPress.preventDefault).not.toHaveBeenCalled();
+    expect(scored.handle(press({ key: 'x', code: 'KeyX', ctrlKey: true }))).toBeFalse();
+    expect(copy).not.toHaveBeenCalled();
+    expect(cut).not.toHaveBeenCalled();
+
+    document.getSelection()?.selectAllChildren(score);
+    expect(scored.handle(press({ key: 'c', code: 'KeyC', ctrlKey: true }))).toBeTrue();
+    expect(copy).toHaveBeenCalled();
+  });
+
+  it('saves on Ctrl+S even from a text field, so the browser\'s own Save dialog never opens', () => {
+    const event = press({ key: 's', code: 'KeyS', ctrlKey: true, target: attach('input') });
+
+    expect(handler.handle(event)).toBeTrue();
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(host.requestSave).toHaveBeenCalled();
+  });
 
   function attach<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
     const element = document.createElement(tag);

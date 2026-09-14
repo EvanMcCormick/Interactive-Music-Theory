@@ -61,15 +61,18 @@ function landingOf<K extends keyof NoteEffectsDoc>(key: K, value: NoteEffectsDoc
  *
  * Vibrato skips a tied continuation, whose own vibrato alphaTab never draws or plays - it takes its
  * origin's (`tieOriginOf`) - so a phrase with a tie in it takes vibrato on the notes that carry it.
+ *
+ * `notes`, when given, are `noteTargetsAt(doc, refs, focus)` already read.
  */
 export function noteEffectTargets<K extends keyof NoteEffectsDoc>(
   doc: ScoreDoc,
   refs: readonly BeatRef[],
   focus: number | null,
   key: K,
-  on: NoteEffectsDoc[K]
+  on: NoteEffectsDoc[K],
+  notes?: readonly NoteTarget[]
 ): NoteTarget[] {
-  const all = noteTargetsAt(doc, refs, focus);
+  const all = notes?.slice() ?? noteTargetsAt(doc, refs, focus);
   const holds = holdingOf(key, on);
   if (!holds) return all;
   const holding = all.filter(target => holds(doc, target.ref, target.note));
@@ -141,9 +144,10 @@ export function setAccidental(
  * The notes a tie press reads and sets: the notes it means that have a note to tie from
  * (`tieCandidateOf`), or all of them when none has - which `tieRefusal` refuses unless the press unties.
  * alphaTab clears a tie with no origin, so a range skips its first notes as a hammer-on skips its last.
+ * `notes`, when given, are `noteTargetsAt(doc, refs, focus)` already read.
  */
-export function tieTargetsOf(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): NoteTarget[] {
-  const all = noteTargetsAt(doc, refs, focus);
+export function tieTargetsOf(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null, notes?: readonly NoteTarget[]): NoteTarget[] {
+  const all = notes?.slice() ?? noteTargetsAt(doc, refs, focus);
   const tying = all.filter(target => tieCandidateOf(doc, target.ref, target.note) !== null);
   return tying.length > 0 ? tying : all;
 }

@@ -2,11 +2,14 @@
  * Key bindings for the composer's tools: what a binding is, whether a key press matches one, and how one
  * is written in a tooltip and on the shortcut sheet.
  *
- * The rules are the design's, under "Shortcuts": modifiers exactly, with Cmd read as Ctrl; a Ctrl or Alt
- * combination by physical key, because macOS Option rewrites `key`; a letter in either case with Shift
- * exactly; a digit or symbol whatever Shift says, because which symbols need Shift depends on the layout;
- * a named key with Shift exactly. And one the design did not state: a symbol typed through AltGr or
- * Option (`bindingMatchesTyped`), asked only after every exact binding has failed.
+ * The rules are the design's, under "Shortcuts": modifiers exactly, with Cmd read as Ctrl; an Alt
+ * combination by physical key, because macOS Option rewrites `key`; a Ctrl letter by the letter typed,
+ * so Ctrl+Z is undo on QWERTZ and Ctrl+A select all on AZERTY, falling back to the physical key only
+ * when no Latin letter was typed (a Cyrillic layout); a letter in either case with Shift exactly, by the
+ * physical key on a layout with no Latin letters; a digit or symbol whatever Shift says, because which
+ * symbols need Shift depends on the layout; a named key with Shift exactly. And one the design did not
+ * state: a symbol typed through AltGr or Option (`bindingMatchesTyped`), asked only after every exact
+ * binding has failed.
  */
 
 /** One key press a tool answers to. Exactly one of `key` and `code`. */
@@ -24,18 +27,36 @@ export interface KeyBinding {
 /** The parts of a `KeyboardEvent` a binding is matched against. */
 export type KeyPress = Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>;
 
+/** A Latin letter, the only letters a binding names. */
 const isLetter = (key: string): boolean => /^[a-z]$/i.test(key);
 const isDigit = (key: string): boolean => /^[0-9]$/.test(key);
 /** A printable key whose Shift depends on the layout: one character, not a letter and not a space. */
 const isShiftFree = (key: string): boolean => key.length === 1 && !isLetter(key) && key !== ' ';
 
-/** Whether `press` is exactly `binding`. */
+/**
+ * Whether `press` is exactly `binding`.
+ *
+ * A letter is matched by what was typed wherever a layout moves it. `KeyboardEvent.code` names the key a
+ * US keyboard has there, so by code a German Ctrl+Z (typed on `KeyY`) would redo and a French Ctrl+A
+ * (on `KeyQ`) would do nothing. Held with Ctrl, a letter still reports itself in `key`, so a `Key[A-Z]`
+ * binding with Ctrl and no Alt is matched on `key`. Alt stays physical: macOS Option rewrites `key` to
+ * another character. Where the layout types no Latin letter at all - Cyrillic `к` on `KeyR` - `key` says
+ * nothing a binding can use, so the physical key decides, for a Ctrl letter and an unmodified one alike.
+ */
 export function bindingMatches(binding: KeyBinding, press: KeyPress): boolean {
   if ((press.ctrlKey || press.metaKey) !== !!binding.ctrl || press.altKey !== !!binding.alt) return false;
-  if (binding.code !== undefined) return press.code === binding.code && press.shiftKey === !!binding.shift;
+  if (binding.code !== undefined) {
+    if (press.shiftKey !== !!binding.shift) return false;
+    const letter = /^Key([A-Z])$/.exec(binding.code)?.[1];
+    if (letter && binding.ctrl && !binding.alt && isLetter(press.key)) return press.key.toUpperCase() === letter;
+    return press.code === binding.code;
+  }
 
   const key = binding.key ?? '';
-  if (isLetter(key)) return press.key.toLowerCase() === key.toLowerCase() && press.shiftKey === !!binding.shift;
+  if (isLetter(key)) {
+    if (press.shiftKey !== !!binding.shift) return false;
+    return isLetter(press.key) ? press.key.toLowerCase() === key.toLowerCase() : press.code === `Key${key.toUpperCase()}`;
+  }
   if (isShiftFree(key)) return press.key === key;
   return press.key === key && press.shiftKey === !!binding.shift;
 }

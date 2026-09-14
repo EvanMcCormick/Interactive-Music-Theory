@@ -61,6 +61,22 @@ describe('FretDigitEntry', () => {
     expect([fretAt(0), fretAt(1), fretAt(2)]).toEqual([1, null, 2]);
   });
 
+  it('starts a new note when the document changed between digits, as an undo changes it', () => {
+    entry.type(1);
+    composer.undo();
+    entry.type(2);
+
+    expect(beats()[0].isRest).toBeTrue();
+    expect(fretAt(1)).toBe(2);
+  });
+
+  it('never continues a leading 0, so "0" then "5" are two notes', () => {
+    entry.type(0);
+    entry.type(5);
+
+    expect([fretAt(0), fretAt(1)]).toEqual([0, 5]);
+  });
+
   it('auditions each fret it writes, capo included', () => {
     composer.setStaffNumber('capo', 2);
     entry.type(1);

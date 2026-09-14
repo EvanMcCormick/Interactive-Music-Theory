@@ -8,6 +8,7 @@ import {
   deleteBeats,
   fermataPositionsOf,
   insertBeatAt,
+  setBeatDots,
   setBeatDurations,
   setGrace,
   setTuplet,
@@ -184,6 +185,24 @@ describe('setBeatDurations', () => {
     setBeatDurations(doc, [{ ...ref(0, 0), voiceIndex: 1 }], 8, 0);
 
     expect(JSON.stringify(doc)).toBe(before);
+  });
+});
+
+describe('setBeatDots', () => {
+  it('dots each beat at its own value, settling the bar, and leaves a grace alone', () => {
+    // A half dotted grows by a quarter and takes the quarter rest after it. The grace, in front of the
+    // last quarter, keeps its value: alphaTab sets a grace's.
+    const doc = ComposerService.createEmptyScore();
+    setBeatDurations(doc, [ref(0, 0)], 2, 0);
+    withNote(doc, 0, 0);
+    beats(doc).splice(2, 0, createRestBeat(8));
+    beats(doc)[2].effects.grace = 'beforeBeat';
+
+    setBeatDots(doc, [ref(0, 0), ref(0, 2)], 1);
+
+    expect(shape(doc)).toEqual(['n2.', 'r8', 'r4']);
+    expect(beats(doc)[1].dots).toBe(0);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
   });
 });
 

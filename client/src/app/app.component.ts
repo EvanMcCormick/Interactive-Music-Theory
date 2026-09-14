@@ -1,5 +1,5 @@
-import { CommonModule } from '@angular/common';
-import { Component, HostListener, OnDestroy, OnInit, inject } from '@angular/core';
+import { CommonModule, DOCUMENT } from '@angular/common';
+import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
 import { Subject, filter, takeUntil } from 'rxjs';
 
@@ -49,6 +49,7 @@ export class AppComponent implements OnInit, OnDestroy {
   circleOpen = false;
 
   private readonly router = inject(Router);
+  private readonly document = inject(DOCUMENT);
   private readonly destroy$ = new Subject<void>();
 
   /**
@@ -74,6 +75,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    this.document.addEventListener('keydown', this.escapeListener, true);
     this.router.events
       .pipe(
         filter((event): event is NavigationEnd => event instanceof NavigationEnd),
@@ -83,6 +85,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.document.removeEventListener('keydown', this.escapeListener, true);
     this.destroy$.next();
     this.destroy$.complete();
   }
@@ -114,16 +117,22 @@ export class AppComponent implements OnInit, OnDestroy {
   /**
    * Escape closes the drawer, and claims the key - `preventDefault` - only when it did.
    *
-   * A page listening after the shell reads the claim: the composer's Escape means back to Select, and
-   * its keyboard handler ignores a press already claimed. The shell's listener is registered at
-   * bootstrap, before any routed page's, so it runs first; a shared "is the drawer open" flag would read
-   * closed by the time the page asked. With the drawer already closed nothing is claimed, so Escape stays
-   * every page's to use.
+   * A page listening on the document reads the claim: the composer's Escape means back to Select, and its
+   * keyboard handler ignores a press already claimed. So the shell must see Escape first, whatever order
+   * the listeners were added in, and it listens in the capture phase (`escapeListener`), which runs before
+   * every bubbling listener on the document - not by registering first, which a page set up earlier, or a
+   * listener added by a library, would quietly undo. A shared "is the drawer open" flag would not do
+   * either: it would read closed by the time the page asked. With the drawer already closed nothing is
+   * claimed, so Escape stays every page's to use.
    */
-  @HostListener('document:keydown.escape', ['$event'])
   onEscape(event?: KeyboardEvent): void {
     if (!this.circleOpen) return;
     this.closeCircle();
     event?.preventDefault();
   }
+
+  /** `onEscape` for every keydown on the document, in the capture phase. */
+  private readonly escapeListener = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') this.onEscape(event);
+  };
 }

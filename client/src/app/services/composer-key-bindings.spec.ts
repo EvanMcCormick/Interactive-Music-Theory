@@ -43,6 +43,21 @@ describe('bindingMatches', () => {
     // macOS Option+- produces an en dash.
     expect(bindingMatches({ code: 'Minus', alt: true }, press({ key: '–', code: 'Minus', altKey: true }))).toBeTrue();
   });
+
+  it('matches Ctrl with a letter by the letter typed, and by the physical key only when no Latin letter was', () => {
+    // German QWERTZ types z on KeyY. By physical key, its Ctrl+Z would redo.
+    expect(bindingMatches({ code: 'KeyZ', ctrl: true }, press({ key: 'z', code: 'KeyY', ctrlKey: true }))).toBeTrue();
+    expect(bindingMatches({ code: 'KeyZ', ctrl: true }, press({ key: 'y', code: 'KeyZ', ctrlKey: true }))).toBeFalse();
+    expect(bindingMatches({ code: 'KeyZ', ctrl: true, shift: true }, press({ key: 'Z', code: 'KeyY', ctrlKey: true, shiftKey: true }))).toBeTrue();
+    // Russian types я on KeyZ: no Latin letter, so the physical key decides.
+    expect(bindingMatches({ code: 'KeyZ', ctrl: true }, press({ key: 'я', code: 'KeyZ', ctrlKey: true }))).toBeTrue();
+  });
+
+  it('matches an unmodified letter by its physical key when the layout typed no Latin letter', () => {
+    expect(bindingMatches({ key: 'r' }, press({ key: 'к', code: 'KeyR' }))).toBeTrue();
+    expect(bindingMatches({ key: 'r' }, press({ key: 'к', code: 'KeyT' }))).toBeFalse();
+    expect(bindingMatches({ key: 'r' }, press({ key: 'К', code: 'KeyR', shiftKey: true }))).toBeFalse();
+  });
 });
 
 describe('bindingMatchesTyped', () => {

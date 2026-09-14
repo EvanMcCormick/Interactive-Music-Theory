@@ -2,6 +2,8 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 
 import { AppComponent } from './app.component';
+import { ComposerKeyHandler } from './services/composer-key-handler';
+import { ComposerService } from './services/composer.service';
 
 /**
  * The shell, and specifically the circle drawer it hosts.
@@ -97,6 +99,39 @@ describe('AppComponent', () => {
       component.onEscape(withDrawerOpen);
       expect(withDrawerOpen.defaultPrevented).toBeTrue();
       expect(component.circleOpen).toBeFalse();
+    });
+
+    /**
+     * The claim must not depend on which listener was added first. A document listener registered before
+     * the shell's - the composer's, on a page that set its up earlier - would otherwise run first and see
+     * Escape unclaimed. The shell listens in the capture phase, which runs before every bubbling listener.
+     */
+    it('claims Escape before a page listener added earlier sees it, with a real key press', () => {
+      const composer = TestBed.inject(ComposerService);
+      const host = {
+        composer,
+        ...jasmine.createSpyObj('host', ['openPopover', 'toggleShortcutSheet', 'escape', 'playPause', 'playFromStart', 'requestSave', 'addTrack', 'typeFretDigit'])
+      };
+      const handler = new ComposerKeyHandler(host);
+      const listener = (event: KeyboardEvent): void => void handler.handle(event);
+      fixture.destroy();
+      document.addEventListener('keydown', listener);
+      try {
+        const shell = TestBed.createComponent(AppComponent);
+        shell.detectChanges();
+        const escape = (): void => void document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+        shell.componentInstance.toggleCircle();
+        escape();
+        expect(shell.componentInstance.circleOpen).toBeFalse();
+        expect(host.escape).not.toHaveBeenCalled();
+
+        escape();
+        expect(host.escape).toHaveBeenCalledTimes(1);
+        shell.destroy();
+      } finally {
+        document.removeEventListener('keydown', listener);
+      }
     });
 
     it('closes when navigating somewhere the circle does not belong', () => {

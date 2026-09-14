@@ -29,6 +29,24 @@ describe('isEditableTarget', () => {
     expect(isEditableTarget(inner)).toBeTrue();
   });
 
+  it('is true for every input that is typed into, and for one with no type, which is text', () => {
+    for (const type of ['text', 'search', 'url', 'email', 'tel', 'password', 'number']) {
+      const input = element('input');
+      input.type = type;
+      expect(isEditableTarget(input)).withContext(type).toBeTrue();
+    }
+    expect(isEditableTarget(element('input'))).toBeTrue();
+  });
+
+  it('is false for an input nothing is typed into - a checkbox, a radio, a button, a file', () => {
+    // A focused checkbox keeps focus after a click; a shortcut pressed next must still reach the page.
+    for (const type of ['checkbox', 'radio', 'button', 'file', 'range', 'color']) {
+      const input = element('input');
+      input.type = type;
+      expect(isEditableTarget(input)).withContext(type).toBeFalse();
+    }
+  });
+
   it('is false for a button, the document body, and no target', () => {
     expect(isEditableTarget(element('button'))).toBeFalse();
     expect(isEditableTarget(document.body)).toBeFalse();
