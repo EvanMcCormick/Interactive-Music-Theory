@@ -52,6 +52,33 @@
   }
 }
 
+// alphaTab's range highlight and playback cursors. alphaTab creates `.at-cursors` inside the container and places
+// its children - `.at-selection > div` for the range, `.at-cursor-bar` and `.at-cursor-beat` for playback - but
+// leaves their look to the host page, so unstyled they are transparent. They are made outside Angular's view, hence
+// `::ng-deep`, kept under `:host` so nothing outside the score is touched. alphaTab sets `pointer-events: none` on
+// the wrapper inline; it is restated so a click always reaches the score beneath.
+:host ::ng-deep .alphatab-container {
+  .at-cursors {
+    pointer-events: none;
+  }
+
+  .at-selection div {
+    background-color: rgba(52, 152, 219, 0.2);
+    background-color: color-mix(in srgb, var(--composer-accent, #3498db) 20%, transparent);
+  }
+
+  .at-cursor-bar {
+    background-color: rgba(52, 152, 219, 0.08);
+    background-color: color-mix(in srgb, var(--composer-accent, #3498db) 8%, transparent);
+  }
+
+  // alphaTab sizes the beat cursor 3px wide and centres it on the beat.
+  .at-cursor-beat {
+    background-color: var(--composer-accent, #3498db);
+    width: 3px;
+  }
+}
+
 // Caret drawn over the staff, showing where typing will land.
 .tab-caret {
   position: absolute;
