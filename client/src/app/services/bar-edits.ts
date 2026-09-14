@@ -1,4 +1,5 @@
 import {
+  BarDoc,
   ClefKind,
   KeySignature,
   MasterBarDoc,
@@ -78,40 +79,52 @@ export function setTimeSignature(doc: ScoreDoc, first: number, timeSignature: Ti
   }
 }
 
-/** Sets the key on every staff from bar `first`, until a bar carries a different key. */
-export function setKeySignature(doc: ScoreDoc, first: number, keySignature: KeySignature): void {
+/** Sets the key on every staff, over the bars `writtenBarsOf` names on each. */
+export function setKeySignature(doc: ScoreDoc, bars: { first: number; last: number }, keySignature: KeySignature): void {
   for (const track of doc.tracks) {
     for (const staff of track.staves) {
-      const was = staff.bars[first]?.keySignature;
-      if (!was) continue;
-      const from = { ...was };
-      for (let index = first; index < staff.bars.length; index++) {
-        const key = staff.bars[index].keySignature;
-        if (key.fifths !== from.fifths || key.mode !== from.mode) break;
+      for (const index of writtenBarsOf(staff.bars, bars, bar => `${bar.keySignature.fifths}:${bar.keySignature.mode}`)) {
         staff.bars[index].keySignature = { ...keySignature };
       }
     }
   }
 }
 
-/** Sets clef and ottava on one staff from bar `first`, until a bar carries different ones. */
+/**
+ * Sets clef and ottava on one staff, over the bars `writtenBarsOf` names. A null field is left as each bar has it: the
+ * Clef popover sends a field the selected bars do not share, and the user did not change, as null.
+ */
 export function setClef(
   doc: ScoreDoc,
   trackIndex: number,
   staffIndex: number,
-  first: number,
-  clef: ClefKind,
-  ottava: OttaviaKind
+  range: { first: number; last: number },
+  clef: ClefKind | null,
+  ottava: OttaviaKind | null
 ): void {
   const bars = doc.tracks[trackIndex]?.staves[staffIndex]?.bars ?? [];
-  const was = bars[first];
-  if (!was) return;
-  const from = { clef: was.clef, ottava: was.clefOttava };
-  for (let index = first; index < bars.length; index++) {
-    if (bars[index].clef !== from.clef || bars[index].clefOttava !== from.ottava) break;
-    bars[index].clef = clef;
-    bars[index].clefOttava = ottava;
+  for (const index of writtenBarsOf(bars, range, bar => `${bar.clef}:${bar.clefOttava}`)) {
+    bars[index].clef = clef ?? bars[index].clef;
+    bars[index].clefOttava = ottava ?? bars[index].clefOttava;
   }
+}
+
+/**
+ * The bars of a staff that a key, clef or ottava is written to. A range of more than one bar is written whole, whatever
+ * each bar held, as the user selected it. From one bar - the caret, or a range inside it - the write runs on until a bar
+ * holds something else (`held`), as a key or clef change does, so a change there does not stop at the bar's end.
+ */
+function writtenBarsOf(bars: readonly BarDoc[], range: { first: number; last: number }, held: (bar: BarDoc) => string): number[] {
+  const start = bars[range.first];
+  if (!start) return [];
+  const indices: number[] = [];
+  if (range.last > range.first) {
+    for (let index = range.first; index <= range.last && index < bars.length; index++) indices.push(index);
+    return indices;
+  }
+  const from = held(start);
+  for (let index = range.first; index < bars.length && held(bars[index]) === from; index++) indices.push(index);
+  return indices;
 }
 
 /**

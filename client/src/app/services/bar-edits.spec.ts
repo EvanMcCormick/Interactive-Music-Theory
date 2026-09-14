@@ -127,7 +127,7 @@ describe('setKeySignature and setClef', () => {
     const doc = ComposerService.createEmptyScore();
     doc.tracks[0].staves[0].bars[3].keySignature = { fifths: -1, mode: 'major' };
 
-    setKeySignature(doc, 1, { fifths: 2, mode: 'major' });
+    setKeySignature(doc, { first: 1, last: 1 }, { fifths: 2, mode: 'major' });
 
     expect(doc.tracks[0].staves[0].bars.map(bar => bar.keySignature.fifths)).toEqual([0, 2, 2, -1]);
   });
@@ -136,10 +136,45 @@ describe('setKeySignature and setClef', () => {
     const doc = ComposerService.createEmptyScore();
     doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
 
-    setClef(doc, 1, 0, 0, 'f4', 'regular');
+    setClef(doc, 1, 0, { first: 0, last: 0 }, 'f4', 'regular');
 
     expect(doc.tracks[1].staves[0].bars.every(bar => bar.clef === 'f4')).toBeTrue();
     expect(doc.tracks[0].staves[0].bars[0].clef).toBe('g2');
+  });
+
+  it('runs a clef forward from one bar until the bars carry a different clef or ottava', () => {
+    const doc = ComposerService.createEmptyScore();
+    const bars = doc.tracks[0].staves[0].bars;
+    bars[3].clefOttava = '8va';
+
+    setClef(doc, 0, 0, { first: 1, last: 1 }, 'f4', 'regular');
+
+    expect(bars.map(bar => bar.clef)).toEqual(['g2', 'f4', 'f4', 'g2']);
+  });
+
+  it('writes a key over the whole of a range, on every staff, when a key change falls inside it', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    for (const track of doc.tracks) {
+      for (const index of [2, 3]) track.staves[0].bars[index].keySignature = { fifths: -1, mode: 'major' };
+    }
+
+    setKeySignature(doc, { first: 1, last: 2 }, { fifths: 2, mode: 'major' });
+
+    for (const track of doc.tracks) {
+      expect(track.staves[0].bars.map(bar => bar.keySignature.fifths)).withContext(track.name).toEqual([0, 2, 2, -1]);
+    }
+  });
+
+  it('writes a changed ottava over the whole of a range whose clefs are mixed, each bar keeping its own clef', () => {
+    const doc = ComposerService.createEmptyScore();
+    const bars = doc.tracks[0].staves[0].bars;
+    bars[2].clef = 'f4';
+    bars[3].clef = 'f4';
+
+    setClef(doc, 0, 0, { first: 1, last: 2 }, null, '8va');
+
+    expect(bars.map(bar => `${bar.clef}/${bar.clefOttava}`)).toEqual(['g2/regular', 'g2/8va', 'f4/8va', 'f4/regular']);
   });
 });
 

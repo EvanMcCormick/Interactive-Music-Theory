@@ -16,8 +16,9 @@ import {
 } from '@angular/core';
 import { CommonModule, DOCUMENT } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Subscription } from 'rxjs';
 
-import { ClefKind, ComposerState, OttaviaKind, TripletFeelKind, Tuplet } from '../../../../models/composer.model';
+import { ClefKind, ComposerState, OttaviaKind, ScoreDoc, TripletFeelKind, Tuplet } from '../../../../models/composer.model';
 import { keySignatureFault, timeSignatureFault } from '../../../../services/bar-edits';
 import {
   CLEF_CHOICES,
@@ -93,7 +94,8 @@ export function popoverPlacementOf(
  * only the values being typed; the document is the service's.
  *
  * It opens on the selection's first bar, where the bar commands write, and shows a value the selected bars do not
- * share as mixed; Apply leaves a field still mixed as each bar has it (`popoverValuesOf`).
+ * share as mixed; Apply leaves a field still mixed as each bar has it (`popoverValuesOf`). A score changed under it by
+ * anything but its own Apply closes it, applying nothing (`closeOnOutsideChange`).
  *
  * Drawn in the top layer (`popover="manual"`), so the palette's scrolling box cannot clip it, and placed
  * beside its trigger by `popoverPlacementOf` - again whenever the window resizes, a box scrolls, or its content
@@ -131,7 +133,7 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
   isCommon = false;
   /** The key chosen, by its index in `keyChoices`, or null while the selected bars' keys differ and none is chosen. */
   keyIndex: number | null = KEY_SIGNATURE_CHOICES.findIndex(choice => choice.value.fifths === 0 && choice.value.mode === 'major');
-  /** Null while the selected bars differ and nothing is chosen; Apply then writes the first bar's (`firstClef`). */
+  /** Null while the selected bars differ and nothing is chosen; Apply then leaves each bar's own (`setClef`). */
   clef: ClefKind | null = 'g2';
   ottava: OttaviaKind | null = 'regular';
   sectionText = '';
@@ -156,9 +158,11 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
 
   /** The kind the popover was last opened for, so it is placed and focused once per opening, not on every check. */
   private shown: PopoverKind | null = null;
-  /** The first selected bar's clef and ottava, written for a field left mixed. */
-  private firstClef: ClefKind = 'g2';
-  private firstOttava: OttaviaKind = 'regular';
+  /** The document last published, so a change to it is told from a caret move (`closeOnOutsideChange`). */
+  private docSeen: ScoreDoc | null = null;
+  /** Whether this popover's own Apply is running: its commit closes the popover, or keeps it open on a refusal. */
+  private applying = false;
+  private readonly stateSubscription: Subscription;
   /** Whether closing gives the focus back to the trigger. A press outside, which closes it, puts the focus where it pressed. */
   private focusBackOnClose = true;
   /** Whether the focus was inside the popover when it was asked to close (`ngOnChanges`). */
@@ -174,7 +178,9 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
   constructor(
     private readonly composer: ComposerService,
     private readonly cdr: ChangeDetectorRef
-  ) {}
+  ) {
+    this.stateSubscription = this.composer.getState().subscribe(this.closeOnOutsideChange);
+  }
 
   get title(): string {
     return this.kind ? TITLES[this.kind] : '';
@@ -218,8 +224,21 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
   }
 
   ngOnDestroy(): void {
+    this.stateSubscription.unsubscribe();
     this.stopFollowing();
   }
+
+  /**
+   * Closes the open popover, applying nothing, when the score changes by anything but its own Apply - Ctrl+Z pressed from
+   * one of its buttons, which it lets reach the page. Its fields were read from the score as it was, so an Apply would
+   * write them over that change. Heard from the service as it publishes, outside any template pass. A caret move, which
+   * leaves the document as it was, keeps it open.
+   */
+  private readonly closeOnOutsideChange = (state: ComposerState): void => {
+    const changed = this.docSeen !== null && state.doc !== this.docSeen;
+    this.docSeen = state.doc;
+    if (changed && this.kind !== null && !this.applying) this.closed.emit();
+  };
 
   /**
    * Keeps a key pressed inside the popover from the page's shortcuts, which listen on the document as it bubbles: a
@@ -263,8 +282,8 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
 
   applyClef(): void {
     if (this.clef === null && this.ottava === null) return this.closed.emit();
-    const clef = this.clef ?? this.firstClef;
-    const ottava = this.ottava ?? this.firstOttava;
+    // A field still mixed goes as null, and each bar keeps its own; a range is written whole (`setClef`).
+    const { clef, ottava } = this;
     this.commit(() => this.composer.setClef(clef, ottava));
   }
 
@@ -301,7 +320,12 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
    */
   private commit(command: () => void): void {
     const before = this.composer.state.messageId;
-    command();
+    this.applying = true;
+    try {
+      command();
+    } finally {
+      this.applying = false;
+    }
     const after = this.composer.state;
     if (this.refuse(after.messageId !== before ? after.refusal : null)) return;
     this.closed.emit();
@@ -410,8 +434,6 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
     this.keyIndex = key === MIXED ? null : index >= 0 ? index : this.keyChoices.findIndex(choice => choice.value.fifths === 0 && choice.value.mode === 'major');
     this.clef = values.clef === MIXED ? null : values.clef;
     this.ottava = values.ottava === MIXED ? null : values.ottava;
-    this.firstClef = values.firstClef;
-    this.firstOttava = values.firstOttava;
 
     this.sectionMixed = values.section === MIXED;
     const section = values.section === MIXED ? null : values.section;

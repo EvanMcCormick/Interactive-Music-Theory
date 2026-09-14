@@ -5,6 +5,7 @@ import { ComposerLibraryPanelComponent } from './composer-library-panel.componen
 import { AlphaTexService } from '../../../../services/alpha-tex.service';
 import { CompositionEntry, ComposerLibraryService } from '../../../../services/composer-library.service';
 import { ComposerService } from '../../../../services/composer.service';
+import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 
 /**
@@ -292,6 +293,62 @@ describe('ComposerLibraryPanelComponent queued saves', () => {
       expect(idsWritten()).toEqual(['a-id', 'a-id']);
       expect(temposWritten()).toEqual([120, 140]);
       expect(panel.saveBlockedReason).toBeNull();
+    });
+
+    /** Links the score to a progression at 140 BPM - a tempo the write under way does not hold - and presses Flatten and save. */
+    async function flattenAndSaveMidWrite(): Promise<void> {
+      void panel.save();
+      composer.replaceDocument({
+        ...composer.doc,
+        tempo: 140,
+        tracks: composer.doc.tracks.map(track => ({
+          ...track,
+          generated: { progressionId: 'prog', progressionName: 'Verse', source: { kind: 'revision' as const, revision: 1 } }
+        }))
+      });
+      await panel.flattenAndSave();
+    }
+
+    /** Expects the announced report that the flatten happened and nothing saved it. */
+    function expectFlattenedButUnsaved(): void {
+      expect(panel.saveBlockedReason).toContain('The track was flattened, but the composition still could not be saved');
+      expect(panel.pendingSave?.flattened).toBeTrue();
+      expect(panel.errorMessage).withContext('said once, in the announced region').toBeNull();
+    }
+
+    it('says the flatten was not saved when the write under way fails, dropping its queued save', async () => {
+      await flattenAndSaveMidWrite();
+
+      writes[0].fail(new Error('Quota exceeded'));
+      await settle();
+
+      expect(library.save).toHaveBeenCalledTimes(1);
+      expectFlattenedButUnsaved();
+      expect(panel.saveBlockedReason).toContain('Quota exceeded');
+    });
+
+    it('says the flatten was not saved when its queued save fails', async () => {
+      await flattenAndSaveMidWrite();
+      writes[0].land('a-id');
+      await settle();
+
+      writes[1].fail(new Error('Quota exceeded'));
+      await settle();
+
+      expectFlattenedButUnsaved();
+    });
+
+    it('says the flatten was not saved when its queued save is refused', async () => {
+      let refusing = false;
+      TestBed.inject(ComposerSaveRequests).guard(() => refusing);
+      await flattenAndSaveMidWrite();
+
+      refusing = true;
+      writes[0].land('a-id');
+      await settle();
+
+      expect(library.save).toHaveBeenCalledTimes(1);
+      expectFlattenedButUnsaved();
     });
   });
 

@@ -29,7 +29,7 @@ describe('popoverValuesOf', () => {
       expect(values.timeSignature.numerator).toBe(4);
       expect(values.keySignature).toEqual({ fifths: 1, mode: 'major' });
       expect(values.section).toEqual({ marker: 'B', text: 'Chorus' });
-      expect(values.firstClef).toBe('f4');
+      expect(values.clef).toBe('f4');
     }
   });
 
@@ -39,10 +39,19 @@ describe('popoverValuesOf', () => {
     expect(values.keySignature).toBe(MIXED);
     expect(values.clef).toBe(MIXED);
     expect(values.ottava).toBe('regular');
-    expect(values.firstClef).toBe('g2');
     expect(values.section).toBe(MIXED);
     expect(values.alternateEndings).toBe(MIXED);
     expect(values.tripletFeel).toBe(MIXED);
+  });
+
+  it('reads the key over every staff, which Key signature writes', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    doc.tracks[1].staves[0].bars[1].keySignature = { fifths: 1, mode: 'major' };
+
+    expect(popoverValuesOf(frozen(doc), at(0), at(1)).keySignature).toBe(MIXED);
+    expect(popoverValuesOf(frozen(doc), null, at(1)).keySignature).toBe(MIXED);
+    expect(popoverValuesOf(frozen(doc), null, at(0)).keySignature).toEqual({ fifths: 0, mode: 'major' });
   });
 
   it('reads the tuplet the selection\'s beats share, graces aside, or mixed', () => {

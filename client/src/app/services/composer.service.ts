@@ -650,13 +650,13 @@ export class ComposerService {
     this.structure.setTimeSignature(timeSignature);
   }
 
-  /** Sets the key on every staff from the selection's first bar. */
+  /** Sets the key on every staff over the selected bars, or from the caret's bar until the key changes. */
   setKeySignature(keySignature: KeySignature): void {
     this.structure.setKeySignature(keySignature);
   }
 
-  /** Sets clef and ottava on the caret's staff from the selection's first bar. */
-  setClef(clef: ClefKind, ottava: OttaviaKind): void {
+  /** Sets clef and ottava - null keeps each bar's - on the caret's staff, as `setKeySignature` sets the key. */
+  setClef(clef: ClefKind | null, ottava: OttaviaKind | null): void {
     this.structure.setClef(clef, ottava);
   }
 

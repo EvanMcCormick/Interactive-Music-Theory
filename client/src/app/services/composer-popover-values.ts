@@ -25,16 +25,11 @@ export type Shared<T> = T | typeof MIXED;
 export interface PopoverValues {
   /** The meter in force at the first selected bar, where Time signature writes. */
   timeSignature: TimeSignature;
-  /** Over the selected bars of the caret's staff. */
+  /** Over the selected bars of every staff, all of which Key signature writes. */
   keySignature: Shared<KeySignature>;
+  /** Over the selected bars of the caret's staff, which Clef writes. A field left mixed is sent as null, keeping each bar's. */
   clef: Shared<ClefKind>;
   ottava: Shared<OttaviaKind>;
-  /**
-   * The first selected bar's clef and ottava. Clef writes both, from the first bar until a bar holds others, so a field
-   * left mixed is written as the first bar's: those bars already hold it.
-   */
-  firstClef: ClefKind;
-  firstOttava: OttaviaKind;
   /** Over the selected bars, which Section, Alternate ending and Triplet feel each write alike. */
   section: Shared<MasterBarDoc['section']>;
   alternateEndings: Shared<number>;
@@ -54,15 +49,16 @@ export function popoverValuesOf(doc: ScoreDoc, anchor: EditCursor | null, head: 
   const staffBars = doc.tracks[head.trackIndex]?.staves[head.staffIndex]?.bars ?? [];
   const bars = indices.map(index => staffBars[index]).filter((bar): bar is BarDoc => bar !== undefined);
   const masterBars = indices.map(index => doc.masterBars[index]).filter((bar): bar is MasterBarDoc => bar !== undefined);
+  const keys = doc.tracks.flatMap(track =>
+    track.staves.flatMap(staff => indices.flatMap(index => (staff.bars[index] ? [staff.bars[index].keySignature] : [])))
+  );
   const beats = beatsAt(doc, selectionTargets(doc, anchor, head)).filter(beat => beat.effects.grace === 'none');
 
   return {
     timeSignature: effectiveTimeSignature(doc.masterBars, first),
-    keySignature: sharedOf(bars.map(bar => bar.keySignature), { fifths: 0, mode: 'major' }),
+    keySignature: sharedOf(keys, { fifths: 0, mode: 'major' }),
     clef: sharedOf(bars.map(bar => bar.clef), 'g2'),
     ottava: sharedOf(bars.map(bar => bar.clefOttava), 'regular'),
-    firstClef: bars[0]?.clef ?? 'g2',
-    firstOttava: bars[0]?.clefOttava ?? 'regular',
     section: sharedOf(masterBars.map(bar => bar.section), null),
     alternateEndings: sharedOf(masterBars.map(bar => bar.alternateEndings), 0),
     tripletFeel: sharedOf(masterBars.map(bar => bar.tripletFeel), 'none'),

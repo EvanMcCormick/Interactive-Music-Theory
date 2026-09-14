@@ -91,6 +91,28 @@ describe('ComposerToolPopoverComponent', () => {
     expect(document.activeElement).toBe(trigger('clef'));
   });
 
+  it('closes, applying nothing, when the score changes under it - an undo pressed from inside it', () => {
+    composer.setTempo(140);
+    open('clef');
+    popover.clef = 'f4';
+
+    composer.undo();
+
+    expect(closed).toBe(1);
+    expect(composer.doc.tracks[0].staves[0].bars.every(bar => bar.clef === 'g2')).toBeTrue();
+  });
+
+  it('stays open when only the caret moves, and closes once when its own Apply changes the score', () => {
+    open('clef');
+    composer.setCursor({ beatIndex: 1 });
+    expect(closed).toBe(0);
+
+    popover.clef = 'f4';
+    popover.applyClef();
+
+    expect(closed).toBe(1);
+  });
+
   it('keeps what is being typed while the state moves on, and starts again for another kind', () => {
     open('timeSignature');
     popover.numerator = 7;
@@ -259,6 +281,34 @@ describe('ComposerToolPopoverComponent', () => {
 
     expect(JSON.stringify(composer.doc)).toBe(before);
     expect(closed).toBe(applies.length);
+  });
+
+  it('writes a changed ottava over the whole range while the clef stays mixed, each bar keeping its own clef', () => {
+    composer.setCursor({ barIndex: 2, beatIndex: 0 });
+    composer.setClef('f4', 'regular');
+    composer.setCursor({ barIndex: 1, beatIndex: 0 });
+    composer.extendSelectionTo({ barIndex: 2, beatIndex: 0 });
+
+    open('clef');
+    expect(popover.clef).toBeNull();
+    popover.ottava = '8va';
+    popover.applyClef();
+
+    const bars = composer.doc.tracks[0].staves[0].bars;
+    expect(bars.map(bar => `${bar.clef}/${bar.clefOttava}`)).toEqual(['g2/regular', 'g2/8va', 'f4/8va', 'f4/regular']);
+  });
+
+  it('writes the key chosen over the whole range when a key change falls inside it', () => {
+    composer.setCursor({ barIndex: 2, beatIndex: 0 });
+    composer.setKeySignature({ fifths: -1, mode: 'major' });
+    composer.setCursor({ barIndex: 1, beatIndex: 0 });
+    composer.extendSelectionTo({ barIndex: 2, beatIndex: 0 });
+
+    open('keySignature');
+    popover.keyIndex = KEY_SIGNATURE_CHOICES.findIndex(choice => choice.value.fifths === 2 && choice.value.mode === 'major');
+    popover.applyKeySignature();
+
+    expect(composer.doc.tracks[0].staves[0].bars.map(bar => bar.keySignature.fifths)).toEqual([0, 2, 2, -1]);
   });
 
   it('starts the key from C major when the bar holds one it does not offer, not from the key it last showed', () => {

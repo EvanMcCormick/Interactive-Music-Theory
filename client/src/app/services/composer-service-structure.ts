@@ -94,12 +94,12 @@ export class ComposerStructureCommands {
   setKeySignature(keySignature: KeySignature): void {
     const fault = keySignatureFault(keySignature);
     if (fault) return this.host.refuse(fault);
-    this.applyBarEdit((draft, bars) => setKeySignature(draft, bars.first, keySignature));
+    this.applyBarEdit((draft, bars) => setKeySignature(draft, bars, keySignature));
   }
 
-  setClef(clef: ClefKind, ottava: OttaviaKind): void {
+  setClef(clef: ClefKind | null, ottava: OttaviaKind | null): void {
     const { trackIndex, staffIndex } = this.host.state().cursor;
-    this.applyBarEdit((draft, bars) => setClef(draft, trackIndex, staffIndex, bars.first, clef, ottava));
+    this.applyBarEdit((draft, bars) => setClef(draft, trackIndex, staffIndex, bars, clef, ottava));
   }
 
   /**

@@ -52,6 +52,12 @@ interface PendingSave {
   flattened: boolean;
 }
 
+/** A save pressed while a write was under way (`queuedSaves`): which kind, and how many tracks Flatten and save detached for it. */
+interface QueuedSave {
+  asNew: boolean;
+  flattened: number;
+}
+
 /**
  * Save, load and export for the composer: the top bar's Library and Export menus, and the saved list
  * in a drawer.
@@ -132,7 +138,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
    * since they were pressed for what is gone (`forgetEntry`); a plain Save when its entry is deleted, which it would
    * write back (`remove`); and when the panel is destroyed, since the page's guards are gone.
    */
-  private queuedSaves: Array<'save' | 'copy'> = [];
+  private queuedSaves: QueuedSave[] = [];
 
   /**
    * Bumped whenever another composition replaces the document - a load, New, an opened transcription (`forgetEntry`). A
@@ -374,11 +380,16 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
    * already left the app and has nothing to stay linked to.
    */
   async save(asNew = false): Promise<void> {
+    await this.requestSave(asNew, 0);
+  }
+
+  /** `save`, for a save that is to write the `flattened` tracks a Flatten and save detached, which is reported if it never does. */
+  private async requestSave(asNew: boolean, flattened: number): Promise<void> {
     // A guard that refuses has said why where its own state is shown - the alphaTex draft, in the status line.
     if (!this.state || this.destroyed || this.saveRequests.refused()) return;
 
     if (this.saving) {
-      this.queueSave(asNew);
+      this.queueSave(asNew, flattened);
       return;
     }
 
@@ -387,7 +398,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
       return;
     }
 
-    await this.writeToLibrary(asNew);
+    await this.writeToLibrary(asNew, flattened);
   }
 
   /**
@@ -419,24 +430,10 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     this.pendingSave = null;
 
     // Pressed while a write is under way: flattened as pressed, and saved once that write lands, as a Save pressed now
-    // is (`queuedSaves`) - the entry that write makes is not known until it lands.
-    if (this.saving) {
-      this.queueSave(asNew);
-      this.returnFocusToLibrary();
-      return;
-    }
-
-    if (!(await this.writeToLibrary(asNew))) {
-      this.pendingSave = {
-        reason: this.describeFlattenedButUnsaved(flattened),
-        asNew,
-        flattened: true
-      };
-      // The message has moved into the announced region, so the unannounced
-      // paragraph at the foot of the panel would only be saying it a second
-      // time - and it is the copy a screen reader would not read out.
-      this.errorMessage = null;
-    }
+    // is (`queuedSaves`) - the entry that write makes is not known until it lands. Whichever way it goes, a flatten no
+    // write saves is reported in the announced region (`dropQueuedSaves`).
+    if (this.saving) this.queueSave(asNew, flattened);
+    else await this.writeToLibrary(asNew, flattened);
 
     this.returnFocusToLibrary();
   }
@@ -447,10 +444,27 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     this.returnFocusToLibrary();
   }
 
-  /** Remembers a save pressed while a write is under way, once for each kind (`queuedSaves`). */
-  private queueSave(asNew: boolean): void {
-    const intent = asNew ? 'copy' : 'save';
-    if (!this.queuedSaves.includes(intent)) this.queuedSaves.push(intent);
+  /** Remembers a save pressed while a write is under way, once for each kind, with the tracks a flatten detached for it (`queuedSaves`). */
+  private queueSave(asNew: boolean, flattened: number): void {
+    const queued = this.queuedSaves.find(save => save.asNew === asNew);
+    if (queued) queued.flattened += flattened;
+    else this.queuedSaves.push({ asNew, flattened });
+  }
+
+  /**
+   * Drops the queued saves, after a write failed or a queued save was refused. The tracks Flatten and save detached for
+   * one of them, or for the save that failed (`flattened`), are now detached with nothing written, which is reported in
+   * the announced region as when the flatten's own write fails.
+   */
+  private dropQueuedSaves(flattened: number, asNew: boolean): void {
+    const unsaved = this.queuedSaves.reduce((count, queued) => count + queued.flattened, flattened);
+    this.queuedSaves = [];
+    if (unsaved === 0 || this.destroyed) return;
+    this.pendingSave = { reason: this.describeFlattenedButUnsaved(unsaved), asNew, flattened: true };
+    // The message has moved into the announced region, so the unannounced paragraph at the foot of the panel would only
+    // be saying it a second time - and it is the copy a screen reader would not read out.
+    this.errorMessage = null;
+    this.cdr.markForCheck();
   }
 
   private refuseToSave(asNew: boolean): void {
@@ -544,8 +558,11 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     return linked.length;
   }
 
-  /** Writes the composition, reporting any failure. True when it landed. */
-  private async writeToLibrary(asNew: boolean): Promise<boolean> {
+  /**
+   * Writes the composition, reporting any failure - and that the `flattened` tracks Flatten and save detached for it were
+   * not saved. True when it landed.
+   */
+  private async writeToLibrary(asNew: boolean, flattened = 0): Promise<boolean> {
     if (!this.state || this.saving) return false;
 
     this.saving = true;
@@ -592,7 +609,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     }
 
     if (landed && !this.destroyed && written !== null) this.runQueuedSave(written, asNew);
-    else this.queuedSaves = [];
+    else this.dropQueuedSaves(landed ? 0 : flattened, asNew);
     return landed;
   }
 
@@ -601,15 +618,16 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
    * a copy when `wroteCopy` - has landed. The rest stay queued behind the write it starts. A plain Save of a document
    * that writes the same alphaTex would write it again, and so would a copy after a copy of it; both are skipped.
    * Compared as alphaTex rather than by identity: undo gives back a copy of the document the write held. A save that
-   * starts no write has been refused, and said why, and the rest would be refused the same way, so they are dropped.
+   * starts no write has been refused, and said why, and the rest would be refused the same way, so they are dropped, and
+   * a flatten one of them was to save is reported (`dropQueuedSaves`). One skipped has nothing to save: the write before
+   * it already held what a flatten left.
    */
   private runQueuedSave(written: string, wroteCopy: boolean): void {
-    while (this.queuedSaves.length > 0) {
-      const asNew = this.queuedSaves.shift() === 'copy';
+    for (let queued = this.queuedSaves.shift(); queued; queued = this.queuedSaves.shift()) {
       const moved = this.texOfDocument() !== written;
-      if (!moved && (!asNew || wroteCopy)) continue;
-      void this.save(asNew);
-      if (!this.saving) this.queuedSaves = [];
+      if (!moved && (!queued.asNew || wroteCopy)) continue;
+      void this.requestSave(queued.asNew, queued.flattened);
+      if (!this.saving) this.dropQueuedSaves(queued.flattened, queued.asNew);
       return;
     }
   }
@@ -675,7 +693,10 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     // for that write. The entry is forgotten only once the delete succeeds: a failed one leaves it current, to be saved.
     const editing = this.currentId === id;
     if (editing) {
-      this.queuedSaves = this.queuedSaves.filter(intent => intent === 'copy');
+      const copies = this.queuedSaves.filter(queued => queued.asNew);
+      this.queuedSaves = this.queuedSaves.filter(queued => !queued.asNew);
+      this.dropQueuedSaves(0, false);
+      this.queuedSaves = copies;
       this.deleting = id;
     }
     try {
