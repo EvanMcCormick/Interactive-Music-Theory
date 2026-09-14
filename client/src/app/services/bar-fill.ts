@@ -62,6 +62,45 @@ export function beatTicks(beat: Pick<BeatDoc, 'duration' | 'dots' | 'tuplet' | '
   return ticks;
 }
 
+/**
+ * The playback length of each grace in a run of `size`: alphaTab writes a lone grace as an eighth, two as sixteenths
+ * and more as 32nds (`Beat.finish`, `alphaTab.core.mjs` ~7772), and plays them as a 32nd, a 64th and a 128th
+ * (`Beat.updateDurations` ~7713).
+ */
+export function gracePlaybackTicks(size: number): number {
+  return size === 1 ? 120 : size === 2 ? 60 : 30;
+}
+
+/**
+ * For each of `beats` - one voice of one bar, in order - the tick alphaTab plays it at, which is where it files the
+ * beat's fermata and where it looks for one to hand the beat (`Voice.finish` ~3226-3294, `MasterBar.getFermata`
+ * ~2728). Not where it is drawn (`beatTicks`): the two differ around graces.
+ *
+ * - A grace plays one after another from the tick of the beat it leads into, each for its playback length
+ *   (`gracePlaybackTicks`), and its fermata is filed while it is finished, at that tick.
+ * - A beat that on-beat graces lead into plays after them: they take their playback lengths from its start
+ *   (`GraceType.OnBeat`, ~3262). A run's first grace decides what kind it is.
+ * - A beat that before-beat graces lead into plays at its own tick; they take their lengths from the beat before.
+ * - Every other beat plays at its own tick.
+ */
+export function playbackStartsOf(beats: readonly Pick<BeatDoc, 'duration' | 'dots' | 'tuplet' | 'effects'>[]): number[] {
+  const starts: number[] = [];
+  let tick = 0;
+  let index = 0;
+  while (index < beats.length) {
+    let end = index;
+    while (end < beats.length && beats[end].effects.grace !== 'none') end++;
+    const size = end - index;
+    const each = gracePlaybackTicks(size);
+    for (let grace = 0; grace < size; grace++) starts.push(tick + grace * each);
+    if (end === beats.length) break;
+    starts.push(size > 0 && beats[index].effects.grace === 'onBeat' ? tick + size * each : tick);
+    tick += beatTicks(beats[end]);
+    index = end + 1;
+  }
+  return starts;
+}
+
 /** How a bar's contents compare with its meter. */
 export type BarFill =
   | { kind: 'full' }

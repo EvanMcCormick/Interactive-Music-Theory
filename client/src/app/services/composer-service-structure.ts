@@ -23,9 +23,9 @@ import {
   toggleMasterBarFlag
 } from './bar-edits';
 import { barFillAt, fixBarOverflow } from './bar-fill';
-import { fermataSnapshotOf, settleFermatas } from './beat-edits';
 import { selectedBars } from './composer-selection';
 import { editRefusal } from './edit-refusals';
+import { FermataDrops, fermataSnapshotOf, settleFermatas } from './fermata-settling';
 import { renameTrack, setPlayback, setStaffNumber, setStaffTuning, setStaffViews } from './track-edits';
 
 /**
@@ -43,6 +43,12 @@ export interface SelectionPlacement {
   anchor: EditCursor | null;
 }
 
+/**
+ * What an edit run by the service returns: a reason, which refuses it and commits nothing; nothing; or why each
+ * fermata it removed went (`settleFermatas`), which commits it.
+ */
+export type EditOutcome = string | null | void | FermataDrops;
+
 /** What the bar and track commands need from `ComposerService`. */
 export interface ComposerCommandHost {
   /** The current state. */
@@ -56,7 +62,7 @@ export interface ComposerCommandHost {
    * commit, and the state is published once.
    */
   commitFollowing(
-    edit: (draft: ScoreDoc) => string | null | void,
+    edit: (draft: ScoreDoc) => EditOutcome,
     place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement
   ): void;
   /** Publishes why a command did nothing. Commits nothing. */
@@ -151,11 +157,10 @@ export class ComposerStructureCommands {
     this.host.commitFollowing(draft => {
       let fixed = false;
       let appended = 0;
-      // A carry moves beats into later bars, so every fermata from the first selected bar on goes back to its
-      // bar position afterwards (`settleFermatas`); bars the carry appends held none.
-      const barCount = (): number => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.length ?? 0;
-      const before = barCount();
-      const fermatas = new Map(fermataSnapshotOf(draft, Array.from({ length: Math.max(0, before - bars.first) }, (_, offset) => bars.first + offset)));
+      // A carry moves beats into later bars, so every fermata from the first selected bar on goes with its note or
+      // back to its bar position afterwards (`settleFermatas`), in the bars the carry appends too.
+      const barCount = draft.tracks[trackIndex]?.staves[staffIndex]?.bars.length ?? 0;
+      const fermatas = fermataSnapshotOf(draft, Array.from({ length: Math.max(0, barCount - bars.first) }, (_, offset) => bars.first + offset));
 
       for (let index = bars.first; index <= bars.last; index++) {
         if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
@@ -166,10 +171,8 @@ export class ComposerStructureCommands {
       }
 
       if (!fixed) return 'No selected bar is over its time signature.';
-      for (let index = before; index < barCount(); index++) fermatas.set(index, new Map());
-      settleFermatas(draft, fermatas);
       if (appended > 0) this.host.markDiverged(draft);
-      return null;
+      return settleFermatas(draft, fermatas);
     });
   }
 

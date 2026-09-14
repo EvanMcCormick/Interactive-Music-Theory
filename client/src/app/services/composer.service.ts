@@ -43,7 +43,7 @@ import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { defaultFermata } from './composer-tool-defaults';
 import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
-import { ComposerStructureCommands, SelectionPlacement } from './composer-service-structure';
+import { ComposerStructureCommands, EditOutcome, SelectionPlacement } from './composer-service-structure';
 import {
   EditScope,
   beatEffectRefusal,
@@ -56,6 +56,7 @@ import {
   trillRefusal,
   tupletRefusal
 } from './edit-refusals';
+import { fermataSnapshotOf, settleFermatas } from './fermata-settling';
 import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
 import { moveNotesToString, shiftSemitone } from './note-moves';
 import { respellNotes, respellRefusal } from './note-respell';
@@ -222,7 +223,7 @@ export class ComposerService {
    * publishes that and commits nothing. With `amend` the result replaces the last commit instead of
    * adding an undo step: the second digit of a two-digit fret (`retypeNote`).
    */
-  private commit(edit: (draft: ScoreDoc) => string | null | void, amend = false): void {
+  private commit(edit: (draft: ScoreDoc) => EditOutcome, amend = false): void {
     const draft = structuredClone(this.stateSubject.getValue().doc);
     const reason = edit(draft);
     if (typeof reason === 'string') return this.refuse(reason);
@@ -243,7 +244,7 @@ export class ComposerService {
    * given, decides the selection from those followed ends instead, in the same publish.
    */
   private commitFollowing(
-    edit: (draft: ScoreDoc) => string | null | void,
+    edit: (draft: ScoreDoc) => EditOutcome,
     place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement
   ): void {
     const state = this.stateSubject.getValue();
@@ -591,7 +592,7 @@ export class ComposerService {
    */
   private applyEdit(
     scope: EditScope | ((doc: ScoreDoc, refs: BeatRef[], focus: number | null) => string | null),
-    edit: (draft: ScoreDoc, refs: BeatRef[], focus: number | null) => string | null | void
+    edit: (draft: ScoreDoc, refs: BeatRef[], focus: number | null) => EditOutcome
   ): void {
     const state = this.stateSubject.getValue();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
@@ -707,8 +708,10 @@ export class ComposerService {
     });
   }
 
+  /** Adds a track of rests, holding every bar position's fermata as the other tracks do (`settleFermatas`). */
   addTrack(name: string, program: number, fretted: boolean): void {
     this.commit(draft => {
+      const fermatas = fermataSnapshotOf(draft, draft.masterBars.keys());
       draft.tracks.push(
         ComposerService.createTrack(
           name,
@@ -718,6 +721,7 @@ export class ComposerService {
           draft.masterBars
         )
       );
+      settleFermatas(draft, fermatas);
     });
   }
 

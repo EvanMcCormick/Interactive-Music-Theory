@@ -3,8 +3,9 @@ import { CopiedBeats, copiedBeatsOf, pasteBeats } from './beat-clipboard';
 import { clearToRests, deleteBeats, insertBeatAt, setBeatDots, setBeatDurations } from './beat-edits';
 import { CursorMove } from './composer-cursor';
 import { BeatRef, beatAt, selectionTargets } from './composer-selection';
-import { ComposerCommandHost } from './composer-service-structure';
+import { ComposerCommandHost, EditOutcome } from './composer-service-structure';
 import { deleteBeatsRefusal, dotsRefusal, editRefusal, insertBeatRefusal, noteEntryRefusal } from './edit-refusals';
+import { FermataDrops } from './fermata-settling';
 
 /**
  * The composer's entry commands: writing a note, a rest or a delete at the caret, and the commands
@@ -22,7 +23,7 @@ export interface ComposerEntryHost extends ComposerCommandHost {
    * `edit` returns a reason, publishes that and commits nothing. With `amend` the commit replaces the
    * last one rather than adding an undo step.
    */
-  commit(edit: (draft: ScoreDoc) => string | null | void, amend?: boolean): void;
+  commit(edit: (draft: ScoreDoc) => EditOutcome, amend?: boolean): void;
   /** Moves the caret, dropping any range. */
   moveCursor(move: CursorMove): void;
   /** Remembers the note value and dots for the next note. Not an edit. */
@@ -86,7 +87,7 @@ export class ComposerEntryCommands {
       if (!beat) return;
       beat.notes = [];
       beat.isRest = true;
-      setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
+      return setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
     });
 
     if (advance) this.host.moveCursor({ kind: 'beat', delta: 1 });
@@ -140,7 +141,11 @@ export class ComposerEntryCommands {
     if (refusal) return this.host.refuse(refusal);
     let inserted: number | null = null;
     this.host.commitFollowing(
-      draft => void (inserted = insertBeatAt(draft, cursor, state.inputDuration, state.inputDots)),
+      draft => {
+        const result = insertBeatAt(draft, cursor, state.inputDuration, state.inputDots);
+        inserted = result?.index ?? null;
+        return result?.droppedFermatas;
+      },
       (_draft, followed) => ({ cursor: { ...cursor, beatIndex: inserted ?? cursor.beatIndex }, anchor: followed.anchor })
     );
   }
@@ -239,13 +244,13 @@ function sameString(a: EditCursor, b: EditCursor): boolean {
  * one note, so a note already on that string is replaced; on a pitched staff the same pitch again
  * takes the note out, which is how a click on a notehead removes it.
  */
-function writeNote(draft: ScoreDoc, cursor: EditCursor, pitch: NotePitch, duration: DurationValue, dots: number): void {
+function writeNote(draft: ScoreDoc, cursor: EditCursor, pitch: NotePitch, duration: DurationValue, dots: number): FermataDrops {
   const beat = beatAt(draft, cursor);
-  if (!beat) return;
+  if (!beat) return [];
 
   // Length first, so the bar settles before the note lands. Settling only removes or inserts beats
   // after this one, so `beat` is still the caret's beat.
-  setBeatDurations(draft, [cursor], duration, dots);
+  const dropped = setBeatDurations(draft, [cursor], duration, dots);
   beat.isRest = false;
 
   const note: NoteDoc = { pitch, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() };
@@ -254,7 +259,7 @@ function writeNote(draft: ScoreDoc, cursor: EditCursor, pitch: NotePitch, durati
     const existing = beat.notes.findIndex(n => n.pitch.kind === 'fretted' && n.pitch.string === pitch.string);
     if (existing >= 0) {
       beat.notes[existing] = note;
-      return;
+      return dropped;
     }
   } else {
     const existing = beat.notes.findIndex(
@@ -263,9 +268,10 @@ function writeNote(draft: ScoreDoc, cursor: EditCursor, pitch: NotePitch, durati
     if (existing >= 0) {
       beat.notes.splice(existing, 1);
       beat.isRest = beat.notes.length === 0;
-      return;
+      return dropped;
     }
   }
 
   beat.notes.push(note);
+  return dropped;
 }

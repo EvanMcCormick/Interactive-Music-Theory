@@ -18,12 +18,14 @@ import {
   barMeterAt,
   beatTicks,
   fillBarGaps,
+  gracePlaybackTicks,
   graceRunStart,
   hasTuplet,
   insertRestsAt,
-  voiceTicks
+  playbackStartsOf
 } from './bar-fill';
 import { BeatRef, beatAt } from './composer-selection';
+import { FermataDrops, fermataSnapshotOf, settleFermatas } from './fermata-settling';
 
 /**
  * Edits that act on whole beats: their effects, dynamics and lengths.
@@ -86,25 +88,24 @@ export function setDynamics(doc: ScoreDoc, refs: readonly BeatRef[], dynamics: D
 }
 
 /**
- * Every beat a fermata pressed on `refs` belongs to: for the tick each ref's beat starts at in its bar,
- * the voice-1 beat that starts there on every staff of every track. A fermata belongs to a bar
- * position, not to a beat.
+ * Every beat a fermata pressed on `refs` belongs to: for the tick each ref's beat plays at in its bar, the voice-1 beat
+ * that plays there on every staff of every track. A fermata belongs to a bar position, not to a beat.
  *
- * That is alphaTab's model and Guitar Pro's. `Voice.finish` files a beat's fermata on the master bar by
- * tick (`alphaTab.core.mjs` ~3294), and `MasterBar.getFermata` (~2728) hands it to every beat finished
- * later at that tick without one - so a fermata written on one track showed on every later track
- * anyway, and clearing it left the copies. Written on every track, the document says what the page
- * shows, whichever track the press came from.
+ * That is alphaTab's model and Guitar Pro's. `Voice.finish` files a beat's fermata on the master bar by the tick it
+ * plays at (`alphaTab.core.mjs` ~3294), and `MasterBar.getFermata` (~2728) hands it to every beat finished later at
+ * that tick without one - so a fermata written on one track showed on every later track anyway, and clearing it left
+ * the copies. Written on every track, the document says what the page shows, whichever track the press came from.
  *
- * A grace beat names no position: it takes no ticks and starts where the beat it leads into does, so a
- * ref on one is skipped, and a selection of graces alone has no position (`fermataRefusal`). But a grace
- * *at* a position is one of its beats. alphaTab plays it at that tick when the fermata is filed, so it
- * takes the fermata on the way in, on-beat or before the beat - and a clear that skipped it would leave
- * that copy to spread back to every track on the next save. So graces at the tick are returned with the
- * beats they lead into, and written and cleared with them; the toggle reads only the non-grace beats
- * (`toggleFermata`). A staff with no beat starting at the tick - a half note spans it - gets nothing. A
- * generated track is left alone, as every edit leaves one; alphaTab may still draw the position's
- * fermata there, and the track's document stays the progression's.
+ * The tick is where the beat plays, not where it is drawn (`playbackStartsOf`): a beat that on-beat graces lead into
+ * plays after them, so it is at a position of its own, and the grace in front of it at the tick it is drawn at.
+ *
+ * A grace beat names no position of its own to press: a ref on one is skipped, and a selection of graces alone has
+ * none (`fermataRefusal`). But a grace that plays *at* a position is one of its beats. alphaTab files its fermata at
+ * that tick, so it takes the fermata on the way in - and a clear that skipped it would leave that copy to spread back
+ * to every track on the next save. So graces playing at the tick are returned with the other beats there, and written
+ * and cleared with them; the toggle reads only the non-grace beats (`toggleFermata`). A staff with no beat playing at
+ * the tick - a half note spans it - gets nothing. A generated track is left alone, as every edit leaves one; alphaTab
+ * may still draw the position's fermata there, and the track's document stays the progression's.
  */
 export function fermataPositionsOf(doc: ScoreDoc, refs: readonly BeatRef[]): BeatDoc[] {
   const ticksByBar = new Map<number, Set<number>>();
@@ -113,7 +114,7 @@ export function fermataPositionsOf(doc: ScoreDoc, refs: readonly BeatRef[]): Bea
     const beat = voice?.beats[ref.beatIndex];
     if (!voice || !beat || beat.effects.grace !== 'none') continue;
     const ticks = ticksByBar.get(ref.barIndex) ?? new Set<number>();
-    ticks.add(voiceTicks({ beats: voice.beats.slice(0, ref.beatIndex) }));
+    ticks.add(playbackStartsOf(voice.beats)[ref.beatIndex]);
     ticksByBar.set(ref.barIndex, ticks);
   }
 
@@ -122,12 +123,11 @@ export function fermataPositionsOf(doc: ScoreDoc, refs: readonly BeatRef[]): Bea
     if (track.generated) continue;
     for (const staff of track.staves) {
       for (const [barIndex, ticks] of ticksByBar) {
-        let start = 0;
-        for (const beat of staff.bars[barIndex]?.voices[0]?.beats ?? []) {
-          // A grace adds no ticks, so it is at the same start as the beat it leads into.
-          if (ticks.has(start)) beats.push(beat);
-          start += beatTicks(beat);
-        }
+        const voice = staff.bars[barIndex]?.voices[0]?.beats ?? [];
+        const starts = playbackStartsOf(voice);
+        voice.forEach((beat, index) => {
+          if (ticks.has(starts[index])) beats.push(beat);
+        });
       }
     }
   }
@@ -146,7 +146,8 @@ export function toggleFermata(doc: ScoreDoc, refs: readonly BeatRef[], fermata: 
 }
 
 /**
- * Gives every beat in `refs` a written value, then keeps each bar honest. See `relength`.
+ * Gives every beat in `refs` a written value, then keeps each bar honest. See `relength`, which says what it
+ * returns: why each fermata it could not keep went.
  *
  * Grace beats keep theirs. alphaTab sets a grace's written value itself when the score is
  * finished - an eighth, sixteenth or thirty-second by the size of its grace group
@@ -159,8 +160,8 @@ export function setBeatDurations(
   refs: readonly BeatRef[],
   duration: DurationValue,
   dots: number
-): void {
-  relength(doc, refs, beat => {
+): FermataDrops {
+  return relength(doc, refs, beat => {
     if (beat.effects.grace !== 'none') return;
     beat.duration = duration;
     beat.dots = dots;
@@ -172,8 +173,8 @@ export function setBeatDurations(
  * honest. See `relength`. What the dot tool does, so dotting a half makes a dotted half whatever note
  * value the palette holds. Grace beats keep theirs, as `setBeatDurations` leaves them.
  */
-export function setBeatDots(doc: ScoreDoc, refs: readonly BeatRef[], dots: number): void {
-  relength(doc, refs, beat => {
+export function setBeatDots(doc: ScoreDoc, refs: readonly BeatRef[], dots: number): FermataDrops {
+  return relength(doc, refs, beat => {
     if (beat.effects.grace !== 'none') return;
     beat.dots = dots;
   });
@@ -186,9 +187,9 @@ export function setBeatDots(doc: ScoreDoc, refs: readonly BeatRef[], dots: numbe
  * carries a tuplet into its group at the grace's playback length, so a group a grace starts never closes
  * (`tupletGroupsOf`). A clear takes a grace's tuplet off too, since only a loaded file can have given it one.
  */
-export function setTuplet(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuplet | null): void {
+export function setTuplet(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuplet | null): FermataDrops {
   const setting = tuplet !== null && hasTuplet({ tuplet });
-  relength(doc, refs, beat => {
+  return relength(doc, refs, beat => {
     if (setting && beat.effects.grace !== 'none') return;
     beat.tuplet = tuplet ? { ...tuplet } : null;
   });
@@ -205,136 +206,13 @@ export function setTuplet(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuple
  *
  * A beat that becomes a grace leaves its fermata at its bar position (the design's M2 decision 2): the
  * rest that fills its room, or the beat that moves up to its tick in a bar that was over, takes it, and the
- * grace takes the fermata at the position it now leads into (`settleFermatas`, which `relength` runs). A
- * grace that becomes an ordinary beat takes its tick's fermata the same way.
+ * grace takes the fermata at the position it plays at (`settleFermatas`, which `relength` runs). A grace that
+ * becomes an ordinary beat takes its tick's fermata the same way.
  */
-export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEffectsDoc['grace']): void {
-  relength(doc, refs, beat => {
+export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEffectsDoc['grace']): FermataDrops {
+  return relength(doc, refs, beat => {
     beat.effects.grace = grace;
   });
-}
-
-/**
- * The fermata the grace `ref` names holds by the per-position rule: the one standing on the ordinary beats
- * at the position of the beat it leads into, on any track (`fermataPositionsOf`) - or none, when it leads
- * into nothing or nothing there has one. A grace has no position of its own; alphaTab finishes it at the
- * tick of the beat it leads into and files its fermata there, so any other value spreads on save.
- */
-export function graceFermataOf(doc: ScoreDoc, ref: BeatRef): FermataDoc | null {
-  const beats = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex]?.beats ?? [];
-  let into = ref.beatIndex + 1;
-  while (into < beats.length && beats[into].effects.grace !== 'none') into++;
-  if (into >= beats.length) return null;
-  const standing = fermataPositionsOf(doc, [{ ...ref, beatIndex: into }]).find(
-    beat => beat.effects.grace === 'none' && beat.effects.fermata !== null
-  );
-  return standing?.effects.fermata ? { ...standing.effects.fermata } : null;
-}
-
-/**
- * Each bar position's fermata before an edit, for the bars it may move beats in: by bar index, the fermata at
- * every tick where a beat starts on some staff, or null where none there has one. See `settleFermatas`.
- */
-export type FermataSnapshot = ReadonlyMap<number, ReadonlyMap<number, FermataDoc | null>>;
-
-/**
- * The fermata at every bar position of the bars `barIndices`, read as `fermataPositionsOf` reads a position:
- * voice 1 of every staff of every track but a generated one, graces aside. Where tracks disagree - only a loaded
- * file can leave them so - the first fermata found stands for the position.
- */
-export function fermataSnapshotOf(doc: ScoreDoc, barIndices: Iterable<number>): FermataSnapshot {
-  const snapshot = new Map<number, Map<number, FermataDoc | null>>();
-  for (const barIndex of barIndices) {
-    if (snapshot.has(barIndex)) continue;
-    const positions = new Map<number, FermataDoc | null>();
-    for (const { beats } of positionVoicesOf(doc, barIndex)) {
-      forEachStart(beats, (beat, start) => {
-        if (beat.effects.grace === 'none' && !positions.get(start)) {
-          positions.set(start, beat.effects.fermata ? { ...beat.effects.fermata } : null);
-        }
-      });
-    }
-    snapshot.set(barIndex, positions);
-  }
-  return snapshot;
-}
-
-/**
- * Puts every fermata in the bars of `before` back at its bar position, on every track, after an edit that moved
- * beat starts: a length change, an insert, a delete, a paste, Fix bar.
- *
- * alphaTab finishes tracks in order and files a beat's fermata on the master bar at the tick the beat starts at,
- * handing it to every beat finished later at that tick without one (`Voice.finish`, `alphaTab.core.mjs` ~3294;
- * `MasterBar.addFermata` ~2705; `MasterBar.getFermata` ~2728). So a fermata beat an edit moves takes its fermata
- * to its new tick, and on save every later track's beat there takes it too, while the tracks it left keep theirs.
- * A fermata belongs to a bar position instead (the design's M2 decision 2):
- *
- * 1. Every ordinary beat now starting at a position `before` holds, on any staff, takes that position's fermata -
- *    the beat an edit moved onto it included. So a beat that moved away from a fermata gives it up, and one that
- *    moved to a tick that held none, or that was no position before, takes none.
- * 2. `pasted` beats, graces aside, bring their own fermata, which wins at the tick they land on (`pasteBeats`).
- * 3. A position no beat starts at any longer, on any staff, loses its fermata. alphaTab keeps a fermata only by
- *    filing a beat's, at that beat's own tick, so nothing can hold one at a tick no beat starts at: kept on the
- *    beat that moved, it would be filed at the beat's new tick, and reach every track there on save.
- * 4. Every grace takes the fermata at the position of the beat it leads into (`graceFermataOf`).
- */
-export function settleFermatas(
-  doc: ScoreDoc,
-  before: FermataSnapshot,
-  pasted: ReadonlyMap<BeatDoc, FermataDoc> = new Map()
-): void {
-  for (const [barIndex, positions] of before) {
-    const voices = positionVoicesOf(doc, barIndex);
-    const settled = new Map(positions);
-    for (const { beats } of voices) {
-      forEachStart(beats, (beat, start) => {
-        const own = pasted.get(beat);
-        if (own && beat.effects.grace === 'none') settled.set(start, own);
-      });
-    }
-    for (const { beats } of voices) {
-      forEachStart(beats, (beat, start) => {
-        if (beat.effects.grace === 'none') setFermata(beat, settled.get(start) ?? null);
-      });
-    }
-    for (const { trackIndex, staffIndex, beats } of voices) {
-      beats.forEach((beat, beatIndex) => {
-        if (beat.effects.grace === 'none') return;
-        setFermata(beat, graceFermataOf(doc, { trackIndex, staffIndex, barIndex, voiceIndex: 0, beatIndex }));
-      });
-    }
-  }
-}
-
-/** Voice 1 of bar `barIndex` on every staff of every track but a generated one: where a fermata position is read. */
-function positionVoicesOf(doc: ScoreDoc, barIndex: number): { trackIndex: number; staffIndex: number; beats: BeatDoc[] }[] {
-  const voices: { trackIndex: number; staffIndex: number; beats: BeatDoc[] }[] = [];
-  doc.tracks.forEach((track, trackIndex) => {
-    if (track.generated) return;
-    track.staves.forEach((staff, staffIndex) => {
-      const beats = staff.bars[barIndex]?.voices[0]?.beats;
-      if (beats) voices.push({ trackIndex, staffIndex, beats });
-    });
-  });
-  return voices;
-}
-
-/** Calls `visit` with each of `beats` and the tick it starts at in its bar. A grace starts where the beat it leads into does. */
-function forEachStart(beats: readonly BeatDoc[], visit: (beat: BeatDoc, start: number) => void): void {
-  let start = 0;
-  for (const beat of beats) {
-    visit(beat, start);
-    start += beatTicks(beat);
-  }
-}
-
-/**
- * Gives `beat` `fermata`, when it holds another. A new effects object, since a spread-copied beat can share its
- * effects with another.
- */
-function setFermata(beat: BeatDoc, fermata: FermataDoc | null): void {
-  if (canonicalJsonOf(beat.effects.fermata) === canonicalJsonOf(fermata)) return;
-  beat.effects = { ...beat.effects, fermata: fermata ? { ...fermata } : null };
 }
 
 /**
@@ -379,9 +257,10 @@ function setFermata(beat: BeatDoc, fermata: FermataDoc | null): void {
  *    no freed room paid for, stays as overflow for Fix bar, as the design asks.
  * 4. A bar still short - one that arrived short, or a gap no rest could spell at its position,
  *    such as a tuplet's remainder - fills at its end (`fillBarGaps`), where that can be spelled.
- * 5. Every fermata in the bars goes back to its bar position, on every track (`settleFermatas`).
+ * 5. Every fermata in the bars goes with its note or stays at its bar position, on every track
+ *    (`settleFermatas`). What it returns: why each fermata it could keep neither way went.
  */
-function relength(doc: ScoreDoc, refs: readonly BeatRef[], change: (beat: BeatDoc) => void): void {
+function relength(doc: ScoreDoc, refs: readonly BeatRef[], change: (beat: BeatDoc) => void): FermataDrops {
   const fermatas = fermataSnapshotOf(doc, refs.filter(ref => ref.voiceIndex === 0).map(ref => ref.barIndex));
   const changing = new Set(beatsAt(doc, refs));
   // Grouped by voice, not bar: a range's beats are settled against the voice they are in.
@@ -404,7 +283,7 @@ function relength(doc: ScoreDoc, refs: readonly BeatRef[], change: (beat: BeatDo
   for (const [voice, { bar, barIndex, beats }] of voices) {
     settleRange(voice, bar, barMeterAt(doc, barIndex), beats, changing, change);
   }
-  settleFermatas(doc, fermatas);
+  return settleFermatas(doc, fermatas);
 }
 
 /** `relength`'s passes for one voice. `beats` are the changing beats in it, in any order. */
@@ -567,14 +446,6 @@ function groupStartTicks(beats: readonly BeatDoc[], index: number): number {
   return beatTicks(beats[index]) - stolen;
 }
 
-/**
- * The playback length of each grace in a run of `size`: alphaTab writes a lone grace as an eighth, two as sixteenths
- * and more as 32nds (`Beat.finish` ~7772), and plays them as a 32nd, a 64th and a 128th (`updateDurations` ~7713).
- */
-function gracePlaybackTicks(size: number): number {
-  return size === 1 ? 120 : size === 2 ? 60 : 30;
-}
-
 /** Whether two beats are under the same tuplet, by alphaTab's comparison of numerator and denominator. */
 function sameTuplet(a: BeatDoc, b: BeatDoc): boolean {
   return a.tuplet?.numerator === b.tuplet?.numerator && a.tuplet?.denominator === b.tuplet?.denominator;
@@ -659,26 +530,31 @@ export function clearToRests(doc: ScoreDoc, refs: readonly BeatRef[]): void {
  * holds beyond its meter is left as overflow for Fix bar: an insertion moves beats later, and taking
  * rests from the end of the bar to make room would be a second edit the user did not ask for.
  *
- * Returns the index the rest went in at, or null when `ref` names no voice. Every fermata in the bar stays at its
- * bar position (`settleFermatas`).
+ * Returns the index the rest went in at, and why each fermata it could not keep went - or null when `ref` names no
+ * voice. Every fermata in the bar goes with its note or stays at its bar position (`settleFermatas`).
  */
-export function insertBeatAt(doc: ScoreDoc, ref: BeatRef, duration: DurationValue, dots: number): number | null {
+export function insertBeatAt(
+  doc: ScoreDoc,
+  ref: BeatRef,
+  duration: DurationValue,
+  dots: number
+): { index: number; droppedFermatas: FermataDrops } | null {
   const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
   if (!voice) return null;
   const fermatas = fermataSnapshotOf(doc, [ref.barIndex]);
   const at = graceRunStart(voice, Math.min(ref.beatIndex, voice.beats.length));
   voice.beats.splice(at, 0, { ...createRestBeat(duration), dots });
-  settleFermatas(doc, fermatas);
-  return at;
+  return { index: at, droppedFermatas: settleFermatas(doc, fermatas) };
 }
 
 /**
  * Removes the beats `refs` name, so the beats after them move earlier, and fills each bar left short at
  * its end (`fillBarGaps`) - unlike a clear, which keeps every later beat where it was. A voice left
  * with no beats at all, in a free-time bar that nothing fills, gets a quarter rest, since alphaTab
- * cannot chain a voice with none. Every fermata in those bars stays at its bar position (`settleFermatas`).
+ * cannot chain a voice with none. Every fermata in those bars goes with its note or stays at its bar position
+ * (`settleFermatas`); what it returns is why each one it could keep neither way went.
  */
-export function deleteBeats(doc: ScoreDoc, refs: readonly BeatRef[]): void {
+export function deleteBeats(doc: ScoreDoc, refs: readonly BeatRef[]): FermataDrops {
   const removing = new Set(beatsAt(doc, refs));
   const bars = new Map<BarDoc, number>();
   for (const ref of refs) {
@@ -691,5 +567,5 @@ export function deleteBeats(doc: ScoreDoc, refs: readonly BeatRef[]): void {
     fillBarGaps(bar, barMeterAt(doc, barIndex));
     for (const voice of bar.voices) if (voice.beats.length === 0) voice.beats.push(createRestBeat(4));
   }
-  settleFermatas(doc, fermatas);
+  return settleFermatas(doc, fermatas);
 }

@@ -1,7 +1,8 @@
 import { BeatDoc, FermataDoc, ScoreDoc } from '../models/composer.model';
 import { barCapacityTicks, barFillOf, barMeterAt, beatTicks, fillBarGaps, graceRunStart, insertRestsAt, splitAtBarLine } from './bar-fill';
-import { fermataSnapshotOf, newOpenTupletGroup, openTupletGroupsOf, settleFermatas, tupletGroupsOf } from './beat-edits';
+import { newOpenTupletGroup, openTupletGroupsOf, tupletGroupsOf } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
+import { FermataDrops, fermataSnapshotOf, settleFermatas } from './fermata-settling';
 import { insertBarInto } from './score-structure';
 
 /**
@@ -58,10 +59,11 @@ const SPLITS_A_GROUP =
  *
  * A fermata belongs to a bar position on every track (the design's M2 decision 2). So each pasted beat
  * that carries one puts it on every track's beat at its position, and every other beat in the bars pasted
- * into - pasted or moved - takes the fermata already at its position, if any, so a paste neither leaves a
- * fermata on one staff alone nor wipes one from the others (`settleFermatas`). A pasted grace has no position
- * of its own: it takes the fermata at the position of the beat it leads into, or none (`graceFermataOf`),
- * since alphaTab files a grace's fermata there and a copied one would spread to every track on save.
+ * into - pasted or moved - takes the fermata already at its position, if any, or goes on holding its own where
+ * it moved, so a paste neither leaves a fermata on one staff alone nor wipes one from the others
+ * (`settleFermatas`). A pasted grace takes the fermata at the position it plays at, or none (`graceFermataOf`),
+ * since alphaTab files a grace's fermata there and a copied one would spread to every track on save. What it
+ * returns says why each fermata it could keep nowhere went: one on a note it wrote over, for one.
  *
  * Refused before anything changes: a copy holding part of a tuplet group (`tupletGroupsOf`), which would
  * start a group alphaTab never closes and leave room off the 64th grid; and a paste at a beat that starts at
@@ -74,7 +76,11 @@ const SPLITS_A_GROUP =
  *
  * **May leave `doc` partly changed when it refuses**, like every edit that returns a reason - call it on a draft.
  */
-export function pasteBeats(doc: ScoreDoc, at: BeatRef, copied: CopiedBeats): { appendedBars: number; at: BeatRef } | string {
+export function pasteBeats(
+  doc: ScoreDoc,
+  at: BeatRef,
+  copied: CopiedBeats
+): { appendedBars: number; at: BeatRef; droppedFermatas: FermataDrops } | string {
   const staff = doc.tracks[at.trackIndex]?.staves[at.staffIndex];
   if (!staff) return 'There is no staff there.';
   if ((staff.tuning.length > 0) !== copied.fretted) {
@@ -163,7 +169,7 @@ export function pasteBeats(doc: ScoreDoc, at: BeatRef, copied: CopiedBeats): { a
     if (newOpenTupletGroup(openBefore.get(segment.barIndex) ?? [], after)) return SPLITS_A_GROUP;
   }
 
-  settleFermatas(doc, fermatas, pasted);
+  const droppedFermatas = settleFermatas(doc, fermatas, pasted);
 
-  return { appendedBars, at: { ...at, beatIndex: startIndex } };
+  return { appendedBars, at: { ...at, beatIndex: startIndex }, droppedFermatas };
 }

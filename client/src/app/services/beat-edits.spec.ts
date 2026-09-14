@@ -667,7 +667,9 @@ describe('toggleFermata', () => {
         const doc = withGrace(kind);
 
         toggleFermata(doc, [ref(0, 1)], medium);
-        expect(fermatas(doc, 1)).toEqual([null, 'medium', 'medium', null, null]);
+        // The grace plays at the guitar's second quarter. A beat that before-beat graces lead into plays there too,
+        // but one that an on-beat grace leads into plays a 32nd later (`playbackStartsOf`): a position of its own.
+        expect(fermatas(doc, 1)).toEqual([null, 'medium', kind === 'beforeBeat' ? 'medium' : null, null, null]);
         const saved = roundTripped(doc);
         expect([fermatas(saved, 0), fermatas(saved, 1)]).toEqual([fermatas(doc, 0), fermatas(doc, 1)]);
 
