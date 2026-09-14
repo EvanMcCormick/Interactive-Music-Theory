@@ -320,11 +320,13 @@ export class TranscriptionComponent implements OnInit, OnDestroy {
    * As a new composition, not saved: the composer's library panel forgets the
    * entry that was open, so Save writes the transcription as a new entry rather
    * than over it, and the history starts again, so undo cannot put back the
-   * composition before under the transcription's name.
+   * composition before under the transcription's name. So it asks first when the
+   * composition open has unsaved work, as a load does (`confirmDiscard`), and told
+   * no, changes nothing and stays here.
    */
   openInComposer(): void {
     const doc = this.state?.derived?.doc;
-    if (!doc) return;
+    if (!doc || !this.composer.confirmDiscard('open this transcription')) return;
 
     this.composer.replaceDocument(doc, { newComposition: true });
     void this.router.navigate(['/composer']);

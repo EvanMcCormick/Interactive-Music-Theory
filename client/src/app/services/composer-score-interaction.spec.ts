@@ -10,6 +10,7 @@ import {
   hoverKeyOf,
   hoverSurvives,
   penHoverHalfStepsOf,
+  pressGuardAfter,
   sameCaret,
   scorePressOf,
   scoreRedrawOf,
@@ -263,5 +264,29 @@ describe('writeSounds', () => {
 
     expect(writeSounds(doc, doc)).toBeFalse();
     expect(writeSounds(doc, structuredClone(doc))).toBeTrue();
+  });
+});
+
+describe('pressGuardAfter', () => {
+  it('ignores the press that closed a popover, from its mouse-down until its release', () => {
+    const armed = pressGuardAfter('none', 'popoverClosedByPress');
+    expect(armed).toBe('armed');
+
+    const pressed = pressGuardAfter(armed, 'press');
+    expect(pressed).toBe('ignoring');
+    expect(pressGuardAfter(pressed, 'press')).withContext('a second button pressed before the release').toBe('ignoring');
+    expect(pressGuardAfter(pressed, 'release')).toBe('none');
+  });
+
+  it('lets every other press act', () => {
+    expect(pressGuardAfter('none', 'press')).toBe('none');
+    expect(pressGuardAfter('none', 'release')).toBe('none');
+  });
+
+  it('forgets a closing press released without reaching the score, so the next press on the score acts', () => {
+    const released = pressGuardAfter(pressGuardAfter('none', 'popoverClosedByPress'), 'release');
+
+    expect(released).toBe('none');
+    expect(pressGuardAfter(released, 'press')).toBe('none');
   });
 });

@@ -124,6 +124,13 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   /** The document the draft was written against: once the score is another, an edited draft is out of date. */
   private texDraftDoc: ScoreDoc | null = null;
   /**
+   * The composition the draft was written for (`ComposerState.documentId`). Once another is open - a load, New, an opened
+   * transcription - the draft is thrown away and seeded again: applied, it would be an edit of the wrong composition.
+   */
+  private texDraftDocumentId: number | null = null;
+  /** Takes the edited draft back out of the unsaved work a new composition asks about (`confirmDiscard`). */
+  private releaseUnsavedDraft: () => void = () => undefined;
+  /**
    * Why the alphaTex draft is in the way, for the status line: an apply that could not parse, or a save
    * refused while the draft is not applied. Cleared by a good apply, a revert, and closing the panel.
    */
@@ -223,8 +230,10 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
         const docChanged = this.state !== null && state.doc !== this.state.doc;
         this.state = state;
         // An untouched draft follows the score - an edit, a load, New - so it never refuses a save. One typed into is left
-        // as typed, and is out of date from here (`texDraftOutOfDate`).
-        if (docChanged && this.showTexPanel && !this.texDraftEdited) this.seedTexDraft();
+        // as typed, and is out of date from here (`texDraftOutOfDate`) - until another composition opens, which asked about
+        // it first (`confirmDiscard`) and throws it away.
+        if (this.showTexPanel && state.documentId !== this.texDraftDocumentId) this.discardTexDraft();
+        else if (docChanged && this.showTexPanel && !this.texDraftEdited) this.seedTexDraft();
         this.cdr.markForCheck();
       });
 
@@ -239,6 +248,8 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
     // Save in the Library menu asks the same question Ctrl+S does (`requestSave`).
     this.removeSaveGuard = this.saveRequests.guard(() => this.refusesSaveForDraft());
+    // An edited draft is unsaved work that a load, New or an opened transcription would throw away.
+    this.releaseUnsavedDraft = this.composer.holdUnsavedWork(() => this.showTexPanel && this.texDraftEdited);
   }
 
   /**
@@ -260,6 +271,7 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     this.pageObserver?.disconnect();
     this.removeSaveGuard();
+    this.releaseUnsavedDraft();
     this.destroy$.next();
     this.destroy$.complete();
   }
@@ -357,8 +369,9 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     this.composer.redo();
   }
 
+  /** A new, empty score, with a fresh history - asked first when anything is unsaved (`confirmDiscard`). */
   newScore(): void {
-    this.composer.reset();
+    if (this.composer.confirmDiscard('start a new score')) this.composer.reset();
   }
 
   // -------------------------------------------------------------------------
@@ -441,6 +454,14 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   private seedTexDraft(): void {
     this.texDraft = this.texDraftBase = this.currentTex();
     this.texDraftDoc = this.state?.doc ?? null;
+    this.texDraftDocumentId = this.state?.documentId ?? null;
+  }
+
+  /** Throws the draft away for the next composition's, with what the panel said about it. */
+  private discardTexDraft(): void {
+    this.seedTexDraft();
+    this.texDiagnostics = [];
+    this.texApplyError = null;
   }
 
   /** Canonical alphaTex for the current document, generated on demand. */
@@ -471,12 +492,10 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   /**
    * Applies the draft as an edit of this composition, on the undo stack (`replaceDocument`). A draft out of date would
-   * replace the changes made since it was written, so that is asked first.
+   * replace the changes made since it was written, so that is asked - once the draft parses, since a draft that cannot
+   * be applied has nothing to ask about.
    */
   applyTex(): void {
-    if (this.texDraftOutOfDate && !confirm('The alphaTex draft was written against an earlier score. Apply it anyway, replacing the changes made since?')) {
-      return;
-    }
     const result = this.texService.parse(this.texDraft);
     this.texDiagnostics = result.diagnostics;
 
@@ -485,6 +504,9 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       this.texApplyError = 'alphaTex could not be parsed. The score is unchanged.';
       this.texErrorId++;
       this.cdr.markForCheck();
+      return;
+    }
+    if (this.texDraftOutOfDate && !confirm('The alphaTex draft was written against an earlier score. Apply it anyway, replacing the changes made since?')) {
       return;
     }
 

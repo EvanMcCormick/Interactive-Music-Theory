@@ -99,6 +99,8 @@ export class ComposerPaletteComponent implements OnChanges {
   @Input() popover: PopoverKind | null = null;
   @Output() readonly toolPressed = new EventEmitter<ComposerTool>();
   @Output() readonly popoverClosed = new EventEmitter<void>();
+  /** A press outside the popover closed it: the page tells the score to let that press do nothing else. */
+  @Output() readonly popoverPressedOutside = new EventEmitter<void>();
 
   /** This palette's element, where the popover looks for the button that opened it. */
   readonly element: HTMLElement = inject(ElementRef<HTMLElement>).nativeElement;

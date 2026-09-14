@@ -97,6 +97,48 @@ describe('ComposerLibraryPanelComponent', () => {
     fixture.detectChanges();
   });
 
+  describe('loading over unsaved work', () => {
+    beforeEach(() => {
+      const doc = { ...ComposerService.createEmptyScore(), title: 'C', tempo: 90 };
+      const tex = TestBed.inject(AlphaTexService).export(TestBed.inject(ScoreDocMapperService).toScore(doc, new alphaTab.Settings()));
+      const now = new Date();
+      spyOn(library, 'get').and.resolveTo({ id: 'c-id', title: 'C', artist: '', tex, tempo: 90, trackCount: 1, barCount: 4, dateCreated: now, dateModified: now });
+    });
+
+    it('asks first, and loads nothing when told not to discard the changes', async () => {
+      composer.setTempo(140);
+      const asked = spyOn(window, 'confirm').and.returnValue(false);
+
+      await panel.load('c-id');
+
+      expect(asked).toHaveBeenCalledOnceWith('Discard unsaved changes and load this composition?');
+      expect(library.get).not.toHaveBeenCalled();
+      expect(composer.doc.tempo).toBe(140);
+      expect(composer.state.canUndo).toBeTrue();
+    });
+
+    it('loads when told to discard them', async () => {
+      composer.setTempo(140);
+      spyOn(window, 'confirm').and.returnValue(true);
+
+      await panel.load('c-id');
+
+      expect(composer.doc.tempo).toBe(90);
+      expect(panel.currentId).toBe('c-id');
+    });
+
+    it('asks about unsaved work held outside the document, as an edited alphaTex draft is', async () => {
+      const release = composer.holdUnsavedWork(() => true);
+      const asked = spyOn(window, 'confirm').and.returnValue(false);
+
+      await panel.load('c-id');
+
+      expect(asked).toHaveBeenCalledTimes(1);
+      expect(library.get).not.toHaveBeenCalled();
+      release();
+    });
+  });
+
   describe('with nothing linked', () => {
     it('saves', async () => {
       await panel.save();

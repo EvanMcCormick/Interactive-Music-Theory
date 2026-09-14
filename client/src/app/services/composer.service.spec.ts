@@ -727,3 +727,66 @@ describe('ComposerService composition identity', () => {
     expect(service.doc.tempo).toBe(140);
   });
 });
+
+describe('ComposerService discarding unsaved work', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('lets a composition with nothing unsaved go without asking', () => {
+    const asked = spyOn(window, 'confirm');
+
+    expect(service.confirmDiscard('start a new score')).toBeTrue();
+    expect(asked).not.toHaveBeenCalled();
+  });
+
+  it('asks before unsaved changes go, answers as the user did, and changes nothing by asking', () => {
+    service.setTempo(140);
+    const asked = spyOn(window, 'confirm').and.returnValues(false, true);
+
+    expect(service.confirmDiscard('start a new score')).toBeFalse();
+    expect(service.confirmDiscard('start a new score')).toBeTrue();
+
+    expect(asked).toHaveBeenCalledWith('Discard unsaved changes and start a new score?');
+    expect(service.doc.tempo).toBe(140);
+    expect(service.state.canUndo).toBeTrue();
+  });
+
+  it('counts unsaved work held outside the document, as an edited alphaTex draft is, until it is released', () => {
+    const release = service.holdUnsavedWork(() => true);
+    const asked = spyOn(window, 'confirm').and.returnValue(true);
+
+    service.confirmDiscard('load this composition');
+    expect(asked).toHaveBeenCalledTimes(1);
+
+    release();
+    service.confirmDiscard('load this composition');
+    expect(asked).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ComposerService announcements', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('keeps a refusal still showing through a notice, and a failure replaces it', () => {
+    service.toggleNoteEffect('isGhost', true, false);
+    const refusal = service.state.refusal;
+    expect(refusal).not.toBeNull();
+
+    service.announce('Saved "A"');
+    expect(service.state.refusal).withContext('the notice says nothing about why that press failed').toBe(refusal);
+    expect(service.state.notice).toBe('Saved "A"');
+
+    service.announce('Disk full', true);
+    expect(service.state.refusal).toBe('Disk full');
+    expect(service.state.notice).toBeNull();
+  });
+});

@@ -26,6 +26,8 @@ import {
   hoverKeyOf,
   hoverSurvives,
   penHoverHalfStepsOf,
+  PressGuard,
+  pressGuardAfter,
   sameCaret,
   scorePressOf,
   scoreRedrawOf,
@@ -131,6 +133,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   private slotsRead: { doc: ScoreDoc; slots: StaffSlot[] } | null = null;
   /** What the hover notehead last drew, by `hoverKeyOf`, or null for none. */
   private hoverKey: string | null = null;
+  /** Whether the press under way closed a popover, and so does nothing here. See `pressGuardAfter`. */
+  private pressGuard: PressGuard = 'none';
 
   constructor(
     private readonly composer: ComposerService,
@@ -204,7 +208,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     element?.removeEventListener('mousedown', this.onScorePointerDown, { capture: true });
     element?.removeEventListener('mousemove', this.onScorePointerMove, { capture: true });
     element?.removeEventListener('mouseleave', this.onScorePointerLeave);
-    document.removeEventListener('mouseup', this.onDocumentMouseUp);
+    document.removeEventListener('mouseup', this.onDocumentMouseUp, { capture: true });
     this.alphaTabService.dispose();
   }
 
@@ -286,7 +290,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       element.addEventListener('mousedown', this.onScorePointerDown, { capture: true });
       element.addEventListener('mousemove', this.onScorePointerMove, { capture: true });
       element.addEventListener('mouseleave', this.onScorePointerLeave);
-      document.addEventListener('mouseup', this.onDocumentMouseUp);
+      // In the capture phase, so a control that stops a release cannot leave a drag or a closing press running.
+      document.addEventListener('mouseup', this.onDocumentMouseUp, { capture: true });
     });
     this.alphaTabService.onBeatMouseDown(beat => this.pressBeat(beat));
     this.alphaTabService.onBeatMouseMove(() => this.dragOverBeat());
@@ -340,7 +345,18 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     );
   }
 
+  /**
+   * The press under way closed a popover, and does only that: it moves no caret, seeks nothing and writes nothing
+   * (design decision 17). Told by the page while the press's `pointerdown` is still being dispatched, before the
+   * `mousedown` that alphaTab turns into a beat press.
+   */
+  ignoreNextPress(): void {
+    this.pressGuard = pressGuardAfter(this.pressGuard, 'popoverClosedByPress');
+  }
+
   private readonly onScorePointerDown = (event: MouseEvent): void => {
+    // Before alphaTab hears it: this listens in the capture phase on an ancestor of alphaTab's surface.
+    this.pressGuard = pressGuardAfter(this.pressGuard, 'press');
     this.pointer = { x: event.clientX, y: event.clientY, shiftKey: event.shiftKey, buttons: event.buttons };
   };
 
@@ -360,6 +376,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   /** The button went up somewhere on the page, which alphaTab may not have heard. */
   private readonly onDocumentMouseUp = (): void => {
     this.dragging = false;
+    this.pressGuard = pressGuardAfter(this.pressGuard, 'release');
   };
 
   /**
@@ -449,7 +466,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
    * beat under the pointer (`cursorUnderPointer`); off every staff, to the beat alphaTab hit, on its own track.
    */
   private pressBeat(beat: alphaTab.model.Beat): void {
-    if (!this.state) return;
+    // The press that closed a popover only closed it (`ignoreNextPress`).
+    if (!this.state || this.pressGuard === 'ignoring') return;
     const under = this.staffUnderPointer();
     const mode = this.state.entryMode;
     const cursor = under ? this.cursorUnderPointer(under, this.state.cursor) : beatCursorOf(beat);

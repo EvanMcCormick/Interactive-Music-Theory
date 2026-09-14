@@ -1,6 +1,8 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 
 import { ComposerPaletteComponent, PaletteButton, paletteGroupsOf } from './composer-palette.component';
+import { ComposerToolPopoverComponent } from '../composer-tool-popover/composer-tool-popover.component';
 import { ComposerService } from '../../../../services/composer.service';
 import { KEY_PLATFORM, KeyPlatform } from '../../../../services/composer-key-platform';
 import { COMPOSER_TOOLS, ComposerTool } from '../../../../services/composer-tools';
@@ -150,5 +152,14 @@ describe('ComposerPaletteComponent', () => {
     expect(button('clef').getAttribute('aria-expanded')).toBe('true');
     expect(open?.getAttribute('aria-label')).toBe('Clef');
     expect(open?.contains(document.activeElement)).toBeTrue();
+  });
+
+  it('passes on that a press outside closed its popover', () => {
+    let pressedOutside = 0;
+    fixture.componentInstance.popoverPressedOutside.subscribe(() => pressedOutside++);
+
+    (fixture.debugElement.query(By.directive(ComposerToolPopoverComponent)).componentInstance as ComposerToolPopoverComponent).pressedOutside.emit();
+
+    expect(pressedOutside).toBe(1);
   });
 });

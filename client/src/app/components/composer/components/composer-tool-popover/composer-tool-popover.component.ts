@@ -120,6 +120,11 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
    */
   @Input() triggers: ParentNode | null = null;
   @Output() readonly closed = new EventEmitter<void>();
+  /**
+   * A press outside closed the popover. Emitted before `closed`, while that press is still being dispatched, so the score
+   * can let the press do nothing else - no caret, no seek, no write (design decision 17, `pressGuardAfter`).
+   */
+  @Output() readonly pressedOutside = new EventEmitter<void>();
 
   readonly keyChoices = KEY_SIGNATURE_CHOICES;
   readonly clefChoices = CLEF_CHOICES;
@@ -407,7 +412,7 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
 
   /**
    * A press outside the popover and its trigger closes it, as a popover is expected to, leaving the focus where the
-   * press puts it. The trigger's own press is left to the trigger, whose click closes an open popover. In the capture
+   * press puts it, and says so first (`pressedOutside`), so that press does nothing else on the score. The trigger's own press is left to the trigger, whose click closes an open popover. In the capture
    * phase, so a control that stops the press still closes it.
    */
   private readonly onOutsidePress = (event: Event): void => {
@@ -416,6 +421,7 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
     if (!panel || this.kind === null || !(target instanceof Node)) return;
     if (panel.contains(target) || this.triggerOf(this.kind)?.contains(target)) return;
     this.focusBackOnClose = false;
+    this.pressedOutside.emit();
     this.closed.emit();
   };
 

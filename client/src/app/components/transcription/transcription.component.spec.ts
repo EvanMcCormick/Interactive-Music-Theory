@@ -396,8 +396,10 @@ describe('TranscriptionComponent', () => {
       refusal: null
     });
 
+    const asked = spyOn(window, 'confirm');
     (query('.transcription__open') as HTMLButtonElement).click();
 
+    expect(asked).withContext('nothing unsaved to ask about').not.toHaveBeenCalled();
     const opened: ScoreDoc[] = [];
     composer.getState().subscribe(composerState => opened.push(composerState.doc)).unsubscribe();
 
@@ -421,11 +423,39 @@ describe('TranscriptionComponent', () => {
       refusal: null
     });
 
+    const asked = spyOn(window, 'confirm').and.returnValue(true);
+
     component.openInComposer();
 
+    expect(asked).toHaveBeenCalledOnceWith('Discard unsaved changes and open this transcription?');
     expect(composer.state.documentId).withContext('the library panel would still name the entry open before').toBe(before + 1);
     expect(composer.state.isDirty).toBeTrue();
     expect(composer.state.canUndo).toBeFalse();
+  });
+
+  it('opens nothing over unsaved changes when told not to discard them', () => {
+    composer.setTempo(140);
+    const open = composer.doc;
+    const before = composer.state.documentId;
+    push({
+      phase: 'ready',
+      progress: 1,
+      session: makeSession(),
+      derived: deriveScore(makeSession()),
+      suppressed: [],
+      declarationRemovals: NO_DECLARATION_REMOVALS,
+      error: null,
+      refusal: null
+    });
+    const asked = spyOn(window, 'confirm').and.returnValue(false);
+
+    component.openInComposer();
+
+    expect(asked).toHaveBeenCalledOnceWith('Discard unsaved changes and open this transcription?');
+    expect(composer.doc).toBe(open);
+    expect(composer.state.documentId).toBe(before);
+    expect(composer.state.canUndo).withContext('the history of the composition open is kept').toBeTrue();
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it('does nothing when there is no score to open', () => {

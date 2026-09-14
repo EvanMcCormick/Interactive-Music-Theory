@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 
+import { ComposerState, StaffDoc } from '../models/composer.model';
 import { ComposerService } from './composer.service';
 import { FretDigitEntry } from './composer-fret-entry';
 
@@ -94,5 +95,63 @@ describe('FretDigitEntry', () => {
     entry.type(5);
 
     expect(JSON.stringify(composer.doc)).toBe(before);
+  });
+});
+
+describe('FretDigitEntry over a refused write', () => {
+  /**
+   * A composer on one guitar staff whose writes the spec decides: an accepted write publishes a new document, as
+   * `ComposerService` does, and a refused one keeps the document, as a refusal does.
+   */
+  class RefusingComposer {
+    accepts = true;
+    state: Pick<ComposerState, 'doc' | 'cursor'> = {
+      doc: ComposerService.createEmptyScore(),
+      cursor: { trackIndex: 0, staffIndex: 0, barIndex: 0, voiceIndex: 0, beatIndex: 0, stringIndex: 0 }
+    };
+    private readonly staff = this.state.doc.tracks[0].staves[0];
+
+    staffAt(): StaffDoc {
+      return this.staff;
+    }
+
+    setNoteAtCursor(): void {
+      this.write();
+    }
+
+    retypeNote(): void {
+      this.write();
+    }
+
+    private write(): void {
+      if (this.accepts) this.state = { ...this.state, doc: structuredClone(this.state.doc) };
+    }
+  }
+
+  let composer: RefusingComposer;
+  let auditioned: number[];
+  let entry: FretDigitEntry;
+
+  beforeEach(() => {
+    composer = new RefusingComposer();
+    auditioned = [];
+    entry = new FretDigitEntry(composer as unknown as ComposerService, () => 1000, midi => auditioned.push(midi));
+  });
+
+  it('sounds nothing for a first digit whose note was refused', () => {
+    composer.accepts = false;
+
+    entry.type(3);
+
+    expect(auditioned).toEqual([]);
+  });
+
+  it('sounds nothing for a second digit whose retyped note was refused, having sounded the first', () => {
+    entry.type(1);
+    composer.accepts = false;
+    entry.type(2);
+
+    // String 1 is E4, 64: fret 1 is 65, and fret 12 was never written.
+    expect(auditioned).toEqual([65]);
   });
 });

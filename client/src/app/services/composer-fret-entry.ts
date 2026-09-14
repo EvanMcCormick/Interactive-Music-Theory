@@ -1,5 +1,6 @@
 import type { ComposerService } from './composer.service';
 import { EditCursor, ScoreDoc } from '../models/composer.model';
+import { writeSounds } from './composer-score-interaction';
 
 /**
  * Fret digits typed onto the caret's string, as in Guitar Pro.
@@ -47,11 +48,15 @@ export class FretDigitEntry {
       combined <= FretDigitEntry.MAX_FRET &&
       sameBeat(state.cursor, typing.leftAt);
 
+    // A refused write - a tuplet it would break, a generated track - says why on the status line and keeps the document,
+    // and a fret that was not written must not be heard (`writeSounds`).
+    const before = state.doc;
+
     if (continuing) {
       const string = (typing.target.stringIndex ?? 0) + 1;
       this.composer.retypeNote(typing.target, { kind: 'fretted', string, fret: combined });
       this.typing = { ...typing, digits: String(combined), doc: this.composer.state.doc, at: now };
-      this.audition((staff.tuning[string - 1] ?? 0) + staff.capo + combined);
+      if (writeSounds(before, this.composer.state.doc)) this.audition((staff.tuning[string - 1] ?? 0) + staff.capo + combined);
       return;
     }
 
@@ -59,7 +64,7 @@ export class FretDigitEntry {
     const string = (target.stringIndex ?? 0) + 1;
     this.composer.setNoteAtCursor({ kind: 'fretted', string, fret: digit }, true);
     this.typing = { digits: String(digit), target, leftAt: this.composer.state.cursor, doc: this.composer.state.doc, at: now };
-    this.audition((staff.tuning[string - 1] ?? 0) + staff.capo + digit);
+    if (writeSounds(before, this.composer.state.doc)) this.audition((staff.tuning[string - 1] ?? 0) + staff.capo + digit);
   }
 }
 

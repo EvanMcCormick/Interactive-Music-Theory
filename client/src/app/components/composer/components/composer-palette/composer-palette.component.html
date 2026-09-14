@@ -38,5 +38,6 @@
     [state]="state"
     [triggers]="element"
     (closed)="popoverClosed.emit()"
+    (pressedOutside)="popoverPressedOutside.emit()"
   ></app-composer-tool-popover>
 </div>

@@ -69,6 +69,7 @@
     [popover]="popover"
     (toolPressed)="runTool($event)"
     (popoverClosed)="closePopover()"
+    (popoverPressedOutside)="score.ignoreNextPress()"
   ></app-composer-palette>
 
   <div class="score-column" [attr.inert]="sheetOpen ? '' : null">

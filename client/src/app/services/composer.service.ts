@@ -247,6 +247,19 @@ export class ComposerService {
   }
 
   /**
+   * Whether a new composition may replace this one, asking "Discard unsaved changes and `action`?" when anything is
+   * unsaved. Every path that starts a new composition asks it first. See `ComposerHistory.confirmDiscard`.
+   */
+  confirmDiscard(action: string): boolean {
+    return this.history.confirmDiscard(action);
+  }
+
+  /** Counts unsaved work held outside the document in `confirmDiscard`, until the returned release. */
+  holdUnsavedWork(unsaved: () => boolean): () => void {
+    return this.history.holdUnsavedWork(unsaved);
+  }
+
+  /**
    * Says what happened outside the document's commands - a save, a load, an export - in the status line's one live region,
    * as a notice; or, when `failed`, why it did not, as a refusal. Commits nothing.
    */

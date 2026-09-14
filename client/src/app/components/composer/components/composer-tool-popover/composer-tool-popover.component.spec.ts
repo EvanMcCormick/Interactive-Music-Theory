@@ -199,6 +199,20 @@ describe('ComposerToolPopoverComponent', () => {
       expect(closed).toBe(1);
     });
 
+    it('says when a press outside closed it, so the score can let that press do nothing else', () => {
+      let pressedOutside = 0;
+      popover.pressedOutside.subscribe(() => pressedOutside++);
+      open('clef');
+
+      pointerDownOn(panel().querySelector('select') as HTMLSelectElement);
+      pointerDownOn(trigger('clef'));
+      expect(pressedOutside).toBe(0);
+
+      pointerDownOn(outside);
+      expect(pressedOutside).toBe(1);
+      expect(closed).toBe(1);
+    });
+
     it('gives the focus back to its trigger only when the focus was inside it', () => {
       open('clef');
       outside.focus();

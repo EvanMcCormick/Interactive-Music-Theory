@@ -4,6 +4,7 @@ import { By } from '@angular/platform-browser';
 
 import { ComposerComponent, clampedStripHeight, stripHeightRangeOf } from './composer.component';
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
+import { ComposerPaletteComponent } from './components/composer-palette/composer-palette.component';
 import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
@@ -26,7 +27,13 @@ import { shortcutTitleOf } from '../../services/composer-tools';
  * other reads IndexedDB, and neither is part of the wiring.
  */
 @Component({ selector: 'app-composer-score', standalone: true, template: '' })
-class StubScoreComponent {}
+class StubScoreComponent {
+  ignoredPresses = 0;
+
+  ignoreNextPress(): void {
+    this.ignoredPresses++;
+  }
+}
 
 @Component({ selector: 'app-composer-library-panel', standalone: true, template: '' })
 class StubLibraryPanelComponent {
@@ -400,6 +407,62 @@ describe('ComposerComponent', () => {
     expect(composer.doc.tempo).toBe(140);
   });
 
+  it('parses an out-of-date draft before asking, and asks nothing when it does not parse', () => {
+    component.toggleTexPanel();
+    component.texDraft = `${component.texDraft} `;
+    composer.setTempo(140);
+    spyOn(TestBed.inject(AlphaTexService), 'parse').and.returnValue({ score: null, diagnostics: [] });
+    const asked = spyOn(window, 'confirm');
+
+    component.applyTex();
+
+    expect(asked).not.toHaveBeenCalled();
+    expect(component.texApplyError).toContain('could not be parsed');
+    expect(composer.doc.tempo).toBe(140);
+  });
+
+  it('asks before New throws away unsaved changes, and keeps them when told no', () => {
+    composer.setTempo(140);
+    const before = composer.state.documentId;
+    const asked = spyOn(window, 'confirm').and.returnValues(false, true);
+
+    component.newScore();
+    expect(asked).toHaveBeenCalledOnceWith('Discard unsaved changes and start a new score?');
+    expect(composer.doc.tempo).toBe(140);
+    expect(composer.state.canUndo).toBeTrue();
+    expect(composer.state.documentId).toBe(before);
+
+    component.newScore();
+    expect(composer.state.documentId).toBe(before + 1);
+    expect(composer.doc.tempo).toBe(120);
+  });
+
+  it('counts an edited alphaTex draft as unsaved work, and seeds the draft again for the next composition', () => {
+    component.toggleTexPanel();
+    component.texDraft = `${component.texDraft} `;
+    const asked = spyOn(window, 'confirm').and.returnValue(true);
+
+    expect(composer.state.isDirty).toBeFalse();
+    expect(composer.confirmDiscard('load this composition')).toBeTrue();
+    expect(asked).toHaveBeenCalledTimes(1);
+
+    composer.replaceDocument({ ...ComposerService.createEmptyScore(), tempo: 90 }, { markClean: true, newComposition: true });
+    fixture.detectChanges();
+
+    expect(component.texDraftEdited).withContext('the draft written for the composition before is gone').toBeFalse();
+    expect(component.texDraft).toContain('90');
+    expect(composer.confirmDiscard('load this composition')).toBeTrue();
+    expect(asked).withContext('nothing unsaved is left to ask about').toHaveBeenCalledTimes(1);
+  });
+
+  it('asks nothing for a draft left untouched', () => {
+    component.toggleTexPanel();
+    const asked = spyOn(window, 'confirm');
+
+    expect(composer.confirmDiscard('start a new score')).toBeTrue();
+    expect(asked).not.toHaveBeenCalled();
+  });
+
   it('takes its save guard off when it is destroyed', () => {
     const requests = TestBed.inject(ComposerSaveRequests);
     component.toggleTexPanel();
@@ -445,6 +508,15 @@ describe('ComposerComponent', () => {
     expect(separator.getAttribute('aria-valuemin')).toBe(`${component.stripRange.min}`);
     expect(separator.getAttribute('aria-valuemax')).toBe(`${component.stripRange.max}`);
     expect(separator.getAttribute('aria-valuenow')).toBe(`${component.stripHeight}`);
+  });
+
+  it('tells the score to ignore the press that closed a popover, so that press only closes it', () => {
+    const score = fixture.debugElement.query(By.directive(StubScoreComponent)).componentInstance as StubScoreComponent;
+    const palette = fixture.debugElement.query(By.directive(ComposerPaletteComponent)).componentInstance as ComposerPaletteComponent;
+
+    palette.popoverPressedOutside.emit();
+
+    expect(score.ignoredPresses).toBe(1);
   });
 });
 

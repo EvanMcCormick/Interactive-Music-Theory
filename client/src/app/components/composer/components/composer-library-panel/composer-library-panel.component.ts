@@ -630,9 +630,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   }
 
   async load(id: string): Promise<void> {
-    if (this.state?.isDirty && !confirm('Discard unsaved changes and load this composition?')) {
-      return;
-    }
+    // A load starts a fresh history, so unsaved work - the document's, or an edited alphaTex draft - is asked about first.
+    if (!this.composer.confirmDiscard('load this composition')) return;
 
     try {
       const entry = await this.library.get(id);

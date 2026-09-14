@@ -209,3 +209,26 @@ export function sameCaret(a: EditCursor, b: EditCursor): boolean {
 export function writeSounds(before: ScoreDoc, after: ScoreDoc): boolean {
   return after !== before;
 }
+
+/**
+ * Where the score is in ignoring a press: `armed` once a press has closed a popover, `ignoring` from that press's
+ * mouse-down on the score until its release, and `none` otherwise.
+ */
+export type PressGuard = 'none' | 'armed' | 'ignoring';
+
+/** What the guard hears: a popover closed by a press outside it, a mouse-down on the score, a mouse-up anywhere. */
+export type PressGuardEvent = 'popoverClosedByPress' | 'press' | 'release';
+
+/**
+ * The guard after `event`. The press that closes a popover only closes it (design decision 17): it moves no caret, seeks
+ * nothing and writes nothing. The popover hears that press as a `pointerdown` in the capture phase, but alphaTab and the
+ * score hear the `mousedown` and `mouseup` that follow it, in the capture phase on elements of their own, so stopping the
+ * `pointerdown` stops neither. So the popover says it closed from a press, which arms the guard; the score's mouse-down
+ * turns an armed guard into `ignoring`; and a release anywhere on the page ends it - a closing press that never reached
+ * the score included, so the next press on the score acts.
+ */
+export function pressGuardAfter(guard: PressGuard, event: PressGuardEvent): PressGuard {
+  if (event === 'popoverClosedByPress') return 'armed';
+  if (event === 'release') return 'none';
+  return guard === 'none' ? 'none' : 'ignoring';
+}
