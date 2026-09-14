@@ -358,6 +358,11 @@ departs from the design" and, once built, under "Corrections during implementati
     nothing, and the next press acts. The popover says it closed from a press outside it, and the score ignores that
     press from its mouse-down to its release: alphaTab and the score hear the mouse events that follow the
     `pointerdown`, in the capture phase on their own elements, so stopping the `pointerdown` would stop neither.
+    *Settled after the merge:* **a press the browser takes over ends the guard as a release does.** One dragged from a
+    link becomes a native drag - pointerdown, mousedown, dragstart, pointercancel, dragend - and a touch that becomes a
+    scroll ends in `pointercancel` alone; neither sends a mouse-up, and without this the next press on the score was
+    swallowed as well. So a `pointercancel`, and a drag's `dragend` after it, end the guard. Never `pointerup`: on a
+    touch tap it comes before the compatibility `mousedown`, so the tap that closed the popover would reach the score.
 18. **Commands with no service method go in new modules** - `composer-entry-commands.ts`, delegated
     like `composer-service-structure.ts`, and pure edit functions - keeping `composer.service.ts`
     under the cap: rest over a range, insert and delete beats, semitone and string moves, cut, copy

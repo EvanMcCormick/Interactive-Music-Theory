@@ -161,8 +161,10 @@ rather than going unnoticed.
 - **alphaTab's `_isBeatMouseDown` stays set after a mouse-up outside the score.** The composer's drag ignores it
   (`dragContinues` reads the buttons), but alphaTab skips playback auto-scroll until the next mouse-up on the score, and
   there is no public API to clear it.
-- **A press that closes a popover is ignored until a mouse-up reaches the page.** A release the page never hears - the
-  button let go over another window - leaves the guard on, and the next press on the score is ignored as well, once.
+- **A press that closes a popover is ignored until the page hears that press end.** A mouse-up ends it, and so does a
+  press the browser takes over and sends no mouse-up for: a `pointercancel` - one become a native drag, a touch become a
+  scroll - or the `dragend` after it. An end the page hears none of - the button let go over another window - still
+  leaves the guard on, and the next press on the score is ignored as well, once.
 - **A slash staff is measured as one line, and a two-line staff next to another staff can be read as lone lines.** The
   hit test tells a staff's lines by their even gaps, so a single line followed by a run of three or more lines at another
   gap is a staff of its own. A numbered staff draws no lines, so it is found by its band instead, and its caret is drawn
