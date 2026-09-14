@@ -1,6 +1,7 @@
 import { AccidentalMode, NoteDoc, NoteEffectsDoc, ScoreDoc } from '../models/composer.model';
 import { toggledValue } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
+import { hammerDestinationOf, slideTargetOf } from './note-landing';
 
 /**
  * Edits that act on notes: effects, accidentals and ties.
@@ -19,19 +20,65 @@ import { BeatRef, beatAt } from './composer-selection';
  * one note of a chord until M2's Pen gives a click a pitch.
  */
 export function notesAt(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): NoteDoc[] {
+  return noteTargetsAt(doc, refs, focus).map(target => target.note);
+}
+
+/** A note a press means, and the beat it is on. */
+export interface NoteTarget {
+  ref: BeatRef;
+  note: NoteDoc;
+}
+
+/** `notesAt`, keeping each note's beat: what a check that looks past the note - where it lands - needs. */
+export function noteTargetsAt(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): NoteTarget[] {
   const single = refs.length === 1;
   return refs.flatMap(ref => {
     const beat = beatAt(doc, ref);
     if (!beat) return [];
     const fretted = (doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.tuning.length ?? 0) > 0;
-    if (single && fretted && focus !== null) {
-      return beat.notes.filter(note => note.pitch.kind === 'fretted' && note.pitch.string === focus + 1);
-    }
-    return beat.notes;
+    const notes =
+      single && fretted && focus !== null
+        ? beat.notes.filter(note => note.pitch.kind === 'fretted' && note.pitch.string === focus + 1)
+        : beat.notes;
+    return notes.map(note => ({ ref, note }));
   });
 }
 
-/** Presses a note effect tool, by the toggle rule. Each note gets its own copy of the value. */
+/**
+ * Whether `note` can hold `value` for `key`, or null when any note can: a hammer-on and a shift or
+ * legato slide need somewhere to land (`note-landing.ts`), since alphaTab drops them otherwise.
+ */
+function landingOf<K extends keyof NoteEffectsDoc>(key: K, value: NoteEffectsDoc[K]): ((doc: ScoreDoc, ref: BeatRef, note: NoteDoc) => NoteDoc | null) | null {
+  if (key === 'isHammerPullOrigin' && value === true) return hammerDestinationOf;
+  if (key === 'slide' && (value === 'shiftSlide' || value === 'legatoSlide')) return slideTargetOf;
+  return null;
+}
+
+/**
+ * The notes a press of `key` with `on` reads and sets: the notes it means that can hold `on`, or all
+ * of them when none can - which `noteEffectRefusal` refuses unless the press clears.
+ */
+export function noteEffectTargets<K extends keyof NoteEffectsDoc>(
+  doc: ScoreDoc,
+  refs: readonly BeatRef[],
+  focus: number | null,
+  key: K,
+  on: NoteEffectsDoc[K]
+): NoteTarget[] {
+  const all = noteTargetsAt(doc, refs, focus);
+  const lands = landingOf(key, on);
+  if (!lands) return all;
+  const landing = all.filter(target => lands(doc, target.ref, target.note) !== null);
+  return landing.length > 0 ? landing : all;
+}
+
+/**
+ * Presses a note effect tool, by the toggle rule. Each note gets its own copy of the value.
+ *
+ * The rule reads the notes that can hold the value (`noteEffectTargets`), so a range ending on a note
+ * with nothing to land on still turns a hammer-on off once every other note has one. Turning on writes
+ * only those notes; a clear writes every note the press means.
+ */
 export function toggleNoteEffect<K extends keyof NoteEffectsDoc>(
   doc: ScoreDoc,
   refs: readonly BeatRef[],
@@ -40,9 +87,10 @@ export function toggleNoteEffect<K extends keyof NoteEffectsDoc>(
   on: NoteEffectsDoc[K],
   off: NoteEffectsDoc[K]
 ): void {
-  const notes = notesAt(doc, refs, focus);
-  const value = toggledValue(notes.map(note => note.effects[key]), on, off);
-  for (const note of notes) note.effects[key] = structuredClone(value);
+  const targets = noteEffectTargets(doc, refs, focus, key, on);
+  const value = toggledValue(targets.map(target => target.note.effects[key]), on, off);
+  const written = value === on ? targets : noteTargetsAt(doc, refs, focus);
+  for (const { note } of written) note.effects[key] = structuredClone(value);
 }
 
 /**

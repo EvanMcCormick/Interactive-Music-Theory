@@ -1,6 +1,8 @@
 import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc } from '../models/composer.model';
+import { toggledValue } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
-import { notesAt } from './note-edits';
+import { noteEffectTargets, noteTargetsAt, notesAt } from './note-edits';
+import { hammerDestinationOf, slideTargetOf, tieOriginOf } from './note-landing';
 import { forcedLetterOf, reduceToOctave } from './note-spelling';
 
 /**
@@ -21,6 +23,10 @@ import { forcedLetterOf, reduceToOctave } from './note-spelling';
 export type EditScope =
   | { family: 'beat'; key: keyof BeatEffectsDoc | 'duration' | 'dynamics' | 'tuplet' }
   | { family: 'note'; key: keyof NoteEffectsDoc | 'tie' }
+  // A press that needs only notes to act on - a clear, a respell, a move of pitch or string. Refused
+  // where any note edit is, never as a fretted-only technique: clearing one from a pitched note removes
+  // what alphaTab cannot use there, and the moves say for themselves what does not fit.
+  | { family: 'note'; key: 'notes' }
   | { family: 'note'; key: 'accidental'; accidental: AccidentalMode }
   | { family: 'track'; trackIndex: number };
 
@@ -69,7 +75,7 @@ const NATURAL_HARMONIC = "A natural harmonic's accidental cannot be forced yet."
  * branches test `isStringed`, so a pitched note marked natural is drawn at its own pitch
  * and is read correctly here.
  */
-function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
+export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
   const sounding =
     pitch.kind === 'fretted'
       ? (staff.tuning[pitch.string - 1] ?? 0) + staff.capo + pitch.fret
@@ -184,4 +190,60 @@ export function durationRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): string
   if (refusal) return refusal;
   const allGraces = refs.every(ref => (beatAt(doc, ref)?.effects.grace ?? 'none') !== 'none');
   return allGraces ? GRACE_DURATION : null;
+}
+
+const HAMMER_ON_NOTHING_FOLLOWS =
+  'A hammer-on or pull-off needs a note to land on - on the same string, or a left-hand tap on another - later in the bar ' +
+  "or on the next bar's first beat. With nothing to land on it would not save.";
+
+const SLIDE_NOTHING_FOLLOWS =
+  "A shift or legato slide needs a note on the same string later in the bar or on the next bar's first beat. " +
+  'With nothing to land on it would not save.';
+
+const HAMMER_ON_PITCHED = 'A hammer-on or pull-off lands on a string, so it belongs to fretted staves.';
+
+const VIBRATO_ON_TIE = 'Vibrato on a tied note belongs to the note it is tied from.';
+
+/**
+ * Why pressing a note effect tool - `key` set to `on`, by the toggle rule, or cleared to `off` - cannot
+ * apply to `refs`, or null when it can.
+ *
+ * - A clear is refused only where any note edit is: nothing selected, a generated track, a second
+ *   voice, no note (the `notes` scope). A fretted-only technique can be cleared from a pitched note.
+ * - Turning an effect on is refused as `editRefusal` refuses it, and also when no note it means can
+ *   hold it: a hammer-on, or a shift or legato slide, with nothing to land on. A range skips the notes
+ *   that cannot land (`noteEffectTargets`).
+ * - Vibrato on a tied note is refused either way. alphaTab draws and plays a tie destination with its
+ *   origin's vibrato (`tieOriginOf`), so a continuation's own value changes nothing anyone can see or
+ *   hear - and writing one stops alphaTab carrying a bend across the tie.
+ */
+export function noteEffectRefusal<K extends keyof NoteEffectsDoc>(
+  doc: ScoreDoc,
+  refs: readonly BeatRef[],
+  focus: number | null,
+  key: K,
+  on: NoteEffectsDoc[K],
+  off: NoteEffectsDoc[K]
+): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'note', key: 'notes' }, focus);
+  if (refusal) return refusal;
+
+  const all = noteTargetsAt(doc, refs, focus);
+  if (key === 'vibrato' && all.some(target => tieOriginOf(doc, target.ref, target.note) !== null)) return VIBRATO_ON_TIE;
+
+  const targets = noteEffectTargets(doc, refs, focus, key, on);
+  if (toggledValue(targets.map(target => target.note.effects[key]), on, off) !== on) return null;
+
+  const scoped = editRefusal(doc, refs, { family: 'note', key }, focus);
+  if (scoped) return scoped;
+
+  // Nothing to land on: no note the press means has a destination, so `noteEffectTargets` fell back to
+  // all of them. A pitched note never has one, so a press on pitched notes alone is told why.
+  if (key === 'isHammerPullOrigin' && !all.some(target => hammerDestinationOf(doc, target.ref, target.note))) {
+    return all.every(target => target.note.pitch.kind === 'pitched') ? HAMMER_ON_PITCHED : HAMMER_ON_NOTHING_FOLLOWS;
+  }
+  if (key === 'slide' && (on === 'shiftSlide' || on === 'legatoSlide') && !all.some(target => slideTargetOf(doc, target.ref, target.note))) {
+    return SLIDE_NOTHING_FOLLOWS;
+  }
+  return null;
 }

@@ -42,7 +42,7 @@ import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
 import { ComposerStructureCommands } from './composer-service-structure';
-import { EditScope, durationRefusal, editRefusal } from './edit-refusals';
+import { EditScope, durationRefusal, editRefusal, noteEffectRefusal } from './edit-refusals';
 import { setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 import { insertBarInto } from './score-structure';
@@ -435,9 +435,12 @@ export class ComposerService {
   // Edits on the selection
   // -------------------------------------------------------------------------
 
-  /** Presses a note effect tool on the selection. See `toggleNoteEffect` in note-edits.ts. */
+  /** Presses a note effect tool on the selection. See `toggleNoteEffect` in note-edits.ts, and `noteEffectRefusal`. */
   toggleNoteEffect<K extends keyof NoteEffectsDoc>(key: K, on: NoteEffectsDoc[K], off: NoteEffectsDoc[K]): void {
-    this.applyEdit({ family: 'note', key }, (draft, refs, focus) => toggleNoteEffect(draft, refs, focus, key, on, off));
+    this.applyEdit(
+      (doc, refs, focus) => noteEffectRefusal(doc, refs, focus, key, on, off),
+      (draft, refs, focus) => toggleNoteEffect(draft, refs, focus, key, on, off)
+    );
   }
 
   setAccidental(accidental: AccidentalMode): void {
@@ -491,13 +494,13 @@ export class ComposerService {
    * beats through whatever the edit inserts or removes (`commitFollowing`).
    */
   private applyEdit(
-    scope: EditScope,
-    edit: (draft: ScoreDoc, refs: BeatRef[], focus: number | null) => void
+    scope: EditScope | ((doc: ScoreDoc, refs: BeatRef[], focus: number | null) => string | null),
+    edit: (draft: ScoreDoc, refs: BeatRef[], focus: number | null) => string | null | void
   ): void {
     const state = this.stateSubject.getValue();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
     const focus = state.anchor ? null : state.cursor.stringIndex;
-    const refusal = editRefusal(state.doc, refs, scope, focus);
+    const refusal = typeof scope === 'function' ? scope(state.doc, refs, focus) : editRefusal(state.doc, refs, scope, focus);
     if (refusal) {
       this.refuse(refusal);
       return;

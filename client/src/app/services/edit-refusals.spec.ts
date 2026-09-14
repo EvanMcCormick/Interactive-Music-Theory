@@ -1,6 +1,6 @@
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { EditScope, durationRefusal, editRefusal } from './edit-refusals';
+import { EditScope, durationRefusal, editRefusal, noteEffectRefusal } from './edit-refusals';
 import { AccidentalMode, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
 
 const ref = (trackIndex: number, beatIndex = 0): BeatRef =>
@@ -191,5 +191,66 @@ describe('durationRefusal', () => {
     score.tracks[0].generated = { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision', revision: 1 } };
 
     expect(durationRefusal(score, [ref(0)])).toMatch(/progression/i);
+  });
+});
+
+describe('noteEffectRefusal', () => {
+  /** The guitar note at beat 0 followed, at beat 1, by a note on string 1 too. */
+  function withFollower(): ScoreDoc {
+    const score = doc();
+    const beat = score.tracks[0].staves[0].bars[0].voices[0].beats[1];
+    beat.isRest = false;
+    beat.notes = [{ pitch: { kind: 'fretted', string: 1, fret: 2 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+    return score;
+  }
+
+  it('refuses a hammer-on with nothing to land on, saying so', () => {
+    expect(noteEffectRefusal(doc(), [ref(0)], null, 'isHammerPullOrigin', true, false)).toMatch(/land/i);
+  });
+
+  it('allows a hammer-on with a note after it on the string', () => {
+    expect(noteEffectRefusal(withFollower(), [ref(0)], null, 'isHammerPullOrigin', true, false)).toBeNull();
+  });
+
+  it('refuses a legato or shift slide with nothing to land on, and not a slide out', () => {
+    expect(noteEffectRefusal(doc(), [ref(0)], null, 'slide', 'legatoSlide', 'none')).toMatch(/land/i);
+    expect(noteEffectRefusal(doc(), [ref(0)], null, 'slide', 'shiftSlide', 'none')).toMatch(/land/i);
+    expect(noteEffectRefusal(doc(), [ref(0)], null, 'slide', 'slideOutUp', 'none')).toBeNull();
+  });
+
+  it('lets a press that clears a hammer-on through, landing or not', () => {
+    const score = doc();
+    score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].effects.isHammerPullOrigin = true;
+
+    expect(noteEffectRefusal(score, [ref(0)], null, 'isHammerPullOrigin', true, false)).toBeNull();
+  });
+
+  it('refuses a hammer-on on a pitched staff as a fretted technique', () => {
+    expect(noteEffectRefusal(doc(), [ref(1)], null, 'isHammerPullOrigin', true, false)).toMatch(/fretted/i);
+  });
+
+  it('lets a press that clears a natural harmonic through on a pitched staff, and refuses one that sets it', () => {
+    const score = doc();
+    score.tracks[1].staves[0].bars[0].voices[0].beats[0].notes[0].effects.harmonic = 'natural';
+
+    expect(noteEffectRefusal(score, [ref(1)], null, 'harmonic', 'natural', 'none')).toBeNull();
+    expect(noteEffectRefusal(score, [ref(1)], null, 'harmonic', 'artificial', 'none')).toMatch(/fretted/i);
+  });
+
+  it('refuses vibrato on a tied note either way, saying it belongs to the note it is tied from', () => {
+    const score = withFollower();
+    const tied = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    tied.isTied = true;
+
+    expect(noteEffectRefusal(score, [ref(0, 1)], null, 'vibrato', 'slight', 'none')).toMatch(/tied from/i);
+    tied.effects.vibrato = 'slight';
+    expect(noteEffectRefusal(score, [ref(0, 1)], null, 'vibrato', 'slight', 'none')).toMatch(/tied from/i);
+  });
+
+  it('still refuses a rest and a generated track', () => {
+    expect(noteEffectRefusal(doc(), [ref(0, 2)], null, 'isGhost', true, false)).toMatch(/note/i);
+    const score = doc();
+    score.tracks[0].generated = { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision', revision: 1 } };
+    expect(noteEffectRefusal(score, [ref(0)], null, 'isGhost', true, false)).toMatch(/progression/i);
   });
 });

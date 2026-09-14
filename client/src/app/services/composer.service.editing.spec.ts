@@ -219,3 +219,33 @@ describe('ComposerService retypeNote', () => {
     expect(beatsIn(service)[0].notes[0].pitch).toEqual(fret(1));
   });
 });
+
+describe('ComposerService note effects that must land', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('refuses a hammer-on on the last note, commits nothing, and says why', () => {
+    writeFret(service, 0, 0, 5);
+    const before = JSON.stringify(service.doc);
+
+    service.toggleNoteEffect('isHammerPullOrigin', true, false);
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(stateOf(service).refusal).toMatch(/land/i);
+    expect(stateOf(service).canUndo).toBeTrue();
+  });
+
+  it('puts a hammer-on on a note that has one to land on', () => {
+    writeFret(service, 0, 0, 5);
+    writeFret(service, 0, 1, 7);
+    service.setCursor({ beatIndex: 0 });
+
+    service.toggleNoteEffect('isHammerPullOrigin', true, false);
+
+    expect(beatsIn(service)[0].notes[0].effects.isHammerPullOrigin).toBeTrue();
+  });
+});

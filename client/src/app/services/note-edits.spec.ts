@@ -78,3 +78,18 @@ describe('toggleTie', () => {
     expect(notesAt(doc, [ref(1)], null)[0].isTied).toBeFalse();
   });
 });
+
+describe('toggleNoteEffect with a hammer-on', () => {
+  it('puts it on the notes that can land and skips the last, then clears them all', () => {
+    // Beat 1's note is the last on string 1 in the score, so it has nothing to land on.
+    const doc = chordDoc();
+    const beats = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+
+    toggleNoteEffect(doc, [ref(0), ref(1)], null, 'isHammerPullOrigin', true, false);
+    expect(beats[0].notes.map(note => note.effects.isHammerPullOrigin)).toEqual([true, false]);
+    expect(beats[1].notes[0].effects.isHammerPullOrigin).toBeFalse();
+
+    toggleNoteEffect(doc, [ref(0), ref(1)], null, 'isHammerPullOrigin', true, false);
+    expect(beats[0].notes[0].effects.isHammerPullOrigin).toBeFalse();
+  });
+});
