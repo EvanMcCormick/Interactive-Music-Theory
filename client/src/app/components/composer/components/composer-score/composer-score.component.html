@@ -1,5 +1,5 @@
 <div class="score-area">
-  <div class="alphatab-container" #alphaTabContainer>
+  <div class="alphatab-container" #alphaTabContainer [class.pen]="state?.entryMode === 'pen'">
     <div
       class="tab-caret"
       *ngIf="caretRect"
@@ -7,6 +7,16 @@
       [style.top.px]="caretRect.top"
       [style.width.px]="caretRect.width"
       [style.height.px]="caretRect.height"
+    ></div>
+    <!-- Pen's hover notehead: where a click would write. Rendering only. -->
+    <div
+      class="pen-hover"
+      *ngIf="hoverRect"
+      aria-hidden="true"
+      [style.left.px]="hoverRect.left"
+      [style.top.px]="hoverRect.top"
+      [style.width.px]="hoverRect.width"
+      [style.height.px]="hoverRect.height"
     ></div>
   </div>
 

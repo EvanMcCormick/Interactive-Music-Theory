@@ -1,13 +1,12 @@
-// Score view: the engraved output plus the click-to-edit caret.
-@use 'sass:color';
-
-$accent-color: #3498db;
-$error-color: #e74c3c;
+// Score view: the engraved output, the caret, the range highlight and Pen's hover notehead.
+//
+// Colours are the composer page's custom properties, with fallbacks for a page that does not set them.
 
 :host {
   display: flex;
   flex: 1;
   min-width: 0;
+  min-height: 0;
 }
 
 .score-area {
@@ -24,25 +23,43 @@ $error-color: #e74c3c;
   flex: 1;
   overflow: auto;
   min-height: 0;
-  cursor: text;
+  cursor: default;
+  // alphaTab's own interaction is off, so it no longer prevents a mouse-down's default: without this, a
+  // drag across the score to select beats would select the page's text as well.
+  user-select: none;
+
+  &.pen {
+    cursor: crosshair;
+  }
 }
 
-// Caret drawn over the tab staff, showing where typing will land.
+// Caret drawn over the staff, showing where typing will land.
 .tab-caret {
   position: absolute;
   pointer-events: none;
   border-radius: 2px;
-  background-color: rgba($accent-color, 0.25);
-  box-shadow: 0 0 0 1px rgba($accent-color, 0.9) inset;
+  background-color: rgba(52, 152, 219, 0.25);
+  box-shadow: 0 0 0 1px var(--composer-accent, #3498db) inset;
   transition: left 0.08s ease, top 0.08s ease;
   z-index: 5;
+}
+
+// Where a Pen click would write: a notehead-shaped mark that follows the pointer.
+.pen-hover {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 50%;
+  background-color: var(--composer-accent, #3498db);
+  opacity: 0.45;
+  transform: rotate(-20deg);
+  z-index: 6;
 }
 
 .render-error {
   margin: 0;
   padding: 0.6rem 1rem;
-  background-color: rgba($error-color, 0.15);
-  border-top: 1px solid $error-color;
-  color: $error-color;
+  background-color: rgba(231, 76, 60, 0.15);
+  border-top: 1px solid var(--composer-error, #e74c3c);
+  color: var(--composer-error, #e74c3c);
   font-size: 0.85rem;
 }

@@ -62,10 +62,11 @@ export class StaffHitTestService {
     return staves;
   }
 
-  /** Index into `allStaves` of the staff the pointer is over, if any. */
-  staffIndexAt(container: HTMLElement, clientX: number, clientY: number): number | null {
-    const staves = this.allStaves(container);
-
+  /**
+   * Index into `allStaves` of the staff the pointer is over, if any. `staves` is a measure the caller
+   * already holds, for a caller asking on every pointer move; by default the page is measured now.
+   */
+  staffIndexAt(container: HTMLElement, clientX: number, clientY: number, staves: StaffLines[] = this.allStaves(container)): number | null {
     let bestIndex = -1;
     let bestDistance = Number.POSITIVE_INFINITY;
 
@@ -137,9 +138,10 @@ export class StaffHitTestService {
     staffIndex: number,
     beatX: number,
     beatWidth: number,
-    halfSteps: number
+    halfSteps: number,
+    staves: StaffLines[] = this.allStaves(container)
   ): Rect | null {
-    const staff = this.allStaves(container)[staffIndex];
+    const staff = staves[staffIndex];
     if (!staff) return null;
 
     const containerBox = container.getBoundingClientRect();
