@@ -179,6 +179,10 @@ that owns the control that reaches them. Each is in the same "Found while design
   set to quarters is `n4 n4 r8 r4 r8`. The beats after it keep their ticks, which is the point;
   M2 may merge them.
 
+- **`isEditableTarget` no longer counts checkboxes, radios and range sliders as typing**, so Space and
+  arrows on them reach composer shortcuts. M3's mixer adds such controls and must let them keep their keys
+  (extend Task 3.11's focused-control check).
+
 ## Next milestone, when there is one
 
 **M1 of the composer editor redesign is implemented.** Designed on 2026-09-13 in

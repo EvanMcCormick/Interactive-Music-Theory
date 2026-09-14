@@ -144,7 +144,12 @@ departs from the design".
    pinned spread specs now pin the rule. A grace at the position is one of its beats - alphaTab plays it
    at that tick and hands it the fermata - so it is written and cleared with the beat it leads into, and
    the toggle reads the beats that are not graces. A grace alone has no position, and a press on one is
-   refused.
+   refused. *Settled in review:* a beat that becomes a grace leaves its fermata at its position. The first
+   ordinary beat now starting there on that staff takes it, usually the rest that fills the gap. The grace
+   takes the fermata of the position it now leads into, or none. A pasted grace takes that position's
+   fermata too. alphaTab files a beat's fermata at the tick it finishes the beat at, and it finishes a grace
+   at the tick of the beat it leads into. So a grace keeping the fermata, or handing it to the beat it leads
+   into, would move it one position on, to every track, on save.
 3. **M2 brings a minimal track strip forward**: a row per track with its name, remove, and the
    progression badge, status, Update and Flatten; add track with an instrument; and "Add
    progression track", keeping every selector and label the M4 specs pin, which move with the
@@ -173,7 +178,13 @@ departs from the design".
    and the status line counts the bars over their time signature on a plain line outside the region, so
    ordinary duration edits are not announced. The alphaTex panel's message goes when the panel closes.
 9. **A whole tuplet group's freed room goes after the group**, fixed before the tuplet tool:
-   `n8 n8 n8 n8 n2` with its first three beats made a triplet keeps the fourth eighth at 1440.
+   `n8 n8 n8 n8 n2` with its first three beats made a triplet keeps the fourth eighth at 1440. Room is held
+   until alphaTab would close the group, even past the pressed beats, so no rest splits one. *Settled in
+   review:* **a tuplet press that would leave a group incomplete is refused**, with a reason: "A 6:4 tuplet
+   needs six beats of the same value, or values that add up to the same length, in one bar." alphaTab closes
+   a group of equal values at the tuplet's numerator, and a mixed one when its values fill a whole group. The
+   room an open group's beats free is off the 64th grid, so the bar would stay short with nothing to say why.
+   The Triplet button shows the refusal before it is pressed.
 10. **Natural clears a forced accidental** (`auto`), because alphaTab 1.8 draws `ForceNatural` as
     `Default`, and its label says so.
 11. **Respell** cycles a pitched note's letter through every spelling `forcedLetterOf` allows for its
@@ -240,7 +251,10 @@ departs from the design".
     would cross a bar line is split there as Fix bar splits one, tied into the next bar, and the paste is
     refused where Fix bar refuses. A pasted fermata goes on every track at its position (decision 2).
     The range is dropped after the paste. Settled when review found paste wrote bar by bar, at the
-    moving end.
+    moving end. *Settled in a second review:* **pasting part of a tuplet group is refused** ("The copy holds
+    part of a tuplet group."), since it would start a group alphaTab never closes. So is **pasting at a beat
+    that starts at or past the bar line of a bar already over** ("That beat is past the bar line; Fix bar
+    first."), which would write into the next bar while the caret stayed on the selected beat.
 27. **A tie with nothing to tie from is refused**, with a reason, as a hammer-on with nothing to land on
     is: alphaTab looks three bars back on the string, or for the pitch, and clears a tie that finds
     nothing. A range ties the notes that can be tied.

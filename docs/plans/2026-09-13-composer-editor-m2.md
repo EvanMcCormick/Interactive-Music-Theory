@@ -87,10 +87,21 @@ and every Phase 3 and 4 block applied again by the same script, in task order, o
 | Phase 3 (Task 3.12) | both clean | **2,989 SUCCESS** |
 | Phase 4 (Task 4.4) | both clean | **3,006 SUCCESS** |
 
+After the second review's three fix commits (see "Corrections during implementation", the last entry), the
+same blocks were applied again, in task order, on top of `9fc9365` (whole suite there: 2,948 SUCCESS). No find
+text had stopped matching. One Phase 3 spec had: Task 3.5's popover spec set a lone beat to 5:4, which is now
+refused as an incomplete group, and it now sets three quarters to 3:2.
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 3 (Task 3.12) | both clean | **3,015 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **3,032 SUCCESS** |
+
 Each task's Step 2 red was captured the same way - the plan applied through that task's Step 1, then the
 spec type check - and its text updated to what was seen. The client code was then reverted.
 
-Line counts after the re-proof, largest first: `composer.service.ts` 947; `composer-track-strip.component.spec.ts`
+Line counts after the re-proof, largest first: `composer.service.ts` 947 (948 after the second one, which
+imports `tupletRefusal`); `composer-track-strip.component.spec.ts`
 647; `composer-library-panel.component.ts` 593; `composer-library-panel.component.spec.ts` 549;
 `composer-score.component.ts` 530; `alpha-tab.service.ts` 522; `composer-track-strip.component.ts` 459;
 `composer-tools.ts` 380; `composer.component.ts` 358.
@@ -386,6 +397,54 @@ the proof table's Phase 3 and 4 rows describe the blocks as first written. Each 
 - **A stranded landing** (Task 5.1, the design doc's "Found while designing", `docs/TODO.md`): a hammer-on's
   or slide's landing is checked only when pressed, so later edits can strand one, and alphaTab drops it on
   save.
+
+**A second review of the committed Phase 1-2 code** found a critical fault and eight smaller ones, fixed in
+three commits: `8b74bb7`, `dc1a8f5` and `9fc9365`. Whole suite after them: **2,948 SUCCESS**. The Phase 3
+and 4 blocks were re-proven on top (see "The re-proof of Phases 3 and 4").
+
+- **Task 1.7 (critical).** `beatsBefore` in `note-landing.ts` called `reverse()` on an earlier bar's own
+  `beats` array. So `tieCandidateOf` and `tieOriginOf` reordered earlier bars in the published document, with
+  no undo step, and so did everything built on them: the Tie and vibrato readers in `toolStates`,
+  `tieRefusal`, `noteEffectRefusal`, `tieChainOf` and the semitone and string moves. A later commit then saved
+  that order. It now walks by index. A reader that ran the lookup an even number of times put the bar back,
+  which is why `toolStates` and the vibrato refusal passed a JSON-equality check. So the `composer-tool-states`
+  and `edit-refusals` specs now read deep-frozen documents (`deep-frozen.ts`), and a reader that changes one
+  throws. The note-moves and tie specs gained a case with an uneven earlier bar: their earlier bars had all
+  been rests, where a reversal cannot show. An audit of the other readers (`edit-refusals.ts`,
+  `note-edits.ts`, `composer-tool-states.ts`, `note-moves.ts`, `note-respell.ts`, `beat-clipboard.ts`,
+  `composer-selection.ts`, and `bar-fill.ts` as they read it) found no other in-place change. Every other
+  `reverse`, `sort`, `splice`, `push` or assignment is on a local array or inside an edit given a draft.
+- **Task 1.1.** Room was held only while the next beat was in the run. So a group that ran on past the run
+  was still split: with beats 3 to 5 already 6:4, beats 0 to 2 made 6:4 put a sixteenth rest between the
+  halves. `tupletGroupsOf` now replays alphaTab's grouping for a whole voice, and room goes after the beat
+  that closes the group (`tupletGroupEndOf`), whether or not that beat is changing.
+  `tupletGroupContinuesAfter` is gone.
+- **Tasks 1.1 and 2.3, an incomplete group.** `tupletRefusal` refuses a tuplet press that would leave a
+  group alphaTab never closes, with "A 6:4 tuplet needs six beats of the same value, or values that add up to
+  the same length, in one bar." (`tupletGroupsCompleteWith`). Otherwise the room left is off the 64th grid
+  and the bar stays short with no explanation. `ComposerService.setTuplet` asks it, and so does the Triplet
+  reader, which lets a clearing press through. The Tuplet popover's reader cannot know the ratio before it is
+  chosen, so the command's refusal says it.
+- **Task 1.10, the fermata on a new grace.** `setGrace` leaves a new grace's fermata at its bar position.
+  The first ordinary beat now starting there on that staff takes it: the rest that filled the gap, or a
+  beat that moved up in a bar that was over. The grace takes the fermata at the position it now leads into
+  (`graceFermataOf`). alphaTab finishes a grace at the tick of the beat it leads into and files its fermata
+  there (`Voice.finish` ~3294). So a grace that kept the fermata, or handed it to the beat it leads into,
+  moved it one position on, to every track, on save.
+- **Task 1.14.** A pasted grace takes the fermata at the position of the beat it leads into, or none
+  (`graceFermataOf`); before, it kept the copied one, which spread to every track on save. A copy holding
+  part of a tuplet group is refused: "The copy holds part of a tuplet group." So is a paste at a beat
+  starting at or past the line of a bar already over, which would land in the next bar while the caret
+  stayed put: "That beat is past the bar line; Fix bar first."
+- **Task 2.2.** A Ctrl press that typed a Latin letter now matches no Ctrl binding by physical key but its
+  own letter's. Dvorak types z on `Slash`, so Ctrl+Z matched undo by the letter and Triplet feel's Ctrl+/ by
+  the key. `toolForPress` already returned undo, which comes first in the table, so the keyboard did the
+  right thing; the binding no longer matches both.
+- **Task 2.6.** `ComposerKeyHandler` counts a text selection as the score's only when both its anchor and
+  its focus are inside the score. A selection dragged from the score out into page text yields Ctrl+C and
+  Ctrl+X to the browser. The constructor is unchanged.
+- **Task 3.5.** The popover spec's tuplet case set a lone beat to 5:4, now refused. It selects three quarters
+  and sets 3:2.
 
 ---
 
@@ -8551,12 +8610,16 @@ describe('ComposerToolPopoverComponent', () => {
     expect(composer.doc.masterBars[0].alternateEndings).toBe(0b11);
   });
 
-  it('puts the caret\'s beat under the tuplet chosen', () => {
+  it('puts the selected beats under the tuplet chosen', () => {
+    // Three quarters, so the 3:2 makes a whole group; fewer is refused (`tupletRefusal`).
+    composer.setCursor({ barIndex: 0, beatIndex: 0 });
+    composer.extendSelectionTo({ barIndex: 0, beatIndex: 2 });
     open('tuplet');
 
-    popover.applyTuplet({ numerator: 5, denominator: 4 });
+    popover.applyTuplet({ numerator: 3, denominator: 2 });
 
-    expect(composer.doc.tracks[0].staves[0].bars[0].voices[0].beats[0].tuplet).toEqual({ numerator: 5, denominator: 4 });
+    const beats = composer.doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    expect(beats.slice(0, 3).map(beat => beat.tuplet)).toEqual([0, 1, 2].map(() => ({ numerator: 3, denominator: 2 })));
     expect(closed).toBe(1);
   });
 });
