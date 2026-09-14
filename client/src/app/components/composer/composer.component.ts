@@ -112,7 +112,13 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('texPanel') private set texPanelRef(ref: ElementRef<HTMLElement> | undefined) {
     const panel = ref?.nativeElement ?? null;
     if (panel === this.texPanel) return;
-    if (this.texPanel) this.pageObserver?.unobserve(this.texPanel);
+    if (this.texPanel) {
+      this.pageObserver?.unobserve(this.texPanel);
+      // A panel that opens is observed, and that first report fits the strip; one that closes is reported by nothing, since
+      // the page and the rows left are the size they were. So the strip is fitted here, past the view query that found the
+      // panel gone, where the bound height and range may change.
+      queueMicrotask(() => this.refitStrip());
+    }
     this.texPanel = panel;
     if (panel) this.pageObserver?.observe(panel);
   }
@@ -164,6 +170,8 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   stripRange: StripHeightRange = stripHeightRangeOf(window.innerHeight, 0);
   /** Measures the strip's range again when the page or its top bar changes size, and clamps the strip to it. */
   private pageObserver: ResizeObserver | null = null;
+  /** Set once the page is destroyed, so a fit waiting on a microtask does not draw into a destroyed view. */
+  private destroyed = false;
 
   /** Undo's and Redo's tooltips, with the keys the platform's keyboard writes: Ctrl+Z, or ⌘+Z on a Mac. */
   readonly undoTitle: string = shortcutTitleOf('undo', inject(KEY_PLATFORM));
@@ -273,11 +281,7 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   ngAfterViewInit(): void {
     const page = this.page?.nativeElement;
     if (!page || typeof ResizeObserver === 'undefined') return;
-    this.pageObserver = new ResizeObserver(() => {
-      const before = `${this.stripHeight}:${this.stripRange.max}`;
-      this.fitStrip();
-      if (`${this.stripHeight}:${this.stripRange.max}` !== before) this.cdr.detectChanges();
-    });
+    this.pageObserver = new ResizeObserver(() => this.refitStrip());
     this.pageObserver.observe(page);
     for (const row of [this.topBar?.nativeElement, this.statusLine?.nativeElement, this.texPanel]) {
       if (row) this.pageObserver.observe(row);
@@ -285,6 +289,7 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
     this.pageObserver?.disconnect();
     this.removeSaveGuard();
     this.releaseUnsavedDraft();
@@ -428,6 +433,18 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     event.stopPropagation();
     this.fitStrip();
     this.stripHeight = clampedStripHeight(next(this.stripRange), this.stripRange);
+  }
+
+  /**
+   * Measures the strip's range again - for a row that changed size, or one that has gone - and draws only when the range
+   * or the strip's height changed. Runs outside any template pass: a `ResizeObserver`'s report comes after layout, and the
+   * panel's fit on a microtask past the view query that found it gone.
+   */
+  private refitStrip(): void {
+    if (this.destroyed) return;
+    const before = `${this.stripHeight}:${this.stripRange.max}`;
+    this.fitStrip();
+    if (`${this.stripHeight}:${this.stripRange.max}` !== before) this.cdr.detectChanges();
   }
 
   /**

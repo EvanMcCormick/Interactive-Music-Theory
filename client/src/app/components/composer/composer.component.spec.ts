@@ -553,29 +553,57 @@ describe('ComposerComponent', () => {
     expect(tallest - component.stripRange.max).toBe(panelHeight);
   });
 
-  it('fits the strip again when the status line or the open alphaTex panel changes height, as a long message wraps', () => {
-    const observed: Element[] = [];
-    const original = window.ResizeObserver;
-    class RecordingObserver {
-      observe(target: Element): void {
-        observed.push(target);
-      }
-      unobserve(): void {}
-      disconnect(): void {}
-    }
-    window.ResizeObserver = RecordingObserver as unknown as typeof ResizeObserver;
-    try {
-      const page = TestBed.createComponent(ComposerComponent);
-      page.detectChanges();
-      page.componentInstance.toggleTexPanel();
-      page.detectChanges();
+  /**
+   * The page's `ResizeObserver` answered, and the fit it makes applied: its callback is delivered after a frame's
+   * animation callbacks, so two frames cover a change made before this was called.
+   */
+  async function fitted(): Promise<void> {
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    fixture.detectChanges();
+  }
 
-      expect(observed).toContain(page.nativeElement.querySelector('app-composer-status-line'));
-      expect(observed).toContain(page.nativeElement.querySelector('.tex-panel'));
-      page.destroy();
-    } finally {
-      window.ResizeObserver = original;
-    }
+  it('fits the strip again when the status line or the open alphaTex panel changes height, as a long message wraps', async () => {
+    tallPage();
+    await fitted();
+    const tallest = component.stripRange.max;
+
+    // A refusal wrapping the status line onto a second line.
+    const status: HTMLElement = fixture.nativeElement.querySelector('app-composer-status-line');
+    status.style.minHeight = `${status.offsetHeight + 40}px`;
+    await fitted();
+
+    expect(tallest - component.stripRange.max).withContext('the room the wrapped status line took').toBe(40);
+
+    component.toggleTexPanel();
+    fixture.detectChanges();
+    await fitted();
+    const withPanel = component.stripRange.max;
+    const panel: HTMLElement = fixture.nativeElement.querySelector('.tex-panel');
+
+    // As the panel's diagnostics grow under its text box.
+    const panelHeight = panel.offsetHeight;
+    panel.style.minHeight = `${panelHeight + 30}px`;
+    await fitted();
+
+    expect(panel.offsetHeight).toBeGreaterThan(panelHeight);
+    expect(withPanel - component.stripRange.max).withContext('the room the grown panel took').toBe(panel.offsetHeight - panelHeight);
+  });
+
+  it('fits the strip again when the alphaTex panel closes, giving back the room its row took', async () => {
+    tallPage();
+    await fitted();
+    const tallest = component.stripRange.max;
+
+    component.toggleTexPanel();
+    fixture.detectChanges();
+    await fitted();
+    expect(component.stripRange.max).withContext('the open panel is a row the strip leaves room for').toBeLessThan(tallest);
+
+    component.toggleTexPanel();
+    fixture.detectChanges();
+    await fitted();
+
+    expect(component.stripRange.max).toBe(tallest);
   });
 
   it('presses any other control focused from the keyboard once for a held Enter, as a menu item or a saved row is', () => {

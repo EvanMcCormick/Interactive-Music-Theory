@@ -7,6 +7,9 @@ import { EditOutcome, SelectionPlacement, noticeOfOutcome } from './composer-ser
  * The composer's history - commits, undo and redo, and replacing the whole document - and what the status line's live
  * region says: a refusal, or a notice.
  *
+ * Nothing here touches the page: the prompt before a new composition discards unsaved work is `ComposerService`'s
+ * (`confirmDiscard`), which asks this only what the document holds.
+ *
  * Lifted out of `ComposerService` for the 1000-line cap, as `composer-service-structure.ts` and
  * `composer-entry-commands.ts` were. The service owns the state subject and exposes each command; this class holds the
  * undo and redo stacks and reaches the state only through `ComposerHistoryHost`.
@@ -23,31 +26,12 @@ export interface ComposerHistoryHost {
 
 /** Commits, undo and redo, and the refusals and notices published beside them. */
 export class ComposerHistory {
-  static readonly MAX_HISTORY = 100;
+  private static readonly MAX_HISTORY = 100;
 
   private undoStack: ScoreDoc[] = [];
   private redoStack: ScoreDoc[] = [];
-  /** Unsaved work outside the document that a new composition would throw away, each asked when one is about to. */
-  private readonly unsavedElsewhere = new Set<() => boolean>();
 
   constructor(private readonly host: ComposerHistoryHost) {}
-
-  /**
-   * Whether the composition open may be replaced by a new one - a load, New, an opened transcription - which starts a
-   * fresh history, so its unsaved work would be gone past undo. With nothing unsaved, in the document or held elsewhere
-   * (`holdUnsavedWork`), yes without asking; otherwise the user is asked, "Discard unsaved changes and `action`?".
-   * Asking changes nothing: a caller that is told no leaves the document, its history and the route as they are.
-   */
-  confirmDiscard(action: string): boolean {
-    const unsaved = this.host.state().isDirty || [...this.unsavedElsewhere].some(held => held());
-    return !unsaved || window.confirm(`Discard unsaved changes and ${action}?`);
-  }
-
-  /** Counts `unsaved` as unsaved work in `confirmDiscard` - the page's edited alphaTex draft - until the returned release. */
-  holdUnsavedWork(unsaved: () => boolean): () => void {
-    this.unsavedElsewhere.add(unsaved);
-    return () => void this.unsavedElsewhere.delete(unsaved);
-  }
 
   /**
    * Runs `edit` on a cloned document and commits the result - or, when `edit` returns a reason,
