@@ -187,11 +187,6 @@ export class StaffHitTestService {
     };
   }
 
-  /** Half-steps above the bottom line for a tab string on an N-line staff. */
-  stringToHalfSteps(stringNumber: number, lineCount: number): number {
-    return (lineCount - stringNumber) * 2;
-  }
-
   /** `surface`'s box, measured once per call that holds `boxes`. */
   private boxOf(boxes: Map<SVGSVGElement, DOMRect>, surface: SVGSVGElement): DOMRect {
     let box = boxes.get(surface);
@@ -206,8 +201,11 @@ export class StaffHitTestService {
     return (clientY - box.top) / this.scaleOf(staff.surface, box);
   }
 
-  /** alphaTab renders without a viewBox, so this is normally 1. */
-  private scaleOf(surface: SVGSVGElement, box: DOMRect): number {
+  /**
+   * Screen pixels per surface unit, for a surface measured as `box`: its drawn width over its viewBox width.
+   * alphaTab renders without a viewBox, so this is normally 1.
+   */
+  scaleOf(surface: SVGSVGElement, box: DOMRect): number {
     const viewBoxWidth = surface.viewBox.baseVal.width;
     if (!viewBoxWidth || !box.width) return 1;
     return box.width / viewBoxWidth;

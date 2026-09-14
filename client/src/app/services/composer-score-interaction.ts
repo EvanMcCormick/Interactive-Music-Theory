@@ -1,4 +1,4 @@
-import { ClefKind, EditCursor, EntryMode, ScoreDoc } from '../models/composer.model';
+import { ClefKind, ComposerState, EditCursor, EntryMode, ScoreDoc } from '../models/composer.model';
 import { BeatRef, selectionTargets } from './composer-selection';
 import { bottomLineDiatonic } from './staff-pitch';
 
@@ -129,10 +129,11 @@ export function caretSlotIndexOf(slots: readonly StaffSlot[], cursor: EditCursor
 /**
  * How far above its staff's bottom line the caret box sits, in half line-spacings: a tablature caret on
  * its string (string 1 is the top line), a notation caret where notation was last clicked, or on the
- * middle line before any click.
+ * middle line before any click. Never below the bottom line: a tablature staff with no strings, which
+ * `staffSlotsOf` does not draw, puts it there.
  */
 export function caretHalfStepsOf(staff: StaffKind, stringCount: number, stringIndex: number | null, clickedHalfSteps: number | null): number {
-  if (staff === 'tab') return (stringCount - ((stringIndex ?? 0) + 1)) * 2;
+  if (staff === 'tab') return Math.max(0, (stringCount - ((stringIndex ?? 0) + 1)) * 2);
   return clickedHalfSteps ?? 4;
 }
 
@@ -174,4 +175,37 @@ export function snappedHoverX(x: number, spacing: number): number {
  */
 export function hoverKeyOf(slotIndex: number, halfSteps: number, snappedX: number, spacing: number, scrollTop: number): string {
   return `${slotIndex}:${halfSteps}:${snappedX}:${spacing}:${scrollTop}`;
+}
+
+/**
+ * Whether Pen's hover notehead stays up across a state change: only while Pen is still on and the document
+ * is the one it was drawn over. A write, an undo or any edit is about to engrave the score again and move
+ * what the notehead was placed against; the next pointer move draws it afresh.
+ */
+export function hoverSurvives(
+  previous: Pick<ComposerState, 'doc' | 'entryMode'> | null,
+  next: Pick<ComposerState, 'doc' | 'entryMode'>
+): boolean {
+  return next.entryMode === 'pen' && previous !== null && previous.doc === next.doc;
+}
+
+/** Whether two carets are one: the same track, staff, bar, voice, beat and string. */
+export function sameCaret(a: EditCursor, b: EditCursor): boolean {
+  return (
+    a.trackIndex === b.trackIndex &&
+    a.staffIndex === b.staffIndex &&
+    a.barIndex === b.barIndex &&
+    a.voiceIndex === b.voiceIndex &&
+    a.beatIndex === b.beatIndex &&
+    a.stringIndex === b.stringIndex
+  );
+}
+
+/**
+ * Whether a Pen click's note is sounded: only when the write changed the document. A refused write - a full
+ * bar, a tuplet it would break - publishes its reason and keeps the document, and a note that was not written
+ * must not be heard. By identity, as `scoreRedrawOf` is.
+ */
+export function writeSounds(before: ScoreDoc, after: ScoreDoc): boolean {
+  return after !== before;
 }
