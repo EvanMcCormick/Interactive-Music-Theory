@@ -118,6 +118,7 @@ export class ComposerService {
       refusal: null,
       notice: null,
       messageId: 0,
+      documentId: 0,
       entryMode: 'select',
       inputDuration: 4,
       inputDots: 0,
@@ -353,6 +354,8 @@ export class ComposerService {
       anchor: null,
       refusal: null,
       notice: null,
+      // Marked clean is a load: another composition, whose entry the library panel then names.
+      documentId: markClean ? state.documentId + 1 : state.documentId,
       isDirty: !markClean,
       canUndo: true,
       canRedo: false
@@ -954,6 +957,7 @@ export class ComposerService {
       refusal: null,
       notice: null,
       messageId: 0,
+      documentId: this.stateSubject.getValue().documentId + 1,
       entryMode: 'select',
       inputDuration: 4,
       inputDots: 0,

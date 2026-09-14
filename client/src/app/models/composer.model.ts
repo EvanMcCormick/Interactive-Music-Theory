@@ -443,6 +443,13 @@ export interface ComposerState {
    * digit's notice rather than saying it again.
    */
   messageId: number;
+  /**
+   * Which composition the document is. Bumped when `reset` starts a new one and when `replaceDocument` puts in one marked
+   * clean - a load - and by nothing that changes the same composition: an edit, undo, redo, an applied alphaTex draft.
+   * The library panel forgets the entry it last loaded or saved when this changes, so Save never writes a new score
+   * over it.
+   */
+  documentId: number;
   /** Select or Pen. See `EntryMode`. */
   entryMode: EntryMode;
   /** Duration applied to the next entered note. */

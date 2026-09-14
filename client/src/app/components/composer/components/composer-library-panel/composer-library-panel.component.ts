@@ -122,17 +122,21 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
    * `save` and its refusals - a plain Save over the entry the write left current. Each runs only if it still has
    * something to write: a plain Save when the document moved on since the write before it began, a copy unless
    * that write was a copy of the same document, so a double click on Save as copy makes one copy. Dropped when
-   * the write failed, which has been reported and would only fail again; when a composition is loaded, since they
-   * were pressed for the one it replaced; and when the panel is destroyed, since the page's guards are gone.
+   * the write failed, which has been reported and would only fail again; when a load or New replaces the document, or
+   * its entry is deleted, since they were pressed for what is gone (`forgetEntry`); and when the panel is destroyed,
+   * since the page's guards are gone.
    */
   private queuedSaves: Array<'save' | 'copy'> = [];
 
   /**
-   * Bumped whenever a load replaces the document. A write that began before it still lands in the entry it was
-   * writing, but leaves `currentId` as the load set it: otherwise the next Save would write the loaded composition
-   * over the entry that write was for.
+   * Bumped whenever the panel forgets its entry - a load or New replacing the document, or the entry deleted
+   * (`forgetEntry`). A write that began before it still lands in the entry it was writing, but leaves `currentId` as it
+   * now is: otherwise the next Save would write the new document over the entry that write was for.
    */
   private loadGeneration = 0;
+
+  /** The write under way, settled either way, or a settled promise. A delete of an entry waits for it (`remove`). */
+  private writing: Promise<void> = Promise.resolve();
 
   /** Set on destroy: a queued save must not run against a page that has gone, whose guards are no longer asked. */
   private destroyed = false;
@@ -177,6 +181,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
       .getState()
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
+        // Another composition - New, or a load - is not the entry last loaded or saved (`forgetEntry`).
+        if (this.state && state.documentId !== this.state.documentId) this.forgetEntry();
         this.state = state;
 
         const linked = state.doc.tracks.flatMap(track =>
@@ -330,8 +336,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     if (!this.state || this.destroyed || this.saveRequests.refused()) return;
 
     if (this.saving) {
-      const intent = asNew ? 'copy' : 'save';
-      if (!this.queuedSaves.includes(intent)) this.queuedSaves.push(intent);
+      this.queueSave(asNew);
       return;
     }
 
@@ -366,10 +371,18 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
    * already listening to, having just pressed a button inside it.
    */
   async flattenAndSave(): Promise<void> {
-    if (this.saving || this.destroyed || this.saveRequests.refused()) return;
+    if (this.destroyed || this.saveRequests.refused()) return;
     const asNew = this.pendingSave?.asNew ?? false;
     const flattened = this.flattenEveryLinkedTrack();
     this.pendingSave = null;
+
+    // Pressed while a write is under way: flattened as pressed, and saved once that write lands, as a Save pressed now
+    // is (`queuedSaves`) - the entry that write makes is not known until it lands.
+    if (this.saving) {
+      this.queueSave(asNew);
+      this.returnFocusToSave();
+      return;
+    }
 
     if (!(await this.writeToLibrary(asNew))) {
       this.pendingSave = {
@@ -390,6 +403,12 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   dismissSaveBlock(): void {
     this.pendingSave = null;
     this.returnFocusToSave();
+  }
+
+  /** Remembers a save pressed while a write is under way, once for each kind (`queuedSaves`). */
+  private queueSave(asNew: boolean): void {
+    const intent = asNew ? 'copy' : 'save';
+    if (!this.queuedSaves.includes(intent)) this.queuedSaves.push(intent);
   }
 
   private refuseToSave(asNew: boolean): void {
@@ -486,23 +505,30 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     // The document this write holds. Only it is marked saved, and a queued save runs after it only when it still has
     // something to write (`runQueuedSave`).
     const doc = this.state.doc;
-    // A load while this write is under way leaves the loaded composition current (`loadGeneration`).
+    // A load, New or a delete of the entry while this write is under way leaves `currentId` as they left it (`loadGeneration`).
     const generation = this.loadGeneration;
+    // What this write holds, as alphaTex: a queued save runs after it only when the document would write something else.
+    let written: string | null = null;
     let landed = false;
     try {
-      const score = this.buildScore();
+      written = this.tex.export(this.buildScore());
 
-      const id = await this.library.save(
+      const write = this.library.save(
         {
           title: doc.title || 'Untitled',
           artist: doc.artist,
-          tex: this.tex.export(score),
+          tex: written,
           tempo: doc.tempo,
           trackCount: doc.tracks.length,
           barCount: doc.masterBars.length
         },
         asNew ? undefined : this.currentId ?? undefined
       );
+      this.writing = write.then(
+        () => undefined,
+        () => undefined
+      );
+      const id = await write;
 
       if (generation === this.loadGeneration) this.currentId = id;
       this.composer.markSaved(doc);
@@ -515,21 +541,22 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
       this.saving = false;
     }
 
-    if (landed && !this.destroyed) this.runQueuedSave(doc, asNew);
+    if (landed && !this.destroyed && written !== null) this.runQueuedSave(written, asNew);
     else this.queuedSaves = [];
     return landed;
   }
 
   /**
-   * Runs the first queued save that still has something to write, after a write of `written` - a copy when
-   * `wroteCopy` - has landed. The rest stay queued behind the write it starts. A plain Save with the document as
-   * written would write it again, and so would a copy after a copy of it; both are skipped. A save that starts no
-   * write has been refused, and said why, and the rest would be refused the same way, so they are dropped.
+   * Runs the first queued save that still has something to write, after a write of `written` - the alphaTex it held,
+   * a copy when `wroteCopy` - has landed. The rest stay queued behind the write it starts. A plain Save of a document
+   * that writes the same alphaTex would write it again, and so would a copy after a copy of it; both are skipped.
+   * Compared as alphaTex rather than by identity: undo gives back a copy of the document the write held. A save that
+   * starts no write has been refused, and said why, and the rest would be refused the same way, so they are dropped.
    */
-  private runQueuedSave(written: ComposerState['doc'], wroteCopy: boolean): void {
+  private runQueuedSave(written: string, wroteCopy: boolean): void {
     while (this.queuedSaves.length > 0) {
       const asNew = this.queuedSaves.shift() === 'copy';
-      const moved = this.state?.doc !== written;
+      const moved = this.texOfDocument() !== written;
       if (!moved && (!asNew || wroteCopy)) continue;
       void this.save(asNew);
       if (!this.saving) this.queuedSaves = [];
@@ -555,10 +582,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
         return;
       }
 
-      // Saves queued for the composition this replaces were pressed for it, and a write still under way for it must
-      // not make it current again.
-      this.loadGeneration++;
-      this.queuedSaves = [];
+      // Marked clean, the loaded document is another composition (`documentId`), so the panel forgets the one it replaces
+      // as the state arrives - dropping the saves queued for it - and then names the loaded entry.
       this.composer.replaceDocument(this.mapper.toDoc(parsed.score), true);
       this.currentId = id;
       this.drawerOpen = false;
@@ -568,13 +593,29 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     }
   }
 
+  /**
+   * Forgets the composition the document was, when a load or New replaces it (`ComposerState.documentId`) or its entry
+   * is deleted. Saves queued for it were pressed for it and are dropped; a write still under way for it lands in its
+   * entry but does not make that entry current again (`loadGeneration`); and the next Save writes a new entry, until a
+   * load or a save names one.
+   */
+  private forgetEntry(): void {
+    this.loadGeneration++;
+    this.queuedSaves = [];
+    this.currentId = null;
+    this.cdr.markForCheck();
+  }
+
   async remove(id: string, title: string, event: Event): Promise<void> {
     event.stopPropagation();
     if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
 
     try {
+      // Deleting the entry being edited forgets it, as New does: a write under way to it does not make it current again,
+      // and no queued save writes it back. That write would put the entry back itself, so the delete waits for it.
+      if (this.currentId === id) this.forgetEntry();
+      await this.writing;
       await this.library.delete(id);
-      if (this.currentId === id) this.currentId = null;
       this.report(`Deleted "${title}"`);
     } catch (error) {
       this.reportError(error);
@@ -642,6 +683,15 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
 
   private buildScore(): alphaTab.model.Score {
     return this.mapper.toScore(this.state!.doc, new alphaTab.Settings());
+  }
+
+  /** The document's alphaTex as a save would write it, or null when it cannot be built. */
+  private texOfDocument(): string | null {
+    try {
+      return this.state ? this.tex.export(this.buildScore()) : null;
+    } catch {
+      return null;
+    }
   }
 
   private report(message: string): void {

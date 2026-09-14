@@ -112,6 +112,88 @@ describe('ComposerLibraryPanelComponent queued saves', () => {
     });
   });
 
+  describe('and New', () => {
+    // The page's New resets the service's document, and the panel hears of it only through the state's `documentId`.
+
+    it('writes the new score as a new entry, not over the entry just saved', async () => {
+      void panel.save();
+      writes[0].land('a-id');
+      await settle();
+
+      composer.reset();
+      void panel.save();
+      await settle();
+
+      expect(idsWritten()).toEqual(['a-id', undefined]);
+      expect(panel.currentId).toBeNull();
+    });
+
+    it('drops a Save queued before New, so the write under way lands and nothing is written over its entry', async () => {
+      void panel.save();
+      composer.setTempo(140);
+      void panel.save();
+
+      composer.reset();
+      writes[0].land('a-id');
+      await settle();
+
+      expect(library.save).toHaveBeenCalledTimes(1);
+      expect(panel.currentId).toBeNull();
+    });
+  });
+
+  describe('and deleting the entry', () => {
+    beforeEach(() => {
+      spyOn(window, 'confirm').and.returnValue(true);
+      spyOn(library, 'delete').and.resolveTo();
+    });
+
+    it('deletes it once a write under way to it lands, and neither that write nor a queued Save brings it back', async () => {
+      void panel.save();
+      composer.setTempo(140);
+      void panel.save();
+
+      const removing = panel.remove('a-id', 'A', new Event('click'));
+      await settle();
+      expect(library.delete).withContext('the write under way would put the entry back').not.toHaveBeenCalled();
+
+      writes[0].land('a-id');
+      await removing;
+      await settle();
+
+      expect(library.delete).toHaveBeenCalledOnceWith('a-id');
+      expect(library.save).toHaveBeenCalledTimes(1);
+      expect(panel.currentId).toBeNull();
+    });
+  });
+
+  describe('and Flatten and save', () => {
+    it('flattens when pressed during a write, and saves the flattened score once that write lands', async () => {
+      void panel.save();
+      // A score that writes something else than the write under way - a link alone writes nothing, since alphaTex has
+      // nowhere to keep it - and is linked to a progression.
+      composer.replaceDocument({
+        ...composer.doc,
+        tempo: 140,
+        tracks: composer.doc.tracks.map(track => ({
+          ...track,
+          generated: { progressionId: 'prog', progressionName: 'Verse', source: { kind: 'revision' as const, revision: 1 } }
+        }))
+      });
+
+      await panel.flattenAndSave();
+      expect(composer.doc.tracks[0].generated).toBeNull();
+      expect(library.save).toHaveBeenCalledTimes(1);
+
+      writes[0].land('a-id');
+      await settle();
+
+      expect(idsWritten()).toEqual(['a-id', 'a-id']);
+      expect(temposWritten()).toEqual([120, 140]);
+      expect(panel.saveBlockedReason).toBeNull();
+    });
+  });
+
   describe('as Save as copy', () => {
     it('makes one copy for a double click', async () => {
       void panel.save(true);
@@ -121,6 +203,19 @@ describe('ComposerLibraryPanelComponent queued saves', () => {
 
       expect(library.save).toHaveBeenCalledTimes(1);
       expect(panel.currentId).toBe('copy-id');
+    });
+
+    it('makes one copy when Save as copy is pressed again after an edit that is then undone', async () => {
+      // Undo gives back a copy of the document, not the one the write held; what the two would write is the same.
+      void panel.save(true);
+      composer.setTempo(140);
+      void panel.save(true);
+      composer.undo();
+
+      writes[0].land('copy-id');
+      await settle();
+
+      expect(library.save).toHaveBeenCalledTimes(1);
     });
 
     it('saves the edit over the original, then copies, when Save and then Save as copy are pressed mid-write', async () => {

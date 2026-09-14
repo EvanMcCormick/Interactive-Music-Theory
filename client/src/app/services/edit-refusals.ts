@@ -392,6 +392,9 @@ const CLEAR_BREAKS_A_GROUP =
 export function clearRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): string | null {
   const refusal = editRefusal(doc, refs, { family: 'beat', key: 'duration' }, null);
   if (refusal) return refusal;
+  // A clear keeps every beat's value and tuplet, so only a grace it removes can move beats. Clearing notes alone is never
+  // refused for a group, and drafts nothing - which the Rest reader asks over every range.
+  if (!beatsAt(doc, refs).some(beat => beat.effects.grace !== 'none')) return null;
   return tupletGroupOpenedBy(doc, refs, (draft, drafted) => clearToRests(draft, drafted), null) ? CLEAR_BREAKS_A_GROUP : null;
 }
 

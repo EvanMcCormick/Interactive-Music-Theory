@@ -214,6 +214,18 @@ describe('fermata positions and carrying', () => {
     expect(shapesOf(saved(doc))).toEqual(shapesOf(doc));
   });
 
+  it('keeps a fermata at its position when one of the notes holding it there stayed, though another moved in its voice', () => {
+    // After the on-beat grace, the 32nd and the 16th both play at 1080 and both hold the fermata. The 32nd made a 16th
+    // still plays at 1080, and the 16th moves to 1200. The note that stayed keeps the fermata there, so it does not go
+    // with the note that moved.
+    const doc = scoreOf('n4 o n32F n16F n8 n2');
+
+    expect(setBeatDurations(doc, [ref(2)], 16, 0)).toEqual([]);
+
+    expect(shapesOf(doc)).toEqual(['n4 o n16F n16 n8 n2']);
+    expect(shapesOf(saved(doc))).toEqual(shapesOf(doc));
+  });
+
   it('reads a fermata only a second voice holds as its position\'s, so a beat that moves onto that tick takes it', () => {
     // A loaded bar: the first guitar's second voice holds a fermata at 1440, where its first voice has no beat. alphaTab
     // files it there and hands it to the second guitar's quarter the dot moves onto 1440.

@@ -414,6 +414,16 @@ describe('an edit that would leave a tuplet group open', () => {
       expect(clearRefusal(barOf(group), beatsAt(1))).toBeNull();
     });
 
+    it('drafts nothing to clear notes, since only removing a grace can leave a group open', () => {
+      // A bar a draft cannot copy: `structuredClone` throws on a function. Clearing notes alone never reads a draft, so
+      // the Rest reader over a long range does no copying for it; clearing the grace still does.
+      const bar = barOf('n4 g o n4t3 n8t3 n2');
+      Object.assign(bar.tracks[0].staves[0].bars[0].voices[0].beats[5], { uncopyable: () => undefined });
+
+      expect(refusals.clearRefusal(bar, beatsAt(0, 3, 5))).toBeNull();
+      expect(() => refusals.clearRefusal(bar, beatsAt(1))).toThrow();
+    });
+
     it('writes a note into a closed group at the beat\'s own value where the palette\'s would break it', () => {
       expect(refusals.entryValueOf(frozen(barOf(group)), ref(0, 1), 4, 0)).toEqual({ duration: 8, dots: 0 });
       expect(refusals.entryValueOf(frozen(barOf('n4t3 n4t3 n4t3 n2')), ref(0, 0), 8, 1)).toEqual({ duration: 4, dots: 0 });

@@ -88,8 +88,8 @@ export function fermataSnapshotOf(doc: ScoreDoc, barIndices: Iterable<number>): 
  * 1. `pasted` beats, graces aside, bring their own fermata, which wins at the position they land on (`pasteBeats`).
  * 2. **A fermata goes with its notes** when that reaches no other beat. The notes holding it at a position - held by
  *    identity in `before`, in any voice of any staff - are read together, with their own voices set aside, and those
- *    that moved carry it when all of these hold: (a) no ordinary beat in another voice still plays at the old position
- *    holding a fermata, so nothing keeps it there; (b) they all moved to the same tick, since carried with notes at
+ *    that moved carry it when all of these hold: (a) no note holding it stayed at the old position, and no ordinary beat
+ *    in another voice still plays there holding a fermata, so nothing keeps it there; (b) they all moved to the same tick, since carried with notes at
  *    different ticks one fermata would become several; (c) no ordinary beat in another voice plays at that new
  *    position, which the fermata would reach; (d) the new position holds no fermata. So the notes holding a fermata on
  *    two tracks, moved alike, take it with them, and what their own voices moved onto the old place does not keep it.
@@ -133,18 +133,26 @@ export function settleFermatas(doc: ScoreDoc, before: FermataSnapshot, pasted: R
   const carriedFrom = new Set<string>();
   const claimed = new Set<string>();
   const moved = new Map<string, { holder: FermataHolder; barIndex: number; start: number }[]>();
+  /** The positions where a note holding the fermata is still in its voice at its old bar and tick. */
+  const stayed = new Set<string>();
   for (const holder of before.holders) {
     const at = located.get(holder.beat);
     if (!at || at.trackIndex !== holder.trackIndex || at.staffIndex !== holder.staffIndex || at.voiceIndex !== holder.voiceIndex) continue;
-    if (at.barIndex === holder.barIndex && at.start === holder.start) continue;
     const from = key(holder.barIndex, holder.start);
+    if (at.barIndex === holder.barIndex && at.start === holder.start) {
+      stayed.add(from);
+      continue;
+    }
     moved.set(from, [...(moved.get(from) ?? []), { holder, barIndex: at.barIndex, start: at.start }]);
   }
   const pending: { holders: FermataHolder[]; barIndex: number; start: number }[] = [];
   for (const moves of moved.values()) {
     const holders = moves.map(move => move.holder);
     const [{ barIndex, start }] = moves;
-    if (otherBeatsAt(doc, holders, holders[0].barIndex, holders[0].start).some(other => other.holdsPosition || other.beat.effects.fermata)) {
+    // Held there by a note that stayed - which `otherBeatsAt` cannot see when it shares a voice with one that moved - or
+    // by a beat in another voice.
+    const from = key(holders[0].barIndex, holders[0].start);
+    if (stayed.has(from) || otherBeatsAt(doc, holders, holders[0].barIndex, holders[0].start).some(other => other.holdsPosition || other.beat.effects.fermata)) {
       holders.forEach(holder => heldThere.add(holder));
       continue;
     }
