@@ -42,9 +42,10 @@ import {
 } from './beat-edits';
 import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { defaultFermata } from './composer-tool-defaults';
-import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
+import { BeatRef, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
-import { ComposerStructureCommands, EditOutcome, SelectionPlacement, noticeOfOutcome } from './composer-service-structure';
+import { ComposerHistory } from './composer-history';
+import { ComposerStructureCommands, EditOutcome } from './composer-service-structure';
 import {
   EditScope,
   beatEffectRefusal,
@@ -70,10 +71,9 @@ import { insertBarInto } from './score-structure';
  * Owns the editable score document, the edit caret, and undo/redo.
  *
  * All mutations go through `commit()`, which snapshots the previous document
- * onto the undo stack. ScoreDoc is an acyclic plain object, so a snapshot is a
- * structuredClone - this is the reason the composer keeps its own model rather
- * than mutating alphaTab's Score, whose cyclic parent references cannot be
- * cloned cheaply.
+ * onto the undo stack. The commits, undo and redo, and the refusals and notices
+ * published beside them live in `ComposerHistory` (composer-history.ts), which
+ * holds the stacks and reaches the state only through its host.
  *
  * INVARIANT: every staff of every track has exactly `masterBars.length` bars.
  * Bar insertion and removal always apply across all tracks, so the shared
@@ -94,40 +94,43 @@ import { insertBarInto } from './score-structure';
  */
 @Injectable({ providedIn: 'root' })
 export class ComposerService {
-  private static readonly MAX_HISTORY = 100;
+  private readonly stateSubject = new BehaviorSubject<ComposerState>(ComposerService.initialState(0));
 
-  private readonly stateSubject: BehaviorSubject<ComposerState>;
-  private undoStack: ScoreDoc[] = [];
-  private redoStack: ScoreDoc[] = [];
+  /** Commits, undo and redo, and the refusals and notices beside them. See composer-history.ts. */
+  private readonly history = new ComposerHistory({
+    state: () => this.stateSubject.getValue(),
+    publish: state => this.stateSubject.next(state)
+  });
 
   /** What the command modules reach back through. */
   private readonly host: ComposerEntryHost = {
     state: () => this.stateSubject.getValue(),
-    commit: (edit, amend) => this.commit(edit, amend),
-    commitFollowing: (edit, place, notice) => this.commitFollowing(edit, place, notice),
-    refuse: reason => this.refuse(reason),
+    commit: (edit, amend) => this.history.commit(edit, amend),
+    commitFollowing: (edit, place, notice) => this.history.commitFollowing(edit, place, notice),
+    refuse: reason => this.history.refuse(reason),
     markDiverged: draft => this.markDiverged(draft),
     setInputDuration: (duration, dots) => this.setInputDuration(duration, dots)
   };
   private readonly structure = new ComposerStructureCommands(this.host);
   private readonly entry = new ComposerEntryCommands(this.host);
 
-  constructor() {
-    this.stateSubject = new BehaviorSubject<ComposerState>({
+  /** A new score's state: an empty score, the caret at its start, Select, and no history. */
+  private static initialState(documentId: number): ComposerState {
+    return {
       doc: ComposerService.createEmptyScore(),
       cursor: createDefaultCursor(),
       anchor: null,
       refusal: null,
       notice: null,
       messageId: 0,
-      documentId: 0,
+      documentId,
       entryMode: 'select',
       inputDuration: 4,
       inputDots: 0,
       isDirty: false,
       canUndo: false,
       canRedo: false
-    });
+    };
   }
 
   getState(): Observable<ComposerState> {
@@ -219,162 +222,41 @@ export class ComposerService {
   }
 
   // -------------------------------------------------------------------------
-  // History
+  // History: see composer-history.ts
   // -------------------------------------------------------------------------
 
-  /**
-   * Runs `edit` on a cloned document and commits the result - or, when `edit` returns a reason,
-   * publishes that and commits nothing. With `amend` the result replaces the last commit instead of
-   * adding an undo step: the second digit of a two-digit fret (`retypeNote`).
-   */
-  private commit(edit: (draft: ScoreDoc) => EditOutcome, amend = false): void {
-    const state = this.stateSubject.getValue();
-    const draft = structuredClone(state.doc);
-    const reason = edit(draft);
-    if (typeof reason === 'string') return this.refuse(reason);
-    // An amend replaces the commit before it, whose notice - a fermata the first digit's note removed - still holds.
-    const notice = noticeOfOutcome(null, reason);
-    this.commitDocument(draft, undefined, amend, amend ? notice ?? state.notice : notice);
-  }
-
-  /**
-   * Runs `edit` on a clone of the document and commits it with the selection still on its
-   * beats - or, when `edit` returns a reason, publishes that and commits nothing, so an edit
-   * that refuses part-way leaves nothing behind.
-   *
-   * The selection's ends name beats by position, and an edit can move the beats they name: a
-   * duration change puts rests right after each beat it shortens, a new grace gets its gap's
-   * rests in front of it, Fix bar splits and carries beats. Left by position, a range of four
-   * notes made eighths would end on a rest halfway through them, and the next press would miss
-   * half the notes. So the beat each end names is found before the edit and looked for again
-   * after it (`followedEnd`). An end whose beat is gone stays where it was, clamped. `place`, when
-   * given, decides the selection from those followed ends instead, in the same publish, and `notice`
-   * what the command says it did (`ComposerState.notice`).
-   */
-  private commitFollowing(
-    edit: (draft: ScoreDoc) => EditOutcome,
-    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement,
-    notice?: () => string | null
-  ): void {
-    const state = this.stateSubject.getValue();
-    const draft = structuredClone(state.doc);
-    const cursorBeat = this.beatAt(draft, state.cursor);
-    const anchorBeat = state.anchor ? this.beatAt(draft, state.anchor) : null;
-
-    const reason = edit(draft);
-    if (typeof reason === 'string') return this.refuse(reason);
-
-    const followed: SelectionPlacement = {
-      cursor: followedEnd(draft, state.cursor, cursorBeat),
-      anchor: state.anchor ? followedEnd(draft, state.anchor, anchorBeat) : null
-    };
-    this.commitDocument(draft, place ? place(draft, followed) : followed, false, noticeOfOutcome(notice?.() ?? null, reason));
-  }
-
-  /**
-   * Publishes a prepared document and pushes the old one onto undo, with `selection` in place
-   * of the current one when given. Either way the selection is clamped into the new document.
-   */
-  private commitDocument(
-    next: ScoreDoc,
-    selection?: { cursor: EditCursor; anchor: EditCursor | null },
-    amend = false,
-    notice: string | null = null
-  ): void {
-    const state = this.stateSubject.getValue();
-    const cursor = selection ? selection.cursor : state.cursor;
-    const anchor = selection ? selection.anchor : state.anchor;
-    if (!amend) {
-      this.undoStack.push(structuredClone(state.doc));
-      if (this.undoStack.length > ComposerService.MAX_HISTORY) this.undoStack.shift();
-    }
-    this.redoStack = [];
-
-    this.stateSubject.next({
-      ...state,
-      doc: next,
-      cursor: clampedCursor(cursor, next),
-      anchor: anchor ? clampedCursor(anchor, next) : null,
-      refusal: null,
-      notice,
-      // A new message, unless an amend kept the one already showing (`commit`).
-      messageId: notice !== null && !(amend && notice === state.notice) ? state.messageId + 1 : state.messageId,
-      isDirty: true,
-      canUndo: true,
-      canRedo: false
-    });
-  }
-
   undo(): void {
-    const state = this.stateSubject.getValue();
-    const previous = this.undoStack.pop();
-    if (!previous) return;
-
-    this.redoStack.push(structuredClone(state.doc));
-    this.stateSubject.next({
-      ...state,
-      doc: previous,
-      cursor: clampedCursor(state.cursor, previous),
-      anchor: state.anchor ? clampedCursor(state.anchor, previous) : null,
-      refusal: null,
-      notice: null,
-      isDirty: true,
-      canUndo: this.undoStack.length > 0,
-      canRedo: true
-    });
+    this.history.undo();
   }
 
   redo(): void {
-    const state = this.stateSubject.getValue();
-    const next = this.redoStack.pop();
-    if (!next) return;
-
-    this.undoStack.push(structuredClone(state.doc));
-    this.stateSubject.next({
-      ...state,
-      doc: next,
-      cursor: clampedCursor(state.cursor, next),
-      anchor: state.anchor ? clampedCursor(state.anchor, next) : null,
-      refusal: null,
-      notice: null,
-      isDirty: true,
-      canUndo: true,
-      canRedo: this.redoStack.length > 0
-    });
+    this.history.redo();
   }
 
   /**
    * Replaces the whole document: by default an edit of this composition, as an applied alphaTex draft is, on the undo
    * stack. A new composition - a load, an opened transcription - moves `documentId` on and starts a fresh history.
    */
-  replaceDocument(doc: ScoreDoc, { markClean = false, newComposition = false }: DocumentReplacement = {}): void {
-    const state = this.stateSubject.getValue();
-    if (newComposition) this.undoStack = [];
-    else this.undoStack.push(structuredClone(state.doc));
-    this.redoStack = [];
+  replaceDocument(doc: ScoreDoc, replacement: DocumentReplacement = {}): void {
+    this.history.replaceDocument(doc, replacement);
+  }
 
-    this.stateSubject.next({
-      ...state,
-      doc,
-      cursor: clampedCursor(state.cursor, doc),
-      anchor: null,
-      refusal: null,
-      notice: null,
-      documentId: newComposition ? state.documentId + 1 : state.documentId,
-      isDirty: !markClean,
-      canUndo: this.undoStack.length > 0,
-      canRedo: false
-    });
+  /** Marks the document clean, if `saved` - the document that was written - is still it. See `ComposerHistory.markSaved`. */
+  markSaved(saved: ScoreDoc): void {
+    this.history.markSaved(saved);
   }
 
   /**
-   * Marks the document clean, if `saved` - the document that was written - is still it. A save is written
-   * asynchronously, and an edit made while it was being written is not in it, so it stays unsaved.
+   * Says what happened outside the document's commands - a save, a load, an export - in the status line's one live region,
+   * as a notice; or, when `failed`, why it did not, as a refusal. Commits nothing.
    */
-  markSaved(saved: ScoreDoc): void {
-    const state = this.stateSubject.getValue();
-    if (state.doc !== saved) return;
-    this.stateSubject.next({ ...state, isDirty: false });
+  announce(message: string, failed = false): void {
+    this.history.announce(message, failed);
+  }
+
+  reset(): void {
+    this.history.clear();
+    this.stateSubject.next(ComposerService.initialState(this.stateSubject.getValue().documentId + 1));
   }
 
   // -------------------------------------------------------------------------
@@ -513,8 +395,8 @@ export class ComposerService {
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
     const refusal = durationRefusal(state.doc, refs, duration, dots);
 
-    if (refusal) this.refuse(refusal);
-    else this.commitFollowing(draft => setBeatDurations(draft, refs, duration, dots));
+    if (refusal) this.history.refuse(refusal);
+    else this.history.commitFollowing(draft => setBeatDurations(draft, refs, duration, dots));
 
     this.setInputDuration(duration, dots);
   }
@@ -629,25 +511,10 @@ export class ComposerService {
     const focus = state.anchor ? null : state.cursor.stringIndex;
     const refusal = typeof scope === 'function' ? scope(state.doc, refs, focus) : editRefusal(state.doc, refs, scope, focus);
     if (refusal) {
-      this.refuse(refusal);
+      this.history.refuse(refusal);
       return;
     }
-    this.commitFollowing(draft => edit(draft, refs, focus));
-  }
-
-  /** Publishes why a command did nothing. Commits nothing, so it costs no undo step. */
-  private refuse(reason: string): void {
-    const state = this.stateSubject.getValue();
-    this.stateSubject.next({ ...state, refusal: reason, notice: null, messageId: state.messageId + 1 });
-  }
-
-  /**
-   * Says what happened outside the document's commands - a save, a load, an export - in the status line's one live region,
-   * as a notice; or, when `failed`, why it did not, as a refusal. Commits nothing.
-   */
-  announce(message: string, failed = false): void {
-    const state = this.stateSubject.getValue();
-    this.stateSubject.next({ ...state, refusal: failed ? message : null, notice: failed ? null : message, messageId: state.messageId + 1 });
+    this.history.commitFollowing(draft => edit(draft, refs, focus));
   }
 
   // -------------------------------------------------------------------------
@@ -728,7 +595,7 @@ export class ComposerService {
 
   /** Inserts a bar at `index` across every track. See `insertBarInto`. */
   insertBar(index: number): void {
-    this.commit(draft => {
+    this.history.commit(draft => {
       insertBarInto(draft, index);
       this.markDiverged(draft);
     });
@@ -741,7 +608,7 @@ export class ComposerService {
   /** Removes bar `index` from every track, keeping the meter after it. See `deleteBars`. */
   removeBar(index: number): void {
     if (this.doc.masterBars.length <= 1) return;
-    this.commit(draft => {
+    this.history.commit(draft => {
       const at = Math.max(0, Math.min(index, draft.masterBars.length - 1));
       deleteBars(draft, { first: at, last: at });
       this.markDiverged(draft);
@@ -750,7 +617,7 @@ export class ComposerService {
 
   /** Adds a track of rests, holding every bar position's fermata as the other tracks do (`settleFermatas`). */
   addTrack(name: string, program: number, fretted: boolean): void {
-    this.commit(draft => {
+    this.history.commit(draft => {
       const fermatas = fermataSnapshotOf(draft, draft.masterBars.keys());
       draft.tracks.push(
         ComposerService.createTrack(
@@ -766,8 +633,8 @@ export class ComposerService {
   }
 
   removeTrack(index: number): void {
-    if (this.doc.tracks.length <= 1) return this.refuse(LAST_TRACK_REFUSAL);
-    this.commit(draft => {
+    if (this.doc.tracks.length <= 1) return this.history.refuse(LAST_TRACK_REFUSAL);
+    this.history.commit(draft => {
       draft.tracks.splice(index, 1);
     });
   }
@@ -777,7 +644,7 @@ export class ComposerService {
    * because `masterBars` and `tracks` share an invariant a blind assign could break.
    */
   updateScoreInfo(changes: Partial<Pick<ScoreDoc, 'title' | 'subTitle' | 'artist' | 'album'>>): void {
-    this.commit(draft => {
+    this.history.commit(draft => {
       draft.title = changes.title ?? draft.title;
       draft.subTitle = changes.subTitle ?? draft.subTitle;
       draft.artist = changes.artist ?? draft.artist;
@@ -786,7 +653,7 @@ export class ComposerService {
   }
 
   setTempo(tempo: number): void {
-    this.commit(draft => {
+    this.history.commit(draft => {
       draft.tempo = Math.max(20, Math.min(400, Math.round(tempo)));
     });
   }
@@ -829,7 +696,7 @@ export class ComposerService {
    */
   sendProgression(generated: GeneratedTrack): void {
     this.requireScoreMeter(generated);
-    this.commit(draft => void Object.assign(draft, mergeGeneratedTrack(draft, generated)));
+    this.history.commit(draft => void Object.assign(draft, mergeGeneratedTrack(draft, generated)));
   }
 
   /**
@@ -842,7 +709,7 @@ export class ComposerService {
    */
   flattenTrack(index: number): void {
     if (!this.isGenerated(this.doc, index)) return;
-    this.commit(draft => void Object.assign(draft, flattenGeneratedTrack(draft, index)));
+    this.history.commit(draft => void Object.assign(draft, flattenGeneratedTrack(draft, index)));
   }
 
   /**
@@ -959,25 +826,5 @@ export class ComposerService {
 
   beatAt(doc: ScoreDoc, cursor: EditCursor): BeatDoc | null {
     return this.voiceAt(doc, cursor)?.beats[cursor.beatIndex] ?? null;
-  }
-
-  reset(): void {
-    this.undoStack = [];
-    this.redoStack = [];
-    this.stateSubject.next({
-      doc: ComposerService.createEmptyScore(),
-      cursor: createDefaultCursor(),
-      anchor: null,
-      refusal: null,
-      notice: null,
-      messageId: 0,
-      documentId: this.stateSubject.getValue().documentId + 1,
-      entryMode: 'select',
-      inputDuration: 4,
-      inputDots: 0,
-      isDirty: false,
-      canUndo: false,
-      canRedo: false
-    });
   }
 }
