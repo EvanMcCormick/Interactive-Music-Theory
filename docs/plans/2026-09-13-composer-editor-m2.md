@@ -11678,7 +11678,8 @@ Seven things the page owns were corrected before this task was applied:
 - **Undo's and Redo's tooltips** are built with `shortcutTitleOf` and `KEY_PLATFORM`, so a Mac reads ⌘+Z.
 
 The status line also takes the notice, its message id and the document, for Task 3.3's outcomes, a message said
-twice in the same words, and the count of bars over. The old keyboard `switch`, the fret buffer, the
+twice in the same words, and the count of bars over; and the alphaTex message's own id, `texErrorId`, which the page
+moves on each time it says one, so "Apply or revert the alphaTex draft before saving." said twice is read out twice. The old keyboard `switch`, the fret buffer, the
 duration buttons and the Tracks panel go: the key handler, `FretDigitEntry`, the palette and the track
 strip now hold them. Composer colours become CSS custom properties on the page host (design Part 3,
 "Styling"), and the child components read them with fallbacks.
@@ -11895,6 +11896,20 @@ describe('ComposerComponent', () => {
     expect(requested).toHaveBeenCalledTimes(2);
   });
 
+  it('says the alphaTex draft refusal again when Save is pressed again, as a new message the live region reads out', () => {
+    component.toggleTexPanel();
+    component.texDraft = `${component.texDraft} `;
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+    const first = region().querySelector('.message');
+    expect(first?.textContent).toContain('Apply or revert the alphaTex draft before saving.');
+
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+    const second = region().querySelector('.message');
+
+    expect(second?.textContent).toBe(first?.textContent ?? '');
+    expect(second).not.toBe(first);
+  });
+
   it('puts the page behind the open shortcut sheet out of reach: inert, and a click over the palette lands on the backdrop, closing the sheet and changing nothing', () => {
     const palette: HTMLElement = fixture.nativeElement.querySelector('app-composer-palette');
     const doc = composer.doc;
@@ -12058,6 +12073,11 @@ export class ComposerComponent implements OnInit, OnDestroy {
    * refused while the draft is not applied. Cleared by a good apply, a revert, and closing the panel.
    */
   texApplyError: string | null = null;
+  /**
+   * Which saying of `texApplyError` it is, moved on each time the page says it, so the status line replaces the
+   * message's node and a screen reader reads the same words again - as `ComposerState.messageId` does for a refusal.
+   */
+  texErrorId = 0;
 
   metronomeEnabled = false;
   countInEnabled = false;
@@ -12305,6 +12325,7 @@ export class ComposerComponent implements OnInit, OnDestroy {
   private refusesSaveForDraft(): boolean {
     if (!this.showTexPanel || this.texDraft === this.currentTex()) return false;
     this.texApplyError = TEX_DRAFT_UNSAVED;
+    this.texErrorId++;
     this.cdr.markForCheck();
     return true;
   }
@@ -12316,6 +12337,7 @@ export class ComposerComponent implements OnInit, OnDestroy {
     if (!result.score) {
       // Keep the last good document; the diagnostics explain the failure, and the status line says so.
       this.texApplyError = 'alphaTex could not be parsed. The score is unchanged.';
+      this.texErrorId++;
       this.cdr.markForCheck();
       return;
     }
@@ -12452,6 +12474,7 @@ Replace `composer.component.html`:
     [notice]="s.notice"
     [messageId]="s.messageId"
     [texError]="texApplyError"
+    [texErrorId]="texErrorId"
     [cursor]="s.cursor"
     [entryMode]="s.entryMode"
     [doc]="s.doc"

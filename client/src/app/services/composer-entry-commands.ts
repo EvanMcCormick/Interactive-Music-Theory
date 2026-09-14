@@ -1,7 +1,7 @@
 import { DurationValue, EditCursor, NoteDoc, NotePitch, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
 import { CopiedBeats, copiedBeatsOf, pasteBeats } from './beat-clipboard';
 import { clearToRests, deleteBeats, insertBeatAt, setBeatDots, setBeatDurations } from './beat-edits';
-import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
+import { clampedCursor, movedCursor } from './composer-cursor';
 import { BeatRef, beatAt, selectionTargets } from './composer-selection';
 import { ComposerCommandHost, EditOutcome } from './composer-service-structure';
 import { pasteNoticeOf } from './composer-text';
@@ -25,8 +25,6 @@ export interface ComposerEntryHost extends ComposerCommandHost {
    * last one rather than adding an undo step.
    */
   commit(edit: (draft: ScoreDoc) => EditOutcome, amend?: boolean): void;
-  /** Moves the caret, dropping any range. */
-  moveCursor(move: CursorMove): void;
   /** Remembers the note value and dots for the next note. Not an edit. */
   setInputDuration(duration: DurationValue, dots: number): void;
 }
@@ -104,7 +102,8 @@ export class ComposerEntryCommands {
   /**
    * Commits a note or rest written at `cursor`, and with `advance` moves the caret to the next beat and drops any range
    * in that same commit. A separate caret move would publish again and clear what the commit said - a fermata the
-   * entry removed (`ComposerState.notice`) - and would advance past an entry the edit itself refused.
+   * entry removed (`ComposerState.notice`). An entry that is refused never gets here: `refusesEntryAt` has said why
+   * before the commit, and neither edit returns a reason.
    */
   private commitEntry(edit: (draft: ScoreDoc) => EditOutcome, cursor: EditCursor, advance: boolean): void {
     if (!advance) return this.host.commit(edit);

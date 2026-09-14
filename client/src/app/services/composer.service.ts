@@ -105,7 +105,6 @@ export class ComposerService {
     commitFollowing: (edit, place, notice) => this.commitFollowing(edit, place, notice),
     refuse: reason => this.refuse(reason),
     markDiverged: draft => this.markDiverged(draft),
-    moveCursor: move => this.moveCursor(move),
     setInputDuration: (duration, dots) => this.setInputDuration(duration, dots)
   };
   private readonly structure = new ComposerStructureCommands(this.host);

@@ -35,8 +35,10 @@ export class ComposerStatusLineComponent implements OnChanges {
   @Input() notice: string | null = null;
   /** Which refusal or notice that is, from `ComposerState.messageId`. */
   @Input() messageId = 0;
-  /** Why an alphaTex apply left the score unchanged. */
+  /** Why the alphaTex draft is in the way: an apply that could not parse, or a save refused while it is not applied. */
   @Input() texError: string | null = null;
+  /** Which saying of `texError` that is, moved on by the page each time it says one, as `messageId` is by the service. */
+  @Input() texErrorId = 0;
   @Input() cursor: EditCursor | null = null;
   @Input() entryMode: EntryMode = 'select';
   /** The document, for the count of bars over. */
@@ -52,13 +54,13 @@ export class ComposerStatusLineComponent implements OnChanges {
   }
 
   /**
-   * What the live region says: the alphaTex error, the refusal, then the outcome, each keyed by what it is. A refusal
-   * and a notice are keyed by `messageId`, so the same words published again replace their node and are read out
-   * again; the alphaTex error, which the page holds rather than the service, by its words.
+   * What the live region says: the alphaTex error, the refusal, then the outcome, each keyed by which saying it is. A
+   * refusal and a notice are keyed by `messageId`, and the alphaTex error, which the page holds rather than the
+   * service, by `texErrorId`. So the same words said again replace their node and are read out again.
    */
   get messages(): StatusMessage[] {
     const keyed: Array<StatusMessage | null> = [
-      this.texError ? { key: `tex:${this.texError}`, text: this.texError } : null,
+      this.texError ? { key: `tex:${this.texErrorId}`, text: this.texError } : null,
       this.refusal ? { key: `refusal:${this.messageId}`, text: this.refusal } : null,
       this.notice ? { key: `notice:${this.messageId}`, text: this.notice } : null
     ];

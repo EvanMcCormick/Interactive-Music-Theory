@@ -115,6 +115,8 @@ alphaTab upgrade that changes one turns a spec red rather than going unnoticed.
   note only when the note moves; a note that is gone carries nothing, so on one track the beat that moves onto its
   tick takes the fermata. Guitar Pro removes a fermata with its beat. A paste that leaves nothing at the tick removes
   it and says so.
+- **Undo does not restore the caret.** Undo and redo put back the document and leave the caret and selection where
+  they are; undo entries would need to store the cursor. Guitar Pro restores the selection.
 - **Fix bar's button does not show its tuplet refusals** before it is pressed. The command refuses a tuplet across
   the bar line and a line inside a tuplet group, but `toolStates` reads only a generated track and whether a selected
   bar is over; showing the rest would run the carry on a copy for every selection.

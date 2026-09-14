@@ -69,6 +69,24 @@ describe('ComposerStatusLineComponent', () => {
     expect(second).not.toBe(first);
   });
 
+  it('replaces the alphaTex message when the page says the same words again, so a screen reader says them again', () => {
+    fixture.componentRef.setInput('texError', 'Apply or revert the alphaTex draft before saving.');
+    fixture.componentRef.setInput('texErrorId', 1);
+    fixture.detectChanges();
+    const first = region().querySelector('.message');
+
+    fixture.componentRef.setInput('cursor', createDefaultCursor());
+    fixture.detectChanges();
+    expect(region().querySelector('.message')).withContext('the page said nothing new').toBe(first);
+
+    fixture.componentRef.setInput('texErrorId', 2);
+    fixture.detectChanges();
+    const second = region().querySelector('.message');
+
+    expect(second?.textContent ?? '').toBe(first?.textContent ?? '');
+    expect(second).not.toBe(first);
+  });
+
   it('shows the caret\'s bar and beat, counting from one, outside the live region', () => {
     fixture.componentRef.setInput('cursor', { ...createDefaultCursor(), barIndex: 2, beatIndex: 1 });
     fixture.detectChanges();
