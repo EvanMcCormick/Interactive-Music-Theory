@@ -97,11 +97,21 @@ refused as an incomplete group, and it now sets three quarters to 3:2.
 | Phase 3 (Task 3.12) | both clean | **3,015 SUCCESS** |
 | Phase 4 (Task 4.4) | both clean | **3,032 SUCCESS** |
 
+After the third review's three fix commits (see "Corrections during implementation", the last entry), the same
+blocks were applied again, in task order, on top of `90b1649` (whole suite there: 2,977 SUCCESS). One find text
+had stopped matching: Task 3.3's Fix bar block, which copied `fixBar` from before it settled fermatas. Its find
+and replace now carry the settling. No spec had to change.
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 3 (Task 3.12) | both clean | **3,044 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **3,061 SUCCESS** |
+
 Each task's Step 2 red was captured the same way - the plan applied through that task's Step 1, then the
 spec type check - and its text updated to what was seen. The client code was then reverted.
 
 Line counts after the re-proof, largest first: `composer.service.ts` 947 (948 after the second one, which
-imports `tupletRefusal`); `composer-track-strip.component.spec.ts`
+imports `tupletRefusal`, and 949 after the third, which imports `graceRefusal`); `composer-track-strip.component.spec.ts`
 647; `composer-library-panel.component.ts` 593; `composer-library-panel.component.spec.ts` 549;
 `composer-score.component.ts` 530; `alpha-tab.service.ts` 522; `composer-track-strip.component.ts` 459;
 `composer-tools.ts` 380; `composer.component.ts` 358.
@@ -445,6 +455,58 @@ and 4 blocks were re-proven on top (see "The re-proof of Phases 3 and 4").
   Ctrl+X to the browser. The constructor is unchanged.
 - **Task 3.5.** The popover spec's tuplet case set a lone beat to 5:4, now refused. It selects three quarters
   and sets 3:2.
+
+**A third review of the committed Phase 1-2 code** found four important faults and six minor ones, fixed in
+three commits: `60e8d7f`, `d7dffa0` and `90b1649`. Whole suite after them: **2,977 SUCCESS**. The Phase 3 and 4
+blocks were re-proven on top (see "The re-proof of Phases 3 and 4"), and Task 3.3's Fix bar find and replace
+now carry the fermata settling.
+
+- **Tasks 1.1, 1.10, 1.13, 1.14 and 1.15, a fermata through an edit that moves beats.** alphaTab finishes tracks
+  in order and files each fermata by bar and tick (`Voice.finish` ~3294, `MasterBar.addFermata` ~2705). So an
+  edit on an early track that moved a fermata beat onto a tick where a later track had a beat gave that beat the
+  fermata on save. Three tracks of `n4 n4F n4 n4`, with the guitar's first quarter made a half, saved the others
+  as `n4 n4F n4F n4`. An insert, a delete, a grace in a bar already over and a blocked dot did the same, or left
+  the fermata on the moved beat alone. Every edit that moves beat starts now reads each position's fermata
+  across tracks first (`fermataSnapshotOf`) and settles afterwards (`settleFermatas`). Each position's fermata
+  goes to whatever starts there now, on every staff; a beat that moved away gives it up; a grace takes its
+  position's (`graceFermataOf`); a pasted beat's own fermata wins where it lands. `relength` runs it, so
+  durations, dots, tuplets, grace and note entry do, and so do `insertBeatAt`, `deleteBeats`, `pasteBeats` and
+  Fix bar. `setGrace`'s own fermata handling and paste's two fermata passes are gone. A fermata whose position no
+  beat starts at any more, on any staff, is dropped: alphaTab keeps a fermata only by filing a beat's at that
+  beat's own tick, so one kept on the beat that moved would be filed at its new tick and reach every track there.
+- **Tasks 1.1, 1.13, 1.14 and 2.3, a tuplet group left open.** Several paths still made one. Two eighths made 3:2
+  beside a full group took its first beat and left two open, because `tupletGroupsCompleteWith` read only the
+  changed beats' groups. A grace in a triplet selection took the tuplet, so its group never closed. So did a
+  paste over part of a group or a whole group cut by a bar line, and a delete, an insert, a duration or a dot
+  inside a group. One rule now: an edit is refused, with a reason and before anything changes, when a voice it
+  touches would hold an open group (`tupletGroupsOf`) that it did not already hold. The refusals run the edit on a
+  copy of the bars (`tupletGroupOpenedBy` in `edit-refusals.ts`), skipped when no beat there is under a tuplet
+  and the edit writes none: `tupletRefusal` (clears included; a whole group's clear goes through),
+  `durationRefusal` (now given the value and dots), `dotsRefusal`, `graceRefusal`, `insertBeatRefusal`,
+  `deleteBeatsRefusal` and `noteEntryRefusal`. The service, the entry commands and the note value, dot, Triplet
+  and grace readers ask them; `pasteBeats` checks its own result. `setTuplet` leaves graces out of a tuplet being
+  set. A tuplet press that would join an unfinished group beside the selection, or split a closed one, says so.
+  `tupletGroupsCompleteWith` is gone.
+- **Task 1.1, alphaTab's grouping with graces.** `tupletGroupsOf` counted a group's first beat at its written
+  length, but alphaTab counts its playback length (`TupletGroup.check` ~6765). So a grace carrying a tuplet
+  starts a group that never closes, and on-beat graces before a mixed group's first beat shorten it: `o n4 n8` at
+  3:2 stays open. Both are replayed now. Fuzzed against alphaTab through the mapper: 0 mismatches over 30,000
+  random bars with graces, on-beat graces and graces carrying tuplets, with a second bar's leading graces set
+  aside. alphaTab joins those to the group the bar before ends in, which a one-bar reading cannot see; read
+  without setting them aside, they are all 365 mismatches of 8,000 bars. The spec replays 400 bars.
+- **`hasTuplet`** was written twice, and the two disagreed on -1:-1, alphaTab's default. `bar-fill.ts` exports the
+  one that matches `Beat.hasTuplet`, and `beat-edits.ts` uses it.
+- **Task 1.7's spec.** The note-landing "reading, which changes nothing" cases compared JSON, which a reader that
+  reverses a bar an even number of times passes. They now read deep-frozen documents, and fail on the reversing
+  code.
+- **Task 2.2, symbols a layout moves.** A Ctrl binding on a symbol key also matches the symbol a US keyboard types
+  there, with Shift applied (`US_SYMBOLS`), typed on another key. Dvorak's Ctrl+Shift+. and Ctrl+/ were out of
+  reach. A letter typed on the key is still that letter's, so Dvorak's Ctrl+Z is undo only.
+- **Task 1.14, a paste at a grace that ends a full bar.** It landed in the next bar while the caret stayed put,
+  since the past-the-line guard asked for a bar already over. The guard now asks only whether the paste starts
+  at or past the line, and refuses a full bar's case too: "That grace ends a full bar, so a paste there would
+  land in the next bar; paste at the next bar's first beat." Refused rather than moved to the next bar, as the
+  over bar's case is, so the caret and the paste never disagree about where it went.
 
 ---
 
@@ -7679,6 +7741,11 @@ Fix bar counts what it fixed and says so:
     this.host.commitFollowing(draft => {
       let fixed = false;
       let appended = 0;
+      // A carry moves beats into later bars, so every fermata from the first selected bar on goes back to its
+      // bar position afterwards (`settleFermatas`); bars the carry appends held none.
+      const barCount = (): number => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.length ?? 0;
+      const before = barCount();
+      const fermatas = new Map(fermataSnapshotOf(draft, Array.from({ length: Math.max(0, before - bars.first) }, (_, offset) => bars.first + offset)));
 
       for (let index = bars.first; index <= bars.last; index++) {
         if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
@@ -7689,6 +7756,8 @@ Fix bar counts what it fixed and says so:
       }
 
       if (!fixed) return 'No selected bar is over its time signature.';
+      for (let index = before; index < barCount(); index++) fermatas.set(index, new Map());
+      settleFermatas(draft, fermatas);
       if (appended > 0) this.host.markDiverged(draft);
       return null;
     });
@@ -7702,6 +7771,12 @@ Fix bar counts what it fixed and says so:
     let appended = 0;
     this.host.commitFollowing(
       draft => {
+        // A carry moves beats into later bars, so every fermata from the first selected bar on goes back to its
+        // bar position afterwards (`settleFermatas`); bars the carry appends held none.
+        const barCount = (): number => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.length ?? 0;
+        const before = barCount();
+        const fermatas = new Map(fermataSnapshotOf(draft, Array.from({ length: Math.max(0, before - bars.first) }, (_, offset) => bars.first + offset)));
+
         for (let index = bars.first; index <= bars.last; index++) {
           if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
           const result = fixBarOverflow(draft, trackIndex, staffIndex, index);
@@ -7711,6 +7786,8 @@ Fix bar counts what it fixed and says so:
         }
 
         if (fixed === 0) return 'No selected bar is over its time signature.';
+        for (let index = before; index < barCount(); index++) fermatas.set(index, new Map());
+        settleFermatas(draft, fermatas);
         if (appended > 0) this.host.markDiverged(draft);
         return null;
       },

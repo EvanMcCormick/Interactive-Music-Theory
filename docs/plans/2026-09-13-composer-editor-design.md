@@ -149,7 +149,12 @@ departs from the design".
    takes the fermata of the position it now leads into, or none. A pasted grace takes that position's
    fermata too. alphaTab files a beat's fermata at the tick it finishes the beat at, and it finishes a grace
    at the tick of the beat it leads into. So a grace keeping the fermata, or handing it to the beat it leads
-   into, would move it one position on, to every track, on save.
+   into, would move it one position on, to every track, on save. *Settled in a third review:* **a fermata stays
+   at its bar position through every edit that moves beats** - a note value, dots, a tuplet, a grace, note or
+   rest entry, insert beat, delete beats, paste and Fix bar. Whatever starts at a position afterwards takes its
+   fermata, on every staff, and a beat that moved away gives it up. A fermata whose position no beat starts at
+   any more, on any staff, is dropped, since alphaTab could only file it at some other beat's tick. Before, an
+   edit on an early track moved a fermata to a tick where a later track took it too on save.
 3. **M2 brings a minimal track strip forward**: a row per track with its name, remove, and the
    progression badge, status, Update and Flatten; add track with an instrument; and "Add
    progression track", keeping every selector and label the M4 specs pin, which move with the
@@ -167,7 +172,9 @@ departs from the design".
    browser; Ctrl or Shift with an arrow does its own table meaning; undo rejects Alt (AltGr on
    Windows); `r` and `R` both rest; form fields include `contentEditable`, through one helper shared
    with the progression page. One refinement: a symbol typed through AltGr or Option still matches,
-   but only after every exact binding has failed, so `}` and `[` are reachable on German keyboards.
+   but only after every exact binding has failed, so `}` and `[` are reachable on German keyboards. And a
+   Ctrl binding on a symbol key also matches that symbol typed on another key, so Dvorak reaches Ctrl+/ and
+   Ctrl+Shift+.; a letter typed on the key stays that letter's.
 7. **A two-digit fret is one undo step.** The second digit replaces the first digit's commit when
    nothing was committed in between.
 8. **Refusals are displayed** in one polite live region, in the status line, which shows a failed
@@ -184,7 +191,14 @@ departs from the design".
    needs six beats of the same value, or values that add up to the same length, in one bar." alphaTab closes
    a group of equal values at the tuplet's numerator, and a mixed one when its values fill a whole group. The
    room an open group's beats free is off the 64th grid, so the bar would stay short with nothing to say why.
-   The Triplet button shows the refusal before it is pressed.
+   The Triplet button shows the refusal before it is pressed. *Settled in a third review:* **no edit may leave a
+   tuplet group open** that its voice did not already hold open: a tuplet press or clear, a note value, dots,
+   grace before or on the beat, note or rest entry, insert beat, delete beats and paste. Each is refused before
+   anything changes, with a reason - "That would break a tuplet group; select the whole group." for most, and
+   for a tuplet press one that names the unfinished group it would join or the closed one it would split. The
+   whole voice is read, since an edit can break a group beside the beats it names, and the note value, dot,
+   Triplet and grace buttons show the refusal before they are pressed. A tuplet is never set on a grace, which
+   alphaTab would count into its group.
 10. **Natural clears a forced accidental** (`auto`), because alphaTab 1.8 draws `ForceNatural` as
     `Default`, and its label says so.
 11. **Respell** cycles a pitched note's letter through every spelling `forcedLetterOf` allows for its
@@ -254,7 +268,9 @@ departs from the design".
     moving end. *Settled in a second review:* **pasting part of a tuplet group is refused** ("The copy holds
     part of a tuplet group."), since it would start a group alphaTab never closes. So is **pasting at a beat
     that starts at or past the bar line of a bar already over** ("That beat is past the bar line; Fix bar
-    first."), which would write into the next bar while the caret stayed on the selected beat.
+    first."), which would write into the next bar while the caret stayed on the selected beat. A third review
+   refused **pasting at a grace that ends a full bar** for the same reason, and **a paste that would split a
+   tuplet group** (decision 9).
 27. **A tie with nothing to tie from is refused**, with a reason, as a hammer-on with nothing to land on
     is: alphaTab looks three bars back on the string, or for the pitch, and clears a tie that finds
     nothing. A range ties the notes that can be tied.
