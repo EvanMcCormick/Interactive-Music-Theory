@@ -187,7 +187,7 @@ const SLOT_TICKS = TICKS_PER_QUARTER / 16;
  * alphaTab leaves its group incomplete (`GraceGroup.isComplete` stays false) - and it stays
  * last, where it was written.
  */
-function graceRunStart(voice: VoiceDoc, index: number): number {
+export function graceRunStart(voice: VoiceDoc, index: number): number {
   let start = index;
   while (start > 0 && voice.beats[start - 1].effects.grace !== 'none') start--;
   return start;

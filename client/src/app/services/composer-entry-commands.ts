@@ -91,7 +91,7 @@ export class ComposerEntryCommands {
   }
 
   /**
-   * Clears the beat at the caret back to a rest.
+   * Clears the beat at the caret back to a rest, as a clear over a range does (`clearToRests`).
    *
    * The slot is kept rather than removed: bars are pre-filled with a full measure of rests, so
    * deleting a note should empty its position, not shorten the bar.
@@ -101,12 +101,7 @@ export class ComposerEntryCommands {
     const cursor = state.cursor;
     if (this.refusesEntryAt(state.doc, cursor)) return;
 
-    this.host.commit(draft => {
-      const beat = beatAt(draft, cursor);
-      if (!beat) return;
-      beat.notes = [];
-      beat.isRest = true;
-    });
+    this.host.commit(draft => clearToRests(draft, [cursor]));
   }
 
   /** Clears every beat in the selection to a rest, keeping their values: R and Delete over a range. */

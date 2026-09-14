@@ -62,6 +62,14 @@ describe('toolStates', () => {
     expect(toolStateOf(doc, null, at(0, 2), 'fermata').pressed).toBe('mixed');
   });
 
+  it('refuses a fermata on a grace alone, which has no bar position', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[0].voices[0].beats[0].effects.grace = 'beforeBeat';
+
+    expect(toolStateOf(doc, null, at(0, 0), 'fermata').refusal).toMatch(/grace note has no bar position/i);
+    expect(toolStateOf(doc, null, at(0, 1), 'fermata').refusal).toBeNull();
+  });
+
   it('refuses note tools on a generated track, by the same reason the command gives', () => {
     const doc = ComposerService.createEmptyScore();
     put(doc, 0, 0);

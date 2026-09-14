@@ -1,8 +1,12 @@
+import { TestBed } from '@angular/core/testing';
+import * as alphaTab from '@coderline/alphatab';
+
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
 import {
   clearToRests,
   deleteBeats,
+  fermataPositionsOf,
   insertBeatAt,
   setBeatDurations,
   setGrace,
@@ -12,7 +16,9 @@ import {
   toggledValue
 } from './beat-edits';
 import { scoreBarFills } from './bar-fill';
-import { DurationValue, ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
+import { fermataRefusal } from './edit-refusals';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
+import { DurationValue, ScoreDoc, createDefaultBeatEffects, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
 
 const ref = (barIndex: number, beatIndex: number): BeatRef =>
   ({ trackIndex: 0, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex });
@@ -368,6 +374,64 @@ describe('setTuplet', () => {
     expect(shape(doc)).toEqual(['n8', 'n8', 'n8', 'r8', 'n8', 'n2']);
     expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
   });
+
+  // A group whose members each free a remainder that becomes spellable part-way through - a 6:4 beat
+  // frees a third of its value, so three of them free a whole value - must still get its room after the
+  // group. A rest placed mid-group ends alphaTab's `TupletGroup` there (`check`, ~6760), and the two
+  // halves are drawn as two broken groups.
+
+  /** Bar 0 as `n` or `r` with a value, from `written`, every beat a note. */
+  const notesOf = (written: string): ScoreDoc => {
+    const doc = ComposerService.createEmptyScore();
+    const values = written.split(' ').map(token => Number(token.slice(1)) as DurationValue);
+    beats(doc).splice(0, beats(doc).length, ...values.map(value => createRestBeat(value)));
+    values.forEach((_, index) => withNote(doc, 0, index));
+    return doc;
+  };
+  /** `shape`, with `tN` after a beat under an N:M tuplet. */
+  const tupletShape = (doc: ScoreDoc): string[] =>
+    beats(doc).map(beat => `${beat.isRest ? 'r' : 'n'}${beat.duration}${beat.tuplet ? `t${beat.tuplet.numerator}` : ''}`);
+  const sextuplet = { numerator: 6, denominator: 4 };
+  const refsFrom = (first: number, count: number): BeatRef[] => Array.from({ length: count }, (_, index) => ref(0, first + index));
+
+  it('keeps a 6:4 group of sixteenths whole, its eighth of room after the sixth', () => {
+    // Each sixteenth becomes 160 ticks and frees 80; the six free 480, at 960.
+    const doc = notesOf('n16 n16 n16 n16 n16 n16 n2 n8');
+
+    setTuplet(doc, refsFrom(0, 6), sextuplet);
+
+    expect(tupletShape(doc)).toEqual(['n16t6', 'n16t6', 'n16t6', 'n16t6', 'n16t6', 'n16t6', 'r8', 'n2', 'n8']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+
+  it('keeps a 6:4 group of eighths whole, its quarter of room after the sixth', () => {
+    const doc = notesOf('n8 n8 n8 n8 n8 n8 n4');
+
+    setTuplet(doc, refsFrom(0, 6), sextuplet);
+
+    expect(tupletShape(doc)).toEqual(['n8t6', 'n8t6', 'n8t6', 'n8t6', 'n8t6', 'n8t6', 'r4', 'n4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+
+  it('keeps a 6:4 group that starts mid-bar whole', () => {
+    const doc = notesOf('n4 n8 n8 n8 n8 n8 n8');
+
+    setTuplet(doc, refsFrom(1, 6), sextuplet);
+
+    expect(tupletShape(doc)).toEqual(['n4', 'n8t6', 'n8t6', 'n8t6', 'n8t6', 'n8t6', 'n8t6', 'r4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+
+  it('gives each of two 3:2 groups over six eighths its own room, so the second group keeps its tick', () => {
+    // alphaTab closes an equal-length 3:2 group at its third beat, so a rest after it breaks nothing:
+    // the second group still starts at 1440, where the fourth eighth was.
+    const doc = notesOf('n8 n8 n8 n8 n8 n8 n4');
+
+    setTuplet(doc, refsFrom(0, 6), { numerator: 3, denominator: 2 });
+
+    expect(tupletShape(doc)).toEqual(['n8t3', 'n8t3', 'n8t3', 'r8', 'n8t3', 'n8t3', 'n8t3', 'r8', 'n4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
 });
 
 describe('toggleFermata', () => {
@@ -424,6 +488,65 @@ describe('toggleFermata', () => {
 
     expect(fermatas(doc, 1)).toEqual([null, null, null, null]);
   });
+
+  describe('with a grace at the position', () => {
+    // alphaTab files a fermata by the tick a beat plays at and hands it to every later beat there without
+    // one (`Voice.finish` ~3294, `MasterBar.getFermata` ~2728). A grace in front of the beat at the
+    // position plays there too, so it takes the fermata on the way in - and a clear that skipped it left
+    // its copy, which then spread back to every track.
+    let mapper: ScoreDocMapperService;
+
+    beforeEach(() => {
+      TestBed.configureTestingModule({});
+      mapper = TestBed.inject(ScoreDocMapperService);
+    });
+
+    /** The guitar's quarters, and a piano bar with a grace of `kind` in front of its second quarter. */
+    const withGrace = (kind: 'onBeat' | 'beforeBeat'): ScoreDoc => {
+      const doc = withPiano();
+      const piano = doc.tracks[1].staves[0].bars[0].voices[0].beats;
+      piano.splice(1, 0, createRestBeat(8));
+      piano[1].effects.grace = kind;
+      piano[1].isRest = false;
+      piano[1].notes = [{ pitch: { kind: 'pitched', noteValue: 2, octave: 4 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+      withNote(doc, 0, 1);
+      return doc;
+    };
+    const roundTripped = (doc: ScoreDoc): ScoreDoc => mapper.toDoc(mapper.toScore(doc, new alphaTab.Settings()));
+
+    for (const kind of ['onBeat', 'beforeBeat'] as const) {
+      it(`writes and clears the ${kind} grace with its beat, so a save neither adds one nor leaves one`, () => {
+        const doc = withGrace(kind);
+
+        toggleFermata(doc, [ref(0, 1)], medium);
+        expect(fermatas(doc, 1)).toEqual([null, 'medium', 'medium', null, null]);
+        const saved = roundTripped(doc);
+        expect([fermatas(saved, 0), fermatas(saved, 1)]).toEqual([fermatas(doc, 0), fermatas(doc, 1)]);
+
+        toggleFermata(saved, [ref(0, 1)], medium);
+        expect(fermatas(saved, 1)).toEqual([null, null, null, null, null]);
+        const cleared = roundTripped(saved);
+        expect([fermatas(cleared, 0), fermatas(cleared, 1)]).toEqual([[null, null, null, null], [null, null, null, null, null]]);
+      });
+    }
+
+    it('reads only the beats at the position, so a grace\'s fermata alone does not make the press clear', () => {
+      const doc = withGrace('onBeat');
+      doc.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata = { ...medium };
+
+      toggleFermata(doc, [ref(0, 1)], medium);
+
+      expect(fermatas(doc, 0)[1]).toBe('medium');
+    });
+
+    it('finds no position for a grace alone', () => {
+      const doc = withGrace('onBeat');
+
+      expect(fermataPositionsOf(doc, [{ ...ref(0, 1), trackIndex: 1 }])).toEqual([]);
+      expect(fermataRefusal(doc, [{ ...ref(0, 1), trackIndex: 1 }])).toMatch(/grace note has no bar position/i);
+      expect(fermataRefusal(doc, [ref(0, 1)])).toBeNull();
+    });
+  });
 });
 
 describe('clearToRests, insertBeatAt and deleteBeats', () => {
@@ -436,6 +559,51 @@ describe('clearToRests, insertBeatAt and deleteBeats', () => {
     clearToRests(doc, [ref(0, 0), ref(0, 1), ref(0, 2)]);
 
     expect(shape(doc)).toEqual(['r8', 'r8', 'r4', 'r4', 'r4']);
+  });
+
+  it('takes attacks off the rests it leaves, keeping the dynamic and the fermata', () => {
+    // A rest has nothing to let ring, tap, slap, pop, pick or fade in; left on it, each is carried by a
+    // cut and pasted back onto whatever note is written there later. The dynamic stands until the next
+    // one, and a fermata belongs to the bar position, so both stay.
+    const doc = ComposerService.createEmptyScore();
+    withNote(doc, 0, 0);
+    const beat = beats(doc)[0];
+    beat.dynamics = 'pp';
+    beat.effects = {
+      ...beat.effects, isLetRing: true, isPalmMute: true, tap: true, slap: true, pop: true, fadeIn: true,
+      pickStroke: 'down', vibrato: 'wide', brush: 'brushUp', crescendo: 'crescendo', fermata: { type: 'long', length: 1 }
+    };
+
+    clearToRests(doc, [ref(0, 0)]);
+
+    expect(beats(doc)[0].effects).toEqual({ ...createDefaultBeatEffects(), fermata: { type: 'long', length: 1 } });
+    expect(beats(doc)[0].dynamics).toBe('pp');
+    expect(beats(doc)[0].isRest).toBeTrue();
+  });
+
+  it('removes a grace it clears, which takes no room and would lead a rest into its beat', () => {
+    const doc = ComposerService.createEmptyScore();
+    beats(doc).splice(1, 0, createRestBeat(8));
+    withNote(doc, 0, 1);
+    beats(doc)[1].effects.grace = 'beforeBeat';
+
+    clearToRests(doc, [ref(0, 0), ref(0, 1)]);
+
+    expect(shape(doc)).toEqual(['r4', 'r4', 'r4', 'r4']);
+    expect(beats(doc).every(entry => entry.effects.grace === 'none')).toBeTrue();
+  });
+
+  it('inserts a beat in front of a grace run, not between the graces and the beat they lead into', () => {
+    const doc = ComposerService.createEmptyScore();
+    beats(doc).splice(1, 0, createRestBeat(8));
+    withNote(doc, 0, 1);
+    withNote(doc, 0, 2);
+    beats(doc)[1].effects.grace = 'onBeat';
+
+    insertBeatAt(doc, ref(0, 2), 8, 0);
+
+    expect(beats(doc).map(entry => `${entry.effects.grace === 'none' ? '' : 'g'}${entry.isRest ? 'r' : 'n'}${entry.duration}`))
+      .toEqual(['r4', 'r8', 'gn8', 'n4', 'r4', 'r4']);
   });
 
   it('inserts a rest in front of a beat and leaves the bar over', () => {

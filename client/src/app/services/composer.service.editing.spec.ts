@@ -250,6 +250,30 @@ describe('ComposerService note effects that must land', () => {
   });
 });
 
+describe('ComposerService fermata', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('refuses a press on a grace alone, saying why, and commits no undo step', () => {
+    service.setCursor({ beatIndex: 1 });
+    service.toggleGrace('beforeBeat');
+    expect(beatsIn(service)[2].effects.grace).toBe('beforeBeat');
+    const before = JSON.stringify(service.doc);
+
+    service.toggleFermata();
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(stateOf(service).refusal).toMatch(/grace note has no bar position/i);
+    // One undo takes back the grace itself: the refused press added no step of its own.
+    service.undo();
+    expect(beatsIn(service).some(beat => beat.effects.grace !== 'none')).toBeFalse();
+  });
+});
+
 describe('ComposerService pitch and string moves', () => {
   let service: ComposerService;
 
@@ -305,6 +329,18 @@ describe('ComposerService beats over the selection', () => {
 
     service.undo();
     expect(beatsIn(service).slice(0, 2).every(beat => !beat.isRest)).toBeTrue();
+  });
+
+  it('takes attacks off a beat cleared at the caret, as over a range, keeping its dynamic', () => {
+    writeFret(service, 0, 0, 5);
+    service.toggleBeatEffect('tap', true, false);
+    service.toggleBeatEffect('pickStroke', 'down', 'none');
+    service.setDynamics('pp');
+
+    service.deleteAtCursor();
+
+    expect(beatsIn(service)[0].isRest).toBeTrue();
+    expect([beatsIn(service)[0].effects.tap, beatsIn(service)[0].effects.pickStroke, beatsIn(service)[0].dynamics]).toEqual([false, 'none', 'pp']);
   });
 
   it('inserts a rest at the input duration in front of the caret, and leaves the caret on it', () => {

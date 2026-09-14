@@ -44,7 +44,7 @@ import { defaultFermata } from './composer-tool-defaults';
 import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
 import { ComposerStructureCommands } from './composer-service-structure';
-import { EditScope, durationRefusal, editRefusal, noteEffectRefusal } from './edit-refusals';
+import { EditScope, durationRefusal, editRefusal, fermataRefusal, noteEffectRefusal } from './edit-refusals';
 import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
 import { moveNotesToString, shiftSemitone } from './note-moves';
 import { respellNotes, respellRefusal } from './note-respell';
@@ -533,7 +533,7 @@ export class ComposerService {
 
   /** Presses Fermata: at the selection's positions, on every track. See `toggleFermata`. */
   toggleFermata(): void {
-    this.applyEdit({ family: 'beat', key: 'fermata' }, (draft, refs) => toggleFermata(draft, refs, defaultFermata()));
+    this.applyEdit(fermataRefusal, (draft, refs) => toggleFermata(draft, refs, defaultFermata()));
   }
 
   /** Respell: each note to its next spelling. See note-respell.ts. */

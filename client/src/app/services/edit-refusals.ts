@@ -1,5 +1,5 @@
 import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc } from '../models/composer.model';
-import { toggledValue } from './beat-edits';
+import { fermataPositionsOf, toggledValue } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
 import { noteEffectTargets, noteTargetsAt, notesAt } from './note-edits';
 import { hammerDestinationOf, slideTargetOf, tieOriginOf } from './note-landing';
@@ -170,6 +170,19 @@ export function editRefusal(
     return UNSPELLABLE;
   }
   return null;
+}
+
+const GRACE_FERMATA = 'A grace note has no bar position of its own, so a fermata goes on the beat it leads into.';
+
+/**
+ * Why a fermata press cannot apply to `refs`, or null: any beat edit's refusal, or no bar position to put
+ * it at. A grace takes no ticks, so a selection of graces alone names no position (`fermataPositionsOf`),
+ * and a press there would commit an undo step that changed nothing.
+ */
+export function fermataRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'beat', key: 'fermata' }, null);
+  if (refusal) return refusal;
+  return fermataPositionsOf(doc, refs).length === 0 ? GRACE_FERMATA : null;
 }
 
 const GRACE_DURATION =

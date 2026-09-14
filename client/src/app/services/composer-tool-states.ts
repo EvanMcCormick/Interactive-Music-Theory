@@ -13,7 +13,7 @@ import { barFillAt } from './bar-fill';
 import { beatsAt, fermataPositionsOf, toggledValue } from './beat-edits';
 import { BeatRef, selectedBars, selectionTargets } from './composer-selection';
 import { defaultFermata, fullBendPoints } from './composer-tool-defaults';
-import { durationRefusal, editRefusal, noteEffectRefusal } from './edit-refusals';
+import { durationRefusal, editRefusal, fermataRefusal, noteEffectRefusal } from './edit-refusals';
 import { noteEffectTargets, noteTargetsAt } from './note-edits';
 import { tieOriginOf } from './note-landing';
 import { respellRefusal } from './note-respell';
@@ -216,9 +216,14 @@ const READERS: Readonly<Record<string, Reader>> = {
   heavyAccent: noteEffect('accent', 'heavy', 'none'),
   staccato: noteEffect('isStaccato', true, false),
   tenuto: noteEffect('accent', 'tenuto', 'none'),
+  // Reads the non-grace beats at the positions, as `toggleFermata` does.
   fermata: reading => ({
-    pressed: share(fermataPositionsOf(reading.doc, reading.refs).map(beat => beat.effects.fermata !== null && sameValue(beat.effects.fermata, defaultFermata()))),
-    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'fermata' }, null)
+    pressed: share(
+      fermataPositionsOf(reading.doc, reading.refs)
+        .filter(beat => beat.effects.grace === 'none')
+        .map(beat => beat.effects.fermata !== null && sameValue(beat.effects.fermata, defaultFermata()))
+    ),
+    refusal: fermataRefusal(reading.doc, reading.refs)
   }),
   hammerOn: noteEffect('isHammerPullOrigin', true, false),
   legatoSlide: noteEffect('slide', 'legatoSlide', 'none'),
