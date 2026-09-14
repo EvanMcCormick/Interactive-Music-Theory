@@ -8,6 +8,8 @@
   margin: 0;
   box-sizing: border-box;
   width: 15rem;
+  // Never wider than the window, less the gap `popoverPlacementOf` keeps from each edge.
+  max-width: calc(100vw - 12px);
   overflow-y: auto;
   padding: 0.6rem;
   background-color: var(--composer-nav, #2c3e50);
@@ -91,6 +93,14 @@ select {
   &:hover {
     background-color: var(--composer-accent, #3498db);
   }
+}
+
+// What the selection holds now, and a value the selected bars do not share.
+.current,
+.mixed {
+  margin: 0 0 0.4rem;
+  font-size: 0.72rem;
+  color: var(--composer-text-secondary, #bdc3c7);
 }
 
 .fault {

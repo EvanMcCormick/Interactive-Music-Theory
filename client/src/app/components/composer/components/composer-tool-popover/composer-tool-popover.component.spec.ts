@@ -2,6 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { ComposerToolPopoverComponent, popoverPlacementOf } from './composer-tool-popover.component';
 import { ComposerService } from '../../../../services/composer.service';
+import { effectiveTimeSignature } from '../../../../models/composer.model';
 import { KEY_SIGNATURE_CHOICES } from '../../../../services/composer-bar-choices';
 import { PopoverKind } from '../../../../services/composer-tools';
 
@@ -10,7 +11,16 @@ describe('popoverPlacementOf', () => {
   const size = { width: 240, height: 200 };
 
   it('goes to the right of its trigger, level with the trigger\'s top', () => {
-    expect(popoverPlacementOf({ left: 10, top: 100, right: 50, bottom: 140 }, size, viewport)).toEqual({ left: 56, top: 100, maxHeight: 588 });
+    expect(popoverPlacementOf({ left: 10, top: 100, right: 50, bottom: 140 }, size, viewport)).toEqual({ left: 56, top: 100, maxHeight: 494 });
+  });
+
+  it('is never taller than the room below its top, so content that grows scrolls inside the window', () => {
+    expect(popoverPlacementOf({ left: 10, top: 300, right: 50, bottom: 340 }, size, viewport).maxHeight).toBe(294);
+    expect(popoverPlacementOf({ left: 10, top: 300, right: 50, bottom: 340 }, { width: 240, height: 700 }, viewport)).toEqual({
+      left: 56,
+      top: 6,
+      maxHeight: 588
+    });
   });
 
   it('goes to the left when the right has no room', () => {
@@ -102,6 +112,166 @@ describe('ComposerToolPopoverComponent', () => {
 
     expect(escape.defaultPrevented).toBeTrue();
     expect(closed).toBe(1);
+  });
+
+  it('keeps a key pressed inside it from the page - a digit, R, an arrow, Space, ? - and lets Tab, Escape and Ctrl through', () => {
+    open('alternateEnding');
+    const checkbox = panel().querySelector('input[type="checkbox"]') as HTMLInputElement;
+    checkbox.focus();
+    const seen: string[] = [];
+    const listen = (event: KeyboardEvent): void => void seen.push(event.key);
+    document.addEventListener('keydown', listen);
+    try {
+      for (const init of [
+        { key: '5', code: 'Digit5' },
+        { key: 'r', code: 'KeyR' },
+        { key: 'ArrowRight' },
+        { key: ' ', code: 'Space' },
+        { key: '?', code: 'Slash', shiftKey: true },
+        { key: 'Tab' },
+        { key: 's', code: 'KeyS', ctrlKey: true },
+        { key: 'Escape' }
+      ]) {
+        checkbox.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
+      }
+    } finally {
+      document.removeEventListener('keydown', listen);
+    }
+
+    expect(seen).toEqual(['Tab', 's', 'Escape']);
+  });
+
+  it('leaves an Escape something before it claimed', () => {
+    open('clef');
+    const claim = (event: KeyboardEvent): void => event.preventDefault();
+    document.addEventListener('keydown', claim, true);
+    try {
+      document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    } finally {
+      document.removeEventListener('keydown', claim, true);
+    }
+
+    expect(closed).toBe(0);
+  });
+
+  describe('beside another element', () => {
+    let outside: HTMLButtonElement;
+
+    beforeEach(() => {
+      outside = document.createElement('button');
+      document.body.appendChild(outside);
+    });
+
+    afterEach(() => outside.remove());
+
+    const pointerDownOn = (target: Element): void => void target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+
+    it('closes on a press outside it and its trigger, and not on a press on either', () => {
+      open('clef');
+
+      pointerDownOn(panel().querySelector('select') as HTMLSelectElement);
+      pointerDownOn(trigger('clef'));
+      expect(closed).toBe(0);
+
+      pointerDownOn(outside);
+      expect(closed).toBe(1);
+    });
+
+    it('gives the focus back to its trigger only when the focus was inside it', () => {
+      open('clef');
+      outside.focus();
+
+      open(null);
+
+      expect(document.activeElement).toBe(outside);
+    });
+
+    it('leaves the focus to the press that closed it', () => {
+      open('clef');
+      pointerDownOn(outside);
+
+      open(null);
+
+      expect(document.activeElement).not.toBe(trigger('clef'));
+    });
+  });
+
+  it('follows its trigger when the window is resized or a box scrolls', async () => {
+    const frame = (): Promise<void> => new Promise(resolve => requestAnimationFrame(() => resolve()));
+    triggers.style.cssText = 'position: fixed; left: 10px; top: 40px;';
+    open('clef');
+    const left = panel().getBoundingClientRect().left;
+
+    triggers.style.left = '110px';
+    window.dispatchEvent(new Event('resize'));
+    await frame();
+    await frame();
+    expect(panel().getBoundingClientRect().left).toBeCloseTo(left + 100, 0);
+
+    triggers.style.top = '140px';
+    triggers.dispatchEvent(new Event('scroll'));
+    await frame();
+    await frame();
+    expect(panel().getBoundingClientRect().top).toBeCloseTo(trigger('clef').getBoundingClientRect().top, 0);
+  });
+
+  it('reads the first bar of a range selected rightwards, and Apply unchanged leaves the bars as they were', () => {
+    // Bar 3 declares 3/4. A range from bar 1 to bar 3 has its head on bar 3, and Time signature writes at bar 1.
+    composer.setCursor({ barIndex: 3, beatIndex: 0 });
+    composer.setTimeSignature({ numerator: 3, denominator: 4, isCommon: false });
+    composer.setCursor({ barIndex: 1, beatIndex: 0 });
+    composer.extendSelectionTo({ barIndex: 3, beatIndex: 0 });
+
+    open('timeSignature');
+    expect(popover.numerator).toBe(4);
+    popover.applyTimeSignature();
+
+    expect([0, 1, 2, 3].map(index => effectiveTimeSignature(composer.doc.masterBars, index).numerator)).toEqual([4, 4, 4, 3]);
+  });
+
+  it('shows what the selected bars do not share as mixed, and Apply leaves each bar with its own', () => {
+    // Bar 2 on has its own key and clef; bar 2 alone its own section, ending and feel. Bars 1 and 2 share none of them.
+    composer.setCursor({ barIndex: 2, beatIndex: 0 });
+    composer.setKeySignature({ fifths: 1, mode: 'major' });
+    composer.setClef('f4', 'regular');
+    composer.setMasterBarValue('section', { marker: 'B', text: 'Chorus' });
+    composer.setMasterBarValue('alternateEndings', 0b1);
+    composer.setMasterBarValue('tripletFeel', 'triplet8th');
+    composer.setCursor({ barIndex: 1, beatIndex: 0 });
+    composer.extendSelectionTo({ barIndex: 2, beatIndex: 0 });
+    const before = JSON.stringify(composer.doc);
+
+    const applies: Array<[PopoverKind, () => void]> = [
+      ['keySignature', () => popover.applyKeySignature()],
+      ['clef', () => popover.applyClef()],
+      ['section', () => popover.applySection()],
+      ['alternateEnding', () => popover.applyEndings()],
+      ['tripletFeel', () => popover.applyTripletFeel()]
+    ];
+    for (const [kind, apply] of applies) {
+      open(kind);
+      expect(panel().textContent).withContext(kind).toContain('Mixed');
+      apply();
+      fixture.detectChanges();
+      expect(alert().textContent?.trim()).withContext(kind).toBe('');
+      open(null);
+    }
+
+    expect(JSON.stringify(composer.doc)).toBe(before);
+    expect(closed).toBe(applies.length);
+  });
+
+  it('starts the key from C major when the bar holds one it does not offer, not from the key it last showed', () => {
+    composer.setKeySignature({ fifths: 1, mode: 'major' });
+    open('keySignature');
+    open(null);
+    const doc = structuredClone(composer.doc);
+    doc.tracks[0].staves[0].bars[0].keySignature = { fifths: 9, mode: 'major' };
+    composer.replaceDocument(doc);
+
+    open('keySignature');
+
+    expect(KEY_SIGNATURE_CHOICES[Number(popover.keyIndex)]?.value).toEqual({ fifths: 0, mode: 'major' });
   });
 
   it('starts from the caret\'s meter', () => {
@@ -196,5 +366,38 @@ describe('ComposerToolPopoverComponent', () => {
     const beats = composer.doc.tracks[0].staves[0].bars[0].voices[0].beats;
     expect(beats.slice(0, 3).map(beat => beat.tuplet)).toEqual([0, 1, 2].map(() => ({ numerator: 3, denominator: 2 })));
     expect(closed).toBe(1);
+  });
+
+  it('says which tuplet the selection is under: none, one ratio, or mixed', () => {
+    const current = (): string => (panel().querySelector('.current') as HTMLElement | null)?.textContent?.trim() ?? '';
+    open('tuplet');
+    expect(current()).toBe('Now: none');
+    open(null);
+
+    composer.setCursor({ barIndex: 0, beatIndex: 0 });
+    composer.extendSelectionTo({ barIndex: 0, beatIndex: 2 });
+    composer.setTuplet({ numerator: 3, denominator: 2 });
+    open('tuplet');
+    expect(current()).toBe('Now: 3:2');
+    expect(panel().querySelector('[aria-pressed="true"]')?.textContent?.trim()).toBe('3:2');
+    open(null);
+
+    composer.setCursor({ barIndex: 0, beatIndex: 0 });
+    composer.extendSelectionTo({ barIndex: 0, beatIndex: 3 });
+    open('tuplet');
+    expect(current()).toBe('Now: mixed');
+  });
+
+  it('stays open on a tuplet the selection cannot take, saying why inline and in the status line', () => {
+    // One quarter cannot make a whole 5:4 group (`tupletRefusal`).
+    composer.setCursor({ barIndex: 0, beatIndex: 0 });
+    open('tuplet');
+
+    popover.applyTuplet({ numerator: 5, denominator: 4 });
+    fixture.detectChanges();
+
+    expect(closed).toBe(0);
+    expect(alert().textContent).toMatch(/tuplet needs/i);
+    expect(composer.state.refusal).toMatch(/tuplet needs/i);
   });
 });

@@ -3,7 +3,7 @@
   it otherwise; manual, so the browser neither light-dismisses it nor takes Escape - `onEscape` does, and
   claims the key.
 -->
-<div #panel class="popover" popover="manual" role="dialog" [attr.aria-label]="title" (keydown.escape)="onEscape($event)">
+<div #panel class="popover" popover="manual" role="dialog" [attr.aria-label]="title" (keydown)="onPanelKey($event)" (keydown.escape)="onEscape($event)">
   <h3 class="popover-title">{{ title }}</h3>
 
   <ng-container [ngSwitch]="kind">
@@ -23,6 +23,7 @@
     <form *ngSwitchCase="'keySignature'" (ngSubmit)="applyKeySignature()">
       <label>Key
         <select name="key" [(ngModel)]="keyIndex">
+          <option *ngIf="keyIndex === null" [ngValue]="null">Mixed</option>
           <option *ngFor="let choice of keyChoices; let index = index" [ngValue]="index">{{ choice.label }}</option>
         </select>
       </label>
@@ -32,11 +33,13 @@
     <form *ngSwitchCase="'clef'" (ngSubmit)="applyClef()">
       <label>Clef
         <select name="clef" [(ngModel)]="clef">
+          <option *ngIf="clef === null" [ngValue]="null">Mixed</option>
           <option *ngFor="let choice of clefChoices" [ngValue]="choice.value">{{ choice.label }}</option>
         </select>
       </label>
       <label>Octave
         <select name="ottava" [(ngModel)]="ottava">
+          <option *ngIf="ottava === null" [ngValue]="null">Mixed</option>
           <option *ngFor="let choice of ottavaChoices" [ngValue]="choice.value">{{ choice.label }}</option>
         </select>
       </label>
@@ -44,6 +47,7 @@
     </form>
 
     <form *ngSwitchCase="'section'" (ngSubmit)="applySection()">
+      <p class="mixed" *ngIf="sectionMixed">Mixed: the selected bars have different sections. Left empty, each keeps its own.</p>
       <label>Name <input type="text" name="sectionText" [(ngModel)]="sectionText" /></label>
       <label>Mark <input type="text" name="sectionMarker" maxlength="3" [(ngModel)]="sectionMarker" /></label>
       <div class="actions">
@@ -54,25 +58,34 @@
     </form>
 
     <form *ngSwitchCase="'alternateEnding'" (ngSubmit)="applyEndings()">
+      <p class="mixed" *ngIf="endingsMixed && !endingsTouched">Mixed: the selected bars have different endings. Left alone, each keeps its own.</p>
       <fieldset class="endings">
         <legend>Played on repeat</legend>
         <label class="check" *ngFor="let ending of endingNumbers; let index = index">
-          <input type="checkbox" [name]="'ending' + ending" [(ngModel)]="endings[index]" /> {{ ending }}
+          <input type="checkbox" [name]="'ending' + ending" [(ngModel)]="endings[index]" (ngModelChange)="endingsTouched = true" /> {{ ending }}
         </label>
       </fieldset>
       <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
     </form>
 
-    <div *ngSwitchCase="'tuplet'" class="actions tuplets">
-      <button type="button" class="text-btn" *ngFor="let tuplet of tupletChoices" (click)="applyTuplet(tuplet)">
-        {{ tuplet.numerator }}:{{ tuplet.denominator }}
-      </button>
-      <button type="button" class="text-btn" (click)="applyTuplet(null)">None</button>
-    </div>
+    <ng-container *ngSwitchCase="'tuplet'">
+      <p class="current">Now: {{ tupletNow }}</p>
+      <div class="actions tuplets">
+        <button
+          type="button"
+          class="text-btn"
+          *ngFor="let tuplet of tupletChoices; let index = index"
+          [attr.aria-pressed]="tupletPressed[index]"
+          (click)="applyTuplet(tuplet)"
+        >{{ tuplet.numerator }}:{{ tuplet.denominator }}</button>
+        <button type="button" class="text-btn" [attr.aria-pressed]="tupletNow === 'none'" (click)="applyTuplet(null)">None</button>
+      </div>
+    </ng-container>
 
     <form *ngSwitchCase="'tripletFeel'" (ngSubmit)="applyTripletFeel()">
       <label>Feel
         <select name="tripletFeel" [(ngModel)]="tripletFeel">
+          <option *ngIf="tripletFeel === null" [ngValue]="null">Mixed</option>
           <option *ngFor="let choice of tripletFeelChoices" [ngValue]="choice.value">{{ choice.label }}</option>
         </select>
       </label>
