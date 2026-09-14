@@ -1,20 +1,25 @@
 # Outstanding
 
-What is known to be left, as of **2026-09-14**, after M4 of the progression composer and
-M1 and M2 of the composer editor shipped. Written because these items were spread across design
-documents, a roadmap paragraph and a plan's hand-check list, and no single place said
-"here is what is not done".
+What is known to be left, as of **2026-09-14**, after M4 of the progression composer and M1 and
+M2 of the composer editor shipped, and after the milestone that makes the GP Viewer the composer
+was designed. Written because these items were spread across design documents, a roadmap
+paragraph and a plan's hand-check list, and no single place said "here is what is not done".
 
-This is not a backlog of ideas. Everything here is either a check nobody has performed
-or a defect somebody decided not to fix yet, and each says which. What M2 settled is argued in
-the composer editor design doc's "M2 decisions", not repeated here.
+This is not a backlog of ideas. Everything here is either a check nobody has performed or a
+defect somebody decided not to fix yet, and each says which. What M2 settled is argued in the
+composer editor design doc's "M2 decisions", not repeated here.
+
+It is grouped by what owns the item: the checks first, since they are the only things that
+cannot be settled from a chair, then what is owed for the composer, then everything else.
 
 ---
 
 ## Checks nobody has performed
 
-The suite is headless, so none of these can be settled by running it. They are ordered
-by what they would cost us to be wrong about.
+The suite is headless, so none of these can be settled by running it. They are ordered by what
+they would cost us to be wrong about.
+
+### Two want real Guitar Pro
 
 - [ ] **Open an exported `.gp` in real Guitar Pro and read the ♭II.** Reading alphaTab's
       `GpifWriter._writePitchForValue` says it displaces a note only when the default
@@ -31,6 +36,8 @@ by what they would cost us to be wrong about.
       fermatas and forced accidentals survive a save, but their round-trip specs go through
       alphaTex, which is what the library stores — not through the `.gp` exporter, which is
       a different writer. The editor design lists this as a hand check for every milestone.
+
+### The composer
 
 - [ ] **Finish M2's hand check in a real browser.** It was run on 2026-09-14 in the Claude desktop app's Browser pane,
       which cannot drag, cannot press a focused button with Enter or Space, has no zoom, and has no other browser,
@@ -62,48 +69,31 @@ by what they would cost us to be wrong about.
       - Step 30 on the second system, and `{numbered tabs}` by hand.
       - Step 33, the prompts before unsaved work is discarded.
 
-      Step 29, Guitar Pro, is the item above.
+      Step 29, Guitar Pro, is the second item above. The alphaTex panel's re-fit of the strip, in Step 14, was fixed
+      after the merge (`ff8a94c`) and has a behaviour spec; the drag that would confirm it by hand is still owed.
+
+### The rest of the app
 
 - [ ] **Send a progression into a score loaded from a `.gp` file** — one with a bass
       staff, so its bars carry `f4` and a real key signature. `padStaff` carries clef,
       ottava and key signature forward from the staff's last bar; that is specced, but
       never exercised against a genuinely loaded score.
 
-- [ ] **Drive the whole cycle in a browser at a narrow viewport.** The progression rail's
-      export buttons stack below about 208px of row; that was measured in headless Chrome
-      rather than looked at. The composer's tracks panel this item also named is gone: M2's
-      track strip replaced it, and the composer's narrow widths are in M2's hand check.
+- [ ] **Drive the progression cycle in a browser at a narrow viewport.** The progression rail's export
+      buttons stack below about 208px of row; that was measured in headless Chrome rather than looked at. The
+      composer's own narrow widths belong to the M2 hand check above, where Step 14 passed at 1000, 768, 480 and
+      375px.
+
+---
+
+# Owed for the composer
 
 ## Known limitations, recorded rather than fixed
 
-Each of these is argued in a design document — the reasoning is there, not here. The
-progression composer's are in `docs/plans/2026-09-08-progression-composer-design.md`.
-
-- **A score that changes meter mid-way.** A generated track is barred by the score's
-  *first* time signature, so its bar lines disagree from the point the meter changes.
-  Fixing it means teaching `placeProgressionNotes` and `writeBar` a per-bar signature.
-- **A generated track's id is not unique after Flatten then Send.** Flatten keeps
-  `progression-<uuid>` and drops the marker, so the next Send appends a second track
-  with the same id. Harmless today — nothing reads `TrackDoc.id` — and reproducible in
-  three clicks. Fixing it in Flatten would break "Flatten costs one field", which is
-  the design's own argument for the materialised-track choice.
-- **Two rows both called *Progression*.** The same Flatten-then-Send path leaves the
-  track strip showing a detached track and a linked one with nothing but the badge to tell
-  them apart.
-- **`quantizeBar` has no note-off**, so a staccato roll engraves legato.
-- **`BeatDoc.dynamics: null`** is documented as "inherit" and nothing implements it.
-  This reaches an exported file now as well as a preview, which raises its priority
-  without changing what it is.
-- **`parseChord` returns the first reading that consumes every note**, so two chords the
-  palette can build in three clicks lose their numeral and degrade to `literal`. The
-  evidence and the count are already written down in
-  `progression-recognise.roundtrip.spec.ts`.
-
-The composer editor's are under "Found while designing" in
-`docs/plans/2026-09-13-composer-editor-design.md`, and what M2 settled is under its "M2
-decisions". Most are alphaTab's rather than ours, and the ones a save causes are pinned in
-`score-doc-mapper.effects.spec.ts`, so an alphaTab upgrade that changes one turns a spec red
-rather than going unnoticed.
+Each of these is argued in `docs/plans/2026-09-13-composer-editor-design.md`, under "Found while
+designing"; what M2 settled is under its "M2 decisions". Most are alphaTab's rather than ours,
+and the ones a save causes are pinned in `score-doc-mapper.effects.spec.ts`, so an alphaTab
+upgrade that changes one turns a spec red rather than going unnoticed.
 
 - **A double bar does not survive a save.** M1 hands it to alphaTab, so it draws, but
   alphaTab 1.8.0 reads `\db` and never writes it, and the library stores alphaTex. An
@@ -120,8 +110,7 @@ rather than going unnoticed.
   those shapes.
 - **Four slide types have no name in the model.** In from above, out down, and pick slides
   down and up read back as no slide, so alphaTex applied from the source panel loses them.
-  Nothing the composer writes can produce them. The GP Viewer milestone's conversion prompt
-  lists them.
+  Nothing the composer writes can produce them. The GP milestone's conversion prompt lists them.
 - **A grace that carries a tuplet is read one bar at a time.** alphaTab joins a bar's leading grace to the group the
   bar before ends in, and a grace after a beat in no group starts a group that never closes. The editor's open-group
   refusals read a bar on its own, so such a bar can be misread: `o ot3 ot3 ot3 o n2 n2` after a bar that ends in a
@@ -148,7 +137,8 @@ rather than going unnoticed.
   the alphaTex exporter writes none of its beats: a staff with no note in its second voice saves without one, and a
   bar whose second voice is all rests, beside bars that have notes there, comes back holding one quarter rest. It saves
   again unchanged and says nothing musically, but a fermata only such a rest holds, at a tick the first voice has no
-  beat at, would be lost. Pinned in `composer.service.voices.spec.ts`.
+  beat at, would be lost. Pinned in `composer.service.voices.spec.ts`. This is the *only* voice limitation: `BarDoc.voices`
+  is an unbounded array and the mapper reads and writes every voice, which the GP design doc corrects the M2 design on.
 - **A key pressed with Ctrl, Alt or Cmd inside a popover still reaches the page's shortcuts**, on purpose, so Ctrl+S
   saves and Ctrl+Z undoes from a popover as from any control. A symbol typed through AltGr on a popover's checkbox or
   button can therefore run a symbol tool - German AltGr+0, `}`, opens Alternate ending in place of the popover open.
@@ -163,8 +153,8 @@ rather than going unnoticed.
   there is no public API to clear it.
 - **A press that closes a popover is ignored until the page hears that press end.** A mouse-up ends it, and so does a
   press the browser takes over and sends no mouse-up for: a `pointercancel` - one become a native drag, a touch become a
-  scroll - or the `dragend` after it. An end the page hears none of - the button let go over another window - still
-  leaves the guard on, and the next press on the score is ignored as well, once.
+  scroll - or the `dragend` after it (`1de28dc`). An end the page hears none of - the button let go over another window -
+  still leaves the guard on, and the next press on the score is ignored as well, once.
 - **A slash staff is measured as one line, and a two-line staff next to another staff can be read as lone lines.** The
   hit test tells a staff's lines by their even gaps, so a single line followed by a run of three or more lines at another
   gap is a staff of its own. A numbered staff draws no lines, so it is found by its band instead, and its caret is drawn
@@ -173,7 +163,8 @@ rather than going unnoticed.
 ## Bugs, recorded and not yet fixed
 
 Found while designing and building M1 and M2 of the composer editor, and left for the milestone
-that owns the control that reaches them. Each is in the design doc's "Found while designing" list.
+that owns the control that reaches them — four of the five are M3's, and Fix bar's belongs to
+whoever next opens that carry. Each is in the design doc's "Found while designing" list.
 
 - **A tuning, capo or transposition change can put a forced accidental on the wrong line.**
   The accidental command refuses one that cannot name its pitch, but checks only when the
@@ -189,53 +180,136 @@ that owns the control that reaches them. Each is in the design doc's "Found whil
 - **Fix bar into a bar that was already short moves that bar's own beats later.** The whole
   shortfall fills right after what Fix bar carried, including the part that was at the end
   of the bar before.
-- **The Bass instrument preset gets six guitar strings.** `createTrack` gives every fretted
-  track `STANDARD_GUITAR_TUNING`; `STANDARD_BASS_TUNING` exists and the composer never uses
-  it. M3.
+- **The Bass instrument preset gets six guitar strings.** `ComposerService.createTrack` gives every
+  fretted track `STANDARD_GUITAR_TUNING` (`composer.service.ts:203`); `STANDARD_BASS_TUNING` exists
+  in `composer.model.ts` and the composer never uses it. M3.
+
+## Found while designing the GP milestone
+
+Recorded on 2026-09-14 in `docs/plans/2026-09-14-gp-composer-design.md`, under "Found while
+designing". These are in shipped code on `/gp-viewer` and `/gp-library`. The milestone meets the
+first two — the highlighter goes with the page and is rebuilt on the composer, and the metadata is
+corrected as a side effect of parsing the bytes on the way in. The rest it does not meet, and they
+outlive it.
+
+- **The scale highlighter has never highlighted anything.** `applyHighlighting` queries `.at-note`
+  and reads `data-note`; alphaTab 1.8 renders neither, and nothing calls the method after a render
+  in any case. The `::ng-deep` rules in `gp-viewer.component.scss` are dead with it, and it is
+  direct DOM manipulation, which `CLAUDE.md` names in its table of common mistakes. Decision 9 of
+  the milestone builds the panel rather than moving it.
+- **A file added from the gallery carries invented metadata.** `GpLibraryComponent.addFiles` calls
+  `addFile(file, {})` and the service fills the gaps with `trackCount: 0` and `tempo: 120`, so the
+  card prints "120 BPM" and "0 tracks" and sorting by BPM sorts every such file as if it were 120.
+  Only a file saved from the viewer carries real values. The milestone parses the bytes on every
+  route in, so an older entry is corrected the first time it is opened.
+- **The library's key, scale and chord filters can never match.** `GpLibraryFiltersComponent` offers
+  all three, and nothing in the app ever writes `key`, `detectedScales` or `detectedChords`. Either
+  something should detect them or they should go.
+- **There is no bulk delete.** `clearLibrary()` has no call site in its template, and it deletes the
+  whole library rather than a selection. A real one needs multi-select, which the gallery has no
+  notion of.
+- **A file card is a `div` with a click handler** — no `role`, no `tabindex` — so Open is mouse-only.
+  The row should be a button, as each saved row in the composer's drawer already is.
+- **`scrollMode` is accepted and ignored**, and so are `notation.rhythmMode`, `notation.fingeringMode`
+  and `display.barsPerRow`: they are on the settings interface and `AlphaTabService.initializeApi`
+  never reads them. A setting a caller can pass and the service drops is worse than one it does not
+  offer.
+- **The service's own asset defaults are wrong for this app.** `initializeApi` falls back to
+  `/assets/font/` and `/assets/soundfont/sonivox.sf2`; `angular.json` publishes them at `/font` and
+  `/soundfont`. Every real caller overrides both, so nothing is broken — a caller that forgot would
+  lose its music font silently.
+- **`GpLibraryService` keeps every file's bytes in a `BehaviorSubject`.** `loadAllEntries` pushes
+  whole records, `ArrayBuffer`s included, so a library of fifty files sits in memory to render a grid
+  of titles. `ComposerLibraryService.refresh` strips its payload; the fix is a summary projection and
+  `getFileData`, which exists and has no caller.
+- **`GpLibraryService` can open its database twice.** `initDatabase()` runs from the constructor and
+  its promise is not kept, so `addFile` and `getEntry` call it again when `this.db` is still null,
+  while `updateEntry`, `deleteEntry` and `clearLibrary` silently resolve instead.
+  `ComposerLibraryService.ensureDb` memoises one promise and is the model to copy.
+- **Its four indexes are never used.** `title`, `artist`, `dateAdded` and `key`: every read is
+  `getAll()` or `get(id)`, and the filtering and sorting run in JS over the whole set. Harmless at
+  this size.
+- **Re-saving a file always makes a second row.** `addFile` uses `store.add`, and `isInLibrary` is
+  in-memory only, so a file dropped into the viewer that the library already holds still offers
+  "Save to Library". The milestone's own routes write through one path; the gallery still can.
 
 ## Smaller things noticed in passing
 
-- **A `NaN` in `ProgressionDoc.revision` would poison the allocator permanently**, since
-  `Math.max` propagates it. Only reachable from a corrupt document, and there is no
-  loader yet — but there will be.
-- **`ProgressionDoc` has no rename path at all.** Several decisions in M4 turn on the
-  track's name and the marker's copy diverging, and neither can move today. Whatever
-  adds a rename must write a resolved label through to `GeneratedOrigin.progressionName`
-  via the exported `progressionLabel` — `revision` does not move on a rename, so a stale
-  copy there would not even read as stale.
 - **Every call to `updateScoreInfo` is an undo step**, so each keystroke in the title field
   would be its own, and retyping an unchanged title marks the score dirty. M3's inspector
   should coalesce the edits or skip a commit that changes nothing.
-- **Two file headers still argue against a 500-line ceiling**: `transcription-review.component.ts`
-  and `transcription.service.ts` each have a section "Past CLAUDE.md's 500-line ceiling,
-  deliberately", and `alpha-tab-enum.bridge.ts` gives "the project's 500-line guideline" as its
-  reason. `CLAUDE.md` raised the cap to 1000 on 2026-09-09. The headers that say it stood at 500
-  when they were split - `review-controls.ts`, `progression-strip-gestures.ts`,
-  `progression-strip-cards.ts`, `progression-chord-names.ts`, `progression-edit.ts` - are history,
-  and right as they are.
-- **`progression.component.ts` is 1,012 lines**, over `CLAUDE.md`'s 1000-line cap. Found while
-  reviewing M2 of the composer editor, which touches only its shared editable-target helper. A
-  small refactor of its own: lift a cohesive block out, as `composer.service.ts` shed its bar and
-  track commands and then its history.
-- **`((x % 12) + 12) % 12` is written out ten more times** across
-  `progression-harmony.ts`, `progression-parse.ts`, `progression-generate.ts`,
-  `progression-voicing.ts`, `progression-edit.ts`, `progression-vocabulary.ts`,
-  `piano-roll-view.ts`, `note-naming.ts` and `review-controls.ts`. `reduceToOctave` is exported
-  from `note-spelling.ts` and the spelling cluster uses it; the rest is a separate sweep.
 - **Rests that could merge are left as two.** A duration change puts a gap's rests where the gap
   opened and leaves the bar's other rests in place, so `n8 n2 r4 r8` with its first two beats
   set to quarters is `n4 n4 r8 r4 r8`. The beats after it keep their ticks, which is the point;
   M2 did not merge them. The same shape: a whole 6:4 group of sixteenths made grace notes leaves
   `r8 r8` where `r4` would do, since each grace frees its own room and the rest-spelling code
   spells each run where it opened.
-- **`isEditableTarget` does not count checkboxes, radios and range sliders as typing**, so Space and
-  arrows on them reach composer shortcuts. M3's mixer adds such controls and must let them keep their keys
-  (extend M2's focused-control check, `pressesFocusedControl`).
+- **`isEditableTarget` does not count checkboxes, radios and range sliders as typing.** Space on a
+  checkbox or a radio is already covered, by M2's separate focused-control check
+  (`pressesFocusedControl`), but only while the control matches `:focus-visible`; the arrows are
+  covered by neither, so an arrow on a range slider or inside a radio group moves the composer's
+  caret as well. M3's mixer adds such controls and must let them keep their keys.
 
-## Next milestone, when there is one
+---
 
-**M1 and M2 of the composer editor redesign are implemented.** Designed on 2026-09-13 in
-`docs/plans/2026-09-13-composer-editor-design.md`, and built to
+# Owed elsewhere in the app
+
+## The progression composer's known limitations
+
+Each is argued in `docs/plans/2026-09-08-progression-composer-design.md` — the reasoning is there,
+not here.
+
+- **A score that changes meter mid-way.** A generated track is barred by the score's
+  *first* time signature, so its bar lines disagree from the point the meter changes.
+  Fixing it means teaching `placeProgressionNotes` and `writeBar` a per-bar signature.
+- **Flatten then Send leaves two tracks that cannot be told apart.** Flatten keeps
+  `progression-<uuid>` and drops the marker, so the next Send appends a second track with the same
+  id, and the strip shows a detached *Progression* and a linked one with nothing but the badge
+  between them. Harmless today — nothing reads `TrackDoc.id` — and reproducible in three clicks.
+  Fixing it in Flatten would break "Flatten costs one field", which is the design's own argument
+  for the materialised-track choice.
+- **`quantizeBar` has no note-off**, so a staccato roll engraves legato.
+- **`BeatDoc.dynamics: null`** is documented as "inherit" and nothing implements it.
+  This reaches an exported file now as well as a preview, which raises its priority
+  without changing what it is.
+- **`parseChord` returns the first reading that consumes every note**, so two chords the
+  palette can build in three clicks lose their numeral and degrade to `literal`. The
+  evidence and the count are already written down in
+  `progression-recognise.roundtrip.spec.ts`.
+
+## Smaller things noticed in passing
+
+- **A `NaN` in `ProgressionDoc.revision` would poison the allocator permanently**, since
+  `Math.max` propagates it (`progression-history.ts:414`). Only reachable from a corrupt document,
+  and there is no loader yet — but there will be.
+- **`ProgressionDoc` has no rename path at all.** Several decisions in M4 turn on the
+  track's name and the marker's copy diverging, and neither can move today. Whatever
+  adds a rename must write a resolved label through to `GeneratedOrigin.progressionName`
+  via the exported `progressionLabel` — `revision` does not move on a rename, so a stale
+  copy there would not even read as stale.
+- **Three file headers still cite a 500-line ceiling** that has not existed since 2026-09-09, when
+  `CLAUDE.md` raised the cap to 1000: `transcription-review.component.ts` and `transcription.service.ts`
+  each have a section "Past CLAUDE.md's 500-line ceiling, deliberately", and `alpha-tab-enum.bridge.ts`
+  gives "the project's 500-line guideline" as its reason for existing. The headers that say the cap
+  *stood* at 500 when they were split — `review-controls.ts`, `progression-strip-gestures.ts`,
+  `progression-strip-cards.ts`, `progression-chord-names.ts`, `progression-edit.ts` — are history, and
+  right as they are.
+- **`progression.component.ts` is 1,012 lines**, over `CLAUDE.md`'s 1000-line cap. Found while
+  reviewing M2 of the composer editor, which touches only its shared editable-target helper. A
+  small refactor of its own: lift a cohesive block out, as `composer.service.ts` shed its bar and
+  track commands and then its history.
+- **`((x % 12) + 12) % 12` is written out ten more times** across
+  `progression-harmony.ts` (twice), `progression-parse.ts`, `progression-generate.ts`,
+  `progression-voicing.ts`, `progression-edit.ts`, `progression-vocabulary.ts`,
+  `piano-roll-view.ts`, `note-naming.ts` and `review-controls.ts`. `reduceToOctave` is exported
+  from `note-spelling.ts` and the spelling cluster uses it; the rest is a separate sweep.
+
+---
+
+## Next milestone
+
+**M1 and M2 of the composer editor redesign are implemented**, M2 merged at `f23bb1c`. Designed on
+2026-09-13 in `docs/plans/2026-09-13-composer-editor-design.md`, and built to
 `docs/plans/2026-09-13-composer-editor-m1.md` and `docs/plans/2026-09-13-composer-editor-m2.md`.
 M1 laid the foundations: saving stops losing data, a selection with beat, note, bar and track
 commands over it, and bars that fill their gaps with rests and report their overflow. M2 put
@@ -243,18 +317,19 @@ them within reach: a palette of Bravura-glyph tools, the Select / Pen toggle, on
 driving buttons, tooltips, a modal shortcut sheet and every shortcut, refusals and outcomes in
 one polite live region, and a page grid of top bar, palette, score, status line and a minimal
 track strip. What implementation changed is under "Corrections during implementation" in the M2
-plan; its decisions, as corrected, are under "M2 decisions" in the design doc.
+plan; its decisions, as corrected, are under "M2 decisions" in the design doc. A review after the
+merge added `54381aa`, and `0c5ebc9` restyled the palette flat.
 
-**Next up, the GP Viewer becomes the composer** - decided by the user on 2026-09-13, a
-milestone of its own before M3, not yet planned. Opening a `.gp` file in the composer shows and
-plays alphaTab's original reading of it, as the viewer does, until the first edit. That edit
-converts it to the composer's model after a prompt listing what the file would lose - multiple
-voices, lyric lines beyond the first, tremolo bar and wah, chord diagrams, tempo automations beyond
-bar 1, the four unnamed slide types - so nothing is dropped silently. The GP Library's Open then
-goes to the composer, and the viewer route is removed.
+**Next up, the GP Viewer becomes the composer.** Decided by the user on 2026-09-13 and designed on
+2026-09-14 in `docs/plans/2026-09-14-gp-composer-design.md`, which supersedes the paragraph that
+stood here and the "After M2" section of the editor design. Seventeen decisions, a build order of
+eleven steps, and percussion joining the model — because a drum track did not convert short, it
+converted wrong: alphaTab leaves `tone` and `octave` at -1 on a percussion note, so `fromNote`
+produced `{ kind: 'pitched', noteValue: -1, octave: -2 }` for every drum hit in the file. The
+design is merged at `2e875be`; the implementation plan is being written on `feature/gp-composer`.
 
 M3 (inspector, and the track strip's mixer and bar grid) and M4 (bend curve, custom tuplet and
-trill speed editors) follow.
+trill speed editors) follow it.
 
 After that, the progression design doc's "Not in M4" names the one that unlocks the
 others: **a progression library**. It would give `GeneratedOrigin.progressionId` a far end worth persisting,

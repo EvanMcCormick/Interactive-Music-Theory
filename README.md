@@ -186,7 +186,10 @@ A comprehensive web application for exploring scales, modes, chords, and music t
 - Multi-track score editing with standard notation and guitar tab side by side
 - **Palette**: Bravura-glyph tools in seven groups — Tools, Duration, Bar, Accidentals,
   Dynamics, Articulation and Techniques — each showing whether the selection has it, and
-  saying why when it refuses
+  saying why when it refuses. It is drawn as Guitar Pro draws its own: no button chrome,
+  the glyphs straight on the panel, a hairline between groups, a faint wash under the
+  pointer, and the accent colour kept for the one tool that is on. A tool that would
+  refuse dims rather than disappearing, so it keeps its place and its reason
 - **Select and Pen**: in Select a click on the notation moves the caret and a drag or
   Shift-click selects a range; in Pen a click writes the pitch under the pointer, shown
   first as a hover notehead. Digits write frets on the tab in either
@@ -218,14 +221,19 @@ A comprehensive web application for exploring scales, modes, chords, and music t
 - **GP File Support**: Load and play Guitar Pro files (.gp, .gp3, .gp4, .gp5, .gpx)
 - **Full Playback**: Play/pause, tempo control, seeking, and looping
 - **Track Controls**: Mute/solo individual tracks
-- **Scale Highlighting**: Highlight notes matching selected scales/chords
 - **Drag & Drop**: Easy file loading via drag-and-drop or file dialog
 - **Save to Library**: Store GP files locally for quick access
+- Its scale highlighting draws nothing: it looks for markup alphaTab 1.8 does not render.
+  The next milestone folds this page into the Composer, where the highlighting is built
+  rather than moved — see [docs/plans/2026-09-14-gp-composer-design.md](docs/plans/2026-09-14-gp-composer-design.md)
 
 ### GP Library
 - **Local Storage**: IndexedDB-backed library for storing Guitar Pro files
-- **Metadata Display**: View title, artist, album, tempo, and track count
-- **Search & Filter**: Find files by name or metadata
+- **Metadata Display**: View title, artist, album, tempo, and track count — real for a file
+  saved from the viewer, and invented for one dropped straight into the gallery, which is
+  read as "120 BPM, 0 tracks" until the same milestone parses it on the way in
+- **Search & Filter**: Find files by name, artist or album. The key, scale and chord filters
+  are decorative — nothing in the app detects any of the three
 - **Quick Loading**: Open files directly from library into viewer
 
 ### Audio Playback
@@ -441,10 +449,11 @@ When you like it, **Send to Composer** puts it on a staff beside your own tracks
 ## Recent Updates
 
 ### Composer Editor (September 2026)
-- ✨ **New**: A palette of tools in seven groups — note values, dots, tuplets and ties;
-  bar tools from time signatures and repeats to Fix bar; accidentals and respelling;
-  dynamics; articulations; and techniques from hammer-ons and bends to harmonics and pick
-  strokes. Each button shows whether the selection has it, and says why when it refuses
+- ✨ **New**: A palette of tools in seven groups — Select and Pen at the top, then note
+  values, dots, tuplets and ties; bar tools from time signatures and repeats to Fix bar;
+  accidentals and respelling; dynamics; articulations; and techniques from hammer-ons and
+  bends to harmonics and pick strokes. Each button shows whether the selection has it, and
+  says why when it refuses
 - ✨ **New**: Select and Pen. Drag across the score to select a range, Shift-click to
   extend it, and click a beat while stopped to seek there; in Pen a click writes the pitch
   under the pointer, on a guitar at the lowest fret that plays it
@@ -455,7 +464,15 @@ When you like it, **Send to Composer** puts it on a staff beside your own tracks
   did, and a track strip to add, remove, update and flatten tracks
 - 🐛 **Fixed**: A composition that loads with a note no string can reach says it left the
   note out, and shows as unsaved, since it no longer matches what was stored
-- 🧪 **Tests**: 3,351 passing
+- 🎨 **Improved**: The palette is drawn the way Guitar Pro draws its own — the glyphs sit
+  straight on the panel with no boxes around them, a hairline splits the groups, hovering
+  is a faint wash, and the accent colour marks the one tool that is on and nothing else
+- 🐛 **Fixed**: A press the browser takes over — a link dragged onto the score, a touch
+  that becomes a scroll — used to leave the score ignoring the next click as well as the
+  one that closed the popover
+- 🐛 **Fixed**: Closing the alphaTex panel gives the track strip its room back, so the
+  separator can be dragged as far as it could before the panel was opened
+- 🧪 **Tests**: 3,357 passing
 
 ### Composer Editor Foundations (September 2026)
 - 🐛 **Fixed**: Saving a composition keeps hammer-ons, bends, slides, wide vibrato,
