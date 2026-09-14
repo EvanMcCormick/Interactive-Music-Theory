@@ -419,12 +419,15 @@ export function clearToRests(doc: ScoreDoc, refs: readonly BeatRef[]): void {
  * lead into it (`graceRunStart`), so they still lead into their beat. The bar grows, and whatever it
  * holds beyond its meter is left as overflow for Fix bar: an insertion moves beats later, and taking
  * rests from the end of the bar to make room would be a second edit the user did not ask for.
+ *
+ * Returns the index the rest went in at, or null when `ref` names no voice.
  */
-export function insertBeatAt(doc: ScoreDoc, ref: BeatRef, duration: DurationValue, dots: number): void {
+export function insertBeatAt(doc: ScoreDoc, ref: BeatRef, duration: DurationValue, dots: number): number | null {
   const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
-  if (!voice) return;
+  if (!voice) return null;
   const at = graceRunStart(voice, Math.min(ref.beatIndex, voice.beats.length));
   voice.beats.splice(at, 0, { ...createRestBeat(duration), dots });
+  return at;
 }
 
 /**

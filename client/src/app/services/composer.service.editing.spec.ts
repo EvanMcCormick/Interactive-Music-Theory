@@ -207,6 +207,29 @@ describe('ComposerService retypeNote', () => {
     expect(beatsIn(service)[0].notes[0].pitch).toEqual(fret(1));
   });
 
+  it('is an undo step of its own on another string of the same beat', () => {
+    const target = stateOf(service).cursor;
+    service.setNoteAtCursor(fret(1), true);
+
+    service.retypeNote({ ...target, stringIndex: 2 }, { kind: 'fretted', string: 3, fret: 12 });
+    service.undo();
+
+    expect(beatsIn(service)[0].notes.map(note => note.pitch)).toEqual([fret(1)]);
+  });
+
+  it('is an undo step of its own for a pitched note', () => {
+    service.addTrack('Piano', 0, false);
+    service.setCursor({ trackIndex: 1, barIndex: 0, beatIndex: 0 });
+    const target = stateOf(service).cursor;
+    const pianoBeat = () => service.doc.tracks[1].staves[0].bars[0].voices[0].beats[0];
+    service.setNoteAtCursor({ kind: 'pitched', noteValue: 0, octave: 4 }, true);
+
+    service.retypeNote(target, { kind: 'pitched', noteValue: 2, octave: 4 });
+    service.undo();
+
+    expect(pianoBeat().notes.map(note => (note.pitch.kind === 'pitched' ? note.pitch.noteValue : null))).toEqual([0]);
+  });
+
   it('is an undo step of its own after an undo and redo', () => {
     const target = stateOf(service).cursor;
     service.setNoteAtCursor(fret(1), true);
@@ -422,6 +445,35 @@ describe('ComposerService beats over the selection', () => {
     expect(stateOf(service).anchor).toBeNull();
   });
 
+  it('publishes a delete once, so nothing sees the new document with the old selection', () => {
+    service.setCursor({ beatIndex: 1 });
+    service.extendSelectionTo({ beatIndex: 2 });
+    const published: ComposerState[] = [];
+    const subscription = service.getState().subscribe(state => published.push(state));
+    published.length = 0;
+
+    service.deleteBeats();
+    subscription.unsubscribe();
+
+    expect(published.length).toBe(1);
+    expect(published[0].anchor).toBeNull();
+  });
+
+  it('keeps a range on its beats when a beat is inserted inside it, the caret on the new rest', () => {
+    // The range runs back from beat 2 to beat 1. The rest goes in front of the caret's beat 1, so the
+    // anchor's beat moves to index 3 and the anchor goes with it.
+    writeFret(service, 0, 2, 5);
+    service.setCursor({ beatIndex: 2 });
+    service.extendSelectionTo({ beatIndex: 1 });
+
+    service.insertBeat();
+
+    expect(stateOf(service).cursor.beatIndex).toBe(1);
+    expect(beatsIn(service)[1].isRest).toBeTrue();
+    expect(stateOf(service).anchor?.beatIndex).toBe(3);
+    expect(beatsIn(service)[3].isRest).toBeFalse();
+  });
+
   it('refuses to insert into a generated track', () => {
     service.addTrack('Piano', 0, false);
     service.replaceDocument({
@@ -472,6 +524,33 @@ describe('ComposerService cut, copy and paste', () => {
     expect(beatsIn(service, 2).every(beat => beat.isRest)).toBeTrue();
   });
 
+  it('pastes over a forward selection from its start, and drops the range', () => {
+    writeFret(service, 0, 0, 5);
+    writeFret(service, 0, 1, 7);
+    service.setCursor({ beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 1 });
+    service.copy();
+    service.setCursor({ barIndex: 2, beatIndex: 1 });
+    service.extendSelectionTo({ beatIndex: 2 });
+
+    service.paste();
+
+    expect(beatsIn(service, 2).map(beat => (beat.notes[0]?.pitch.kind === 'fretted' ? beat.notes[0].pitch.fret : null))).toEqual([null, 5, 7, null]);
+    expect(stateOf(service).anchor).toBeNull();
+    expect(stateOf(service).cursor.barIndex).toBe(2);
+    expect(stateOf(service).cursor.beatIndex).toBe(1);
+  });
+
+  it('says nothing is selected when a copy has no beat to take', () => {
+    const empty = structuredClone(service.doc);
+    empty.tracks[0].staves[0].bars[0].voices[0].beats = [];
+    service.replaceDocument(empty);
+
+    service.copy();
+
+    expect(stateOf(service).refusal).toBe('Nothing is selected.');
+  });
+
   it('cuts by copying and clearing, and the cut pastes back', () => {
     writeFret(service, 0, 0, 5);
     service.setCursor({ beatIndex: 0 });
@@ -511,6 +590,26 @@ describe('ComposerService bars over the selection', () => {
 
     expect(service.doc.masterBars.length).toBe(6);
     expect(stateOf(service).anchor?.barIndex).toBe(3);
+  });
+
+  it('drops the range after deleting the selected bars, leaving the caret on the bar that took their place', () => {
+    service.setCursor({ barIndex: 1 });
+    service.extendSelectionTo({ barIndex: 2, beatIndex: 2 });
+
+    service.deleteSelectedBars();
+
+    expect(service.doc.masterBars.length).toBe(2);
+    expect(stateOf(service).anchor).toBeNull();
+    expect([stateOf(service).cursor.barIndex, stateOf(service).cursor.beatIndex]).toEqual([1, 0]);
+  });
+
+  it('refuses to remove the last track, saying why', () => {
+    const before = JSON.stringify(service.doc);
+
+    service.removeTrack(0);
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(stateOf(service).refusal).toMatch(/at least one track/i);
   });
 
   it('refuses to delete every bar, saying why', () => {

@@ -1,6 +1,7 @@
 import {
   ClefKind,
   ComposerState,
+  EditCursor,
   KeySignature,
   MasterBarDoc,
   OttaviaKind,
@@ -35,6 +36,12 @@ import { renameTrack, setPlayback, setStaffNumber, setStaffTuning, setStaffViews
  * this class reaches the service only through `ComposerCommandHost`.
  */
 
+/** A selection: the caret, and the fixed end of a range or null. */
+export interface SelectionPlacement {
+  cursor: EditCursor;
+  anchor: EditCursor | null;
+}
+
 /** What the bar and track commands need from `ComposerService`. */
 export interface ComposerCommandHost {
   /** The current state. */
@@ -42,8 +49,15 @@ export interface ComposerCommandHost {
   /**
    * Runs `edit` on a clone and commits it with the selection still on its beats - or, when
    * `edit` returns a reason, publishes that and commits nothing.
+   *
+   * `place`, when given, decides the selection instead, from the edited draft and the ends as they
+   * followed their beats - so a command that moves the caret or drops the range does it in the same
+   * commit, and the state is published once.
    */
-  commitFollowing(edit: (draft: ScoreDoc) => string | null | void): void;
+  commitFollowing(
+    edit: (draft: ScoreDoc) => string | null | void,
+    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement
+  ): void;
   /** Publishes why a command did nothing. Commits nothing. */
   refuse(reason: string): void;
   /** Stamps every generated track in `draft` as diverged from its progression. */
@@ -161,16 +175,22 @@ export class ComposerStructureCommands {
     this.applyBarEdit((draft, bars) => insertBarsBefore(draft, bars.first, bars.last - bars.first + 1));
   }
 
-  /** Removes the selected bars from every track. See `deleteBars`. */
+  /**
+   * Removes the selected bars from every track (see `deleteBars`), and drops the range: its beats are
+   * gone. The caret goes to the first beat of the bar that took their place, on its own staff.
+   */
   deleteSelectedBars(): void {
     const state = this.host.state();
     const bars = selectedBars(state.anchor, state.cursor);
-    this.host.commitFollowing(draft => {
-      const refusal = deleteBars(draft, bars);
-      if (refusal) return refusal;
-      this.host.markDiverged(draft);
-      return null;
-    });
+    this.host.commitFollowing(
+      draft => {
+        const refusal = deleteBars(draft, bars);
+        if (refusal) return refusal;
+        this.host.markDiverged(draft);
+        return null;
+      },
+      () => ({ cursor: { ...state.cursor, barIndex: bars.first, beatIndex: 0 }, anchor: null })
+    );
   }
 
   /**

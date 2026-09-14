@@ -2,7 +2,7 @@ import { DurationValue, EditCursor, NoteDoc, NotePitch, ScoreDoc, createDefaultN
 import { CopiedBeats, copiedBeatsOf, pasteBeats } from './beat-clipboard';
 import { clearToRests, deleteBeats, insertBeatAt, setBeatDurations } from './beat-edits';
 import { CursorMove } from './composer-cursor';
-import { beatAt, selectionTargets } from './composer-selection';
+import { BeatRef, beatAt, selectionTargets } from './composer-selection';
 import { ComposerCommandHost } from './composer-service-structure';
 import { editRefusal } from './edit-refusals';
 
@@ -25,8 +25,6 @@ export interface ComposerEntryHost extends ComposerCommandHost {
   commit(edit: (draft: ScoreDoc) => string | null | void, amend?: boolean): void;
   /** Moves the caret, dropping any range. */
   moveCursor(move: CursorMove): void;
-  /** Puts the caret at `cursor`, clamped, dropping any range. */
-  select(cursor: Partial<EditCursor>): void;
 }
 
 /** Note entry and the selection commands M2 adds, run through a `ComposerEntryHost`. */
@@ -67,8 +65,10 @@ export class ComposerEntryCommands {
     const state = this.host.state();
     if (this.refusesEntryAt(state.doc, target)) return;
 
+    // Only a fret is built from digits. A pitched note written twice is two notes of a chord, and a note
+    // on another string is another note, so neither replaces the last commit.
     const last = this.lastEntry;
-    const amend = last !== null && last.doc === state.doc && sameBeat(last.at, target);
+    const amend = last !== null && last.doc === state.doc && pitch.kind === 'fretted' && sameString(last.at, target);
     this.host.commit(draft => writeNote(draft, target, pitch, state.inputDuration, state.inputDots), amend);
     this.lastEntry = { at: target, doc: this.host.state().doc };
   }
@@ -113,27 +113,39 @@ export class ComposerEntryCommands {
     this.host.commitFollowing(draft => clearToRests(draft, refs));
   }
 
-  /** Inserts a rest at the input duration in front of the caret's beat, leaving the caret on it. See `insertBeatAt`. */
+  /**
+   * Inserts a rest at the input duration in front of the caret's beat (see `insertBeatAt`), leaving the
+   * caret on the new rest. A range's other end follows its beat, so the range still covers what it did.
+   */
   insertBeat(): void {
     const state = this.host.state();
-    if (this.refusesEntryAt(state.doc, state.cursor)) return;
-    this.host.commit(draft => insertBeatAt(draft, state.cursor, state.inputDuration, state.inputDots));
+    const cursor = state.cursor;
+    if (this.refusesEntryAt(state.doc, cursor)) return;
+    let inserted: number | null = null;
+    this.host.commitFollowing(
+      draft => void (inserted = insertBeatAt(draft, cursor, state.inputDuration, state.inputDots)),
+      (_draft, followed) => ({ cursor: { ...cursor, beatIndex: inserted ?? cursor.beatIndex }, anchor: followed.anchor })
+    );
   }
 
-  /** Removes the selected beats, and puts the caret where the range began. See `deleteBeats`. */
+  /** Removes the selected beats, and puts the caret where the range began, in one commit. See `deleteBeats`. */
   deleteBeats(): void {
     const state = this.host.state();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
     const refusal = editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null);
     if (refusal) return this.host.refuse(refusal);
-    this.host.commit(draft => deleteBeats(draft, refs));
-    this.host.select(refs[0]);
+    this.host.commitFollowing(
+      draft => deleteBeats(draft, refs),
+      () => ({ cursor: { ...state.cursor, ...refs[0] }, anchor: null })
+    );
   }
 
   /** Copies the selection's beats, from one staff. Not an edit: nothing is committed. */
   copy(): void {
     const state = this.host.state();
-    const copied = copiedBeatsOf(state.doc, selectionTargets(state.doc, state.anchor, state.cursor));
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    if (refs.length === 0) return this.host.refuse('Nothing is selected.');
+    const copied = copiedBeatsOf(state.doc, refs);
     if (!copied) return this.host.refuse('Copy takes beats from one staff at a time.');
     this.clipboard = copied;
   }
@@ -150,42 +162,54 @@ export class ComposerEntryCommands {
     this.host.commitFollowing(draft => clearToRests(draft, refs));
   }
 
-  /** Pastes the clipboard at the caret. See `pasteBeats`. */
+  /**
+   * Pastes the clipboard from the start of the selection - its first beat in timeline order, whichever
+   * end moved - as one run (see `pasteBeats`), and leaves the caret on the first pasted beat with no
+   * range: the beats the range named were written over.
+   */
   paste(): void {
     const state = this.host.state();
     const clipboard = this.clipboard;
     if (!clipboard) return this.host.refuse('Nothing has been copied yet.');
-    if (this.refusesEntryAt(state.doc, state.cursor)) return;
-    this.host.commit(draft => {
-      const result = pasteBeats(draft, state.cursor, clipboard);
-      if (typeof result === 'string') return result;
-      if (result.appendedBars > 0) this.host.markDiverged(draft);
-      return null;
-    });
+    const start = selectionTargets(state.doc, state.anchor, state.cursor)[0];
+    if (!start) return this.host.refuse('Nothing is selected.');
+    if (this.refusesEntryAt(state.doc, start)) return;
+    let pastedAt: BeatRef = start;
+    this.host.commitFollowing(
+      draft => {
+        const result = pasteBeats(draft, start, clipboard);
+        if (typeof result === 'string') return result;
+        pastedAt = result.at;
+        if (result.appendedBars > 0) this.host.markDiverged(draft);
+        return null;
+      },
+      () => ({ cursor: { ...state.cursor, ...pastedAt }, anchor: null })
+    );
   }
 
   /**
-   * Whether note entry, rest entry or a delete at `cursor` is refused - on a generated track, or in a
-   * second voice, which a click can reach in a loaded bar and bar filling cannot measure. Publishes
+   * Whether note entry, rest entry, a delete or a paste at `at` is refused - on a generated track, or in
+   * a second voice, which a click can reach in a loaded bar and bar filling cannot measure. Publishes
    * the reason and commits nothing, so a refusal costs no undo step and the caret does not advance. A
    * beat scope, not a note one: a delete on a rest clears nothing, and a note scope would refuse it as
    * a note tool on a rest.
    */
-  private refusesEntryAt(doc: ScoreDoc, cursor: EditCursor): boolean {
-    const refusal = editRefusal(doc, [cursor], { family: 'beat', key: 'duration' }, null);
+  private refusesEntryAt(doc: ScoreDoc, at: BeatRef): boolean {
+    const refusal = editRefusal(doc, [at], { family: 'beat', key: 'duration' }, null);
     if (refusal) this.host.refuse(refusal);
     return refusal !== null;
   }
 }
 
-/** Whether two cursors name the same beat. */
-function sameBeat(a: EditCursor, b: EditCursor): boolean {
+/** Whether two cursors name the same beat and the same string: where a two-digit fret is being typed. */
+function sameString(a: EditCursor, b: EditCursor): boolean {
   return (
     a.trackIndex === b.trackIndex &&
     a.staffIndex === b.staffIndex &&
     a.barIndex === b.barIndex &&
     a.voiceIndex === b.voiceIndex &&
-    a.beatIndex === b.beatIndex
+    a.beatIndex === b.beatIndex &&
+    a.stringIndex === b.stringIndex
   );
 }
 

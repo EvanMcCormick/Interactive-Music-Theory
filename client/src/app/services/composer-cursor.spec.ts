@@ -72,12 +72,15 @@ describe('movedCursor', () => {
     expect(moved(doc, at(1, 1), { kind: 'scoreEdge', edge: 'last' })).toBe('0:3.3');
   });
 
-  it('goes to the same bar on the next or previous track, and stops at the ends', () => {
+  it('goes to the same bar on the next or previous track, and stays put at the ends', () => {
+    // At either end there is no track to go to, so the caret does not move - not even to the bar's
+    // first beat, which would be a move nobody asked for.
     const doc = ComposerService.createEmptyScore();
     doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
 
     expect(moved(doc, at(2, 3), { kind: 'track', delta: 1 })).toBe('1:2.0');
-    expect(moved(doc, at(2, 3, { trackIndex: 1 }), { kind: 'track', delta: 1 })).toBe('1:2.0');
+    expect(moved(doc, at(2, 3, { trackIndex: 1 }), { kind: 'track', delta: 1 })).toBe('1:2.3');
+    expect(moved(doc, at(2, 3), { kind: 'track', delta: -1 })).toBe('0:2.3');
     expect(moved(doc, at(2, 3, { trackIndex: 1 }), { kind: 'track', delta: -1 })).toBe('0:2.0');
   });
 });

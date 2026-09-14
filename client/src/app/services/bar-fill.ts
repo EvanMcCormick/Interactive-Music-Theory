@@ -467,19 +467,46 @@ function beatsPastBarLine(
 
     if (start >= capacity) return { kind: 'cut', carried: voice.beats.splice(graceRunStart(voice, index)) };
 
-    if (hasTuplet(beat)) return { kind: 'refused', reason: TUPLET_ACROSS_LINE };
-    if (barGridFault(timeSignature, SLOT_DIVISION) !== null || barGridFault(nextTimeSignature, SLOT_DIVISION) !== null) {
-      return { kind: 'refused', reason: NO_GRID_AT_LINE };
-    }
-    const head = spelledTicks(capacity - start, start, timeSignature);
-    const tail = spelledTicks(end - capacity, 0, nextTimeSignature);
-    if (!head || !tail) return { kind: 'refused', reason: OFF_GRID_AT_LINE };
+    const split = splitAtBarLine(beat, start, timeSignature, nextTimeSignature);
+    if (split.kind === 'refused') return split;
 
     const after = voice.beats.splice(index + 1);
-    voice.beats.splice(index, 1, ...piecesOf(beat, head, false));
-    return { kind: 'cut', carried: [...piecesOf(beat, tail, true), ...after] };
+    voice.beats.splice(index, 1, ...split.head);
+    return { kind: 'cut', carried: [...split.tail, ...after] };
   }
   return { kind: 'cut', carried: [] };
+}
+
+/** A beat split at a bar line: its pieces before the line and its tied pieces after, or why it cannot be. */
+export type BarLineSplit = { kind: 'split'; head: BeatDoc[]; tail: BeatDoc[] } | { kind: 'refused'; reason: string };
+
+/**
+ * `beat`, starting `start` ticks into a bar of `timeSignature`, split at that bar's line into written
+ * values: the head up to the line, and a tail tied on from it spelled from the start of a bar of
+ * `nextTimeSignature` - or why it cannot be split, with Fix bar's reasons. `beat` must cross the line.
+ *
+ * The split Fix bar makes (`beatsPastBarLine`), and a paste across a bar line makes too: a tuplet is
+ * refused, since its pieces would lose the bracket; so is a meter on either side with no 64th grid, and
+ * a split between 64ths. The head's first piece is `beat` itself, re-valued; every other piece is a
+ * continuation carrying what goes on sounding (`piecesOf`, `CARRIED_OVER_A_TIE`). `beat` must not be
+ * held anywhere else afterwards: the head's first piece shares its effects.
+ */
+export function splitAtBarLine(
+  beat: BeatDoc,
+  start: number,
+  timeSignature: TimeSignature,
+  nextTimeSignature: TimeSignature
+): BarLineSplit {
+  const capacity = barCapacityTicks(timeSignature);
+  const end = start + beatTicks(beat);
+  if (hasTuplet(beat)) return { kind: 'refused', reason: TUPLET_ACROSS_LINE };
+  if (barGridFault(timeSignature, SLOT_DIVISION) !== null || barGridFault(nextTimeSignature, SLOT_DIVISION) !== null) {
+    return { kind: 'refused', reason: NO_GRID_AT_LINE };
+  }
+  const head = spelledTicks(capacity - start, start, timeSignature);
+  const tail = spelledTicks(end - capacity, 0, nextTimeSignature);
+  if (!head || !tail) return { kind: 'refused', reason: OFF_GRID_AT_LINE };
+  return { kind: 'split', head: piecesOf(beat, head, false), tail: piecesOf(beat, tail, true) };
 }
 
 /**

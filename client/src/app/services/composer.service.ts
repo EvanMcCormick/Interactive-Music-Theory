@@ -43,7 +43,7 @@ import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { defaultFermata } from './composer-tool-defaults';
 import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
-import { ComposerStructureCommands } from './composer-service-structure';
+import { ComposerStructureCommands, SelectionPlacement } from './composer-service-structure';
 import {
   EditScope,
   beatEffectRefusal,
@@ -99,11 +99,10 @@ export class ComposerService {
   private readonly host: ComposerEntryHost = {
     state: () => this.stateSubject.getValue(),
     commit: (edit, amend) => this.commit(edit, amend),
-    commitFollowing: edit => this.commitFollowing(edit),
+    commitFollowing: (edit, place) => this.commitFollowing(edit, place),
     refuse: reason => this.refuse(reason),
     markDiverged: draft => this.markDiverged(draft),
-    moveCursor: move => this.moveCursor(move),
-    select: cursor => this.setCursor(cursor)
+    moveCursor: move => this.moveCursor(move)
   };
   private readonly structure = new ComposerStructureCommands(this.host);
   private readonly entry = new ComposerEntryCommands(this.host);
@@ -237,9 +236,13 @@ export class ComposerService {
    * rests in front of it, Fix bar splits and carries beats. Left by position, a range of four
    * notes made eighths would end on a rest halfway through them, and the next press would miss
    * half the notes. So the beat each end names is found before the edit and looked for again
-   * after it (`followedEnd`). An end whose beat is gone stays where it was, clamped.
+   * after it (`followedEnd`). An end whose beat is gone stays where it was, clamped. `place`, when
+   * given, decides the selection from those followed ends instead, in the same publish.
    */
-  private commitFollowing(edit: (draft: ScoreDoc) => string | null | void): void {
+  private commitFollowing(
+    edit: (draft: ScoreDoc) => string | null | void,
+    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement
+  ): void {
     const state = this.stateSubject.getValue();
     const draft = structuredClone(state.doc);
     const cursorBeat = this.beatAt(draft, state.cursor);
@@ -248,10 +251,11 @@ export class ComposerService {
     const reason = edit(draft);
     if (typeof reason === 'string') return this.refuse(reason);
 
-    this.commitDocument(draft, {
+    const followed: SelectionPlacement = {
       cursor: followedEnd(draft, state.cursor, cursorBeat),
       anchor: state.anchor ? followedEnd(draft, state.anchor, anchorBeat) : null
-    });
+    };
+    this.commitDocument(draft, place ? place(draft, followed) : followed);
   }
 
   /**
@@ -447,7 +451,7 @@ export class ComposerService {
     this.entry.cut();
   }
 
-  /** Pastes the clipboard at the caret. See `pasteBeats`. */
+  /** Pastes the clipboard from the start of the selection, as one run. See `pasteBeats`. */
   paste(): void {
     this.entry.paste();
   }
@@ -710,7 +714,7 @@ export class ComposerService {
   }
 
   removeTrack(index: number): void {
-    if (this.doc.tracks.length <= 1) return;
+    if (this.doc.tracks.length <= 1) return this.refuse('A score needs at least one track.');
     this.commit(draft => {
       draft.tracks.splice(index, 1);
     });

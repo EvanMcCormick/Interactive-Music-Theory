@@ -45,8 +45,9 @@ export function clampedCursor(cursor: EditCursor, doc: ScoreDoc): EditCursor {
  * A beat step wraps across bar lines by each bar's own beat count and stops at either end of the
  * score. A bar move lands on the bar's first beat, as Guitar Pro's and TuxGuitar's do, and a track
  * move on the same bar's first beat of the other track's first staff: beat indices do not line up
- * across tracks, so keeping one would land on an arbitrary beat. A string move on a pitched staff,
- * which has no strings, goes nowhere.
+ * across tracks, so keeping one would land on an arbitrary beat. A track move past the first or last
+ * track has no track to go to and goes nowhere, like a string move on a pitched staff, which has no
+ * strings.
  */
 export function movedCursor(doc: ScoreDoc, cursor: EditCursor, move: CursorMove): EditCursor {
   const staff = doc.tracks[cursor.trackIndex]?.staves[cursor.staffIndex];
@@ -80,10 +81,10 @@ export function movedCursor(doc: ScoreDoc, cursor: EditCursor, move: CursorMove)
       return move.edge === 'first'
         ? clampedCursor({ ...cursor, barIndex: 0, beatIndex: 0 }, doc)
         : clampedCursor({ ...cursor, barIndex: lastBar, beatIndex: beatCount(lastBar) - 1 }, doc);
-    case 'track':
-      return clampedCursor(
-        { ...cursor, trackIndex: cursor.trackIndex + move.delta, staffIndex: 0, voiceIndex: 0, beatIndex: 0 },
-        doc
-      );
+    case 'track': {
+      const trackIndex = clamp(cursor.trackIndex + move.delta, 0, doc.tracks.length - 1);
+      if (trackIndex === cursor.trackIndex) return cursor;
+      return clampedCursor({ ...cursor, trackIndex, staffIndex: 0, voiceIndex: 0, beatIndex: 0 }, doc);
+    }
   }
 }
