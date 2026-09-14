@@ -433,9 +433,11 @@ export function entryValueOf(doc: ScoreDoc, at: BeatRef, duration: DurationValue
 
 /**
  * Why pressing Grace before or Grace on beat - `grace`, by the toggle rule - cannot apply to `refs`, or null: any
- * beat edit's refusal, or a tuplet group it would leave open (`tupletGroupOpenedBy`). A grace takes no room and is
- * not counted in a group, so a triplet beat made a grace leaves its group a beat short; and an on-beat grace in front
- * of a mixed group shortens its first beat, which is said in its own words (`shortenedByOnBeatGrace`).
+ * beat edit's refusal, or a tuplet group it would leave open (`tupletGroupOpenedBy`). A grace takes no room, is not
+ * counted in a group, and loses its tuplet (`setGrace`), so a triplet beat made a grace leaves its group a beat short;
+ * and an on-beat grace in front of a mixed group shortens its first beat, which is said in its own words
+ * (`shortenedByOnBeatGrace`). A whole group made graces leaves no group, and goes through - unless a loaded grace
+ * carrying a tuplet after it would then start one of its own, which is said as a group made of grace notes.
  */
 export function graceRefusal(doc: ScoreDoc, refs: readonly BeatRef[], grace: Exclude<BeatEffectsDoc['grace'], 'none'>): string | null {
   const refusal = editRefusal(doc, refs, { family: 'beat', key: 'grace' }, null);

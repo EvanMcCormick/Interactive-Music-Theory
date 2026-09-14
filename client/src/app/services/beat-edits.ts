@@ -210,10 +210,17 @@ export function setTuplet(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuple
  * rest that fills its room, or the beat that moves up to its tick in a bar that was over, takes it, and the
  * grace takes the fermata at the position it plays at (`settleFermatas`, which `relength` runs). A grace that
  * becomes an ordinary beat takes its tick's fermata the same way.
+ *
+ * A beat made a grace loses its tuplet in the same edit. A grace carrying one starts a group alphaTab never closes on
+ * a written value, and a bar's leading one is joined to the group the bar before ends in, which the one-bar reading of
+ * `tupletGroupsOf` cannot see. What is left is judged as any edit is (`graceRefusal`): a triplet beat made a grace
+ * leaves its group a beat short, and that is refused. A grace made an ordinary beat keeps whatever tuplet it has - only
+ * a loaded file can have given it one.
  */
 export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEffectsDoc['grace']): FermataDrops {
   return relength(doc, refs, beat => {
     beat.effects.grace = grace;
+    if (grace !== 'none') beat.tuplet = null;
   });
 }
 

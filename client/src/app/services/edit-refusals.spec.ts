@@ -362,9 +362,17 @@ describe('an edit that would leave a tuplet group open', () => {
       expect(graceRefusal(barOf(group), beatsAt(3), 'onBeat')).toBeNull();
     });
 
-    it('says a whole group cannot be made of graces, since selecting the group would not help', () => {
+    it('lets a whole group be made graces, which takes its tuplet off and leaves no group open', () => {
       for (const kind of ['beforeBeat', 'onBeat'] as const) {
-        const refusal = graceRefusal(barOf('n4t3 n4t3 n4t3 n2'), beatsAt(0, 1, 2), kind);
+        expect(graceRefusal(barOf('n4t3 n4t3 n4t3 n2'), beatsAt(0, 1, 2), kind)).withContext(kind).toBeNull();
+      }
+    });
+
+    it('says a whole group cannot be made of graces when a loaded grace carrying a tuplet would start a group, since selecting more would not help', () => {
+      // The loaded grace joins the closed triplet before it. With that triplet made graces, it starts a group of its
+      // own, which alphaTab never closes.
+      for (const kind of ['beforeBeat', 'onBeat'] as const) {
+        const refusal = graceRefusal(barOf('n4t3 n4t3 n4t3 g8t3 n2 n4'), beatsAt(0, 1, 2), kind);
 
         expect(refusal).withContext(kind).toMatch(/tuplet group cannot be made of grace notes/i);
         expect(refusal).withContext(kind).not.toMatch(/select the whole group/i);
