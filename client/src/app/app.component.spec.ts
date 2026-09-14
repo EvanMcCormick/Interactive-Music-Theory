@@ -82,6 +82,23 @@ describe('AppComponent', () => {
       expect(component.circleOpen).toBeFalse();
     });
 
+    /**
+     * The composer's Escape means back to Select, and it ignores a press something before it claimed.
+     * So the shell claims Escape when - and only when - it used it: a claim with the drawer closed would
+     * take Escape away from every page.
+     */
+    it('claims Escape only when it closes the drawer', () => {
+      const withDrawerClosed = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+      component.onEscape(withDrawerClosed);
+      expect(withDrawerClosed.defaultPrevented).toBeFalse();
+
+      component.toggleCircle();
+      const withDrawerOpen = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+      component.onEscape(withDrawerOpen);
+      expect(withDrawerOpen.defaultPrevented).toBeTrue();
+      expect(component.circleOpen).toBeFalse();
+    });
+
     it('closes when navigating somewhere the circle does not belong', () => {
       component.toggleCircle();
       expect(component.circleOpen).toBeTrue();

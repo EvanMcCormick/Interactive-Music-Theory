@@ -111,8 +111,19 @@ export class AppComponent implements OnInit, OnDestroy {
     this.circleOpen = false;
   }
 
-  @HostListener('document:keydown.escape')
-  onEscape(): void {
+  /**
+   * Escape closes the drawer, and claims the key - `preventDefault` - only when it did.
+   *
+   * A page listening after the shell reads the claim: the composer's Escape means back to Select, and
+   * its keyboard handler ignores a press already claimed. The shell's listener is registered at
+   * bootstrap, before any routed page's, so it runs first; a shared "is the drawer open" flag would read
+   * closed by the time the page asked. With the drawer already closed nothing is claimed, so Escape stays
+   * every page's to use.
+   */
+  @HostListener('document:keydown.escape', ['$event'])
+  onEscape(event?: KeyboardEvent): void {
+    if (!this.circleOpen) return;
     this.closeCircle();
+    event?.preventDefault();
   }
 }
