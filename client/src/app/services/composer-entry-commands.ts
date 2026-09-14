@@ -1,4 +1,5 @@
 import { DurationValue, EditCursor, NoteDoc, NotePitch, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+import { CopiedBeats, copiedBeatsOf, pasteBeats } from './beat-clipboard';
 import { clearToRests, deleteBeats, insertBeatAt, setBeatDurations } from './beat-edits';
 import { CursorMove } from './composer-cursor';
 import { beatAt, selectionTargets } from './composer-selection';
@@ -36,6 +37,9 @@ export class ComposerEntryCommands {
    * the next retype is an edit of its own.
    */
   private lastEntry: { at: EditCursor; doc: ScoreDoc } | null = null;
+
+  /** What Copy or Cut last took. The composer's own clipboard: nothing outside the page reads a beat. */
+  private clipboard: CopiedBeats | null = null;
 
   constructor(private readonly host: ComposerEntryHost) {}
 
@@ -129,6 +133,40 @@ export class ComposerEntryCommands {
     if (refusal) return this.host.refuse(refusal);
     this.host.commit(draft => deleteBeats(draft, refs));
     this.host.select(refs[0]);
+  }
+
+  /** Copies the selection's beats, from one staff. Not an edit: nothing is committed. */
+  copy(): void {
+    const state = this.host.state();
+    const copied = copiedBeatsOf(state.doc, selectionTargets(state.doc, state.anchor, state.cursor));
+    if (!copied) return this.host.refuse('Copy takes beats from one staff at a time.');
+    this.clipboard = copied;
+  }
+
+  /** Copies the selection's beats and clears them to rests, as one undo step. */
+  cut(): void {
+    const state = this.host.state();
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const refusal = editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null);
+    if (refusal) return this.host.refuse(refusal);
+    const copied = copiedBeatsOf(state.doc, refs);
+    if (!copied) return this.host.refuse('Cut takes beats from one staff at a time.');
+    this.clipboard = copied;
+    this.host.commitFollowing(draft => clearToRests(draft, refs));
+  }
+
+  /** Pastes the clipboard at the caret. See `pasteBeats`. */
+  paste(): void {
+    const state = this.host.state();
+    const clipboard = this.clipboard;
+    if (!clipboard) return this.host.refuse('Nothing has been copied yet.');
+    if (this.refusesEntryAt(state.doc, state.cursor)) return;
+    this.host.commit(draft => {
+      const result = pasteBeats(draft, state.cursor, clipboard);
+      if (typeof result === 'string') return result;
+      if (result.appendedBars > 0) this.host.markDiverged(draft);
+      return null;
+    });
   }
 
   /**

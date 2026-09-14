@@ -348,3 +348,47 @@ describe('ComposerService beats over the selection', () => {
     expect(stateOf(service).refusal).toMatch(/progression/i);
   });
 });
+
+describe('ComposerService cut, copy and paste', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('refuses a paste with nothing copied', () => {
+    service.paste();
+
+    expect(stateOf(service).refusal).toMatch(/copied/i);
+  });
+
+  it('pastes a copied range at the caret as one undo step', () => {
+    writeFret(service, 0, 0, 5);
+    writeFret(service, 0, 1, 7);
+    service.setCursor({ beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 1 });
+    service.copy();
+    service.setCursor({ barIndex: 2, beatIndex: 0 });
+
+    service.paste();
+    expect(beatsIn(service, 2).slice(0, 2).map(beat => beat.notes[0]?.pitch)).toEqual([
+      { kind: 'fretted', string: 1, fret: 5 },
+      { kind: 'fretted', string: 1, fret: 7 }
+    ]);
+
+    service.undo();
+    expect(beatsIn(service, 2).every(beat => beat.isRest)).toBeTrue();
+  });
+
+  it('cuts by copying and clearing, and the cut pastes back', () => {
+    writeFret(service, 0, 0, 5);
+    service.setCursor({ beatIndex: 0 });
+
+    service.cut();
+    expect(beatsIn(service)[0].isRest).toBeTrue();
+
+    service.paste();
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual({ kind: 'fretted', string: 1, fret: 5 });
+  });
+});

@@ -422,6 +422,21 @@ export class ComposerService {
     this.entry.deleteBeats();
   }
 
+  /** Copies the selection's beats to the composer's clipboard. */
+  copy(): void {
+    this.entry.copy();
+  }
+
+  /** Copies the selection's beats and clears them to rests. */
+  cut(): void {
+    this.entry.cut();
+  }
+
+  /** Pastes the clipboard at the caret. See `pasteBeats`. */
+  paste(): void {
+    this.entry.paste();
+  }
+
   setInputDuration(duration: DurationValue, dots = 0): void {
     const state = this.stateSubject.getValue();
     this.stateSubject.next({ ...state, inputDuration: duration, inputDots: dots });
