@@ -168,7 +168,10 @@ departs from the design".
 8. **Refusals are displayed** in one polite live region, in the status line, which shows a failed
    alphaTex apply too. A refusal clears on a caret move, a selection change, undo and redo, as well
    as on the next edit. A duration press publishes its refusal; on a generated track it still
-   remembers the input duration, and now also says why the beat did not change.
+   remembers the input duration, and now also says why the beat did not change. Fix bar and paste say
+   what they did in the same region (`ComposerState.notice`, cleared as a refusal is), as Part 4 asks,
+   and the status line counts the bars over their time signature on a plain line outside the region, so
+   ordinary duration edits are not announced. The alphaTex panel's message goes when the panel closes.
 9. **A whole tuplet group's freed room goes after the group**, fixed before the tuplet tool:
    `n8 n8 n8 n8 n2` with its first three beats made a triplet keeps the fourth eighth at 1440.
 10. **Natural clears a forced accidental** (`auto`), because alphaTab 1.8 draws `ForceNatural` as
@@ -192,7 +195,11 @@ departs from the design".
 17. **Tools that take a value open a small anchored popover**: time signature, key signature (all
     fifteen keys, major and minor), clef, section, alternate ending, tuplet, and triplet feel.
     Validation reuses `timeSignatureFault` and `keySignatureFault`, and an invalid entry is refused
-    inline.
+    inline. The popover is drawn in the top layer (the HTML `popover` attribute), placed beside its
+    button in window coordinates: the palette scrolls, and a popover positioned inside it was clipped.
+    Opening one, by button or by key, focuses its first control; closing gives focus back to the button;
+    the fields are read from the selection only when the popover's kind changes; and Escape closes the
+    popover alone, claimed so the composer's Escape does not also go back to Select.
 18. **Commands with no service method go in new modules** - `composer-entry-commands.ts`, delegated
     like `composer-service-structure.ts`, and pure edit functions - keeping `composer.service.ts`
     under the cap: rest over a range, insert and delete beats, semitone and string moves, cut, copy
@@ -201,14 +208,22 @@ departs from the design".
 19. **Ctrl+S reaches the library panel's own save** through a small request service, so a keyboard
     save refuses, announces and returns focus exactly as a click does.
 20. **The library's menus and drawer are hidden with CSS**, never `*ngIf`, and its announced regions
-    sit outside them.
+    sit outside them. Each closes on Escape - claimed in the capture phase, so the composer's own Escape
+    does not also act - and on a click outside. A save already writing drops a second trigger, so a click
+    and Ctrl+S together make one library entry.
 21. **macOS**: see "macOS" under Shortcuts. Nobody has checked the bindings on a Mac.
 22. **Score interaction.** In Select a notation click moves the caret and never writes; in Pen it
     writes the clicked pitch; digits write on tablature in both. Mouse-down sets the caret, moving
     with the button held extends the range, and Shift-click extends. The highlight is drawn from
     state with `highlightPlaybackRange` after every render; alphaTab's own interaction is turned off,
     because with it on alphaTab's mouse-up sets the playback range. Pen shows a hover notehead, and
-    the caret is drawn from state before the first click.
+    the caret is drawn from state before the first click. *Corrected before it was built:* turning
+    alphaTab's interaction off also took away click-to-seek, so a click on a beat while playback is
+    stopped moves the playback position there, setting no range. A drag ends when the button is released
+    anywhere on the page, since alphaTab hears mouse-up only on its own surface. The score is engraved
+    again only when the document changes - a selection or caret change redraws the highlight and caret
+    alone - and Pen's hover runs outside Angular's change detection, entering it only when what it draws
+    changes.
 23. **The page grid** is sized to the viewport minus the app header, whose height the shell
     publishes as `--app-header-height`: a top bar, the palette, the score, a status line, and the
     track strip under a draggable separator. There is no inspector column until M3. Composer colours
@@ -232,6 +247,12 @@ departs from the design".
 28. **Tie chains move whole.** A semitone or string move takes every note tied to or from a note it
     moves, since alphaTab copies a tie origin's fret and pitch onto the notes tied from it. A string move
     that would break a landing, change a tie's origin or put a natural harmonic off a node is refused.
+29. **Space and Enter press a focused button.** Without Ctrl, Alt or Cmd, Space or Enter on a focused
+    button, link, checkbox or radio is the browser's, and the composer's keyboard is not asked - so Space
+    plays only when no button has the focus. Settled when review found the keyboard would claim them.
+30. **A save is refused while the alphaTex panel holds a draft that is not applied**, from Ctrl+S - which
+    runs in the textarea - or the Library menu's Save, and the status line says "Apply or revert the
+    alphaTex draft before saving." A save writes the document, not the draft. Settled in review.
 
 ---
 
@@ -394,7 +415,8 @@ scroll vertically with `overflow-x: hidden`. The track strip has a draggable hei
 | Techniques | Hammer-on / pull-off, legato slide, shift slide, bend, vibrato, wide vibrato, palm mute, let ring, natural harmonic, artificial harmonic, ghost, dead, trill, tap, left-hand tap, slap, pop, grace before, grace on beat, pick stroke down, pick stroke up, fade in |
 
 Tools that take a value - time and key signature, clef, section name, alternate
-ending, tuplet - open a small popover anchored to their button, not a modal.
+ending, tuplet - open a small popover beside their button, not a modal. *M2:* drawn in the top
+layer, since the palette scrolls and would clip it, and reachable by keyboard (decision 17).
 
 Buttons are Bravura glyphs, from the font alphaTab already serves at `/font`, with an
 `aria-label`, a tooltip that includes the shortcut, and `aria-pressed` including
@@ -442,7 +464,9 @@ refused inline.
 
 **Saving an overflowing bar is allowed**, with a status warning naming how many bars
 are over. A linked progression track stays a refusal because it loses data; an
-overflowing bar does not - alphaTex stores and renders it.
+overflowing bar does not - alphaTex stores and renders it. *M2:* the warning is the status
+line's count of bars over, on a plain line outside the live region, so it is read on the page
+but not announced on every duration edit (decision 8).
 
 **Paste** writes from the caret for the copied length and then fills gaps, each where it
 opens, as a duration change does. Overflow is flagged, never pushed on.
@@ -524,7 +548,13 @@ over and over, a digit would write a run of notes, and Delete would stack undo s
 
 **Clipboard and save in text.** Ctrl+C and Ctrl+X are left to the browser while text outside the
 score is selected, so copying words on the page works. Ctrl+S is the composer's even from a text
-field, so the browser's own Save dialog never opens on the composer.
+field, so the browser's own Save dialog never opens on the composer - and refuses while the
+alphaTex panel holds a draft that is not applied, saying why (decision 30).
+
+**Focused buttons.** Space and Enter on a focused button, link, checkbox or radio, without Ctrl,
+Alt or Cmd, press it: the composer's keyboard is not asked, so Space plays only when no button has
+the focus, and Shift+Enter on a focused button presses the button rather than opening Section
+(decision 29).
 
 **macOS**, settled in M2's plan without a Mac to hand - nobody has checked these on one. Mac
 keyboards have no Insert key, so each Insert binding also gets the Enter key with the same
@@ -781,7 +811,16 @@ Not rejected - not yet placed. Each needs its own design pass:
 - **With `player.enableUserInteraction` on, alphaTab's own mouse-up sets the playback range**
   (`_onBeatMouseUp` calls `applyPlaybackRangeFromHighlight`, `alphaTab.core.mjs` ~53124 in 1.8), so
   a drag across the score changed what the transport played. M2's plan turns alphaTab's interaction
-  off and draws the highlight itself (Task 4.3). Found while planning M2.
+  off and draws the highlight itself (Task 4.3). Found while planning M2. *Found in review of the plan:*
+  the same code path is how a click set the playback position (`tickPosition`, ~53330), so turning it
+  off lost click-to-seek, which M2 restores without a range; and alphaTab listens for mouse-up only on
+  its own surface, so a button released outside the score left its beat mouse-move firing.
+- **A hammer-on's or slide's landing is checked only when the tool is pressed.** M2 refuses a
+  hammer-on or a shift or legato slide with nothing to land on, and a string move that would strand
+  one, but nothing re-checks a landing afterwards: deleting beats, a cut, a string move elsewhere in
+  the bar, an insert that pushes the landing past the next bar's first beat, or a rest over a range can
+  still leave one with nothing to land on. The palette still shows it, and alphaTab drops it on save.
+  Recorded in review of the M2 plan; not changed in M2.
 - **`removeBar(0)` turned a 3/4 score into 4/4**, the fault M1 fixed for `insertBar(0)`: the new bar 1
   declared nothing. M2's plan removes bars through `deleteBars`, which keeps the meter (Task 1.15).
   Found while planning M2.

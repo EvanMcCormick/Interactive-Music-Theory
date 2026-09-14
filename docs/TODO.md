@@ -79,6 +79,11 @@ alphaTab upgrade that changes one turns a spec red rather than going unnoticed.
   show a technique that a reload loses. M2's tools decide whether to refuse it or allow it
   and say so. *Settled in the M2 plan: refused with a reason, landing later in the bar or on the
   next bar's first beat - alphaTab's reach as measured, not the three bars its source reads.*
+- **A hammer-on's or slide's landing is checked only when the tool is pressed.** Later edits -
+  deleting beats, a cut, a string move elsewhere in the bar, an insert that pushes the landing past
+  the next bar's first beat, a rest over a range - can still leave one with nothing to land on. The
+  palette shows it, and alphaTab drops it on save. Nothing in M2 re-checks a landing after the press
+  that made it; an edit that strands one could refuse, or say so, as a string move already refuses.
 - **Bends are stored in Guitar Pro's shapes, not as drawn.** alphaTab rewrites a bend of
   two to four points to the nearest standard type before anything is saved, and a pre-bend
   of 2 or more quarter tones resets a forced accidental. M4's bend curve editor has to write
@@ -188,7 +193,8 @@ command, and the control is still to come.
 
 **Next up is M2**: the palette, the Select / Pen toggle, the tool table and a shortcut for
 every tool, which put M1's commands within reach, with the new page grid and a minimal track
-strip. It is planned, and the plan proven against the code, in
+strip. Phases 1 and 2 are implemented and reviewed; Phases 3 to 5 were corrected after that review
+and re-proven against the reviewed code. It is planned in
 `docs/plans/2026-09-13-composer-editor-m2.md`; its decisions are under "M2 decisions" in the
 design doc.
 
