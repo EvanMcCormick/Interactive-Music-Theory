@@ -45,6 +45,7 @@ import { defaultFermata } from './composer-tool-defaults';
 import { BeatRef, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
 import { ComposerHistory } from './composer-history';
+import { frettedDocOf, outOfReachNoticeOf } from './pitch-on-strings';
 import { ComposerStructureCommands, EditOutcome } from './composer-service-structure';
 import {
   EditScope,
@@ -236,9 +237,14 @@ export class ComposerService {
   /**
    * Replaces the whole document: by default an edit of this composition, as an applied alphaTex draft is, on the undo
    * stack. A new composition - a load, an opened transcription - moves `documentId` on and starts a fresh history.
+   *
+   * A pitched note on a staff with a tuning is fretted first, and one no string reaches is left out and said
+   * (`frettedDocOf`): alphaTab cannot draw a note on tablature without a string.
    */
   replaceDocument(doc: ScoreDoc, replacement: DocumentReplacement = {}): void {
-    this.history.replaceDocument(doc, replacement);
+    const fretted = frettedDocOf(doc);
+    this.history.replaceDocument(fretted.doc, replacement);
+    if (fretted.dropped > 0) this.announce(outOfReachNoticeOf(fretted.dropped));
   }
 
   /** Marks the document clean, if `saved` - the document that was written - is still it. See `ComposerHistory.markSaved`. */

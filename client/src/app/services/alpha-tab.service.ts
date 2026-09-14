@@ -8,6 +8,7 @@ import {
   DEFAULT_ALPHA_TAB_STATE
 } from '../models/alpha-tab.model';
 import * as alphaTab from '@coderline/alphatab';
+import { AuditionQueue } from './audition-queue';
 
 /**
  * Service for managing alphaTab API interactions
@@ -19,6 +20,8 @@ import * as alphaTab from '@coderline/alphatab';
 export class AlphaTabService {
   private stateSubject = new BehaviorSubject<AlphaTabState>(DEFAULT_ALPHA_TAB_STATE);
   private api: alphaTab.AlphaTabApi | null = null;
+  /** A note entry's audition, held until its render's MIDI has loaded. See `auditionAfterRender`. */
+  private readonly auditions = new AuditionQueue();
 
   constructor(private ngZone: NgZone) {}
 
@@ -122,6 +125,12 @@ export class AlphaTabService {
       });
     });
 
+    // MIDI loaded: a render's `loadMidiFile` has stopped the player, so a note entry's audition can sound now.
+    this.api.midiLoaded.on(() => {
+      const audition = this.auditions.midiLoaded();
+      if (audition) this.auditionNote(audition.midiKey, audition.program);
+    });
+
     // Player ready
     this.api.playerReady.on(() => {
       this.ngZone.run(() => {
@@ -193,6 +202,7 @@ export class AlphaTabService {
       throw new Error('alphaTab API not initialized');
     }
     this.updateState({ loadingState: 'loading', errorMessage: null });
+    this.auditions.rendered();
     this.api.renderScore(score, trackIndices);
   }
 
@@ -217,6 +227,22 @@ export class AlphaTabService {
    * @param durationMs How long to hold the note
    */
   auditionNote(midiKey: number, program = 25, durationMs = 500): void {
+    this.playNote(midiKey, program, durationMs);
+  }
+
+  /**
+   * Sounds the note an edit wrote, once the render that edit asks for has loaded its MIDI (`AuditionQueue`).
+   *
+   * Sounded at once, the render's `loadMidiFile` stopped it a moment later, and that stop could reach alphaTab's
+   * AudioWorklet output before its buffer source had started - the `InvalidStateError`s "cannot call stop without
+   * calling start first" and "cannot call start more than once".
+   */
+  auditionAfterRender(midiKey: number, program = 25): void {
+    if (!this.api?.player) return;
+    this.auditions.queue({ midiKey, program });
+  }
+
+  private playNote(midiKey: number, program: number, durationMs: number): void {
     if (!this.api) return;
 
     const midi = new alphaTab.midi.MidiFile();

@@ -573,8 +573,10 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
     // Advance so a melody flows, matching fret entry.
     this.composer.setNoteAtCursor(pitch, true);
-    // A refused write says why on the status line, and sounds nothing (`writeSounds`).
-    if (writeSounds(before, this.composer.state.doc)) this.alphaTabService.auditionNote(pitchToMidi(pitch), program);
+    // A refused write says why on the status line, and sounds nothing (`writeSounds`). A written note sounds once
+    // its render has reloaded the MIDI, which stops the player (`auditionAfterRender`). On a staff with a tuning the
+    // note is a fret that sounds this pitch (`staffEntryOf`).
+    if (writeSounds(before, this.composer.state.doc)) this.alphaTabService.auditionAfterRender(pitchToMidi(pitch), program);
   }
 
   /**

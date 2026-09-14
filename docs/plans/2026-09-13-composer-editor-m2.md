@@ -1044,6 +1044,29 @@ after it: **3,288 SUCCESS**.
 - **`progression-track.ts`** said the library panel and the page replace the document with a `.gp` file. Neither does: a
   saved composition, an applied alphaTex draft and a transcription's derived score do.
 
+**The M2 hand check** found Pen blanking the score, fixed in `fix: Write a fretted note when Pen clicks notation on a
+stringed staff, so alphaTab never gets a pitched note it cannot tab` (design decision 33). Whole suite after it:
+**3,320 SUCCESS**.
+
+- **Task 4.x, Pen on a guitar's notation.** `placeClickedPitch` handed `setNoteAtCursor` a pitched note, written as it
+  was onto a staff with a tuning. alphaTab leaves a pitched note's `string` at -1, and `TabBarRenderer.collectSpaces`
+  (`alphaTab.core.mjs` ~75023) indexes `spaces[tuning.length - note.string]`, one past the last string, so the render
+  threw "Cannot read properties of undefined (reading 'push')" and the score stayed blank. Main (`e726b51`) wrote Pen's
+  pitch the same way and the mapper is unchanged from it, so M1 had the bug. `staffEntryOf` (`pitch-on-strings.ts`) now
+  writes a fret: the caret's string when it reaches the pitch and is free on the beat, otherwise the lowest free fret,
+  a tie to the higher string, frets counted from the capo with 24 less the capo in front of it (`candidatesFor`). A click
+  on a pitch the beat already sounds takes that note out, as it does on a piano staff. A pitch no free string reaches is
+  refused with a reason ("That pitch is below this staff's lowest string."). `retypeNote` goes through it too. A fretted
+  note has no letter; `accidental: 'auto'` spells it from the key signature, which is how the click was read.
+- **A pitched note from anywhere else.** `replaceDocument` - a load, an applied alphaTex draft, an opened transcription -
+  frets every pitched note on a staff with a tuning (`frettedDocOf`) and says how many no string reached and were left
+  out; `ScoreDocMapperService.toScore` frets as the last guard. Paste already refused pitched beats on a fretted staff,
+  now specced; a progression's track has no tuning, and `setStaffTuning` refuses a pitched staff.
+- **The audition** sounded at once, and the render the write asked for, 150 ms later, loaded MIDI - `AlphaSynth.loadMidiFile`
+  calls `stop()`, which cut the note off and could pause alphaTab's AudioWorklet output before its buffer source had
+  started: the two `InvalidStateError`s. Not Tone.js, which the composer does not use. `auditionAfterRender`
+  (`AuditionQueue`) sounds the note once that render's MIDI has loaded.
+
 ---
 
 

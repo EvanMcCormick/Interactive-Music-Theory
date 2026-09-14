@@ -440,6 +440,16 @@ departs from the design" and, once built, under "Corrections during implementati
     voice of rests is written as nothing by alphaTex: no bar keeps it when no bar of its staff has a note in it, and a bar
     beside bars that do comes back holding alphaTab's placeholder, one rest, which saves again unchanged. That is kept as
     it is, and recorded in `docs/TODO.md`.
+33. **Every note on a staff with a tuning is fretted.** Pen's click on a guitar's notation writes a string and a fret
+    that sound the pitch clicked, as Guitar Pro does: the caret's string when it reaches the pitch and holds no note on
+    the beat; otherwise the lowest free fret, a tie going to the higher string; frets counted from the capo, which
+    leaves 24 less the capo in front of it. A click on a pitch the beat already sounds takes that note out, as on a piano
+    staff, and a pitch no free string reaches is refused with a reason. alphaTab cannot draw a pitched note on
+    tablature: its `string` stays -1 and `TabBarRenderer.collectSpaces` throws, blanking the score. So a document put in
+    whole - a load, an applied alphaTex draft - has its pitched notes on such a staff fretted, and the ones no string
+    reaches left out and counted in a notice, and the mapper frets as a last guard; paste refuses pitched beats on a
+    fretted staff, as before. A fretted note carries no letter, so it is spelled from the key signature, which is how
+    the click was read. Settled in the M2 hand check.
 
 ---
 

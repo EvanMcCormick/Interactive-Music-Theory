@@ -16,6 +16,7 @@ import {
 import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { insertBarInto } from './score-structure';
 import { StaffHitTestService } from './staff-hit-test.service';
+import { createDefaultNoteEffects } from '../models/composer.model';
 
 /** A guitar (notation and tablature) and a piano (notation): three staves per system. */
 const slots: StaffSlot[] = [
@@ -215,7 +216,11 @@ describe('staff systems on a real engraving', () => {
    * no lazy loading, no fonts to wait for - and attaches each partial as `BrowserUiFacade` does: an absolutely
    * placed child of `.at-surface`.
    */
-  function engrave(doc: ReturnType<typeof ComposerService.createEmptyScore>, width: number): alphaTab.rendering.BoundsLookup | null {
+  function engrave(
+    doc: ReturnType<typeof ComposerService.createEmptyScore>,
+    width: number,
+    errors: unknown[] = []
+  ): alphaTab.rendering.BoundsLookup | null {
     const settings = new alphaTab.Settings();
     settings.core.engine = 'svg';
     settings.core.useWorkers = false;
@@ -233,6 +238,8 @@ describe('staff systems on a real engraving', () => {
 
     const renderer = new alphaTab.rendering.ScoreRenderer(settings);
     renderer.width = width;
+    // `renderScore` catches what the layout throws and reports it here; the composer's worker logs it and draws nothing.
+    renderer.error.on(error => errors.push(error));
     renderer.partialRenderFinished.on(result => {
       const partial = document.createElement('div');
       partial.style.cssText = `position: absolute; left: ${result.x}px; top: ${result.y}px;`;
@@ -334,5 +341,33 @@ describe('staff systems on a real engraving', () => {
     expect(staves.slice(0, 3).map(staff => staff.lineY.length)).toEqual([1, 5, 6]);
     expect(centres.slice(0, 3).map(y => slotIndexAt(bands[0], y, docSlots))).toEqual([0, 1, 3]);
     expect(docSlots.map(slot => slot.kind)).toEqual(['slash', 'notation', 'numbered', 'tab']);
+  });
+
+  it('engraves a guitar track whose bar holds a note Pen wrote on its notation staff', () => {
+    const composer = new ComposerService();
+    for (let bar = 0; bar < 3; bar++) composer.appendBar();
+    composer.setCursor({ ...composer.state.cursor, barIndex: 3, beatIndex: 1 });
+    // D5 on the treble staff's fourth space, as a Pen click there asks for.
+    composer.setNoteAtCursor({ kind: 'pitched', noteValue: 2, octave: 5 }, true);
+    const errors: unknown[] = [];
+    engrave(composer.state.doc, 900, errors);
+
+    expect(errors.map(error => String((error as Error)?.stack ?? error))).toEqual([]);
+  });
+
+  it('engraves a pitched note a loaded document holds on a staff with a tuning, drawn on a string', () => {
+    // Put in behind the entry commands' back, as a document from before this fix or an applied alphaTex draft could.
+    const doc = ComposerService.createEmptyScore();
+    const beat = doc.tracks[0].staves[0].bars[3].voices[0].beats[1];
+    beat.isRest = false;
+    beat.notes = [{ pitch: { kind: 'pitched', noteValue: 2, octave: 5 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+    const errors: unknown[] = [];
+
+    engrave(doc, 900, errors);
+    const note = new ScoreDocMapperService().toScore(doc, new alphaTab.Settings()).tracks[0].staves[0].bars[3].voices[0].beats[1].notes[0];
+
+    expect(errors.map(error => String((error as Error)?.stack ?? error))).toEqual([]);
+    // alphaTab's string 6 is the high E: tab string 1, fret 10.
+    expect([note.string, note.fret, note.realValue]).toEqual([6, 10, 74]);
   });
 });

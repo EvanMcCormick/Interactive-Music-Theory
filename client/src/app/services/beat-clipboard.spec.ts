@@ -151,6 +151,20 @@ describe('pasteBeats', () => {
     expect(pasteBeats(doc, ref(0, 0, 1), copied!)).toMatch(/fretted/i);
   });
 
+  it('refuses pitched beats from a piano on a guitar staff, which would reach alphaTab with no string to tab', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    const piano = doc.tracks[1].staves[0].bars[0].voices[0].beats[0];
+    piano.isRest = false;
+    piano.notes = [{ pitch: { kind: 'pitched', noteValue: 2, octave: 5 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+    const before = structuredClone(doc);
+
+    expect(pasteBeats(doc, ref(0, 0), copiedBeatsOf(doc, [ref(0, 0, 1)])!)).toBe(
+      'Those beats were copied from a pitched staff, and this staff writes notes by string.'
+    );
+    expect(doc).toEqual(before);
+  });
+
   it('refuses a copy that holds part of a tuplet group, and pastes the whole group', () => {
     // One triplet quarter of three. Pasted alone it would start a group alphaTab never closes, and the
     // room it leaves - 320 ticks short of a quarter - is off the 64th grid, so the bar would stay short.

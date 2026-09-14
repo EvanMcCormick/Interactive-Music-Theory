@@ -188,7 +188,7 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     private readonly cdr: ChangeDetectorRef
   ) {
     this.fretEntry = new FretDigitEntry(composer, () => Date.now(), midi =>
-      this.alphaTabService.auditionNote(midi, this.currentTrackProgram)
+      this.alphaTabService.auditionAfterRender(midi, this.currentTrackProgram)
     );
     this.host = {
       composer,

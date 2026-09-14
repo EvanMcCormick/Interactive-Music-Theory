@@ -21,6 +21,7 @@ import {
   createDefaultBeatEffects,
   createDefaultNoteEffects
 } from '../models/composer.model';
+import { frettedDocOf } from './pitch-on-strings';
 import {
   accentOf,
   applySlide,
@@ -182,7 +183,13 @@ export class ScoreDocMapperService {
   // ScoreDoc -> alphaTab Score
   // -------------------------------------------------------------------------
 
-  toScore(doc: ScoreDoc, settings: alphaTab.Settings): alphaTab.model.Score {
+  /**
+   * A pitched note on a staff with a tuning is fretted first (`frettedDocOf`), and one no string reaches is not
+   * drawn: alphaTab's tablature reads `note.string`, which a pitched note leaves at -1, and the render throws.
+   * The entry commands and `replaceDocument` never leave one there; this is the last guard.
+   */
+  toScore(written: ScoreDoc, settings: alphaTab.Settings): alphaTab.model.Score {
+    const doc = frettedDocOf(written).doc;
     const score = new alphaTab.model.Score();
     score.title = doc.title;
     score.subTitle = doc.subTitle;
