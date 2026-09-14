@@ -107,6 +107,20 @@ and replace now carry the settling. No spec had to change.
 | Phase 3 (Task 3.12) | both clean | **3,044 SUCCESS** |
 | Phase 4 (Task 4.4) | both clean | **3,061 SUCCESS** |
 
+After the fourth review's three fix commits (see "Corrections during implementation", the last entry), the same
+blocks were applied again, in task order, on top of `a1a63d7` (whole suite there: 3,001 SUCCESS). Task 3.3 had stopped
+matching in four places, all since corrected: the host's and the service's `commitFollowing` finds, which now take an
+`EditOutcome`; its Fix bar find and replace, which carry the tuplet-group refusal and return the fermatas settling
+removed; and the entry commands' import, which now names `EditOutcome`. Task 3.3 also gained the notice for a removed
+fermata - `noticeOfOutcome` in both of the service's commits, paste returning `droppedFermatas`, and a spec - and no
+other block changed. The first run of that spec failed at both boundaries on the spec itself: it wrote the frets after
+selecting the second track, and `writeFret` keeps the caret's track, so no note held the fermata. It now writes them first.
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 3 (Task 3.12) | both clean | **3,069 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **3,086 SUCCESS** |
+
 Each task's Step 2 red was captured the same way - the plan applied through that task's Step 1, then the
 spec type check - and its text updated to what was seen. The client code was then reverted.
 
@@ -507,6 +521,69 @@ now carry the fermata settling.
   at or past the line, and refuses a full bar's case too: "That grace ends a full bar, so a paste there would
   land in the next bar; paste at the next bar's first beat." Refused rather than moved to the next bar, as the
   over bar's case is, so the caret and the paste never disagree about where it went.
+
+**A fourth review of the committed Phase 1-2 code** found four important faults, two questions and five minor ones,
+fixed in three commits: `5e2467a`, `a4c71ba` and `a1a63d7`. Whole suite after them: **3,001 SUCCESS**. The Phase 3 and 4
+blocks were re-proven on top (see "The re-proof of Phases 3 and 4"). Task 3.3's finds for the host's and the service's
+`commitFollowing`, and its Fix bar find and replace, now carry the committed code, and its notice says when an edit
+removed a fermata.
+
+- **Task 1.10, a fermata position is the tick a beat plays at.** alphaTab files a beat's fermata at its playback start
+  (`Voice.finish` ~3262-3294): a beat that on-beat graces lead into starts after them, by their playback lengths, and
+  each grace at its own tick. Read at the drawn tick, `n4 n4F n2` over a second track's `n4 n32F n32 n16 n8 n2`, with
+  beat 0 made an on-beat grace, kept the fermata on the quarter that now plays at 1080, and the second track saved as
+  `n4 n32F n32F ...`. `playbackStartsOf` (`bar-fill.ts`) is now the one reading of a position, in
+  `fermataPositionsOf`, `graceFermataOf`, the snapshot and the settling, which moved to `fermata-settling.ts`. A grace
+  takes the fermata at the tick it plays at. `beat-edits.spec.ts`: the on-beat case of "writes and clears the grace
+  with its beat" pinned the fermata on the beat after the grace as well, which plays a 32nd later; it now pins it on
+  the grace alone.
+- **Task 1.15, a new track's fermatas.** `addTrack` settles every bar, so the new track's rests at a fermata's
+  position hold it. A track added beside `n4 n4F n4 n4` held none, and saved as `r4 rF r4 r4`. Removing a track settles
+  nothing: a fermata only that track held goes with it, and no remaining beat plays at its tick to take it on save.
+- **Task 1.10, a fermata goes with its note** when that reaches no other beat (the review's second question). The
+  snapshot records the note holding each fermata by identity. When the note moved, the fermata goes with it if (a) no
+  ordinary beat on another staff, or in another voice of its staff, still plays at the old tick holding a fermata; (b)
+  none plays at the new tick; and (c) the new position holds no fermata. Notes are tried until none moves, so a run of
+  fermata notes each moving onto the next one's place all carry. Guard (a) is refined from the review's "no ordinary
+  beat left on any staff", which left a single track's `n4 n4F n4 n4`, with beat 0 deleted, as `n4 n4F n4 r4`: the
+  fermata on another note. Otherwise the fermata stays at its position, and is removed only where it can do neither.
+  Each edit returns why (`FermataDropReason`), and Task 3.3's notice says it: "1 fermata removed: its note moved where it
+  would reach other tracks." Fuzzed through alphaTex with the refined guard: 0 save differences and 0 disagreements
+  between staves over 10,000 random edits on one to three tracks - lengths, dots, inserts, deletes, graces before and
+  on the beat, pastes and Fix bar - about 250 of which carried a fermata. The review's fuzz drew its choices from an LCG
+  that lost precision past 2^53, so nearly every choice was the first.
+- **Task 1.15, Fix bar splitting a tuplet group.** `splitAtBarLine` refuses only a tuplet beat that crosses the line.
+  So `n2 n8` and six 6:4 sixteenths and `r8`, with beat 1 dotted - accepted, over by 960 - was fixed into two open
+  groups. Fix bar now refuses when a bar it touches would hold an open group no bar held before: "The bar line falls
+  inside a tuplet group, so carrying the overflow would split it and leave both parts unfinished." The edit that
+  overfilled the bar stays accepted. Guitar Pro flags overflow and leaves the fix to the user, and refusing the edit
+  would stop an ordinary sequence - lengthen one beat, then shorten the next - half-way.
+- **Task 1.6, typing over a tuplet beat.** A fret or R over a beat in a closed group, with the palette on another
+  value, was refused. Entry now writes at the beat's own value when the palette's would break the group
+  (`entryValueOf`), as Guitar Pro keeps a beat's value; in a group already open the palette's value and its refusal
+  stand. The input duration keeps the palette's choice for the next note, and the value buttons read the caret's beat,
+  so they show what was written. `composer.service.editing.spec.ts`: "refuses a delete, an insert, a note of another
+  value or a grace inside a tuplet group" pinned a refused note typed into a triplet quarter with the palette on an
+  eighth, which is now written at the triplet's value. That press left the list, and specs of its own pin the new rule.
+- **Task 1.1, a grace carrying a tuplet on load, left as it is.** The review asked `toDoc` to strip it. Read through
+  alphaTab, that changes grouping for a loaded grace after a beat in no group: `n4 g8t3 n8t3 n8t3 n8t3 n2` is one open
+  group of four, and stripped, a closed triplet; `n4 o8t3 n4t3 n8t3 n2` loses the grace from its group. The review's own
+  bar groups the same either way, and a grace plays and is drawn the same, but a change in grouping is not a
+  normalisation, so nothing is stripped and it is recorded in `docs/TODO.md`.
+- **Task 1.13, the on-beat grace refusal.** Making beat 0 of `n4 n4t3 n8t3 n2` an on-beat grace said "select the whole
+  group", which cannot help. It gives the tuplet press's on-beat reason now (`shortenedByOnBeatGrace`).
+- **Task 2.2, a binding's own key first.** A Ctrl symbol typed on another key (`bindingMatchesSymbol`) is asked only
+  after every binding's own key. AZERTY's Ctrl+Shift on `Comma` types `.`, and matched crescendo by its key and
+  diminuendo by the symbol. `toolForPress` asks three questions in turn, each of the whole table. The spec's `.` with
+  Shift on `KeyE` was no Dvorak event: it presses Dvorak's real `>`, `<` and `/` now, and a spec runs QWERTY, QWERTZ,
+  AZERTY and Dvorak with Ctrl, Ctrl+Shift, Alt and Alt+Shift, finding no press that matches two bindings.
+- **Task 2.3, tool states over a long selection.** A refusal drafts only the voices it could open a group in - one
+  holding a tuplet, or, for a tuplet press, one whose named beats would leave a group open when read without the edit -
+  and copies no bar of another track. The review's benchmark, twelve readers over select-all of 200 bars on four
+  tracks: 318 ms before, 60 ms after. 60,000 refusals compared with the full drafts on random bars: no difference.
+  `toolStates` was already memoized on the document, the anchor, the cursor and the entry mode.
+- **`written-beats.ts`** is `written-beats.spec-helper.ts`. Karma's `**/*.spec.ts` does not load it as a spec, the
+  specs compile it through their imports, and `tsconfig.app.json` excludes it.
 
 ---
 
@@ -7072,7 +7149,7 @@ under test - which has no page host - still renders in the house colours.
 | `composer-library-panel` | answers save requests; a save in flight drops a second trigger; a refusing guard stops a save | 3.1 |
 | `composer-bar-choices.ts` (new) | `Choice`, `KEY_SIGNATURE_CHOICES`, `CLEF_CHOICES`, `OTTAVA_CHOICES`, `TRIPLET_FEEL_CHOICES`, `MAX_ENDING`, `endingsOf`, `endingBitsOf` | 3.2 |
 | `composer.model.ts` | `ComposerState.notice` | 3.3 |
-| `composer-service-structure.ts` | `commitFollowing`'s `notice`; `countOf`, `fixBarNoticeOf` | 3.3 |
+| `composer-service-structure.ts` | `commitFollowing`'s `notice`; `countOf`, `fixBarNoticeOf`, `noticeOfOutcome` | 3.3 |
 | `composer-entry-commands.ts` | `pasteNoticeOf` | 3.3 |
 | `composer-status-line` (new component) | `ComposerStatusLineComponent`, `overBarCountOf` | 3.3 |
 | `composer-shortcut-sheet` (new component) | `ComposerShortcutSheetComponent`, `ShortcutSection`, `shortcutSectionsOf` | 3.4 |
@@ -7534,6 +7611,12 @@ Design Part 4 puts two more things in that region and one beside it:
   `Fixed 2 bars, adding 1 bar at the end.`, `Pasted 6 beats.` The words travel in state, as
   `ComposerState.notice`, published in the same commit as the edit (`commitFollowing`'s new `notice`),
   and cleared wherever a refusal is: the next edit, a selection change, undo, redo, and a refusal.
+- **A fermata an edit removed.** An edit that moves beats carries each fermata with its note, or leaves it at its
+  bar position, and removes one only where it can do neither (`settleFermatas`): its note moved where the fermata
+  would reach another track's beat, or onto another fermata's place, or no note starts at its place any more. The
+  edit returns a reason for each, and the commit that removed it says so in the same region:
+  `1 fermata removed: its note moved where it would reach other tracks.` (`fermataNoticeOf`, joined to any other
+  words by `noticeOfOutcome`).
 - **How many bars are over their time signature**, counted with `scoreBarFills`. Part 4 lets a score with
   overflowing bars save, "with a status warning naming how many bars are over"; the status line is where
   that stands. It is a plain line **outside** the live region: it changes with nearly every duration edit,
@@ -7586,6 +7669,27 @@ describe('ComposerService outcomes', () => {
     service.fixBar();
     expect(stateOf(service).notice).toBeNull();
     expect(stateOf(service).refusal).toMatch(/over/i);
+  });
+
+  it('says a fermata was removed on the commit that removed it, and the next caret move clears it', () => {
+    // The first guitar's quarters, with a fermata on the second; then a second guitar whose bar is a half then two
+    // quarters, so nothing of it starts at 960, where the fermata is - but a quarter starts at 1920.
+    for (const beatIndex of [0, 1, 2, 3]) writeFret(service, 0, beatIndex, beatIndex);
+    service.setCursor({ barIndex: 0, beatIndex: 1 });
+    service.toggleFermata();
+    service.addTrack('Guitar', 25, true);
+    service.setCursor({ trackIndex: 1, barIndex: 0, beatIndex: 0 });
+    service.applyDurationAtCursor(2, 0);
+    expect(stateOf(service).notice).toBeNull();
+
+    // The first quarter made a half pushes the fermata's note to 1920, where it would reach the second guitar.
+    service.setCursor({ trackIndex: 0, barIndex: 0, beatIndex: 0 });
+    service.applyDurationAtCursor(2, 0);
+    expect(stateOf(service).notice).toBe('1 fermata removed: its note moved where it would reach other tracks.');
+    expect(service.doc.tracks[0].staves[0].bars[0].voices[0].beats.some(beat => beat.effects.fermata)).toBeFalse();
+
+    service.moveCursor({ kind: 'beat', delta: 1 });
+    expect(stateOf(service).notice).toBeNull();
   });
 });
 ```
@@ -7714,7 +7818,7 @@ so a command can say what the edit found:
    * commit, and the state is published once.
    */
   commitFollowing(
-    edit: (draft: ScoreDoc) => string | null | void,
+    edit: (draft: ScoreDoc) => EditOutcome,
     place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement
   ): void;
 ```
@@ -7724,16 +7828,17 @@ so a command can say what the edit found:
    * `place`, when given, decides the selection instead, from the edited draft and the ends as they
    * followed their beats - so a command that moves the caret or drops the range does it in the same
    * commit, and the state is published once. `notice`, when given, is asked after the edit has run and
-   * its answer published as `ComposerState.notice` in that same commit.
+   * its answer published as `ComposerState.notice` in that same commit, followed by why each fermata the edit
+   * removed went, when it removed one (`noticeOfOutcome`).
    */
   commitFollowing(
-    edit: (draft: ScoreDoc) => string | null | void,
+    edit: (draft: ScoreDoc) => EditOutcome,
     place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement,
     notice?: () => string | null
   ): void;
 ```
 
-Fix bar counts what it fixed and says so:
+Fix bar counts what it fixed and says so, and returns the fermatas its settling removed, for the notice:
 
 <!-- apply: find client/src/app/services/composer-service-structure.ts -->
 ```typescript
@@ -7741,11 +7846,11 @@ Fix bar counts what it fixed and says so:
     this.host.commitFollowing(draft => {
       let fixed = false;
       let appended = 0;
-      // A carry moves beats into later bars, so every fermata from the first selected bar on goes back to its
-      // bar position afterwards (`settleFermatas`); bars the carry appends held none.
-      const barCount = (): number => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.length ?? 0;
-      const before = barCount();
-      const fermatas = new Map(fermataSnapshotOf(draft, Array.from({ length: Math.max(0, before - bars.first) }, (_, offset) => bars.first + offset)));
+      // A carry moves beats into later bars, so every fermata from the first selected bar on goes with its note or
+      // back to its bar position afterwards (`settleFermatas`), in the bars the carry appends too.
+      const staffBars = (): BarDoc[] => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.slice(bars.first) ?? [];
+      const fermatas = fermataSnapshotOf(draft, staffBars().map((_, offset) => bars.first + offset));
+      const openBefore = staffBars().flatMap(bar => openTupletGroupsOf(bar.voices[0]?.beats ?? []));
 
       for (let index = bars.first; index <= bars.last; index++) {
         if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
@@ -7756,10 +7861,9 @@ Fix bar counts what it fixed and says so:
       }
 
       if (!fixed) return 'No selected bar is over its time signature.';
-      for (let index = before; index < barCount(); index++) fermatas.set(index, new Map());
-      settleFermatas(draft, fermatas);
+      if (staffBars().some(bar => newOpenTupletGroup(openBefore, bar.voices[0]?.beats ?? []))) return SPLITS_A_GROUP;
       if (appended > 0) this.host.markDiverged(draft);
-      return null;
+      return settleFermatas(draft, fermatas);
     });
   }
 ```
@@ -7771,11 +7875,11 @@ Fix bar counts what it fixed and says so:
     let appended = 0;
     this.host.commitFollowing(
       draft => {
-        // A carry moves beats into later bars, so every fermata from the first selected bar on goes back to its
-        // bar position afterwards (`settleFermatas`); bars the carry appends held none.
-        const barCount = (): number => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.length ?? 0;
-        const before = barCount();
-        const fermatas = new Map(fermataSnapshotOf(draft, Array.from({ length: Math.max(0, before - bars.first) }, (_, offset) => bars.first + offset)));
+        // A carry moves beats into later bars, so every fermata from the first selected bar on goes with its note or
+        // back to its bar position afterwards (`settleFermatas`), in the bars the carry appends too.
+        const staffBars = (): BarDoc[] => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.slice(bars.first) ?? [];
+        const fermatas = fermataSnapshotOf(draft, staffBars().map((_, offset) => bars.first + offset));
+        const openBefore = staffBars().flatMap(bar => openTupletGroupsOf(bar.voices[0]?.beats ?? []));
 
         for (let index = bars.first; index <= bars.last; index++) {
           if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
@@ -7786,10 +7890,9 @@ Fix bar counts what it fixed and says so:
         }
 
         if (fixed === 0) return 'No selected bar is over its time signature.';
-        for (let index = before; index < barCount(); index++) fermatas.set(index, new Map());
-        settleFermatas(draft, fermatas);
+        if (staffBars().some(bar => newOpenTupletGroup(openBefore, bar.voices[0]?.beats ?? []))) return SPLITS_A_GROUP;
         if (appended > 0) this.host.markDiverged(draft);
-        return null;
+        return settleFermatas(draft, fermatas);
       },
       undefined,
       () => fixBarNoticeOf(fixed, appended)
@@ -7797,10 +7900,30 @@ Fix bar counts what it fixed and says so:
   }
 ```
 
-and the words, with a count helper the entry commands share, go at the end of the file:
+and the words, with a count helper the entry commands share, go at the end of the file, beside what a commit says
+when its edit removed a fermata:
+
+<!-- apply: find client/src/app/services/composer-service-structure.ts -->
+```typescript
+import { FermataDrops, fermataSnapshotOf, settleFermatas } from './fermata-settling';
+```
+
+<!-- apply: replace client/src/app/services/composer-service-structure.ts -->
+```typescript
+import { FermataDrops, fermataNoticeOf, fermataSnapshotOf, settleFermatas } from './fermata-settling';
+```
 
 <!-- apply: append client/src/app/services/composer-service-structure.ts -->
 ```typescript
+/**
+ * What a commit says: `said`, the command's own words, then why each fermata the edit's `outcome` removed went
+ * (`fermataNoticeOf`) - or null when neither has anything to say.
+ */
+export function noticeOfOutcome(said: string | null, outcome: EditOutcome): string | null {
+  const fermatas = Array.isArray(outcome) ? fermataNoticeOf(outcome) : null;
+  return [said, fermatas].filter((part): part is string => !!part).join(' ') || null;
+}
+
 /** `count` and `noun`, plural unless the count is one: "1 bar", "3 beats". */
 export function countOf(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
@@ -7816,12 +7939,12 @@ Paste says what it wrote, reading `pasteBeats`' result:
 
 <!-- apply: find client/src/app/services/composer-entry-commands.ts -->
 ```typescript
-import { ComposerCommandHost } from './composer-service-structure';
+import { ComposerCommandHost, EditOutcome } from './composer-service-structure';
 ```
 
 <!-- apply: replace client/src/app/services/composer-entry-commands.ts -->
 ```typescript
-import { ComposerCommandHost, countOf } from './composer-service-structure';
+import { ComposerCommandHost, EditOutcome, countOf } from './composer-service-structure';
 ```
 
 <!-- apply: find client/src/app/services/composer-entry-commands.ts -->
@@ -7851,7 +7974,7 @@ import { ComposerCommandHost, countOf } from './composer-service-structure';
         pastedAt = result.at;
         appended = result.appendedBars;
         if (result.appendedBars > 0) this.host.markDiverged(draft);
-        return null;
+        return result.droppedFermatas;
       },
       () => ({ cursor: { ...state.cursor, ...pastedAt }, anchor: null }),
       () => pasteNoticeOf(clipboard.beats.length, appended)
@@ -7919,6 +8042,28 @@ The first state and a reset say nothing:
       notice: null,
 ```
 
+Both commits say what the edit's fermata settling removed, `commit` - note and rest entry - on its own:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+import { ComposerStructureCommands, EditOutcome, SelectionPlacement } from './composer-service-structure';
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+import { ComposerStructureCommands, EditOutcome, SelectionPlacement, noticeOfOutcome } from './composer-service-structure';
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    this.commitDocument(draft, undefined, amend);
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    this.commitDocument(draft, undefined, amend, noticeOfOutcome(null, reason));
+```
+
 `commitFollowing` asks for the notice after the edit, and `commitDocument` publishes it:
 
 <!-- apply: find client/src/app/services/composer.service.ts -->
@@ -7927,7 +8072,7 @@ The first state and a reset say nothing:
    * given, decides the selection from those followed ends instead, in the same publish.
    */
   private commitFollowing(
-    edit: (draft: ScoreDoc) => string | null | void,
+    edit: (draft: ScoreDoc) => EditOutcome,
     place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement
   ): void {
 ```
@@ -7939,7 +8084,7 @@ The first state and a reset say nothing:
    * what the command says it did (`ComposerState.notice`).
    */
   private commitFollowing(
-    edit: (draft: ScoreDoc) => string | null | void,
+    edit: (draft: ScoreDoc) => EditOutcome,
     place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement,
     notice?: () => string | null
   ): void {
@@ -7953,7 +8098,7 @@ The first state and a reset say nothing:
 
 <!-- apply: replace client/src/app/services/composer.service.ts -->
 ```typescript
-    this.commitDocument(draft, place ? place(draft, followed) : followed, false, notice?.() ?? null);
+    this.commitDocument(draft, place ? place(draft, followed) : followed, false, noticeOfOutcome(notice?.() ?? null, reason));
   }
 ```
 

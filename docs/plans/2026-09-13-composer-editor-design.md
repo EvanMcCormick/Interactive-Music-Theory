@@ -154,7 +154,15 @@ departs from the design".
    rest entry, insert beat, delete beats, paste and Fix bar. Whatever starts at a position afterwards takes its
    fermata, on every staff, and a beat that moved away gives it up. A fermata whose position no beat starts at
    any more, on any staff, is dropped, since alphaTab could only file it at some other beat's tick. Before, an
-   edit on an early track moved a fermata to a tick where a later track took it too on save.
+   edit on an early track moved a fermata to a tick where a later track took it too on save. *Settled in a fourth
+   review:* **a position is the tick a beat plays at**, where alphaTab files its fermata - not where it is drawn. A
+   beat that on-beat graces lead into plays after them, and each grace plays at its own tick and takes that tick's
+   fermata. **A fermata goes with its note** when the note moves and that reaches no other beat: nothing on another
+   staff, or in another voice, still holds it at the old tick; nothing plays at the new one; and the new position
+   holds no fermata. Otherwise it stays at its position, as above, and where it can do neither it is removed and the
+   commit says so in the status line - "1 fermata removed: its note moved where it would reach other tracks." A new
+   track takes every position's fermata where its rests start, and a removed track takes a fermata only it held away
+   with it.
 3. **M2 brings a minimal track strip forward**: a row per track with its name, remove, and the
    progression badge, status, Update and Flatten; add track with an instrument; and "Add
    progression track", keeping every selector and label the M4 specs pin, which move with the
@@ -174,7 +182,8 @@ departs from the design".
    with the progression page. One refinement: a symbol typed through AltGr or Option still matches,
    but only after every exact binding has failed, so `}` and `[` are reachable on German keyboards. And a
    Ctrl binding on a symbol key also matches that symbol typed on another key, so Dvorak reaches Ctrl+/ and
-   Ctrl+Shift+.; a letter typed on the key stays that letter's.
+   Ctrl+Shift+.; a letter typed on the key stays that letter's. *Settled in a fourth review:* the symbol is asked only
+   once no binding's own key matched, so AZERTY's Ctrl+Shift on the comma key, which types `.`, is crescendo alone.
 7. **A two-digit fret is one undo step.** The second digit replaces the first digit's commit when
    nothing was committed in between.
 8. **Refusals are displayed** in one polite live region, in the status line, which shows a failed
@@ -198,7 +207,13 @@ departs from the design".
    for a tuplet press one that names the unfinished group it would join or the closed one it would split. The
    whole voice is read, since an edit can break a group beside the beats it names, and the note value, dot,
    Triplet and grace buttons show the refusal before they are pressed. A tuplet is never set on a grace, which
-   alphaTab would count into its group.
+   alphaTab would count into its group. *Settled in a fourth review:* **Fix bar refuses to split a tuplet group** -
+   one the bar line falls inside, which would leave both parts unfinished - and says why. The edit that overfilled
+   the bar stays accepted, since Guitar Pro flags overflow and leaves the fix to the user. **Typing a fret or R over a
+   beat in a closed tuplet group keeps the beat's value** where the palette's would break the group, as Guitar Pro
+   keeps a beat's value; the palette keeps its choice for the next note, and the value buttons show the caret's beat.
+   **A grace that carries a tuplet in a loaded file keeps it.** Stripping it on load was considered and not done:
+   alphaTab groups the beats after such a grace differently without it, so it is recorded rather than normalised.
 10. **Natural clears a forced accidental** (`auto`), because alphaTab 1.8 draws `ForceNatural` as
     `Default`, and its label says so.
 11. **Respell** cycles a pitched note's letter through every spelling `forcedLetterOf` allows for its
@@ -564,7 +579,8 @@ marked † produce a symbol through Shift and need the non-US layout hand check.
 settles the rest: modifiers match exactly, with Cmd read as Ctrl; a letter matches in either
 case, with Shift exactly as bound; a digit or symbol matches whatever Shift says; and a symbol
 typed through AltGr or Option still matches once every exact binding has failed, since `}` is
-AltGr+0 on a German keyboard.
+AltGr+0 on a German keyboard. A Ctrl symbol typed on another key than its binding's, as Dvorak places `.` and `/`, is
+asked between the two: after every binding's own key, before AltGr and Option.
 
 **AZERTY's digit row**, for the hand check: unshifted it types `& é " ' ( - è _ ç à`, and the
 digits need Shift. Fret digits match what was typed, so Shift+5 (or the numpad) writes fret 5,
