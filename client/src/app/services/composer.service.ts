@@ -46,6 +46,7 @@ import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-comma
 import { ComposerStructureCommands } from './composer-service-structure';
 import { EditScope, durationRefusal, editRefusal, noteEffectRefusal } from './edit-refusals';
 import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
+import { respellNotes, respellRefusal } from './note-respell';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 import { insertBarInto } from './score-structure';
 
@@ -495,6 +496,11 @@ export class ComposerService {
   /** Presses Fermata: at the selection's positions, on every track. See `toggleFermata`. */
   toggleFermata(): void {
     this.applyEdit({ family: 'beat', key: 'fermata' }, (draft, refs) => toggleFermata(draft, refs, defaultFermata()));
+  }
+
+  /** Respell: each note to its next spelling. See note-respell.ts. */
+  respell(): void {
+    this.applyEdit(respellRefusal, (draft, refs, focus) => respellNotes(draft, refs, focus));
   }
 
   /**
