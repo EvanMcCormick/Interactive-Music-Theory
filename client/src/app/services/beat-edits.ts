@@ -193,11 +193,67 @@ export function setTuplet(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuple
  * one frees its value's worth of the bar, which fills with rests where it stood - in front of
  * the grace, so it still leads into the beat after it - and a grace that becomes an ordinary
  * beat takes room, which takes the rests after it or is left as overflow.
+ *
+ * A beat that becomes a grace leaves its fermata at its bar position (the design's M2 decision 2), and
+ * takes the one at the position it now leads into, if any. alphaTab files a beat's fermata at the tick
+ * the beat is finished at (`Voice.finish`, `alphaTab.core.mjs` ~3294) - for a grace, the tick of the beat
+ * it leads into, since graces take no ticks until that beat moves them - and hands it to every beat
+ * finished later at that tick (`MasterBar.getFermata`, ~2728). So a grace that kept the fermata would move
+ * it one position on, to every track, on the next save, while the other tracks kept theirs where it was;
+ * and one that handed it to the beat it leads into would do the same. Instead the first ordinary beat now
+ * starting at the old position on this staff - the rest that filled the gap, or a beat that moved up to it
+ * in a bar that was over - takes it, and the grace takes its new position's (`graceFermataOf`). Leaving a
+ * grace is not handled here: an ordinary beat at a grace's tick already holds that position's fermata.
  */
 export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEffectsDoc['grace']): void {
+  const becoming: { ref: BeatRef; voice: VoiceDoc; beat: BeatDoc; tick: number }[] = [];
+  for (const ref of grace === 'none' ? [] : refs) {
+    const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
+    const beat = voice?.beats[ref.beatIndex];
+    if (!voice || !beat || beat.effects.grace !== 'none') continue;
+    becoming.push({ ref, voice, beat, tick: voiceTicks({ beats: voice.beats.slice(0, ref.beatIndex) }) });
+  }
+
   relength(doc, refs, beat => {
     beat.effects.grace = grace;
   });
+
+  for (const { voice, beat, tick } of becoming) {
+    if (!beat.effects.fermata || !voice.beats.includes(beat)) continue;
+    const holder = ordinaryBeatStartingAt(voice, tick);
+    if (holder && holder.effects.fermata === null) holder.effects.fermata = { ...beat.effects.fermata };
+  }
+  for (const { ref, voice, beat } of becoming) {
+    const beatIndex = voice.beats.indexOf(beat);
+    if (beatIndex >= 0) beat.effects.fermata = graceFermataOf(doc, { ...ref, beatIndex });
+  }
+}
+
+/** The first beat of `voice` that is not a grace and starts `tick` into its bar, or null. */
+function ordinaryBeatStartingAt(voice: VoiceDoc, tick: number): BeatDoc | null {
+  let start = 0;
+  for (const beat of voice.beats) {
+    if (start === tick && beat.effects.grace === 'none') return beat;
+    start += beatTicks(beat);
+  }
+  return null;
+}
+
+/**
+ * The fermata the grace `ref` names holds by the per-position rule: the one standing on the ordinary beats
+ * at the position of the beat it leads into, on any track (`fermataPositionsOf`) - or none, when it leads
+ * into nothing or nothing there has one. A grace has no position of its own; alphaTab finishes it at the
+ * tick of the beat it leads into and files its fermata there, so any other value spreads on save.
+ */
+export function graceFermataOf(doc: ScoreDoc, ref: BeatRef): FermataDoc | null {
+  const beats = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex]?.beats ?? [];
+  let into = ref.beatIndex + 1;
+  while (into < beats.length && beats[into].effects.grace !== 'none') into++;
+  if (into >= beats.length) return null;
+  const standing = fermataPositionsOf(doc, [{ ...ref, beatIndex: into }]).find(
+    beat => beat.effects.grace === 'none' && beat.effects.fermata !== null
+  );
+  return standing?.effects.fermata ? { ...standing.effects.fermata } : null;
 }
 
 /**
@@ -228,9 +284,10 @@ export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEff
  *    Room no rest can spell where it opened - a tuplet's remainder, off the 64th grid - carries to
  *    the next beat while that beat is changing too and directly follows, and is placed after the
  *    run: `n8 n8 n8 n8 n2` with its first three beats made a triplet is `n8 n8 n8 r8 n8 n2`. Inside a
- *    tuplet group alphaTab has not closed, room carries however it spells, so a rest never ends a
+ *    tuplet group alphaTab has not closed, room is held however it spells, and goes after the beat
+ *    where alphaTab closes the group, whether or not that beat is changing, so a rest never ends a
  *    group half-way: six sixteenths made 6:4 free a sixteenth after three beats, and an eighth rest
- *    goes after the sixth (`tupletGroupContinuesAfter`).
+ *    goes after the sixth (`tupletGroupEndOf`).
  * 3. **Blocked growth takes the rests after the range.** A beat blocked only by its changing
  *    neighbour is still owed room when the bar is over - less whatever room phase 2 freed and
  *    did not place, which has paid for it already. So a bar that arrived over keeps exactly its
@@ -302,25 +359,30 @@ function settleRange(
   // three eighths made a triplet each free 160 ticks, which nothing can spell, and together free 480,
   // an eighth rest right after the group. So the beats after a whole group keep their ticks.
   //
-  // Inside a tuplet group that alphaTab has not closed yet, room is carried without trying to place it,
+  // Inside a tuplet group that alphaTab has not closed yet, room is held without trying to place it,
   // however it spells: a 6:4 beat frees a third of its value, so three of them free a whole value, and
-  // a rest there would end alphaTab's group half-way (`TupletGroup.check`, ~6760). The room goes after
-  // the group - or after each group, when the run holds several.
+  // a rest there would end alphaTab's group half-way (`TupletGroup.check`, ~6760). It carries to the next
+  // beat of the run while that beat is in the same group, and otherwise goes after the beat that closes
+  // the group (`tupletGroupEndOf`) - which need not be changing: beats already 6:4 after the run close
+  // the group the run's beats join. So the room goes after each group, when the run holds several.
   let unplaced = 0;
   let carried = 0;
   inOrder.forEach((beat, order) => {
     const room = carried + (freed.get(beat) ?? 0);
     carried = 0;
-    const after = voice.beats.indexOf(beat) + 1;
-    if (tupletGroupContinuesAfter(voice, after - 1) && voice.beats[after] === inOrder[order + 1]) {
+    const next = inOrder[order + 1];
+    const index = voice.beats.indexOf(beat);
+    const end = tupletGroupEndOf(voice.beats, index);
+    if (end > index && next && voice.beats.indexOf(next) <= end) {
       carried = room;
       return;
     }
+    const after = end + 1;
     const fill = barFillOf(bar, meter);
     const wanted = room > 0 && fill.kind === 'under' ? Math.min(room, fill.ticks) : 0;
     if (wanted > 0 && insertRestsAt(voice, after, wanted, meter)) {
       unplaced += room - wanted;
-    } else if (wanted > 0 && voice.beats[after] === inOrder[order + 1]) {
+    } else if (wanted > 0 && voice.beats[after] === next) {
       carried = room;
     } else {
       unplaced += room;
@@ -348,52 +410,96 @@ function hasTuplet(beat: BeatDoc): boolean {
   return beat.tuplet !== null && !(beat.tuplet.numerator === 1 && beat.tuplet.denominator === 1);
 }
 
+/** A tuplet group as alphaTab builds one while it finishes a voice (`TupletGroup`, ~6700). */
+export interface TupletGroupRun {
+  first: BeatDoc;
+  /** The beats counted, graces not among them. */
+  count: number;
+  ticks: number;
+  equal: boolean;
+  /** Whether alphaTab has closed the group, so it takes no more beats but graces. */
+  full: boolean;
+}
+
 /**
- * Whether `voice.beats[index]` is in a tuplet group alphaTab would still add the next beat to: the group
- * is not full, and the next beat is a grace or has the same tuplet.
+ * For each of `beats` - one voice of one bar, in order - the tuplet group alphaTab puts it in, or null. Beats
+ * in one group share one `TupletGroupRun`, and its `full` says whether the group was closed by its end.
  *
  * alphaTab groups a voice's beats as it finishes them (`Beat.finishTuplet`, ~7741, and
  * `TupletGroup.check`, ~6742): a beat joins the group before it when it has the same tuplet and that
- * group is not full; a grace joins any open group without counting; anything else starts a new group or
- * none. A group of equal values is full at as many beats as the tuplet's numerator; a mixed one when its
- * total is a written value times the numerator over the denominator, truncated. Groups never cross a bar,
- * since `check` refuses a beat from another voice. Lengths are `beatTicks`, alphaTab's `displayDuration`
- * - which is what `check` adds for every beat but a group's first, where it adds `playbackDuration`; the
- * two differ only on a beat a grace steals from, and a grace-led group is left to that small difference.
+ * group is not full; a grace joins the group before it, full or not, without counting; anything else
+ * starts a new group or none. A group of equal values is full at as many beats as the tuplet's numerator;
+ * a mixed one when its total is a written value times the numerator over the denominator, truncated.
+ * Groups never cross a bar, since `check` refuses a beat from another voice. Lengths are `beatTicks`,
+ * alphaTab's `displayDuration` - which is what `check` adds for every beat but a group's first, where it
+ * adds `playbackDuration`; the two differ only on a beat a grace steals from, and a grace-led group is
+ * left to that small difference.
  */
-function tupletGroupContinuesAfter(voice: VoiceDoc, index: number): boolean {
-  let group: { first: BeatDoc; count: number; ticks: number; equal: boolean; full: boolean } | null = null;
-  for (let at = 0; at <= index && at < voice.beats.length; at++) {
-    const beat = voice.beats[at];
-    const grace = beat.effects.grace !== 'none';
-    if (grace && group) continue;
+export function tupletGroupsOf(beats: readonly BeatDoc[]): (TupletGroupRun | null)[] {
+  const groups: (TupletGroupRun | null)[] = [];
+  let group: TupletGroupRun | null = null;
+  for (const beat of beats) {
+    if (beat.effects.grace !== 'none' && group) {
+      groups.push(group);
+      continue;
+    }
     if (!hasTuplet(beat)) {
       group = null;
+      groups.push(null);
       continue;
     }
-    const joins =
-      group !== null &&
-      !group.full &&
-      beat.tuplet?.numerator === group.first.tuplet?.numerator &&
-      beat.tuplet?.denominator === group.first.tuplet?.denominator;
-    if (!group || !joins) {
+    if (!group || group.full || !sameTuplet(beat, group.first)) {
       group = { first: beat, count: 1, ticks: beatTicks(beat), equal: true, full: false };
-      continue;
+    } else {
+      const open: TupletGroupRun = group;
+      open.count++;
+      open.ticks += beatTicks(beat);
+      if (beatTicks(beat) !== beatTicks(open.first)) open.equal = false;
+      const tuplet = open.first.tuplet ?? { numerator: 1, denominator: 1 };
+      const factor = (tuplet.numerator / tuplet.denominator) | 0;
+      open.full = open.equal ? open.count === tuplet.numerator : TUPLET_GROUP_TICKS.some(ticks => open.ticks === ticks * factor);
     }
-    group.count++;
-    group.ticks += beatTicks(beat);
-    if (beatTicks(beat) !== beatTicks(group.first)) group.equal = false;
-    const tuplet = group.first.tuplet ?? { numerator: 1, denominator: 1 };
-    const factor = (tuplet.numerator / tuplet.denominator) | 0;
-    group.full = group.equal
-      ? group.count === tuplet.numerator
-      : TUPLET_GROUP_TICKS.some(ticks => group !== null && group.ticks === ticks * factor);
+    groups.push(group);
   }
+  return groups;
+}
 
-  const next = voice.beats[index + 1];
-  if (!group || group.full || !next || !hasTuplet(voice.beats[index])) return false;
-  if (next.effects.grace !== 'none') return true;
-  return next.tuplet?.numerator === group.first.tuplet?.numerator && next.tuplet?.denominator === group.first.tuplet?.denominator;
+/** Whether two beats are under the same tuplet, by alphaTab's comparison of numerator and denominator. */
+function sameTuplet(a: BeatDoc, b: BeatDoc): boolean {
+  return a.tuplet?.numerator === b.tuplet?.numerator && a.tuplet?.denominator === b.tuplet?.denominator;
+}
+
+/**
+ * The index of the last of `beats` in the tuplet group `beats[index]` is in - where alphaTab closes it, or
+ * where the bar ends it unclosed - or `index` itself when it is in none (`tupletGroupsOf`).
+ */
+export function tupletGroupEndOf(beats: readonly BeatDoc[], index: number): number {
+  const groups = tupletGroupsOf(beats);
+  const group = groups[index];
+  let end = index;
+  while (group && groups[end + 1] === group) end++;
+  return end;
+}
+
+/**
+ * Whether putting the beats `refs` name under `tuplet` leaves every tuplet group they are in closed, as
+ * alphaTab closes one (`tupletGroupsOf`). A group left open - four eighths made 6:4 - is drawn as a broken
+ * group, and the room its beats free is off the 64th grid, so the bar would be left short with nothing to
+ * say why. Beats already under `tuplet` next to the run count: three 6:4 eighths complete three more.
+ */
+export function tupletGroupsCompleteWith(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuplet): boolean {
+  const changing = new Set(beatsAt(doc, refs));
+  const voices = new Set<VoiceDoc>();
+  for (const ref of refs) {
+    const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
+    if (voice) voices.add(voice);
+  }
+  for (const voice of voices) {
+    const changed = voice.beats.map(beat => (changing.has(beat) ? { ...beat, tuplet } : beat));
+    const groups = tupletGroupsOf(changed);
+    if (voice.beats.some((beat, index) => changing.has(beat) && groups[index] !== null && !groups[index]?.full)) return false;
+  }
+  return true;
 }
 
 /**

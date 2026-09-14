@@ -1,6 +1,6 @@
 import { BeatDoc, ScoreDoc } from '../models/composer.model';
-import { barCapacityTicks, barMeterAt, beatTicks, fillBarGaps, graceRunStart, insertRestsAt, splitAtBarLine } from './bar-fill';
-import { fermataPositionsOf } from './beat-edits';
+import { barCapacityTicks, barFillOf, barMeterAt, beatTicks, fillBarGaps, graceRunStart, insertRestsAt, splitAtBarLine } from './bar-fill';
+import { fermataPositionsOf, graceFermataOf, tupletGroupsOf } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
 import { insertBarInto } from './score-structure';
 
@@ -32,6 +32,10 @@ export function copiedBeatsOf(doc: ScoreDoc, refs: readonly BeatRef[]): CopiedBe
 
 const NO_ROOM = 'A time signature there leaves no room in a bar, so there is nowhere to paste.';
 
+const PART_OF_A_GROUP = 'The copy holds part of a tuplet group. Copy the whole group to paste it.';
+
+const PAST_THE_LINE = 'That beat is past the bar line; Fix bar first.';
+
 /**
  * Pastes `copied` from `at`, or returns why not.
  *
@@ -50,7 +54,13 @@ const NO_ROOM = 'A time signature there leaves no room in a bar, so there is now
  * A fermata belongs to a bar position on every track (the design's M2 decision 2). So each pasted beat
  * that carries one puts it on every track's beat at its position (`fermataPositionsOf`), and one that
  * carries none takes the fermata already at its position, if any - so a paste neither leaves a fermata on
- * one staff alone nor wipes one from the others.
+ * one staff alone nor wipes one from the others. A pasted grace has no position of its own: it takes the
+ * fermata at the position of the beat it leads into, or none (`graceFermataOf`), since alphaTab files a
+ * grace's fermata there and a copied one would spread to every track on save.
+ *
+ * Refused before anything changes: a copy holding part of a tuplet group (`tupletGroupsOf`), which would
+ * start a group alphaTab never closes and leave room off the 64th grid; and a paste at a beat that starts at
+ * or past the line of a bar already over, which would land in the next bar while the caret stayed put.
  *
  * **May leave `doc` partly changed when it refuses**, like every edit that returns a reason - call it on a draft.
  */
@@ -65,9 +75,11 @@ export function pasteBeats(doc: ScoreDoc, at: BeatRef, copied: CopiedBeats): { a
   const strings = copied.beats.flatMap(beat => beat.notes.map(note => (note.pitch.kind === 'fretted' ? note.pitch.string : 0)));
   const highest = Math.max(0, ...strings);
   if (highest > staff.tuning.length) return `Those beats use ${highest} strings, and this staff has ${staff.tuning.length}.`;
+  if (tupletGroupsOf(copied.beats).some(group => group !== null && !group.full)) return PART_OF_A_GROUP;
 
-  const startVoice = staff.bars[at.barIndex]?.voices[at.voiceIndex];
-  if (!startVoice) return 'There is no beat there to paste at.';
+  const startBar = staff.bars[at.barIndex];
+  const startVoice = startBar?.voices[at.voiceIndex];
+  if (!startBar || !startVoice) return 'There is no beat there to paste at.';
   const startIndex = graceRunStart(startVoice, Math.min(at.beatIndex, startVoice.beats.length));
 
   // The run, cut into what goes in each bar.
@@ -75,6 +87,10 @@ export function pasteBeats(doc: ScoreDoc, at: BeatRef, copied: CopiedBeats): { a
   const pending = copied.beats.map(beat => structuredClone(beat));
   let appendedBars = 0;
   let tick = startVoice.beats.slice(0, startIndex).reduce((sum, beat) => sum + beatTicks(beat), 0);
+
+  const startMeter = barMeterAt(doc, at.barIndex);
+  const startCapacity = startMeter.isFreeTime ? Number.POSITIVE_INFINITY : barCapacityTicks(startMeter.timeSignature);
+  if (startCapacity > 0 && tick >= startCapacity && barFillOf(startBar, startMeter).kind === 'over') return PAST_THE_LINE;
   for (let barIndex = at.barIndex; pending.length > 0; barIndex++, tick = 0) {
     while (barIndex >= staff.bars.length) {
       insertBarInto(doc, doc.masterBars.length);
@@ -132,6 +148,14 @@ export function pasteBeats(doc: ScoreDoc, at: BeatRef, copied: CopiedBeats): { a
       const standing = positions.find(other => other !== beat && other.effects.grace === 'none' && other.effects.fermata !== null);
       const fermata = beat.effects.fermata ?? standing?.effects.fermata ?? null;
       for (const other of positions) other.effects.fermata = fermata ? { ...fermata } : null;
+    }
+  }
+
+  for (const segment of segments) {
+    const voice = staff.bars[segment.barIndex]?.voices[at.voiceIndex];
+    for (const beat of segment.beats) {
+      if (!voice || beat.effects.grace === 'none') continue;
+      beat.effects.fermata = graceFermataOf(doc, { ...at, barIndex: segment.barIndex, beatIndex: voice.beats.indexOf(beat) });
     }
   }
 

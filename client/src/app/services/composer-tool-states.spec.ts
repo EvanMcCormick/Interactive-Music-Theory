@@ -106,6 +106,16 @@ describe('toolStates', () => {
     expect(toolStateOf(doc, null, at(0, 2), 'fermata').pressed).toBe('mixed');
   });
 
+  it('refuses a triplet over beats that cannot make whole groups, and lets a clear through', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(toolStateOf(doc, at(0, 0), at(0, 1), 'triplet').refusal).toMatch(/3:2 tuplet needs three/i);
+    expect(toolStateOf(doc, at(0, 0), at(0, 2), 'triplet').refusal).toBeNull();
+
+    doc.tracks[0].staves[0].bars[0].voices[0].beats.slice(0, 2).forEach(beat => (beat.tuplet = { numerator: 3, denominator: 2 }));
+    expect(toolStateOf(doc, at(0, 0), at(0, 1), 'triplet')).toEqual({ pressed: true, refusal: null });
+  });
+
   it('refuses a fermata on a grace alone, which has no bar position', () => {
     const doc = ComposerService.createEmptyScore();
     doc.tracks[0].staves[0].bars[0].voices[0].beats[0].effects.grace = 'beforeBeat';

@@ -1,8 +1,12 @@
-import { copiedBeatsOf, pasteBeats } from './beat-clipboard';
+import { TestBed } from '@angular/core/testing';
+import * as alphaTab from '@coderline/alphatab';
+
+import { CopiedBeats, copiedBeatsOf, pasteBeats } from './beat-clipboard';
 import { scoreBarFills } from './bar-fill';
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
+import { BeatDoc, FermataDoc, ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
 
 const ref = (barIndex: number, beatIndex: number, trackIndex = 0): BeatRef =>
   ({ trackIndex, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex });
@@ -144,5 +148,81 @@ describe('pasteBeats', () => {
     const copied = copiedBeatsOf(doc, [ref(0, 0)]);
 
     expect(pasteBeats(doc, ref(0, 0, 1), copied!)).toMatch(/fretted/i);
+  });
+
+  it('refuses a copy that holds part of a tuplet group, and pastes the whole group', () => {
+    // One triplet quarter of three. Pasted alone it would start a group alphaTab never closes, and the
+    // room it leaves - 320 ticks short of a quarter - is off the 64th grid, so the bar would stay short.
+    const doc = ComposerService.createEmptyScore();
+    beats(doc, 0).splice(0, 2, ...[0, 1, 2].map(() => ({ ...createRestBeat(4), tuplet: { numerator: 3, denominator: 2 } })));
+    withNote(doc, 0, 0);
+
+    expect(pasteBeats(doc, ref(1, 0), copiedBeatsOf(doc, [ref(0, 0)])!)).toMatch(/part of a tuplet group/i);
+    expect(shape(doc, 1)).toEqual(['r4', 'r4', 'r4', 'r4']);
+    expect(pasteBeats(doc, ref(1, 0), copiedBeatsOf(doc, [ref(0, 0), ref(0, 1), ref(0, 2)])!)).toEqual({ appendedBars: 0, at: ref(1, 0) });
+  });
+
+  it('refuses a paste at a beat past the bar line of a bar already over, and not one before the line', () => {
+    // Bar 1 holds a half and three quarters, 960 over: its last quarter starts at 3840, on the line. A
+    // paste there would land in bar 2 while the caret stayed on that quarter.
+    const doc = ComposerService.createEmptyScore();
+    beats(doc, 1).splice(0, 1, createRestBeat(2));
+    withNote(doc, 0, 0);
+    const copied = copiedBeatsOf(doc, [ref(0, 0)]);
+
+    expect(pasteBeats(doc, ref(1, 3), copied!)).toMatch(/past the bar line.*Fix bar/i);
+    expect(shape(doc, 2)).toEqual(['r4', 'r4', 'r4', 'r4']);
+    expect(pasteBeats(doc, ref(1, 2), copied!)).toEqual({ appendedBars: 0, at: ref(1, 2) });
+  });
+});
+
+describe('pasteBeats, a grace and a fermata', () => {
+  // alphaTab files a beat's fermata on the master bar at the tick the beat is finished at, and hands it to
+  // every beat finished later at that tick without one (`Voice.finish` ~3294, `MasterBar.getFermata`
+  // ~2728). A grace is finished at the tick of the beat it leads into, so a fermata left on a pasted grace
+  // reaches every track at that position on save.
+  let mapper: ScoreDocMapperService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    mapper = TestBed.inject(ScoreDocMapperService);
+  });
+
+  /** A guitar, a piano and an organ. */
+  const threeTracks = (): ScoreDoc => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    doc.tracks.push(ComposerService.createTrack('Organ', 'org', 16, false, doc.masterBars));
+    return doc;
+  };
+  /** A copy of one before-beat grace on string 2, carrying `fermata`. */
+  const graceCopy = (fermata: FermataDoc): CopiedBeats => {
+    const grace: BeatDoc = { ...createRestBeat(8), isRest: false };
+    grace.notes = [{ pitch: { kind: 'fretted', string: 2, fret: 3 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+    grace.effects = { ...grace.effects, grace: 'beforeBeat', fermata };
+    return { fretted: true, beats: [grace] };
+  };
+  const fermatas = (doc: ScoreDoc): (string | null)[][] =>
+    doc.tracks.map(track => track.staves[0].bars[0].voices[0].beats.map(beat => beat.effects.fermata?.type ?? null));
+  const saved = (doc: ScoreDoc): ScoreDoc => mapper.toDoc(mapper.toScore(doc, new alphaTab.Settings()));
+
+  it('clears a pasted grace\'s fermata where its position has none, so a save puts none on any track', () => {
+    const doc = threeTracks();
+
+    pasteBeats(doc, ref(0, 3), graceCopy({ type: 'medium', length: 1 }));
+
+    expect(beats(doc, 0)[3].effects.grace).toBe('beforeBeat');
+    expect(fermatas(doc)).toEqual([[null, null, null, null, null], [null, null, null, null], [null, null, null, null]]);
+    expect(fermatas(saved(doc))).toEqual(fermatas(doc));
+  });
+
+  it('gives a pasted grace the fermata at its position, so a save changes nothing', () => {
+    const doc = threeTracks();
+    for (const track of doc.tracks) track.staves[0].bars[0].voices[0].beats[3].effects.fermata = { type: 'long', length: 1 };
+
+    pasteBeats(doc, ref(0, 3), graceCopy({ type: 'medium', length: 1 }));
+
+    expect(fermatas(doc)).toEqual([[null, null, null, 'long', 'long'], [null, null, null, 'long'], [null, null, null, 'long']]);
+    expect(fermatas(saved(doc))).toEqual(fermatas(doc));
   });
 });

@@ -1,5 +1,5 @@
-import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc } from '../models/composer.model';
-import { beatsAt, fermataPositionsOf, toggledValue } from './beat-edits';
+import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc, Tuplet } from '../models/composer.model';
+import { beatsAt, fermataPositionsOf, toggledValue, tupletGroupsCompleteWith } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
 import { NoteTarget, noteEffectTargets, noteTargetsAt, tieTargetsOf, trillTargetOf } from './note-edits';
 import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieOriginOf } from './note-landing';
@@ -196,6 +196,25 @@ export function tieRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: numbe
   const targets = tieTargetsOf(doc, refs, focus, notes);
   if (!toggledValue(targets.map(target => target.note.isTied), true, false)) return null;
   return targets.some(target => tieCandidateOf(doc, target.ref, target.note) !== null) ? null : NOTHING_TO_TIE_FROM;
+}
+
+const COUNT_WORDS: readonly string[] = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+
+/**
+ * Why putting `refs` under `tuplet` - or out of any tuplet, with null - cannot apply, or null: any beat
+ * edit's refusal, or, when the press sets a tuplet, a tuplet group it would leave open.
+ *
+ * alphaTab closes a group of equal values at as many beats as the tuplet's numerator, and a mixed one when
+ * its values add up to a whole group (`tupletGroupsCompleteWith`). A group left open is drawn broken, and
+ * the room its beats free is off the 64th grid, so the bar would be left short with nothing to say why.
+ * Taking beats out of a tuplet is never refused for it.
+ */
+export function tupletRefusal(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuplet | null): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'beat', key: 'tuplet' }, null);
+  if (refusal || tuplet === null || (tuplet.numerator === 1 && tuplet.denominator === 1)) return refusal;
+  if (tupletGroupsCompleteWith(doc, refs, tuplet)) return null;
+  const count = COUNT_WORDS[tuplet.numerator] ?? String(tuplet.numerator);
+  return `A ${tuplet.numerator}:${tuplet.denominator} tuplet needs ${count} beats of the same value, or values that add up to the same length, in one bar.`;
 }
 
 /** The highest MIDI note, which `Note.trillValue` must not pass. */

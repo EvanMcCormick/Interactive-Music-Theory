@@ -21,7 +21,8 @@ import {
   fermataRefusal,
   noteEffectRefusal,
   tieRefusal,
-  trillRefusal
+  trillRefusal,
+  tupletRefusal
 } from './edit-refusals';
 import { NoteTarget, noteEffectTargets, noteTargetsAt, tieTargetsOf } from './note-edits';
 import { tieOriginOf } from './note-landing';
@@ -196,10 +197,11 @@ const READERS: Readonly<Record<string, Reader>> = {
   sixtyFourth: duration(64),
   dot: dots(1),
   doubleDot: dots(2),
-  triplet: reading => ({
-    pressed: share(beats(reading).map(beat => beat.tuplet !== null && sameValue(beat.tuplet, TRIPLET))),
-    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'tuplet' }, null)
-  }),
+  // A press clears when every beat is a triplet, and a clear is never refused for an open group.
+  triplet: reading => {
+    const pressed = share(beats(reading).map(beat => beat.tuplet !== null && sameValue(beat.tuplet, TRIPLET)));
+    return { pressed, refusal: tupletRefusal(reading.doc, reading.refs, pressed === true ? null : TRIPLET) };
+  },
   tuplet: reading => ({
     pressed: share(beats(reading).map(beat => beat.tuplet !== null)),
     refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'tuplet' }, null)

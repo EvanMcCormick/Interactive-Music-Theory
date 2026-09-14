@@ -451,6 +451,63 @@ describe('setTuplet', () => {
     expect(tupletShape(doc)).toEqual(['n8t3', 'n8t3', 'n8t3', 'r8', 'n8t3', 'n8t3', 'n8t3', 'r8', 'n4']);
     expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
   });
+
+  it('holds the room until a group that runs on past the press closes, so no rest splits it', () => {
+    // Beats 3 to 5 are already 6:4 and the bar is full. Made 6:4 too, beats 0 to 2 join them in one group
+    // of six, which alphaTab closes at beat 5: the sixteenth the three free goes after beat 5, not after
+    // beat 2, where the group is still open though the next beat is not being changed.
+    const doc = notesOf('n16 n16 n16 n16 n16 n16 n2 n8 n16');
+    beats(doc).slice(3, 6).forEach(beat => (beat.tuplet = { ...sextuplet }));
+
+    setTuplet(doc, refsFrom(0, 3), sextuplet);
+
+    expect(tupletShape(doc)).toEqual(['n16t6', 'n16t6', 'n16t6', 'n16t6', 'n16t6', 'n16t6', 'r16', 'n2', 'n8', 'n16']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+});
+
+describe('setGrace at a fermata', () => {
+  // alphaTab files a beat's fermata at the tick the beat is finished at, and hands it to every beat finished
+  // there later without one (`Voice.finish` ~3294, `MasterBar.getFermata` ~2728). A grace is finished at
+  // the tick of the beat it leads into. So a quarter that becomes a grace would carry its fermata one
+  // position on, to every track, if it kept it.
+  let mapper: ScoreDocMapperService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    mapper = TestBed.inject(ScoreDocMapperService);
+  });
+
+  const fermatas = (doc: ScoreDoc): (string | null)[][] =>
+    doc.tracks.map(track => track.staves[0].bars[0].voices[0].beats.map(beat => beat.effects.fermata?.type ?? null));
+  /** A guitar, a piano and an organ, every quarter a note, with a fermata on every track's second quarter. */
+  const withFermata = (): ScoreDoc => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    doc.tracks.push(ComposerService.createTrack('Organ', 'org', 16, false, doc.masterBars));
+    [0, 1, 2, 3].forEach(index => withNote(doc, 0, index));
+    for (const track of doc.tracks.slice(1)) {
+      for (const beat of track.staves[0].bars[0].voices[0].beats) {
+        beat.isRest = false;
+        beat.notes = [{ pitch: { kind: 'pitched', noteValue: 0, octave: 4 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+      }
+    }
+    for (const track of doc.tracks) track.staves[0].bars[0].voices[0].beats[1].effects.fermata = { type: 'medium', length: 1 };
+    return doc;
+  };
+
+  for (const kind of ['beforeBeat', 'onBeat'] as const) {
+    it(`leaves the fermata at its position when the beat there becomes a ${kind} grace, so a save adds none`, () => {
+      const doc = withFermata();
+
+      setGrace(doc, [{ ...ref(0, 1), trackIndex: 1 }], kind);
+
+      // The rest that fills the quarter's place holds the position's fermata; the grace, now at the third
+      // quarter's position, holds that position's, which is none.
+      expect(fermatas(doc)).toEqual([[null, 'medium', null, null], [null, 'medium', null, null, null], [null, 'medium', null, null]]);
+      expect(fermatas(mapper.toDoc(mapper.toScore(doc, new alphaTab.Settings())))).toEqual(fermatas(doc));
+    });
+  }
 });
 
 describe('toggleFermata', () => {

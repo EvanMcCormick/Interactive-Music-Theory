@@ -52,7 +52,8 @@ import {
   fermataRefusal,
   noteEffectRefusal,
   tieRefusal,
-  trillRefusal
+  trillRefusal,
+  tupletRefusal
 } from './edit-refusals';
 import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
 import { moveNotesToString, shiftSemitone } from './note-moves';
@@ -546,7 +547,7 @@ export class ComposerService {
   }
 
   setTuplet(tuplet: Tuplet | null): void {
-    this.applyEdit({ family: 'beat', key: 'tuplet' }, (draft, refs) => setTuplet(draft, refs, tuplet));
+    this.applyEdit((doc, refs) => tupletRefusal(doc, refs, tuplet), (draft, refs) => setTuplet(draft, refs, tuplet));
   }
 
   /** Presses Trill: each note a whole step above itself at the default speed, or none. See `toggleTrill`. */

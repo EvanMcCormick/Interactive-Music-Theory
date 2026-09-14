@@ -3,7 +3,7 @@ import { BeatRef } from './composer-selection';
 import { deepFrozen } from './deep-frozen';
 import * as refusals from './edit-refusals';
 import { EditScope } from './edit-refusals';
-import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, ScoreDoc, Tuplet, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
 
 /**
  * Every refusal here reads a deep-frozen copy of the document it is given, so one that changed a
@@ -19,6 +19,8 @@ const tieRefusal = (score: ScoreDoc, refs: readonly BeatRef[], focus: number | n
   refusals.tieRefusal(frozen(score), refs, focus);
 const trillRefusal = (score: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null =>
   refusals.trillRefusal(frozen(score), refs, focus);
+const tupletRefusal = (score: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuplet | null): string | null =>
+  refusals.tupletRefusal(frozen(score), refs, tuplet);
 const beatEffectRefusal = <K extends Exclude<keyof BeatEffectsDoc, 'grace'>>(
   score: ScoreDoc,
   refs: readonly BeatRef[],
@@ -243,6 +245,41 @@ describe('tieRefusal', () => {
     score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].isTied = true;
 
     expect(tieRefusal(score, [ref(0)], null)).toBeNull();
+  });
+});
+
+describe('tupletRefusal', () => {
+  /** The guitar's bar 0 as `count` eighth rests. */
+  const eighths = (count: number): ScoreDoc => {
+    const score = ComposerService.createEmptyScore();
+    const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
+    beats.splice(0, beats.length, ...Array.from({ length: count }, () => createRestBeat(8)));
+    return score;
+  };
+  const firstBeats = (count: number): BeatRef[] => Array.from({ length: count }, (_, index) => ref(0, index));
+
+  it('refuses four of eight eighths made 6:4, a group alphaTab would never close', () => {
+    expect(tupletRefusal(eighths(8), firstBeats(4), { numerator: 6, denominator: 4 })).toMatch(/6:4 tuplet needs six beats of the same value/i);
+  });
+
+  it('accepts six eighths made 6:4, and three eighths made 3:2', () => {
+    expect(tupletRefusal(eighths(8), firstBeats(6), { numerator: 6, denominator: 4 })).toBeNull();
+    expect(tupletRefusal(eighths(8), firstBeats(3), { numerator: 3, denominator: 2 })).toBeNull();
+  });
+
+  it('accepts beats that complete a group already begun, and never refuses taking beats out of one', () => {
+    const score = eighths(8);
+    score.tracks[0].staves[0].bars[0].voices[0].beats.slice(3, 6).forEach(beat => (beat.tuplet = { numerator: 6, denominator: 4 }));
+
+    expect(tupletRefusal(score, firstBeats(3), { numerator: 6, denominator: 4 })).toBeNull();
+    expect(tupletRefusal(eighths(8), firstBeats(1), null)).toBeNull();
+  });
+
+  it('still refuses a generated track', () => {
+    const score = eighths(8);
+    score.tracks[0].generated = { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision', revision: 1 } };
+
+    expect(tupletRefusal(score, firstBeats(3), { numerator: 3, denominator: 2 })).toMatch(/progression/i);
   });
 });
 

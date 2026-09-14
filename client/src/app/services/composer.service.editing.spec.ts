@@ -297,6 +297,25 @@ describe('ComposerService fermata', () => {
   });
 });
 
+describe('ComposerService tuplets', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('refuses a tuplet that cannot make whole groups, saying why, and commits nothing', () => {
+    service.setCursor({ barIndex: 0, beatIndex: 0 });
+    service.extendSelectionTo({ barIndex: 0, beatIndex: 1 });
+
+    service.setTuplet({ numerator: 3, denominator: 2 });
+
+    expect(stateOf(service).refusal).toMatch(/3:2 tuplet needs three beats/i);
+    expect(stateOf(service).canUndo).toBeFalse();
+  });
+});
+
 describe('ComposerService vibrato and ties over a range', () => {
   let service: ComposerService;
 
