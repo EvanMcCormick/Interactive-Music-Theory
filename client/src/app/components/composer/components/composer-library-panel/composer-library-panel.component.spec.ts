@@ -6,6 +6,7 @@ import { ScoreDoc } from '../../../../models/composer.model';
 import { ComposerExportService } from '../../../../services/composer-export.service';
 import { ComposerLibraryService } from '../../../../services/composer-library.service';
 import { ComposerService } from '../../../../services/composer.service';
+import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
 
 /**
  * What the Library panel refuses to save, and what it still exports.
@@ -98,6 +99,41 @@ describe('ComposerLibraryPanelComponent', () => {
 
       expect(library.save).toHaveBeenCalled();
       expect(panel.saveBlockedReason).toBeNull();
+    });
+
+    it('saves when the keyboard asks, through the same save its button runs', async () => {
+      TestBed.inject(ComposerSaveRequests).request();
+      await fixture.whenStable();
+
+      expect(library.save).toHaveBeenCalled();
+    });
+
+    it('writes one entry when a click and Ctrl+S both arrive while the first save is still writing', async () => {
+      let finish: (id: string) => void = () => undefined;
+      (library.save as jasmine.Spy).and.returnValue(new Promise<string>(resolve => (finish = resolve)));
+
+      const click = panel.save();
+      TestBed.inject(ComposerSaveRequests).request();
+      const again = panel.save();
+      finish('saved-id');
+      await Promise.all([click, again]);
+      await fixture.whenStable();
+
+      expect(library.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not save while something on the page stands in the way, however Save is pressed', async () => {
+      const requests = TestBed.inject(ComposerSaveRequests);
+      const removeGuard = requests.guard(() => true);
+
+      await panel.save();
+      requests.request();
+      await fixture.whenStable();
+      expect(library.save).not.toHaveBeenCalled();
+
+      removeGuard();
+      await panel.save();
+      expect(library.save).toHaveBeenCalledTimes(1);
     });
   });
 

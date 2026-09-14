@@ -19,6 +19,7 @@ import {
   CompositionSummary
 } from '../../../../services/composer-library.service';
 import { ComposerService } from '../../../../services/composer.service';
+import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { ComposerState } from '../../../../models/composer.model';
 
@@ -87,6 +88,13 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   pendingSave: PendingSave | null = null;
 
   /**
+   * Whether a write to the library is under way. A second trigger while it is - Ctrl+S just after a click,
+   * a double click - is dropped: the first write's id is not known until it lands, so letting the second
+   * through would create a second entry rather than overwrite the first.
+   */
+  private saving = false;
+
+  /**
    * Why the last press of Save was refused, or `null` if it was not.
    *
    * A view onto `pendingSave` rather than a field of its own. See `PendingSave`
@@ -112,6 +120,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
     private readonly exporter: ComposerExportService,
     private readonly mapper: ScoreDocMapperService,
     private readonly tex: AlphaTexService,
+    private readonly saveRequests: ComposerSaveRequests,
     private readonly cdr: ChangeDetectorRef
   ) {}
 
@@ -157,6 +166,10 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
         this.cdr.markForCheck();
       });
 
+    // Ctrl+S. The same `save()` as the button, so a keyboard save is refused, announced and followed by
+    // focus exactly as a click is.
+    this.saveRequests.requested$.pipe(takeUntil(this.destroy$)).subscribe(() => void this.save());
+
     void this.library.refresh().catch(error => this.reportError(error));
   }
 
@@ -194,7 +207,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
    * already left the app and has nothing to stay linked to.
    */
   async save(asNew = false): Promise<void> {
-    if (!this.state) return;
+    // A guard that refuses has said why where its own state is shown - the alphaTex draft, in the status line.
+    if (!this.state || this.saveRequests.refused()) return;
 
     if (this.linkedProgressions.length > 0) {
       this.refuseToSave(asNew);
@@ -227,6 +241,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
    * already listening to, having just pressed a button inside it.
    */
   async flattenAndSave(): Promise<void> {
+    if (this.saving || this.saveRequests.refused()) return;
     const asNew = this.pendingSave?.asNew ?? false;
     const flattened = this.flattenEveryLinkedTrack();
     this.pendingSave = null;
@@ -338,8 +353,9 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
 
   /** Writes the composition, reporting any failure. True when it landed. */
   private async writeToLibrary(asNew: boolean): Promise<boolean> {
-    if (!this.state) return false;
+    if (!this.state || this.saving) return false;
 
+    this.saving = true;
     try {
       const doc = this.state.doc;
       const score = this.buildScore();
@@ -364,6 +380,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
     } catch (error) {
       this.reportError(error);
       return false;
+    } finally {
+      this.saving = false;
     }
   }
 
