@@ -1,3 +1,5 @@
+import type * as alphaTab from '@coderline/alphatab';
+
 import { StaffSlot } from './composer-score-interaction';
 
 /**
@@ -118,6 +120,26 @@ export function highlightBeatsOf<B>(
   if (!first || !last || !lookup) return null;
   if ((lookup.findBeat(first) ?? null) === null || (lookup.findBeat(last) ?? null) === null) return null;
   return { first, last };
+}
+
+/**
+ * The beat under `x` on one track and staff of a master bar: that staff's bar bounds, then its beat nearest to
+ * the left of `x` (`BarBounds.findBeatAtPos`). alphaTab's own hit, `MasterBarBounds.findBeatAtPos` (~45226),
+ * searches every track's bars and keeps the nearest beat of any, so where the tracks' rhythms differ its beat -
+ * and its beat index - belongs to another track. The bar's staff is read from its first beat, as in
+ * `systemBandsOf`, since the worker path never sets `BarBounds.bar`. Null when the master bar draws no such staff.
+ */
+export function targetTrackBeat(
+  masterBar: alphaTab.rendering.MasterBarBounds,
+  x: number,
+  trackIndex: number,
+  staffIndex: number
+): alphaTab.model.Beat | null {
+  const bar = masterBar.bars.find(candidate => {
+    const staff = candidate.beats[0]?.beat.voice.bar.staff;
+    return staff !== undefined && staff.track.index === trackIndex && staff.index === staffIndex;
+  });
+  return bar?.findBeatAtPos(x)?.beat ?? null;
 }
 
 /** The band holding `y`, or else the one nearest it. */

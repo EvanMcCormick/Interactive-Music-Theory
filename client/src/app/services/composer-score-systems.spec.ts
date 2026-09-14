@@ -9,7 +9,8 @@ import {
   measuredStaffOfSlot,
   slotIndexAt,
   systemBandsOf,
-  systemIndexAt
+  systemIndexAt,
+  targetTrackBeat
 } from './composer-score-systems';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { insertBarInto } from './score-structure';
@@ -132,6 +133,60 @@ describe('highlightBeatsOf', () => {
   it('draws nothing without both ends', () => {
     expect(highlightBeatsOf(undefined, last, lookupOf([first, last]))).toBeNull();
     expect(highlightBeatsOf(first, undefined, lookupOf([first, last]))).toBeNull();
+  });
+});
+
+describe('targetTrackBeat', () => {
+  /** A bar's bounds on `trackIndex`, with `count` beats `step` pixels apart, as a render leaves them. */
+  function barOn(masterBar: alphaTab.rendering.MasterBarBounds, trackIndex: number, top: number, count: number, step: number): alphaTab.model.Beat[] {
+    const track = new alphaTab.model.Track();
+    track.index = trackIndex;
+    const staff = new alphaTab.model.Staff();
+    staff.index = 0;
+    staff.track = track;
+    const bar = new alphaTab.model.Bar();
+    bar.staff = staff;
+    const voice = new alphaTab.model.Voice();
+    voice.bar = bar;
+
+    const bounds = new alphaTab.rendering.BarBounds();
+    bounds.realBounds = new alphaTab.rendering.Bounds(0, top, count * step, 60);
+    bounds.visualBounds = new alphaTab.rendering.Bounds(0, top, count * step, 60);
+    masterBar.addBar(bounds);
+
+    return Array.from({ length: count }, (_, index) => {
+      const beat = new alphaTab.model.Beat();
+      beat.index = index;
+      beat.voice = voice;
+      voice.beats.push(beat);
+      const beatBounds = new alphaTab.rendering.BeatBounds();
+      beatBounds.beat = beat;
+      beatBounds.barBounds = bounds;
+      beatBounds.realBounds = new alphaTab.rendering.Bounds(index * step, top, step, 60);
+      beatBounds.visualBounds = new alphaTab.rendering.Bounds(index * step, top, step, 60);
+      // Not `addBeat`, which reaches for a whole lookup this spec has no need of.
+      bounds.beats.push(beatBounds);
+      return beat;
+    });
+  }
+
+  it('finds the beat on the track under the pointer, not the nearest beat on any track', () => {
+    const masterBar = new alphaTab.rendering.MasterBarBounds();
+    const eighths = barOn(masterBar, 0, 0, 8, 25);
+    const quarters = barOn(masterBar, 1, 100, 4, 50);
+
+    // At x 85, track 0's eighth at 75 is nearer than track 1's quarter at 50, and alphaTab's own search picks it.
+    expect(masterBar.findBeatAtPos(85)).toBe(eighths[3]);
+    expect(targetTrackBeat(masterBar, 85, 1, 0)).toBe(quarters[1]);
+    expect(targetTrackBeat(masterBar, 85, 0, 0)).toBe(eighths[3]);
+  });
+
+  it('finds none for a track the master bar does not draw', () => {
+    const masterBar = new alphaTab.rendering.MasterBarBounds();
+    barOn(masterBar, 0, 0, 4, 50);
+
+    expect(targetTrackBeat(masterBar, 60, 2, 0)).toBeNull();
+    expect(targetTrackBeat(masterBar, 60, 0, 1)).toBeNull();
   });
 });
 

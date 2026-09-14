@@ -88,15 +88,17 @@ export class StaffHitTestService {
 
   /**
    * Index into `allStaves` of the staff the pointer is over, if any. `staves` is a measure the caller
-   * already holds, for a caller asking on every pointer move; by default the page is measured now.
+   * already holds, for a caller asking on every pointer move; by default the page is measured now. Each
+   * surface - one per system - is measured once per call, not once per staff.
    */
   staffIndexAt(container: HTMLElement, clientX: number, clientY: number, staves: StaffLines[] = this.allStaves(container)): number | null {
     let bestIndex = -1;
     let bestDistance = Number.POSITIVE_INFINITY;
+    const boxes = new Map<SVGSVGElement, DOMRect>();
 
     for (let index = 0; index < staves.length; index++) {
       const staff = staves[index];
-      const box = staff.surface.getBoundingClientRect();
+      const box = this.boxOf(boxes, staff.surface);
       if (clientX < box.left || clientX > box.right) continue;
 
       const localY = this.toLocalY(staff, box, clientY);

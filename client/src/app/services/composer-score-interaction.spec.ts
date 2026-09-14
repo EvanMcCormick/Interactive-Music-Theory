@@ -5,6 +5,7 @@ import {
   caretSlotIndexOf,
   dragContinues,
   dragExtends,
+  dragTargetOf,
   highlightEndsOf,
   hoverKeyOf,
   penHoverHalfStepsOf,
@@ -61,6 +62,21 @@ describe('dragContinues', () => {
     expect(dragContinues(true, 0)).toBeFalse();
     expect(dragContinues(true, 2)).toBeFalse();
     expect(dragContinues(false, 1)).toBeFalse();
+  });
+});
+
+describe('dragTargetOf', () => {
+  const tab: StaffSlot = { trackIndex: 1, staffIndex: 0, kind: 'tab' };
+  const notation: StaffSlot = { trackIndex: 1, staffIndex: 0, kind: 'notation' };
+
+  it('extends onto the staff under the pointer, and on tablature onto its string', () => {
+    expect(dragTargetOf({ slot: tab, stringIndex: 3 }, at(0, 2, 1, 5))).toEqual({ trackIndex: 1, staffIndex: 0, stringIndex: 3 });
+    expect(dragTargetOf({ slot: notation, stringIndex: null }, at(0, 2, 1, 5))).toEqual({ trackIndex: 1, staffIndex: 0, stringIndex: 5 });
+  });
+
+  it('stays on the caret\'s track, staff and string while the pointer crosses the gap between staves', () => {
+    // Not track 0, which alphaTab's beat - hit across every staff of the system - would report.
+    expect(dragTargetOf(null, { ...at(2, 1, 0, 4), staffIndex: 1 })).toEqual({ trackIndex: 2, staffIndex: 1, stringIndex: 4 });
   });
 });
 

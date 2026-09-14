@@ -70,6 +70,25 @@ export function dragContinues(dragging: boolean, buttons: number): boolean {
 }
 
 /**
+ * The track, staff and string the pointer names, for a click or a drag: the staff under the pointer, with its
+ * string on tablature (`under.stringIndex`) and the caret's own string elsewhere, which `ComposerService`
+ * clamps to the staff. With no staff under the pointer - a drag crossing the gap between two staves - the
+ * caret's own track, staff and string, so the range goes on growing along the staff it is on instead of
+ * jumping to the first track, which is the track alphaTab's beat hit reports there.
+ */
+export function dragTargetOf(
+  under: { slot: StaffSlot; stringIndex: number | null } | null,
+  cursor: EditCursor
+): Pick<EditCursor, 'trackIndex' | 'staffIndex' | 'stringIndex'> {
+  if (!under) return { trackIndex: cursor.trackIndex, staffIndex: cursor.staffIndex, stringIndex: cursor.stringIndex };
+  return {
+    trackIndex: under.slot.trackIndex,
+    staffIndex: under.slot.staffIndex,
+    stringIndex: under.slot.kind === 'tab' ? under.stringIndex : cursor.stringIndex
+  };
+}
+
+/**
  * Whether a mouse-down moves the playback position to the clicked beat: a click that moves the caret or
  * writes, while playback is stopped. alphaTab's own interaction did this before the composer turned it off
  * (`applyPlaybackRangeFromHighlight`, which also set the range - this sets no range). A Shift-click only

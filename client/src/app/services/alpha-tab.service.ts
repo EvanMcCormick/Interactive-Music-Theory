@@ -420,12 +420,16 @@ export class AlphaTabService {
   }
 
   /**
-   * Notify when the pointer crosses a beat after a `beatMouseDown`, until alphaTab sees the mouse-up. alphaTab
-   * hears that mouse-up only on its own surface, so after a release outside the score this goes on firing;
-   * a caller checks the move's own `MouseEvent.buttons`.
+   * Notify when the pointer crosses a beat after a `beatMouseDown`, until alphaTab sees the mouse-up.
+   *
+   * Unlike every other handler here, `handler` runs **outside** Angular's zone. alphaTab raises this on every
+   * pointer move while its `_isBeatMouseDown` is set, and it hears mouse-up only on its own surface
+   * (`canvasElement.mouseUp`, `alphaTab.core.mjs` ~53195 in 1.8), so after a release outside the score it goes
+   * on firing for every move over the score until the next mouse-up there - and nothing public clears the flag.
+   * A caller checks the move's own `MouseEvent.buttons` and enters the zone only for a move that changes state.
    */
   onBeatMouseMove(handler: (beat: alphaTab.model.Beat) => void): void {
-    this.api?.beatMouseMove.on(beat => this.ngZone.run(() => handler(beat)));
+    this.api?.beatMouseMove.on(beat => this.ngZone.runOutsideAngular(() => handler(beat)));
   }
 
   /** Notify when the button is released over alphaTab's surface after a `beatMouseDown`, with the beat under the pointer or null. */
