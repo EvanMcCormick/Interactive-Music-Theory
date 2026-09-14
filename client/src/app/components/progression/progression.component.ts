@@ -21,6 +21,7 @@ import { ProgressionState } from '../../models/progression.model';
 import { findChordByIntervals } from '../../services/chord-catalog';
 import { ComposerExportService } from '../../services/composer-export.service';
 import { ComposerService } from '../../services/composer.service';
+import { isEditableTarget } from '../../services/editable-target';
 import { errorOf } from '../../services/error-message';
 import { MusicTheoryService } from '../../services/music-theory.service';
 import { PROGRESSION_AUDIO, createToneApi } from '../../services/progression-audio';
@@ -390,7 +391,7 @@ export class ProgressionComponent implements OnInit, OnDestroy {
   onKeydown(event: KeyboardEvent): void {
     if (!event.ctrlKey && !event.metaKey) return;
     if (event.altKey) return;
-    if (isEditable(event.target)) return;
+    if (isEditableTarget(event.target)) return;
 
     const key = event.key.toLowerCase();
     if (key !== 'z' && key !== 'y') return;
@@ -1009,20 +1010,3 @@ export class ProgressionComponent implements OnInit, OnDestroy {
 const SENT_BUT_STILL_HERE =
   'The progression is in the composer, but this page could not move there. Nothing was lost - '
   + 'open the Composer from the navigation at the top of the page to see the track.';
-
-/**
- * Whether a key press belongs to something the user is typing into.
- *
- * The tempo box is on this page, and `Ctrl+Z` inside a text box means undo the
- * typing - the browser's own, which `preventDefault` would otherwise take away.
- * `<select>` is in the list because it is a form control that reads its own key
- * presses, and `isContentEditable` because a rich-text field is neither tag.
- */
-function isEditable(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-
-  return target.tagName === 'INPUT'
-    || target.tagName === 'TEXTAREA'
-    || target.tagName === 'SELECT';
-}
