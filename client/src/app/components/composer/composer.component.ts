@@ -4,7 +4,8 @@ import {
   Component,
   HostListener,
   OnDestroy,
-  OnInit
+  OnInit,
+  inject
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -14,6 +15,8 @@ import * as alphaTab from '@coderline/alphatab';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerService } from '../../services/composer.service';
+import { KEY_PLATFORM } from '../../services/composer-key-platform';
+import { shortcutTitleOf } from '../../services/composer-tools';
 import { ProgressionService } from '../../services/progression.service';
 import {
   GeneratedTrackState,
@@ -101,6 +104,10 @@ export class ComposerComponent implements OnInit, OnDestroy {
 
   metronomeEnabled = false;
   countInEnabled = false;
+
+  /** Undo's and Redo's tooltips, with the keys the platform's keyboard writes: Ctrl+Z, or ⌘+Z on a Mac. */
+  readonly undoTitle: string = shortcutTitleOf('undo', inject(KEY_PLATFORM));
+  readonly redoTitle: string = shortcutTitleOf('redo', inject(KEY_PLATFORM));
 
   /** Accumulates digits so two-digit frets like 12 can be typed. */
   private fretBuffer = '';

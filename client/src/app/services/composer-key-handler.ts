@@ -42,10 +42,13 @@ export class ComposerKeyHandler {
    * Ctrl+C or Ctrl+X while text outside the score is selected (`yieldsToTextSelection`), so ordinary
    * copying works on the page.
    *
-   * While a modal is open, every press but the sheet's key and Escape (`TOOLS_OVER_A_MODAL`) is left alone too, as
-   * a press in a text field is, so the browser scrolls the sheet with the arrow keys and Space. A tool that runs from
-   * a text field is claimed and dropped instead: Ctrl+S runs there so that the browser's Save dialog never opens, and
-   * it should not open over the sheet either.
+   * While a modal is open, only the sheet's key and Escape (`TOOLS_OVER_A_MODAL`) run. Of the other bound presses:
+   * - one with no Ctrl, Alt or Cmd is left to the browser, so it scrolls the sheet with the arrows, Space, Page Up,
+   *   Page Down, Home and End, and does nothing with the rest;
+   * - a tool that yields to a text selection (`yieldsToTextSelection`) is left to the browser too, so Ctrl+C copies
+   *   the sheet's text;
+   * - any other with Ctrl, Alt or Cmd is claimed and dropped. Left alone, Ctrl+K would focus the browser's search box
+   *   and Ctrl+S open its Save dialog, over a sheet whose keys they are not.
    *
    * A press a tool is bound to is claimed. An auto-repeat of a held key runs the tool again only when it is
    * `repeatable`; otherwise it is claimed and dropped, so holding a toggle's key does not flicker it and
@@ -56,7 +59,8 @@ export class ComposerKeyHandler {
     const tool = toolForPress(event, this.tools);
     if (!tool) return false;
     if (this.modalOpen() && !TOOLS_OVER_A_MODAL.has(tool.id)) {
-      if (!tool.inTextFields) return false;
+      const modified = event.ctrlKey || event.altKey || event.metaKey;
+      if (!modified || tool.yieldsToTextSelection) return false;
       event.preventDefault();
       return true;
     }

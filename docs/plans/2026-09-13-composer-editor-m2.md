@@ -11648,7 +11648,7 @@ The page implements `ComposerToolHost` - popovers, the sheet, transport, the sav
 through the strip - and hands every key press to `ComposerKeyHandler` and every palette press to the same
 tool's `run`, so a button and its key cannot differ.
 
-Five things the page owns were corrected before this task was applied:
+Seven things the page owns were corrected before this task was applied:
 
 - **The key handler is built with the score's element** (its third argument), a `#score` view query on
   `<app-composer-score>`. Without it every text selection counts as outside the score, and Ctrl+C and
@@ -11664,8 +11664,18 @@ Five things the page owns were corrected before this task was applied:
 - **The shortcut sheet is a modal.** While it is open only its own key and Escape reach the key handler, whose
   fourth argument is `() => this.sheetOpen`, so Delete, R, a digit or Ctrl+V cannot edit the score hidden behind
   it. Escape closes the sheet alone, as it closes a popover alone. The sheet gives the focus back to what had it,
-  or to the score when that is gone: its `fallbackFocus` is the score's host, which takes the focus through
+  or to the score when that is gone: its `fallbackFocus` is a function returning the score's host, asked as the sheet
+  closes rather than bound while the `#score` view query may still be unset, and the host takes the focus through
   `tabindex="-1"`.
+- **The sheet is modal to the mouse and to Ctrl keys too.** It draws a backdrop over the whole window, and a click
+  there closes it as Escape does. The page's own parts - top bar, palette, score column, status line, separator and
+  strip - are `inert` while it is open, so neither a click nor the focus reaches them. The sheet is first in the
+  template, so it records what had the focus before the page goes inert, and it gives the focus back after the view
+  is checked, once the page is not. Behind the sheet the key handler claims and drops every Ctrl, Alt or Cmd binding
+  but Ctrl+C and Ctrl+X, so Ctrl+K does not focus the browser's search. The Library panel is told
+  (`[modalOpen]="sheetOpen"`): it closes its menus and drawer, and its Escape listener stands aside, so Escape
+  reaches the sheet.
+- **Undo's and Redo's tooltips** are built with `shortcutTitleOf` and `KEY_PLATFORM`, so a Mac reads ⌘+Z.
 
 The status line also takes the notice, its message id and the document, for Task 3.3's outcomes, a message said
 twice in the same words, and the count of bars over. The old keyboard `switch`, the fret buffer, the
@@ -11685,15 +11695,18 @@ the page itself is answerable for.
 
 <!-- apply: create client/src/app/components/composer/composer.component.spec.ts -->
 ```typescript
-import { Component } from '@angular/core';
+import { Component, Input } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 
 import { ComposerComponent, clampedStripHeight } from './composer.component';
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
 import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
 import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerService } from '../../services/composer.service';
+import { KEY_PLATFORM } from '../../services/composer-key-platform';
 import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
+import { shortcutTitleOf } from '../../services/composer-tools';
 
 /**
  * The composer page: what it is answerable for beyond its parts.
@@ -11710,7 +11723,9 @@ import { ComposerSaveRequests } from '../../services/composer-save-requests.serv
 class StubScoreComponent {}
 
 @Component({ selector: 'app-composer-library-panel', standalone: true, template: '' })
-class StubLibraryPanelComponent {}
+class StubLibraryPanelComponent {
+  @Input() modalOpen = false;
+}
 
 describe('ComposerComponent', () => {
   let fixture: ComponentFixture<ComposerComponent>;
@@ -11880,6 +11895,48 @@ describe('ComposerComponent', () => {
     expect(requested).toHaveBeenCalledTimes(2);
   });
 
+  it('puts the page behind the open shortcut sheet out of reach: inert, and a click over the palette lands on the backdrop, closing the sheet and changing nothing', () => {
+    const palette: HTMLElement = fixture.nativeElement.querySelector('app-composer-palette');
+    const doc = composer.doc;
+    const cursor = composer.state.cursor;
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(palette.closest('[inert]')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('.top-bar').closest('[inert]')).not.toBeNull();
+
+    // A script's click() still reaches an inert element, and a pointer does not, so ask what a pointer there would hit.
+    // The sheet is inset from the window's edges; a few pixels in from the palette's left edge is in that margin.
+    const box = palette.getBoundingClientRect();
+    const hit = document.elementFromPoint(Math.max(1, box.left + 4), Math.min(innerHeight - 2, Math.max(1, box.top + 4)));
+    expect(hit?.classList.contains('sheet-backdrop')).toBeTrue();
+    (hit as HTMLElement).click();
+    fixture.detectChanges();
+
+    expect(component.sheetOpen).toBeFalse();
+    expect(palette.closest('[inert]')).toBeNull();
+    expect(composer.doc).toBe(doc);
+    expect(composer.state.cursor).toEqual(cursor);
+  });
+
+  it('tells the Library panel a modal is open while the shortcut sheet is, so it closes its menus and leaves Escape to the sheet', () => {
+    const panel = fixture.debugElement.query(By.directive(StubLibraryPanelComponent)).componentInstance as StubLibraryPanelComponent;
+    expect(panel.modalOpen).toBeFalse();
+
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(panel.modalOpen).toBeTrue();
+
+    press({ key: 'Escape' });
+    expect(component.sheetOpen).toBeFalse();
+    expect(panel.modalOpen).toBeFalse();
+  });
+
+  it('writes the shortcuts of Undo and Redo with the modifiers of the platform keyboard', () => {
+    const platform = TestBed.inject(KEY_PLATFORM);
+    const [undo, redo] = Array.from(fixture.nativeElement.querySelectorAll('.header-actions .text-btn')) as HTMLButtonElement[];
+
+    expect(undo.title).toBe(shortcutTitleOf('undo', platform));
+    expect(redo.title).toBe(shortcutTitleOf('redo', platform));
+  });
+
   it('adds a track of the strip\'s chosen instrument from the keyboard', () => {
     press({ key: 'Insert', ctrlKey: true, shiftKey: true });
 
@@ -11913,7 +11970,8 @@ import {
   HostListener,
   OnDestroy,
   OnInit,
-  ViewChild
+  ViewChild,
+  inject
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -11933,8 +11991,9 @@ import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerService } from '../../services/composer.service';
 import { FretDigitEntry } from '../../services/composer-fret-entry';
 import { ComposerKeyHandler } from '../../services/composer-key-handler';
+import { KEY_PLATFORM } from '../../services/composer-key-platform';
 import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
-import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, PopoverKind } from '../../services/composer-tools';
+import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, PopoverKind, shortcutTitleOf } from '../../services/composer-tools';
 import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
 
 /** What the status line says when a save meets an alphaTex draft that is not applied. */
@@ -12008,6 +12067,10 @@ export class ComposerComponent implements OnInit, OnDestroy {
   sheetOpen = false;
   stripHeight = 180;
 
+  /** Undo's and Redo's tooltips, with the keys the platform's keyboard writes: Ctrl+Z, or ⌘+Z on a Mac. */
+  readonly undoTitle: string = shortcutTitleOf('undo', inject(KEY_PLATFORM));
+  readonly redoTitle: string = shortcutTitleOf('redo', inject(KEY_PLATFORM));
+
   /** What every tool runs against. */
   readonly host: ComposerToolHost;
 
@@ -12062,7 +12125,8 @@ export class ComposerComponent implements OnInit, OnDestroy {
     };
     // The score's element, so a text selection inside the score does not stop Ctrl+C and Ctrl+X copying beats.
     // And the sheet's state: while it is open, only its own key and Escape reach the tools, so no key edits the score
-    // hidden behind it (`TOOLS_OVER_A_MODAL`).
+    // hidden behind it (`TOOLS_OVER_A_MODAL`), and a Ctrl, Alt or Cmd press is claimed and dropped, so the browser's own
+    // shortcuts do not act behind it either.
     this.keyHandler = new ComposerKeyHandler(
       this.host,
       COMPOSER_TOOLS,
@@ -12122,10 +12186,11 @@ export class ComposerComponent implements OnInit, OnDestroy {
     this.sheetOpen = false;
   }
 
-  /** The score's host, where the shortcut sheet gives the focus back when what had it before is gone. */
-  get scoreHost(): HTMLElement | null {
-    return this.scoreElement?.nativeElement ?? null;
-  }
+  /**
+   * The score's host, where the shortcut sheet gives the focus back when what had it before is gone. A function the
+   * sheet asks as it closes: `scoreElement` is a view query inside `*ngIf`, unset when the sheet's input is first bound.
+   */
+  readonly scoreHost = (): HTMLElement | null => this.scoreElement?.nativeElement ?? null;
 
   /** The program of the caret's track, for auditioning a typed fret on its own sound. */
   get currentTrackProgram(): number {
@@ -12279,7 +12344,13 @@ Replace `composer.component.html`:
 <!-- apply: create client/src/app/components/composer/composer.component.html -->
 ```html
 <div class="composer-page" *ngIf="state as s">
-  <header class="top-bar">
+  <!--
+    First, so it hears it is opening before the parts below go inert. Its backdrop covers the window, and while it is
+    open every part of the page is inert: no click and no focus reaches the page behind it.
+  -->
+  <app-composer-shortcut-sheet [open]="sheetOpen" [fallbackFocus]="scoreHost" (closed)="closeShortcutSheet()"></app-composer-shortcut-sheet>
+
+  <header class="top-bar" [attr.inert]="sheetOpen ? '' : null">
     <div class="score-info">
       <input
         class="title-input"
@@ -12318,13 +12389,13 @@ Replace `composer.component.html`:
     </div>
 
     <div class="header-actions">
-      <button class="text-btn" type="button" (click)="undo()" [disabled]="!s.canUndo" title="Undo (Ctrl+Z)">Undo</button>
-      <button class="text-btn" type="button" (click)="redo()" [disabled]="!s.canRedo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+      <button class="text-btn" type="button" (click)="undo()" [disabled]="!s.canUndo" [title]="undoTitle">Undo</button>
+      <button class="text-btn" type="button" (click)="redo()" [disabled]="!s.canRedo" [title]="redoTitle">Redo</button>
       <button class="text-btn" type="button" (click)="newScore()" title="Start a new score">New</button>
       <button class="text-btn" type="button" [class.active]="showTexPanel" [attr.aria-pressed]="showTexPanel" (click)="toggleTexPanel()">
         alphaTex
       </button>
-      <app-composer-library-panel></app-composer-library-panel>
+      <app-composer-library-panel [modalOpen]="sheetOpen"></app-composer-library-panel>
       <button
         class="text-btn shortcuts-toggle"
         type="button"
@@ -12338,13 +12409,14 @@ Replace `composer.component.html`:
 
   <app-composer-palette
     class="palette"
+    [attr.inert]="sheetOpen ? '' : null"
     [state]="s"
     [popover]="popover"
     (toolPressed)="runTool($event)"
     (popoverClosed)="closePopover()"
   ></app-composer-palette>
 
-  <div class="score-column">
+  <div class="score-column" [attr.inert]="sheetOpen ? '' : null">
     <!-- Focusable by script only, for the shortcut sheet to give the focus back to. -->
     <app-composer-score #score tabindex="-1"></app-composer-score>
 
@@ -12375,6 +12447,7 @@ Replace `composer.component.html`:
 
   <app-composer-status-line
     class="status"
+    [attr.inert]="sheetOpen ? '' : null"
     [refusal]="s.refusal"
     [notice]="s.notice"
     [messageId]="s.messageId"
@@ -12386,6 +12459,7 @@ Replace `composer.component.html`:
 
   <div
     class="strip-resize"
+    [attr.inert]="sheetOpen ? '' : null"
     role="separator"
     tabindex="0"
     aria-orientation="horizontal"
@@ -12399,9 +12473,7 @@ Replace `composer.component.html`:
     (keydown)="onStripResizeKey($event)"
   ></div>
 
-  <app-composer-track-strip class="strip" [style.height.px]="stripHeight"></app-composer-track-strip>
-
-  <app-composer-shortcut-sheet [open]="sheetOpen" [fallbackFocus]="scoreHost" (closed)="closeShortcutSheet()"></app-composer-shortcut-sheet>
+  <app-composer-track-strip class="strip" [attr.inert]="sheetOpen ? '' : null" [style.height.px]="stripHeight"></app-composer-track-strip>
 </div>
 ```
 

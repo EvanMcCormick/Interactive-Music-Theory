@@ -45,8 +45,8 @@
     </div>
 
     <div class="header-actions">
-      <button class="text-btn" (click)="undo()" [disabled]="!s.canUndo" title="Undo (Ctrl+Z)">Undo</button>
-      <button class="text-btn" (click)="redo()" [disabled]="!s.canRedo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+      <button class="text-btn" (click)="undo()" [disabled]="!s.canUndo" [title]="undoTitle">Undo</button>
+      <button class="text-btn" (click)="redo()" [disabled]="!s.canRedo" [title]="redoTitle">Redo</button>
       <button class="text-btn" (click)="newScore()" title="Start a new score">New</button>
       <button class="text-btn" [class.active]="showTexPanel" (click)="toggleTexPanel()">alphaTex</button>
     </div>

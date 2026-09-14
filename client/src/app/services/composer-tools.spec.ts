@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { ComposerService } from './composer.service';
 import { BROWSER_RESERVED, KeyBinding, KeyPress, bindingMatches, bindingMatchesSymbol, bindingMatchesTyped, bindingSignatureOf } from './composer-key-bindings';
 import { TOOLS_WITH_STATE } from './composer-tool-states';
-import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, KEYLESS_TOOLS, PALETTE_GROUPS, toolForPress } from './composer-tools';
+import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, KEYLESS_TOOLS, PALETTE_GROUPS, shortcutTitleOf, toolForPress } from './composer-tools';
 
 const press = (init: Partial<KeyPress>): KeyPress => ({
   key: '', code: '', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...init
@@ -385,5 +385,14 @@ describe('COMPOSER_TOOLS commands', () => {
 
     run('timeSignature');
     expect(host.openPopover).toHaveBeenCalledWith('timeSignature');
+  });
+});
+
+describe('shortcutTitleOf', () => {
+  it('writes the label of a tool and every key that runs it, with the modifiers of the platform keyboard', () => {
+    expect(shortcutTitleOf('undo')).toBe('Undo (Ctrl+Z)');
+    expect(shortcutTitleOf('redo')).toBe('Redo (Ctrl+Shift+Z or Ctrl+Y)');
+    expect(shortcutTitleOf('undo', 'mac')).toBe('Undo (⌘+Z)');
+    expect(shortcutTitleOf('redo', 'mac')).toBe('Redo (⌘+Shift+Z or ⌘+Y)');
   });
 });

@@ -1,7 +1,8 @@
 import type { ComposerService } from './composer.service';
 import { DurationValue, DynamicValue, EntryMode } from '../models/composer.model';
 import { beatsAt } from './beat-edits';
-import { KeyBinding, KeyPress, bindingMatches, bindingMatchesSymbol, bindingMatchesTyped } from './composer-key-bindings';
+import { bindingLabelOf, bindingMatches, bindingMatchesSymbol, bindingMatchesTyped, KeyBinding, KeyPress } from './composer-key-bindings';
+import { KeyPlatform } from './composer-key-platform';
 import { selectionTargets } from './composer-selection';
 import { toolStateOf } from './composer-tool-states';
 import { fullBendPoints } from './composer-tool-defaults';
@@ -382,4 +383,16 @@ export function toolForPress(press: KeyPress, tools: readonly ComposerTool[] = C
     if (tool) return tool;
   }
   return null;
+}
+
+/**
+ * A tooltip for a control the tool `id` also runs from the keyboard: its label and every key that runs it, joined with
+ * "or" as the palette and the shortcut sheet write them, with the modifiers the platform's keyboard has - `Undo (Ctrl+Z)`,
+ * or `Undo (⌘+Z)` on a Mac. For the page's own buttons, such as Undo and Redo, which are not palette tools.
+ */
+export function shortcutTitleOf(id: string, platform: KeyPlatform = 'other', tools: readonly ComposerTool[] = COMPOSER_TOOLS): string {
+  const tool = tools.find(entry => entry.id === id);
+  if (!tool) return id;
+  const keys = tool.keys.map(binding => bindingLabelOf(binding, platform)).join(' or ');
+  return keys ? `${tool.label} (${keys})` : tool.label;
 }

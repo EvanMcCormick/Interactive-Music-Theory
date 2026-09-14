@@ -5,7 +5,10 @@ import {
   ElementRef,
   OnDestroy,
   HostListener,
+  Input,
+  OnChanges,
   OnInit,
+  SimpleChanges,
   ViewChild
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
@@ -62,7 +65,7 @@ interface PendingSave {
   styleUrls: ['./composer-library-panel.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
+export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestroy {
   private readonly destroy$ = new Subject<void>();
 
   entries: CompositionSummary[] = [];
@@ -97,6 +100,13 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   libraryMenuOpen = false;
   exportMenuOpen = false;
   drawerOpen = false;
+
+  /**
+   * Whether a modal - the shortcut sheet - is open over the page. Opening one closes the menus and the drawer, and
+   * while it is open the panel's Escape listener stands aside, so Escape closes the modal rather than a menu hidden
+   * behind it.
+   */
+  @Input() modalOpen = false;
 
   /**
    * Whether a write to the library is under way. A trigger while it is - Ctrl+S just after a click, a double
@@ -213,6 +223,10 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
     void this.library.refresh().catch(error => this.reportError(error));
   }
 
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['modalOpen'] && this.modalOpen) this.closeMenus();
+  }
+
   ngOnDestroy(): void {
     this.destroyed = true;
     this.queuedSaves = [];
@@ -275,7 +289,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
    * nothing open nothing is claimed, so Escape stays the page's.
    */
   private readonly escapeListener = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape' || event.defaultPrevented || !this.anyOpen) return;
+    if (event.key !== 'Escape' || event.defaultPrevented || this.modalOpen || !this.anyOpen) return;
     event.preventDefault();
     const focusWasInside = this.host.nativeElement.contains(document.activeElement);
     const toggle = this.exportMenuOpen && !this.libraryMenuOpen ? this.exportToggle : this.libraryToggle;

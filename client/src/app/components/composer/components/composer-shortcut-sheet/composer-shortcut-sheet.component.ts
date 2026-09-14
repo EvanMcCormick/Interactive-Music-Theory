@@ -73,8 +73,10 @@ const TABBABLE =
  * keyboard has (`KEY_PLATFORM`). Hidden with CSS rather than removed while closed, so opening it builds nothing.
  *
  * A modal dialog: opening it moves the focus to its heading and remembers what had it; Tab goes round inside it; and
- * closing it, by its × or by Escape, gives the focus back - or, when that element has left the page, to
- * `fallbackFocus`, the score. The page closes it by setting `open`, whichever way, so the focus is handled here once.
+ * closing it, by its ×, by Escape or by a click on the backdrop behind it, gives the focus back - or, when that element
+ * has left the page, to `fallbackFocus`, the score. The backdrop covers the whole window, so a click beside the sheet
+ * reaches nothing under it; the page makes its own content `inert` while the sheet is open, so the focus cannot get
+ * there either. The page closes it by setting `open`, whichever way, so the focus is handled here once.
  * The keys behind it are the page's to hold back (`ComposerKeyHandler`'s `modalOpen`).
  */
 @Component({
@@ -87,8 +89,11 @@ const TABBABLE =
 })
 export class ComposerShortcutSheetComponent implements OnChanges, AfterViewChecked {
   @Input() open = false;
-  /** Where the focus goes on closing when what had it before the sheet opened has left the page. */
-  @Input() fallbackFocus: HTMLElement | null = null;
+  /**
+   * Where the focus goes on closing when what had it before the sheet opened has left the page - asked as the sheet
+   * closes, not when the page binds it, since the page's element can be a view query that is unset until it renders.
+   */
+  @Input() fallbackFocus: () => HTMLElement | null = () => null;
   @Output() readonly closed = new EventEmitter<void>();
 
   private readonly platform: KeyPlatform = inject(KEY_PLATFORM);
@@ -106,6 +111,13 @@ export class ComposerShortcutSheetComponent implements OnChanges, AfterViewCheck
    * element still under `display: none` cannot take the focus.
    */
   private focusOnRender = false;
+  /**
+   * Set on closing, and acted on once the view is checked: the page makes itself `inert` while the sheet is open, and
+   * an inert element cannot take the focus. By `ngAfterViewChecked` every binding in the page's template has been
+   * applied, whatever order the page wrote them in, so the page is no longer inert. What had the focus is still read
+   * on opening, in `ngOnChanges`, before the bindings after the sheet make the page inert.
+   */
+  private focusBackOnRender = false;
 
   ngOnChanges(changes: SimpleChanges): void {
     const change = changes['open'];
@@ -115,12 +127,19 @@ export class ComposerShortcutSheetComponent implements OnChanges, AfterViewCheck
       const active = document.activeElement;
       this.returnFocusTo = active instanceof HTMLElement ? active : null;
       this.focusOnRender = true;
+      this.focusBackOnRender = false;
     } else if (!this.open && wasOpen) {
-      this.giveFocusBack();
+      this.focusOnRender = false;
+      this.focusBackOnRender = true;
     }
   }
 
   ngAfterViewChecked(): void {
+    if (this.focusBackOnRender) {
+      this.focusBackOnRender = false;
+      this.giveFocusBack();
+      return;
+    }
     if (!this.focusOnRender) return;
     this.focusOnRender = false;
     this.heading?.nativeElement.focus();
@@ -160,7 +179,7 @@ export class ComposerShortcutSheetComponent implements OnChanges, AfterViewCheck
     const active = document.activeElement;
     const stillOurs = active === null || active === document.body || !!this.sheet?.nativeElement.contains(active);
     if (!stillOurs) return;
-    const target = saved && saved.isConnected && saved !== document.body ? saved : this.fallbackFocus;
+    const target = saved && saved.isConnected && saved !== document.body ? saved : this.fallbackFocus();
     target?.focus();
   }
 }

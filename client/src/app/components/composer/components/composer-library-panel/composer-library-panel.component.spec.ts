@@ -255,6 +255,20 @@ describe('ComposerLibraryPanelComponent', () => {
       expect(claimedBeforeThePage).toBeTrue();
     });
 
+    it('closes its menus and the drawer when a modal opens over the page, so Escape reaches the modal', () => {
+      panel.toggleExportMenu();
+      panel.openDrawer();
+
+      fixture.componentRef.setInput('modalOpen', true);
+      fixture.detectChanges();
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      document.body.dispatchEvent(escape);
+
+      expect(panel.exportMenuOpen).toBeFalse();
+      expect(panel.drawerOpen).toBeFalse();
+      expect(escape.defaultPrevented).toBeFalse();
+    });
+
     it('leaves Escape to the page while nothing is open', () => {
       const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
 

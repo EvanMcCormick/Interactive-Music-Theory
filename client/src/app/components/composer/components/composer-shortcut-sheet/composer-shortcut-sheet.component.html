@@ -1,3 +1,9 @@
+<!--
+  Behind the sheet and over the whole window, while it is open: a click beside the sheet closes it, as Escape does, and
+  reaches nothing on the page under it.
+-->
+<div class="sheet-backdrop" [class.open]="open" aria-hidden="true" (click)="closed.emit()"></div>
+
 <section
   #sheet
   class="sheet"
