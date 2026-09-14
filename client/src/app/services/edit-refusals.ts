@@ -300,14 +300,23 @@ function openedByTupletPress({ group, after, before, named }: OpenedGroup, tuple
   if (!group.beats.some(beat => named.has(beat))) {
     return `That would split the ${group.tuplet} group next to the selection, leaving part of it unfinished; select the whole group.`;
   }
+  const shortened = shortenedByOnBeatGrace(group, after);
+  if (shortened) return shortened;
+  const count = COUNT_WORDS[tuplet.numerator] ?? String(tuplet.numerator);
+  return `A ${tuplet.numerator}:${tuplet.denominator} tuplet needs ${count} beats of the same value, or values that add up to the same length, in one bar.`;
+}
+
+/**
+ * Why `group` is open, when what leaves it so is an on-beat grace in front of it in `after`: the grace takes its
+ * playback length from the group's first beat, so a group of mixed values no longer adds up to a whole one
+ * (`tupletGroupsOf`). Selecting more of the group would not help, so the words say what would. Null otherwise.
+ */
+function shortenedByOnBeatGrace(group: OpenTupletGroup, after: readonly BeatDoc[]): string | null {
   const first = after.indexOf(group.beats[0]);
   let graces = first;
   while (graces > 0 && after[graces - 1].effects.grace !== 'none') graces--;
-  if (graces < first && after[graces].effects.grace === 'onBeat' && groups[first]?.equal === false) {
-    return `An on-beat grace before the group shortens its first beat, so alphaTab never closes a ${group.tuplet} group of mixed values there; use equal values, or make it a grace before the beat.`;
-  }
-  const count = COUNT_WORDS[tuplet.numerator] ?? String(tuplet.numerator);
-  return `A ${tuplet.numerator}:${tuplet.denominator} tuplet needs ${count} beats of the same value, or values that add up to the same length, in one bar.`;
+  if (graces === first || after[graces].effects.grace !== 'onBeat' || tupletGroupsOf(after)[first]?.equal !== false) return null;
+  return `An on-beat grace before the group shortens its first beat, so alphaTab never closes a ${group.tuplet} group of mixed values there; use equal values, or make it a grace before the beat.`;
 }
 
 /**
@@ -360,15 +369,32 @@ export function noteEntryRefusal(doc: ScoreDoc, at: BeatRef, duration: DurationV
 }
 
 /**
+ * The value note or rest entry writes at `at` with the palette on `duration` and `dots`: the palette's, unless the
+ * beat is in a tuplet group alphaTab has closed (`tupletGroupsOf`) and a beat of the palette's value would break it
+ * (`noteEntryRefusal`) - then the beat's own. Guitar Pro keeps a beat's value when you type over it, and the beat
+ * keeps its tuplet either way (`setBeatDurations`), so the group stays whole. In a group that is already open the
+ * palette's value stands, and so does its refusal: the beat's own value would close nothing.
+ */
+export function entryValueOf(doc: ScoreDoc, at: BeatRef, duration: DurationValue, dots: number): { duration: DurationValue; dots: number } {
+  const beats = doc.tracks[at.trackIndex]?.staves[at.staffIndex]?.bars[at.barIndex]?.voices[at.voiceIndex]?.beats ?? [];
+  const beat = beats[at.beatIndex];
+  const own = beat && hasTuplet(beat) && beat.effects.grace === 'none' && tupletGroupsOf(beats)[at.beatIndex]?.full;
+  if (!beat || !own || (beat.duration === duration && beat.dots === dots)) return { duration, dots };
+  return noteEntryRefusal(doc, at, duration, dots) === NOTE_BREAKS_A_GROUP ? { duration: beat.duration, dots: beat.dots } : { duration, dots };
+}
+
+/**
  * Why pressing Grace before or Grace on beat - `grace`, by the toggle rule - cannot apply to `refs`, or null: any
  * beat edit's refusal, or a tuplet group it would leave open (`tupletGroupOpenedBy`). A grace takes no room and is
- * not counted in a group, so a triplet beat made a grace leaves its group a beat short.
+ * not counted in a group, so a triplet beat made a grace leaves its group a beat short; and an on-beat grace in front
+ * of a mixed group shortens its first beat, which is said in its own words (`shortenedByOnBeatGrace`).
  */
 export function graceRefusal(doc: ScoreDoc, refs: readonly BeatRef[], grace: Exclude<BeatEffectsDoc['grace'], 'none'>): string | null {
   const refusal = editRefusal(doc, refs, { family: 'beat', key: 'grace' }, null);
   if (refusal) return refusal;
   const value = toggledValue(beatsAt(doc, refs).map(beat => beat.effects.grace), grace, 'none');
-  return tupletGroupOpenedBy(doc, refs, draft => setGrace(draft, refs, value), false) ? BREAKS_A_GROUP : null;
+  const opened = tupletGroupOpenedBy(doc, refs, draft => setGrace(draft, refs, value), false);
+  return opened ? shortenedByOnBeatGrace(opened.group, opened.after) ?? BREAKS_A_GROUP : null;
 }
 
 /** The highest MIDI note, which `Note.trillValue` must not pass. */

@@ -361,6 +361,15 @@ describe('an edit that would leave a tuplet group open', () => {
       expect(graceRefusal(barOf(group), beatsAt(3), 'onBeat')).toBeNull();
     });
 
+    it('says an on-beat grace in front of a mixed group shortens it, since selecting the group would not help', () => {
+      // The grace takes its 32nd from the group's first beat, so 640 and 320 no longer add up to a whole group.
+      const refusal = graceRefusal(barOf('n4 n4t3 n8t3 n2'), beatsAt(0), 'onBeat');
+
+      expect(refusal).toMatch(/on-beat grace before the group shortens its first beat/i);
+      expect(refusal).not.toMatch(/select the whole group/i);
+      expect(graceRefusal(barOf('n4 n4t3 n8t3 n2'), beatsAt(0), 'beforeBeat')).toBeNull();
+    });
+
     it('refuses an insert inside a group, and not one in front of it or after it', () => {
       expect(insertBeatRefusal(barOf(group), ref(0, 1), 8, 0)).toMatch(/break a tuplet group; insert before or after the whole group/i);
       expect(insertBeatRefusal(barOf(group), ref(0, 0), 8, 0)).toBeNull();
@@ -370,6 +379,18 @@ describe('an edit that would leave a tuplet group open', () => {
     it('refuses deleting part of a group, and not the whole group', () => {
       expect(deleteBeatsRefusal(barOf(group), beatsAt(1))).toMatch(/break a tuplet group; select the whole group/i);
       expect(deleteBeatsRefusal(barOf(group), beatsAt(0, 1, 2))).toBeNull();
+    });
+
+    it('writes a note into a closed group at the beat\'s own value where the palette\'s would break it', () => {
+      expect(refusals.entryValueOf(frozen(barOf(group)), ref(0, 1), 4, 0)).toEqual({ duration: 8, dots: 0 });
+      expect(refusals.entryValueOf(frozen(barOf('n4t3 n4t3 n4t3 n2')), ref(0, 0), 8, 1)).toEqual({ duration: 4, dots: 0 });
+      // Outside a group, and where the palette's value keeps the group, the palette's value.
+      expect(refusals.entryValueOf(frozen(barOf(group)), ref(0, 3), 2, 0)).toEqual({ duration: 2, dots: 0 });
+      expect(refusals.entryValueOf(frozen(barOf(group)), ref(0, 1), 8, 0)).toEqual({ duration: 8, dots: 0 });
+      // In a group already open, which the beat's own value cannot close, the palette's - and its refusal.
+      const open = barOf('n16t6 n16t6 n16t6 n16t6 r2 r4');
+      expect(refusals.entryValueOf(frozen(open), ref(0, 1), 4, 0)).toEqual({ duration: 4, dots: 0 });
+      expect(noteEntryRefusal(open, ref(0, 1), 4, 0)).toMatch(/break a tuplet group/i);
     });
 
     it('refuses a note of another value written into a group, and not one of the group\'s own value', () => {

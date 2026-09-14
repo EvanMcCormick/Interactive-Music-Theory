@@ -1,6 +1,8 @@
 import { TestBed } from '@angular/core/testing';
 
 import { ComposerService } from './composer.service';
+import { toolStateOf } from './composer-tool-states';
+import { writtenBeats, writtenOf } from './written-beats';
 import { ComposerState } from '../models/composer.model';
 
 /**
@@ -315,8 +317,9 @@ describe('ComposerService tuplets', () => {
     expect(stateOf(service).canUndo).toBeFalse();
   });
 
-  it('refuses a delete, an insert, a note of another value or a grace inside a tuplet group, committing nothing', () => {
-    // Three quarters made a triplet; then each press on the group's second beat alone would leave it open.
+  it('refuses a delete, an insert or a grace inside a tuplet group, committing nothing', () => {
+    // Three quarters made a triplet; then each press on the group's second beat alone would leave it open. A note
+    // typed there is written at the beat's own value instead (see 'ComposerService typing over a tuplet beat').
     service.setCursor({ barIndex: 0, beatIndex: 0 });
     service.extendSelectionTo({ barIndex: 0, beatIndex: 2 });
     service.setTuplet({ numerator: 3, denominator: 2 });
@@ -325,7 +328,6 @@ describe('ComposerService tuplets', () => {
     const presses: [string, () => void][] = [
       ['deleteBeats', () => service.deleteBeats()],
       ['insertBeat', () => service.insertBeat()],
-      ['setNoteAtCursor', () => { service.setInputDuration(8, 0); service.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false); }],
       ['toggleGrace', () => service.toggleGrace('beforeBeat')]
     ];
 
@@ -668,5 +670,107 @@ describe('ComposerService bars over the selection', () => {
     service.removeBar(0);
 
     expect(service.scoreMeter.numerator).toBe(3);
+  });
+});
+
+/** Replaces the document with one whose first bar is `written` (`writtenBeats`). */
+function withFirstBar(service: ComposerService, written: string): void {
+  const doc = ComposerService.createEmptyScore();
+  doc.tracks[0].staves[0].bars[0].voices[0].beats = writtenBeats(written);
+  service.replaceDocument(doc);
+}
+
+describe('ComposerService typing over a tuplet beat', () => {
+  // Guitar Pro keeps a beat's value when a note is typed over it. Written at the palette's value, a triplet eighth
+  // would break its group, which is refused; so a beat in a closed group is written at its own value.
+  let service: ComposerService;
+  const fret = { kind: 'fretted', string: 1, fret: 3 } as const;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('writes a fret at the triplet eighth\'s own value with the palette on a quarter', () => {
+    withFirstBar(service, 'n8t3 r8t3 n8t3 n4 n2');
+    service.setCursor({ beatIndex: 1 });
+
+    service.setNoteAtCursor(fret, false);
+
+    expect(stateOf(service).refusal).toBeNull();
+    expect(writtenOf(beatsIn(service))).toBe('n8t3 n8t3 n8t3 n4 n2');
+    expect(beatsIn(service)[1].notes[0].pitch).toEqual(fret);
+    // The palette keeps its choice for the next note; the value buttons show the caret's beat, as written.
+    expect(stateOf(service).inputDuration).toBe(4);
+    expect(toolStateOf(service.doc, null, stateOf(service).cursor, 'eighth').pressed).toBeTrue();
+    expect(toolStateOf(service.doc, null, stateOf(service).cursor, 'quarter').pressed).toBeFalse();
+  });
+
+  it('writes a rest with R at the triplet eighth\'s own value', () => {
+    withFirstBar(service, 'n8t3 n8t3 n8t3 n4 n2');
+    service.setCursor({ beatIndex: 1 });
+
+    service.setRestAtCursor(false);
+
+    expect(stateOf(service).refusal).toBeNull();
+    expect(writtenOf(beatsIn(service))).toBe('n8t3 r8t3 n8t3 n4 n2');
+  });
+
+  it('writes a triplet quarter at its own value with the palette on an eighth, and advances past it', () => {
+    withFirstBar(service, 'r4t3 r4t3 r4t3 n2');
+    service.setInputDuration(8, 0);
+    service.setCursor({ beatIndex: 0 });
+
+    service.setNoteAtCursor(fret, true);
+
+    expect(stateOf(service).refusal).toBeNull();
+    expect(writtenOf(beatsIn(service))).toBe('n4t3 r4t3 r4t3 n2');
+    expect(stateOf(service).cursor.beatIndex).toBe(1);
+  });
+
+  it('still refuses a note in a group already open, where the beat\'s own value would not help', () => {
+    withFirstBar(service, 'n16t6 n16t6 n16t6 n16t6 r2 r4');
+    service.setCursor({ beatIndex: 1 });
+    const before = JSON.stringify(service.doc);
+
+    service.setNoteAtCursor(fret, false);
+
+    expect(stateOf(service).refusal).toMatch(/break a tuplet group/i);
+    expect(JSON.stringify(service.doc)).toBe(before);
+  });
+});
+
+describe('ComposerService Fix bar and a tuplet group', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('refuses a Fix bar whose bar line falls inside a tuplet group, saying why, and commits nothing', () => {
+    // A dotted quarter before a 6:4 group is accepted, leaving the bar a quarter over, as Guitar Pro flags it. Cut at
+    // the line, the group's first three sixteenths would stay and its last three would go to bar 2, both open.
+    withFirstBar(service, 'n2 n8 n16t6 n16t6 n16t6 n16t6 n16t6 n16t6 r8');
+    service.setCursor({ beatIndex: 1 });
+    service.applyDurationAtCursor(4, 1);
+    expect(stateOf(service).refusal).toBeNull();
+    expect(writtenOf(beatsIn(service))).toBe('n2 n4. n16t6 n16t6 n16t6 n16t6 n16t6 n16t6 r8');
+    const before = JSON.stringify(service.doc);
+
+    service.fixBar();
+
+    expect(stateOf(service).refusal).toMatch(/bar line falls inside a tuplet group/i);
+    expect(JSON.stringify(service.doc)).toBe(before);
+  });
+
+  it('carries a whole group that lies past the line', () => {
+    withFirstBar(service, 'n2 n4. n8 n8t3 n8t3 n8t3');
+
+    service.fixBar();
+
+    expect(stateOf(service).refusal).toBeNull();
+    expect(writtenOf(beatsIn(service, 0))).toBe('n2 n4. n8');
+    expect(writtenOf(beatsIn(service, 1))).toBe('n8t3 n8t3 n8t3 r4 r4 r4');
   });
 });

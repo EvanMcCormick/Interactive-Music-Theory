@@ -4,7 +4,7 @@ import { clearToRests, deleteBeats, insertBeatAt, setBeatDots, setBeatDurations 
 import { CursorMove } from './composer-cursor';
 import { BeatRef, beatAt, selectionTargets } from './composer-selection';
 import { ComposerCommandHost, EditOutcome } from './composer-service-structure';
-import { deleteBeatsRefusal, dotsRefusal, editRefusal, insertBeatRefusal, noteEntryRefusal } from './edit-refusals';
+import { deleteBeatsRefusal, dotsRefusal, editRefusal, entryValueOf, insertBeatRefusal, noteEntryRefusal } from './edit-refusals';
 import { FermataDrops } from './fermata-settling';
 
 /**
@@ -44,13 +44,18 @@ export class ComposerEntryCommands {
 
   constructor(private readonly host: ComposerEntryHost) {}
 
-  /** Writes a note at the caret, replacing any note already on that string, and by default advances. */
+  /**
+   * Writes a note at the caret, replacing any note already on that string, and by default advances. At the input
+   * duration - or at the beat's own value, over a beat in a closed tuplet group that the input duration would break
+   * (`entryValueOf`).
+   */
   setNoteAtCursor(pitch: NotePitch, advance: boolean): void {
     const state = this.host.state();
     const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor, true)) return;
+    const value = entryValueOf(state.doc, cursor, state.inputDuration, state.inputDots);
+    if (this.refusesEntryAt(state.doc, cursor, value)) return;
 
-    this.host.commit(draft => writeNote(draft, cursor, pitch, state.inputDuration, state.inputDots));
+    this.host.commit(draft => writeNote(draft, cursor, pitch, value.duration, value.dots));
     this.lastEntry = { at: cursor, doc: this.host.state().doc };
 
     if (advance) this.host.moveCursor({ kind: 'beat', delta: 1 });
@@ -66,28 +71,30 @@ export class ComposerEntryCommands {
    */
   retypeNote(target: EditCursor, pitch: NotePitch): void {
     const state = this.host.state();
-    if (this.refusesEntryAt(state.doc, target, true)) return;
+    const value = entryValueOf(state.doc, target, state.inputDuration, state.inputDots);
+    if (this.refusesEntryAt(state.doc, target, value)) return;
 
     // Only a fret is built from digits. A pitched note written twice is two notes of a chord, and a note
     // on another string is another note, so neither replaces the last commit.
     const last = this.lastEntry;
     const amend = last !== null && last.doc === state.doc && pitch.kind === 'fretted' && sameString(last.at, target);
-    this.host.commit(draft => writeNote(draft, target, pitch, state.inputDuration, state.inputDots), amend);
+    this.host.commit(draft => writeNote(draft, target, pitch, value.duration, value.dots), amend);
     this.lastEntry = { at: target, doc: this.host.state().doc };
   }
 
-  /** Turns the beat at the caret into a rest, and by default advances. */
+  /** Turns the beat at the caret into a rest, at the value a note would be written at (`entryValueOf`), and by default advances. */
   setRestAtCursor(advance: boolean): void {
     const state = this.host.state();
     const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor, true)) return;
+    const value = entryValueOf(state.doc, cursor, state.inputDuration, state.inputDots);
+    if (this.refusesEntryAt(state.doc, cursor, value)) return;
 
     this.host.commit(draft => {
       const beat = beatAt(draft, cursor);
       if (!beat) return;
       beat.notes = [];
       beat.isRest = true;
-      return setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
+      return setBeatDurations(draft, [cursor], value.duration, value.dots);
     });
 
     if (advance) this.host.moveCursor({ kind: 'beat', delta: 1 });
@@ -214,13 +221,12 @@ export class ComposerEntryCommands {
    * a second voice, which a click can reach in a loaded bar and bar filling cannot measure. Publishes
    * the reason and commits nothing, so a refusal costs no undo step and the caret does not advance. A
    * beat scope, not a note one: a delete on a rest clears nothing, and a note scope would refuse it as
-   * a note tool on a rest. A press that `writesValue` - a note or a rest at the input duration - is also
-   * refused where that value would break a tuplet group (`noteEntryRefusal`).
+   * a note tool on a rest. A press that `writes` a value - a note or a rest - is also refused where that value
+   * would break a tuplet group (`noteEntryRefusal`).
    */
-  private refusesEntryAt(doc: ScoreDoc, at: BeatRef, writesValue = false): boolean {
-    const state = this.host.state();
-    const refusal = writesValue
-      ? noteEntryRefusal(doc, at, state.inputDuration, state.inputDots)
+  private refusesEntryAt(doc: ScoreDoc, at: BeatRef, writes?: { duration: DurationValue; dots: number }): boolean {
+    const refusal = writes
+      ? noteEntryRefusal(doc, at, writes.duration, writes.dots)
       : editRefusal(doc, [at], { family: 'beat', key: 'duration' }, null);
     if (refusal) this.host.refuse(refusal);
     return refusal !== null;

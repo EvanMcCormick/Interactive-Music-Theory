@@ -1,4 +1,5 @@
 import {
+  BarDoc,
   ClefKind,
   ComposerState,
   EditCursor,
@@ -23,6 +24,7 @@ import {
   toggleMasterBarFlag
 } from './bar-edits';
 import { barFillAt, fixBarOverflow } from './bar-fill';
+import { newOpenTupletGroup, openTupletGroupsOf } from './beat-edits';
 import { selectedBars } from './composer-selection';
 import { editRefusal } from './edit-refusals';
 import { FermataDrops, fermataSnapshotOf, settleFermatas } from './fermata-settling';
@@ -70,6 +72,10 @@ export interface ComposerCommandHost {
   /** Stamps every generated track in `draft` as diverged from its progression. */
   markDiverged(draft: ScoreDoc): void;
 }
+
+const SPLITS_A_GROUP =
+  'The bar line falls inside a tuplet group, so carrying the overflow would split it and leave both parts unfinished. ' +
+  'Shorten the beats before the group until the whole group fits, or lies past the line.';
 
 /** Bar, track and Fix bar commands on the selection, run through a `ComposerCommandHost`. */
 export class ComposerStructureCommands {
@@ -146,6 +152,11 @@ export class ComposerStructureCommands {
    * `barFillAt`, against its own meter and free time, rather than measuring the whole score
    * once per bar. The selection follows its beats where they survive; the beat split at a line
    * is replaced by its pieces, so an end on it stays where it was.
+   *
+   * Refused, too, when the line falls inside a tuplet group, so that any bar it carries into or out of would hold
+   * a group alphaTab never closes that no bar held before (`newOpenTupletGroup`): `fixBarOverflow` refuses only a
+   * tuplet beat that crosses the line itself. The edit that overfilled the bar stands, as Guitar Pro lets a bar be
+   * over and flags it: the user shortens the beats before the group.
    */
   fixBar(): void {
     const state = this.host.state();
@@ -159,8 +170,9 @@ export class ComposerStructureCommands {
       let appended = 0;
       // A carry moves beats into later bars, so every fermata from the first selected bar on goes with its note or
       // back to its bar position afterwards (`settleFermatas`), in the bars the carry appends too.
-      const barCount = draft.tracks[trackIndex]?.staves[staffIndex]?.bars.length ?? 0;
-      const fermatas = fermataSnapshotOf(draft, Array.from({ length: Math.max(0, barCount - bars.first) }, (_, offset) => bars.first + offset));
+      const staffBars = (): BarDoc[] => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.slice(bars.first) ?? [];
+      const fermatas = fermataSnapshotOf(draft, staffBars().map((_, offset) => bars.first + offset));
+      const openBefore = staffBars().flatMap(bar => openTupletGroupsOf(bar.voices[0]?.beats ?? []));
 
       for (let index = bars.first; index <= bars.last; index++) {
         if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
@@ -171,6 +183,7 @@ export class ComposerStructureCommands {
       }
 
       if (!fixed) return 'No selected bar is over its time signature.';
+      if (staffBars().some(bar => newOpenTupletGroup(openBefore, bar.voices[0]?.beats ?? []))) return SPLITS_A_GROUP;
       if (appended > 0) this.host.markDiverged(draft);
       return settleFermatas(draft, fermatas);
     });
