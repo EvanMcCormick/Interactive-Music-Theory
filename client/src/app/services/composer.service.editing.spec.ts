@@ -142,3 +142,33 @@ describe('ComposerService duration refusals', () => {
     expect(stateOf(service).inputDuration).toBe(8);
   });
 });
+
+describe('ComposerService entry mode', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('starts in Select, so a notation click writes nothing until Pen is chosen', () => {
+    expect(stateOf(service).entryMode).toBe('select');
+  });
+
+  it('switches to Pen and back, committing nothing', () => {
+    service.setEntryMode('pen');
+    expect(stateOf(service).entryMode).toBe('pen');
+    expect(stateOf(service).canUndo).toBeFalse();
+
+    service.setEntryMode('select');
+    expect(stateOf(service).entryMode).toBe('select');
+  });
+
+  it('goes back to Select for a new score', () => {
+    service.setEntryMode('pen');
+
+    service.reset();
+
+    expect(stateOf(service).entryMode).toBe('select');
+  });
+});

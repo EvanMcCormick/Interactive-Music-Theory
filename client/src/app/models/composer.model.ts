@@ -410,6 +410,13 @@ export interface TexDiagnostic {
   column: number;
 }
 
+/**
+ * What a click on standard notation does: `select` moves the caret and never writes, `pen` writes
+ * the clicked pitch. Digits on tablature write in both. The design's decision 5: a click meant to
+ * select must not write a note.
+ */
+export type EntryMode = 'select' | 'pen';
+
 export interface ComposerState {
   doc: ScoreDoc;
   cursor: EditCursor;
@@ -418,8 +425,13 @@ export interface ComposerState {
    * selection is the caret alone. See `selectionTargets` for what a range covers.
    */
   anchor: EditCursor | null;
-  /** Why the last command did nothing, for the status line. The next edit clears it. */
+  /**
+   * Why the last command did nothing, for the status line. The next edit clears it, and so does a
+   * selection change, undo and redo.
+   */
   refusal: string | null;
+  /** Select or Pen. See `EntryMode`. */
+  entryMode: EntryMode;
   /** Duration applied to the next entered note. */
   inputDuration: DurationValue;
   inputDots: number;

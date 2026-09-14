@@ -10,6 +10,7 @@ import {
   DurationValue,
   DynamicValue,
   EditCursor,
+  EntryMode,
   KeySignature,
   MasterBarDoc,
   NoteDoc,
@@ -94,6 +95,7 @@ export class ComposerService {
       cursor: createDefaultCursor(),
       anchor: null,
       refusal: null,
+      entryMode: 'select',
       inputDuration: 4,
       inputDots: 0,
       isDirty: false,
@@ -352,6 +354,11 @@ export class ComposerService {
 
   moveCursorByString(delta: number): void {
     this.moveCursor({ kind: 'string', delta });
+  }
+
+  /** Chooses what a notation click does. Not an edit, so no undo step. See `EntryMode`. */
+  setEntryMode(entryMode: EntryMode): void {
+    this.stateSubject.next({ ...this.stateSubject.getValue(), entryMode });
   }
 
   /**
@@ -881,6 +888,7 @@ export class ComposerService {
       cursor: createDefaultCursor(),
       anchor: null,
       refusal: null,
+      entryMode: 'select',
       inputDuration: 4,
       inputDots: 0,
       isDirty: false,
