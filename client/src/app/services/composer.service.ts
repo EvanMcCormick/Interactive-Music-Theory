@@ -13,7 +13,6 @@ import {
   EntryMode,
   KeySignature,
   MasterBarDoc,
-  NoteDoc,
   NoteEffectsDoc,
   NotePitch,
   OttaviaKind,
@@ -27,7 +26,6 @@ import {
   effectiveTimeSignature,
   createDefaultCursor,
   createDefaultMasterBar,
-  createDefaultNoteEffects,
   createDefaultPlaybackInfo,
   STANDARD_GUITAR_TUNING
 } from '../models/composer.model';
@@ -42,6 +40,7 @@ import {
 } from './beat-edits';
 import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
+import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
 import { ComposerStructureCommands } from './composer-service-structure';
 import { EditScope, durationRefusal, editRefusal } from './edit-refusals';
 import { setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
@@ -82,12 +81,17 @@ export class ComposerService {
   private undoStack: ScoreDoc[] = [];
   private redoStack: ScoreDoc[] = [];
 
-  private readonly structure = new ComposerStructureCommands({
+  /** What the command modules reach back through. */
+  private readonly host: ComposerEntryHost = {
     state: () => this.stateSubject.getValue(),
+    commit: (edit, amend) => this.commit(edit, amend),
     commitFollowing: edit => this.commitFollowing(edit),
     refuse: reason => this.refuse(reason),
-    markDiverged: draft => this.markDiverged(draft)
-  });
+    markDiverged: draft => this.markDiverged(draft),
+    moveCursor: move => this.moveCursor(move)
+  };
+  private readonly structure = new ComposerStructureCommands(this.host);
+  private readonly entry = new ComposerEntryCommands(this.host);
 
   constructor() {
     this.stateSubject = new BehaviorSubject<ComposerState>({
@@ -191,11 +195,16 @@ export class ComposerService {
   // History
   // -------------------------------------------------------------------------
 
-  /** Applies a mutation to a cloned document and commits the result. */
-  private commit(mutate: (draft: ScoreDoc) => void): void {
+  /**
+   * Runs `edit` on a cloned document and commits the result - or, when `edit` returns a reason,
+   * publishes that and commits nothing. With `amend` the result replaces the last commit instead of
+   * adding an undo step: the second digit of a two-digit fret (`retypeNote`).
+   */
+  private commit(edit: (draft: ScoreDoc) => string | null | void, amend = false): void {
     const draft = structuredClone(this.stateSubject.getValue().doc);
-    mutate(draft);
-    this.commitDocument(draft);
+    const reason = edit(draft);
+    if (typeof reason === 'string') return this.refuse(reason);
+    this.commitDocument(draft, undefined, amend);
   }
 
   /**
@@ -229,13 +238,13 @@ export class ComposerService {
    * Publishes a prepared document and pushes the old one onto undo, with `selection` in place
    * of the current one when given. Either way the selection is clamped into the new document.
    */
-  private commitDocument(next: ScoreDoc, selection?: { cursor: EditCursor; anchor: EditCursor | null }): void {
+  private commitDocument(next: ScoreDoc, selection?: { cursor: EditCursor; anchor: EditCursor | null }, amend = false): void {
     const state = this.stateSubject.getValue();
     const cursor = selection ? selection.cursor : state.cursor;
     const anchor = selection ? selection.anchor : state.anchor;
-    this.undoStack.push(structuredClone(state.doc));
-    if (this.undoStack.length > ComposerService.MAX_HISTORY) {
-      this.undoStack.shift();
+    if (!amend) {
+      this.undoStack.push(structuredClone(state.doc));
+      if (this.undoStack.length > ComposerService.MAX_HISTORY) this.undoStack.shift();
     }
     this.redoStack = [];
 
@@ -373,106 +382,24 @@ export class ComposerService {
   // Note entry
   // -------------------------------------------------------------------------
 
-  /**
-   * Whether note entry, rest entry or a delete at the caret is refused - on a generated track,
-   * or in a second voice, which a click can reach in a loaded bar and bar filling cannot measure.
-   * Publishes the reason and commits nothing, so a refusal costs no undo step and the caret does
-   * not advance. A beat scope, not a note one: a delete on a rest clears nothing, and a note
-   * scope would refuse it as a note tool on a rest.
-   */
-  private refusesEntryAt(doc: ScoreDoc, cursor: EditCursor): boolean {
-    const refusal = editRefusal(doc, [cursor], { family: 'beat', key: 'duration' }, null);
-    if (refusal) this.refuse(refusal);
-    return refusal !== null;
-  }
-
-  /** Writes a note at the caret, replacing any note already on that string. */
+  /** Writes a note at the caret, replacing any note already on that string, and by default advances. */
   setNoteAtCursor(pitch: NotePitch, advance = true): void {
-    const state = this.stateSubject.getValue();
-    const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor)) return;
-
-    this.commit(draft => {
-      const beat = this.beatAt(draft, cursor);
-      if (!beat) return;
-
-      // Length first, so the bar settles before the note lands. Settling only removes or
-      // inserts beats after this one, so `beat` is still the caret's beat.
-      setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
-      beat.isRest = false;
-
-      const note: NoteDoc = {
-        pitch,
-        isTied: false,
-        accidental: 'auto',
-        effects: createDefaultNoteEffects()
-      };
-
-      // On a fretted staff one string holds at most one note, so replace.
-      if (pitch.kind === 'fretted') {
-        const existing = beat.notes.findIndex(
-          n => n.pitch.kind === 'fretted' && n.pitch.string === pitch.string
-        );
-        if (existing >= 0) {
-          beat.notes[existing] = note;
-          return;
-        }
-      } else {
-        const existing = beat.notes.findIndex(
-          n =>
-            n.pitch.kind === 'pitched' &&
-            n.pitch.noteValue === pitch.noteValue &&
-            n.pitch.octave === pitch.octave
-        );
-        if (existing >= 0) {
-          beat.notes.splice(existing, 1);
-          beat.isRest = beat.notes.length === 0;
-          return;
-        }
-      }
-
-      beat.notes.push(note);
-    });
-
-    if (advance) this.moveCursorByBeat(1);
+    this.entry.setNoteAtCursor(pitch, advance);
   }
 
-  /** Turns the beat at the caret into a rest. */
+  /** Rewrites the note just written at `target`, as one undo step with it. See `retypeNote` in composer-entry-commands.ts. */
+  retypeNote(target: EditCursor, pitch: NotePitch): void {
+    this.entry.retypeNote(target, pitch);
+  }
+
+  /** Turns the beat at the caret into a rest, and by default advances. */
   setRestAtCursor(advance = true): void {
-    const state = this.stateSubject.getValue();
-    const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor)) return;
-
-    this.commit(draft => {
-      const beat = this.beatAt(draft, cursor);
-      if (!beat) return;
-      beat.notes = [];
-      beat.isRest = true;
-      setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
-    });
-
-    if (advance) this.moveCursorByBeat(1);
+    this.entry.setRestAtCursor(advance);
   }
 
-  /**
-   * Clears the beat at the caret back to a rest.
-   *
-   * The slot is kept rather than removed: bars are pre-filled with a full
-   * measure of rests, so deleting a note should empty its position, not
-   * shorten the bar.
-   */
+  /** Clears the beat at the caret back to a rest, keeping its slot. */
   deleteAtCursor(): void {
-    const state = this.stateSubject.getValue();
-    const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor)) return;
-
-    this.commit(draft => {
-      const voice = this.voiceAt(draft, cursor);
-      const beat = voice?.beats[cursor.beatIndex];
-      if (!beat) return;
-      beat.notes = [];
-      beat.isRest = true;
-    });
+    this.entry.deleteAtCursor();
   }
 
   setInputDuration(duration: DurationValue, dots = 0): void {
@@ -748,7 +675,7 @@ export class ComposerService {
    */
   sendProgression(generated: GeneratedTrack): void {
     this.requireScoreMeter(generated);
-    this.commit(draft => Object.assign(draft, mergeGeneratedTrack(draft, generated)));
+    this.commit(draft => void Object.assign(draft, mergeGeneratedTrack(draft, generated)));
   }
 
   /**
@@ -761,7 +688,7 @@ export class ComposerService {
    */
   flattenTrack(index: number): void {
     if (!this.isGenerated(this.doc, index)) return;
-    this.commit(draft => Object.assign(draft, flattenGeneratedTrack(draft, index)));
+    this.commit(draft => void Object.assign(draft, flattenGeneratedTrack(draft, index)));
   }
 
   /**

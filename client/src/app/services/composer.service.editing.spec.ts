@@ -172,3 +172,50 @@ describe('ComposerService entry mode', () => {
     expect(stateOf(service).entryMode).toBe('select');
   });
 });
+
+describe('ComposerService retypeNote', () => {
+  let service: ComposerService;
+  const fret = (value: number) => ({ kind: 'fretted' as const, string: 1, fret: value });
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+    service.setCursor({ barIndex: 0, beatIndex: 0, stringIndex: 0 });
+  });
+
+  it('makes "1" then "2" fret 12 and one undo step, the caret staying where the first digit left it', () => {
+    const target = stateOf(service).cursor;
+    service.setNoteAtCursor(fret(1), true);
+
+    service.retypeNote(target, fret(12));
+
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual(fret(12));
+    expect(stateOf(service).cursor.beatIndex).toBe(1);
+    service.undo();
+    expect(beatsIn(service)[0].isRest).toBeTrue();
+    expect(stateOf(service).canUndo).toBeFalse();
+  });
+
+  it('is an undo step of its own when anything was committed in between', () => {
+    const target = stateOf(service).cursor;
+    service.setNoteAtCursor(fret(1), true);
+    service.setDynamics('pp');
+
+    service.retypeNote(target, fret(12));
+    service.undo();
+
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual(fret(1));
+  });
+
+  it('is an undo step of its own after an undo and redo', () => {
+    const target = stateOf(service).cursor;
+    service.setNoteAtCursor(fret(1), true);
+    service.undo();
+    service.redo();
+
+    service.retypeNote(target, fret(12));
+    service.undo();
+
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual(fret(1));
+  });
+});
