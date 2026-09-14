@@ -36,12 +36,18 @@ describe('ComposerService Pen on a staff with a tuning', () => {
     expect(stateOf(service).refusal).toBeNull();
   });
 
-  it("plays it on the caret's string when that string reaches the pitch", () => {
-    service.setCursor({ barIndex: 0, beatIndex: 0, stringIndex: 2 });
-
+  it("plays it at the lowest fret, and on the caret's string only within 4 frets of that", () => {
+    // D5 on the D string is fret 24: the hand check's caret, left on string 4.
+    service.setCursor({ barIndex: 0, beatIndex: 0, stringIndex: 3 });
     service.setNoteAtCursor(D5, false);
 
-    expect(beatAt(0, 0).notes.map(note => note.pitch)).toEqual([{ kind: 'fretted', string: 3, fret: 19 }]);
+    expect(beatAt(0, 0).notes.map(note => note.pitch)).toEqual([{ kind: 'fretted', string: 1, fret: 10 }]);
+
+    // D4: fret 3 on the B string, and 7 on the G string the caret is on.
+    service.setCursor({ barIndex: 0, beatIndex: 1, stringIndex: 2 });
+    service.setNoteAtCursor({ kind: 'pitched', noteValue: 2, octave: 4 }, false);
+
+    expect(beatAt(0, 1).notes.map(note => note.pitch)).toEqual([{ kind: 'fretted', string: 3, fret: 7 }]);
   });
 
   it('adds a second pitch to the chord on another string, and a click on a pitch already there takes it out', () => {

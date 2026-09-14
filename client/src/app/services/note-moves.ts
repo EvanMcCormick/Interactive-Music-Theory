@@ -5,6 +5,7 @@ import { NoteTarget, noteTargetsAt } from './note-edits';
 import { PlacedNote, hammerDestinationOf, slideTargetOf, tieChainOf, tieOriginOf } from './note-landing';
 import { respellingsOf } from './note-respell';
 import { reduceToOctave } from './note-spelling';
+import { fretRangeOf, maxFretOf } from './pitch-on-strings';
 import { STEP_SEMITONES } from './staff-pitch';
 
 /**
@@ -15,9 +16,6 @@ import { STEP_SEMITONES } from './staff-pitch';
  * and pitch onto its destination (`alphaTab.core.mjs` ~6619), so one end moved alone is overwritten on
  * the next save, or loses its tie on another string. Guitar Pro moves the chain too.
  */
-
-/** The highest fret a note can move to, as the fret digits allow. */
-const MAX_FRET = 24;
 
 /** The MIDI range a pitch and a trill's `value` must stay in. */
 const MIDI_TOP = 127;
@@ -49,7 +47,7 @@ const movesOut = (from: number, to: number, min: number, max: number): boolean =
 /**
  * Moves every note the press means by `delta` semitones, or returns why not and changes nothing.
  *
- * A fret moves by `delta`; a pitched note moves by `delta` across octave boundaries and loses its
+ * A fret moves by `delta`, within 0 to `maxFretOf` its staff; a pitched note moves by `delta` across octave boundaries and loses its
  * `letter`, which named the old pitch. `trill.value` is a pitch, so it moves too, and a move that would
  * take it out of MIDI's 0 to 127 is refused, since alphaTab drops a trill there. A fret or pitch already
  * past an edge, as a loaded file can have, may move back toward it; only a move further out is refused.
@@ -63,10 +61,11 @@ export function shiftSemitone(doc: ScoreDoc, refs: readonly BeatRef[], focus: nu
   const targets = movedTargetsOf(doc, refs, focus);
   const direction = delta > 0 ? 'up' : 'down';
 
-  for (const { note } of targets) {
+  for (const { ref, note } of targets) {
     if (note.pitch.kind === 'fretted') {
-      if (movesOut(note.pitch.fret, note.pitch.fret + delta, 0, MAX_FRET)) {
-        return `A fret runs from 0 to ${MAX_FRET}, so a note in the selection cannot move ${direction} a semitone.`;
+      const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex] ?? { capo: 0 };
+      if (movesOut(note.pitch.fret, note.pitch.fret + delta, 0, maxFretOf(staff))) {
+        return `${fretRangeOf(staff)}, so a note in the selection cannot move ${direction} a semitone.`;
       }
     } else {
       const midi = midiOf(note.pitch);
@@ -131,7 +130,7 @@ export function moveNotesToString(doc: ScoreDoc, refs: readonly BeatRef[], focus
     const string = note.pitch.string + delta;
     if (string < 1 || string > staff.tuning.length) return `There is no string ${direction} a note in the selection.`;
     const fret = note.pitch.fret + (staff.tuning[note.pitch.string - 1] ?? 0) - (staff.tuning[string - 1] ?? 0);
-    if (movesOut(note.pitch.fret, fret, 0, MAX_FRET)) {
+    if (movesOut(note.pitch.fret, fret, 0, maxFretOf(staff))) {
       return `A note in the selection does not fit on the string ${direction}: it would need fret ${fret}.`;
     }
     if (note.effects.harmonic === 'natural' && !NATURAL_HARMONIC_FRETS.has(fret)) {

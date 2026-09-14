@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { ComposerState, StaffDoc } from '../models/composer.model';
 import { ComposerService } from './composer.service';
 import { FretDigitEntry } from './composer-fret-entry';
+import { stateOf } from './composer.service.spec-helper';
 
 describe('FretDigitEntry', () => {
   let composer: ComposerService;
@@ -85,6 +86,19 @@ describe('FretDigitEntry', () => {
 
     // String 1 is E4, 64: fret 1 under a capo at 2 is 67, fret 12 is 78.
     expect(auditioned).toEqual([67, 78]);
+  });
+
+  it('refuses a number past the last fret in front of the capo, saying why, and sounds nothing for it', () => {
+    composer.setStaffNumber('capo', 5);
+    entry.type(2);
+    now += 300;
+    entry.type(0);
+
+    expect(fretAt(0)).toBe(2);
+    expect(fretAt(1)).toBeNull();
+    expect(stateOf(composer).refusal).toBe('With the capo at 5, a fret runs from 0 to 19.');
+    // String 1 is E4, 64: fret 2 under a capo at 5 is 71, and fret 20 was never written.
+    expect(auditioned).toEqual([71]);
   });
 
   it('writes nothing on a pitched staff', () => {

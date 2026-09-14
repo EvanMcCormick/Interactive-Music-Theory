@@ -91,6 +91,16 @@ describe('shiftSemitone', () => {
     expect(notesOf(score, 0).map(note => note.pitch.kind === 'fretted' && note.pitch.fret)).toEqual([0, 3]);
   });
 
+  it('refuses a semitone up past the last fret in front of the capo, saying so', () => {
+    const score = doc({ kind: 'fretted', string: 1, fret: 19 });
+    score.tracks[0].staves[0].capo = 5;
+
+    expect(shiftSemitone(score, [ref(0)], null, 1)).toBe(
+      'With the capo at 5, a fret runs from 0 to 19, so a note in the selection cannot move up a semitone.'
+    );
+    expect(shiftSemitone(score, [ref(0)], null, -1)).toBeNull();
+  });
+
   it('lets a loaded fret past the fretboard move back toward it, and refuses one further out', () => {
     const score = doc({ kind: 'fretted', string: 1, fret: 30 });
 
@@ -205,6 +215,20 @@ describe('moveNotesToString', () => {
     const score = doc({ kind: 'fretted', string: 2, fret: 3 });
 
     expect(moveNotesToString(score, [ref(0)], null, -1)).toMatch(/fret -2/);
+  });
+
+  it('refuses a note that would need a fret past the last one in front of the capo', () => {
+    // String 1 (E, 64) at fret 16 under a capo at 5 is 85: fret 21 on string 2 (B, 59), with 19 in front of the capo.
+    const score = doc({ kind: 'fretted', string: 1, fret: 16 });
+    score.tracks[0].staves[0].capo = 5;
+
+    expect(moveNotesToString(score, [ref(0)], null, 1)).toMatch(/fret 21/);
+    expect(notesOf(score, 0)[0].pitch).toEqual({ kind: 'fretted', string: 1, fret: 16 });
+
+    const lower = doc({ kind: 'fretted', string: 1, fret: 14 });
+    lower.tracks[0].staves[0].capo = 5;
+    expect(moveNotesToString(lower, [ref(0)], null, 1)).toBeNull();
+    expect(notesOf(lower, 0)[0].pitch).toEqual({ kind: 'fretted', string: 2, fret: 19 });
   });
 
   it('refuses a string that does not exist, and a pitched staff', () => {

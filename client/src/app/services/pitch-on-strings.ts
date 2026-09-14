@@ -1,5 +1,4 @@
 import { BeatDoc, NotePitch, ScoreDoc, StaffDoc } from '../models/composer.model';
-import { candidatesFor } from './transcription-fingering';
 
 /**
  * A pitch on a staff with a tuning: which string and fret play it.
@@ -14,8 +13,25 @@ import { candidatesFor } from './transcription-fingering';
  * how Pen's pitch was read off the staff (`diatonicToPitch`), so the note lands on the line that was clicked.
  */
 
-/** The highest fret a note can be written at, on a neck with no capo. */
+/** The frets on the neck: the highest fret a note can be written at, with no capo. */
 export const MAX_FRET = 24;
+
+/** How many frets above the lowest one Pen still prefers the caret's string within. */
+const CARET_STRING_REACH = 4;
+
+/**
+ * The highest fret a note can be written at on `staff`: 24 less the capo, since frets count from the capo and it
+ * shortens the neck in front of it. The one limit for every path that writes or moves a fret - Pen, typed digits,
+ * semitone and string moves, and fretting a document put in whole.
+ */
+export function maxFretOf(staff: Pick<StaffDoc, 'capo'>): number {
+  return Math.max(0, MAX_FRET - staff.capo);
+}
+
+/** The range `maxFretOf` allows, as a refusal says it: "A fret runs from 0 to 24", or "With the capo at 5, ..." */
+export function fretRangeOf(staff: Pick<StaffDoc, 'capo'>): string {
+  return staff.capo > 0 ? `With the capo at ${staff.capo}, a fret runs from 0 to ${maxFretOf(staff)}` : `A fret runs from 0 to ${maxFretOf(staff)}`;
+}
 
 /** The fretted half of `NotePitch`. */
 export type FrettedPitch = Extract<NotePitch, { kind: 'fretted' }>;
@@ -33,9 +49,11 @@ export function soundingMidiOf(staff: Pick<StaffDoc, 'tuning' | 'capo'>, pitch: 
 /**
  * The string and fret that play `midi`, or why none does.
  *
- * The caret's string (`caretString`, 1-based) when it reaches the pitch and holds no note on the beat (`taken`);
- * otherwise the lowest fret over the free strings, a tie going to the higher string. Frets count from the capo, and a
- * capo shortens the neck in front of it (`candidatesFor`).
+ * Chosen to be predictable, as Guitar Pro's is: the lowest fret over the strings that hold no note on the beat
+ * (`taken`), a tie going to the caret's string (`caretString`, 1-based) and then to the higher string - except that the
+ * caret's string, when it is free and reaches the pitch within 4 frets of that lowest fret, is preferred. So a caret
+ * left on a low string by a tablature click does not send a high pitch to fret 24 there. Frets run from 0 to
+ * `maxFretOf` the staff.
  */
 export function frettedPlacementOf(
   staff: Pick<StaffDoc, 'tuning' | 'capo'>,
@@ -43,8 +61,11 @@ export function frettedPlacementOf(
   taken: ReadonlySet<number>,
   caretString: number | null
 ): FrettedPitch | string {
-  // `candidatesFor` lists strings from the highest, so the first of two equal frets is the higher string.
-  const reachable = candidatesFor(midi, staff.tuning, staff.capo, MAX_FRET).map(({ string, fret }) => ({ string: string + 1, fret }));
+  // Listed from string 1, the highest, so the first of two equal frets is the higher string.
+  const reach = maxFretOf(staff);
+  const reachable = staff.tuning
+    .map((open, index) => ({ string: index + 1, fret: midi - open - staff.capo }))
+    .filter(candidate => candidate.fret >= 0 && candidate.fret <= reach);
   if (reachable.length === 0) {
     const lowest = Math.min(...staff.tuning) + staff.capo;
     return midi < lowest ? "That pitch is below this staff's lowest string." : "That pitch is above the highest fret this staff's strings reach.";
@@ -52,7 +73,9 @@ export function frettedPlacementOf(
   const free = reachable.filter(candidate => !taken.has(candidate.string));
   if (free.length === 0) return 'Every string that can play that pitch already has a note on this beat.';
 
-  const chosen = free.find(candidate => candidate.string === caretString) ?? free.reduce((best, next) => (next.fret < best.fret ? next : best));
+  const lowest = Math.min(...free.map(candidate => candidate.fret));
+  const onCaretString = free.find(candidate => candidate.string === caretString && candidate.fret - lowest <= CARET_STRING_REACH);
+  const chosen = onCaretString ?? free.find(candidate => candidate.fret === lowest) ?? free[0];
   return { kind: 'fretted', string: chosen.string, fret: chosen.fret };
 }
 
@@ -60,13 +83,14 @@ export function frettedPlacementOf(
  * What writing `pitch` on `beat` of `staff` does, or why it cannot.
  *
  * On a staff with a tuning a pitched note - Pen's click - is fretted (`frettedPlacementOf`), or, when the beat already
- * sounds that pitch, takes that note out, as the same click does on a staff with no tuning. A fret on a staff with no
- * strings is refused. Anything else is written as it is.
+ * sounds that pitch, takes that note out, as the same click does on a staff with no tuning. A fret past `maxFretOf` the
+ * staff - a typed number, with a capo on - is refused, and so is a fret on a staff with no strings. Anything else is
+ * written as it is.
  */
 export function staffEntryOf(staff: StaffDoc, beat: BeatDoc | null, pitch: NotePitch, caretString: number | null): StaffEntry | string {
   const stringed = staff.tuning.length > 0;
   if (!stringed) return pitch.kind === 'fretted' ? 'A staff with no strings has no fret to write.' : { kind: 'write', pitch };
-  if (pitch.kind === 'fretted') return { kind: 'write', pitch };
+  if (pitch.kind === 'fretted') return pitch.fret > maxFretOf(staff) ? `${fretRangeOf(staff)}.` : { kind: 'write', pitch };
 
   const notes = beat?.notes ?? [];
   const midi = soundingMidiOf(staff, pitch);

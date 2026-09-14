@@ -441,9 +441,10 @@ departs from the design" and, once built, under "Corrections during implementati
     beside bars that do comes back holding alphaTab's placeholder, one rest, which saves again unchanged. That is kept as
     it is, and recorded in `docs/TODO.md`.
 33. **Every note on a staff with a tuning is fretted.** Pen's click on a guitar's notation writes a string and a fret
-    that sound the pitch clicked, as Guitar Pro does: the caret's string when it reaches the pitch and holds no note on
-    the beat; otherwise the lowest free fret, a tie going to the higher string; frets counted from the capo, which
-    leaves 24 less the capo in front of it. A click on a pitch the beat already sounds takes that note out, as on a piano
+    that sound the pitch clicked, as Guitar Pro does, by a rule chosen to be predictable: the lowest fret over the
+    strings free on the beat, a tie going to the caret's string and then the higher string, except that the caret's
+    string is preferred when it reaches the pitch within 4 frets of that lowest fret; frets counted from the capo, which
+    leaves 24 less the capo in front of it (`maxFretOf`, the one limit typed digits, semitone and string moves share). A click on a pitch the beat already sounds takes that note out, as on a piano
     staff, and a pitch no free string reaches is refused with a reason. alphaTab cannot draw a pitched note on
     tablature: its `string` stays -1 and `TabBarRenderer.collectSpaces` throws, blanking the score. So a document put in
     whole - a load, an applied alphaTex draft - has its pitched notes on such a staff fretted, and the ones no string
