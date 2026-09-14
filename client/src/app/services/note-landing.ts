@@ -36,6 +36,10 @@ function beatsAfter(doc: ScoreDoc, ref: BeatRef): BeatDoc[] {
  * The beats before `ref`'s in its voice, nearest first, as `Beat.previousBeat` walks them, back to the
  * bar three before `ref`'s. Earlier bars are chained by the time a note finishes, so this bound is the
  * one alphaTab applies. The chain breaks at a bar whose voice has no beats, so the walk stops there.
+ *
+ * Walked by index, back to front. A reader must never change the document it reads: `reverse()` on an
+ * earlier bar's own `beats` array reversed that bar in the published document, with no undo step, every
+ * time a tie or vibrato tool asked.
  */
 function beatsBefore(doc: ScoreDoc, ref: BeatRef): BeatDoc[] {
   const bars = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars ?? [];
@@ -44,7 +48,8 @@ function beatsBefore(doc: ScoreDoc, ref: BeatRef): BeatDoc[] {
   for (let barIndex = ref.barIndex; barIndex >= first; barIndex--) {
     const inBar = bars[barIndex]?.voices[ref.voiceIndex]?.beats ?? [];
     if (barIndex < ref.barIndex && inBar.length === 0) break;
-    beats.push(...(barIndex === ref.barIndex ? inBar.slice(0, ref.beatIndex) : inBar).reverse());
+    const end = barIndex === ref.barIndex ? Math.min(ref.beatIndex, inBar.length) : inBar.length;
+    for (let beatIndex = end - 1; beatIndex >= 0; beatIndex--) beats.push(inBar[beatIndex]);
   }
   return beats;
 }

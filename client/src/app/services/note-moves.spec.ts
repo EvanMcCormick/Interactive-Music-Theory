@@ -118,6 +118,25 @@ describe('shiftSemitone', () => {
 
     expect([notesOf(score, 0)[0], tied, again].map(note => note.pitch.kind === 'fretted' && note.pitch.fret)).toEqual([6, 6, 6]);
   });
+
+  it('moves a tie chain back into an uneven bar without reordering that bar', () => {
+    // Bar 0 is a half on string 2, a quarter rest and a quarter on string 3; bar 1 opens with the
+    // quarter's tied continuation. Finding the origin walks bar 0 backwards, and must not reverse it.
+    const score = ComposerService.createEmptyScore();
+    const bar0 = score.tracks[0].staves[0].bars[0].voices[0].beats;
+    bar0.splice(0, bar0.length, { ...bar0[0], duration: 2 }, { ...bar0[1] }, { ...bar0[2] });
+    put(score, 0, { kind: 'fretted', string: 2, fret: 7 });
+    const origin = put(score, 2, { kind: 'fretted', string: 3, fret: 5 });
+    const next = score.tracks[0].staves[0].bars[1].voices[0].beats[0];
+    next.isRest = false;
+    next.notes = [{ pitch: { kind: 'fretted', string: 3, fret: 5 }, isTied: true, accidental: 'auto', effects: createDefaultNoteEffects() }];
+
+    expect(shiftSemitone(score, [{ ...ref(0), barIndex: 1 }], null, 1)).toBeNull();
+
+    expect(bar0.map(beat => `${beat.isRest ? 'r' : 'n'}${beat.duration}`)).toEqual(['n2', 'r4', 'n4']);
+    expect([origin, next.notes[0]].map(note => note.pitch.kind === 'fretted' && note.pitch.fret)).toEqual([6, 6]);
+    expect(bar0[0].notes[0].pitch).toEqual({ kind: 'fretted', string: 2, fret: 7 });
+  });
 });
 
 describe('moveNotesToString with ties and landings', () => {

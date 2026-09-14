@@ -3,7 +3,9 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { hammerDestinationOf, slideTargetOf, tieOriginOf } from './note-landing';
+import { toolStates } from './composer-tool-states';
+import { noteEffectRefusal, tieRefusal } from './edit-refusals';
+import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieChainOf, tieOriginOf } from './note-landing';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { insertBarInto } from './score-structure';
 import { NoteDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
@@ -135,6 +137,47 @@ describe('note landing', () => {
 
     expect(tieOriginOf(doc, ref(0, 1), untied)).toBeNull();
     expect(tieOriginOf(doc, ref(0, 2), lonely)).toBeNull();
+  });
+
+  describe('reading, which changes nothing', () => {
+    /**
+     * Bar 0 is uneven - a half, a quarter, a quarter rest - so reading it back to front in place would
+     * show; bar 1's first beat holds a tied note on string 2, which nothing in bar 0 is on, so every
+     * lookup walks the whole of bar 0.
+     */
+    function uneven(): { doc: ScoreDoc; tied: NoteDoc } {
+      const doc = ComposerService.createEmptyScore();
+      const bar0 = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+      bar0.splice(0, bar0.length, { ...bar0[0], duration: 2 }, { ...bar0[1] }, { ...bar0[2] });
+      put(doc, 0, 0, 1, 1);
+      put(doc, 0, 1, 1, 2);
+      const tied = put(doc, 1, 0, 2, 7);
+      tied.isTied = true;
+      return { doc, tied };
+    }
+
+    const readers: { name: string; read: (doc: ScoreDoc, tied: NoteDoc) => unknown }[] = [
+      { name: 'tieCandidateOf', read: (doc, tied) => tieCandidateOf(doc, ref(1, 0), tied) },
+      { name: 'tieOriginOf', read: (doc, tied) => tieOriginOf(doc, ref(1, 0), tied) },
+      { name: 'tieChainOf', read: (doc, tied) => tieChainOf(doc, ref(1, 0), tied) },
+      {
+        name: 'toolStates',
+        read: doc => toolStates(doc, null, { trackIndex: 0, staffIndex: 0, barIndex: 1, voiceIndex: 0, beatIndex: 0, stringIndex: 1 }, 'select')
+      },
+      { name: 'tieRefusal', read: doc => tieRefusal(doc, [ref(1, 0)], 1) },
+      { name: 'noteEffectRefusal for vibrato', read: doc => noteEffectRefusal(doc, [ref(1, 0)], 1, 'vibrato', 'slight', 'none') }
+    ];
+
+    for (const reader of readers) {
+      it(`leaves an uneven earlier bar in order after ${reader.name}`, () => {
+        const { doc, tied } = uneven();
+        const before = JSON.stringify(doc);
+
+        reader.read(doc, tied);
+
+        expect(JSON.stringify(doc)).toBe(before);
+      });
+    }
   });
 
   it('finds a pitched tied note\'s origin by its pitch', () => {

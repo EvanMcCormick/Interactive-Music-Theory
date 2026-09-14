@@ -90,6 +90,26 @@ describe('toggleTie', () => {
     toggleTie(doc, [ref(0), ref(1)], null);
     expect([...beats[0].notes, ...beats[1].notes].map(note => note.isTied)).toEqual([false, false, false]);
   });
+
+  it('ties across a bar line from an uneven bar without reordering that bar', () => {
+    // Bar 0 is a half on string 1, a quarter rest and a quarter on string 2. Bar 1's first note, on
+    // string 1, ties from the half: the search walks bar 0 backwards, and must not reverse it.
+    const doc = ComposerService.createEmptyScore();
+    const bar0 = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    bar0.splice(0, bar0.length, { ...bar0[0], duration: 2, isRest: false, notes: [noteOn({ kind: 'fretted', string: 1, fret: 3 })] }, { ...bar0[1] }, {
+      ...bar0[2],
+      isRest: false,
+      notes: [noteOn({ kind: 'fretted', string: 2, fret: 1 })]
+    });
+    const next = doc.tracks[0].staves[0].bars[1].voices[0].beats[0];
+    next.isRest = false;
+    next.notes = [noteOn({ kind: 'fretted', string: 1, fret: 3 })];
+
+    toggleTie(doc, [{ ...ref(0), barIndex: 1 }], null);
+
+    expect(next.notes[0].isTied).toBeTrue();
+    expect(bar0.map(beat => `${beat.isRest ? 'r' : 'n'}${beat.duration}`)).toEqual(['n2', 'r4', 'n4']);
+  });
 });
 
 describe('toggleNoteEffect clearing a range', () => {

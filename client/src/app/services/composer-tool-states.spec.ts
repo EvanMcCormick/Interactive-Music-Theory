@@ -1,6 +1,18 @@
 import { ComposerService } from './composer.service';
-import { toolStateOf, toolStates } from './composer-tool-states';
-import { EditCursor, NoteDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+import * as tools from './composer-tool-states';
+import { deepFrozen } from './deep-frozen';
+import { EditCursor, EntryMode, NoteDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+
+/**
+ * Every reading here is of a deep-frozen document, so a reader that changed one in place - the published
+ * document, in the page - throws instead of passing. `toolStateOf` reads a frozen copy, so a spec can
+ * change its own document between two questions; `toolStates` freezes the document itself, since its
+ * memo is keyed on the document's identity.
+ */
+const toolStateOf = (doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor, toolId: string): tools.ToolState =>
+  tools.toolStateOf(deepFrozen(structuredClone(doc)), anchor, cursor, toolId);
+const toolStates = (doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor, entryMode: EntryMode): ReadonlyMap<string, tools.ToolState> =>
+  tools.toolStates(deepFrozen(doc), anchor, cursor, entryMode);
 
 const at = (barIndex: number, beatIndex: number, trackIndex = 0, stringIndex: number | null = 0): EditCursor =>
   ({ trackIndex, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex, stringIndex });
@@ -141,6 +153,22 @@ describe('toolStates', () => {
     expect(toolStates(doc, null, cursor, 'select')).toBe(first);
     expect(toolStates(doc, null, { ...cursor }, 'select')).not.toBe(first);
     expect(toolStates(doc, null, cursor, 'pen')).not.toBe(first);
+  });
+
+  it('reads a caret after an uneven bar without changing that bar', () => {
+    // Bar 0 is a half, a quarter and a quarter rest; the caret's tied note on string 2 has nothing on
+    // its string there, so the tie and vibrato readers walk all of bar 0 backwards. Frozen, a reader
+    // that reversed it in place would throw.
+    const doc = ComposerService.createEmptyScore();
+    const bar0 = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    bar0.splice(0, bar0.length, { ...bar0[0], duration: 2 }, { ...bar0[1] }, { ...bar0[2] });
+    put(doc, 0, 0, 1, 1);
+    put(doc, 0, 1, 1, 2);
+    put(doc, 1, 0, 2, 7).isTied = true;
+    const before = JSON.stringify(doc);
+
+    expect(() => toolStates(doc, null, at(1, 0, 0, 1), 'select')).not.toThrow();
+    expect(JSON.stringify(doc)).toBe(before);
   });
 
   it('shows Select or Pen pressed from the entry mode', () => {

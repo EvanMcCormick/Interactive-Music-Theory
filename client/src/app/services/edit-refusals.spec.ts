@@ -1,7 +1,39 @@
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { EditScope, beatEffectRefusal, durationRefusal, editRefusal, noteEffectRefusal, tieRefusal, trillRefusal } from './edit-refusals';
-import { AccidentalMode, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+import { deepFrozen } from './deep-frozen';
+import * as refusals from './edit-refusals';
+import { EditScope } from './edit-refusals';
+import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+
+/**
+ * Every refusal here reads a deep-frozen copy of the document it is given, so one that changed a
+ * document in place - the published one, when the service asks - throws instead of passing. A copy, so
+ * a spec can still change its own document between two questions.
+ */
+const frozen = (score: ScoreDoc): ScoreDoc => deepFrozen(structuredClone(score));
+type NoteTargets = Parameters<typeof refusals.editRefusal>[4];
+const editRefusal = (score: ScoreDoc, refs: readonly BeatRef[], scope: EditScope, focus: number | null, notes?: NoteTargets): string | null =>
+  refusals.editRefusal(frozen(score), refs, scope, focus, notes);
+const durationRefusal = (score: ScoreDoc, refs: readonly BeatRef[]): string | null => refusals.durationRefusal(frozen(score), refs);
+const tieRefusal = (score: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null =>
+  refusals.tieRefusal(frozen(score), refs, focus);
+const trillRefusal = (score: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null =>
+  refusals.trillRefusal(frozen(score), refs, focus);
+const beatEffectRefusal = <K extends Exclude<keyof BeatEffectsDoc, 'grace'>>(
+  score: ScoreDoc,
+  refs: readonly BeatRef[],
+  key: K,
+  on: BeatEffectsDoc[K],
+  off: BeatEffectsDoc[K]
+): string | null => refusals.beatEffectRefusal(frozen(score), refs, key, on, off);
+const noteEffectRefusal = <K extends keyof NoteEffectsDoc>(
+  score: ScoreDoc,
+  refs: readonly BeatRef[],
+  focus: number | null,
+  key: K,
+  on: NoteEffectsDoc[K],
+  off: NoteEffectsDoc[K]
+): string | null => refusals.noteEffectRefusal(frozen(score), refs, focus, key, on, off);
 
 const ref = (trackIndex: number, beatIndex = 0): BeatRef =>
   ({ trackIndex, staffIndex: 0, barIndex: 0, voiceIndex: 0, beatIndex });
@@ -299,6 +331,22 @@ describe('noteEffectRefusal', () => {
 
     expect(noteEffectRefusal(score, [ref(0, 0), ref(0, 1), ref(0, 2)], null, 'vibrato', 'slight', 'none')).toBeNull();
     expect(noteEffectRefusal(score, [ref(0, 1)], null, 'vibrato', 'slight', 'none')).toMatch(/tied from/i);
+  });
+
+  it('reads a tie back into an uneven bar without changing it', () => {
+    // Bar 0 becomes a half on string 1, then two quarter rests; bar 1's first note is tied from the
+    // half. Finding that origin walks bar 0 backwards, and the frozen copy throws if it is reversed.
+    const score = doc();
+    const bar0 = score.tracks[0].staves[0].bars[0].voices[0].beats;
+    bar0[0].duration = 2;
+    bar0.pop();
+    const next = score.tracks[0].staves[0].bars[1].voices[0].beats[0];
+    next.isRest = false;
+    next.notes = [{ pitch: { kind: 'fretted', string: 1, fret: 0 }, isTied: true, accidental: 'auto', effects: createDefaultNoteEffects() }];
+    const inBar1: BeatRef = { ...ref(0), barIndex: 1 };
+
+    expect(tieRefusal(score, [inBar1], null)).toBeNull();
+    expect(noteEffectRefusal(score, [inBar1], null, 'vibrato', 'slight', 'none')).toMatch(/tied from/i);
   });
 
   it('still refuses a rest and a generated track', () => {
