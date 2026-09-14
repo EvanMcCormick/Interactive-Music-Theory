@@ -216,6 +216,11 @@ departs from the design".
    keeps a beat's value; the palette keeps its choice for the next note, and the value buttons show the caret's beat.
    **A grace that carries a tuplet in a loaded file keeps it.** Stripping it on load was considered and not done:
    alphaTab groups the beats after such a grace differently without it, so it is recorded rather than normalised.
+   *Settled in review of the committed M2 code:* **a beat made a grace loses its tuplet** in the same edit, and the
+   open-group rule then judges what is left. A grace carrying a tuplet starts a group alphaTab never closes on a
+   written value, and a bar's leading one is joined to the group the bar before ends in, which a one-bar reading
+   cannot see. So a whole group made graces goes through with no group left, and part of a group is refused as
+   breaking it. Only a loaded file gives a grace a tuplet.
 10. **Natural clears a forced accidental** (`auto`), because alphaTab 1.8 draws `ForceNatural` as
     `Default`, and its label says so.
 11. **Respell** cycles a pitched note's letter through every spelling `forcedLetterOf` allows for its
@@ -254,7 +259,13 @@ departs from the design".
     does not also act - and on a click outside. A save asked for while one is writing is remembered, however
     many times, and runs once after that write lands, over the same entry - when the document has moved on since the
     write began, or it was Save as copy - so a click and Ctrl+S together make one library entry, and an edit made
-    mid-save is saved rather than marked saved. Only the document a write held is marked saved.
+    mid-save is saved rather than marked saved. Only the document a write held is marked saved. *Settled in review of
+    the committed save code:* **the saves pressed mid-write are kept for the composition they were pressed for** - at
+    most one Save and one Save as copy, run one at a time in the order first pressed. A plain Save runs only when the
+    document moved on, and a copy is skipped after a copy of the same document, so a double click on Save as copy
+    makes one copy, and Save then Save as copy puts the edit in the original and then copies it. A load drops them,
+    and a write that lands after a load leaves the loaded composition current, so the next Save never writes it over
+    another entry. Destroying the panel drops them too, since the page's guards are gone.
 21. **macOS**: see "macOS" under Shortcuts. Nobody has checked the bindings on a Mac. Tooltips and the shortcut sheet
     write Ctrl as ⌘ and Alt as ⌥ on a Mac, and Ctrl and Alt elsewhere, from the browser's platform, read once.
 22. **Score interaction.** In Select a notation click moves the caret and never writes; in Pen it
@@ -307,7 +318,12 @@ departs from the design".
     button or Escape - gives the focus back, or to the score when what had it is gone. While it is open no key but its
     own and Escape reaches the score behind it, and Escape closes the sheet alone, as it closes a popover. Its note says
     keys are ignored while typing in a field except those that still run there - Ctrl+S - read from the tool table.
-    Settled in review of Task 3.4.
+    Settled in review of Task 3.4. *Settled in a second review:* **it is modal to the mouse and to Ctrl keys too.** A
+    backdrop covers the window and a click on it closes the sheet as Escape does, and the page behind is `inert`, so
+    neither a click nor the focus reaches it; the sheet gives the focus back once the page is no longer inert. Behind
+    it every Ctrl, Alt or Cmd binding but Ctrl+C and Ctrl+X is claimed and dropped, so Ctrl+K does not reach the
+    browser's search box, while keys with no modifier still scroll the sheet. Opening it closes the Library panel's
+    menus and drawer, so Escape reaches the sheet.
 
 ---
 

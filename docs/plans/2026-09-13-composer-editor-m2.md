@@ -219,7 +219,7 @@ Numbered as in the design's "M2 decisions", where each is argued.
 | 17 | Popovers with inline validation, in the top layer beside their button, reachable by keyboard | 3.2, 3.5, 3.6 |
 | 18 | New commands in new modules; the service under the cap | 1.2-1.15 |
 | 19 | Ctrl+S through a save-request channel | 3.1 |
-| 20 | Menus and drawer hidden with CSS, closed by Escape and an outside click; one save per trigger, and one follow-up for triggers mid-write | 3.1, 3.8 |
+| 20 | Menus and drawer hidden with CSS, closed by Escape, an outside click and a modal opening; one save per trigger, and the saves pressed mid-write queued for the composition they were pressed for | 3.1, 3.8, 3.10 |
 | 21 | macOS alternates | 2.4 |
 | 22 | Score interaction, click-to-seek, drags that end anywhere, engraving only a new document | 4.1-4.3 |
 | 23 | The page grid | 3.9, 3.10 |
@@ -230,7 +230,7 @@ Numbered as in the design's "M2 decisions", where each is argued.
 | 28 | Tie chains move whole | 1.12 |
 | 29 | Space and Enter press a focused button | 3.11 |
 | 30 | A save is refused while an alphaTex draft is unapplied | 3.1, 3.10 |
-| 31 | The shortcut sheet is modal: the focus goes in and back, Tab stays inside, and no key but its own and Escape reaches the score | 3.4, 3.10 |
+| 31 | The shortcut sheet is modal: the focus goes in and back, Tab stays inside, no key but its own and Escape reaches the score, a backdrop takes clicks over an inert page, and Ctrl keys behind it are dropped | 3.4, 3.10 |
 
 ### Where this plan departs from the design
 
@@ -620,7 +620,7 @@ sheet, and three small items, fixed in three commits: `6eebeda`, `ecfa4a4` and `
 - **Task 3.3, a fermata's notice through note entry.** The second digit of a fret amends the first digit's commit, and
   cleared its notice. Keeping it was not enough on its own: the first digit's advance was a publish of its own, and a caret
   move clears the notice, so a typed fret or R that removed a fermata never said so. Entry now advances the caret in the
-  commit that writes (`commitEntry`), which also no longer advances past an entry the edit itself refused. An amend whose
+  commit that writes (`commitEntry`). An amend whose
   own edit says nothing keeps the notice before it, and does not announce it again.
 - **Task 3.3, paste's count** was the clipboard's length, which counts graces and counts a beat split at a bar line once.
   `pasteBeats` returns `beatsWritten`: the beats laid down, graces aside, a split beat as its pieces. The seven
@@ -694,6 +694,75 @@ still to apply uses has changed.
   round-trips with its tuplets. The review's fuzz case lost its group because alphaTab joins a bar's leading graces to
   the triplet the bar before ends in, which the one-bar reading already recorded misses. `setGrace` keeps a beat's
   tuplet, so the grace tool does give a grace one where that leaves no group open; the entry said it never did.
+
+**A review of the committed M2 code - the grace tool, saving and the shortcut sheet** found one fault in the grace tool,
+three in saving, five in the shortcut sheet and two small items, fixed in four commits: `1068164`, `a9f33d3`, `66b5b1a`
+and `db1874b`. Whole suite after them: **3,113 SUCCESS** (3,098, 3,106 and 3,112 after the first three). Task 3.10's blocks
+were corrected for the fixes, as each entry below says. The blocks still to apply were not re-proven with them.
+
+- **Tasks 1.13 and 2.3, a grace carrying a tuplet.** `setGrace` kept a beat's tuplet, and a service fuzz accepted 26 of
+  1,995 grace presses that left one. The review's bar began `n8 n4. o g g g n4t3 n8t3`; completed as `n4 n4`, beats 4 to 6
+  made on-beat graces became `n8 n4. o g o o ot3 n8t3 ...`. The on-beat grace leading the run already held that mixed
+  group open, and the press left it holding the same two beats, so the open-group refusal saw nothing new. Such a grace
+  starts a group alphaTab never closes on a written value, and a bar's leading one joins the group the bar before ends
+  in, which the one-bar reading cannot see. A beat made a grace now loses its tuplet in the same edit (`setGrace`), and the
+  open-group refusal judges what is left. That press now says "That would break a tuplet group; select the whole group.",
+  and the whole group made graces goes through with no tuplet left. `beat-edits.grace.spec.ts` pins the bar, the
+  service's press, and a sweep of every run of beats in seven bars of groups, pressed both ways, that finds no tuplet grace.
+  `edit-refusals.spec.ts`: "says a whole group cannot be made of graces" pinned `n4t3 n4t3 n4t3 n2` made graces as
+  refused. Stripped, no group is left, so that press is accepted now, and the words are pinned where they still apply: a
+  loaded grace carrying a tuplet after the group, which would then start a group of its own.
+- **Task 3.1, a load during a save.** `load` did not ask about a write under way. Save A, Save again (queued), load C:
+  the write landed, set `currentId` back to A, and the queued save wrote C over A. `load` now moves `loadGeneration` on
+  and drops the queued saves when it replaces the document, and a write sets `currentId` only when no load came between.
+  Refusing a load while a write is under way was the alternative, and was not taken: a load already waiting on
+  `library.get` when a write starts would pass that check, and the generation covers both orders without refusing the
+  user's press. A Save pressed after the load stays queued and runs for the loaded composition.
+- **Task 3.1, Save as copy while a write is under way.** The follow-up was one `{ asNew }`, OR-ed across triggers. So a
+  double click on Save as copy made two copies, which the panel's own comment said it did not; and Save then Save as copy,
+  both mid-write, merged into a copy, and the edit never reached the original. The queue now holds at most one Save and one
+  Save as copy, in the order first pressed, run one at a time after the write before lands: a Save when the document moved
+  on since that write began, a copy unless that write was a copy of the same document. A queued save that starts no write
+  has been refused and said why, and the rest are dropped with it.
+- **Task 3.1, a queued save after the panel is destroyed.** The panel's state stops updating on destroy and the page's
+  draft guard is removed, so a queued save would have written unguarded. `ngOnDestroy` sets `destroyed` and drops the
+  queue. The drop after a failed write, already the behaviour, is specced too. `composer-library-panel.save-queue.spec.ts`
+  holds these cases, with each `library.save` held until the spec lands or fails it.
+- **Tasks 3.4 and 3.10, the sheet is modal to the mouse.** It was `position: fixed; inset: 5vh 5vw` with nothing behind
+  it, so a click in the margin ran palette or top-bar tools and took the focus out of the sheet. A backdrop now covers the
+  window and closes the sheet on a click, giving the focus back as Escape does, and Task 3.10 makes the page's parts `inert`
+  while the sheet is open. Found while wiring it: an inert element cannot take the focus, and the sheet gave the focus back
+  from `ngOnChanges`, inside the page's template pass, where a later binding could still have the page inert. It now does
+  so in `ngAfterViewChecked`, after every binding in the page is applied, and Task 3.10 puts the sheet first in its
+  template, so the sheet reads what had the focus before the page goes inert. The sheet's spec binds it before an inert
+  page. A probe in the suite's Chrome found that a script's `click()` on an inert button still runs its handler, so Task
+  3.10's spec asks `elementFromPoint` what a pointer over the palette would hit.
+- **Task 3.4, Ctrl keys behind the sheet.** Behind a modal only `inTextFields` tools were claimed, so Ctrl+K reached the
+  browser's search box. While a modal is open the key handler now leaves to the browser a press with no Ctrl, Alt or Cmd
+  and a `yieldsToTextSelection` tool, runs the sheet's key and Escape, and claims and drops every other binding.
+  `composer-key-handler.spec.ts` pinned Ctrl+V behind the sheet as left to the browser; it is claimed and dropped now,
+  beside Ctrl+K, Ctrl+Home, Alt+- and Cmd+Z, and Ctrl+C is pinned as left alone.
+- **Tasks 3.8 and 3.10, Escape under the sheet.** The Library panel's capture-phase Escape claimed the key while a menu or
+  the drawer was open, so Escape closed that instead of the sheet. The panel takes `modalOpen`: it closes its menus and
+  drawer when that turns true, and its listener stands aside while it is. Task 3.10 binds `[modalOpen]="sheetOpen"`, its
+  stub panel declares the input, and its spec checks the panel is told.
+- **Task 3.4, `fallbackFocus`** is a function, `() => HTMLElement | null`, asked as the sheet closes. Bound as an element
+  it read a view query inside `*ngIf`, and escaped NG0100 only through a synchronous `detectChanges`. Task 3.10's
+  `scoreHost` is a function property. Shift+Tab from the heading, where opening puts the focus, is specced.
+- **Undo's and Redo's tooltips** said Ctrl+Z on a Mac, in the current page and in Task 3.10. `shortcutTitleOf(id, platform)`
+  in `composer-tools.ts` writes a tool's label and every key that runs it, as the palette's tooltips do, and both pages use
+  it with `KEY_PLATFORM`. Task 3.10's spec checks the two titles.
+- **Task 1.6, the entry host's `moveCursor`** was never called once entry advanced in its commit (`commitEntry`). It is
+  gone from `ComposerEntryHost` and from the service's wiring. The blocks of Tasks 1.6 and 1.13 still name it; they are
+  superseded by the committed code and left as proven, and no block still to apply names it. `commitEntry`'s comment said
+  it no longer advanced past an entry the edit refused, which no entry ever did - `refusesEntryAt` refuses before the
+  commit - and that claim is gone from the comment and from the Task 3.3 entry above.
+- **Tasks 3.3 and 3.10, the alphaTex message said twice.** It was still keyed by its words, so "Apply or revert the alphaTex
+  draft before saving." for a second Ctrl+S kept its node and was not read out again. The status line takes `texErrorId` and
+  keys the message by it. Task 3.10's page moves the id on each time it sets `texApplyError` to a message, binds it, and
+  specs a second Ctrl+S replacing the node.
+- **`docs/TODO.md`**: undo does not restore the caret, since undo entries do not store the cursor; Guitar Pro restores the
+  selection.
 
 ---
 
