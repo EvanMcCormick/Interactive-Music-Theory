@@ -2,6 +2,7 @@ import {
   ScoreDoc,
   createDefaultBar,
   createDefaultMasterBar,
+  createRestBeat,
   effectiveTimeSignature
 } from '../models/composer.model';
 
@@ -38,6 +39,11 @@ export function insertBarInto(doc: ScoreDoc, index: number): number {
         bar.clefOttava = template.clefOttava;
         bar.keySignature = { ...template.keySignature };
       }
+      // Every voice the bars either side hold, each past the first a whole-bar rest - which fills a bar in any meter.
+      // alphaTab's `Voice._chain` reads `bar.nextBar.voices[this.index]` for every voice's last beat, unchecked, so a
+      // loaded bar's second voice beside a new bar without one throws out of `Score.finish`: no save, no render.
+      const voices = Math.max(1, staff.bars[at - 1]?.voices.length ?? 0, staff.bars[at]?.voices.length ?? 0);
+      while (bar.voices.length < voices) bar.voices.push({ beats: [createRestBeat(1)] });
       staff.bars.splice(at, 0, bar);
     }
   }

@@ -1,6 +1,6 @@
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { notesAt, setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
+import { notesAt, setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
 import { NoteDoc, NotePitch, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
 
 const ref = (beatIndex: number): BeatRef =>
@@ -76,5 +76,93 @@ describe('toggleTie', () => {
 
     toggleTie(doc, [ref(1)], null);
     expect(notesAt(doc, [ref(1)], null)[0].isTied).toBeFalse();
+  });
+
+  it('ties the notes of a range that have a note to tie from, skipping the rest, and a second press unties them', () => {
+    // Beat 0's two notes are the first on their strings; beat 1's string-1 note has beat 0's before it.
+    // alphaTab clears a tie with no origin, so the first notes are skipped rather than tied for nothing.
+    const doc = chordDoc();
+    const beats = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+
+    toggleTie(doc, [ref(0), ref(1)], null);
+    expect([...beats[0].notes, ...beats[1].notes].map(note => note.isTied)).toEqual([false, false, true]);
+
+    toggleTie(doc, [ref(0), ref(1)], null);
+    expect([...beats[0].notes, ...beats[1].notes].map(note => note.isTied)).toEqual([false, false, false]);
+  });
+
+  it('ties across a bar line from an uneven bar without reordering that bar', () => {
+    // Bar 0 is a half on string 1, a quarter rest and a quarter on string 2. Bar 1's first note, on
+    // string 1, ties from the half: the search walks bar 0 backwards, and must not reverse it.
+    const doc = ComposerService.createEmptyScore();
+    const bar0 = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    bar0.splice(0, bar0.length, { ...bar0[0], duration: 2, isRest: false, notes: [noteOn({ kind: 'fretted', string: 1, fret: 3 })] }, { ...bar0[1] }, {
+      ...bar0[2],
+      isRest: false,
+      notes: [noteOn({ kind: 'fretted', string: 2, fret: 1 })]
+    });
+    const next = doc.tracks[0].staves[0].bars[1].voices[0].beats[0];
+    next.isRest = false;
+    next.notes = [noteOn({ kind: 'fretted', string: 1, fret: 3 })];
+
+    toggleTie(doc, [{ ...ref(0), barIndex: 1 }], null);
+
+    expect(next.notes[0].isTied).toBeTrue();
+    expect(bar0.map(beat => `${beat.isRest ? 'r' : 'n'}${beat.duration}`)).toEqual(['n2', 'r4', 'n4']);
+  });
+});
+
+describe('toggleNoteEffect clearing a range', () => {
+  it('clears only the notes holding the value pressed, leaving another value alone', () => {
+    // Beat 0's string-1 note shift-slides into beat 1's, which slides out and lands nowhere. Shift slide
+    // reads beat 0's note alone, which has it, so the press clears - and must not wipe the slide out.
+    const doc = chordDoc();
+    const beats = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    beats[0].notes[0].effects.slide = 'shiftSlide';
+    beats[1].notes[0].effects.slide = 'slideOutUp';
+
+    toggleNoteEffect(doc, [ref(0), ref(1)], null, 'slide', 'shiftSlide', 'none');
+
+    expect([...beats[0].notes, ...beats[1].notes].map(note => note.effects.slide)).toEqual(['none', 'none', 'slideOutUp']);
+  });
+});
+
+describe('toggleNoteEffect with a hammer-on', () => {
+  it('puts it on the notes that can land and skips the last, then clears them all', () => {
+    // Beat 1's note is the last on string 1 in the score, so it has nothing to land on.
+    const doc = chordDoc();
+    const beats = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+
+    toggleNoteEffect(doc, [ref(0), ref(1)], null, 'isHammerPullOrigin', true, false);
+    expect(beats[0].notes.map(note => note.effects.isHammerPullOrigin)).toEqual([true, false]);
+    expect(beats[1].notes[0].effects.isHammerPullOrigin).toBeFalse();
+
+    toggleNoteEffect(doc, [ref(0), ref(1)], null, 'isHammerPullOrigin', true, false);
+    expect(beats[0].notes[0].effects.isHammerPullOrigin).toBeFalse();
+  });
+});
+
+describe('toggleTrill', () => {
+  it('aims each note of a chord a whole step above itself, capo included, and a second press clears them', () => {
+    // String 1 (E, 64) at fret 0 and string 2 (B, 59) at fret 1, under a capo at 2.
+    const doc = chordDoc();
+    doc.tracks[0].staves[0].capo = 2;
+    const notes = doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes;
+
+    toggleTrill(doc, [ref(0)], null);
+    expect(notes.map(note => note.effects.trill?.value)).toEqual([68, 64]);
+
+    toggleTrill(doc, [ref(0)], null);
+    expect(notes.map(note => note.effects.trill)).toEqual([null, null]);
+  });
+
+  it('gives every note a trill when some already have one', () => {
+    const doc = chordDoc();
+    const notes = doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes;
+    notes[0].effects.trill = { value: 70, speed: 32 };
+
+    toggleTrill(doc, [ref(0)], null);
+
+    expect(notes.map(note => note.effects.trill)).toEqual([{ value: 66, speed: 16 }, { value: 62, speed: 16 }]);
   });
 });

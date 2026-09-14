@@ -1,6 +1,8 @@
 import { TestBed } from '@angular/core/testing';
+import * as alphaTab from '@coderline/alphatab';
 
 import { scoreBarFills } from './bar-fill';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { ComposerService } from './composer.service';
 import { selectionTargets } from './composer-selection';
 import { progressionTrack } from './progression-track';
@@ -449,6 +451,25 @@ describe('ComposerService bar and track edits', () => {
     }
   });
 
+  it("gives a track added later the score's key signatures, bar by bar, and keeps its own clef", () => {
+    service.setCursor({ barIndex: 3 });
+    service.setKeySignature({ fifths: 7, mode: 'minor' });
+
+    service.addTrack('Piano', 0, false);
+
+    const piano = service.doc.tracks[1].staves[0].bars;
+    expect(piano.map(bar => bar.keySignature)).toEqual(service.doc.tracks[0].staves[0].bars.map(bar => bar.keySignature));
+    expect(piano[3].keySignature).toEqual({ fifths: 7, mode: 'minor' });
+    // Copied, not shared: a later key on the guitar alone cannot move the piano's.
+    expect(piano[3].keySignature).not.toBe(service.doc.tracks[0].staves[0].bars[3].keySignature);
+    expect(piano.map(bar => bar.clef)).toEqual(['g2', 'g2', 'g2', 'g2']);
+
+    const settings = new alphaTab.Settings();
+    const mapper = new ScoreDocMapperService();
+    const readBack = mapper.toDoc(mapper.toScore(service.doc, settings));
+    expect(readBack.tracks[1].staves[0].bars[3].keySignature).toEqual({ fifths: 7, mode: 'minor' });
+  });
+
   it('toggles a repeat start across the selected bars as one undo step', () => {
     service.setCursor({ barIndex: 0 });
     service.extendSelectionTo({ barIndex: 1 });
@@ -593,6 +614,26 @@ describe('ComposerService fix bar', () => {
     expect(carried.isRest).toBeFalse();
     expect(carried.duration).toBe(8);
   });
+
+  it('leaves a carried beat\'s fermata at its bar position, not on the beat, so a save adds none', () => {
+    // alphaTab files a fermata by bar and tick, and hands it to every later track's beat at that tick. The
+    // eighth's fermata was at 3840 in bar 1, where no track has a beat once it is carried; carried to the start
+    // of bar 2, it would reach the piano's rest there on save.
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(8)];
+    doc.tracks[0].staves[0].bars[0].voices[0].beats[4].effects.fermata = { type: 'medium', length: 1 };
+    service.replaceDocument(doc);
+    service.setCursor({ barIndex: 0, beatIndex: 4 });
+    const fermatas = (score: ScoreDoc): (string | null)[][][] =>
+      score.tracks.map(track => track.staves[0].bars.slice(0, 2).map(bar => bar.voices[0].beats.map(beat => beat.effects.fermata?.type ?? null)));
+
+    service.fixBar();
+
+    expect(fermatas(service.doc).flat(2).filter(type => type !== null)).toEqual([]);
+    const saved = TestBed.inject(ScoreDocMapperService).toDoc(TestBed.inject(ScoreDocMapperService).toScore(service.doc, new alphaTab.Settings()));
+    expect(fermatas(saved)).toEqual(fermatas(service.doc));
+  });
 });
 
 describe('ComposerService note entry in a second voice', () => {
@@ -648,5 +689,149 @@ describe('ComposerService note entry in a second voice', () => {
     service.deleteAtCursor();
 
     expect(state().refusal).toBeNull();
+  });
+});
+
+/**
+ * Which composition the document is (`ComposerState.documentId`), apart from whether it is saved. Opening a different
+ * composition starts a fresh history, as opening a file does in Guitar Pro: an undo across it would put back the
+ * composition before while the library panel names the one opened, and Save would write the one over the other.
+ */
+describe('ComposerService composition identity', () => {
+  let service: ComposerService;
+  const state = (): ComposerState => service.state;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+    service.setTempo(140);
+  });
+
+  it('starts a fresh history for a composition that is loaded, marked clean', () => {
+    const before = state().documentId;
+
+    service.replaceDocument({ ...ComposerService.createEmptyScore(), tempo: 90 }, { markClean: true, newComposition: true });
+
+    expect(state().documentId).toBe(before + 1);
+    expect(state().isDirty).toBeFalse();
+    expect(state().canUndo).toBeFalse();
+    service.undo();
+    expect(service.doc.tempo).withContext('undo put back the composition before').toBe(90);
+  });
+
+  /** An empty score whose first guitar beat holds `pitch` as a pitched note, as a document saved before Pen wrote frets. */
+  const withPitchOnStrings = (noteValue: number, octave: number): ScoreDoc => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[0].voices[0].beats[0] = {
+      ...createRestBeat(4),
+      isRest: false,
+      notes: [{ pitch: { kind: 'pitched', noteValue, octave }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }]
+    };
+    return doc;
+  };
+
+  it('leaves a load unsaved when it left out a note no string reaches, so the unsaved marker shows', () => {
+    // E1 is below the guitar's low E.
+    service.replaceDocument(withPitchOnStrings(4, 1), { markClean: true, newComposition: true });
+
+    expect(service.doc.tracks[0].staves[0].bars[0].voices[0].beats[0].isRest).toBeTrue();
+    expect(state().isDirty).toBeTrue();
+  });
+
+  it('keeps a load clean when its pitched notes were fretted and none was left out', () => {
+    service.replaceDocument(withPitchOnStrings(2, 5), { markClean: true, newComposition: true });
+
+    expect(service.doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes.map(note => note.pitch.kind)).toEqual(['fretted']);
+    expect(state().isDirty).toBeFalse();
+  });
+
+  it('starts a fresh history for a new composition that is not saved, and leaves it unsaved', () => {
+    service.undo();
+    expect(state().canRedo).toBeTrue();
+    const before = state().documentId;
+
+    service.replaceDocument({ ...ComposerService.createEmptyScore(), tempo: 90 }, { newComposition: true });
+
+    expect(state().documentId).toBe(before + 1);
+    expect(state().isDirty).toBeTrue();
+    expect(state().canUndo).toBeFalse();
+    expect(state().canRedo).toBeFalse();
+    service.undo();
+    service.redo();
+    expect(service.doc.tempo).toBe(90);
+  });
+
+  it('keeps the composition and its history for a replacement that is an edit, as an applied alphaTex draft is', () => {
+    const before = state().documentId;
+
+    service.replaceDocument({ ...ComposerService.createEmptyScore(), tempo: 90 });
+
+    expect(state().documentId).toBe(before);
+    expect(state().isDirty).toBeTrue();
+    service.undo();
+    expect(service.doc.tempo).toBe(140);
+  });
+});
+
+describe('ComposerService discarding unsaved work', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('lets a composition with nothing unsaved go without asking', () => {
+    const asked = spyOn(window, 'confirm');
+
+    expect(service.confirmDiscard('start a new score')).toBeTrue();
+    expect(asked).not.toHaveBeenCalled();
+  });
+
+  it('asks before unsaved changes go, answers as the user did, and changes nothing by asking', () => {
+    service.setTempo(140);
+    const asked = spyOn(window, 'confirm').and.returnValues(false, true);
+
+    expect(service.confirmDiscard('start a new score')).toBeFalse();
+    expect(service.confirmDiscard('start a new score')).toBeTrue();
+
+    expect(asked).toHaveBeenCalledWith('Discard unsaved changes and start a new score?');
+    expect(service.doc.tempo).toBe(140);
+    expect(service.state.canUndo).toBeTrue();
+  });
+
+  it('counts unsaved work held outside the document, as an edited alphaTex draft is, until it is released', () => {
+    const release = service.holdUnsavedWork(() => true);
+    const asked = spyOn(window, 'confirm').and.returnValue(true);
+
+    service.confirmDiscard('load this composition');
+    expect(asked).toHaveBeenCalledTimes(1);
+
+    release();
+    service.confirmDiscard('load this composition');
+    expect(asked).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ComposerService announcements', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('keeps a refusal still showing through a notice, and a failure replaces it', () => {
+    service.toggleNoteEffect('isGhost', true, false);
+    const refusal = service.state.refusal;
+    expect(refusal).not.toBeNull();
+
+    service.announce('Saved "A"');
+    expect(service.state.refusal).withContext('the notice says nothing about why that press failed').toBe(refusal);
+    expect(service.state.notice).toBe('Saved "A"');
+
+    service.announce('Disk full', true);
+    expect(service.state.refusal).toBe('Disk full');
+    expect(service.state.notice).toBeNull();
   });
 });

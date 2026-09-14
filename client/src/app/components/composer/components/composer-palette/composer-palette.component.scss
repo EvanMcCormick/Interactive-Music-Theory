@@ -1,0 +1,88 @@
+// The notation palette: every tool as a button, Bravura glyphs where SMuFL has one.
+
+// alphaTab serves Bravura at /font (angular.json copies node_modules/@coderline/alphatab/dist/font
+// there). A @font-face is not encapsulated, so declaring it here registers the family for the page.
+@font-face {
+  font-family: 'Bravura';
+  src: url('/font/Bravura.woff2') format('woff2'), url('/font/Bravura.woff') format('woff');
+  font-display: block;
+}
+
+// Scrolls vertically, never sideways. The popover is in the top layer, so this box does not clip it.
+:host {
+  display: block;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background-color: var(--composer-nav, #2c3e50);
+  border-right: 1px solid var(--composer-border, #465666);
+}
+
+.palette {
+  padding: 0.5rem;
+}
+
+.group + .group {
+  margin-top: 0.6rem;
+}
+
+.group-heading {
+  margin: 0 0 0.3rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--composer-text-secondary, #bdc3c7);
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2.3rem, 1fr));
+  gap: 0.25rem;
+}
+
+.tool {
+  width: 100%;
+  height: 2.3rem;
+  padding: 0;
+  overflow: hidden;
+  background-color: var(--composer-nav-secondary, #34495e);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+  color: var(--composer-text, #ecf0f1);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  white-space: nowrap;
+
+  &.smufl {
+    // Bravura's glyphs sit on the baseline with a tall ascent, so they are drawn larger and nudged
+    // down to sit in the middle of the button.
+    font-family: 'Bravura', serif;
+    font-size: 1.35rem;
+    padding-top: 0.55rem;
+  }
+
+  &:hover:not([aria-disabled='true']) {
+    background-color: var(--composer-accent, #3498db);
+  }
+
+  &.on {
+    background-color: var(--composer-accent, #3498db);
+    border-color: var(--composer-accent-hover, #2980b9);
+  }
+
+  &.mixed {
+    box-shadow: inset 0 -3px 0 var(--composer-accent, #3498db);
+  }
+
+  &[aria-disabled='true'] {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--composer-text, #ecf0f1);
+    outline-offset: 1px;
+  }
+}

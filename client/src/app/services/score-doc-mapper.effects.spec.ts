@@ -324,8 +324,9 @@ describe('ScoreDocMapperService effects round trip', () => {
     it('gives a fermata to a later track at the same tick - alphaTab keeps fermatas per bar', () => {
       // `Voice.finish` files a beat's fermata on the master bar by tick and hands it to every
       // beat finished after it at that tick without one - later voices, staves and tracks,
-      // never earlier ones - before render or export. Pinned so M2 has to decide whether a
-      // fermata is per beat.
+      // never earlier ones - before render or export. M2 made that the rule: a fermata belongs
+      // to a bar position, and `toggleFermata` writes it on every track itself. Still pinned, so
+      // an alphaTab upgrade that stops spreading it is noticed rather than hidden by the tool.
       const doc = withSecondTrack(guitarBar(beats => (beats[1].effects.fermata = { type: 'long', length: 1 })));
 
       // Already there on the render path, before any save - and only at that tick.
@@ -339,6 +340,8 @@ describe('ScoreDocMapperService effects round trip', () => {
     });
 
     it('does not give a fermata to an earlier track', () => {
+      // Which is why `toggleFermata` writes every track rather than relying on the spread: a
+      // fermata pressed on a later track would otherwise never reach an earlier one.
       const doc = withSecondTrack(guitarBar(() => undefined));
       doc.tracks[1].staves[0].bars[0].voices[0].beats[1].effects.fermata = { type: 'long', length: 1 };
 

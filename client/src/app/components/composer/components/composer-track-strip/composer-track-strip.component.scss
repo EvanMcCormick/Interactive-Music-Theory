@@ -1,0 +1,156 @@
+// The track strip: a row per track along the bottom of the composer.
+
+:host {
+  display: block;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background-color: var(--composer-nav, #2c3e50);
+  color: var(--composer-text, #ecf0f1);
+}
+
+.track-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem 0.6rem;
+}
+
+.track-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.track-item {
+  display: flex;
+  align-items: center;
+  // Wraps rather than squeezes: on a narrow page the badge, status and buttons go under the name
+  // rather than eating it, since the name is what a user scans the strip for.
+  flex-wrap: wrap;
+  gap: 0.35rem 0.6rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+  }
+
+  &.selected {
+    background-color: rgba(52, 152, 219, 0.25);
+    box-shadow: inset 2px 0 0 var(--composer-accent, #3498db);
+  }
+}
+
+.track-swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.track-name {
+  flex: 0 1 14rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// The badge and the status as one phrase. `min-width: 0` is load-bearing: a flex item's automatic
+// minimum is its content, and the badge does not wrap, so without it a long progression name widens the
+// row past the strip.
+.track-origin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.35rem;
+  min-width: 0;
+}
+
+.track-badge {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--composer-text-secondary, #bdc3c7);
+  background-color: rgba(52, 152, 219, 0.18);
+  border: 1px solid rgba(52, 152, 219, 0.5);
+  border-radius: 3px;
+  padding: 0.1rem 0.35rem;
+}
+
+// Brightness rather than hue marks a stale row: the words already say which state it is, and the
+// accent blue fails contrast against a selected row, whose tint is that same blue.
+.track-status {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--composer-text-secondary, #bdc3c7);
+
+  &.is-stale {
+    color: var(--composer-text, #ecf0f1);
+  }
+}
+
+.track-generated {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.track-remove {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--composer-text-secondary, #bdc3c7);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.2rem;
+
+  &:hover:not(:disabled):not([aria-disabled='true']) {
+    color: var(--composer-error, #e74c3c);
+  }
+
+  &:disabled,
+  &[aria-disabled='true'] {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+}
+
+.add-track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+
+  select {
+    padding: 0.3rem;
+    background-color: var(--composer-nav-secondary, #34495e);
+    border: 1px solid var(--composer-border, #465666);
+    border-radius: 4px;
+    color: var(--composer-text, #ecf0f1);
+  }
+}
+
+.text-btn {
+  background-color: var(--composer-nav-secondary, #34495e);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+  color: var(--composer-text, #ecf0f1);
+  cursor: pointer;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+
+  &:hover:not([aria-disabled='true']) {
+    background-color: var(--composer-accent, #3498db);
+  }
+
+  &[aria-disabled='true'] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}

@@ -1,0 +1,14980 @@
+# Composer Editor M2: The Editor Implementation Plan
+
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** Put every M1 command within reach: a palette of Bravura-glyph tools, the Select / Pen toggle,
+one tool table driving buttons, tooltips, a `?` shortcut sheet and the keyboard, every shortcut in the
+design's table, refusals shown and announced, and a page grid of top bar, palette, score, status line and
+a minimal track strip.
+
+**Architecture:** Per the design in [2026-09-13-composer-editor-design.md](2026-09-13-composer-editor-design.md),
+whose "M2 decisions" section this plan implements. Phase 1 adds the missing commands as pure edit
+functions, delegated from `ComposerService` through new command modules, and fixes the tuplet placement
+and refusal bugs first. Phase 2 declares every tool once in `COMPOSER_TOOLS`, reads what each button shows
+from `toolStates`, and matches keys exactly in `ComposerKeyHandler`. Phase 3 builds the components and the
+page grid. Phase 4 gives the score Select and Pen, drag selection, a highlight drawn from state, Pen's
+hover notehead and a caret drawn before the first click. Phase 5 records what shipped and checks by hand
+what the headless suite cannot see.
+
+**Tech Stack:** Angular 21 standalone, TypeScript 5.9 strict, RxJS 7.8, alphaTab 1.8.0, Jasmine/Karma.
+
+---
+
+## Before you start
+
+**Worktree.** Everything happens in `.worktrees/composer-editor-m2` on `feature/composer-editor-m2`,
+from `e726b51`. Baseline on creation: **2,677 specs, 0 failures**, in 61 seconds.
+
+**Running one spec file** (from `client/`):
+
+```bash
+npx ng test --watch=false --browsers=ChromeHeadless --include=src/app/services/beat-edits.spec.ts
+```
+
+**Running everything** (from `client/`):
+
+```bash
+npx ng test --watch=false --browsers=ChromeHeadless 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E "FAILED|TOTAL|error TS" | tail -20
+```
+
+**Type-checking** (from `client/`): `npx tsc -p tsconfig.app.json --noEmit`, then
+`npx tsc -p tsconfig.spec.json --noEmit`. Run both: the app config excludes specs.
+
+**Commits.** `<type>: <description>`, and every message ends with a blank line and
+`Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`, passed as a second `-m`. Never commit
+`client/yarn.lock`.
+
+**House style.** Read `CLAUDE.md`: pure derivations are named for what they return; comments explain why,
+generously; 1000 lines per file at most; standalone OnPush components; `takeUntil` for subscriptions; CSS
+custom properties for theming, in component-scoped styles.
+
+**How the code blocks are marked.** Every block that changes a file is preceded by an HTML comment the
+rendered plan hides: `<!-- apply: create PATH -->` (write the whole file), `<!-- apply: append PATH -->`,
+`<!-- apply: find PATH -->` followed by `<!-- apply: replace PATH -->` (exact text, which occurs exactly
+once), and `<!-- apply: move FROM TO -->`. Read them as instructions; they are also what the proof below
+applied mechanically.
+
+### The proof
+
+This plan's code was applied, task by task and in order, from a clean `e726b51` by a script reading those
+markers - every block, and nothing else - and checked at each phase boundary:
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 1 (Task 1.16) | both clean | **2,798 SUCCESS** |
+| Phase 2 (Task 2.8) | both clean | **2,853 SUCCESS** |
+| Phase 3 (Task 3.11) | both clean | **2,896 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **2,908 SUCCESS** |
+
+The expected red in each Step 2 was observed the same way: the plan applied through that task's Step 1
+only, then the spec type check (or, for Task 1.1, the spec run). The code was then reverted; nothing but
+documentation was committed with the plan.
+
+Line counts after the proof, largest first: `composer.service.ts` 911 (953 before, under the cap by
+lifting note entry and the caret arithmetic out); `composer-track-strip.component.spec.ts` 647;
+`composer-library-panel.component.ts` 534; `composer-track-strip.component.ts` 459;
+`composer.service.editing.spec.ts` 441; `composer-score.component.ts` 439; `beat-edits.ts` 345;
+`composer-tools.ts` 340; `composer.component.ts` 314 (801 before).
+
+### The re-proof of Phases 3 and 4
+
+After the Phase 1-2 review commits, Phases 3 to 5 were corrected (see "Corrections during implementation")
+and every Phase 3 and 4 block applied again by the same script, in task order, on top of `56e1ad1`
+(whole suite there: 2,922 SUCCESS):
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 3 (Task 3.12) | both clean | **2,989 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **3,006 SUCCESS** |
+
+After the second review's three fix commits (see "Corrections during implementation", the last entry), the
+same blocks were applied again, in task order, on top of `9fc9365` (whole suite there: 2,948 SUCCESS). No find
+text had stopped matching. One Phase 3 spec had: Task 3.5's popover spec set a lone beat to 5:4, which is now
+refused as an incomplete group, and it now sets three quarters to 3:2.
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 3 (Task 3.12) | both clean | **3,015 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **3,032 SUCCESS** |
+
+After the third review's three fix commits (see "Corrections during implementation", the last entry), the same
+blocks were applied again, in task order, on top of `90b1649` (whole suite there: 2,977 SUCCESS). One find text
+had stopped matching: Task 3.3's Fix bar block, which copied `fixBar` from before it settled fermatas. Its find
+and replace now carry the settling. No spec had to change.
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 3 (Task 3.12) | both clean | **3,044 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **3,061 SUCCESS** |
+
+After the fourth review's three fix commits (see "Corrections during implementation", the last entry), the same
+blocks were applied again, in task order, on top of `a1a63d7` (whole suite there: 3,001 SUCCESS). Task 3.3 had stopped
+matching in four places, all since corrected: the host's and the service's `commitFollowing` finds, which now take an
+`EditOutcome`; its Fix bar find and replace, which carry the tuplet-group refusal and return the fermatas settling
+removed; and the entry commands' import, which now names `EditOutcome`. Task 3.3 also gained the notice for a removed
+fermata - `noticeOfOutcome` in both of the service's commits, paste returning `droppedFermatas`, and a spec - and no
+other block changed. The first run of that spec failed at both boundaries on the spec itself: it wrote the frets after
+selecting the second track, and `writeFret` keeps the caret's track, so no note held the fermata. It now writes them first.
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 3 (Task 3.12) | both clean | **3,069 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **3,086 SUCCESS** |
+
+After a review of Tasks 3.1 to 3.4 as committed and its three fix commits (see "Corrections during implementation",
+the last entry), the blocks still to apply - Tasks 3.9 to 3.12 and 4.1 to 4.4 - were applied again, in task order, on
+top of `94fbf86` (whole suite there: 3,078 SUCCESS). Tasks 3.1 to 3.8 are committed code by then, so their blocks were
+not applied. No find text had stopped matching, and no spec failed. Task 3.10's blocks were corrected for the fixes
+themselves: the key handler's fourth argument is `() => this.sheetOpen`; Escape closes the open sheet alone; the sheet's
+`fallbackFocus` is the score's host, focusable through `tabindex="-1"`; the status line takes `messageId`; and the page's
+spec has "Escape closes it alone" in place of "Escape closes it and goes back to Select", and gains "Delete clears nothing
+until the sheet closes" and the focus going back to the `?` button. Its Step 2 red is unchanged.
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 3 (Task 3.12) | both clean | **3,096 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **3,113 SUCCESS** |
+
+Line counts after it, largest first: `composer.service.ts` 966; `composer.service.editing.spec.ts` 932;
+`composer-library-panel.component.ts` 614; `composer-library-panel.component.spec.ts` 610; `composer-score.component.ts` 530;
+`composer.component.ts` 373.
+
+After the review of the committed M2 code - voices, fermatas, saving, popovers, the drawer and the strip - and its three
+fix commits (see "Corrections during implementation", the last entry), the blocks still to apply - Tasks 3.9 to 3.12 and
+4.1 to 4.4 - were applied again, in task order, on top of `44389da` (whole suite there: 3,151 SUCCESS). No find text had
+stopped matching and no spec failed. Task 3.10's blocks were corrected for the fixes first: a popover's button toggles it,
+opening the sheet or a Library menu closes it, and the stub panel declares `menuOpened`, with three specs. The Task 3.10
+specs added after the last re-proof ran here for the first time - the page and backdrop inert to a pointer through
+`elementFromPoint`, the Library panel told `modalOpen`, Undo's and Redo's titles, the alphaTex refusal said twice, and the
+sheet placed first in the template - and each passed as written, needing no change.
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 3 (Task 3.12) | both clean | **3,176 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **3,193 SUCCESS** |
+
+Line counts after it, largest first: `composer.service.ts` 970; `composer-library-panel.component.ts` 752;
+`composer-library-panel.component.spec.ts` 727; `composer.service.spec.ts` 674; `composer-track-strip.component.spec.ts` 667;
+`composer-score.component.ts` 530; `alpha-tab.service.ts` 522; `composer-track-strip.component.ts` 470. The client code was
+reverted afterwards.
+
+Each task's Step 2 red was captured the same way - the plan applied through that task's Step 1, then the
+spec type check - and its text updated to what was seen. The client code was then reverted.
+
+Line counts after the re-proof, largest first: `composer.service.ts` 947 (948 after the second one, which
+imports `tupletRefusal`, and 949 after the third, which imports `graceRefusal`); `composer-track-strip.component.spec.ts`
+647; `composer-library-panel.component.ts` 593; `composer-library-panel.component.spec.ts` 549;
+`composer-score.component.ts` 530; `alpha-tab.service.ts` 522; `composer-track-strip.component.ts` 459;
+`composer-tools.ts` 380; `composer.component.ts` 358.
+
+**Phases 3 and 4 are implemented.** Every block of both phases is committed code, the score's interaction merged from
+`feature/composer-editor-m2-score` in `1f0672b`, and corrected since (see "Corrections during implementation"). The
+committed code supersedes their blocks, as it does those of Phases 1 and 2. Whole suite on `a6f7ba0`: **3,294 SUCCESS**, both
+type checks clean. No client code changed after `a6f7ba0`, so the corrections below are complete for it. Task 5.1
+records M2 in the design doc, `docs/TODO.md` and `docs/ROADMAP.md`; Task 5.2, the hand check, records its own results.
+
+**Not proven by the suite:** Task 4.3's wiring of the score, which has no spec (its decisions are Task
+4.1's pure functions); anything visual or keyboard-hardware - Bravura rendering, narrow widths, Firefox,
+non-US layouts, macOS - which Task 5.2 checks by hand; the shapes of the twelve SMuFL code points that
+alphaTab's own enum does not name (they are in the font; Task 5.2 looks at them). The order of the
+shell's and the composer's Escape listeners, left to the running app here, is pinned since the
+corrections by a spec that dispatches a real key press with both listening. Since the Phase 3-4
+corrections, also not proven by the suite: a popover's placement in a real layout, at the palette's edge
+and in a short window; a drag released outside the score, and click-to-seek, against a real alphaTab
+player; and whether drags and Pen's hover stay off the change-detection path - Task 5.2, Steps 20-26.
+
+### Facts this plan rests on, all verified on 2026-09-13
+
+- **A hammer-on or a shift or legato slide lands later in its bar or on the next bar's first beat - not
+  within three bars.** `Note.nextNoteOnSameLine` and `findHammerPullDestination` (`alphaTab.core.mjs`
+  ~6477, ~6489) are written to search three bars, but `Staff.finish` (~12707) finishes bars in order and
+  `Voice.finish` (~3195) chains its own beats before finishing them, so when a note finishes the next
+  bar's first beat is linked and nothing after it is. A probe through `mapper.toScore` and through
+  alphaTex agreed layout by layout; `note-landing.spec.ts` (Task 1.7) pins it against alphaTab.
+- **A tie's origin is found up to three bars back**, since earlier bars are chained; with none,
+  alphaTab clears `isTieDestination`. Probed.
+- **A pitched note never lands a hammer-on or slide**: `Beat.addNote` files only stringed notes by string
+  (~7662).
+- **alphaTab draws a tied note with its origin's vibrato** (~48360 in the MIDI generator, ~63881 and
+  ~64605 in the two vibrato effect infos).
+- **With `player.enableUserInteraction` on, alphaTab's mouse-up sets the playback range**
+  (`_onBeatMouseUp` → `applyPlaybackRangeFromHighlight`, ~53124). The beat mouse events fire whatever the
+  setting (`_setupClickHandling`, ~53156); alphaTab re-applies its highlight after a render only with it
+  on (~53215); `highlightPlaybackRange` and `clearPlaybackRangeHighlight` draw and clear without touching
+  the range (~53263, ~53381); a one-beat range draws nothing.
+- **Under `Default`, alphaTab writes a black key sharp** in a key of no accidentals or sharps and flat in
+  a flat key (`ModelUtils.computeAccidental`, ~4571).
+- **`ForceNatural` renders as `Default`** in 1.8 (the mapper's comment on `ALTER_BY_MODE`), so Natural
+  can only clear a forced accidental.
+- **Bravura is served at `/font`**: `angular.json` copies `node_modules/@coderline/alphatab/dist/font`,
+  which holds `Bravura.woff2`, `Bravura.woff`, `Bravura.otf`, `Bravura.svg` and `Bravura.eot`. All 45
+  code points the palette uses are glyphs in `Bravura.svg`; 33 are also named in alphaTab's
+  `MusicFontSymbol` enum.
+- **The defaults survive a save**: the full bend's two points, the medium fermata, each offered tuplet,
+  and a whole-step trill on a fretted note and on a pitched note on a staff with no tuning -
+  `composer-tool-defaults.spec.ts` (Task 1.9) sends each through alphaTex.
+- **The shell's Escape listener runs before the composer's** because it listens in the capture phase, which
+  runs before every bubbling listener on the document. Registration order - bootstrap before a route -
+  was the first reason given, and it is not one a page can rely on (see "Corrections during
+  implementation", Task 2.7).
+- `composer.service.ts` was 953 lines; `composer.component.ts` 801, holding the keyboard `switch`, the fret
+  buffer, the duration buttons and the Tracks panel.
+
+### Decisions this plan implements
+
+Numbered as in the design's "M2 decisions", where each is argued.
+
+| | Decision | Tasks |
+|---|---|---|
+| 1 | Hammer-on and shift/legato slide refuse where nothing follows, mirroring alphaTab's rule | 1.7, 1.8 |
+| 2 | A fermata belongs to a bar position across all tracks | 1.10 |
+| 3 | A minimal track strip, whose last Remove refuses rather than disabling; Library and Export as top-bar menus with the saved list in a drawer | 3.7, 3.8 |
+| 4 | `+`/`=` longer, `-` shorter | 2.4 |
+| 5 | Escape: the drawer first, then back to Select and clear the range | 2.6, 2.7 |
+| 6 | Modifiers checked exactly; one shared editable-target helper | 2.1, 2.2, 2.6 |
+| 7 | A two-digit fret is one undo step | 1.6, 2.5 |
+| 8 | Refusals displayed in a live region, cleared on caret, selection, undo and redo; duration refusals published; Fix bar and paste outcomes there too; bars over counted beside it | 1.3, 1.4, 3.3 |
+| 9 | Tuplet placement fixed before the tuplet tool | 1.1 |
+| 10 | Natural clears a forced accidental | 2.4 |
+| 11 | Respell | 1.11 |
+| 12, 13 | Palm mute, let ring and vibrato are note-level; tied vibrato read from its origin and refused | 1.8, 2.3, 2.4 |
+| 14 | A duration press on nothing but graces is refused | 1.4 |
+| 15 | A clearing press passes on a pitched staff | 1.8 |
+| 16 | Defaults for bend, trill, tuplet and fermata | 1.9 |
+| 17 | Popovers with inline validation, in the top layer beside their button, reachable by keyboard; closed by an outside press, following their button, keeping their keys, and reading the first selected bar with mixed values | 3.2, 3.5, 3.6, 3.10 |
+| 18 | New commands in new modules; the service under the cap | 1.2-1.15 |
+| 19 | Ctrl+S through a save-request channel | 3.1 |
+| 20 | Menus and drawer hidden with CSS, closed by Escape, an outside click and a modal opening; one save per trigger, and the saves pressed mid-write queued for the composition they were pressed for; disclosure buttons, not ARIA menus; New forgets the saved entry | 3.1, 3.8, 3.10 |
+| 21 | macOS alternates | 2.4 |
+| 22 | Score interaction, click-to-seek, drags that end anywhere, engraving only a new document | 4.1-4.3 |
+| 23 | The page grid | 3.9, 3.10 |
+| 24 | Bravura palette buttons | 2.4, 3.6 |
+| 25 | The tool table's spec | 2.4 |
+| 26 | Paste as one run from the selection's start | 1.14 |
+| 27 | A tie with nothing to tie from is refused | 1.8 |
+| 28 | Tie chains move whole | 1.12 |
+| 29 | Space and Enter press a focused button | 3.11 |
+| 30 | A save is refused while an alphaTex draft is unapplied | 3.1, 3.10 |
+| 31 | The shortcut sheet is modal: the focus goes in and back, Tab stays inside, no key but its own and Escape reaches the score, a backdrop takes clicks over an inert page, and Ctrl keys behind it are dropped | 3.4, 3.10 |
+| 32 | A bar a command adds carries every voice the bars beside it hold | 1.13-1.15 |
+
+### Where this plan departs from the design
+
+1. **The landing reach is the next bar's first beat, not three bars** (decision 1). The decision said "no
+   note on the same string within three bars", from reading alphaTab's source; the source's bound never
+   takes effect on a finished score, as the facts above say. The predicate mirrors what alphaTab keeps, and
+   its spec checks alphaTab rather than the source. The refusal messages say "later in the bar or on the
+   next bar's first beat".
+2. **On a range, a hammer-on or slide goes on the notes that can land and skips the rest**, refusing only
+   when none can (decision 1 said what a single note does). This is how a note tool already treats rests,
+   and a phrase's last note should not stop the phrase taking legato. The toggle reads the notes that can
+   land, so such a range still turns off.
+3. **A fermata press leaves a generated track alone** (decision 2 said every track). Every edit refuses or
+   skips a generated track; alphaTab may still draw the position's fermata there.
+4. **Every fretted-only note technique can be cleared from a pitched staff**, not only the harmonic
+   (decision 15), since clearing any of them removes what alphaTab cannot use there. The scope that asks
+   only for notes, `{ family: 'note'; key: 'notes' }`, also serves respell and the pitch and string moves.
+5. **Escape uses the shell's claim, not a shared drawer flag** (decision 5 suggested a service). A flag
+   would read closed by the time the composer asked, because the shell's listener runs first and closes
+   the drawer. A claim is read correctly only if the shell does run first, so the shell listens in the
+   capture phase, which makes that hold whatever order the listeners were added in. Task 2.7 explains,
+   as corrected under "Corrections during implementation".
+6. **A symbol typed through AltGr or Option still matches** after every exact binding fails (decision 6
+   said exactly). Without it `}`, `|`, `[`, `]`, `$` and `<` are out of reach on German and French layouts
+   and on a German Mac. Digits and letters are never relaxed, so the decision's cases hold.
+7. **Nine tools have no key** (decision 25 said every tool has one): the seven note values, which `+` and
+   `-` step through, and the Select and Pen buttons, which Q toggles. The design's table gives them none;
+   `KEYLESS_TOOLS` names them and the spec checks the list.
+8. **Triplet feel opens a popover** too (decision 17 listed six popovers): it has seven values and the
+   design's table writes it with an ellipsis.
+9. **Common and cut time are validated**: `isCommon` is accepted for 4/4 and 2/2 only, the two meters
+   alphaTab draws with a C. Not in the design.
+10. **Respell on a range** respells the notes that can be and skips the rest (decision 11 described one
+    note), refusing only when none can.
+11. **The half-refusal now says why** (decision 8 left it to planning): a duration press on a generated
+    track remembers the input duration and publishes the reason the beat did not change.
+12. **Delete beats pulls the later beats earlier** and fills the bar at its end, and **insert beat leaves
+    overflow**, rather than placing rests where a gap opened or taking trailing rests. The design's gap rule
+    is for length changes; a delete and an insert are about which beats exist. Cut clears to rests.
+13. **The clipboard is the composer's own** and copies from one staff; a multitrack rectangle is refused.
+    Paste appends bars when it runs off the end of the score (design Part 4 did not say).
+14. **Shift+↑ and Shift+↓ extend to the track above and below** - a multitrack rectangle - since ↑ and ↓
+    change string and the design's table only says "Extend selection".
+15. **The app header's height is published by the shell** as `--app-header-height` (decision 23 said
+    "minus the app header"), because the header's navigation wraps on a narrow window.
+16. **Pen's hover notehead uses the clef of the caret's bar** on the staff under the pointer: no beat is
+    known during a hover without asking alphaTab's bounds lookup for one.
+17. **Task 4.3 has no failing spec**: `ComposerScoreComponent` has none, as decision 22 foresaw, and its
+    decisions are Task 4.1's.
+18. **`removeBar(0)` is fixed in passing** (Task 1.15): it turned a 3/4 score into 4/4, the fault M1 fixed
+    for `insertBar(0)`.
+19. **The four unnamed slide types stay unnamed.** The design's "Found while designing" put widening
+    `NoteEffectsDoc.slide` with M2's slide tools, but M2's slide tools are the two the model names.
+20. **Play from start is the page's stop then play**, not an `AlphaTabService` method: stop already rewinds.
+21. **Click-to-seek is restored** (decision 22 turned alphaTab's interaction off, and did not say seeking went
+    with it). A click that moves the caret or writes, while playback is stopped, moves the playback position
+    to the beat, and sets no range. Task 4.3.
+22. **Popovers are drawn in the top layer**, beside their button in window coordinates, not inside the
+    palette's box beside it (decision 17 said anchored): the palette scrolls and clipped them. Task 3.5.
+23. **Fix bar's and paste's outcomes travel in state**, as `ComposerState.notice` (Part 4 put them in the
+    live region; the model had no field to carry them). Task 3.3.
+24. **The count of bars over is not announced** (Part 4 asked for "a status warning naming how many bars
+    are over"): it is a plain line outside the live region, which would otherwise speak on nearly every
+    duration edit. Task 3.3.
+25. **Escape closes an open popover, the open shortcut sheet, or an open Library or Export menu, and nothing else** (decision 5 named
+    the circle-of-fifths drawer, then Select). Tasks 3.4, 3.5, 3.8, 3.10.
+26. **Space and Enter on a focused button are the browser's**, not only plain Enter as the design's macOS
+    paragraph says, so Space plays only when no button has the focus. Task 3.11.
+27. **A save is refused while the alphaTex panel holds an unapplied draft.** Not in the design. Tasks 3.1,
+    3.10.
+
+### Corrections during implementation
+
+Four reviews of Phases 1 and 2 as committed (through `1613dd0`) found faults, fixed in four commits:
+`419fc46` (bar and beat edits), `79db533` (note edits, moves, respell and refusals), `b50c369` (selection,
+cursor, clipboard and structure) and `9147bd5` (the keyboard layer). **The committed code supersedes the
+blocks of every task named below.** Those blocks stay as they were proven, so the proof table above still
+describes them; Phases 3 and 4 were written against the old blocks, and have since been corrected and
+re-proven against the committed code - see the last entry below. Whole suite after the four commits: **2,922 SUCCESS**.
+
+- **Task 1.1.** A 6:4 beat frees a third of its value, so three carried remainders spelled a rest and it
+  went in mid-group, which ends alphaTab's `TupletGroup` there. `settleRange` now carries room, without
+  trying to place it, while the beat's group - as alphaTab groups a voice (`tupletGroupContinuesAfter`) -
+  is still open and the next beat is in the run. Six sixteenths made 6:4 are six tuplet sixteenths then
+  an eighth rest; six eighths made 3:2 keep a rest after each closed group.
+- **Task 1.2.** A track move with no track to go to returns the caret unchanged, not moved to beat 0
+  (`composer-cursor.spec.ts`: `'1:2.0'` became `'1:2.3'`).
+- **Task 1.6.** `retypeNote` amends the last commit only for a fretted pitch on the same beat and string.
+  Delete at the caret clears through `clearToRests`, as a range does.
+- **Task 1.8.** Vibrato on a range skips tied continuations (`noteEffectTargets`) and is refused only on
+  tied notes alone. A clear writes `off` to the notes read and to notes holding exactly the value pressed,
+  never to a note holding another value: Shift slide over a phrase ending in a slide out keeps the slide
+  out. A tie with nothing to tie from is refused (`tieRefusal`, `tieTargetsOf`, `tieCandidateOf` in
+  `note-landing.ts`), and a range ties the notes that can be. A tap, slap or pop can be cleared from a
+  pitched staff (`beatEffectRefusal`). Every reader in `toolStates` asks the same functions.
+- **Task 1.9.** A trill press that would aim past MIDI 127 is refused (`trillRefusal`).
+- **Task 1.10.** A grace at a fermata's position is one of its beats: alphaTab hands it the fermata and it
+  spread back after a clear. `fermataPositionsOf` returns graces at the tick, written and cleared with the
+  beat; the toggle and its reader read the non-grace beats; a selection of graces alone is refused
+  (`fermataRefusal`), where it used to commit an empty undo step.
+- **Task 1.11.** On a transposed staff respell sets the accidental and drops the letter
+  (`respelledNote`'s new `transposed` argument), and a letter is read against the stored pitch.
+- **Task 1.12.** A move takes each note's whole tie chain (`tieChainOf`), since `Note.finish` copies a tie
+  origin's fret and pitch onward. A forced accidental survives a semitone move only where respell would
+  offer it (`note-moves.spec.ts`: B flat moved up, pinned as `'flat'` - C flat - is now `'auto'`). A loaded
+  fret or pitch past an edge may move back toward it. A move that takes a trill out of 0 to 127 is
+  refused. A string move is refused when a hammer-on or slide - the moved note's own, or another's onto
+  it - would stop landing, when a tie's origin would change, and when a natural harmonic would land on a
+  fret alphaTab names no node for.
+- **Task 1.13.** `clearToRests` resets every beat effect but the dynamic and the fermata, and removes a
+  grace rather than leave a grace rest. `insertBeatAt` inserts in front of a grace run and returns where;
+  `insertBeat` keeps the caret on the new rest and a range on its beats. `deleteBeats` publishes once.
+- **Task 1.14.** `CopiedBeats` holds one run (`beats`, not `bars`). Paste writes it from the selection's
+  first beat, crossing bar lines and splitting a beat across one as Fix bar does (`splitAtBarLine`, now
+  exported from `bar-fill.ts`, refusing a tuplet or an off-grid split), gives a pasted fermata to every
+  track at its position (decision 2), and drops the range; `pasteBeats` returns `at`. Copy with nothing
+  selected says "Nothing is selected." `beat-clipboard.spec.ts`: `copiedBeatsOf` pinned `bars` of `[1, 1]`,
+  now a run of two; `pasteBeats` pinned `{ appendedBars }`, now `{ appendedBars, at }`; "leaves a bar over
+  when the copied beats are longer than its room" pasted a half at beat 3, which now splits, and became
+  "leaves a bar that was already over still over".
+- **Task 1.15.** `deleteSelectedBars` drops the range, leaving the caret on the bar that took their place.
+  `removeTrack` on the last track refuses with a reason.
+- **Tasks 1.3-1.15, the service seam.** `ComposerCommandHost.commitFollowing` takes an optional `place`,
+  so a command sets the selection in the commit that edits; `ComposerEntryHost.select` is gone and
+  `setInputDuration` added; `ComposerService.applyDotsAtCursor` is new.
+- **Task 2.1.** `isEditableTarget` counts only inputs that are typed into (text, search, url, email, tel,
+  password, number). The circle-of-fifths wedges claim Space and Enter, so a document listener leaves them.
+- **Task 2.2.** A `Key[A-Z]` binding with Ctrl and no Alt matches the letter typed (`key`), falling back to
+  `code` only for a non-Latin letter; an unmodified letter binding falls back to `code` the same way. By
+  `code`, German Ctrl+Z redid and French Ctrl+A did nothing. The design's Matching paragraph is corrected.
+- **Task 2.3.** `toolStates(doc, anchor, cursor, entryMode)` takes the entry mode, is memoized on the four
+  arguments' identity, and reads the selection's notes once for every tool (an optional `notes` argument on
+  `editRefusal`, `noteEffectTargets`, `noteEffectRefusal`, `tieTargetsOf`, `tieRefusal`, `trillRefusal`
+  and `respellRefusal`). Select and Pen have readers, so the tool-table spec's "every palette button but
+  Select and Pen has a state" is now every palette button. `ToolState` says what `pressed` means per kind.
+- **Task 2.4.** Every tool has a `kind` - `toggle`, `radio`, `popover`, or `action` for commands that are
+  none of those (Fix bar, Insert bar, Respell, Natural, Rest, every key-only tool) - so Phase 3 puts
+  `aria-pressed` only on toggles and radios; and `repeatable`, `inTextFields` and `yieldsToTextSelection`
+  where they apply. Key signature's face is text, since U+E262 is Sharp's. One `pressedNowOf`. Dot dots
+  the selected beats' own values (`setBeatDots`), and `+` and `-` step from the value the selection shares.
+- **Task 2.5.** A second digit continues the number only while the document is the one the first digit
+  left, and never after a lone 0.
+- **Task 2.6.** An auto-repeat runs a tool only if it is `repeatable`; otherwise it is claimed and dropped.
+  Ctrl+C and Ctrl+X yield to a text selection outside the score (a third constructor argument names the
+  score element); Ctrl+S runs from a text field.
+- **Task 2.7.** The shell listens for Escape in the capture phase, so it claims the key before any bubbling
+  document listener whatever order they were added in. The task's "either order" was wrong: had the
+  composer's listener run first it would have seen Escape unclaimed and gone back to Select as well.
+  `app.component.spec.ts` now dispatches a real key press with the composer's handler listening first.
+
+**Phases 3 and 4, corrected before they were applied.** The four commits above changed the code those
+phases' blocks were written against, and review found faults in the blocks themselves. The Phase 3, 4 and 5
+tasks below are the corrected ones, re-proven on top of `56e1ad1` (see "The re-proof of Phases 3 and 4");
+the proof table's Phase 3 and 4 rows describe the blocks as first written. Each correction, and where it is:
+
+- **The APIs Phase 1-2 changed.** `toolStates` takes the entry mode, and Select and Pen have readers, so the
+  palette reads every button from it (Task 3.6). What a button says follows the tool's `kind`:
+  `aria-pressed` for `toggle` and `radio` only, `aria-haspopup` and `aria-expanded` for `popover`, neither
+  for `action` - the palette's own list of non-toggles is gone. `ComposerKeyHandler` is built with the
+  score's element, from a `#score` view query (Task 3.10); without it every text selection counted as
+  outside the score and blocked Ctrl+C and Ctrl+X. The dot and double-dot buttons are the tool table's
+  `dotTool`, which already calls `applyDotsAtCursor`, and no Phase 3 block calls a duration command for a
+  dot. Paste's `{ appendedBars, at }` is read by paste's notice (Task 3.3). Found by the proof: Task 3.9's
+  finds no longer matched `app.component.ts`, which imports no `HostListener` and removes its capture
+  listener in `ngOnDestroy`, and it now writes through the injected `DOCUMENT`; Task 3.7's move needs its
+  directory, which `git mv` makes and a plain rename does not; `toggleTexPanel` marks the page for check,
+  or a spec calling it saw a stale status line.
+- **Popovers are not clipped** (Tasks 3.5, 3.6). The palette scrolls, so a popover positioned beside its
+  button inside it was cut off. The popover is `popover="manual"`, in the top layer, placed by
+  `popoverPlacementOf` from its trigger's `getBoundingClientRect()`, and the palette draws one, finding its
+  trigger by `data-tool`. The palette spec asserts `aria-expanded` and an open `.popover` of the right kind,
+  not a DOM sibling.
+- **Popover focus** (Tasks 3.5, 3.10). Opening by click or key focuses the first control; closing returns
+  focus to the trigger; the fields are read only when the kind changes, not on every state emission; Escape
+  closes the popover alone and claims the key, and the page's `escape` closes an open popover and nothing
+  else when the focus is elsewhere. Specced in the popover's spec and the page's.
+- **Menus and drawer** (Task 3.8) close on Escape - claimed in the capture phase, so the page's Escape does
+  not also act - and on an outside click, and give focus back to their button. Still hidden with CSS, so the
+  panel's `role="alert"` and `aria-live` regions stay in the DOM.
+- **Space and Enter on a focused button** (Task 3.11, new) press it: `pressesFocusedControl` in
+  `editable-target.ts`, asked by the page before its key handler. `composer-key-handler.ts` is left
+  unchanged, since a separate fix to its selection check is going into committed code.
+- **One save per trigger** (Task 3.1): `save` and `flattenAndSave` drop a trigger while a write is in flight,
+  so a click and Ctrl+S make one entry.
+- **An unapplied alphaTex draft refuses a save** (Tasks 3.1, 3.10). Ctrl+S runs from the draft's textarea,
+  and a save writes the document, not the draft. `ComposerSaveRequests` carries a guard the page registers;
+  Ctrl+S and the menu's Save both refuse while the panel is open on a draft that differs from the document's
+  alphaTex, and the status line says "Apply or revert the alphaTex draft before saving."
+- **Bars over, and outcomes** (Tasks 3.3, 3.10). The status line counts the bars over their time signature
+  with `scoreBarFills`, on a plain line outside the live region. Fix bar and paste say what they did through
+  that region, as `ComposerState.notice`, published in the commit (`commitFollowing`'s `notice`) and cleared
+  as a refusal is. A failed apply's message goes when the alphaTex panel closes.
+- **A drag released outside the score** (Tasks 4.1, 4.3). `dragContinues` reads the move's
+  `MouseEvent.buttons`, recorded in the capture phase, and a `document` mouse-up, removed in `ngOnDestroy`,
+  ends the drag.
+- **Click-to-seek** (Tasks 4.1-4.3). A click that moves the caret or writes, while playback is stopped
+  (`seeksOnPress`), sets `tickPosition` to the beat's start from `tickCache.getBeatStart` (`seekToBeat`), with
+  no playback range. Checked against `alphaTab.d.ts` (`tickCache`, `MidiTickLookup.getBeatStart`,
+  `tickPosition`) and `applyPlaybackRangeFromHighlight` (~53309), which is how alphaTab's own click did it.
+- **Engraving only a new document** (Tasks 4.1, 4.3): `scoreRedrawOf` against the document last rendered; a
+  selection or caret change redraws the highlight and caret directly.
+- **Hover off the change-detection path** (Tasks 4.1, 4.3). The pointer listeners, and alphaTab itself, run
+  outside Angular's zone; a move enters it only when `hoverKeyOf` changes. The staves are measured once per
+  settled render (`StaffHitTestService.staffIndexAt` and `caretRect` take the measure), not on every move.
+- **The hand check** (Task 5.2) gains Steps 18-28; a step that cannot be performed is recorded as not
+  performed.
+- **A stranded landing** (Task 5.1, the design doc's "Found while designing", `docs/TODO.md`): a hammer-on's
+  or slide's landing is checked only when pressed, so later edits can strand one, and alphaTab drops it on
+  save.
+
+**A second review of the committed Phase 1-2 code** found a critical fault and eight smaller ones, fixed in
+three commits: `8b74bb7`, `dc1a8f5` and `9fc9365`. Whole suite after them: **2,948 SUCCESS**. The Phase 3
+and 4 blocks were re-proven on top (see "The re-proof of Phases 3 and 4").
+
+- **Task 1.7 (critical).** `beatsBefore` in `note-landing.ts` called `reverse()` on an earlier bar's own
+  `beats` array. So `tieCandidateOf` and `tieOriginOf` reordered earlier bars in the published document, with
+  no undo step, and so did everything built on them: the Tie and vibrato readers in `toolStates`,
+  `tieRefusal`, `noteEffectRefusal`, `tieChainOf` and the semitone and string moves. A later commit then saved
+  that order. It now walks by index. A reader that ran the lookup an even number of times put the bar back,
+  which is why `toolStates` and the vibrato refusal passed a JSON-equality check. So the `composer-tool-states`
+  and `edit-refusals` specs now read deep-frozen documents (`deep-frozen.ts`), and a reader that changes one
+  throws. The note-moves and tie specs gained a case with an uneven earlier bar: their earlier bars had all
+  been rests, where a reversal cannot show. An audit of the other readers (`edit-refusals.ts`,
+  `note-edits.ts`, `composer-tool-states.ts`, `note-moves.ts`, `note-respell.ts`, `beat-clipboard.ts`,
+  `composer-selection.ts`, and `bar-fill.ts` as they read it) found no other in-place change. Every other
+  `reverse`, `sort`, `splice`, `push` or assignment is on a local array or inside an edit given a draft.
+- **Task 1.1.** Room was held only while the next beat was in the run. So a group that ran on past the run
+  was still split: with beats 3 to 5 already 6:4, beats 0 to 2 made 6:4 put a sixteenth rest between the
+  halves. `tupletGroupsOf` now replays alphaTab's grouping for a whole voice, and room goes after the beat
+  that closes the group (`tupletGroupEndOf`), whether or not that beat is changing.
+  `tupletGroupContinuesAfter` is gone.
+- **Tasks 1.1 and 2.3, an incomplete group.** `tupletRefusal` refuses a tuplet press that would leave a
+  group alphaTab never closes, with "A 6:4 tuplet needs six beats of the same value, or values that add up to
+  the same length, in one bar." (`tupletGroupsCompleteWith`). Otherwise the room left is off the 64th grid
+  and the bar stays short with no explanation. `ComposerService.setTuplet` asks it, and so does the Triplet
+  reader, which lets a clearing press through. The Tuplet popover's reader cannot know the ratio before it is
+  chosen, so the command's refusal says it.
+- **Task 1.10, the fermata on a new grace.** `setGrace` leaves a new grace's fermata at its bar position.
+  The first ordinary beat now starting there on that staff takes it: the rest that filled the gap, or a
+  beat that moved up in a bar that was over. The grace takes the fermata at the position it now leads into
+  (`graceFermataOf`). alphaTab finishes a grace at the tick of the beat it leads into and files its fermata
+  there (`Voice.finish` ~3294). So a grace that kept the fermata, or handed it to the beat it leads into,
+  moved it one position on, to every track, on save.
+- **Task 1.14.** A pasted grace takes the fermata at the position of the beat it leads into, or none
+  (`graceFermataOf`); before, it kept the copied one, which spread to every track on save. A copy holding
+  part of a tuplet group is refused: "The copy holds part of a tuplet group." So is a paste at a beat
+  starting at or past the line of a bar already over, which would land in the next bar while the caret
+  stayed put: "That beat is past the bar line; Fix bar first."
+- **Task 2.2.** A Ctrl press that typed a Latin letter now matches no Ctrl binding by physical key but its
+  own letter's. Dvorak types z on `Slash`, so Ctrl+Z matched undo by the letter and Triplet feel's Ctrl+/ by
+  the key. `toolForPress` already returned undo, which comes first in the table, so the keyboard did the
+  right thing; the binding no longer matches both.
+- **Task 2.6.** `ComposerKeyHandler` counts a text selection as the score's only when both its anchor and
+  its focus are inside the score. A selection dragged from the score out into page text yields Ctrl+C and
+  Ctrl+X to the browser. The constructor is unchanged.
+- **Task 3.5.** The popover spec's tuplet case set a lone beat to 5:4, now refused. It selects three quarters
+  and sets 3:2.
+
+**A third review of the committed Phase 1-2 code** found four important faults and six minor ones, fixed in
+three commits: `60e8d7f`, `d7dffa0` and `90b1649`. Whole suite after them: **2,977 SUCCESS**. The Phase 3 and 4
+blocks were re-proven on top (see "The re-proof of Phases 3 and 4"), and Task 3.3's Fix bar find and replace
+now carry the fermata settling.
+
+- **Tasks 1.1, 1.10, 1.13, 1.14 and 1.15, a fermata through an edit that moves beats.** alphaTab finishes tracks
+  in order and files each fermata by bar and tick (`Voice.finish` ~3294, `MasterBar.addFermata` ~2705). So an
+  edit on an early track that moved a fermata beat onto a tick where a later track had a beat gave that beat the
+  fermata on save. Three tracks of `n4 n4F n4 n4`, with the guitar's first quarter made a half, saved the others
+  as `n4 n4F n4F n4`. An insert, a delete, a grace in a bar already over and a blocked dot did the same, or left
+  the fermata on the moved beat alone. Every edit that moves beat starts now reads each position's fermata
+  across tracks first (`fermataSnapshotOf`) and settles afterwards (`settleFermatas`). Each position's fermata
+  goes to whatever starts there now, on every staff; a beat that moved away gives it up; a grace takes its
+  position's (`graceFermataOf`); a pasted beat's own fermata wins where it lands. `relength` runs it, so
+  durations, dots, tuplets, grace and note entry do, and so do `insertBeatAt`, `deleteBeats`, `pasteBeats` and
+  Fix bar. `setGrace`'s own fermata handling and paste's two fermata passes are gone. A fermata whose position no
+  beat starts at any more, on any staff, is dropped: alphaTab keeps a fermata only by filing a beat's at that
+  beat's own tick, so one kept on the beat that moved would be filed at its new tick and reach every track there.
+- **Tasks 1.1, 1.13, 1.14 and 2.3, a tuplet group left open.** Several paths still made one. Two eighths made 3:2
+  beside a full group took its first beat and left two open, because `tupletGroupsCompleteWith` read only the
+  changed beats' groups. A grace in a triplet selection took the tuplet, so its group never closed. So did a
+  paste over part of a group or a whole group cut by a bar line, and a delete, an insert, a duration or a dot
+  inside a group. One rule now: an edit is refused, with a reason and before anything changes, when a voice it
+  touches would hold an open group (`tupletGroupsOf`) that it did not already hold. The refusals run the edit on a
+  copy of the bars (`tupletGroupOpenedBy` in `edit-refusals.ts`), skipped when no beat there is under a tuplet
+  and the edit writes none: `tupletRefusal` (clears included; a whole group's clear goes through),
+  `durationRefusal` (now given the value and dots), `dotsRefusal`, `graceRefusal`, `insertBeatRefusal`,
+  `deleteBeatsRefusal` and `noteEntryRefusal`. The service, the entry commands and the note value, dot, Triplet
+  and grace readers ask them; `pasteBeats` checks its own result. `setTuplet` leaves graces out of a tuplet being
+  set. A tuplet press that would join an unfinished group beside the selection, or split a closed one, says so.
+  `tupletGroupsCompleteWith` is gone.
+- **Task 1.1, alphaTab's grouping with graces.** `tupletGroupsOf` counted a group's first beat at its written
+  length, but alphaTab counts its playback length (`TupletGroup.check` ~6765). So a grace carrying a tuplet
+  starts a group that never closes, and on-beat graces before a mixed group's first beat shorten it: `o n4 n8` at
+  3:2 stays open. Both are replayed now. Fuzzed against alphaTab through the mapper: 0 mismatches over 30,000
+  random bars with graces, on-beat graces and graces carrying tuplets, with a second bar's leading graces set
+  aside. alphaTab joins those to the group the bar before ends in, which a one-bar reading cannot see; read
+  without setting them aside, they are all 365 mismatches of 8,000 bars. The spec replays 400 bars.
+- **`hasTuplet`** was written twice, and the two disagreed on -1:-1, alphaTab's default. `bar-fill.ts` exports the
+  one that matches `Beat.hasTuplet`, and `beat-edits.ts` uses it.
+- **Task 1.7's spec.** The note-landing "reading, which changes nothing" cases compared JSON, which a reader that
+  reverses a bar an even number of times passes. They now read deep-frozen documents, and fail on the reversing
+  code.
+- **Task 2.2, symbols a layout moves.** A Ctrl binding on a symbol key also matches the symbol a US keyboard types
+  there, with Shift applied (`US_SYMBOLS`), typed on another key. Dvorak's Ctrl+Shift+. and Ctrl+/ were out of
+  reach. A letter typed on the key is still that letter's, so Dvorak's Ctrl+Z is undo only.
+- **Task 1.14, a paste at a grace that ends a full bar.** It landed in the next bar while the caret stayed put,
+  since the past-the-line guard asked for a bar already over. The guard now asks only whether the paste starts
+  at or past the line, and refuses a full bar's case too: "That grace ends a full bar, so a paste there would
+  land in the next bar; paste at the next bar's first beat." Refused rather than moved to the next bar, as the
+  over bar's case is, so the caret and the paste never disagree about where it went.
+
+**A fourth review of the committed Phase 1-2 code** found four important faults, two questions and five minor ones,
+fixed in three commits: `5e2467a`, `a4c71ba` and `a1a63d7`. Whole suite after them: **3,001 SUCCESS**. The Phase 3 and 4
+blocks were re-proven on top (see "The re-proof of Phases 3 and 4"). Task 3.3's finds for the host's and the service's
+`commitFollowing`, and its Fix bar find and replace, now carry the committed code, and its notice says when an edit
+removed a fermata.
+
+- **Task 1.10, a fermata position is the tick a beat plays at.** alphaTab files a beat's fermata at its playback start
+  (`Voice.finish` ~3262-3294): a beat that on-beat graces lead into starts after them, by their playback lengths, and
+  each grace at its own tick. Read at the drawn tick, `n4 n4F n2` over a second track's `n4 n32F n32 n16 n8 n2`, with
+  beat 0 made an on-beat grace, kept the fermata on the quarter that now plays at 1080, and the second track saved as
+  `n4 n32F n32F ...`. `playbackStartsOf` (`bar-fill.ts`) is now the one reading of a position, in
+  `fermataPositionsOf`, `graceFermataOf`, the snapshot and the settling, which moved to `fermata-settling.ts`. A grace
+  takes the fermata at the tick it plays at. `beat-edits.spec.ts`: the on-beat case of "writes and clears the grace
+  with its beat" pinned the fermata on the beat after the grace as well, which plays a 32nd later; it now pins it on
+  the grace alone.
+- **Task 1.15, a new track's fermatas.** `addTrack` settles every bar, so the new track's rests at a fermata's
+  position hold it. A track added beside `n4 n4F n4 n4` held none, and saved as `r4 rF r4 r4`. Removing a track settles
+  nothing: a fermata only that track held goes with it, and no remaining beat plays at its tick to take it on save.
+- **Task 1.10, a fermata goes with its note** when that reaches no other beat (the review's second question). The
+  snapshot records the note holding each fermata by identity. When the note moved, the fermata goes with it if (a) no
+  ordinary beat on another staff, or in another voice of its staff, still plays at the old tick holding a fermata; (b)
+  none plays at the new tick; and (c) the new position holds no fermata. Notes are tried until none moves, so a run of
+  fermata notes each moving onto the next one's place all carry. Guard (a) is refined from the review's "no ordinary
+  beat left on any staff", which left a single track's `n4 n4F n4 n4`, with beat 0 deleted, as `n4 n4F n4 r4`: the
+  fermata on another note. Otherwise the fermata stays at its position, and is removed only where it can do neither.
+  Each edit returns why (`FermataDropReason`), and Task 3.3's notice says it: "1 fermata removed: its note moved where it
+  would reach other tracks." Fuzzed through alphaTex with the refined guard: 0 save differences and 0 disagreements
+  between staves over 14,565 random edits on one to three tracks - lengths, dots, inserts, deletes, graces before and
+  on the beat, pastes and Fix bar. Where it was counted, a note that moved kept a fermata in 658 of 6,856 runs. The review's fuzz drew its choices from an LCG
+  that lost precision past 2^53, so nearly every choice was the first.
+- **Task 1.15, Fix bar splitting a tuplet group.** `splitAtBarLine` refuses only a tuplet beat that crosses the line.
+  So `n2 n8` and six 6:4 sixteenths and `r8`, with beat 1 dotted - accepted, over by 960 - was fixed into two open
+  groups. Fix bar now refuses when a bar it touches would hold an open group no bar held before: "The bar line falls
+  inside a tuplet group, so carrying the overflow would split it and leave both parts unfinished." The edit that
+  overfilled the bar stays accepted. Guitar Pro flags overflow and leaves the fix to the user, and refusing the edit
+  would stop an ordinary sequence - lengthen one beat, then shorten the next - half-way.
+- **Task 1.6, typing over a tuplet beat.** A fret or R over a beat in a closed group, with the palette on another
+  value, was refused. Entry now writes at the beat's own value when the palette's would break the group
+  (`entryValueOf`), as Guitar Pro keeps a beat's value; in a group already open the palette's value and its refusal
+  stand. The input duration keeps the palette's choice for the next note, and the value buttons read the caret's beat,
+  so they show what was written. `composer.service.editing.spec.ts`: "refuses a delete, an insert, a note of another
+  value or a grace inside a tuplet group" pinned a refused note typed into a triplet quarter with the palette on an
+  eighth, which is now written at the triplet's value. That press left the list, and specs of its own pin the new rule.
+- **Task 1.1, a grace carrying a tuplet on load, left as it is.** The review asked `toDoc` to strip it. Read through
+  alphaTab, that changes grouping for a loaded grace after a beat in no group: `n4 g8t3 n8t3 n8t3 n8t3 n2` is one open
+  group of four, and stripped, a closed triplet; `n4 o8t3 n4t3 n8t3 n2` loses the grace from its group. The review's own
+  bar groups the same either way, and a grace plays and is drawn the same, but a change in grouping is not a
+  normalisation, so nothing is stripped and it is recorded in `docs/TODO.md`.
+- **Task 1.13, the on-beat grace refusal.** Making beat 0 of `n4 n4t3 n8t3 n2` an on-beat grace said "select the whole
+  group", which cannot help. It gives the tuplet press's on-beat reason now (`shortenedByOnBeatGrace`).
+- **Task 2.2, a binding's own key first.** A Ctrl symbol typed on another key (`bindingMatchesSymbol`) is asked only
+  after every binding's own key. AZERTY's Ctrl+Shift on `Comma` types `.`, and matched crescendo by its key and
+  diminuendo by the symbol. `toolForPress` asks three questions in turn, each of the whole table. The spec's `.` with
+  Shift on `KeyE` was no Dvorak event: it presses Dvorak's real `>`, `<` and `/` now, and a spec runs QWERTY, QWERTZ,
+  AZERTY and Dvorak with Ctrl, Ctrl+Shift, Alt and Alt+Shift, finding no press that matches two bindings.
+- **Task 2.3, tool states over a long selection.** A refusal drafts only the voices it could open a group in - one
+  holding a tuplet, or, for a tuplet press, one whose named beats would leave a group open when read without the edit -
+  and copies no bar of another track. The review's benchmark, twelve readers over select-all of 200 bars on four
+  tracks: 318 ms before, 60 ms after. 60,000 refusals compared with the full drafts on random bars: no difference.
+  `toolStates` was already memoized on the document, the anchor, the cursor and the entry mode.
+- **`written-beats.ts`** is `written-beats.spec-helper.ts`. Karma's `**/*.spec.ts` does not load it as a spec, the
+  specs compile it through their imports, and `tsconfig.app.json` excludes it.
+
+**A review of Tasks 3.1 to 3.4 as committed** found five faults in saving and the status line, three in the shortcut
+sheet, and three small items, fixed in three commits: `6eebeda`, `ecfa4a4` and `94fbf86`. Whole suite after them:
+**3,078 SUCCESS**. The blocks still to apply were re-proven on top (see "The re-proof of Phases 3 and 4"), and Task
+3.10's corrected.
+
+- **Task 3.3, Fix bar's count.** Carrying one bar's overflow can mend a later selected bar, which the loop then found
+  not over and skipped: bars 0 and 1 both over and both selected said "Fixed 1 bar." Fix bar counts the selected bars
+  over before it carries anything, and says that count.
+- **Task 3.3, a message said twice.** The live region tracked its spans by their words, so a second identical refusal - two
+  presses of Fix bar with nothing over - or the same paste twice kept the node, and a screen reader said nothing.
+  `ComposerState.messageId` is bumped whenever a refusal or a notice is published, and the status line keys a refusal's
+  and a notice's span by it, so the node is replaced. A failed alphaTex apply, which the page holds, is still keyed by its
+  words.
+- **Task 3.3, a fermata's notice through note entry.** The second digit of a fret amends the first digit's commit, and
+  cleared its notice. Keeping it was not enough on its own: the first digit's advance was a publish of its own, and a caret
+  move clears the notice, so a typed fret or R that removed a fermata never said so. Entry now advances the caret in the
+  commit that writes (`commitEntry`). An amend whose
+  own edit says nothing keeps the notice before it, and does not announce it again.
+- **Task 3.3, paste's count** was the clipboard's length, which counts graces and counts a beat split at a bar line once.
+  `pasteBeats` returns `beatsWritten`: the beats laid down, graces aside, a split beat as its pieces. The seven
+  `toEqual`s of its result in `beat-clipboard.spec.ts` gain the field.
+- **Task 3.1, a save asked for during a save.** A dropped trigger could mark an unsaved edit saved: Ctrl+S starts a write,
+  an edit, Ctrl+S is dropped, the write lands, and `markSaved()` cleared the newer document. `markSaved(saved)` marks the
+  document clean only if it is still the one written. A trigger that arrives mid-write - Save, Save as copy or Ctrl+S, any
+  number of them - is remembered, and one follow-up save runs after the write lands, through `save()` and its refusals,
+  over the same entry by the id the write returned. It runs only if the document moved on since the write began, or a
+  trigger was Save as copy, so a click and Ctrl+S with nothing between still write once; and not at all if the write
+  failed, which has been reported and would only fail again.
+- **Task 3.4, the shortcut sheet is a modal.** Opening it focuses its heading and remembers what had the focus; Tab goes
+  round inside it; closing it, by its close button or by Escape, gives the focus back, or to `fallbackFocus` - the score -
+  when that element has left the page. `aria-modal="true"`, and named by its `<h2>` through `aria-labelledby`. Built by
+  hand rather than with `<dialog>` and `showModal()`: the page closes the sheet by setting `open` whichever way it closes,
+  so a native dialog's own Escape would be a second path beside the shell's capture-phase listener and the key handler's.
+- **Task 3.4, keys behind the sheet.** Every key reached the score hidden behind it: Delete, R, a digit, Ctrl+V.
+  `ComposerKeyHandler` takes a fourth argument, `modalOpen`, and while it answers true only `TOOLS_OVER_A_MODAL` run - the
+  sheet's own key and Escape. Every other press is left to the browser, as a press in a text field is, so the arrow keys
+  and Space scroll the sheet's list, which is focusable for it. Ctrl+S (`inTextFields`) is claimed and dropped instead, so
+  the browser's Save dialog does not open over the sheet. Task 3.10 wires `() => this.sheetOpen`, and Escape closes the
+  open sheet alone, as it closes a popover alone.
+- **Task 3.4, the sheet's note and the Mac's modifiers.** The note said keys are ignored in a field and not that Ctrl+S
+  still runs; it names the `inTextFields` tools' keys now, read from the table (`textFieldKeysOf`). Its "Ctrl is Cmd on a
+  Mac" is gone: `bindingLabelOf` takes a `KeyPlatform` and writes ⌘ for Ctrl and ⌥ for Alt on a Mac, Ctrl and Alt
+  elsewhere. The platform is read once, as `KEY_PLATFORM` (`composer-key-platform.ts`), from `userAgentData.platform` or
+  else `navigator.platform`, and injected into the sheet and the palette, whose tooltips (Task 3.6) use it too.
+- **Task 3.4, `SHEET_ORDER`** is a hand copy of `ToolGroup`. The spec checks the sheet's rows are every tool with a key,
+  so a group left out of the order fails it.
+- **Task 3.2, `endingBitsOf`** leaves out an ending outside 1 to `MAX_ENDING`: 0 set bit 31, making the field negative,
+  and 9 set bit 8. `OTTAVA_CHOICES` is specced.
+- **Task 3.3, the status line's words** - `countOf`, `fixBarNoticeOf`, `pasteNoticeOf` - are in `composer-text.ts`; the
+  status line imported `countOf` from the structure commands.
+
+**A review of the fermata and tuplet work in committed M2 code** found one important fault and six minor items, fixed
+in two commits: `7c21dc0` and `950f8ba`. Whole suite after them: **3,092 SUCCESS**. No signature a Phase 3 or 4 block
+still to apply uses has changed.
+
+- **Tasks 1.6 and 1.13, a clear that removes a grace.** Delete at the caret, a clear over a range and Cut remove graces
+  (`clearToRests`), and a grace moves where beats play: an on-beat grace takes its length from the start of the beat it
+  leads into. The commands asked only `editRefusal`, so they opened tuplet groups and moved fermatas with nothing
+  settled. Delete on beat 1 of `n4 g o n4t3 n8t3 n2` left the group open. On a second track's `oF n4 n4 n4 n4` beside
+  `n4F n4 n4 n4`, Delete on the grace left the quarter that now plays at 0 without the fermata, and it saved as `n4F`.
+  In `n4 gF g n4F n2`, the grace left playing at 960 held none. `clearToRests` now snapshots and settles fermatas when
+  it removes a grace and returns the drops, which reach the notice through the edit's outcome. `clearRefusal` refuses a
+  clear that would leave a group open - "Removing a grace note there would leave a tuplet group unfinished, since graces
+  before a group take their time from its first beat." - and the three commands and the Rest reader over a range ask
+  it. The review's service fuzz through alphaTex, seeds 505 and 606, 29,837 commands: 0 accepted open groups, and 1 save
+  difference, the second voice below.
+- **Task 1.10, one fermata became two.** Settling carried each note holding a fermata on its own. `n4. n8 n2F` over
+  `n2 n2F`, dotted from the first track's beat 0 to the second's, carried it to 2160 on one and 2880 on the other, with
+  no report; and two tracks' notes moved alike each reached the other, so the fermata was dropped. The notes holding a
+  position's fermata are now read together, with their own voices set aside, and carry it only when they all land on
+  one tick. Otherwise it stays where a beat still plays, or goes as `notesApart`: "1 fermata removed: the notes holding
+  it moved apart."
+- **Task 1.10, a fermata whose note became a grace** said "no note starts at its place any more" while the grace still
+  played there: `n4. n4 n16 n16F n8 n8 n8` with beat 3 an on-beat grace. It goes as `becameGrace`: "its note became a
+  grace note, which cannot hold a fermata of its own."
+- **Task 1.13, a grace press on a whole group.** Beats 0 to 2 of `n4t3 n4t3 n4t3 n2` made graces said "select the whole
+  group", which they were. When the selection names every beat of each group it touches, `graceRefusal` says "A grace
+  note takes no room in its bar, so a tuplet group cannot be made of grace notes."
+- **Task 2.2, AltGr and Option.** The layout spec also presses AltGr symbols on QWERTZ and AZERTY, reported with Ctrl
+  and Alt, and Option symbols on German and French Macs, and finds no press that matches two bindings. No binding
+  changed.
+- **Task 1.10, a second voice.** `toggleFermata` wrote voice 1 only, so a loaded bar's second voice took the fermata at
+  its tick on save, and settling read voice 1 only. `fermataPositionsOf`, the snapshot and the settling now read every
+  voice of every staff (`FermataHolder.voiceIndex`), since alphaTab files and hands on a fermata by tick in all of them,
+  and a fermata only a second voice holds is its position's. After both commits, the same fuzz over 29,840 commands: 0
+  accepted open groups and 0 save differences.
+- **A grace carrying a tuplet** (`docs/TODO.md`). alphaTex keeps it, a grace-only run's included: `o ot3 ot3 ot3 o n2 n2`
+  round-trips with its tuplets. The review's fuzz case lost its group because alphaTab joins a bar's leading graces to
+  the triplet the bar before ends in, which the one-bar reading already recorded misses. `setGrace` keeps a beat's
+  tuplet, so the grace tool does give a grace one where that leaves no group open; the entry said it never did.
+
+**A review of the committed M2 code - the grace tool, saving and the shortcut sheet** found one fault in the grace tool,
+three in saving, five in the shortcut sheet and two small items, fixed in four commits: `1068164`, `a9f33d3`, `66b5b1a`
+and `db1874b`. Whole suite after them: **3,113 SUCCESS** (3,098, 3,106 and 3,112 after the first three). Task 3.10's blocks
+were corrected for the fixes, as each entry below says. The blocks still to apply were not re-proven with them.
+
+- **Tasks 1.13 and 2.3, a grace carrying a tuplet.** `setGrace` kept a beat's tuplet, and a service fuzz accepted 26 of
+  1,995 grace presses that left one. The review's bar began `n8 n4. o g g g n4t3 n8t3`; completed as `n4 n4`, beats 4 to 6
+  made on-beat graces became `n8 n4. o g o o ot3 n8t3 ...`. The on-beat grace leading the run already held that mixed
+  group open, and the press left it holding the same two beats, so the open-group refusal saw nothing new. Such a grace
+  starts a group alphaTab never closes on a written value, and a bar's leading one joins the group the bar before ends
+  in, which the one-bar reading cannot see. A beat made a grace now loses its tuplet in the same edit (`setGrace`), and the
+  open-group refusal judges what is left. That press now says "That would break a tuplet group; select the whole group.",
+  and the whole group made graces goes through with no tuplet left. `beat-edits.grace.spec.ts` pins the bar, the
+  service's press, and a sweep of every run of beats in seven bars of groups, pressed both ways, that finds no tuplet grace.
+  `edit-refusals.spec.ts`: "says a whole group cannot be made of graces" pinned `n4t3 n4t3 n4t3 n2` made graces as
+  refused. Stripped, no group is left, so that press is accepted now, and the words are pinned where they still apply: a
+  loaded grace carrying a tuplet after the group, which would then start a group of its own.
+- **Task 3.1, a load during a save.** `load` did not ask about a write under way. Save A, Save again (queued), load C:
+  the write landed, set `currentId` back to A, and the queued save wrote C over A. `load` now moves `loadGeneration` on
+  and drops the queued saves when it replaces the document, and a write sets `currentId` only when no load came between.
+  Refusing a load while a write is under way was the alternative, and was not taken: a load already waiting on
+  `library.get` when a write starts would pass that check, and the generation covers both orders without refusing the
+  user's press. A Save pressed after the load stays queued and runs for the loaded composition.
+- **Task 3.1, Save as copy while a write is under way.** The follow-up was one `{ asNew }`, OR-ed across triggers. So a
+  double click on Save as copy made two copies, which the panel's own comment said it did not; and Save then Save as copy,
+  both mid-write, merged into a copy, and the edit never reached the original. The queue now holds at most one Save and one
+  Save as copy, in the order first pressed, run one at a time after the write before lands: a Save when the document moved
+  on since that write began, a copy unless that write was a copy of the same document. A queued save that starts no write
+  has been refused and said why, and the rest are dropped with it.
+- **Task 3.1, a queued save after the panel is destroyed.** The panel's state stops updating on destroy and the page's
+  draft guard is removed, so a queued save would have written unguarded. `ngOnDestroy` sets `destroyed` and drops the
+  queue. The drop after a failed write, already the behaviour, is specced too. `composer-library-panel.save-queue.spec.ts`
+  holds these cases, with each `library.save` held until the spec lands or fails it.
+- **Tasks 3.4 and 3.10, the sheet is modal to the mouse.** It was `position: fixed; inset: 5vh 5vw` with nothing behind
+  it, so a click in the margin ran palette or top-bar tools and took the focus out of the sheet. A backdrop now covers the
+  window and closes the sheet on a click, giving the focus back as Escape does, and Task 3.10 makes the page's parts `inert`
+  while the sheet is open. Found while wiring it: an inert element cannot take the focus, and the sheet gave the focus back
+  from `ngOnChanges`, inside the page's template pass, where a later binding could still have the page inert. It now does
+  so in `ngAfterViewChecked`, after every binding in the page is applied, and Task 3.10 puts the sheet first in its
+  template, so the sheet reads what had the focus before the page goes inert. The sheet's spec binds it before an inert
+  page. A probe in the suite's Chrome found that a script's `click()` on an inert button still runs its handler, so Task
+  3.10's spec asks `elementFromPoint` what a pointer over the palette would hit.
+- **Task 3.4, Ctrl keys behind the sheet.** Behind a modal only `inTextFields` tools were claimed, so Ctrl+K reached the
+  browser's search box. While a modal is open the key handler now leaves to the browser a press with no Ctrl, Alt or Cmd
+  and a `yieldsToTextSelection` tool, runs the sheet's key and Escape, and claims and drops every other binding.
+  `composer-key-handler.spec.ts` pinned Ctrl+V behind the sheet as left to the browser; it is claimed and dropped now,
+  beside Ctrl+K, Ctrl+Home, Alt+- and Cmd+Z, and Ctrl+C is pinned as left alone.
+- **Tasks 3.8 and 3.10, Escape under the sheet.** The Library panel's capture-phase Escape claimed the key while a menu or
+  the drawer was open, so Escape closed that instead of the sheet. The panel takes `modalOpen`: it closes its menus and
+  drawer when that turns true, and its listener stands aside while it is. Task 3.10 binds `[modalOpen]="sheetOpen"`, its
+  stub panel declares the input, and its spec checks the panel is told.
+- **Task 3.4, `fallbackFocus`** is a function, `() => HTMLElement | null`, asked as the sheet closes. Bound as an element
+  it read a view query inside `*ngIf`, and escaped NG0100 only through a synchronous `detectChanges`. Task 3.10's
+  `scoreHost` is a function property. Shift+Tab from the heading, where opening puts the focus, is specced.
+- **Undo's and Redo's tooltips** said Ctrl+Z on a Mac, in the current page and in Task 3.10. `shortcutTitleOf(id, platform)`
+  in `composer-tools.ts` writes a tool's label and every key that runs it, as the palette's tooltips do, and both pages use
+  it with `KEY_PLATFORM`. Task 3.10's spec checks the two titles.
+- **Task 1.6, the entry host's `moveCursor`** was never called once entry advanced in its commit (`commitEntry`). It is
+  gone from `ComposerEntryHost` and from the service's wiring. The blocks of Tasks 1.6 and 1.13 still name it; they are
+  superseded by the committed code and left as proven, and no block still to apply names it. `commitEntry`'s comment said
+  it no longer advanced past an entry the edit refused, which no entry ever did - `refusesEntryAt` refuses before the
+  commit - and that claim is gone from the comment and from the Task 3.3 entry above.
+- **Tasks 3.3 and 3.10, the alphaTex message said twice.** It was still keyed by its words, so "Apply or revert the alphaTex
+  draft before saving." for a second Ctrl+S kept its node and was not read out again. The status line takes `texErrorId` and
+  keys the message by it. Task 3.10's page moves the id on each time it sets `texApplyError` to a message, binds it, and
+  specs a second Ctrl+S replacing the node.
+- **`docs/TODO.md`**: undo does not restore the caret, since undo entries do not store the cursor; Guitar Pro restores the
+  selection.
+
+**A review of the committed M2 code - voices, fermatas, saving, popovers, the library drawer and the track strip** found
+faults in each, fixed in three commits: `6a5721d`, `9a55f1e` and `44389da`. Whole suite after them: **3,151 SUCCESS**
+(3,127 and 3,142 after the first two). Task 3.10's blocks were corrected, as each entry below says, and the blocks still
+to apply were re-proven on top (see "The re-proof of Phases 3 and 4").
+
+- **Tasks 1.13 to 1.15, a new bar beside a second voice.** `insertBarInto` gave a new bar one voice, so a loaded staff
+  with a second voice threw out of alphaTab's `Voice._chain` (`reading 'beats'`) on every save and render after Append
+  bar, Insert bar, a Fix bar that appended or a paste that did. A new bar now takes as many voices as the bars either
+  side hold, each past the first a whole-bar rest. `deleteBeats` filters every voice by identity and fills the first
+  alone, and `deleteBars` removes whole bars from every staff, so neither changes a voice count. A second voice of rests
+  is written as nothing by alphaTex - dropped when no bar of the staff has a note in it, one quarter rest in a bar beside
+  bars that do - and that is kept as it is (design decision 32, `docs/TODO.md`). `composer.service.voices.spec.ts` pins
+  the four commands through `toScore`, the rest-only voice through alphaTex, and a fermata only a second voice holds:
+  it reads mixed, the first press sets it on every beat at the position, the second clears them all.
+- **Task 1.10, a fermata held by a note that stayed.** Settling's check (a) set aside the whole voice of a moved holder,
+  so in `n4 o n32F n16F n8 n2` with the 32nd made a 16th the 16th that moved to 1200 took the fermata and the note still
+  at 1080 lost it. A position where some holder is still at its old bar and tick now keeps it (`stayed`).
+- **Task 1.13, `clearRefusal`** returns null once `editRefusal` passes when its beats hold no grace: a clear keeps every
+  value, so only a grace it removes can open a group, and the Rest reader over a range drafts nothing. Its spec gives a
+  bar a function a draft cannot copy.
+- **Task 3.1, New overwrote the last entry.** The page's New called `reset()` and the panel kept `currentId`, so Save
+  wrote a blank score over the composition last saved or loaded, and a Save queued before New ran over it once the
+  write under way landed. `ComposerState.documentId` moves on in `reset` and in `replaceDocument(_, true)`, a load, and
+  the panel forgets its entry when it changes (`forgetEntry`): no entry named, the queue dropped, `loadGeneration`
+  moved on. A page-to-panel channel was tried first and replaced by the service's identity, which needs no wiring in
+  the page and covers any later path that replaces the document. Deleting the entry being edited forgets it too, and
+  the delete waits for a write under way to it, which would put it back. Flatten and save pressed mid-write was dropped;
+  it flattens and is queued as Save is. A queued save compared document identity, and undo gives back a copy, so Save as
+  copy, an edit, Save as copy and Undo made two copies; it compares the alphaTex the write held. The Flatten and save
+  spec's score gains a tempo, since a link alone writes nothing different. `composer-library-panel.save-queue.spec.ts`.
+- **`composer.service.editing.spec.ts`** (979 lines) is split by topic into `composer.service.editing.spec.ts` (460),
+  `composer.service.beats.spec.ts` (349) and `composer.service.outcomes.spec.ts` (165), sharing
+  `composer.service.spec-helper.ts`; all 61 `it`s keep their titles.
+- **Task 3.5, keys inside a popover.** A digit on the Tuplet popover's 3:2 wrote a fret, an arrow moved the caret, R
+  rested and Space on a checkbox played. The page listens on the document in the bubbling phase, so the panel's own
+  `(keydown)` stops the press - but for Tab, Escape (claimed by `onEscape`, which now leaves a press something earlier
+  claimed) and presses with Ctrl, Alt or Cmd, which go on so Ctrl+S saves rather than open the browser's Save dialog.
+  `?` inside a popover stays in it.
+- **Task 3.5, the bar a popover reads.** It read the head's bar and the commands write the first selected bar, so a
+  range selected rightwards onto a 3/4 bar showed 3/4 and Apply made the earlier bars 3/4. `popoverValuesOf`
+  (`composer-popover-values.ts`) reads the first bar, and says `MIXED` for a key, clef, ottava, section, endings or
+  triplet feel the selected bars do not share; the popover shows Mixed, and Apply leaves a field still mixed as each
+  bar has it (a mixed clef or ottava is written as the first bar's, which the bars Clef writes already hold). A key the
+  list does not offer starts from C major, not the previous key.
+- **Task 3.5, closing and placement.** A capture-phase `pointerdown` on the injected `DOCUMENT` closes the popover on a
+  press outside it and its trigger; the focus goes back to the trigger only when it was inside the popover, read in
+  `ngOnChanges` before the closing view takes the focused field out. While open it is placed again in the next frame on
+  `resize`, a capture-phase `scroll` and a `ResizeObserver` on the panel, after `scrollIntoView({ block: 'nearest' })` on
+  opening; `popoverPlacementOf` caps `maxHeight` at the room below `top` (its first spec's 588 is 494), and the panel has
+  `max-width: calc(100vw - 12px)`. The Tuplet popover says `Now:` and the ratio, none or mixed, with `aria-pressed` on
+  the current choice, and every popover stays open on a refusal the service publishes - read by a new `messageId` -
+  with the reason inline as well as in the status line.
+- **Task 3.10, popovers.** `openPopover` closes the kind already open, so a popover's button toggles it. Opening the
+  shortcut sheet closes an open popover, which the top layer kept above the sheet, inside the inert palette. Opening a
+  Library or Export menu, or the saved list, closes one too: the panel's `menuOpened`, bound to `closePopover`, and the
+  stub panel declares it. Three specs added.
+- **Task 3.8, the drawer and the menus.** The drawer's close button takes the focus when it opens; ×, Escape and a load
+  give it to Library; an export gives it to Export. Each saved row loads through a `<button class="composition-load">`.
+  A refusal closes the menus, since it drops where they open, and the focus goes to Library, not into the menu: the two
+  specs that pinned focus returning to Save inside the reopened menu now pin Library. The menus stay disclosure buttons
+  (design decision 20). The panel's key listener uses the injected `DOCUMENT`, and `report`'s timer is cleared on destroy.
+- **Task 3.7, the last track's Remove** was `[disabled]`, hiding its reason. It is `aria-disabled` with the reason in its
+  name and tooltip (`LAST_TRACK_REFUSAL`, in `composer-text.ts`, which the service uses too), and its press reaches the
+  service, which refuses.
+- **Task 3.4, keys behind the sheet.** Ctrl+A, Ctrl+Home, Ctrl+End, Ctrl+Insert and Option+↑ and ↓ are the browser's own
+  keys over the sheet's text and are left to it (`TOOLS_LEFT_TO_A_MODAL`); Ctrl+S and Ctrl+K stay claimed.
+  `composer-key-handler.spec.ts` pinned Ctrl+Home as claimed. The sheet's spec gains a backdrop press after the focus
+  went to the body, and its inert-page spec no longer says "whatever order the page binds in".
+- **Task 3.6's spec** re-sets `state` and checks the OnPush palette updates `aria-pressed` and `aria-disabled`.
+- **Task 3.10 replaces the page's `.ts`, `.html` and `.scss` whole** (`create`), so the old Tracks panel, the duration
+  buttons and the generated-track methods go with them; the re-proof's clean type checks confirm nothing reaches them.
+
+**A review of the committed M2 code - which composition is open, Flatten and save, and the bar popovers** found five
+faults in composition identity and deleting, one in Flatten and save and three in the popovers, fixed in `374e79b` and
+`72d373c`. Whole suite after them: **3,215 SUCCESS** (3,204 after the first). **A review of the page (Tasks 3.9 to
+3.11)** found six important faults and eleven minor items, fixed in `bebbb9c`: **3,232 SUCCESS**. Task 5.2's Steps 13,
+14 and 25 are corrected for both.
+
+- **Task 3.1, undo across a load.** A open, load C: Ctrl+Z put A back while the panel named C, and Save wrote A over C.
+  Opening a different composition starts a fresh history, as opening a file does in Guitar Pro (design decision 20).
+  `replaceDocument(doc, { markClean, newComposition })` replaces the boolean: `newComposition` moves `documentId` on and
+  clears the undo and redo stacks; `markClean` only says it is saved. Its callers: the panel's load passes both; the
+  transcription's Open in Composer passes `newComposition` alone, since it is unsaved; the page's alphaTex Apply and the
+  spec helper `withFirstBar` pass neither, an edit. `reset` (the page's New) already cleared both stacks. No GP viewer or
+  import path calls either; the comment in `progression-track.ts` naming a `.gp` file is about the mapper.
+- **An opened transcription kept the old identity.** `openInComposer` replaced the document unmarked, so `documentId`
+  stayed and Save overwrote the entry open before. `transcription.component.spec.ts` and the save-queue spec pin it.
+- **Task 3.1, a delete that fails.** `remove` forgot the entry before `library.delete` resolved, so a failed delete left
+  the next Save writing a new entry beside the one still there. It forgets only once the delete succeeds, and only if the
+  entry is still current. While it is under way, a queued plain Save is dropped - it would write the entry back - and a
+  Save pressed then writes a new entry (`deleting`).
+- **Task 3.1, a copy writing while its original is deleted.** Forgetting moved `loadGeneration` on, so a Save as copy
+  landing after the delete was not adopted and the next Save made a third entry. A delete now moves `deletions` on
+  instead, and a write that made a new entry is adopted across it; one a load or New overtook is not.
+- **Task 3.8, `#saveButton`** was a template reference nothing read. Gone.
+- **Task 3.1, Flatten and save pressed mid-write.** The flatten ran, and when the write before failed, or its queued save
+  was refused or failed, nothing said the tracks were flattened and unsaved. A queued save records the tracks a flatten
+  detached for it (`QueuedSave.flattened`), and dropping it unsaved reports them in the alert, as the direct path does
+  (`dropQueuedSaves`).
+- **Task 3.5, clef, ottava and key over a range.** Apply wrote from the first bar until a bar differed, so bars in g2 and
+  f4 with only the ottava changed became g2/8va and f4/regular, and a key over a range stopped at a key change inside it.
+  With more than one bar selected, `setClef` and `setKeySignature` (`bar-edits.ts`, `writtenBarsOf`) write every selected
+  bar, a null field keeping each bar's own; from one bar they run on as before. The Clef popover sends a field still
+  mixed as null, so `PopoverValues.firstClef` and `firstOttava` are gone: `composer-popover-values.spec.ts` pinned
+  `firstClef` twice, and the first now pins `clef`. `bar-edits.spec.ts` calls take `{ first, last }`.
+- **Task 3.2, Key signature's Mixed** read the caret's staff and the command writes every staff. It reads every staff.
+- **Task 3.5, a popover the score changed under.** Ctrl+Z from a popover's button reaches the page, and the popover kept
+  fields read from the score before. It hears the service and closes, applying nothing, when the document changes by
+  anything but its own Apply (`closeOnOutsideChange`).
+- **Task 3.11, Space and Enter** (design decision 29). `pressesFocusedControl` claimed Space on a link and Enter on a
+  checkbox, which the browser does nothing with: after clicking Composer in the shell's nav, Space no longer played. It
+  is key-specific now, and only for a control matching `:focus-visible`: a Delete bar clicked with the mouse kept the
+  focus, and Space deleted another bar. A held Enter presses a palette button once unless its tool repeats.
+  `editable-target.spec.ts` pinned Space and Enter both on a link and a checkbox; that case is replaced by one per kind
+  of control, with `:focus-visible` faked, as Chrome headless does not set it from a script's `focus()`.
+- **Task 3.10, the alphaTex draft guard** refused a save whenever the draft differed from the score's alphaTex, so an
+  untouched draft refused every save after an edit and pointed at Apply, which would throw the edit away. The page keeps
+  the tex the draft was seeded from (`texDraftBase`): a draft equal to it follows the score, re-seeded when the document
+  changes; an edited draft refuses as before, and once the score has moved on it says "The alphaTex draft was written
+  against an earlier score; revert it, or apply it to replace the changes made since." in the status line and the panel,
+  and Apply asks first. No alphaTex is built to answer a Ctrl+S.
+- **Task 3.10, the strip's height** was clamped against the window, not the page, and never on resize.
+  `stripHeightRangeOf(pageHeight, fixedRowsHeight)` leaves the score 160px; a `ResizeObserver` on the page and its top
+  bar clamps again and is disconnected on destroy; the separator binds `aria-valuemin` and `aria-valuemax` from the same
+  range and takes Home and End. `clampedStripHeight` takes the range, and its spec is the new function's.
+- **Tasks 3.3 and 3.10, one live region.** The panel had a polite region of its own beside the status line's.
+  `ComposerService.announce(message, failed)` publishes a notice or a refusal with a new `messageId`, and the panel's
+  saved, loaded, deleted, exported and failure messages go through it; `statusMessage`, its timer and the region are gone.
+  The save refusal stays `role="alert"`: it holds its remedy and is a question, not a report. The panel spec's timer case
+  became one for `announce`, and the two cases that read its polite region read `ComposerState.notice`. The page spec's
+  `region()` reads the status line's `.messages`, and a spec with the real panel finds one `[aria-live]`.
+- **Task 3.10, parts the old page had.** Add bar returns as a palette tool in Bar, `appendBar`, face `+end`, keys
+  Ctrl+Alt+Insert and Ctrl+Alt+Enter (free on all four layouts the tool spec presses; design Shortcuts table). The
+  status line shows the score's bar count beside the caret ("Bar 3 of 4"). The ⌫ delete button and the entry-hints
+  paragraph are removed on purpose: Delete clears a beat, and the shortcut sheet lists every key.
+- **Task 3.10, small items.** `.tex-panel` scrolls within itself (`overflow: auto; min-height: 0`) and the score keeps
+  `10rem`; the editor's `#11181f` is `--composer-editor-surface`. The palette is a named `role="region"` with each group
+  labelled by its name, not a `<nav>` with `<h2>`s: `role="toolbar"` promises arrow keys, as `role="menu"` did (decision
+  20), and the shell's `<h1>` already heads the route. Plain keys in the saved list stop there, as in a popover.
+- **Task 3.9, the shell.** Its header wraps (`flex-wrap` on the header row and the nav), so a 375px window does not scroll
+  the body sideways, and it publishes `getBoundingClientRect().height`, which `offsetHeight` rounded. Its spec removes
+  `--app-header-height` after each case and drives a fake `ResizeObserver`.
+- **Specs added for the page:** Shift+Enter on a focused Section… opens it once; a held Enter; Space after a mouse click
+  plays; the separator's keys leave the caret; destroying the page takes its save guard off; Ctrl+C with the text
+  selection inside the score copies, which proves `#score` reaches the key handler.
+- **`deep-frozen.ts`** is `deep-frozen.spec-helper.ts`, which `tsconfig.app.json` excludes, so the production build no
+  longer compiles it. `edit-refusals.spec.ts`'s `toThrow()` case is titled for what it pins: that clearing notes makes no draft.
+
+`bebbb9c` is committed as "fix: page". The message is that short, and the commit holds every item of the page review
+listed in the entry above.
+
+**The score-interaction fixes** - `6a8ae66`, `4555492` and `4f813d6`, on `feature/composer-editor-m2-score`, merged in
+`1f0672b` beside the page fixes. Whole suite after the merge: **3,259 SUCCESS**.
+
+- **Staves by system (Tasks 4.1, 4.3).** Page layout engraves one SVG per system, and lazy loading attaches only the
+  systems near the viewport, so a staff's index on the page is not its slot. `composer-score-systems.ts` resolves a
+  measured staff to a system by y (`staffSystems[].realBounds`), then to its slot by its band within that system. The
+  caret uses the system of `findBeat(beat)`. A `MutationObserver` under `.at-surface` drops the measure when a system is
+  attached or detached. Track and staff are read from a bar's first beat, since `BoundsLookup.fromJson` never sets
+  `BarBounds.bar`.
+- **Highlight after a render (Tasks 4.2, 4.3).** With workers, `renderFinished` fires before the bounds lookup is
+  replaced. The highlight and caret are redrawn on `postRenderFinished` (`AlphaTabService.onPostRenderFinished`), and
+  `highlightBeatsOf` clears instead of drawing when the lookup doesn't know both ends.
+- **Beats on the target track (Tasks 4.1, 4.3).** `MasterBarBounds.findBeatAtPos` searches every track. `targetTrackBeat`
+  resolves the beat on the staff under the pointer, and `dragTargetOf` keeps a drag on the caret's staff between staves.
+- **Zone (Tasks 4.2, 4.3).** `onBeatMouseMove` runs outside Angular's zone. A drag enters the zone only to extend to a
+  different caret (`sameCaret`), and Pen hover redraws with `detectChanges`.
+- **Minors.**
+  - A refused Pen note is silent (`writeSounds`).
+  - Hover follows the hovered bar's clef and clears on a mode or document change (`hoverSurvives`).
+  - Seek goes to the caret's beat.
+  - `caretHalfStepsOf` is clamped at 0.
+  - The score has a focus ring.
+
+**`composer.service.ts` made room for M3** in `3ffb294`. It was 983 lines. Commits, undo and redo, `replaceDocument`,
+`markSaved`, `refuse` and `announce` moved to `ComposerHistory` (`composer-history.ts`), which holds the undo and redo
+stacks and reaches the state only through `ComposerHistoryHost`, as the structure and entry commands reach theirs. The
+constructor and `reset` share `initialState`. The service was 830 lines after it, and no spec changed. No block still to
+apply names a moved member. Whole suite: **3,259 SUCCESS**.
+
+**Follow-ups after the merge**, in `fffdb22`. Whole suite after it: **3,279 SUCCESS**.
+
+- **Task 2.5, a refused fret digit sounded.** `FretDigitEntry.type` auditions a digit only when its write changed the
+  document (`writeSounds`), in both branches, as a refused Pen note was already silent.
+- **Tasks 3.5 and 4.3, the press that closes a popover only closes it** (design decision 17). A press outside an open
+  popover closed it, and the same press reached the score, which moved the caret, sought, and in Pen wrote a note. The
+  popover hears the press as a capture-phase `pointerdown`, but alphaTab hears the `mousedown` and `mouseup` after it, in
+  the capture phase on `.at-surface`, and the score its own capture listener on an ancestor, so stopping the
+  `pointerdown` stops neither. So the popover emits `pressedOutside` before `closed`; the palette passes it on
+  (`popoverPressedOutside`); and the page calls `ComposerScoreComponent.ignoreNextPress()`, while that press is still
+  being dispatched. `pressGuardAfter` arms the guard; the score's `mousedown` turns it to `ignoring`, and a beat press is
+  then dropped; a `mouseup` anywhere ends it. The document's `mouseup` listener is in the capture phase now, so a control
+  that stops a release cannot leave the guard on. A closing press released without reaching the score leaves the next
+  press on the score acting.
+- **Task 3.1, every new composition asks before discarding unsaved work** (design decision 20). Only a load asked. New,
+  and a transcription's Open in Composer, replaced the document and its history without a word.
+  `ComposerService.confirmDiscard(action)` asks "Discard unsaved changes and `action`?" when the document is dirty or
+  unsaved work is held elsewhere (`holdUnsavedWork`), and answers yes otherwise. The library's load, the page's New and
+  Open in Composer each ask it first; told no, each leaves the document, its history and the route as they were. The
+  load's words are unchanged.
+- **Task 3.10, an edited alphaTex draft outlived its composition.** Type into A's draft, load C, Apply: A's alphaTex was an
+  edit of C, and Save wrote it over C's entry. The page holds an edited draft as unsaved work, records the `documentId` it
+  was seeded for, and throws it away and seeds it again when another composition opens.
+- **Task 3.10, Apply asked before it parsed.** A draft that does not parse now says so and asks nothing; a draft that does
+  is asked about when it is out of date.
+- **Task 3.3, an announcement wiped a refusal still showing.** `announce` leaves the refusal as it is; only a failure
+  replaces it.
+
+**A review of the score fixes** found one critical fault, one important and three minor, fixed in `19a136f`. Whole suite
+after it: **3,288 SUCCESS**.
+
+- **Tasks 4.1 and 4.3, a press's staff and beat on different systems (critical).** `staffUnderPointer` found the system
+  from the staff's middle line, and `beatUnderPointerOn` found it again from the pointer. `staffIndexAt` reaches three
+  line spacings past a staff, and every system after the first has its band start about 14 pixels above its first
+  staff's top line. So a Pen click on a ledger line above system 2's treble staff took system 2's staff and system 1's
+  bar, and wrote under that bar's clef; a click in the gap between two bands did nothing; and hover did the same.
+  `pressSystemIndexOf` reads the beat on the system of the staff under the pointer, and on the pointer's own only off
+  every staff, and `systemIndexAt` falls back to the nearest band. `composer-score-systems.spec.ts` engraves 20 bars and
+  presses two spacings above systems 2 and 3, where the band has not begun.
+- **Tasks 4.1 and 4.3, slash and numbered staves broke the slot ranking.** An applied draft or a load carries `showSlash`
+  and `showNumbered`, and alphaTab's default profile draws slash, notation, numbered and tablature, one bounds band each
+  (~75665). `staffSlotsOf` listed notation and tablature only, so with `slash score tabs` a click on notation mapped to the
+  tablature slot and one on tablature to none. It lists all four in that order. Both only take the caret: no Pen write,
+  no string, no hover notehead, and a Pen drag from one extends, since nothing was written. `StaffHitTestService` paired a
+  slash staff's one line with notation's top line, measuring notation as four lines; a line that is last on its surface,
+  or followed by a run of three or more lines at another gap, is now a staff of its own, with the spacing of the staff
+  beside it. A numbered staff draws no lines and is not measured; its band still counts in the ranking. A caret with no
+  string prefers a staff that draws lines. Specced on a real engraving of all four.
+- **Task 4.3, presses read stale bands.** From `renderFinished` to `postRenderFinished` a press, a drag and Pen's hover do
+  nothing (`scoreTakesPress`).
+- **Task 4.3, caret updates were not coalesced.** Each state emission and each `MutationObserver` report scheduled its own
+  pair of frames and `detectChanges`; one is pending at a time now.
+- **`color-mix`** needs Firefox 113, and the build's baseline allows 112. Each declaration has an `rgba` fallback before it.
+
+**A review of composition identity, range writes and the page fixes** found, beside the items in `fffdb22`, faults fixed in
+`a6f7ba0`. Whole suite after it: **3,294 SUCCESS**.
+
+- **Task 3.10, the score's floor as rendered** (design decision 23). The strip was clamped against 160px, while the score's
+  minimum is `10rem`, wrong at any other root font size; the open alphaTex panel was not counted, and the column had no
+  `overflow`, so the panel spilled over the status line; and a status line wrapping onto two lines left the clamp stale.
+  `fitStrip` reads the score's computed `min-height`, counts the open panel as a fixed row, and the page observes the
+  status line and the panel as well as the page and the top bar. `.score-column` has `overflow: hidden`.
+  `stripHeightRangeOf` takes the score's minimum, and its spec a case for a 20px root.
+- **Spec titles.** The page's and the Library panel's say "one polite live region". The save refusal's `role="alert"` is
+  assertive on purpose (design decision 30).
+- **Add bar's keys** are pressed on the four layouts and on a Mac, Cmd+Option+Enter, and each matches Add bar alone.
+  Task 5.2 Step 32 checks them on a real Mac and AltGr+Enter on Windows.
+- **Task 3.11, a held Enter** is dropped on every control focused from the keyboard - a menu item, a saved row, a track
+  row, the `?` button - and let through only on a palette button whose tool's key repeats. The code was right: a held
+  Enter on Save, a saved row or Remove would press it again on every repeat. Design decision 29 and the page's comment
+  said palette buttons only, and are corrected; a spec pins the `?` button.
+- **`progression-track.ts`** said the library panel and the page replace the document with a `.gp` file. Neither does: a
+  saved composition, an applied alphaTex draft and a transcription's derived score do.
+
+**The M2 hand check** found Pen blanking the score, fixed in `fix: Write a fretted note when Pen clicks notation on a
+stringed staff, so alphaTab never gets a pitched note it cannot tab` (design decision 33). Whole suite after it:
+**3,320 SUCCESS**.
+
+- **Task 4.x, Pen on a guitar's notation.** `placeClickedPitch` handed `setNoteAtCursor` a pitched note, written as it
+  was onto a staff with a tuning. alphaTab leaves a pitched note's `string` at -1, and `TabBarRenderer.collectSpaces`
+  (`alphaTab.core.mjs` ~75023) indexes `spaces[tuning.length - note.string]`, one past the last string, so the render
+  threw "Cannot read properties of undefined (reading 'push')" and the score stayed blank. Main (`e726b51`) wrote Pen's
+  pitch the same way and the mapper is unchanged from it, so M1 had the bug. `staffEntryOf` (`pitch-on-strings.ts`) now
+  writes a fret: the caret's string when it reaches the pitch and is free on the beat, otherwise the lowest free fret,
+  a tie to the higher string, frets counted from the capo with 24 less the capo in front of it (`candidatesFor`). A click
+  on a pitch the beat already sounds takes that note out, as it does on a piano staff. A pitch no free string reaches is
+  refused with a reason ("That pitch is below this staff's lowest string."). `retypeNote` goes through it too. A fretted
+  note has no letter; `accidental: 'auto'` spells it from the key signature, which is how the click was read.
+- **A pitched note from anywhere else.** `replaceDocument` - a load, an applied alphaTex draft, an opened transcription -
+  frets every pitched note on a staff with a tuning (`frettedDocOf`) and says how many no string reached and were left
+  out; `ScoreDocMapperService.toScore` frets as the last guard. Paste already refused pitched beats on a fretted staff,
+  now specced; a progression's track has no tuning, and `setStaffTuning` refuses a pitched staff.
+- **The audition** sounded at once, and the render the write asked for, 150 ms later, loaded MIDI - `AlphaSynth.loadMidiFile`
+  calls `stop()`, which cut the note off and could pause alphaTab's AudioWorklet output before its buffer source had
+  started: the two `InvalidStateError`s. Not Tone.js, which the composer does not use. `auditionAfterRender`
+  (`AuditionQueue`) sounds the note once that render's MIDI has loaded.
+
+**The rest of the M2 hand check** found three faults fixed in commits of their own, each re-run in the pane: alphaTab's
+range highlight and playback cursors had no style (`1b7a58e`); an added track took C major where the score's bars had
+other keys (`1a93873`); and the common-time box stayed ticked after Top changed, so Apply was refused, and Enter in a
+popover's field did not apply (`fe1775f`). Then two more, each its own commit:
+
+- **Tasks 1.6 and 1.12 and the hand check's Pen fix: Pen's string, and one fret limit (`e14e479`).** With the caret left
+  on string 4 by a tablature click, Pen wrote D5 at fret 24 there, since the caret's string came first whenever it
+  reached the pitch. `frettedPlacementOf` takes the lowest fret over the strings free on the beat, a tie going to the
+  caret's string and then the higher string, and prefers the caret's string only when it reaches the pitch within 4
+  frets of that lowest fret - chosen to be predictable, as Guitar Pro's is. So the caret on the low E string and a click
+  at the high E string's open pitch writes string 1, fret 0, not string 6, fret 24. The load-time and mapper conversions
+  (`frettedDocOf`) use the same rule. Pen allowed 24 frets less the capo, while typed digits and string and semitone moves
+  allowed fret 24 whatever the capo: `maxFretOf` in `pitch-on-strings.ts` is now the one limit for all of them. A typed
+  number on the neck but past it - "2" then "0" with the capo at 5 - is refused through `staffEntryOf` with "With the capo
+  at 5, a fret runs from 0 to 19.", and the note keeps its first digit's fret; a number past the neck's 24 still starts
+  a new note, as before. A string move that would need fret 21 there is refused. Whole suite after it: **3,332 SUCCESS**.
+- **Tasks 4.1, 4.3 and 3.3: the caret on a slash or numbered staff, and a narrow status line (`7a20ace`).** The hand
+  check saw a Select click on a slash staff move the caret and draw its box on notation. It did not reproduce: on the
+  committed code a scripted press at the slash line's measured position, at 1280 and 770px wide, took the slash slot and
+  drew the box on that line, so the pane's scaled coordinates most likely missed the staff. What was left open is settled
+  (design decision 22). `caretSlotIndexOf` keeps a clicked slash or numbered staff only while the caret is where that
+  click, or the drag from it, left it, so a key that moves the caret takes it back to notation or tablature. A numbered
+  staff draws no lines, so it was never under the pointer and a press over it went to the nearest lined staff; it is
+  now found by its band (`numberedSlotAt`), and its caret is drawn in the middle of that band (`staveBandOfSlot`,
+  `StaffHitTestService.bandCaretRect`). At 375px the status line clipped a load's message at the right edge: it wraps now
+  (`flex-wrap`, the messages at `flex: 1 1 12rem` with `min-width: 0`, and `overflow-wrap: anywhere` on each message),
+  and an empty live region claims no line. Checked in the pane at 375px with a short, a long and an unbroken message: no
+  sideways scroll. Whole suite after it: **3,336 SUCCESS**.
+
+The final M2 review, before the merge, found more, fixed in two commits:
+
+- **Tasks 2.2, 2.4, 3.4 and 3.6: Mac keys the system takes (`9cd030e`).** The dynamics were bound to Ctrl+Shift+1 to 8, which a
+  Mac's tooltips wrote as ⌘+Shift+3 and so on, and macOS takes ⌘+Shift+3, 4, 5 and 6 for screenshots before the browser
+  sees them. Every Ctrl binding was audited against what macOS and Chrome and Safari on a Mac take with ⌘, now
+  `MAC_RESERVED` beside `BROWSER_RESERVED`, and four clashed. A binding says how it is held on a Mac (`KeyBinding.mac`):
+  the dynamics and Delete track (⌘+Shift+Delete clears Chrome's browsing data) take `control`, written ⌃ and matched
+  from the Control key alone; Ctrl+Space (Spotlight) and Ctrl+Y (History) take `none`, still matching but left out of a
+  Mac's labels by `bindingLabelsOf`, which the palette, the sheet and `shortcutTitleOf` now use. ⌘+← and ⌘+→, Back
+  and Forward in Chrome on a Mac, already have `preventDefault` from the handler, which a new spec pins; they, ⌘+/ and
+  the ⌃ keys are owed a check on a Mac in `docs/TODO.md`. Delete bar and Delete beats on a Mac keyboard are Step 28 of
+  Task 5.2 already. The design's macOS notes and table record it. Whole suite after it: **3,345 SUCCESS**.
+- **Tasks 1.15, 2.3 and 3.8, and the hand check's Pen fix: the mapper's last guard, the capo, a load that dropped
+  notes, and shared wording (`3524e72`).** `toScore` frets a pitched note on strings, as the last guard, and discarded what it dropped: in dev
+  mode it now warns, naming how many it fretted (`frettedDocOf` returns `converted`) and left out, and a spec runs
+  `frettedDocOf` over a new score, Pen on a guitar, a paste and a load to show no edit path leaves it any. The capo
+  check read `value > 24`: it takes `MAX_FRET` and stops at 23, so a fret is left in front of it. A load that left
+  notes out was still marked clean, hiding that it no longer matched the stored file; `replaceDocument` now leaves it
+  unsaved. A load whose notes were only fretted stays clean - every note is kept, sounds the same and nothing is said.
+  `trillTargetOf`, the fret entry's audition and `drawnPitchClassOf` use `soundingMidiOf` rather than its formula;
+  the last read only a pitched note's letter, and the octave the shared formula adds is reduced away. Fix bar's and
+  Delete bar's refusals, each written twice, are `NO_BAR_OVER` in `bar-fill.ts` and `SCORE_NEEDS_A_BAR` in
+  `bar-edits.ts`, used by the command and the tool state alike; no other refusal was duplicated. `tupletGroupEndOf`,
+  `respelledNote`, `DURATION_ORDER` and `TOOLS_LEFT_TO_A_MODAL` are no longer exported. Whole suite after it:
+  **3,351 SUCCESS**.
+
+---
+
+
+## Phase 1: fixes and missing commands, in the service layer
+
+Every command the palette and the keyboard will call, as pure edit functions with their own specs,
+delegated from `ComposerService` the way M1's bar and track commands are. Nothing in the page
+changes in this phase.
+
+**Phase 1 exports**
+
+| Module | Exports added | Task |
+|---|---|---|
+| `beat-edits.ts` | (fix) `relength` places a tuplet group's freed room after the group | 1.1 |
+| `composer-cursor.ts` (new) | `CursorMove`, `clampedCursor`, `movedCursor` | 1.2 |
+| `composer.service.ts` | `moveCursor(move, extend)`; caret moves, undo and redo clear `refusal` | 1.3 |
+| `edit-refusals.ts` | `durationRefusal` | 1.4 |
+| `composer.model.ts` | `EntryMode`, `ComposerState.entryMode` | 1.5 |
+| `composer.service.ts` | `setEntryMode` | 1.5 |
+| `composer-entry-commands.ts` (new) | `ComposerEntryHost`, `ComposerEntryCommands` (note, rest and delete entry lifted out; `retypeNote`) | 1.6 |
+| `note-landing.ts` (new) | `hammerDestinationOf`, `slideTargetOf`, `tieOriginOf` | 1.7 |
+| `edit-refusals.ts` | `noteEffectRefusal`, `drawnPitchClassOf` (exported), scope `{ family: 'note'; key: 'notes' }` | 1.8 |
+| `note-edits.ts` | `NoteTarget`, `noteTargetsAt`, `noteEffectTargets`; `toggleNoteEffect` reads and writes only notes that can hold the value | 1.8 |
+| `composer-tool-defaults.ts` (new) | `fullBendPoints`, `defaultFermata`, `DEFAULT_TRILL_SPEED`, `TRILL_INTERVAL`, `TUPLET_CHOICES` | 1.9 |
+| `note-edits.ts` | `trillTargetOf`, `toggleTrill` | 1.9 |
+| `beat-edits.ts` | `fermataPositionsOf`, `toggleFermata` | 1.10 |
+| `note-respell.ts` (new) | `respellingsOf`, `respelledNote`, `respellRefusal`, `respellNotes` | 1.11 |
+| `note-moves.ts` (new) | `shiftSemitone`, `moveNotesToString` | 1.12 |
+| `beat-edits.ts` | `clearToRests`, `insertBeatAt`, `deleteBeats` | 1.13 |
+| `composer-entry-commands.ts` | `ComposerEntryHost.select`; `clearSelectionToRests`, `insertBeat`, `deleteBeats` | 1.13 |
+| `beat-clipboard.ts` (new) | `CopiedBeats`, `copiedBeatsOf`, `pasteBeats` | 1.14 |
+| `composer-entry-commands.ts` | `copy`, `cut`, `paste` | 1.14 |
+| `bar-edits.ts` | `toggleRepeatClose`, `insertBarsBefore`, `deleteBars` | 1.15 |
+| `composer-service-structure.ts` | `toggleRepeatClose`, `insertBarsBeforeSelection`, `deleteSelectedBars` | 1.15 |
+| `composer.service.ts` | `toggleTrill`, `toggleFermata`, `respell`, `shiftSemitone`, `moveNotesToString`, `clearSelectionToRests`, `insertBeat`, `deleteBeats`, `copy`, `cut`, `paste`, `toggleRepeatClose`, `insertBarsBeforeSelection`, `deleteSelectedBars`; `removeBar` keeps the meter | 1.9-1.15 |
+
+All new service specs go in one new file, `client/src/app/services/composer.service.editing.spec.ts`,
+created in Task 1.3 and appended to after.
+
+### Task 1.1: A whole tuplet group's freed room goes after the group
+
+`relength`'s phase 2 places each changing beat's freed room right after that beat. A beat made a
+triplet eighth frees 160 ticks, which is not a whole number of 64ths, so `insertRestsAt` cannot spell
+a rest there, and the bar fills at its end instead - moving the notes after the group earlier. Carry
+room that cannot be placed forward while the next beat in the voice is the next changing beat, and
+place it after the run. Phase 2 also counted room as placed when `insertRestsAt` returned false; that
+is fixed in the same lines. It cannot be seen today: phase 2 only places room while the bar is
+short, and a bar short at that point is never over in phase 3, which is the only reader of the count.
+
+**Files:**
+- Modify: `client/src/app/services/beat-edits.ts` (`settleRange`, and `relength`'s docstring)
+- Test: `client/src/app/services/beat-edits.spec.ts`
+
+**Step 1: Failing spec.** In `beat-edits.spec.ts`, inside `describe('setTuplet', ...)`, after the
+existing `it`:
+
+<!-- apply: find client/src/app/services/beat-edits.spec.ts -->
+```typescript
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+    expect(beats(doc).length).toBe(5);
+  });
+```
+
+<!-- apply: replace client/src/app/services/beat-edits.spec.ts -->
+```typescript
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+    expect(beats(doc).length).toBe(5);
+  });
+
+  it('puts a whole group\'s freed room right after the group, so the beats after it keep their ticks', () => {
+    // `n8 n8 n8 n8 n2`. Each eighth made a triplet eighth frees 160 ticks - off the 64th grid, so no
+    // rest can go after any one of them. Together they free 480, an eighth rest right after the
+    // group, and the fourth eighth stays at 1440 rather than moving to 960.
+    const doc = ComposerService.createEmptyScore();
+    beats(doc).splice(0, beats(doc).length, ...([8, 8, 8, 8, 2] as DurationValue[]).map(value => createRestBeat(value)));
+    [0, 1, 2, 3, 4].forEach(index => withNote(doc, 0, index));
+
+    setTuplet(doc, [ref(0, 0), ref(0, 1), ref(0, 2)], { numerator: 3, denominator: 2 });
+
+    expect(shape(doc)).toEqual(['n8', 'n8', 'n8', 'r8', 'n8', 'n2']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+```
+
+**Step 2: Run it** (from `client/`):
+
+```bash
+npx ng test --watch=false --browsers=ChromeHeadless --include=src/app/services/beat-edits.spec.ts
+```
+
+Expected: 1 FAILED - `Expected $[3] = 'n8' to equal 'r8'.` (and the shape messages after it): the
+rest went to the end of the bar.
+
+**Step 3: Carry the room.** In `beat-edits.ts`, replace phase 2 of `settleRange`:
+
+<!-- apply: find client/src/app/services/beat-edits.ts -->
+```typescript
+  // Room freed but not placed, because the bar was not short when its turn came. That room has
+  // already paid for growth within the range, so phase 3 must not take rests for it again.
+  let unplaced = 0;
+  for (const beat of inOrder) {
+    const room = freed.get(beat) ?? 0;
+    const fill = barFillOf(bar, meter);
+    const placed = room > 0 && fill.kind === 'under' ? Math.min(room, fill.ticks) : 0;
+    if (placed > 0) insertRestsAt(voice, voice.beats.indexOf(beat) + 1, placed, meter);
+    unplaced += room - placed;
+  }
+```
+
+<!-- apply: replace client/src/app/services/beat-edits.ts -->
+```typescript
+  // Room freed but not placed, because the bar was not short when its turn came or no rest could
+  // spell it. That room has already paid for growth within the range, so phase 3 must not take
+  // rests for it again.
+  //
+  // Room no rest can spell where it opened - a tuplet's remainder is off the 64th grid - is carried
+  // to the next beat when that beat is changing too and directly follows, and placed after the run:
+  // three eighths made a triplet each free 160 ticks, which nothing can spell, and together free 480,
+  // an eighth rest right after the group. So the beats after a whole group keep their ticks.
+  let unplaced = 0;
+  let carried = 0;
+  inOrder.forEach((beat, order) => {
+    const room = carried + (freed.get(beat) ?? 0);
+    carried = 0;
+    const fill = barFillOf(bar, meter);
+    const wanted = room > 0 && fill.kind === 'under' ? Math.min(room, fill.ticks) : 0;
+    const after = voice.beats.indexOf(beat) + 1;
+    if (wanted > 0 && insertRestsAt(voice, after, wanted, meter)) {
+      unplaced += room - wanted;
+    } else if (wanted > 0 && voice.beats[after] === inOrder[order + 1]) {
+      carried = room;
+    } else {
+      unplaced += room;
+    }
+  });
+```
+
+And the docstring's phase 2, so it says what the code does:
+
+<!-- apply: find client/src/app/services/beat-edits.ts -->
+```typescript
+ *    quarters set to eighths are `n8 r8 n8 r8 n8 r8 n8 r8`; `n4 r4 r4 r4` dotted is `n4. r8 r4 r4`.
+```
+
+<!-- apply: replace client/src/app/services/beat-edits.ts -->
+```typescript
+ *    quarters set to eighths are `n8 r8 n8 r8 n8 r8 n8 r8`; `n4 r4 r4 r4` dotted is `n4. r8 r4 r4`.
+ *    Room no rest can spell where it opened - a tuplet's remainder, off the 64th grid - carries to
+ *    the next beat while that beat is changing too and directly follows, and is placed after the
+ *    run: `n8 n8 n8 n8 n2` with its first three beats made a triplet is `n8 n8 n8 r8 n8 n2`.
+```
+
+**Step 4: Run it.** Expected: all SUCCESS, including M1's `makes three quarters a triplet` - its
+fourth beat was already a rest, so the rest lands in the same place either way.
+
+**Step 5: Commit**
+
+```bash
+git add client/src/app/services/beat-edits.ts client/src/app/services/beat-edits.spec.ts
+git commit -m "fix: Put a whole tuplet group's freed room right after the group" -m "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+### Task 1.2: Caret moves as pure functions
+
+The keyboard needs Home, End, previous and next bar, first and last bar, and previous and next
+track, each also extending a range. Rather than seven service methods, one pure function answers
+where any move lands, and the service gets one command in Task 1.3. `clampCursor` moves here too,
+which takes about forty lines out of `composer.service.ts` (953 lines, 47 under the cap).
+
+**Files:**
+- Create: `client/src/app/services/composer-cursor.ts`
+- Test: `client/src/app/services/composer-cursor.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/services/composer-cursor.spec.ts -->
+```typescript
+import { ComposerService } from './composer.service';
+import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
+import { EditCursor, ScoreDoc, createRestBeat } from '../models/composer.model';
+
+const at = (barIndex: number, beatIndex: number, extra: Partial<EditCursor> = {}): EditCursor => ({
+  trackIndex: 0, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex, stringIndex: 0, ...extra
+});
+const where = (cursor: EditCursor): string => `${cursor.trackIndex}:${cursor.barIndex}.${cursor.beatIndex}`;
+const moved = (doc: ScoreDoc, cursor: EditCursor, move: CursorMove): string => where(movedCursor(doc, cursor, move));
+
+describe('clampedCursor', () => {
+  it('pulls every index back inside the document', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(clampedCursor(at(9, 9, { trackIndex: 3, stringIndex: 8 }), doc)).toEqual(at(3, 3, { stringIndex: 5 }));
+  });
+
+  it('gives a pitched staff no string', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+
+    expect(clampedCursor(at(0, 0, { trackIndex: 1, stringIndex: 2 }), doc).stringIndex).toBeNull();
+  });
+});
+
+describe('movedCursor', () => {
+  it('steps a beat, wrapping across bar lines both ways and stopping at the ends', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(moved(doc, at(0, 3), { kind: 'beat', delta: 1 })).toBe('0:1.0');
+    expect(moved(doc, at(1, 0), { kind: 'beat', delta: -1 })).toBe('0:0.3');
+    expect(moved(doc, at(0, 0), { kind: 'beat', delta: -1 })).toBe('0:0.0');
+    expect(moved(doc, at(3, 3), { kind: 'beat', delta: 1 })).toBe('0:3.3');
+  });
+
+  it('wraps by each bar\'s own beat count', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[0].voices[0].beats = [createRestBeat(2), createRestBeat(2)];
+
+    expect(moved(doc, at(1, 0), { kind: 'beat', delta: -1 })).toBe('0:0.1');
+  });
+
+  it('changes string on a fretted staff and not on a pitched one', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+
+    expect(movedCursor(doc, at(0, 0, { stringIndex: 5 }), { kind: 'string', delta: 1 }).stringIndex).toBe(5);
+    expect(movedCursor(doc, at(0, 0, { stringIndex: 2 }), { kind: 'string', delta: -1 }).stringIndex).toBe(1);
+    const piano = at(0, 0, { trackIndex: 1, stringIndex: null });
+    expect(movedCursor(doc, piano, { kind: 'string', delta: 1 })).toEqual(piano);
+  });
+
+  it('goes to the first and last beat of the bar', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(moved(doc, at(2, 2), { kind: 'barEdge', edge: 'first' })).toBe('0:2.0');
+    expect(moved(doc, at(2, 1), { kind: 'barEdge', edge: 'last' })).toBe('0:2.3');
+  });
+
+  it('goes to the first beat of the previous or next bar, and stops at the ends', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(moved(doc, at(1, 2), { kind: 'bar', delta: 1 })).toBe('0:2.0');
+    expect(moved(doc, at(1, 2), { kind: 'bar', delta: -1 })).toBe('0:0.0');
+    expect(moved(doc, at(3, 2), { kind: 'bar', delta: 1 })).toBe('0:3.0');
+  });
+
+  it('goes to the first beat of the score and the last', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(moved(doc, at(2, 2), { kind: 'scoreEdge', edge: 'first' })).toBe('0:0.0');
+    expect(moved(doc, at(1, 1), { kind: 'scoreEdge', edge: 'last' })).toBe('0:3.3');
+  });
+
+  it('goes to the same bar on the next or previous track, and stops at the ends', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+
+    expect(moved(doc, at(2, 3), { kind: 'track', delta: 1 })).toBe('1:2.0');
+    expect(moved(doc, at(2, 3, { trackIndex: 1 }), { kind: 'track', delta: 1 })).toBe('1:2.0');
+    expect(moved(doc, at(2, 3, { trackIndex: 1 }), { kind: 'track', delta: -1 })).toBe('0:2.0');
+  });
+});
+```
+
+**Step 2: Run it** with `--include=src/app/services/composer-cursor.spec.ts`. Expected: a compile
+error, `TS2307: Cannot find module './composer-cursor' or its corresponding type declarations.`
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/composer-cursor.ts -->
+```typescript
+import { EditCursor, ScoreDoc, createDefaultCursor } from '../models/composer.model';
+
+/**
+ * Where the caret goes, as pure functions of the document.
+ *
+ * The keyboard has more caret moves than the service had commands - Home and End, previous and next
+ * bar, first and last bar, previous and next track - and each also extends a range with Shift. One
+ * function answers where any move lands, so `ComposerService.moveCursor` is one command rather than
+ * a dozen, and the arithmetic is specced without a service. `clampedCursor` was the service's
+ * private `clampCursor`; every caller of either now goes through here.
+ */
+
+/** A caret move the keyboard asks for. */
+export type CursorMove =
+  | { kind: 'beat'; delta: number }
+  | { kind: 'string'; delta: number }
+  | { kind: 'barEdge'; edge: 'first' | 'last' }
+  | { kind: 'bar'; delta: number }
+  | { kind: 'scoreEdge'; edge: 'first' | 'last' }
+  | { kind: 'track'; delta: number };
+
+const clamp = (value: number, min: number, max: number): number => (max < min ? min : Math.max(min, Math.min(max, value)));
+
+/** `cursor` with every index pulled back inside `doc`. A pitched staff has no string. */
+export function clampedCursor(cursor: EditCursor, doc: ScoreDoc): EditCursor {
+  const trackIndex = clamp(cursor.trackIndex, 0, doc.tracks.length - 1);
+  const track = doc.tracks[trackIndex];
+  if (!track) return createDefaultCursor();
+
+  const staffIndex = clamp(cursor.staffIndex, 0, track.staves.length - 1);
+  const staff = track.staves[staffIndex];
+  const barIndex = clamp(cursor.barIndex, 0, staff.bars.length - 1);
+  const bar = staff.bars[barIndex];
+  const voiceIndex = clamp(cursor.voiceIndex, 0, bar.voices.length - 1);
+  const beats = bar.voices[voiceIndex].beats;
+  const beatIndex = clamp(cursor.beatIndex, 0, Math.max(0, beats.length - 1));
+  const stringIndex = staff.tuning.length > 0 ? clamp(cursor.stringIndex ?? 0, 0, staff.tuning.length - 1) : null;
+
+  return { trackIndex, staffIndex, barIndex, voiceIndex, beatIndex, stringIndex };
+}
+
+/**
+ * Where `move` takes `cursor`, inside `doc`.
+ *
+ * A beat step wraps across bar lines by each bar's own beat count and stops at either end of the
+ * score. A bar move lands on the bar's first beat, as Guitar Pro's and TuxGuitar's do, and a track
+ * move on the same bar's first beat of the other track's first staff: beat indices do not line up
+ * across tracks, so keeping one would land on an arbitrary beat. A string move on a pitched staff,
+ * which has no strings, goes nowhere.
+ */
+export function movedCursor(doc: ScoreDoc, cursor: EditCursor, move: CursorMove): EditCursor {
+  const staff = doc.tracks[cursor.trackIndex]?.staves[cursor.staffIndex];
+  if (!staff) return clampedCursor(cursor, doc);
+  const beatCount = (barIndex: number): number => staff.bars[barIndex]?.voices[cursor.voiceIndex]?.beats.length ?? 1;
+  const lastBar = staff.bars.length - 1;
+
+  switch (move.kind) {
+    case 'beat': {
+      let barIndex = cursor.barIndex;
+      let beatIndex = cursor.beatIndex + move.delta;
+      while (beatIndex < 0 && barIndex > 0) {
+        barIndex--;
+        beatIndex += beatCount(barIndex);
+      }
+      while (barIndex < lastBar && beatIndex >= beatCount(barIndex)) {
+        beatIndex -= beatCount(barIndex);
+        barIndex++;
+      }
+      return clampedCursor({ ...cursor, barIndex, beatIndex }, doc);
+    }
+    case 'string':
+      return staff.tuning.length === 0
+        ? cursor
+        : clampedCursor({ ...cursor, stringIndex: (cursor.stringIndex ?? 0) + move.delta }, doc);
+    case 'barEdge':
+      return clampedCursor({ ...cursor, beatIndex: move.edge === 'first' ? 0 : beatCount(cursor.barIndex) - 1 }, doc);
+    case 'bar':
+      return clampedCursor({ ...cursor, barIndex: cursor.barIndex + move.delta, beatIndex: 0 }, doc);
+    case 'scoreEdge':
+      return move.edge === 'first'
+        ? clampedCursor({ ...cursor, barIndex: 0, beatIndex: 0 }, doc)
+        : clampedCursor({ ...cursor, barIndex: lastBar, beatIndex: beatCount(lastBar) - 1 }, doc);
+    case 'track':
+      return clampedCursor(
+        { ...cursor, trackIndex: cursor.trackIndex + move.delta, staffIndex: 0, voiceIndex: 0, beatIndex: 0 },
+        doc
+      );
+  }
+}
+```
+
+**Step 4: Run it.** Expected: 9 SUCCESS.
+
+**Step 5: Commit**: `feat: Caret moves as pure functions of the score`.
+
+### Task 1.3: One caret command, and a caret move clears a refusal
+
+`moveCursor(move, extend)` covers every navigation key and its Shift form. Today `moveCursorByBeat`
+calls `setCursor`, which drops the anchor, so Shift+arrow has nothing to extend with.
+
+A refusal also outlives the selection it answered: `setCursor`, `extendSelectionTo`, `undo` and
+`redo` leave `state.refusal` standing, so after a refused press and an arrow key the status line would
+explain a press on a beat the user has left. Every selection change now clears it, and so do undo
+and redo.
+
+**Files:**
+- Modify: `client/src/app/services/composer.service.ts`
+- Test: create `client/src/app/services/composer.service.editing.spec.ts`
+
+**Step 1: Failing specs**
+
+<!-- apply: create client/src/app/services/composer.service.editing.spec.ts -->
+```typescript
+import { TestBed } from '@angular/core/testing';
+
+import { ComposerService } from './composer.service';
+import { ComposerState } from '../models/composer.model';
+
+/**
+ * The service commands M2's palette and keyboard reach, beyond M1's.
+ *
+ * Each `describe` belongs to one task of the M2 plan. The pure edit functions under these commands
+ * have their own specs; what is pinned here is what only the service can get wrong - a range pressed
+ * as one undo step, a refusal published and nothing committed, the selection after the press.
+ */
+
+/** The service's current state. */
+function stateOf(service: ComposerService): ComposerState {
+  let latest: ComposerState | undefined;
+  service.getState().subscribe(value => (latest = value)).unsubscribe();
+  if (!latest) throw new Error('no state');
+  return latest;
+}
+
+/** Writes `fret` on tab string `string` at bar `barIndex`, beat `beatIndex`, leaving the caret there. */
+function writeFret(service: ComposerService, barIndex: number, beatIndex: number, fret: number, string = 1): void {
+  service.setCursor({ barIndex, beatIndex, stringIndex: string - 1 });
+  service.setNoteAtCursor({ kind: 'fretted', string, fret }, false);
+}
+
+/** The first track's beats in bar `barIndex`. */
+function beatsIn(service: ComposerService, barIndex = 0) {
+  return service.doc.tracks[0].staves[0].bars[barIndex].voices[0].beats;
+}
+
+describe('ComposerService moveCursor', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('extends a range beat by beat, keeping where it started', () => {
+    service.setCursor({ barIndex: 0, beatIndex: 1 });
+
+    service.moveCursor({ kind: 'beat', delta: 1 }, true);
+    service.moveCursor({ kind: 'beat', delta: 1 }, true);
+
+    expect(stateOf(service).anchor?.beatIndex).toBe(1);
+    expect(stateOf(service).cursor.beatIndex).toBe(3);
+  });
+
+  it('drops the range on a plain move', () => {
+    service.moveCursor({ kind: 'beat', delta: 1 }, true);
+
+    service.moveCursor({ kind: 'bar', delta: 1 });
+
+    expect(stateOf(service).anchor).toBeNull();
+    expect(stateOf(service).cursor.barIndex).toBe(1);
+  });
+
+  it('keeps the range when the string changes, since that moves the focus and not the selection', () => {
+    service.moveCursor({ kind: 'beat', delta: 1 }, true);
+
+    service.moveCursor({ kind: 'string', delta: 1 });
+
+    expect(stateOf(service).anchor).not.toBeNull();
+    expect(stateOf(service).cursor.stringIndex).toBe(1);
+  });
+});
+
+describe('ComposerService refusals clear', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  /** A refusal on screen: a note tool pressed on the caret's rest. */
+  const refuseAPress = (): void => {
+    service.toggleNoteEffect('isGhost', true, false);
+    expect(stateOf(service).refusal).not.toBeNull();
+  };
+
+  it('when the caret moves', () => {
+    refuseAPress();
+    service.setCursor({ beatIndex: 1 });
+    expect(stateOf(service).refusal).toBeNull();
+  });
+
+  it('when the caret steps or changes string', () => {
+    refuseAPress();
+    service.moveCursorByBeat(1);
+    expect(stateOf(service).refusal).toBeNull();
+
+    refuseAPress();
+    service.moveCursorByString(1);
+    expect(stateOf(service).refusal).toBeNull();
+  });
+
+  it('when a range is extended or the whole track selected', () => {
+    refuseAPress();
+    service.extendSelectionTo({ beatIndex: 2 });
+    expect(stateOf(service).refusal).toBeNull();
+
+    service.setCursor({ beatIndex: 0 });
+    refuseAPress();
+    service.selectAllInTrack();
+    expect(stateOf(service).refusal).toBeNull();
+  });
+
+  it('on undo and on redo', () => {
+    writeFret(service, 0, 0, 3);
+    service.setCursor({ beatIndex: 1 });
+
+    refuseAPress();
+    service.undo();
+    expect(stateOf(service).refusal).toBeNull();
+
+    refuseAPress();
+    service.redo();
+    expect(stateOf(service).refusal).toBeNull();
+  });
+});
+```
+
+**Step 2: Run it** with `--include=src/app/services/composer.service.editing.spec.ts`. Expected: a
+compile error, `TS2339: Property 'moveCursor' does not exist on type 'ComposerService'.`
+
+**Step 3: Implement.** In `composer.service.ts`, import the cursor module after the
+`composer-selection` import:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
+import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
+```
+
+Replace the whole cursor section, from `setCursor` to the private `clamp`:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  /** Moves the caret, and drops any range: a plain click or arrow key. */
+  setCursor(cursor: Partial<EditCursor>): void {
+    const state = this.stateSubject.getValue();
+    this.stateSubject.next({
+      ...state,
+      anchor: null,
+      cursor: this.clampCursor({ ...state.cursor, ...cursor }, state.doc)
+    });
+  }
+
+  /**
+   * Moves the selection's moving end, fixing the other end where the caret was if no range
+   * existed yet: shift-click and shift-arrow.
+   */
+  extendSelectionTo(cursor: Partial<EditCursor>): void {
+    const state = this.stateSubject.getValue();
+    this.stateSubject.next({
+      ...state,
+      anchor: state.anchor ?? state.cursor,
+      cursor: this.clampCursor({ ...state.cursor, ...cursor }, state.doc)
+    });
+  }
+
+  /** Selects every beat of the caret's staff, first bar to last. */
+  selectAllInTrack(): void {
+    const state = this.stateSubject.getValue();
+    const staff = this.staffAt(state.doc, state.cursor);
+    if (!staff) return;
+    const lastBar = staff.bars.length - 1;
+    const lastBeat = (staff.bars[lastBar]?.voices[state.cursor.voiceIndex]?.beats.length ?? 1) - 1;
+    this.stateSubject.next({
+      ...state,
+      anchor: { ...state.cursor, barIndex: 0, beatIndex: 0 },
+      cursor: this.clampCursor({ ...state.cursor, barIndex: lastBar, beatIndex: lastBeat }, state.doc)
+    });
+  }
+
+  /** Moves the caret forward or backward, wrapping across bars. */
+  moveCursorByBeat(delta: number): void {
+    const state = this.stateSubject.getValue();
+    const cursor = { ...state.cursor };
+    const staff = this.staffAt(state.doc, cursor);
+    if (!staff) return;
+
+    let beatIndex = cursor.beatIndex + delta;
+
+    while (beatIndex < 0 && cursor.barIndex > 0) {
+      cursor.barIndex--;
+      beatIndex += staff.bars[cursor.barIndex].voices[cursor.voiceIndex]?.beats.length ?? 1;
+    }
+    while (
+      cursor.barIndex < staff.bars.length - 1 &&
+      beatIndex >= (staff.bars[cursor.barIndex].voices[cursor.voiceIndex]?.beats.length ?? 1)
+    ) {
+      beatIndex -= staff.bars[cursor.barIndex].voices[cursor.voiceIndex]?.beats.length ?? 1;
+      cursor.barIndex++;
+    }
+
+    cursor.beatIndex = beatIndex;
+    this.setCursor(cursor);
+  }
+
+  moveCursorByString(delta: number): void {
+    const state = this.stateSubject.getValue();
+    const staff = this.staffAt(state.doc, state.cursor);
+    if (!staff || staff.tuning.length === 0) return;
+
+    const current = state.cursor.stringIndex ?? 0;
+    const next = Math.max(0, Math.min(staff.tuning.length - 1, current + delta));
+    this.stateSubject.next({ ...state, cursor: { ...state.cursor, stringIndex: next } });
+  }
+
+  private clampCursor(cursor: EditCursor, doc: ScoreDoc): EditCursor {
+    const trackIndex = this.clamp(cursor.trackIndex, 0, doc.tracks.length - 1);
+    const track = doc.tracks[trackIndex];
+    if (!track) return createDefaultCursor();
+
+    const staffIndex = this.clamp(cursor.staffIndex, 0, track.staves.length - 1);
+    const staff = track.staves[staffIndex];
+    const barIndex = this.clamp(cursor.barIndex, 0, staff.bars.length - 1);
+    const bar = staff.bars[barIndex];
+    const voiceIndex = this.clamp(cursor.voiceIndex, 0, bar.voices.length - 1);
+    const beats = bar.voices[voiceIndex].beats;
+    const beatIndex = this.clamp(cursor.beatIndex, 0, Math.max(0, beats.length - 1));
+
+    const stringIndex =
+      staff.tuning.length > 0
+        ? this.clamp(cursor.stringIndex ?? 0, 0, staff.tuning.length - 1)
+        : null;
+
+    return { trackIndex, staffIndex, barIndex, voiceIndex, beatIndex, stringIndex };
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    if (max < min) return min;
+    return Math.max(min, Math.min(max, value));
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** Moves the caret, and drops any range: a plain click or arrow key. */
+  setCursor(cursor: Partial<EditCursor>): void {
+    const state = this.stateSubject.getValue();
+    this.publishSelection(clampedCursor({ ...state.cursor, ...cursor }, state.doc), null);
+  }
+
+  /**
+   * Moves the selection's moving end, fixing the other end where the caret was if no range
+   * existed yet: shift-click and shift-arrow.
+   */
+  extendSelectionTo(cursor: Partial<EditCursor>): void {
+    const state = this.stateSubject.getValue();
+    this.publishSelection(clampedCursor({ ...state.cursor, ...cursor }, state.doc), state.anchor ?? state.cursor);
+  }
+
+  /** Selects every beat of the caret's staff, first bar to last. */
+  selectAllInTrack(): void {
+    const { doc, cursor } = this.stateSubject.getValue();
+    this.publishSelection(
+      movedCursor(doc, cursor, { kind: 'scoreEdge', edge: 'last' }),
+      movedCursor(doc, cursor, { kind: 'scoreEdge', edge: 'first' })
+    );
+  }
+
+  /**
+   * Moves the caret by `move` (see `movedCursor`) - or, with `extend`, the selection's moving end.
+   * A plain move drops the range, except a change of string, which moves the focus within it.
+   */
+  moveCursor(move: CursorMove, extend = false): void {
+    const state = this.stateSubject.getValue();
+    const anchor = extend ? state.anchor ?? state.cursor : move.kind === 'string' ? state.anchor : null;
+    this.publishSelection(movedCursor(state.doc, state.cursor, move), anchor);
+  }
+
+  moveCursorByBeat(delta: number): void {
+    this.moveCursor({ kind: 'beat', delta });
+  }
+
+  moveCursorByString(delta: number): void {
+    this.moveCursor({ kind: 'string', delta });
+  }
+
+  /**
+   * Publishes a selection, and clears any refusal: it answered a press on the selection that was,
+   * and left standing it would read as the reason a press on this one failed.
+   */
+  private publishSelection(cursor: EditCursor, anchor: EditCursor | null): void {
+    this.stateSubject.next({ ...this.stateSubject.getValue(), cursor, anchor, refusal: null });
+  }
+```
+
+The history methods use the moved clamp, and undo and redo clear the refusal too:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+      doc: next,
+      cursor: this.clampCursor(cursor, next),
+      anchor: anchor ? this.clampCursor(anchor, next) : null,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+      doc: next,
+      cursor: clampedCursor(cursor, next),
+      anchor: anchor ? clampedCursor(anchor, next) : null,
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+      doc: previous,
+      cursor: this.clampCursor(state.cursor, previous),
+      anchor: state.anchor ? this.clampCursor(state.anchor, previous) : null,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+      doc: previous,
+      cursor: clampedCursor(state.cursor, previous),
+      anchor: state.anchor ? clampedCursor(state.anchor, previous) : null,
+      refusal: null,
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+      doc: next,
+      cursor: this.clampCursor(state.cursor, next),
+      anchor: state.anchor ? this.clampCursor(state.anchor, next) : null,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+      doc: next,
+      cursor: clampedCursor(state.cursor, next),
+      anchor: state.anchor ? clampedCursor(state.anchor, next) : null,
+      refusal: null,
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+      cursor: this.clampCursor(state.cursor, doc),
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+      cursor: clampedCursor(state.cursor, doc),
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+      const at = this.clamp(index, 0, draft.masterBars.length - 1);
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+      const at = Math.max(0, Math.min(index, draft.masterBars.length - 1));
+```
+
+**Step 4: Run** `composer.service.editing.spec.ts`, `composer.service.spec.ts` and
+`composer.service.generated.spec.ts`. Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: One caret command for every navigation key, and a caret move clears a refusal`.
+
+### Task 1.4: A duration press says why it did nothing
+
+`applyDurationAtCursor` asks `editRefusal` and skips silently. It now publishes the reason, and it
+refuses a press whose every target is a grace beat: alphaTab sets a grace's written value itself from
+the size of its grace group (`Beat.finish`, `alphaTab.core.mjs` ~7772-7786), so the press could never
+show. A range with some graces keeps skipping them, as M1 does.
+
+M1's half-refusal stays: on a generated track the press still remembers the input duration. It now
+also publishes why the beat did not change - a palette that moves while the score does not is what
+M2's live region exists to explain, and publishing a message freezes nothing.
+
+**Files:**
+- Modify: `client/src/app/services/edit-refusals.ts`, `client/src/app/services/composer.service.ts`
+- Test: `client/src/app/services/edit-refusals.spec.ts`, `client/src/app/services/composer.service.editing.spec.ts`,
+  `client/src/app/services/composer.service.generated.spec.ts`
+
+**Step 1: Failing specs.** Append to `edit-refusals.spec.ts`, and import `durationRefusal` beside
+`editRefusal`:
+
+<!-- apply: find client/src/app/services/edit-refusals.spec.ts -->
+```typescript
+import { EditScope, editRefusal } from './edit-refusals';
+```
+
+<!-- apply: replace client/src/app/services/edit-refusals.spec.ts -->
+```typescript
+import { EditScope, durationRefusal, editRefusal } from './edit-refusals';
+```
+
+<!-- apply: append client/src/app/services/edit-refusals.spec.ts -->
+```typescript
+describe('durationRefusal', () => {
+  it('refuses a press on nothing but grace beats, saying alphaTab sets their value', () => {
+    const score = doc();
+    score.tracks[0].staves[0].bars[0].voices[0].beats[1].effects.grace = 'beforeBeat';
+
+    expect(durationRefusal(score, [ref(0, 1)])).toMatch(/grace/i);
+  });
+
+  it('lets a range with some graces through, since those are skipped', () => {
+    const score = doc();
+    score.tracks[0].staves[0].bars[0].voices[0].beats[1].effects.grace = 'beforeBeat';
+
+    expect(durationRefusal(score, [ref(0, 0), ref(0, 1)])).toBeNull();
+  });
+
+  it('refuses a generated track as any beat edit does', () => {
+    const score = doc();
+    score.tracks[0].generated = { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision', revision: 1 } };
+
+    expect(durationRefusal(score, [ref(0)])).toMatch(/progression/i);
+  });
+});
+```
+
+Append to `composer.service.editing.spec.ts`:
+
+<!-- apply: append client/src/app/services/composer.service.editing.spec.ts -->
+```typescript
+describe('ComposerService duration refusals', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('says why a duration press on a grace did nothing, and still remembers the choice', () => {
+    service.setCursor({ beatIndex: 1 });
+    service.toggleGrace('beforeBeat');
+    const before = JSON.stringify(service.doc);
+
+    service.applyDurationAtCursor(8, 0);
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(stateOf(service).refusal).toMatch(/grace/i);
+    expect(stateOf(service).inputDuration).toBe(8);
+  });
+});
+```
+
+And in `composer.service.generated.spec.ts`, the half-refusal now says why:
+
+<!-- apply: find client/src/app/services/composer.service.generated.spec.ts -->
+```typescript
+    expect(JSON.stringify(service.doc.tracks)).toBe(before);
+    expect(state().inputDuration).toBe(8);
+    expect(state().inputDots).toBe(1);
+```
+
+<!-- apply: replace client/src/app/services/composer.service.generated.spec.ts -->
+```typescript
+    expect(JSON.stringify(service.doc.tracks)).toBe(before);
+    expect(state().inputDuration).toBe(8);
+    expect(state().inputDots).toBe(1);
+    // And it says why the beat did not change, since M2 shows refusals.
+    expect(state().refusal).toMatch(/progression/i);
+```
+
+**Step 2: Run** the three spec files. Expected: a compile error,
+`TS2305: Module '"./edit-refusals"' has no exported member 'durationRefusal'.`
+
+**Step 3: Implement.** In `edit-refusals.ts`, import `beatAt`:
+
+<!-- apply: find client/src/app/services/edit-refusals.ts -->
+```typescript
+import { BeatRef } from './composer-selection';
+```
+
+<!-- apply: replace client/src/app/services/edit-refusals.ts -->
+```typescript
+import { BeatRef, beatAt } from './composer-selection';
+```
+
+Append:
+
+<!-- apply: append client/src/app/services/edit-refusals.ts -->
+```typescript
+const GRACE_DURATION =
+  "A grace note's written value is set by alphaTab from how many graces are in its group, so it cannot be changed.";
+
+/**
+ * Why a duration press cannot apply to `refs`, or null when it can: any beat edit's refusal, or
+ * every target a grace beat.
+ *
+ * `Beat.finish` (`alphaTab.core.mjs` ~7772-7786 in 1.8) rewrites an on-beat or before-beat grace's
+ * value by the size of its group - an eighth for one grace, a sixteenth for two, a thirty-second for
+ * three or more - so a value set on one is drawn as alphaTab's and lost on save. `setBeatDurations`
+ * skips graces for that reason; a press with nothing else to change is refused rather than skipped,
+ * so it says why nothing happened. A range with some graces in it changes the rest.
+ */
+export function durationRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'beat', key: 'duration' }, null);
+  if (refusal) return refusal;
+  const allGraces = refs.every(ref => (beatAt(doc, ref)?.effects.grace ?? 'none') !== 'none');
+  return allGraces ? GRACE_DURATION : null;
+}
+```
+
+In `composer.service.ts`, import it:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+import { EditScope, editRefusal } from './edit-refusals';
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+import { EditScope, durationRefusal, editRefusal } from './edit-refusals';
+```
+
+and replace `applyDurationAtCursor` with its docstring:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  /**
+   * Applies the current input duration to the beat under the caret, and
+   * remembers it as the choice for the next note.
+   *
+   * The gate covers the write and stops there, because these are two effects
+   * and only one of them is the generated track's business. The score is the
+   * track's; the input duration is the *toolbar's*, and the toolbar belongs to
+   * whichever track the caret moves to next.
+   *
+   * Refusing both is what a read of the gate suggests and it is wrong twice
+   * over. Every route to the input duration runs through here - the palette,
+   * the dot toggle, and the `+`/`-` keys all call this method, and nothing else
+   * in the app calls `setInputDuration` - so a blanket refusal freezes the
+   * palette outright for as long as the caret rests on a generated track, which
+   * the design explicitly permits and which is how a user reads one. It also
+   * takes away the pre-selection: choose a duration while looking at the
+   * generated track, move back to your own, and type.
+   *
+   * Nor is there an atomicity to protect. `commit()` runs its callback against
+   * a draft, so a caret on an empty beat already returns early and lands an
+   * empty commit with the choice remembered anyway - "write the beat and
+   * remember the choice, always together" was never the invariant. What is
+   * left is the honest half: a toolbar showing a duration the score under the
+   * caret does not have, which is what a toolbar showing an *input* duration
+   * means everywhere else in the editor.
+   *
+   * It acts on the selection, not only the caret, and keeps each bar honest through
+   * `setBeatDurations`: a gap fills with rests where it opened, and a beat that grows takes
+   * only rests. The selection follows its beats past the rests that inserts (`commitFollowing`).
+   */
+  applyDurationAtCursor(duration: DurationValue, dots: number): void {
+    const state = this.stateSubject.getValue();
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+
+    if (!editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null)) {
+      this.commitFollowing(draft => setBeatDurations(draft, refs, duration, dots));
+    }
+
+    this.setInputDuration(duration, dots);
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /**
+   * Applies a duration to the selection, and remembers it as the choice for the next note.
+   *
+   * The refusal covers the write and stops there, because these are two effects and only one of
+   * them is the score's business. The input duration is the palette's, and the palette belongs to
+   * whichever track the caret moves to next: refusing both would freeze it while the caret rests on a
+   * generated track, and take away choosing a duration there to carry back to your own. So a refused
+   * press still remembers the choice - and says why the beat did not change (`durationRefusal`),
+   * since a palette that moves while the score does not needs a reason beside it.
+   *
+   * It keeps each bar honest through `setBeatDurations`: a gap fills with rests where it opened, and
+   * a beat that grows takes only rests. The selection follows its beats past the rests that inserts.
+   */
+  applyDurationAtCursor(duration: DurationValue, dots: number): void {
+    const state = this.stateSubject.getValue();
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const refusal = durationRefusal(state.doc, refs);
+
+    if (refusal) this.refuse(refusal);
+    else this.commitFollowing(draft => setBeatDurations(draft, refs, duration, dots));
+
+    this.setInputDuration(duration, dots);
+  }
+```
+
+**Step 4: Run** the three files. Expected: all SUCCESS.
+
+**Step 5: Commit**: `fix: Say why a duration press did nothing, and refuse one on nothing but graces`.
+
+### Task 1.5: Select and Pen live in state
+
+The Select / Pen toggle is read by the palette, the keyboard handler and the score, so it is state
+the service owns rather than a field one component holds. A new score starts in Select: only Pen
+writes on a notation click (design decision 5).
+
+**Files:**
+- Modify: `client/src/app/models/composer.model.ts`, `client/src/app/services/composer.service.ts`
+- Test: `client/src/app/services/composer.service.editing.spec.ts`
+
+**Step 1: Failing spec.** Append:
+
+<!-- apply: append client/src/app/services/composer.service.editing.spec.ts -->
+```typescript
+describe('ComposerService entry mode', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('starts in Select, so a notation click writes nothing until Pen is chosen', () => {
+    expect(stateOf(service).entryMode).toBe('select');
+  });
+
+  it('switches to Pen and back, committing nothing', () => {
+    service.setEntryMode('pen');
+    expect(stateOf(service).entryMode).toBe('pen');
+    expect(stateOf(service).canUndo).toBeFalse();
+
+    service.setEntryMode('select');
+    expect(stateOf(service).entryMode).toBe('select');
+  });
+
+  it('goes back to Select for a new score', () => {
+    service.setEntryMode('pen');
+
+    service.reset();
+
+    expect(stateOf(service).entryMode).toBe('select');
+  });
+});
+```
+
+**Step 2: Run** `composer.service.editing.spec.ts`. Expected: compile errors,
+`TS2339: Property 'entryMode' does not exist on type 'ComposerState'.` and
+`TS2339: Property 'setEntryMode' does not exist on type 'ComposerService'.`
+
+**Step 3: Implement.** In `composer.model.ts`:
+
+<!-- apply: find client/src/app/models/composer.model.ts -->
+```typescript
+export interface ComposerState {
+  doc: ScoreDoc;
+  cursor: EditCursor;
+```
+
+<!-- apply: replace client/src/app/models/composer.model.ts -->
+```typescript
+/**
+ * What a click on standard notation does: `select` moves the caret and never writes, `pen` writes
+ * the clicked pitch. Digits on tablature write in both. The design's decision 5: a click meant to
+ * select must not write a note.
+ */
+export type EntryMode = 'select' | 'pen';
+
+export interface ComposerState {
+  doc: ScoreDoc;
+  cursor: EditCursor;
+```
+
+<!-- apply: find client/src/app/models/composer.model.ts -->
+```typescript
+  /** Why the last command did nothing, for the status line. The next edit clears it. */
+  refusal: string | null;
+```
+
+<!-- apply: replace client/src/app/models/composer.model.ts -->
+```typescript
+  /**
+   * Why the last command did nothing, for the status line. The next edit clears it, and so does a
+   * selection change, undo and redo.
+   */
+  refusal: string | null;
+  /** Select or Pen. See `EntryMode`. */
+  entryMode: EntryMode;
+```
+
+In `composer.service.ts`, add `EntryMode` to the model import:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  EditCursor,
+  KeySignature,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  EditCursor,
+  EntryMode,
+  KeySignature,
+```
+
+Both places that build a state start in Select:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject = new BehaviorSubject<ComposerState>({
+      doc: ComposerService.createEmptyScore(),
+      cursor: createDefaultCursor(),
+      anchor: null,
+      refusal: null,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject = new BehaviorSubject<ComposerState>({
+      doc: ComposerService.createEmptyScore(),
+      cursor: createDefaultCursor(),
+      anchor: null,
+      refusal: null,
+      entryMode: 'select',
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject.next({
+      doc: ComposerService.createEmptyScore(),
+      cursor: createDefaultCursor(),
+      anchor: null,
+      refusal: null,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject.next({
+      doc: ComposerService.createEmptyScore(),
+      cursor: createDefaultCursor(),
+      anchor: null,
+      refusal: null,
+      entryMode: 'select',
+```
+
+And the command, after `moveCursorByString`:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  moveCursorByString(delta: number): void {
+    this.moveCursor({ kind: 'string', delta });
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  moveCursorByString(delta: number): void {
+    this.moveCursor({ kind: 'string', delta });
+  }
+
+  /** Chooses what a notation click does. Not an edit, so no undo step. See `EntryMode`. */
+  setEntryMode(entryMode: EntryMode): void {
+    this.stateSubject.next({ ...this.stateSubject.getValue(), entryMode });
+  }
+```
+
+**Step 4: Run** `composer.service.editing.spec.ts`, then both type checks - a `ComposerState` built
+anywhere else would fail to compile now. Expected: all SUCCESS, and no type errors.
+
+**Step 5: Commit**: `feat: Select and Pen in the composer's state`.
+
+### Task 1.6: Two-digit frets are one undo step; note entry leaves the service
+
+Typing "1" then "2" writes fret 1 and advances, then rewrites the note as fret 12. Today that is two
+commits, so undo after typing 12 leaves a fret 1 no one meant. `retypeNote` replaces the first
+commit instead of adding a second - but only when nothing was committed in between, which it checks
+by identity: the document the first digit left must still be the current one. An undo, a redo or any
+other edit replaces the document object, so the rewrite becomes an ordinary commit.
+
+To make room under the 1000-line cap, note, rest and delete entry move to a new
+`composer-entry-commands.ts`, which the service delegates to exactly as it does to
+`composer-service-structure.ts`. `commit` learns to take a reason, like `commitFollowing`, and an
+`amend` flag.
+
+**Files:**
+- Create: `client/src/app/services/composer-entry-commands.ts`
+- Modify: `client/src/app/services/composer.service.ts`
+- Test: `client/src/app/services/composer.service.editing.spec.ts`
+
+**Step 1: Failing spec.** Append:
+
+<!-- apply: append client/src/app/services/composer.service.editing.spec.ts -->
+```typescript
+describe('ComposerService retypeNote', () => {
+  let service: ComposerService;
+  const fret = (value: number) => ({ kind: 'fretted' as const, string: 1, fret: value });
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+    service.setCursor({ barIndex: 0, beatIndex: 0, stringIndex: 0 });
+  });
+
+  it('makes "1" then "2" fret 12 and one undo step, the caret staying where the first digit left it', () => {
+    const target = stateOf(service).cursor;
+    service.setNoteAtCursor(fret(1), true);
+
+    service.retypeNote(target, fret(12));
+
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual(fret(12));
+    expect(stateOf(service).cursor.beatIndex).toBe(1);
+    service.undo();
+    expect(beatsIn(service)[0].isRest).toBeTrue();
+    expect(stateOf(service).canUndo).toBeFalse();
+  });
+
+  it('is an undo step of its own when anything was committed in between', () => {
+    const target = stateOf(service).cursor;
+    service.setNoteAtCursor(fret(1), true);
+    service.setDynamics('pp');
+
+    service.retypeNote(target, fret(12));
+    service.undo();
+
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual(fret(1));
+  });
+
+  it('is an undo step of its own after an undo and redo', () => {
+    const target = stateOf(service).cursor;
+    service.setNoteAtCursor(fret(1), true);
+    service.undo();
+    service.redo();
+
+    service.retypeNote(target, fret(12));
+    service.undo();
+
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual(fret(1));
+  });
+});
+```
+
+**Step 2: Run** `composer.service.editing.spec.ts`. Expected: a compile error,
+`TS2339: Property 'retypeNote' does not exist on type 'ComposerService'.`
+
+**Step 3: Implement.** Create the entry commands, carrying `setNoteAtCursor`, `setRestAtCursor`,
+`deleteAtCursor` and `refusesEntryAt` over from the service unchanged apart from where they reach:
+
+<!-- apply: create client/src/app/services/composer-entry-commands.ts -->
+```typescript
+import { DurationValue, EditCursor, NoteDoc, NotePitch, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+import { setBeatDurations } from './beat-edits';
+import { CursorMove } from './composer-cursor';
+import { beatAt } from './composer-selection';
+import { ComposerCommandHost } from './composer-service-structure';
+import { editRefusal } from './edit-refusals';
+
+/**
+ * The composer's entry commands: writing a note, a rest or a delete at the caret, and the commands
+ * M2's keyboard adds over the selection.
+ *
+ * Lifted out of `ComposerService` for the 1000-line cap, as `composer-service-structure.ts` was in
+ * M1. The service owns the state, the history and the selection, exposes each command, and delegates
+ * here; this class reaches it only through `ComposerEntryHost`.
+ */
+
+/** What the entry commands need from `ComposerService`, beyond what the structure commands need. */
+export interface ComposerEntryHost extends ComposerCommandHost {
+  /**
+   * Runs `edit` on a clone and commits it with the caret where the command leaves it - or, when
+   * `edit` returns a reason, publishes that and commits nothing. With `amend` the commit replaces the
+   * last one rather than adding an undo step.
+   */
+  commit(edit: (draft: ScoreDoc) => string | null | void, amend?: boolean): void;
+  /** Moves the caret, dropping any range. */
+  moveCursor(move: CursorMove): void;
+}
+
+/** Note entry and the selection commands M2 adds, run through a `ComposerEntryHost`. */
+export class ComposerEntryCommands {
+  /**
+   * The last note entry, for `retypeNote`: where it was written, and the document it left. Held by
+   * identity, so any later commit, undo or redo - each of which publishes a different document - means
+   * the next retype is an edit of its own.
+   */
+  private lastEntry: { at: EditCursor; doc: ScoreDoc } | null = null;
+
+  constructor(private readonly host: ComposerEntryHost) {}
+
+  /** Writes a note at the caret, replacing any note already on that string, and by default advances. */
+  setNoteAtCursor(pitch: NotePitch, advance: boolean): void {
+    const state = this.host.state();
+    const cursor = state.cursor;
+    if (this.refusesEntryAt(state.doc, cursor)) return;
+
+    this.host.commit(draft => writeNote(draft, cursor, pitch, state.inputDuration, state.inputDots));
+    this.lastEntry = { at: cursor, doc: this.host.state().doc };
+
+    if (advance) this.host.moveCursor({ kind: 'beat', delta: 1 });
+  }
+
+  /**
+   * Rewrites the note at `target` - the second digit of a two-digit fret, after the first digit's
+   * `setNoteAtCursor` advanced the caret. The caret stays where it is.
+   *
+   * When nothing has been committed since that note was written at `target`, this replaces that
+   * commit instead of adding one, so "1" then "2" is fret 12 and a single undo step takes it all back.
+   * Otherwise it is an ordinary commit.
+   */
+  retypeNote(target: EditCursor, pitch: NotePitch): void {
+    const state = this.host.state();
+    if (this.refusesEntryAt(state.doc, target)) return;
+
+    const last = this.lastEntry;
+    const amend = last !== null && last.doc === state.doc && sameBeat(last.at, target);
+    this.host.commit(draft => writeNote(draft, target, pitch, state.inputDuration, state.inputDots), amend);
+    this.lastEntry = { at: target, doc: this.host.state().doc };
+  }
+
+  /** Turns the beat at the caret into a rest, and by default advances. */
+  setRestAtCursor(advance: boolean): void {
+    const state = this.host.state();
+    const cursor = state.cursor;
+    if (this.refusesEntryAt(state.doc, cursor)) return;
+
+    this.host.commit(draft => {
+      const beat = beatAt(draft, cursor);
+      if (!beat) return;
+      beat.notes = [];
+      beat.isRest = true;
+      setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
+    });
+
+    if (advance) this.host.moveCursor({ kind: 'beat', delta: 1 });
+  }
+
+  /**
+   * Clears the beat at the caret back to a rest.
+   *
+   * The slot is kept rather than removed: bars are pre-filled with a full measure of rests, so
+   * deleting a note should empty its position, not shorten the bar.
+   */
+  deleteAtCursor(): void {
+    const state = this.host.state();
+    const cursor = state.cursor;
+    if (this.refusesEntryAt(state.doc, cursor)) return;
+
+    this.host.commit(draft => {
+      const beat = beatAt(draft, cursor);
+      if (!beat) return;
+      beat.notes = [];
+      beat.isRest = true;
+    });
+  }
+
+  /**
+   * Whether note entry, rest entry or a delete at `cursor` is refused - on a generated track, or in a
+   * second voice, which a click can reach in a loaded bar and bar filling cannot measure. Publishes
+   * the reason and commits nothing, so a refusal costs no undo step and the caret does not advance. A
+   * beat scope, not a note one: a delete on a rest clears nothing, and a note scope would refuse it as
+   * a note tool on a rest.
+   */
+  private refusesEntryAt(doc: ScoreDoc, cursor: EditCursor): boolean {
+    const refusal = editRefusal(doc, [cursor], { family: 'beat', key: 'duration' }, null);
+    if (refusal) this.host.refuse(refusal);
+    return refusal !== null;
+  }
+}
+
+/** Whether two cursors name the same beat. */
+function sameBeat(a: EditCursor, b: EditCursor): boolean {
+  return (
+    a.trackIndex === b.trackIndex &&
+    a.staffIndex === b.staffIndex &&
+    a.barIndex === b.barIndex &&
+    a.voiceIndex === b.voiceIndex &&
+    a.beatIndex === b.beatIndex
+  );
+}
+
+/**
+ * Writes `pitch` into the beat at `cursor` at the input duration. On a fretted staff a string holds
+ * one note, so a note already on that string is replaced; on a pitched staff the same pitch again
+ * takes the note out, which is how a click on a notehead removes it.
+ */
+function writeNote(draft: ScoreDoc, cursor: EditCursor, pitch: NotePitch, duration: DurationValue, dots: number): void {
+  const beat = beatAt(draft, cursor);
+  if (!beat) return;
+
+  // Length first, so the bar settles before the note lands. Settling only removes or inserts beats
+  // after this one, so `beat` is still the caret's beat.
+  setBeatDurations(draft, [cursor], duration, dots);
+  beat.isRest = false;
+
+  const note: NoteDoc = { pitch, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() };
+
+  if (pitch.kind === 'fretted') {
+    const existing = beat.notes.findIndex(n => n.pitch.kind === 'fretted' && n.pitch.string === pitch.string);
+    if (existing >= 0) {
+      beat.notes[existing] = note;
+      return;
+    }
+  } else {
+    const existing = beat.notes.findIndex(
+      n => n.pitch.kind === 'pitched' && n.pitch.noteValue === pitch.noteValue && n.pitch.octave === pitch.octave
+    );
+    if (existing >= 0) {
+      beat.notes.splice(existing, 1);
+      beat.isRest = beat.notes.length === 0;
+      return;
+    }
+  }
+
+  beat.notes.push(note);
+}
+```
+
+In `composer.service.ts`, import it beside the structure commands:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+import { ComposerStructureCommands } from './composer-service-structure';
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
+import { ComposerStructureCommands } from './composer-service-structure';
+```
+
+One host object serves both command classes:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  private readonly structure = new ComposerStructureCommands({
+    state: () => this.stateSubject.getValue(),
+    commitFollowing: edit => this.commitFollowing(edit),
+    refuse: reason => this.refuse(reason),
+    markDiverged: draft => this.markDiverged(draft)
+  });
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** What the command modules reach back through. */
+  private readonly host: ComposerEntryHost = {
+    state: () => this.stateSubject.getValue(),
+    commit: (edit, amend) => this.commit(edit, amend),
+    commitFollowing: edit => this.commitFollowing(edit),
+    refuse: reason => this.refuse(reason),
+    markDiverged: draft => this.markDiverged(draft),
+    moveCursor: move => this.moveCursor(move)
+  };
+  private readonly structure = new ComposerStructureCommands(this.host);
+  private readonly entry = new ComposerEntryCommands(this.host);
+```
+
+`commit` takes a reason and `amend`:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  /** Applies a mutation to a cloned document and commits the result. */
+  private commit(mutate: (draft: ScoreDoc) => void): void {
+    const draft = structuredClone(this.stateSubject.getValue().doc);
+    mutate(draft);
+    this.commitDocument(draft);
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /**
+   * Runs `edit` on a cloned document and commits the result - or, when `edit` returns a reason,
+   * publishes that and commits nothing. With `amend` the result replaces the last commit instead of
+   * adding an undo step: the second digit of a two-digit fret (`retypeNote`).
+   */
+  private commit(edit: (draft: ScoreDoc) => string | null | void, amend = false): void {
+    const draft = structuredClone(this.stateSubject.getValue().doc);
+    const reason = edit(draft);
+    if (typeof reason === 'string') return this.refuse(reason);
+    this.commitDocument(draft, undefined, amend);
+  }
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  private commitDocument(next: ScoreDoc, selection?: { cursor: EditCursor; anchor: EditCursor | null }): void {
+    const state = this.stateSubject.getValue();
+    const cursor = selection ? selection.cursor : state.cursor;
+    const anchor = selection ? selection.anchor : state.anchor;
+    this.undoStack.push(structuredClone(state.doc));
+    if (this.undoStack.length > ComposerService.MAX_HISTORY) {
+      this.undoStack.shift();
+    }
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  private commitDocument(next: ScoreDoc, selection?: { cursor: EditCursor; anchor: EditCursor | null }, amend = false): void {
+    const state = this.stateSubject.getValue();
+    const cursor = selection ? selection.cursor : state.cursor;
+    const anchor = selection ? selection.anchor : state.anchor;
+    if (!amend) {
+      this.undoStack.push(structuredClone(state.doc));
+      if (this.undoStack.length > ComposerService.MAX_HISTORY) this.undoStack.shift();
+    }
+```
+
+`Object.assign` returns the document, which is not a reason; the two commits that use it say so:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    this.commit(draft => Object.assign(draft, mergeGeneratedTrack(draft, generated)));
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    this.commit(draft => void Object.assign(draft, mergeGeneratedTrack(draft, generated)));
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    this.commit(draft => Object.assign(draft, flattenGeneratedTrack(draft, index)));
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    this.commit(draft => void Object.assign(draft, flattenGeneratedTrack(draft, index)));
+```
+
+Replace the note entry section with delegations:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  /**
+   * Whether note entry, rest entry or a delete at the caret is refused - on a generated track,
+   * or in a second voice, which a click can reach in a loaded bar and bar filling cannot measure.
+   * Publishes the reason and commits nothing, so a refusal costs no undo step and the caret does
+   * not advance. A beat scope, not a note one: a delete on a rest clears nothing, and a note
+   * scope would refuse it as a note tool on a rest.
+   */
+  private refusesEntryAt(doc: ScoreDoc, cursor: EditCursor): boolean {
+    const refusal = editRefusal(doc, [cursor], { family: 'beat', key: 'duration' }, null);
+    if (refusal) this.refuse(refusal);
+    return refusal !== null;
+  }
+
+  /** Writes a note at the caret, replacing any note already on that string. */
+  setNoteAtCursor(pitch: NotePitch, advance = true): void {
+    const state = this.stateSubject.getValue();
+    const cursor = state.cursor;
+    if (this.refusesEntryAt(state.doc, cursor)) return;
+
+    this.commit(draft => {
+      const beat = this.beatAt(draft, cursor);
+      if (!beat) return;
+
+      // Length first, so the bar settles before the note lands. Settling only removes or
+      // inserts beats after this one, so `beat` is still the caret's beat.
+      setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
+      beat.isRest = false;
+
+      const note: NoteDoc = {
+        pitch,
+        isTied: false,
+        accidental: 'auto',
+        effects: createDefaultNoteEffects()
+      };
+
+      // On a fretted staff one string holds at most one note, so replace.
+      if (pitch.kind === 'fretted') {
+        const existing = beat.notes.findIndex(
+          n => n.pitch.kind === 'fretted' && n.pitch.string === pitch.string
+        );
+        if (existing >= 0) {
+          beat.notes[existing] = note;
+          return;
+        }
+      } else {
+        const existing = beat.notes.findIndex(
+          n =>
+            n.pitch.kind === 'pitched' &&
+            n.pitch.noteValue === pitch.noteValue &&
+            n.pitch.octave === pitch.octave
+        );
+        if (existing >= 0) {
+          beat.notes.splice(existing, 1);
+          beat.isRest = beat.notes.length === 0;
+          return;
+        }
+      }
+
+      beat.notes.push(note);
+    });
+
+    if (advance) this.moveCursorByBeat(1);
+  }
+
+  /** Turns the beat at the caret into a rest. */
+  setRestAtCursor(advance = true): void {
+    const state = this.stateSubject.getValue();
+    const cursor = state.cursor;
+    if (this.refusesEntryAt(state.doc, cursor)) return;
+
+    this.commit(draft => {
+      const beat = this.beatAt(draft, cursor);
+      if (!beat) return;
+      beat.notes = [];
+      beat.isRest = true;
+      setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
+    });
+
+    if (advance) this.moveCursorByBeat(1);
+  }
+
+  /**
+   * Clears the beat at the caret back to a rest.
+   *
+   * The slot is kept rather than removed: bars are pre-filled with a full
+   * measure of rests, so deleting a note should empty its position, not
+   * shorten the bar.
+   */
+  deleteAtCursor(): void {
+    const state = this.stateSubject.getValue();
+    const cursor = state.cursor;
+    if (this.refusesEntryAt(state.doc, cursor)) return;
+
+    this.commit(draft => {
+      const voice = this.voiceAt(draft, cursor);
+      const beat = voice?.beats[cursor.beatIndex];
+      if (!beat) return;
+      beat.notes = [];
+      beat.isRest = true;
+    });
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** Writes a note at the caret, replacing any note already on that string, and by default advances. */
+  setNoteAtCursor(pitch: NotePitch, advance = true): void {
+    this.entry.setNoteAtCursor(pitch, advance);
+  }
+
+  /** Rewrites the note just written at `target`, as one undo step with it. See `retypeNote` in composer-entry-commands.ts. */
+  retypeNote(target: EditCursor, pitch: NotePitch): void {
+    this.entry.retypeNote(target, pitch);
+  }
+
+  /** Turns the beat at the caret into a rest, and by default advances. */
+  setRestAtCursor(advance = true): void {
+    this.entry.setRestAtCursor(advance);
+  }
+
+  /** Clears the beat at the caret back to a rest, keeping its slot. */
+  deleteAtCursor(): void {
+    this.entry.deleteAtCursor();
+  }
+```
+
+The model import no longer needs `NoteDoc` or `createDefaultNoteEffects`:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  MasterBarDoc,
+  NoteDoc,
+  NoteEffectsDoc,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  MasterBarDoc,
+  NoteEffectsDoc,
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  createDefaultMasterBar,
+  createDefaultNoteEffects,
+  createDefaultPlaybackInfo,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  createDefaultMasterBar,
+  createDefaultPlaybackInfo,
+```
+
+**Step 4: Run** `composer.service.editing.spec.ts`, `composer.service.spec.ts` and
+`composer.service.generated.spec.ts`, then both type checks. Expected: all SUCCESS. The entry
+specs M1 wrote pass unchanged: they call the same service methods.
+
+**Step 5: Commit**: `feat: Make a two-digit fret one undo step, and lift note entry out of the service`.
+
+### Task 1.7: Where a hammer-on, a slide and a tie land
+
+alphaTab drops a hammer-on or pull-off, and a shift or legato slide, that has nothing to land on
+(`Note.finish`, `alphaTab.core.mjs` ~6282-6303 in 1.8), and draws a tied note with the vibrato of the
+note it is tied from (~48360, ~63881, ~64605). The tools need to ask the same questions of a
+`ScoreDoc` before a press. This task mirrors the three lookups and checks the first two against
+alphaTab itself: the spec builds each layout, finishes it through the mapper, and compares.
+
+The rules, read from the 1.8 source and then measured, because the source's own bound is not the one
+that applies:
+
+- **`Note.nextNoteOnSameLine`** (~6477) walks `Beat.nextBeat` while the beat's bar index is at most
+  the note's plus 3 (`_maxOffsetForSameLineSearch`), and returns the first note on the same string.
+- **`Note.findHammerPullDestination`** (~6489) walks the same beats. On each: a note on the same
+  string is the destination; otherwise the nearest note on a lower string, if left-hand tapped, and
+  then the nearest on a higher string, if left-hand tapped; otherwise the next beat. A note that is not
+  tapped only stops the search in its direction on that beat.
+- **The walk reaches the rest of the note's bar and the next bar's first beat, not three bars.**
+  `Staff.finish` finishes bars in order (~12707), and `Voice.finish` (~3195) first chains every beat
+  of its voice - which links its last beat to the next bar's first (`Voice._chain`, ~3154-3170) - and
+  only then finishes them. So when a note finishes, the next bar's first beat is reachable but its own
+  `nextBeat` is not linked yet, and the walk ends there. A probe through `mapper.toScore` and through
+  alphaTex export and parse agreed: a note at bar 0 keeps a hammer-on or slide landing on bar 1's
+  first beat and loses one landing on bar 1's second beat, or on any later bar; from bar 1, bar 2's
+  first beat lands and bar 3's does not. The three-bar bound never takes effect on a score finished
+  this way, which is every score the composer renders, saves or loads.
+- **`Note.findTieOrigin`** (~6530) walks `previousBeat` back while the bar index is at least the
+  note's minus 3: a stringed note's origin is the first note on its string, a pitched note's the first
+  note with its real value. Earlier bars are already chained, so this bound does apply - probed: a tie
+  at bar 5 finds an origin in bar 2 and none in bar 1, and with no origin alphaTab clears
+  `isTieDestination`.
+- A pitched note has no string (`Note.string` stays -1, and `Beat.addNote` files only stringed notes in
+  `noteStringLookup`, ~7662), so a pitched note's hammer-on and slide never land.
+- alphaTab has no notes on a rest, and the mapper writes none there.
+
+**Files:**
+- Create: `client/src/app/services/note-landing.ts`
+- Test: `client/src/app/services/note-landing.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/services/note-landing.spec.ts -->
+```typescript
+import { TestBed } from '@angular/core/testing';
+import * as alphaTab from '@coderline/alphatab';
+
+import { ComposerService } from './composer.service';
+import { BeatRef } from './composer-selection';
+import { hammerDestinationOf, slideTargetOf, tieOriginOf } from './note-landing';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
+import { insertBarInto } from './score-structure';
+import { NoteDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+
+/**
+ * The landing rules, checked against alphaTab rather than only against what we believe it does: each
+ * layout is finished through the mapper, which runs `Score.finish`, and alphaTab's own answer - does
+ * the hammer-on survive, does the slide - must match the predicate's.
+ */
+describe('note landing', () => {
+  let mapper: ScoreDocMapperService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    mapper = TestBed.inject(ScoreDocMapperService);
+  });
+
+  const ref = (barIndex: number, beatIndex: number, trackIndex = 0): BeatRef =>
+    ({ trackIndex, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex });
+
+  /** Puts a fretted note on `string` at bar `bar`, beat `beat`, and returns it. */
+  function put(doc: ScoreDoc, bar: number, beat: number, string: number, fret = 5, tapped = false): NoteDoc {
+    const target = doc.tracks[0].staves[0].bars[bar].voices[0].beats[beat];
+    const note: NoteDoc = { pitch: { kind: 'fretted', string, fret }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() };
+    note.effects.isLeftHandTapped = tapped;
+    target.isRest = false;
+    target.notes.push(note);
+    return note;
+  }
+
+  /** alphaTab's finished note at the same place as `note` in bar 0, beat 0. */
+  function finished(doc: ScoreDoc, noteIndex = 0): alphaTab.model.Note {
+    const score = mapper.toScore(doc, new alphaTab.Settings());
+    return score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[noteIndex];
+  }
+
+  /**
+   * Layouts after a note on string 3 at bar 0, beat 0, each named for what follows it. The last four
+   * pin the reach: the next bar's first beat lands, its second beat and anything later do not,
+   * whatever `_maxOffsetForSameLineSearch` says - see the task for why.
+   */
+  const layouts: { name: string; build: (doc: ScoreDoc) => void }[] = [
+    { name: 'a note on the same string next beat', build: doc => void put(doc, 0, 1, 3) },
+    { name: 'a note on the same string at the end of the bar', build: doc => void put(doc, 0, 3, 3) },
+    { name: 'nothing at all', build: () => undefined },
+    { name: 'a note on another string, not tapped', build: doc => void put(doc, 0, 1, 2) },
+    { name: 'a left-hand tap on another string', build: doc => void put(doc, 0, 1, 1, 9, true) },
+    { name: 'a left-hand tap on the next bar\'s second beat', build: doc => void put(doc, 1, 1, 1, 9, true) },
+    { name: 'a note on the same string on the next bar\'s first beat', build: doc => void put(doc, 1, 0, 3) },
+    { name: 'a note on the same string on the next bar\'s second beat', build: doc => void put(doc, 1, 1, 3) },
+    { name: 'a note on the same string three bars on', build: doc => void put(doc, 3, 0, 3) },
+    { name: 'a note on the same string in a fifth bar', build: doc => {
+      insertBarInto(doc, doc.masterBars.length);
+      put(doc, 4, 0, 3);
+    } }
+  ];
+
+  it('lands from a later bar on the bar after it, too', () => {
+    const doc = ComposerService.createEmptyScore();
+    const note = put(doc, 1, 3, 3);
+    note.effects.isHammerPullOrigin = true;
+    put(doc, 2, 0, 3);
+
+    const score = mapper.toScore(doc, new alphaTab.Settings());
+    expect(hammerDestinationOf(doc, ref(1, 3), note)).not.toBeNull();
+    expect(score.tracks[0].staves[0].bars[1].voices[0].beats[3].notes[0].isHammerPullOrigin).toBeTrue();
+  });
+
+  it('finds no origin for a tie more than three bars after its note, as alphaTab finds none', () => {
+    const doc = ComposerService.createEmptyScore();
+    insertBarInto(doc, doc.masterBars.length);
+    put(doc, 0, 3, 3);
+    const tied = put(doc, 4, 0, 3);
+    tied.isTied = true;
+
+    const score = mapper.toScore(doc, new alphaTab.Settings());
+    expect(tieOriginOf(doc, ref(4, 0), tied)).toBeNull();
+    expect(score.tracks[0].staves[0].bars[4].voices[0].beats[0].notes[0].isTieDestination).toBeFalse();
+  });
+
+  for (const layout of layouts) {
+    it(`agrees with alphaTab on a hammer-on followed by ${layout.name}`, () => {
+      const doc = ComposerService.createEmptyScore();
+      const note = put(doc, 0, 0, 3);
+      note.effects.isHammerPullOrigin = true;
+      layout.build(doc);
+
+      expect(hammerDestinationOf(doc, ref(0, 0), note) !== null).toBe(finished(doc).isHammerPullOrigin);
+    });
+
+    it(`agrees with alphaTab on a legato slide followed by ${layout.name}`, () => {
+      const doc = ComposerService.createEmptyScore();
+      const note = put(doc, 0, 0, 3);
+      note.effects.slide = 'legatoSlide';
+      layout.build(doc);
+
+      const kept = finished(doc).slideOutType !== alphaTab.model.SlideOutType.None;
+      expect(slideTargetOf(doc, ref(0, 0), note) !== null).toBe(kept);
+    });
+  }
+
+  it('finds no destination for a pitched note, which alphaTab files on no string', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    const beats = doc.tracks[1].staves[0].bars[0].voices[0].beats;
+    const pitched = (): NoteDoc => ({ pitch: { kind: 'pitched', noteValue: 0, octave: 4 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() });
+    beats[0] = { ...beats[0], isRest: false, notes: [pitched()] };
+    beats[1] = { ...beats[1], isRest: false, notes: [pitched()] };
+
+    expect(hammerDestinationOf(doc, ref(0, 0, 1), beats[0].notes[0])).toBeNull();
+    expect(slideTargetOf(doc, ref(0, 0, 1), beats[0].notes[0])).toBeNull();
+  });
+
+  it('finds a tied note\'s origin on its string, across a bar line', () => {
+    const doc = ComposerService.createEmptyScore();
+    const origin = put(doc, 0, 3, 3);
+    const tied = put(doc, 1, 0, 3);
+    tied.isTied = true;
+
+    expect(tieOriginOf(doc, ref(1, 0), tied)).toBe(origin);
+  });
+
+  it('finds no origin for a note that is not tied, or one with nothing before it', () => {
+    const doc = ComposerService.createEmptyScore();
+    put(doc, 0, 0, 3);
+    const untied = put(doc, 0, 1, 3);
+    const lonely = put(doc, 0, 2, 1);
+    lonely.isTied = true;
+
+    expect(tieOriginOf(doc, ref(0, 1), untied)).toBeNull();
+    expect(tieOriginOf(doc, ref(0, 2), lonely)).toBeNull();
+  });
+
+  it('finds a pitched tied note\'s origin by its pitch', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    const beats = doc.tracks[1].staves[0].bars[0].voices[0].beats;
+    const pitched = (noteValue: number, isTied: boolean): NoteDoc => ({ pitch: { kind: 'pitched', noteValue, octave: 4 }, isTied, accidental: 'auto', effects: createDefaultNoteEffects() });
+    beats[0] = { ...beats[0], isRest: false, notes: [pitched(0, false), pitched(4, false)] };
+    beats[1] = { ...beats[1], isRest: false, notes: [pitched(4, true)] };
+
+    expect(tieOriginOf(doc, ref(0, 1, 1), beats[1].notes[0])).toBe(beats[0].notes[1]);
+  });
+});
+```
+
+**Step 2: Run it** with `--include=src/app/services/note-landing.spec.ts`. Expected: a compile error,
+`TS2307: Cannot find module './note-landing' or its corresponding type declarations.`
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/note-landing.ts -->
+```typescript
+import { BeatDoc, NoteDoc, ScoreDoc } from '../models/composer.model';
+import { BeatRef } from './composer-selection';
+
+/**
+ * Where a note's technique lands, asked of a `ScoreDoc` the way alphaTab 1.8 asks it of a finished
+ * score, so a tool can refuse what a save would drop.
+ *
+ * Mirrors three lookups on alphaTab's `Note` (`alphaTab.core.mjs` in 1.8): `nextNoteOnSameLine`
+ * (~6477) and `findHammerPullDestination` (~6489), which `Note.finish` uses to keep or clear a slide
+ * and a hammer-on (~6282-6303), and `findTieOrigin` (~6530), whose answer the renderer and the MIDI
+ * generator read a tied note's vibrato from (~48360, ~63881, ~64605). `note-landing.spec.ts` checks
+ * the first two against alphaTab itself, layout by layout.
+ */
+
+/** alphaTab's `Note._maxOffsetForSameLineSearch`: how many bars back a tie's origin is looked for. */
+const SAME_LINE_BAR_REACH = 3;
+
+/**
+ * The beats a forward search from `ref` reaches when alphaTab finishes a score: the rest of `ref`'s bar
+ * in its voice, and the next bar's first beat in the same voice.
+ *
+ * Not the three bars `Note.nextNoteOnSameLine` and `findHammerPullDestination` are written to search.
+ * `Staff.finish` finishes bars in order (~12707), and `Voice.finish` (~3195) chains all of its beats -
+ * linking its last to the next bar's first (`Voice._chain`, ~3154-3170) - before finishing any. So when
+ * a note is finished the next bar's first beat is linked, and nothing after it is yet.
+ * `note-landing.spec.ts` pins this against alphaTab layout by layout.
+ */
+function beatsAfter(doc: ScoreDoc, ref: BeatRef): BeatDoc[] {
+  const bars = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars ?? [];
+  const inBar = bars[ref.barIndex]?.voices[ref.voiceIndex]?.beats ?? [];
+  const nextFirst = bars[ref.barIndex + 1]?.voices[ref.voiceIndex]?.beats[0];
+  return nextFirst ? [...inBar.slice(ref.beatIndex + 1), nextFirst] : inBar.slice(ref.beatIndex + 1);
+}
+
+/**
+ * The beats before `ref`'s in its voice, nearest first, as `Beat.previousBeat` walks them, back to the
+ * bar three before `ref`'s. Earlier bars are chained by the time a note finishes, so this bound is the
+ * one alphaTab applies. The chain breaks at a bar whose voice has no beats, so the walk stops there.
+ */
+function beatsBefore(doc: ScoreDoc, ref: BeatRef): BeatDoc[] {
+  const bars = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars ?? [];
+  const beats: BeatDoc[] = [];
+  const first = Math.max(0, ref.barIndex - SAME_LINE_BAR_REACH);
+  for (let barIndex = ref.barIndex; barIndex >= first; barIndex--) {
+    const inBar = bars[barIndex]?.voices[ref.voiceIndex]?.beats ?? [];
+    if (barIndex < ref.barIndex && inBar.length === 0) break;
+    beats.push(...(barIndex === ref.barIndex ? inBar.slice(0, ref.beatIndex) : inBar).reverse());
+  }
+  return beats;
+}
+
+/** The note alphaTab finds on tab string `string` of `beat`. A rest has none: the mapper writes no notes on one. */
+function noteOnString(beat: BeatDoc, string: number): NoteDoc | null {
+  if (beat.isRest) return null;
+  return beat.notes.find(note => note.pitch.kind === 'fretted' && note.pitch.string === string) ?? null;
+}
+
+/**
+ * The note on `beat` on the nearest string numbered below `string` (`direction` -1) or above it (+1).
+ * alphaTab numbers strings the other way up from tab numbering, but it searches both directions, so
+ * which is which does not change whether a destination exists.
+ */
+function nearestNote(beat: BeatDoc, string: number, direction: -1 | 1): NoteDoc | null {
+  if (beat.isRest) return null;
+  let nearest: NoteDoc | null = null;
+  for (const note of beat.notes) {
+    if (note.pitch.kind !== 'fretted') continue;
+    const distance = (note.pitch.string - string) * direction;
+    if (distance <= 0) continue;
+    if (!nearest || (nearest.pitch.kind === 'fretted' && distance < (nearest.pitch.string - string) * direction)) nearest = note;
+  }
+  return nearest;
+}
+
+/**
+ * The note a hammer-on or pull-off on `note` would land on, or null when alphaTab would drop it: on the
+ * first beat after it - later in its bar, or the next bar's first beat (`beatsAfter`) - with a note on
+ * the same string, or a left-hand tap on the nearest string below or above where that string has no
+ * note. A pitched note has no string, so it never lands.
+ */
+export function hammerDestinationOf(doc: ScoreDoc, ref: BeatRef, note: NoteDoc): NoteDoc | null {
+  if (note.pitch.kind !== 'fretted') return null;
+  const string = note.pitch.string;
+  for (const beat of beatsAfter(doc, ref)) {
+    const same = noteOnString(beat, string);
+    if (same) return same;
+    const below = nearestNote(beat, string, -1);
+    if (below?.effects.isLeftHandTapped) return below;
+    const above = nearestNote(beat, string, 1);
+    if (above?.effects.isLeftHandTapped) return above;
+  }
+  return null;
+}
+
+/**
+ * The note a shift or legato slide on `note` would run into, or null when alphaTab would drop it: the
+ * first note on the same string later in its bar or on the next bar's first beat (`beatsAfter`). A
+ * pitched note has no string, so it never lands.
+ */
+export function slideTargetOf(doc: ScoreDoc, ref: BeatRef, note: NoteDoc): NoteDoc | null {
+  if (note.pitch.kind !== 'fretted') return null;
+  const string = note.pitch.string;
+  for (const beat of beatsAfter(doc, ref)) {
+    const same = noteOnString(beat, string);
+    if (same) return same;
+  }
+  return null;
+}
+
+/**
+ * The note a tied `note` is tied from, as alphaTab finds it, or null when `note` is not tied or has no
+ * origin within three bars back: on a string, the nearest earlier note on the same string; pitched,
+ * the nearest earlier note of the same pitch.
+ */
+export function tieOriginOf(doc: ScoreDoc, ref: BeatRef, note: NoteDoc): NoteDoc | null {
+  if (!note.isTied) return null;
+  const pitch = note.pitch;
+  for (const beat of beatsBefore(doc, ref)) {
+    if (pitch.kind === 'fretted') {
+      const same = noteOnString(beat, pitch.string);
+      if (same) return same;
+    } else if (!beat.isRest) {
+      const same = beat.notes.find(
+        other => other.pitch.kind === 'pitched' && other.pitch.noteValue === pitch.noteValue && other.pitch.octave === pitch.octave
+      );
+      if (same) return same;
+    }
+  }
+  return null;
+}
+```
+
+**Step 4: Run it.** Expected: 26 SUCCESS. If a layout disagrees, alphaTab's rule has changed: read
+`Note.finish`, `Voice.finish` and `Staff.finish` in the installed version before changing the predicate.
+
+**Step 5: Commit**: `feat: Ask where a hammer-on, a slide and a tie land, as alphaTab does`.
+
+### Task 1.8: Note effects refuse what alphaTab would drop, and clear what they can
+
+Four rules join the note effect press (design decisions 1, 13 and 15):
+
+- **Nothing to land on.** Turning a hammer-on, or a shift or legato slide, on for a caret whose note
+  has nothing to land on is refused, saying why. On a range, the notes that can land take it and the
+  rest are skipped, as a note tool skips rests; only a range where no note can land is refused. The
+  toggle rule reads the notes that can land, so a range whose last note cannot hold a hammer-on still
+  turns off when every other note has one. A hammer-on on a pitched staff, which never lands, is
+  refused as a fretted technique.
+- **Vibrato on a tied note** is refused, both ways: alphaTab draws a continuation with its origin's
+  vibrato, so a press there would write a value no one can see.
+- **Clearing is allowed on a pitched staff.** A press that would *clear* a fretted-only technique -
+  a natural harmonic an alphaTex import put on a piano note - passes. Only turning one on is refused.
+  This is decision 15 made general: every fretted-only note technique, not only the harmonic, since
+  clearing any of them from a pitched note removes something alphaTab cannot use there.
+- A clear reaches every note the press means, including notes that could not hold the value.
+
+**Files:**
+- Modify: `client/src/app/services/note-edits.ts`, `client/src/app/services/edit-refusals.ts`,
+  `client/src/app/services/composer.service.ts`
+- Test: `client/src/app/services/note-edits.spec.ts`, `client/src/app/services/edit-refusals.spec.ts`,
+  `client/src/app/services/composer.service.editing.spec.ts`
+
+**Step 1: Failing specs.** Append to `note-edits.spec.ts`:
+
+<!-- apply: append client/src/app/services/note-edits.spec.ts -->
+```typescript
+describe('toggleNoteEffect with a hammer-on', () => {
+  it('puts it on the notes that can land and skips the last, then clears them all', () => {
+    // Beat 1's note is the last on string 1 in the score, so it has nothing to land on.
+    const doc = chordDoc();
+    const beats = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+
+    toggleNoteEffect(doc, [ref(0), ref(1)], null, 'isHammerPullOrigin', true, false);
+    expect(beats[0].notes.map(note => note.effects.isHammerPullOrigin)).toEqual([true, false]);
+    expect(beats[1].notes[0].effects.isHammerPullOrigin).toBeFalse();
+
+    toggleNoteEffect(doc, [ref(0), ref(1)], null, 'isHammerPullOrigin', true, false);
+    expect(beats[0].notes[0].effects.isHammerPullOrigin).toBeFalse();
+  });
+});
+```
+
+Append to `edit-refusals.spec.ts`, importing `noteEffectRefusal`:
+
+<!-- apply: find client/src/app/services/edit-refusals.spec.ts -->
+```typescript
+import { EditScope, durationRefusal, editRefusal } from './edit-refusals';
+```
+
+<!-- apply: replace client/src/app/services/edit-refusals.spec.ts -->
+```typescript
+import { EditScope, durationRefusal, editRefusal, noteEffectRefusal } from './edit-refusals';
+```
+
+<!-- apply: append client/src/app/services/edit-refusals.spec.ts -->
+```typescript
+describe('noteEffectRefusal', () => {
+  /** The guitar note at beat 0 followed, at beat 1, by a note on string 1 too. */
+  function withFollower(): ScoreDoc {
+    const score = doc();
+    const beat = score.tracks[0].staves[0].bars[0].voices[0].beats[1];
+    beat.isRest = false;
+    beat.notes = [{ pitch: { kind: 'fretted', string: 1, fret: 2 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+    return score;
+  }
+
+  it('refuses a hammer-on with nothing to land on, saying so', () => {
+    expect(noteEffectRefusal(doc(), [ref(0)], null, 'isHammerPullOrigin', true, false)).toMatch(/land/i);
+  });
+
+  it('allows a hammer-on with a note after it on the string', () => {
+    expect(noteEffectRefusal(withFollower(), [ref(0)], null, 'isHammerPullOrigin', true, false)).toBeNull();
+  });
+
+  it('refuses a legato or shift slide with nothing to land on, and not a slide out', () => {
+    expect(noteEffectRefusal(doc(), [ref(0)], null, 'slide', 'legatoSlide', 'none')).toMatch(/land/i);
+    expect(noteEffectRefusal(doc(), [ref(0)], null, 'slide', 'shiftSlide', 'none')).toMatch(/land/i);
+    expect(noteEffectRefusal(doc(), [ref(0)], null, 'slide', 'slideOutUp', 'none')).toBeNull();
+  });
+
+  it('lets a press that clears a hammer-on through, landing or not', () => {
+    const score = doc();
+    score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].effects.isHammerPullOrigin = true;
+
+    expect(noteEffectRefusal(score, [ref(0)], null, 'isHammerPullOrigin', true, false)).toBeNull();
+  });
+
+  it('refuses a hammer-on on a pitched staff as a fretted technique', () => {
+    expect(noteEffectRefusal(doc(), [ref(1)], null, 'isHammerPullOrigin', true, false)).toMatch(/fretted/i);
+  });
+
+  it('lets a press that clears a natural harmonic through on a pitched staff, and refuses one that sets it', () => {
+    const score = doc();
+    score.tracks[1].staves[0].bars[0].voices[0].beats[0].notes[0].effects.harmonic = 'natural';
+
+    expect(noteEffectRefusal(score, [ref(1)], null, 'harmonic', 'natural', 'none')).toBeNull();
+    expect(noteEffectRefusal(score, [ref(1)], null, 'harmonic', 'artificial', 'none')).toMatch(/fretted/i);
+  });
+
+  it('refuses vibrato on a tied note either way, saying it belongs to the note it is tied from', () => {
+    const score = withFollower();
+    const tied = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    tied.isTied = true;
+
+    expect(noteEffectRefusal(score, [ref(0, 1)], null, 'vibrato', 'slight', 'none')).toMatch(/tied from/i);
+    tied.effects.vibrato = 'slight';
+    expect(noteEffectRefusal(score, [ref(0, 1)], null, 'vibrato', 'slight', 'none')).toMatch(/tied from/i);
+  });
+
+  it('still refuses a rest and a generated track', () => {
+    expect(noteEffectRefusal(doc(), [ref(0, 2)], null, 'isGhost', true, false)).toMatch(/note/i);
+    const score = doc();
+    score.tracks[0].generated = { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision', revision: 1 } };
+    expect(noteEffectRefusal(score, [ref(0)], null, 'isGhost', true, false)).toMatch(/progression/i);
+  });
+});
+```
+
+Append to `composer.service.editing.spec.ts`:
+
+<!-- apply: append client/src/app/services/composer.service.editing.spec.ts -->
+```typescript
+describe('ComposerService note effects that must land', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('refuses a hammer-on on the last note, commits nothing, and says why', () => {
+    writeFret(service, 0, 0, 5);
+    const before = JSON.stringify(service.doc);
+
+    service.toggleNoteEffect('isHammerPullOrigin', true, false);
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(stateOf(service).refusal).toMatch(/land/i);
+    expect(stateOf(service).canUndo).toBeTrue();
+  });
+
+  it('puts a hammer-on on a note that has one to land on', () => {
+    writeFret(service, 0, 0, 5);
+    writeFret(service, 0, 1, 7);
+    service.setCursor({ beatIndex: 0 });
+
+    service.toggleNoteEffect('isHammerPullOrigin', true, false);
+
+    expect(beatsIn(service)[0].notes[0].effects.isHammerPullOrigin).toBeTrue();
+  });
+});
+```
+
+**Step 2: Run** the three spec files. Expected: a compile error,
+`TS2305: Module '"./edit-refusals"' has no exported member 'noteEffectRefusal'.`
+
+**Step 3: Implement.** In `note-edits.ts`, replace the imports and `notesAt` with note targets that
+keep their beat:
+
+<!-- apply: find client/src/app/services/note-edits.ts -->
+```typescript
+import { AccidentalMode, NoteDoc, NoteEffectsDoc, ScoreDoc } from '../models/composer.model';
+import { toggledValue } from './beat-edits';
+import { BeatRef, beatAt } from './composer-selection';
+```
+
+<!-- apply: replace client/src/app/services/note-edits.ts -->
+```typescript
+import { AccidentalMode, NoteDoc, NoteEffectsDoc, ScoreDoc } from '../models/composer.model';
+import { toggledValue } from './beat-edits';
+import { BeatRef, beatAt } from './composer-selection';
+import { hammerDestinationOf, slideTargetOf } from './note-landing';
+```
+
+<!-- apply: find client/src/app/services/note-edits.ts -->
+```typescript
+export function notesAt(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): NoteDoc[] {
+  const single = refs.length === 1;
+  return refs.flatMap(ref => {
+    const beat = beatAt(doc, ref);
+    if (!beat) return [];
+    const fretted = (doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.tuning.length ?? 0) > 0;
+    if (single && fretted && focus !== null) {
+      return beat.notes.filter(note => note.pitch.kind === 'fretted' && note.pitch.string === focus + 1);
+    }
+    return beat.notes;
+  });
+}
+
+/** Presses a note effect tool, by the toggle rule. Each note gets its own copy of the value. */
+export function toggleNoteEffect<K extends keyof NoteEffectsDoc>(
+  doc: ScoreDoc,
+  refs: readonly BeatRef[],
+  focus: number | null,
+  key: K,
+  on: NoteEffectsDoc[K],
+  off: NoteEffectsDoc[K]
+): void {
+  const notes = notesAt(doc, refs, focus);
+  const value = toggledValue(notes.map(note => note.effects[key]), on, off);
+  for (const note of notes) note.effects[key] = structuredClone(value);
+}
+```
+
+<!-- apply: replace client/src/app/services/note-edits.ts -->
+```typescript
+export function notesAt(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): NoteDoc[] {
+  return noteTargetsAt(doc, refs, focus).map(target => target.note);
+}
+
+/** A note a press means, and the beat it is on. */
+export interface NoteTarget {
+  ref: BeatRef;
+  note: NoteDoc;
+}
+
+/** `notesAt`, keeping each note's beat: what a check that looks past the note - where it lands - needs. */
+export function noteTargetsAt(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): NoteTarget[] {
+  const single = refs.length === 1;
+  return refs.flatMap(ref => {
+    const beat = beatAt(doc, ref);
+    if (!beat) return [];
+    const fretted = (doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.tuning.length ?? 0) > 0;
+    const notes =
+      single && fretted && focus !== null
+        ? beat.notes.filter(note => note.pitch.kind === 'fretted' && note.pitch.string === focus + 1)
+        : beat.notes;
+    return notes.map(note => ({ ref, note }));
+  });
+}
+
+/**
+ * Whether `note` can hold `value` for `key`, or null when any note can: a hammer-on and a shift or
+ * legato slide need somewhere to land (`note-landing.ts`), since alphaTab drops them otherwise.
+ */
+function landingOf<K extends keyof NoteEffectsDoc>(key: K, value: NoteEffectsDoc[K]): ((doc: ScoreDoc, ref: BeatRef, note: NoteDoc) => NoteDoc | null) | null {
+  if (key === 'isHammerPullOrigin' && value === true) return hammerDestinationOf;
+  if (key === 'slide' && (value === 'shiftSlide' || value === 'legatoSlide')) return slideTargetOf;
+  return null;
+}
+
+/**
+ * The notes a press of `key` with `on` reads and sets: the notes it means that can hold `on`, or all
+ * of them when none can - which `noteEffectRefusal` refuses unless the press clears.
+ */
+export function noteEffectTargets<K extends keyof NoteEffectsDoc>(
+  doc: ScoreDoc,
+  refs: readonly BeatRef[],
+  focus: number | null,
+  key: K,
+  on: NoteEffectsDoc[K]
+): NoteTarget[] {
+  const all = noteTargetsAt(doc, refs, focus);
+  const lands = landingOf(key, on);
+  if (!lands) return all;
+  const landing = all.filter(target => lands(doc, target.ref, target.note) !== null);
+  return landing.length > 0 ? landing : all;
+}
+
+/**
+ * Presses a note effect tool, by the toggle rule. Each note gets its own copy of the value.
+ *
+ * The rule reads the notes that can hold the value (`noteEffectTargets`), so a range ending on a note
+ * with nothing to land on still turns a hammer-on off once every other note has one. Turning on writes
+ * only those notes; a clear writes every note the press means.
+ */
+export function toggleNoteEffect<K extends keyof NoteEffectsDoc>(
+  doc: ScoreDoc,
+  refs: readonly BeatRef[],
+  focus: number | null,
+  key: K,
+  on: NoteEffectsDoc[K],
+  off: NoteEffectsDoc[K]
+): void {
+  const targets = noteEffectTargets(doc, refs, focus, key, on);
+  const value = toggledValue(targets.map(target => target.note.effects[key]), on, off);
+  const written = value === on ? targets : noteTargetsAt(doc, refs, focus);
+  for (const { note } of written) note.effects[key] = structuredClone(value);
+}
+```
+
+In `edit-refusals.ts`, the imports and a scope for a clear:
+
+<!-- apply: find client/src/app/services/edit-refusals.ts -->
+```typescript
+import { BeatRef, beatAt } from './composer-selection';
+import { notesAt } from './note-edits';
+import { forcedLetterOf, reduceToOctave } from './note-spelling';
+```
+
+<!-- apply: replace client/src/app/services/edit-refusals.ts -->
+```typescript
+import { toggledValue } from './beat-edits';
+import { BeatRef, beatAt } from './composer-selection';
+import { noteEffectTargets, noteTargetsAt, notesAt } from './note-edits';
+import { hammerDestinationOf, slideTargetOf, tieOriginOf } from './note-landing';
+import { forcedLetterOf, reduceToOctave } from './note-spelling';
+```
+
+<!-- apply: find client/src/app/services/edit-refusals.ts -->
+```typescript
+  | { family: 'note'; key: keyof NoteEffectsDoc | 'tie' }
+```
+
+<!-- apply: replace client/src/app/services/edit-refusals.ts -->
+```typescript
+  | { family: 'note'; key: keyof NoteEffectsDoc | 'tie' }
+  // A press that needs only notes to act on - a clear, a respell, a move of pitch or string. Refused
+  // where any note edit is, never as a fretted-only technique: clearing one from a pitched note removes
+  // what alphaTab cannot use there, and the moves say for themselves what does not fit.
+  | { family: 'note'; key: 'notes' }
+```
+
+`drawnPitchClassOf` is needed by Task 1.11's respell, so export it:
+
+<!-- apply: find client/src/app/services/edit-refusals.ts -->
+```typescript
+function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
+```
+
+<!-- apply: replace client/src/app/services/edit-refusals.ts -->
+```typescript
+export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
+```
+
+Append the refusal:
+
+<!-- apply: append client/src/app/services/edit-refusals.ts -->
+```typescript
+const HAMMER_ON_NOTHING_FOLLOWS =
+  'A hammer-on or pull-off needs a note to land on - on the same string, or a left-hand tap on another - later in the bar ' +
+  "or on the next bar's first beat. With nothing to land on it would not save.";
+
+const SLIDE_NOTHING_FOLLOWS =
+  "A shift or legato slide needs a note on the same string later in the bar or on the next bar's first beat. " +
+  'With nothing to land on it would not save.';
+
+const HAMMER_ON_PITCHED = 'A hammer-on or pull-off lands on a string, so it belongs to fretted staves.';
+
+const VIBRATO_ON_TIE = 'Vibrato on a tied note belongs to the note it is tied from.';
+
+/**
+ * Why pressing a note effect tool - `key` set to `on`, by the toggle rule, or cleared to `off` - cannot
+ * apply to `refs`, or null when it can.
+ *
+ * - A clear is refused only where any note edit is: nothing selected, a generated track, a second
+ *   voice, no note (the `notes` scope). A fretted-only technique can be cleared from a pitched note.
+ * - Turning an effect on is refused as `editRefusal` refuses it, and also when no note it means can
+ *   hold it: a hammer-on, or a shift or legato slide, with nothing to land on. A range skips the notes
+ *   that cannot land (`noteEffectTargets`).
+ * - Vibrato on a tied note is refused either way. alphaTab draws and plays a tie destination with its
+ *   origin's vibrato (`tieOriginOf`), so a continuation's own value changes nothing anyone can see or
+ *   hear - and writing one stops alphaTab carrying a bend across the tie.
+ */
+export function noteEffectRefusal<K extends keyof NoteEffectsDoc>(
+  doc: ScoreDoc,
+  refs: readonly BeatRef[],
+  focus: number | null,
+  key: K,
+  on: NoteEffectsDoc[K],
+  off: NoteEffectsDoc[K]
+): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'note', key: 'notes' }, focus);
+  if (refusal) return refusal;
+
+  const all = noteTargetsAt(doc, refs, focus);
+  if (key === 'vibrato' && all.some(target => tieOriginOf(doc, target.ref, target.note) !== null)) return VIBRATO_ON_TIE;
+
+  const targets = noteEffectTargets(doc, refs, focus, key, on);
+  if (toggledValue(targets.map(target => target.note.effects[key]), on, off) !== on) return null;
+
+  const scoped = editRefusal(doc, refs, { family: 'note', key }, focus);
+  if (scoped) return scoped;
+
+  // Nothing to land on: no note the press means has a destination, so `noteEffectTargets` fell back to
+  // all of them. A pitched note never has one, so a press on pitched notes alone is told why.
+  if (key === 'isHammerPullOrigin' && !all.some(target => hammerDestinationOf(doc, target.ref, target.note))) {
+    return all.every(target => target.note.pitch.kind === 'pitched') ? HAMMER_ON_PITCHED : HAMMER_ON_NOTHING_FOLLOWS;
+  }
+  if (key === 'slide' && (on === 'shiftSlide' || on === 'legatoSlide') && !all.some(target => slideTargetOf(doc, target.ref, target.note))) {
+    return SLIDE_NOTHING_FOLLOWS;
+  }
+  return null;
+}
+```
+
+In `composer.service.ts`, the note effect press asks the new refusal. Import it:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+import { EditScope, durationRefusal, editRefusal } from './edit-refusals';
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+import { EditScope, durationRefusal, editRefusal, noteEffectRefusal } from './edit-refusals';
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  /** Presses a note effect tool on the selection. See `toggleNoteEffect` in note-edits.ts. */
+  toggleNoteEffect<K extends keyof NoteEffectsDoc>(key: K, on: NoteEffectsDoc[K], off: NoteEffectsDoc[K]): void {
+    this.applyEdit({ family: 'note', key }, (draft, refs, focus) => toggleNoteEffect(draft, refs, focus, key, on, off));
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** Presses a note effect tool on the selection. See `toggleNoteEffect` in note-edits.ts, and `noteEffectRefusal`. */
+  toggleNoteEffect<K extends keyof NoteEffectsDoc>(key: K, on: NoteEffectsDoc[K], off: NoteEffectsDoc[K]): void {
+    this.applyEdit(
+      (doc, refs, focus) => noteEffectRefusal(doc, refs, focus, key, on, off),
+      (draft, refs, focus) => toggleNoteEffect(draft, refs, focus, key, on, off)
+    );
+  }
+```
+
+`applyEdit` takes a scope or a refusal of its own:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  private applyEdit(
+    scope: EditScope,
+    edit: (draft: ScoreDoc, refs: BeatRef[], focus: number | null) => void
+  ): void {
+    const state = this.stateSubject.getValue();
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const focus = state.anchor ? null : state.cursor.stringIndex;
+    const refusal = editRefusal(state.doc, refs, scope, focus);
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  private applyEdit(
+    scope: EditScope | ((doc: ScoreDoc, refs: BeatRef[], focus: number | null) => string | null),
+    edit: (draft: ScoreDoc, refs: BeatRef[], focus: number | null) => string | null | void
+  ): void {
+    const state = this.stateSubject.getValue();
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const focus = state.anchor ? null : state.cursor.stringIndex;
+    const refusal = typeof scope === 'function' ? scope(state.doc, refs, focus) : editRefusal(state.doc, refs, scope, focus);
+```
+
+**Step 4: Run** the three spec files and `composer.service.spec.ts`. Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: Refuse a hammer-on, slide or tied vibrato alphaTab would drop, and let a clear through`.
+
+### Task 1.9: Default values, and a trill aimed at each note's own whole step
+
+M2's bend, fermata, trill and tuplet tools apply fixed values until M4 gives them editors (design Part
+1). A trill cannot be a single value pressed onto every note: `TrillDoc.value` is a pitch, so each
+note's trill has to be aimed at its own whole step - open string plus capo plus fret plus 2 on a
+string, or its own pitch plus 2 - which is why the trill gets a toggle of its own.
+
+**Files:**
+- Create: `client/src/app/services/composer-tool-defaults.ts`
+- Modify: `client/src/app/services/note-edits.ts`, `client/src/app/services/composer.service.ts`
+- Test: `client/src/app/services/composer-tool-defaults.spec.ts`, `client/src/app/services/note-edits.spec.ts`
+
+**Step 1: Failing specs.** Every default must survive a save, so the spec sends each through alphaTex:
+
+<!-- apply: create client/src/app/services/composer-tool-defaults.spec.ts -->
+```typescript
+import { TestBed } from '@angular/core/testing';
+import * as alphaTab from '@coderline/alphatab';
+
+import { AlphaTexService } from './alpha-tex.service';
+import { ComposerService } from './composer.service';
+import { DEFAULT_TRILL_SPEED, TUPLET_CHOICES, defaultFermata, fullBendPoints } from './composer-tool-defaults';
+import { toggleTrill } from './note-edits';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
+import { BeatDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+
+/**
+ * The values the palette applies until M4's editors, each through the path a save and a load take.
+ * A default alphaTab reshapes or drops would put a mark on the page that a reload takes away.
+ */
+describe('composer tool defaults', () => {
+  let mapper: ScoreDocMapperService;
+  let tex: AlphaTexService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    mapper = TestBed.inject(ScoreDocMapperService);
+    tex = TestBed.inject(AlphaTexService);
+  });
+
+  /** `doc` as a save and a load hand it back. */
+  function throughTex(doc: ScoreDoc): ScoreDoc {
+    const parsed = tex.parse(tex.export(mapper.toScore(doc, new alphaTab.Settings())));
+    if (!parsed.score) throw new Error('exported alphaTex did not parse');
+    return mapper.toDoc(parsed.score);
+  }
+
+  /** An empty score whose guitar's first beat is fret 5 on the G string, with a piano whose first beat is C4. */
+  function scoreWithNotes(): ScoreDoc {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    const guitar = doc.tracks[0].staves[0].bars[0].voices[0].beats[0];
+    guitar.isRest = false;
+    guitar.notes = [{ pitch: { kind: 'fretted', string: 3, fret: 5 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+    const piano = doc.tracks[1].staves[0].bars[0].voices[0].beats[0];
+    piano.isRest = false;
+    piano.notes = [{ pitch: { kind: 'pitched', noteValue: 0, octave: 4 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+    return doc;
+  }
+
+  const firstBeat = (doc: ScoreDoc, trackIndex: number): BeatDoc => doc.tracks[trackIndex].staves[0].bars[0].voices[0].beats[0];
+
+  it('bends a whole tone in a shape alphaTab keeps through a save', () => {
+    const doc = scoreWithNotes();
+    firstBeat(doc, 0).notes[0].effects.bendPoints = fullBendPoints();
+
+    expect(firstBeat(throughTex(doc), 0).notes[0].effects.bendPoints).toEqual(fullBendPoints());
+  });
+
+  it('keeps the default fermata through a save', () => {
+    const doc = scoreWithNotes();
+    firstBeat(doc, 0).effects.fermata = defaultFermata();
+
+    expect(firstBeat(throughTex(doc), 0).effects.fermata).toEqual(defaultFermata());
+  });
+
+  it('keeps every offered tuplet through a save', () => {
+    for (const tuplet of TUPLET_CHOICES) {
+      const doc = scoreWithNotes();
+      firstBeat(doc, 0).tuplet = { ...tuplet };
+
+      expect(firstBeat(throughTex(doc), 0).tuplet).withContext(`${tuplet.numerator}:${tuplet.denominator}`).toEqual({ ...tuplet });
+    }
+  });
+
+  it('trills a whole step above a fretted note and a pitched one, and both survive a save', () => {
+    const doc = scoreWithNotes();
+    const at = (trackIndex: number) => ({ trackIndex, staffIndex: 0, barIndex: 0, voiceIndex: 0, beatIndex: 0 });
+    toggleTrill(doc, [at(0)], null);
+    toggleTrill(doc, [at(1)], null);
+
+    // The G string is 55, so fret 5 is C4, 60, and a whole step above is 62; the piano's C4 likewise.
+    const back = throughTex(doc);
+    expect(firstBeat(back, 0).notes[0].effects.trill).toEqual({ value: 62, speed: DEFAULT_TRILL_SPEED });
+    expect(firstBeat(back, 1).notes[0].effects.trill).toEqual({ value: 62, speed: DEFAULT_TRILL_SPEED });
+  });
+});
+```
+
+Append to `note-edits.spec.ts`, importing `toggleTrill` beside the others:
+
+<!-- apply: find client/src/app/services/note-edits.spec.ts -->
+```typescript
+import { notesAt, setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
+```
+
+<!-- apply: replace client/src/app/services/note-edits.spec.ts -->
+```typescript
+import { notesAt, setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
+```
+
+<!-- apply: append client/src/app/services/note-edits.spec.ts -->
+```typescript
+describe('toggleTrill', () => {
+  it('aims each note of a chord a whole step above itself, capo included, and a second press clears them', () => {
+    // String 1 (E, 64) at fret 0 and string 2 (B, 59) at fret 1, under a capo at 2.
+    const doc = chordDoc();
+    doc.tracks[0].staves[0].capo = 2;
+    const notes = doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes;
+
+    toggleTrill(doc, [ref(0)], null);
+    expect(notes.map(note => note.effects.trill?.value)).toEqual([68, 64]);
+
+    toggleTrill(doc, [ref(0)], null);
+    expect(notes.map(note => note.effects.trill)).toEqual([null, null]);
+  });
+
+  it('gives every note a trill when some already have one', () => {
+    const doc = chordDoc();
+    const notes = doc.tracks[0].staves[0].bars[0].voices[0].beats[0].notes;
+    notes[0].effects.trill = { value: 70, speed: 32 };
+
+    toggleTrill(doc, [ref(0)], null);
+
+    expect(notes.map(note => note.effects.trill)).toEqual([{ value: 66, speed: 16 }, { value: 62, speed: 16 }]);
+  });
+});
+```
+
+**Step 2: Run** both spec files. Expected: compile errors,
+`TS2307: Cannot find module './composer-tool-defaults' or its corresponding type declarations.` and
+`TS2724: '"./note-edits"' has no exported member named 'toggleTrill'. Did you mean 'toggleTie'?`
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/composer-tool-defaults.ts -->
+```typescript
+import { BendPointDoc, FermataDoc, TrillDoc, Tuplet } from '../models/composer.model';
+
+/**
+ * The values M2's tools apply where M4 will give them an editor: a bend, a fermata, a trill's speed and
+ * interval, and the tuplets the tuplet popover offers.
+ *
+ * The structured values are functions rather than constants, so no press can hand one object to two
+ * notes or beats: every caller gets its own copy. `composer-tool-defaults.spec.ts` sends each through a
+ * save, because a default alphaTab reshapes would draw a mark a reload changes.
+ */
+
+/**
+ * A full bend: a whole tone - 4 quarter tones - reached by the end of the note. Two points at offsets 0
+ * and 60 are exactly the shape alphaTab keeps for its plain `Bend` type, so `Note.finish`, which
+ * rewrites any bend of two to four points into one of Guitar Pro's shapes, leaves it as written.
+ */
+export function fullBendPoints(): BendPointDoc[] {
+  return [
+    { offset: 0, value: 0 },
+    { offset: 60, value: 4 }
+  ];
+}
+
+/** A medium fermata held for its written length. */
+export function defaultFermata(): FermataDoc {
+  return { type: 'medium', length: 1 };
+}
+
+/** A trill in sixteenth notes. */
+export const DEFAULT_TRILL_SPEED: TrillDoc['speed'] = 16;
+
+/** How far above its note a default trill alternates, in semitones: a whole step. */
+export const TRILL_INTERVAL = 2;
+
+/** The tuplets the tuplet popover offers until M4's custom tuplet editor. */
+export const TUPLET_CHOICES: readonly Readonly<Tuplet>[] = [
+  { numerator: 3, denominator: 2 },
+  { numerator: 5, denominator: 4 },
+  { numerator: 6, denominator: 4 },
+  { numerator: 7, denominator: 4 }
+];
+```
+
+In `note-edits.ts`:
+
+<!-- apply: find client/src/app/services/note-edits.ts -->
+```typescript
+import { AccidentalMode, NoteDoc, NoteEffectsDoc, ScoreDoc } from '../models/composer.model';
+import { toggledValue } from './beat-edits';
+```
+
+<!-- apply: replace client/src/app/services/note-edits.ts -->
+```typescript
+import { AccidentalMode, NoteDoc, NoteEffectsDoc, ScoreDoc, StaffDoc } from '../models/composer.model';
+import { toggledValue } from './beat-edits';
+import { DEFAULT_TRILL_SPEED, TRILL_INTERVAL } from './composer-tool-defaults';
+```
+
+<!-- apply: append client/src/app/services/note-edits.ts -->
+```typescript
+/**
+ * The pitch a default trill on `note` alternates with, as `TrillDoc.value` stores it - alphaTab's
+ * `Note.trillValue`, a MIDI number: a whole step above the note as it sounds. On a string that is the
+ * open string plus the capo plus the fret, since alphaTex saves a trill as a fret relative to the
+ * string with the capo included (`trillFret`); on a pitched staff, the note's own pitch.
+ */
+export function trillTargetOf(staff: StaffDoc, note: NoteDoc): number {
+  const pitch = note.pitch;
+  const sounding =
+    pitch.kind === 'fretted'
+      ? (staff.tuning[pitch.string - 1] ?? 0) + staff.capo + pitch.fret
+      : (pitch.octave + 1) * 12 + pitch.noteValue;
+  return sounding + TRILL_INTERVAL;
+}
+
+/**
+ * Presses the trill tool, by the toggle rule: when every note the press means has a trill they all lose
+ * it; otherwise each gets a trill a whole step above itself (`trillTargetOf`) at the default speed.
+ *
+ * Not `toggleNoteEffect`, whose one value for every note would trill a chord's notes to one pitch.
+ */
+export function toggleTrill(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): void {
+  const targets = noteTargetsAt(doc, refs, focus);
+  const allOn = targets.length > 0 && targets.every(target => target.note.effects.trill !== null);
+  for (const { ref, note } of targets) {
+    const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
+    note.effects.trill = allOn || !staff ? null : { value: trillTargetOf(staff, note), speed: DEFAULT_TRILL_SPEED };
+  }
+}
+```
+
+In `composer.service.ts`, import it and add the command before `applyEdit`:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+import { setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  /**
+   * The one way a note or beat edit reaches the document.
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** Presses Trill: each note a whole step above itself at the default speed, or none. See `toggleTrill`. */
+  toggleTrill(): void {
+    this.applyEdit({ family: 'note', key: 'trill' }, (draft, refs, focus) => toggleTrill(draft, refs, focus));
+  }
+
+  /**
+   * The one way a note or beat edit reaches the document.
+```
+
+**Step 4: Run** both spec files. Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: Default bend, fermata, tuplets and a trill aimed at each note's whole step`.
+
+### Task 1.10: A fermata belongs to a bar position, on every track
+
+The user's decision: as in alphaTab and Guitar Pro, a fermata belongs to a position in a bar, not to a
+beat. alphaTab already behaves so - `Voice.finish` files a beat's fermata on the master bar by tick
+(`alphaTab.core.mjs` ~3294) and `MasterBar.getFermata` (~2728) hands it to every beat finished later at
+that tick - which M1 pinned as a surprise, because clearing the original left the copies. Pressing
+Fermata now sets it on every staff's voice-1 beat that starts at that tick in that bar, on every track,
+and pressing again clears all of them. The toggle reads all of them. A generated track is left alone,
+as every edit leaves one.
+
+**Files:**
+- Modify: `client/src/app/services/beat-edits.ts`, `client/src/app/services/composer.service.ts`,
+  `client/src/app/services/score-doc-mapper.effects.spec.ts` (comments only)
+- Test: `client/src/app/services/beat-edits.spec.ts`
+
+**Step 1: Failing spec.** In `beat-edits.spec.ts`, import `toggleFermata` and append:
+
+<!-- apply: find client/src/app/services/beat-edits.spec.ts -->
+```typescript
+import { setBeatDurations, setGrace, setTuplet, toggleBeatEffect, toggledValue } from './beat-edits';
+```
+
+<!-- apply: replace client/src/app/services/beat-edits.spec.ts -->
+```typescript
+import { setBeatDurations, setGrace, setTuplet, toggleBeatEffect, toggleFermata, toggledValue } from './beat-edits';
+```
+
+<!-- apply: append client/src/app/services/beat-edits.spec.ts -->
+```typescript
+describe('toggleFermata', () => {
+  const medium = { type: 'medium' as const, length: 1 };
+  /** Each beat's fermata type in bar 0 of track `trackIndex`, or null. */
+  const fermatas = (doc: ScoreDoc, trackIndex: number): (string | null)[] =>
+    doc.tracks[trackIndex].staves[0].bars[0].voices[0].beats.map(beat => beat.effects.fermata?.type ?? null);
+  const withPiano = (): ScoreDoc => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    return doc;
+  };
+
+  it('puts a fermata at that position on every track, and a second press clears every one', () => {
+    const doc = withPiano();
+
+    toggleFermata(doc, [ref(0, 2)], medium);
+    expect(fermatas(doc, 0)).toEqual([null, null, 'medium', null]);
+    expect(fermatas(doc, 1)).toEqual([null, null, 'medium', null]);
+
+    toggleFermata(doc, [ref(0, 2)], medium);
+    expect(fermatas(doc, 0)).toEqual([null, null, null, null]);
+    expect(fermatas(doc, 1)).toEqual([null, null, null, null]);
+  });
+
+  it('reads the position on every track, so one on another track alone does not make the press clear', () => {
+    const doc = withPiano();
+    doc.tracks[1].staves[0].bars[0].voices[0].beats[2].effects.fermata = { ...medium };
+
+    toggleFermata(doc, [ref(0, 2)], medium);
+
+    expect(fermatas(doc, 0)[2]).toBe('medium');
+    expect(fermatas(doc, 1)[2]).toBe('medium');
+  });
+
+  it('finds the position by tick, and gives nothing to a staff with no beat starting there', () => {
+    // The piano's bar is two halves: its second beat starts at 1920, the guitar's third beat's tick,
+    // and nothing of the piano's starts at 960, the guitar's second.
+    const doc = withPiano();
+    doc.tracks[1].staves[0].bars[0].voices[0].beats = [createRestBeat(2), createRestBeat(2)];
+
+    toggleFermata(doc, [ref(0, 2)], medium);
+    toggleFermata(doc, [ref(0, 1)], medium);
+
+    expect(fermatas(doc, 0)).toEqual([null, 'medium', 'medium', null]);
+    expect(fermatas(doc, 1)).toEqual([null, 'medium']);
+  });
+
+  it('leaves a generated track alone', () => {
+    const doc = withPiano();
+    doc.tracks[1].generated = { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision', revision: 1 } };
+
+    toggleFermata(doc, [ref(0, 0)], medium);
+
+    expect(fermatas(doc, 1)).toEqual([null, null, null, null]);
+  });
+});
+```
+
+**Step 2: Run** `beat-edits.spec.ts`. Expected: a compile error,
+`TS2305: Module '"./beat-edits"' has no exported member 'toggleFermata'.`
+
+**Step 3: Implement.** In `beat-edits.ts`, the imports:
+
+<!-- apply: find client/src/app/services/beat-edits.ts -->
+```typescript
+  DurationValue,
+  DynamicValue,
+  ScoreDoc,
+```
+
+<!-- apply: replace client/src/app/services/beat-edits.ts -->
+```typescript
+  DurationValue,
+  DynamicValue,
+  FermataDoc,
+  ScoreDoc,
+```
+
+<!-- apply: find client/src/app/services/beat-edits.ts -->
+```typescript
+  fillBarGaps,
+  insertRestsAt
+} from './bar-fill';
+```
+
+<!-- apply: replace client/src/app/services/beat-edits.ts -->
+```typescript
+  fillBarGaps,
+  insertRestsAt,
+  voiceTicks
+} from './bar-fill';
+```
+
+After `setDynamics`:
+
+<!-- apply: find client/src/app/services/beat-edits.ts -->
+```typescript
+/** Marks a dynamic on every beat in `refs`; null removes it. */
+export function setDynamics(doc: ScoreDoc, refs: readonly BeatRef[], dynamics: DynamicValue | null): void {
+  for (const beat of beatsAt(doc, refs)) beat.dynamics = dynamics;
+}
+```
+
+<!-- apply: replace client/src/app/services/beat-edits.ts -->
+```typescript
+/** Marks a dynamic on every beat in `refs`; null removes it. */
+export function setDynamics(doc: ScoreDoc, refs: readonly BeatRef[], dynamics: DynamicValue | null): void {
+  for (const beat of beatsAt(doc, refs)) beat.dynamics = dynamics;
+}
+
+/**
+ * Every beat a fermata pressed on `refs` belongs to: for the tick each ref's beat starts at in its bar,
+ * the voice-1 beat that starts there on every staff of every track. A fermata belongs to a bar
+ * position, not to a beat.
+ *
+ * That is alphaTab's model and Guitar Pro's. `Voice.finish` files a beat's fermata on the master bar by
+ * tick (`alphaTab.core.mjs` ~3294), and `MasterBar.getFermata` (~2728) hands it to every beat finished
+ * later at that tick without one - so a fermata written on one track showed on every later track
+ * anyway, and clearing it left the copies. Written on every track, the document says what the page
+ * shows, whichever track the press came from.
+ *
+ * A grace beat names no position: it takes no ticks and starts where the beat it leads into does, so a
+ * ref on one is skipped, and a grace at the tick gets nothing. A staff with no beat starting at the
+ * tick - a half note spans it - gets nothing either. A generated track is left alone, as every edit
+ * leaves one; alphaTab may still draw the position's fermata there, and the track's document stays the
+ * progression's.
+ */
+export function fermataPositionsOf(doc: ScoreDoc, refs: readonly BeatRef[]): BeatDoc[] {
+  const ticksByBar = new Map<number, Set<number>>();
+  for (const ref of refs) {
+    const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
+    const beat = voice?.beats[ref.beatIndex];
+    if (!voice || !beat || beat.effects.grace !== 'none') continue;
+    const ticks = ticksByBar.get(ref.barIndex) ?? new Set<number>();
+    ticks.add(voiceTicks({ beats: voice.beats.slice(0, ref.beatIndex) }));
+    ticksByBar.set(ref.barIndex, ticks);
+  }
+
+  const beats: BeatDoc[] = [];
+  for (const track of doc.tracks) {
+    if (track.generated) continue;
+    for (const staff of track.staves) {
+      for (const [barIndex, ticks] of ticksByBar) {
+        let start = 0;
+        for (const beat of staff.bars[barIndex]?.voices[0]?.beats ?? []) {
+          if (beat.effects.grace === 'none' && ticks.has(start)) beats.push(beat);
+          start += beatTicks(beat);
+        }
+      }
+    }
+  }
+  return beats;
+}
+
+/** Presses Fermata on `refs`, by the toggle rule, reading and writing every beat at those positions. */
+export function toggleFermata(doc: ScoreDoc, refs: readonly BeatRef[], fermata: FermataDoc): void {
+  const beats = fermataPositionsOf(doc, refs);
+  const value = toggledValue(beats.map(beat => beat.effects.fermata), fermata, null);
+  for (const beat of beats) beat.effects.fermata = value ? { ...value } : null;
+}
+```
+
+In `composer.service.ts`:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  setTuplet,
+  toggleBeatEffect,
+  toggledValue
+} from './beat-edits';
+import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  setTuplet,
+  toggleBeatEffect,
+  toggleFermata,
+  toggledValue
+} from './beat-edits';
+import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
+import { defaultFermata } from './composer-tool-defaults';
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  /**
+   * The one way a note or beat edit reaches the document.
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** Presses Fermata: at the selection's positions, on every track. See `toggleFermata`. */
+  toggleFermata(): void {
+    this.applyEdit({ family: 'beat', key: 'fermata' }, (draft, refs) => toggleFermata(draft, refs, defaultFermata()));
+  }
+
+  /**
+   * The one way a note or beat edit reaches the document.
+```
+
+The spread M1 pinned is now the rule. In `score-doc-mapper.effects.spec.ts`:
+
+<!-- apply: find client/src/app/services/score-doc-mapper.effects.spec.ts -->
+```typescript
+      // `Voice.finish` files a beat's fermata on the master bar by tick and hands it to every
+      // beat finished after it at that tick without one - later voices, staves and tracks,
+      // never earlier ones - before render or export. Pinned so M2 has to decide whether a
+      // fermata is per beat.
+```
+
+<!-- apply: replace client/src/app/services/score-doc-mapper.effects.spec.ts -->
+```typescript
+      // `Voice.finish` files a beat's fermata on the master bar by tick and hands it to every
+      // beat finished after it at that tick without one - later voices, staves and tracks,
+      // never earlier ones - before render or export. M2 made that the rule: a fermata belongs
+      // to a bar position, and `toggleFermata` writes it on every track itself. Still pinned, so
+      // an alphaTab upgrade that stops spreading it is noticed rather than hidden by the tool.
+```
+
+<!-- apply: find client/src/app/services/score-doc-mapper.effects.spec.ts -->
+```typescript
+    it('does not give a fermata to an earlier track', () => {
+```
+
+<!-- apply: replace client/src/app/services/score-doc-mapper.effects.spec.ts -->
+```typescript
+    it('does not give a fermata to an earlier track', () => {
+      // Which is why `toggleFermata` writes every track rather than relying on the spread: a
+      // fermata pressed on a later track would otherwise never reach an earlier one.
+```
+
+**Step 4: Run** `beat-edits.spec.ts` and `score-doc-mapper.effects.spec.ts`. Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: A fermata belongs to a bar position on every track`.
+
+### Task 1.11: Respell
+
+Respell (E) cycles how a note is written without changing its pitch (design decision 11).
+
+- **On a pitched note** it cycles the note's letter through every spelling `forcedLetterOf` allows
+  for its drawn pitch class, highest letter-alteration first: C sharp goes to D flat, then B double
+  sharp, then back to C sharp. It writes `letter` and the matching `accidental`, so the mapper and the
+  accidental refusal agree about the result.
+- **On a fretted note** it cycles the forced accidental between the sharp and the flat that can name a
+  black key. A white key has nothing to cycle, and a natural harmonic's accidental cannot be forced
+  (M1's refusal), so both are skipped in a range and refused when nothing else is selected.
+- A note with no forced spelling starts from the one alphaTab draws: for a black key under `Default`,
+  sharp in a key of no accidentals or sharps and flat in a flat key (`ModelUtils.computeAccidental`,
+  `alphaTab.core.mjs` ~4571), so the first press always changes what is drawn.
+
+**Files:**
+- Create: `client/src/app/services/note-respell.ts`
+- Modify: `client/src/app/services/composer.service.ts`
+- Test: `client/src/app/services/note-respell.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/services/note-respell.spec.ts -->
+```typescript
+import { ComposerService } from './composer.service';
+import { BeatRef } from './composer-selection';
+import { respellNotes, respellRefusal, respellingsOf } from './note-respell';
+import { NoteDoc, NotePitch, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+
+const ref = (trackIndex: number): BeatRef => ({ trackIndex, staffIndex: 0, barIndex: 0, voiceIndex: 0, beatIndex: 0 });
+
+/** A guitar and a piano, with one note on each track's first beat. */
+function doc(guitar: NotePitch, piano: NotePitch): ScoreDoc {
+  const score = ComposerService.createEmptyScore();
+  score.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, score.masterBars));
+  [guitar, piano].forEach((pitch, trackIndex) => {
+    const beat = score.tracks[trackIndex].staves[0].bars[0].voices[0].beats[0];
+    beat.isRest = false;
+    beat.notes = [{ pitch, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+  });
+  return score;
+}
+const noteOf = (score: ScoreDoc, trackIndex: number): NoteDoc => score.tracks[trackIndex].staves[0].bars[0].voices[0].beats[0].notes[0];
+/** String 2 (B, 59) at fret 2 is C sharp; at fret 1, C. */
+const C_SHARP_FRET: NotePitch = { kind: 'fretted', string: 2, fret: 2 };
+const C_FRET: NotePitch = { kind: 'fretted', string: 2, fret: 1 };
+const C_SHARP: NotePitch = { kind: 'pitched', noteValue: 1, octave: 4 };
+
+describe('respellingsOf', () => {
+  it('offers a black key\'s sharp and flat on a fretted staff, and a white key nothing', () => {
+    expect(respellingsOf(1, true)).toEqual(['sharp', 'flat']);
+    expect(respellingsOf(0, true)).toEqual([]);
+  });
+
+  it('offers every spelling that names the pitch on a pitched staff', () => {
+    // C sharp: B double sharp, C sharp, D flat. C: B sharp, C, D double flat.
+    expect(respellingsOf(1, false)).toEqual(['doubleSharp', 'sharp', 'flat']);
+    expect(respellingsOf(0, false)).toEqual(['sharp', 'auto', 'doubleFlat']);
+  });
+});
+
+describe('respellNotes', () => {
+  it('turns a fretted C sharp spelled from C major into D flat, and back', () => {
+    const score = doc(C_SHARP_FRET, C_SHARP);
+
+    respellNotes(score, [ref(0)], null);
+    expect(noteOf(score, 0).accidental).toBe('flat');
+
+    respellNotes(score, [ref(0)], null);
+    expect(noteOf(score, 0).accidental).toBe('sharp');
+  });
+
+  it('starts from the flat a flat key draws', () => {
+    const score = doc(C_SHARP_FRET, C_SHARP);
+    score.tracks[0].staves[0].bars[0].keySignature = { fifths: -2, mode: 'major' };
+
+    respellNotes(score, [ref(0)], null);
+
+    expect(noteOf(score, 0).accidental).toBe('sharp');
+  });
+
+  it('cycles a pitched C sharp\'s letter through D flat, B double sharp and C sharp', () => {
+    const score = doc(C_SHARP_FRET, C_SHARP);
+    const letters: (string | undefined)[] = [];
+
+    for (let press = 0; press < 3; press++) {
+      respellNotes(score, [ref(1)], null);
+      const note = noteOf(score, 1);
+      letters.push(note.pitch.kind === 'pitched' ? `${note.pitch.letter}:${note.accidental}` : undefined);
+    }
+
+    expect(letters).toEqual(['D:flat', 'B:doubleSharp', 'C:sharp']);
+  });
+
+  it('reads a written letter as the current spelling', () => {
+    const score = doc(C_SHARP_FRET, { ...C_SHARP, letter: 'D' });
+
+    respellNotes(score, [ref(1)], null);
+
+    const pitch = noteOf(score, 1).pitch;
+    expect(pitch.kind === 'pitched' ? pitch.letter : null).toBe('B');
+  });
+});
+
+describe('respellRefusal', () => {
+  it('refuses a fretted white key, saying why', () => {
+    expect(respellRefusal(doc(C_FRET, C_SHARP), [ref(0)], null)).toMatch(/black key/i);
+  });
+
+  it('refuses a fretted natural harmonic', () => {
+    const score = doc(C_SHARP_FRET, C_SHARP);
+    noteOf(score, 0).effects.harmonic = 'natural';
+
+    expect(respellRefusal(score, [ref(0)], null)).toMatch(/harmonic/i);
+  });
+
+  it('allows a range with something to respell, and refuses a rest', () => {
+    const score = doc(C_FRET, C_SHARP);
+
+    expect(respellRefusal(score, [ref(0), ref(1)], null)).toBeNull();
+    expect(respellRefusal(score, [{ ...ref(0), beatIndex: 1 }], null)).toMatch(/note/i);
+  });
+});
+```
+
+**Step 2: Run** `note-respell.spec.ts`. Expected: a compile error,
+`TS2307: Cannot find module './note-respell'`.
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/note-respell.ts -->
+```typescript
+import { AccidentalMode, NoteDoc, NoteLetter, ScoreDoc } from '../models/composer.model';
+import { BeatRef } from './composer-selection';
+import { drawnPitchClassOf, editRefusal } from './edit-refusals';
+import { NoteTarget, noteTargetsAt } from './note-edits';
+import { alterFor, forcedLetterOf, reduceToOctave } from './note-spelling';
+import { STEP_SEMITONES } from './staff-pitch';
+
+/**
+ * Respell: writing a note another way without changing its pitch.
+ *
+ * Every spelling offered is one `forcedLetterOf` can name, which is the predicate the accidental
+ * refusal checks and the mapper reads a letter back with - so a respelled note is never one that
+ * refusal would have stopped.
+ */
+
+const LETTERS: readonly NoteLetter[] = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+
+/** The accidental a letter needs, by its alteration in semitones. */
+const MODE_BY_ALTER: ReadonlyMap<number, AccidentalMode> = new Map([
+  [-2, 'doubleFlat'],
+  [-1, 'flat'],
+  [0, 'auto'],
+  [1, 'sharp'],
+  [2, 'doubleSharp']
+]);
+
+/** A pitched note's spellings in order: lowest letter, whose alteration is highest, first. */
+const PITCHED_ORDER: readonly AccidentalMode[] = ['doubleSharp', 'sharp', 'auto', 'flat', 'doubleFlat'];
+
+const WHITE_KEY = 'A natural note on a fretted staff is written one way here - respell swaps a black key between its sharp and its flat.';
+
+const NATURAL_HARMONIC = "A natural harmonic's accidental cannot be forced yet, so it cannot be respelled.";
+
+/**
+ * The spellings of `pitchClass` respell cycles through, as the accidental each forces.
+ *
+ * On a fretted staff, a black key's sharp and flat, and nothing for a white key. On a pitched staff,
+ * every spelling from a double sharp to a double flat that names the pitch, `auto` standing for the
+ * natural letter of a white key.
+ */
+export function respellingsOf(pitchClass: number, fretted: boolean): AccidentalMode[] {
+  const reduced = reduceToOctave(pitchClass);
+  const white = STEP_SEMITONES.includes(reduced);
+  if (fretted) return white ? [] : ['sharp', 'flat'];
+  return PITCHED_ORDER.filter(mode => (mode === 'auto' ? white : forcedLetterOf(mode, reduced) !== undefined));
+}
+
+/**
+ * The spelling `note` is drawn with now: a pitched note's letter, else its forced accidental, else what
+ * alphaTab draws for `Default` - a white key's natural, or a black key sharp when the key signature has
+ * no flats and flat when it has (`ModelUtils.computeAccidental`, `alphaTab.core.mjs` ~4571).
+ */
+function spellingOf(note: NoteDoc, pitchClass: number, fifths: number): AccidentalMode {
+  if (note.pitch.kind === 'pitched' && note.pitch.letter) {
+    return MODE_BY_ALTER.get(alterFor(pitchClass, LETTERS.indexOf(note.pitch.letter))) ?? 'auto';
+  }
+  if (note.accidental !== 'auto') return note.accidental;
+  if (STEP_SEMITONES.includes(reduceToOctave(pitchClass))) return 'auto';
+  return fifths >= 0 ? 'sharp' : 'flat';
+}
+
+/**
+ * `note`'s next spelling - its pitch and accidental - drawn from `pitchClass` in a key of `fifths`, or
+ * null when it has none to move to. A pitched note gets the letter as well as the accidental, since the
+ * mapper reads a letter first.
+ */
+export function respelledNote(note: NoteDoc, pitchClass: number, fifths: number): Pick<NoteDoc, 'pitch' | 'accidental'> | null {
+  const options = respellingsOf(pitchClass, note.pitch.kind === 'fretted');
+  if (options.length === 0) return null;
+  const next = options[(options.indexOf(spellingOf(note, pitchClass, fifths)) + 1) % options.length];
+  if (note.pitch.kind === 'fretted') return { pitch: note.pitch, accidental: next };
+
+  const letter = next === 'auto' ? LETTERS[STEP_SEMITONES.indexOf(reduceToOctave(pitchClass))] : forcedLetterOf(next, pitchClass);
+  return { pitch: { kind: 'pitched', noteValue: note.pitch.noteValue, octave: note.pitch.octave, letter }, accidental: next };
+}
+
+/** `target`'s next spelling in its own staff and key, or null. A fretted natural harmonic has none. */
+function respellingOf(doc: ScoreDoc, target: NoteTarget): Pick<NoteDoc, 'pitch' | 'accidental'> | null {
+  const staff = doc.tracks[target.ref.trackIndex]?.staves[target.ref.staffIndex];
+  const bar = staff?.bars[target.ref.barIndex];
+  if (!staff || !bar) return null;
+  if (target.note.pitch.kind === 'fretted' && target.note.effects.harmonic === 'natural') return null;
+  return respelledNote(target.note, drawnPitchClassOf(staff, target.note.pitch), bar.keySignature.fifths);
+}
+
+/** Why a respell cannot apply to `refs`, or null: any note edit's refusal, or no note that can be respelled. */
+export function respellRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'note', key: 'notes' }, focus);
+  if (refusal) return refusal;
+  const targets = noteTargetsAt(doc, refs, focus);
+  if (targets.some(target => respellingOf(doc, target) !== null)) return null;
+  return targets.every(target => target.note.effects.harmonic === 'natural') ? NATURAL_HARMONIC : WHITE_KEY;
+}
+
+/** Respells every note the press means that can be, each by its own cycle. The rest are skipped. */
+export function respellNotes(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null): void {
+  for (const target of noteTargetsAt(doc, refs, focus)) {
+    const next = respellingOf(doc, target);
+    if (!next) continue;
+    target.note.pitch = next.pitch;
+    target.note.accidental = next.accidental;
+  }
+}
+```
+
+In `composer.service.ts`:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
+import { respellNotes, respellRefusal } from './note-respell';
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  /**
+   * The one way a note or beat edit reaches the document.
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** Respell: each note to its next spelling. See note-respell.ts. */
+  respell(): void {
+    this.applyEdit(respellRefusal, (draft, refs, focus) => respellNotes(draft, refs, focus));
+  }
+
+  /**
+   * The one way a note or beat edit reaches the document.
+```
+
+**Step 4: Run** `note-respell.spec.ts`. Expected: 9 SUCCESS.
+
+**Step 5: Commit**: `feat: Respell a note through the spellings that name it`.
+
+### Task 1.12: Semitone and string moves
+
+Alt+↑/↓ moves the selection's notes a semitone; Ctrl+Alt+↑/↓ moves them to the string above or below,
+keeping their pitch. Both refuse the whole press, saying why, when any note would not fit.
+
+- **A semitone** moves a fret by one, or a pitched note by one, and drops a pitched note's `letter`,
+  which named the old pitch (the model's own warning on `NotePitch.letter`). It moves `trill.value`
+  with the note, since the trill's target is a pitch. A forced accidental that cannot name the new
+  pitch goes back to `auto` rather than draw the note on the wrong line.
+- **A string** keeps the pitch: the fret moves by the difference between the two strings' tunings. It
+  refuses a note that would leave the fretboard, a string that does not exist, and a beat where two
+  notes would share a string. The trill's target is a pitch, which does not change. On the caret alone,
+  the caret's string follows the note.
+
+**Files:**
+- Create: `client/src/app/services/note-moves.ts`
+- Modify: `client/src/app/services/composer.service.ts`
+- Test: `client/src/app/services/note-moves.spec.ts`, `client/src/app/services/composer.service.editing.spec.ts`
+
+**Step 1: Failing specs**
+
+<!-- apply: create client/src/app/services/note-moves.spec.ts -->
+```typescript
+import { ComposerService } from './composer.service';
+import { BeatRef } from './composer-selection';
+import { moveNotesToString, shiftSemitone } from './note-moves';
+import { NoteDoc, NotePitch, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+
+const ref = (trackIndex: number, beatIndex = 0): BeatRef => ({ trackIndex, staffIndex: 0, barIndex: 0, voiceIndex: 0, beatIndex });
+
+/** A guitar and a piano, with `guitar`'s notes on the guitar's first beat and C4 on the piano's. */
+function doc(...guitar: NotePitch[]): ScoreDoc {
+  const score = ComposerService.createEmptyScore();
+  score.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, score.masterBars));
+  const note = (pitch: NotePitch): NoteDoc => ({ pitch, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() });
+  const first = score.tracks[0].staves[0].bars[0].voices[0].beats[0];
+  first.isRest = false;
+  first.notes = guitar.map(note);
+  const piano = score.tracks[1].staves[0].bars[0].voices[0].beats[0];
+  piano.isRest = false;
+  piano.notes = [note({ kind: 'pitched', noteValue: 0, octave: 4, letter: 'C' })];
+  return score;
+}
+const notesOf = (score: ScoreDoc, trackIndex: number): NoteDoc[] => score.tracks[trackIndex].staves[0].bars[0].voices[0].beats[0].notes;
+
+describe('shiftSemitone', () => {
+  it('moves a fret and its trill up a semitone', () => {
+    const score = doc({ kind: 'fretted', string: 3, fret: 5 });
+    notesOf(score, 0)[0].effects.trill = { value: 62, speed: 16 };
+
+    expect(shiftSemitone(score, [ref(0)], null, 1)).toBeNull();
+
+    expect(notesOf(score, 0)[0].pitch).toEqual({ kind: 'fretted', string: 3, fret: 6 });
+    expect(notesOf(score, 0)[0].effects.trill).toEqual({ value: 63, speed: 16 });
+  });
+
+  it('moves a pitched note across an octave and drops the letter that named the old pitch', () => {
+    const score = doc({ kind: 'fretted', string: 3, fret: 5 });
+
+    shiftSemitone(score, [ref(1)], null, -1);
+
+    expect(notesOf(score, 1)[0].pitch).toEqual({ kind: 'pitched', noteValue: 11, octave: 3 });
+  });
+
+  it('puts a forced accidental that cannot name the new pitch back to auto, and keeps one that can', () => {
+    // String 3 (G, 55) at fret 3 is B flat, 58. A semitone up is 59, which a flat still names - C flat.
+    // A semitone down is 57, A, which a flat cannot name: its letter would be a black key.
+    const up = doc({ kind: 'fretted', string: 3, fret: 3 });
+    notesOf(up, 0)[0].accidental = 'flat';
+    shiftSemitone(up, [ref(0)], null, 1);
+    expect(notesOf(up, 0)[0].accidental).toBe('flat');
+
+    const down = doc({ kind: 'fretted', string: 3, fret: 3 });
+    notesOf(down, 0)[0].accidental = 'flat';
+    shiftSemitone(down, [ref(0)], null, -1);
+    expect(notesOf(down, 0)[0].accidental).toBe('auto');
+  });
+
+  it('refuses the whole press when one note would go below fret 0, and moves nothing', () => {
+    const score = doc({ kind: 'fretted', string: 1, fret: 0 }, { kind: 'fretted', string: 2, fret: 3 });
+
+    expect(shiftSemitone(score, [ref(0)], null, -1)).toMatch(/fret/i);
+    expect(notesOf(score, 0).map(note => note.pitch.kind === 'fretted' && note.pitch.fret)).toEqual([0, 3]);
+  });
+});
+
+describe('moveNotesToString', () => {
+  it('moves a note to the string above, keeping its pitch', () => {
+    // String 2 (B, 59) at fret 5 is E, 64: fret 0 on string 1.
+    const score = doc({ kind: 'fretted', string: 2, fret: 5 });
+
+    expect(moveNotesToString(score, [ref(0)], null, -1)).toBeNull();
+
+    expect(notesOf(score, 0)[0].pitch).toEqual({ kind: 'fretted', string: 1, fret: 0 });
+  });
+
+  it('refuses a note that would need a fret below 0, saying which', () => {
+    const score = doc({ kind: 'fretted', string: 2, fret: 3 });
+
+    expect(moveNotesToString(score, [ref(0)], null, -1)).toMatch(/fret -2/);
+  });
+
+  it('refuses a string that does not exist, and a pitched staff', () => {
+    expect(moveNotesToString(doc({ kind: 'fretted', string: 1, fret: 3 }), [ref(0)], null, -1)).toMatch(/no string/i);
+    expect(moveNotesToString(doc({ kind: 'fretted', string: 1, fret: 3 }), [ref(1)], null, 1)).toMatch(/pitched/i);
+  });
+
+  it('refuses a beat where two notes would share a string, and lets a whole chord move together', () => {
+    const chord = (): ScoreDoc => doc({ kind: 'fretted', string: 2, fret: 5 }, { kind: 'fretted', string: 3, fret: 9 });
+
+    expect(moveNotesToString(chord(), [ref(0)], 2, -1)).toMatch(/already/i);
+    const score = chord();
+    expect(moveNotesToString(score, [ref(0)], null, -1)).toBeNull();
+    expect(notesOf(score, 0).map(note => note.pitch)).toEqual([
+      { kind: 'fretted', string: 1, fret: 0 },
+      { kind: 'fretted', string: 2, fret: 5 }
+    ]);
+  });
+});
+```
+
+Append to `composer.service.editing.spec.ts`:
+
+<!-- apply: append client/src/app/services/composer.service.editing.spec.ts -->
+```typescript
+describe('ComposerService pitch and string moves', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('moves the caret\'s note to the string above, and the caret with it', () => {
+    writeFret(service, 0, 0, 5, 2);
+
+    service.moveNotesToString(-1);
+
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual({ kind: 'fretted', string: 1, fret: 0 });
+    expect(stateOf(service).cursor.stringIndex).toBe(0);
+  });
+
+  it('refuses a move that does not fit, publishing why and leaving the caret', () => {
+    writeFret(service, 0, 0, 3, 2);
+
+    service.moveNotesToString(-1);
+
+    expect(stateOf(service).refusal).toMatch(/fret -2/);
+    expect(stateOf(service).cursor.stringIndex).toBe(1);
+  });
+
+  it('moves a semitone as one undo step', () => {
+    writeFret(service, 0, 0, 5);
+
+    service.shiftSemitone(1);
+    service.undo();
+
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual({ kind: 'fretted', string: 1, fret: 5 });
+  });
+});
+```
+
+**Step 2: Run** `note-moves.spec.ts` and `composer.service.editing.spec.ts`. Expected: compile errors,
+`TS2307: Cannot find module './note-moves'` and `TS2339: Property 'moveNotesToString' does not exist on type 'ComposerService'.`
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/note-moves.ts -->
+```typescript
+import { BeatDoc, NoteDoc, ScoreDoc } from '../models/composer.model';
+import { BeatRef, beatAt } from './composer-selection';
+import { drawnPitchClassOf } from './edit-refusals';
+import { noteTargetsAt } from './note-edits';
+import { forcedLetterOf, reduceToOctave } from './note-spelling';
+
+/**
+ * Moving notes by pitch or by string. Each move checks every note first and returns why it refused
+ * before changing anything, so a press is whole or nothing.
+ */
+
+/** The highest fret a note can move to, as the fret digits allow. */
+const MAX_FRET = 24;
+
+/**
+ * Moves every note the press means by `delta` semitones, or returns why not and changes nothing.
+ *
+ * A fret moves by `delta`; a pitched note moves by `delta` across octave boundaries and loses its
+ * `letter`, which named the old pitch. `trill.value` is a pitch, so it moves too. A forced accidental
+ * that cannot name the new drawn pitch returns to `auto` (see `forcedLetterOf`).
+ */
+export function shiftSemitone(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null, delta: 1 | -1): string | null {
+  const targets = noteTargetsAt(doc, refs, focus);
+  const direction = delta > 0 ? 'up' : 'down';
+
+  for (const { note } of targets) {
+    if (note.pitch.kind === 'fretted') {
+      const fret = note.pitch.fret + delta;
+      if (fret < 0 || fret > MAX_FRET) return `A fret runs from 0 to ${MAX_FRET}, so a note in the selection cannot move ${direction} a semitone.`;
+    } else {
+      const midi = (note.pitch.octave + 1) * 12 + note.pitch.noteValue + delta;
+      if (midi < 0 || midi > 127) return `A note in the selection is at the edge of the MIDI range and cannot move ${direction}.`;
+    }
+  }
+
+  for (const { ref, note } of targets) {
+    const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
+    if (!staff) continue;
+    if (note.pitch.kind === 'fretted') {
+      note.pitch = { ...note.pitch, fret: note.pitch.fret + delta };
+    } else {
+      const midi = (note.pitch.octave + 1) * 12 + note.pitch.noteValue + delta;
+      note.pitch = { kind: 'pitched', noteValue: reduceToOctave(midi), octave: Math.floor(midi / 12) - 1 };
+    }
+    if (note.effects.trill) note.effects.trill = { ...note.effects.trill, value: note.effects.trill.value + delta };
+    if (note.accidental !== 'auto' && forcedLetterOf(note.accidental, drawnPitchClassOf(staff, note.pitch)) === undefined) {
+      note.accidental = 'auto';
+    }
+  }
+  return null;
+}
+
+/**
+ * Moves every note the press means to the string `delta` away in tab numbering - -1 the string above,
+ * higher in pitch; +1 the one below - keeping its pitch, or returns why not and changes nothing.
+ *
+ * The fret moves by the difference between the two strings' open pitches. Refused on a pitched staff,
+ * for a string past either edge, for a fret off the fretboard, and where two notes of one beat would
+ * end on one string - a note moving off a string frees it for another moving on.
+ */
+export function moveNotesToString(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null, delta: 1 | -1): string | null {
+  const direction = delta < 0 ? 'above' : 'below';
+  const moves = new Map<NoteDoc, { string: number; fret: number }>();
+  const beats = new Set<BeatDoc>();
+
+  for (const { ref, note } of noteTargetsAt(doc, refs, focus)) {
+    const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
+    if (!staff || note.pitch.kind !== 'fretted' || staff.tuning.length === 0) {
+      return 'A pitched staff has no strings to move a note between.';
+    }
+    const string = note.pitch.string + delta;
+    if (string < 1 || string > staff.tuning.length) return `There is no string ${direction} a note in the selection.`;
+    const fret = note.pitch.fret + (staff.tuning[note.pitch.string - 1] ?? 0) - (staff.tuning[string - 1] ?? 0);
+    if (fret < 0 || fret > MAX_FRET) return `A note in the selection does not fit on the string ${direction}: it would need fret ${fret}.`;
+    moves.set(note, { string, fret });
+    const beat = beatAt(doc, ref);
+    if (beat) beats.add(beat);
+  }
+
+  for (const beat of beats) {
+    const strings = beat.notes.map(note => moves.get(note)?.string ?? (note.pitch.kind === 'fretted' ? note.pitch.string : 0));
+    if (new Set(strings).size !== strings.length) return `The string ${direction} already has a note on that beat.`;
+  }
+
+  for (const [note, { string, fret }] of moves) {
+    note.pitch = { kind: 'fretted', string, fret };
+  }
+  return null;
+}
+```
+
+In `composer.service.ts`:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+import { respellNotes, respellRefusal } from './note-respell';
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+import { moveNotesToString, shiftSemitone } from './note-moves';
+import { respellNotes, respellRefusal } from './note-respell';
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  /**
+   * The one way a note or beat edit reaches the document.
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** Moves the selection's notes a semitone up (+1) or down (-1). See `shiftSemitone`. */
+  shiftSemitone(delta: 1 | -1): void {
+    this.applyEdit({ family: 'note', key: 'notes' }, (draft, refs, focus) => shiftSemitone(draft, refs, focus, delta));
+  }
+
+  /**
+   * Moves the selection's notes to the string above (-1) or below (+1), keeping their pitch. See
+   * `moveNotesToString`. On the caret alone, the caret's string follows the note.
+   */
+  moveNotesToString(delta: 1 | -1): void {
+    const before = this.doc;
+    this.applyEdit({ family: 'note', key: 'notes' }, (draft, refs, focus) => moveNotesToString(draft, refs, focus, delta));
+    if (this.doc !== before && !this.stateSubject.getValue().anchor) this.moveCursor({ kind: 'string', delta });
+  }
+
+  /**
+   * The one way a note or beat edit reaches the document.
+```
+
+**Step 4: Run** both spec files. Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: Move notes by a semitone, and to another string at the same pitch`.
+
+### Task 1.13: Rest over a range, insert beat, delete beats
+
+- **R and Delete over a range** clear every beat in it to a rest, keeping each beat's value. On the
+  caret alone they keep today's behaviour (`setRestAtCursor` applies the input duration and advances).
+- **Insert beat** puts a rest at the input duration in front of the caret's beat and leaves the caret
+  on it. The bar grows; any overflow is left for Fix bar, as the design asks of every edit.
+- **Delete beats** removes the selected beats, so the beats after them move earlier - that is what
+  sets it apart from clearing - and fills each bar it leaves short at its end. The caret goes to where
+  the range began.
+
+`ComposerEntryHost` gains `select`, the service's `setCursor`, for commands that place the caret.
+
+**Files:**
+- Modify: `client/src/app/services/beat-edits.ts`, `client/src/app/services/composer-entry-commands.ts`,
+  `client/src/app/services/composer.service.ts`
+- Test: `client/src/app/services/beat-edits.spec.ts`, `client/src/app/services/composer.service.editing.spec.ts`
+
+**Step 1: Failing specs.** In `beat-edits.spec.ts`:
+
+<!-- apply: find client/src/app/services/beat-edits.spec.ts -->
+```typescript
+import { setBeatDurations, setGrace, setTuplet, toggleBeatEffect, toggleFermata, toggledValue } from './beat-edits';
+```
+
+<!-- apply: replace client/src/app/services/beat-edits.spec.ts -->
+```typescript
+import {
+  clearToRests,
+  deleteBeats,
+  insertBeatAt,
+  setBeatDurations,
+  setGrace,
+  setTuplet,
+  toggleBeatEffect,
+  toggleFermata,
+  toggledValue
+} from './beat-edits';
+```
+
+<!-- apply: append client/src/app/services/beat-edits.spec.ts -->
+```typescript
+describe('clearToRests, insertBeatAt and deleteBeats', () => {
+  it('clears notes to rests and keeps each beat\'s value', () => {
+    const doc = ComposerService.createEmptyScore();
+    setBeatDurations(doc, [ref(0, 0)], 8, 0);
+    withNote(doc, 0, 0);
+    withNote(doc, 0, 2);
+
+    clearToRests(doc, [ref(0, 0), ref(0, 1), ref(0, 2)]);
+
+    expect(shape(doc)).toEqual(['r8', 'r8', 'r4', 'r4', 'r4']);
+  });
+
+  it('inserts a rest in front of a beat and leaves the bar over', () => {
+    const doc = ComposerService.createEmptyScore();
+    withNote(doc, 0, 0);
+
+    insertBeatAt(doc, ref(0, 0), 8, 1);
+
+    expect(shape(doc)).toEqual(['r8.', 'n4', 'r4', 'r4', 'r4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'over', ticks: 720 });
+  });
+
+  it('deletes beats, moves the later ones earlier, and fills the bar at its end', () => {
+    const doc = ComposerService.createEmptyScore();
+    withNote(doc, 0, 2);
+
+    deleteBeats(doc, [ref(0, 0), ref(0, 1)]);
+
+    expect(shape(doc)).toEqual(['n4', 'r4', 'r2']);
+  });
+
+  it('fills a bar whose every beat was deleted', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    deleteBeats(doc, [0, 1, 2, 3].map(index => ref(0, index)));
+
+    expect(shape(doc)).toEqual(['r1']);
+  });
+});
+```
+
+Append to `composer.service.editing.spec.ts`:
+
+<!-- apply: append client/src/app/services/composer.service.editing.spec.ts -->
+```typescript
+describe('ComposerService beats over the selection', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('rests every beat of a range as one undo step', () => {
+    writeFret(service, 0, 0, 5);
+    writeFret(service, 0, 1, 7);
+    service.setCursor({ beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 1 });
+
+    service.clearSelectionToRests();
+    expect(beatsIn(service).slice(0, 2).every(beat => beat.isRest)).toBeTrue();
+
+    service.undo();
+    expect(beatsIn(service).slice(0, 2).every(beat => !beat.isRest)).toBeTrue();
+  });
+
+  it('inserts a rest at the input duration in front of the caret, and leaves the caret on it', () => {
+    writeFret(service, 0, 1, 5);
+    service.setInputDuration(8, 0);
+
+    service.insertBeat();
+
+    expect(beatsIn(service)[1].isRest).toBeTrue();
+    expect(beatsIn(service)[1].duration).toBe(8);
+    expect(beatsIn(service)[2].isRest).toBeFalse();
+    expect(stateOf(service).cursor.beatIndex).toBe(1);
+  });
+
+  it('deletes a range and puts the caret where it began, with no range', () => {
+    writeFret(service, 0, 3, 5);
+    service.setCursor({ beatIndex: 1 });
+    service.extendSelectionTo({ beatIndex: 2 });
+
+    service.deleteBeats();
+
+    expect(beatsIn(service)[1].isRest).toBeFalse();
+    expect(stateOf(service).cursor.beatIndex).toBe(1);
+    expect(stateOf(service).anchor).toBeNull();
+  });
+
+  it('refuses to insert into a generated track', () => {
+    service.addTrack('Piano', 0, false);
+    service.replaceDocument({
+      ...service.doc,
+      tracks: service.doc.tracks.map((track, index) =>
+        index === 1 ? { ...track, generated: { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision' as const, revision: 1 } } } : track
+      )
+    });
+    service.setCursor({ trackIndex: 1 });
+    const before = JSON.stringify(service.doc);
+
+    service.insertBeat();
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(stateOf(service).refusal).toMatch(/progression/i);
+  });
+});
+```
+
+**Step 2: Run** both spec files. Expected: compile errors,
+`TS2305: Module '"./beat-edits"' has no exported member 'clearToRests'.` (and `deleteBeats`,
+`insertBeatAt`) and `TS2339: Property 'clearSelectionToRests' does not exist on type 'ComposerService'.`
+
+**Step 3: Implement.** In `beat-edits.ts`, import `createRestBeat`:
+
+<!-- apply: find client/src/app/services/beat-edits.ts -->
+```typescript
+  Tuplet,
+  VoiceDoc
+} from '../models/composer.model';
+```
+
+<!-- apply: replace client/src/app/services/beat-edits.ts -->
+```typescript
+  Tuplet,
+  VoiceDoc,
+  createRestBeat
+} from '../models/composer.model';
+```
+
+Append:
+
+<!-- apply: append client/src/app/services/beat-edits.ts -->
+```typescript
+/** Clears every beat in `refs` to a rest, keeping each beat's value, so no bar's fill changes. */
+export function clearToRests(doc: ScoreDoc, refs: readonly BeatRef[]): void {
+  for (const beat of beatsAt(doc, refs)) {
+    beat.notes = [];
+    beat.isRest = true;
+  }
+}
+
+/**
+ * Inserts a rest of `duration` and `dots` in front of the beat `ref` names. The bar grows, and whatever
+ * it holds beyond its meter is left as overflow for Fix bar: an insertion moves beats later, and taking
+ * rests from the end of the bar to make room would be a second edit the user did not ask for.
+ */
+export function insertBeatAt(doc: ScoreDoc, ref: BeatRef, duration: DurationValue, dots: number): void {
+  const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
+  if (!voice) return;
+  voice.beats.splice(Math.min(ref.beatIndex, voice.beats.length), 0, { ...createRestBeat(duration), dots });
+}
+
+/**
+ * Removes the beats `refs` name, so the beats after them move earlier, and fills each bar left short at
+ * its end (`fillBarGaps`) - unlike a clear, which keeps every later beat where it was. A voice left
+ * with no beats at all, in a free-time bar that nothing fills, gets a quarter rest, since alphaTab
+ * cannot chain a voice with none.
+ */
+export function deleteBeats(doc: ScoreDoc, refs: readonly BeatRef[]): void {
+  const removing = new Set(beatsAt(doc, refs));
+  const bars = new Map<BarDoc, number>();
+  for (const ref of refs) {
+    const bar = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex];
+    if (bar) bars.set(bar, ref.barIndex);
+  }
+  for (const [bar, barIndex] of bars) {
+    for (const voice of bar.voices) voice.beats = voice.beats.filter(beat => !removing.has(beat));
+    fillBarGaps(bar, barMeterAt(doc, barIndex));
+    for (const voice of bar.voices) if (voice.beats.length === 0) voice.beats.push(createRestBeat(4));
+  }
+}
+```
+
+In `composer-entry-commands.ts`, the imports and `select` on the host:
+
+<!-- apply: find client/src/app/services/composer-entry-commands.ts -->
+```typescript
+import { setBeatDurations } from './beat-edits';
+import { CursorMove } from './composer-cursor';
+import { beatAt } from './composer-selection';
+```
+
+<!-- apply: replace client/src/app/services/composer-entry-commands.ts -->
+```typescript
+import { clearToRests, deleteBeats, insertBeatAt, setBeatDurations } from './beat-edits';
+import { CursorMove } from './composer-cursor';
+import { beatAt, selectionTargets } from './composer-selection';
+```
+
+<!-- apply: find client/src/app/services/composer-entry-commands.ts -->
+```typescript
+  /** Moves the caret, dropping any range. */
+  moveCursor(move: CursorMove): void;
+}
+```
+
+<!-- apply: replace client/src/app/services/composer-entry-commands.ts -->
+```typescript
+  /** Moves the caret, dropping any range. */
+  moveCursor(move: CursorMove): void;
+  /** Puts the caret at `cursor`, clamped, dropping any range. */
+  select(cursor: Partial<EditCursor>): void;
+}
+```
+
+The commands, before `refusesEntryAt`:
+
+<!-- apply: find client/src/app/services/composer-entry-commands.ts -->
+```typescript
+  /**
+   * Whether note entry, rest entry or a delete at `cursor` is refused - on a generated track, or in a
+```
+
+<!-- apply: replace client/src/app/services/composer-entry-commands.ts -->
+```typescript
+  /** Clears every beat in the selection to a rest, keeping their values: R and Delete over a range. */
+  clearSelectionToRests(): void {
+    const state = this.host.state();
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const refusal = editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null);
+    if (refusal) return this.host.refuse(refusal);
+    this.host.commitFollowing(draft => clearToRests(draft, refs));
+  }
+
+  /** Inserts a rest at the input duration in front of the caret's beat, leaving the caret on it. See `insertBeatAt`. */
+  insertBeat(): void {
+    const state = this.host.state();
+    if (this.refusesEntryAt(state.doc, state.cursor)) return;
+    this.host.commit(draft => insertBeatAt(draft, state.cursor, state.inputDuration, state.inputDots));
+  }
+
+  /** Removes the selected beats, and puts the caret where the range began. See `deleteBeats`. */
+  deleteBeats(): void {
+    const state = this.host.state();
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const refusal = editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null);
+    if (refusal) return this.host.refuse(refusal);
+    this.host.commit(draft => deleteBeats(draft, refs));
+    this.host.select(refs[0]);
+  }
+
+  /**
+   * Whether note entry, rest entry or a delete at `cursor` is refused - on a generated track, or in a
+```
+
+In `composer.service.ts`, the host gains `select`, and the service delegates:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    moveCursor: move => this.moveCursor(move)
+  };
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    moveCursor: move => this.moveCursor(move),
+    select: cursor => this.setCursor(cursor)
+  };
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  setInputDuration(duration: DurationValue, dots = 0): void {
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** Clears every beat in the selection to a rest, keeping their values. */
+  clearSelectionToRests(): void {
+    this.entry.clearSelectionToRests();
+  }
+
+  /** Inserts a rest at the input duration in front of the caret, leaving the caret on it. */
+  insertBeat(): void {
+    this.entry.insertBeat();
+  }
+
+  /** Removes the selected beats; the beats after them move earlier. */
+  deleteBeats(): void {
+    this.entry.deleteBeats();
+  }
+
+  setInputDuration(duration: DurationValue, dots = 0): void {
+```
+
+**Step 4: Run** both spec files. Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: Rest over a range, insert a beat, and delete beats`.
+
+### Task 1.14: Cut, copy and paste
+
+Design Part 4: paste writes from the caret for the copied length and fills gaps where they open, and
+overflow is flagged, never pushed on. The clipboard is the composer's own, held by the entry commands,
+not the system clipboard: a copied beat is a document fragment no other program reads.
+
+- **Copy** takes the selection's beats bar by bar, from one staff. A multitrack rectangle is refused.
+- **Paste** writes each copied bar's beats into the matching bar from the caret's: into the caret's
+  bar from the caret's beat, into each later bar from its start. The beats it lands on are removed
+  until the copied length is covered; if the last one reached past it, the spare fills with rests right
+  after the pasted beats. A copied bar longer than the room left makes its bar over, for Fix bar. A
+  paste that runs off the end of the score appends bars (and stamps generated tracks diverged, as any
+  bar insertion does). Beats copied from a fretted staff do not paste onto a pitched one or the other
+  way round, and a staff with fewer strings than the notes use is refused.
+- **Cut** is copy, then clear to rests, as one undo step.
+
+**Files:**
+- Create: `client/src/app/services/beat-clipboard.ts`
+- Modify: `client/src/app/services/composer-entry-commands.ts`, `client/src/app/services/composer.service.ts`
+- Test: `client/src/app/services/beat-clipboard.spec.ts`, `client/src/app/services/composer.service.editing.spec.ts`
+
+**Step 1: Failing specs**
+
+<!-- apply: create client/src/app/services/beat-clipboard.spec.ts -->
+```typescript
+import { copiedBeatsOf, pasteBeats } from './beat-clipboard';
+import { scoreBarFills } from './bar-fill';
+import { ComposerService } from './composer.service';
+import { BeatRef } from './composer-selection';
+import { ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
+
+const ref = (barIndex: number, beatIndex: number, trackIndex = 0): BeatRef =>
+  ({ trackIndex, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex });
+const beats = (doc: ScoreDoc, bar: number) => doc.tracks[0].staves[0].bars[bar].voices[0].beats;
+const shape = (doc: ScoreDoc, bar: number): string[] =>
+  beats(doc, bar).map(beat => `${beat.isRest ? 'r' : 'n'}${beat.duration}${'.'.repeat(beat.dots)}`);
+const withNote = (doc: ScoreDoc, bar: number, beat: number): void => {
+  const target = beats(doc, bar)[beat];
+  target.isRest = false;
+  target.notes = [{ pitch: { kind: 'fretted', string: 1, fret: 3 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+};
+
+describe('copiedBeatsOf', () => {
+  it('copies a range bar by bar', () => {
+    const doc = ComposerService.createEmptyScore();
+    withNote(doc, 0, 3);
+    withNote(doc, 1, 0);
+
+    const copied = copiedBeatsOf(doc, [ref(0, 3), ref(1, 0)]);
+
+    expect(copied?.bars.map(bar => bar.length)).toEqual([1, 1]);
+    expect(copied?.fretted).toBeTrue();
+  });
+
+  it('copies nothing from more than one staff', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+
+    expect(copiedBeatsOf(doc, [ref(0, 0), ref(0, 0, 1)])).toBeNull();
+  });
+});
+
+describe('pasteBeats', () => {
+  it('writes the copied beats from the caret, over what was there', () => {
+    const doc = ComposerService.createEmptyScore();
+    withNote(doc, 0, 0);
+    withNote(doc, 0, 1);
+    const copied = copiedBeatsOf(doc, [ref(0, 0), ref(0, 1)]);
+
+    expect(pasteBeats(doc, ref(1, 1), copied!)).toEqual({ appendedBars: 0 });
+
+    expect(shape(doc, 1)).toEqual(['r4', 'n4', 'n4', 'r4']);
+  });
+
+  it('fills the spare right after the pasted beats when they end inside a beat', () => {
+    const doc = ComposerService.createEmptyScore();
+    beats(doc, 0).splice(0, 1, createRestBeat(8), createRestBeat(8));
+    withNote(doc, 0, 0);
+    const copied = copiedBeatsOf(doc, [ref(0, 0)]);
+
+    pasteBeats(doc, ref(1, 0), copied!);
+
+    expect(shape(doc, 1)).toEqual(['n8', 'r8', 'r4', 'r4', 'r4']);
+  });
+
+  it('leaves a bar over when the copied beats are longer than its room', () => {
+    const doc = ComposerService.createEmptyScore();
+    beats(doc, 0).splice(0, 2, createRestBeat(2));
+    withNote(doc, 0, 0);
+    const copied = copiedBeatsOf(doc, [ref(0, 0)]);
+
+    pasteBeats(doc, ref(1, 3), copied!);
+
+    expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'over', ticks: 960 });
+  });
+
+  it('pastes across a bar line, and appends bars when it runs off the end', () => {
+    const doc = ComposerService.createEmptyScore();
+    withNote(doc, 0, 3);
+    withNote(doc, 1, 0);
+    const copied = copiedBeatsOf(doc, [ref(0, 3), ref(1, 0)]);
+
+    expect(pasteBeats(doc, ref(3, 3), copied!)).toEqual({ appendedBars: 1 });
+
+    expect(shape(doc, 3)).toEqual(['r4', 'r4', 'r4', 'n4']);
+    expect(shape(doc, 4)[0]).toBe('n4');
+    expect(doc.masterBars.length).toBe(5);
+  });
+
+  it('refuses fretted beats on a pitched staff', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    withNote(doc, 0, 0);
+    const copied = copiedBeatsOf(doc, [ref(0, 0)]);
+
+    expect(pasteBeats(doc, ref(0, 0, 1), copied!)).toMatch(/fretted/i);
+  });
+});
+```
+
+Append to `composer.service.editing.spec.ts`:
+
+<!-- apply: append client/src/app/services/composer.service.editing.spec.ts -->
+```typescript
+describe('ComposerService cut, copy and paste', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('refuses a paste with nothing copied', () => {
+    service.paste();
+
+    expect(stateOf(service).refusal).toMatch(/copied/i);
+  });
+
+  it('pastes a copied range at the caret as one undo step', () => {
+    writeFret(service, 0, 0, 5);
+    writeFret(service, 0, 1, 7);
+    service.setCursor({ beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 1 });
+    service.copy();
+    service.setCursor({ barIndex: 2, beatIndex: 0 });
+
+    service.paste();
+    expect(beatsIn(service, 2).slice(0, 2).map(beat => beat.notes[0]?.pitch)).toEqual([
+      { kind: 'fretted', string: 1, fret: 5 },
+      { kind: 'fretted', string: 1, fret: 7 }
+    ]);
+
+    service.undo();
+    expect(beatsIn(service, 2).every(beat => beat.isRest)).toBeTrue();
+  });
+
+  it('cuts by copying and clearing, and the cut pastes back', () => {
+    writeFret(service, 0, 0, 5);
+    service.setCursor({ beatIndex: 0 });
+
+    service.cut();
+    expect(beatsIn(service)[0].isRest).toBeTrue();
+
+    service.paste();
+    expect(beatsIn(service)[0].notes[0].pitch).toEqual({ kind: 'fretted', string: 1, fret: 5 });
+  });
+});
+```
+
+**Step 2: Run** both spec files. Expected: compile errors,
+`TS2307: Cannot find module './beat-clipboard'` and `TS2339: Property 'paste' does not exist on type 'ComposerService'.`
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/beat-clipboard.ts -->
+```typescript
+import { BeatDoc, ScoreDoc } from '../models/composer.model';
+import { barMeterAt, beatTicks, fillBarGaps, insertRestsAt } from './bar-fill';
+import { BeatRef, beatAt } from './composer-selection';
+import { insertBarInto } from './score-structure';
+
+/**
+ * The composer's clipboard: beats copied from one staff, and pasting them at the caret.
+ *
+ * Paste follows design Part 4: it writes from the caret for the copied length and fills gaps where they
+ * open, and a bar it overfills is flagged for Fix bar rather than pushed on.
+ */
+
+/** Beats copied from one staff. */
+export interface CopiedBeats {
+  /** Whether they came from a fretted staff, whose notes name strings rather than pitches. */
+  fretted: boolean;
+  /** The copied beats bar by bar, first bar first: `bars[1]` came from the bar after `bars[0]`'s. */
+  bars: BeatDoc[][];
+}
+
+/** The beats `refs` name, copied bar by bar - or null when they are on more than one staff, or name none. */
+export function copiedBeatsOf(doc: ScoreDoc, refs: readonly BeatRef[]): CopiedBeats | null {
+  const first = refs[0];
+  if (!first || refs.some(ref => ref.trackIndex !== first.trackIndex || ref.staffIndex !== first.staffIndex)) return null;
+  const staff = doc.tracks[first.trackIndex]?.staves[first.staffIndex];
+  if (!staff) return null;
+
+  const bars: BeatDoc[][] = [];
+  for (const ref of refs) {
+    const beat = beatAt(doc, ref);
+    if (!beat) continue;
+    const offset = ref.barIndex - first.barIndex;
+    while (bars.length <= offset) bars.push([]);
+    bars[offset].push(structuredClone(beat));
+  }
+  return { fretted: staff.tuning.length > 0, bars };
+}
+
+/**
+ * Pastes `copied` at `at`, or returns why not. Each copied bar is written into the bar as many after
+ * `at`'s as it was after the first copied bar: into `at`'s own bar from `at`'s beat, into later bars
+ * from their start. The beats it lands on are removed until the copied length is covered, and when the
+ * last one reached past it the spare fills with rests right after the pasted beats (`insertRestsAt`);
+ * a bar left short fills at its end. A bar the copied beats overfill stays over, for Fix bar. Bars are
+ * appended when the paste runs off the end, and how many is returned so the caller can stamp generated
+ * tracks diverged.
+ *
+ * **May leave `doc` partly changed when it refuses**, like every edit that returns a reason - call it on a draft.
+ */
+export function pasteBeats(doc: ScoreDoc, at: BeatRef, copied: CopiedBeats): { appendedBars: number } | string {
+  const staff = doc.tracks[at.trackIndex]?.staves[at.staffIndex];
+  if (!staff) return 'There is no staff there.';
+  if ((staff.tuning.length > 0) !== copied.fretted) {
+    return copied.fretted
+      ? 'Those beats were copied from a fretted staff, and this staff has no strings.'
+      : 'Those beats were copied from a pitched staff, and this staff writes notes by string.';
+  }
+  const strings = copied.bars.flat().flatMap(beat => beat.notes.map(note => (note.pitch.kind === 'fretted' ? note.pitch.string : 0)));
+  const highest = Math.max(0, ...strings);
+  if (highest > staff.tuning.length) return `Those beats use ${highest} strings, and this staff has ${staff.tuning.length}.`;
+
+  let appendedBars = 0;
+  copied.bars.forEach((copiedBar, offset) => {
+    const barIndex = at.barIndex + offset;
+    while (barIndex >= staff.bars.length) {
+      insertBarInto(doc, doc.masterBars.length);
+      appendedBars++;
+    }
+    const bar = staff.bars[barIndex];
+    const voice = bar.voices[at.voiceIndex];
+    if (!voice) return;
+
+    const meter = barMeterAt(doc, barIndex);
+    const written = copiedBar.map(beat => structuredClone(beat));
+    const span = written.reduce((sum, beat) => sum + beatTicks(beat), 0);
+    const start = offset === 0 ? Math.min(at.beatIndex, voice.beats.length) : 0;
+
+    let covered = 0;
+    while (covered < span && start < voice.beats.length) {
+      covered += beatTicks(voice.beats[start]);
+      voice.beats.splice(start, 1);
+    }
+    voice.beats.splice(start, 0, ...written);
+    if (covered > span) insertRestsAt(voice, start + written.length, covered - span, meter);
+    fillBarGaps(bar, meter);
+  });
+  return { appendedBars };
+}
+```
+
+In `composer-entry-commands.ts`:
+
+<!-- apply: find client/src/app/services/composer-entry-commands.ts -->
+```typescript
+import { clearToRests, deleteBeats, insertBeatAt, setBeatDurations } from './beat-edits';
+```
+
+<!-- apply: replace client/src/app/services/composer-entry-commands.ts -->
+```typescript
+import { CopiedBeats, copiedBeatsOf, pasteBeats } from './beat-clipboard';
+import { clearToRests, deleteBeats, insertBeatAt, setBeatDurations } from './beat-edits';
+```
+
+<!-- apply: find client/src/app/services/composer-entry-commands.ts -->
+```typescript
+  private lastEntry: { at: EditCursor; doc: ScoreDoc } | null = null;
+```
+
+<!-- apply: replace client/src/app/services/composer-entry-commands.ts -->
+```typescript
+  private lastEntry: { at: EditCursor; doc: ScoreDoc } | null = null;
+
+  /** What Copy or Cut last took. The composer's own clipboard: nothing outside the page reads a beat. */
+  private clipboard: CopiedBeats | null = null;
+```
+
+<!-- apply: find client/src/app/services/composer-entry-commands.ts -->
+```typescript
+  /**
+   * Whether note entry, rest entry or a delete at `cursor` is refused - on a generated track, or in a
+```
+
+<!-- apply: replace client/src/app/services/composer-entry-commands.ts -->
+```typescript
+  /** Copies the selection's beats, from one staff. Not an edit: nothing is committed. */
+  copy(): void {
+    const state = this.host.state();
+    const copied = copiedBeatsOf(state.doc, selectionTargets(state.doc, state.anchor, state.cursor));
+    if (!copied) return this.host.refuse('Copy takes beats from one staff at a time.');
+    this.clipboard = copied;
+  }
+
+  /** Copies the selection's beats and clears them to rests, as one undo step. */
+  cut(): void {
+    const state = this.host.state();
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const refusal = editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null);
+    if (refusal) return this.host.refuse(refusal);
+    const copied = copiedBeatsOf(state.doc, refs);
+    if (!copied) return this.host.refuse('Cut takes beats from one staff at a time.');
+    this.clipboard = copied;
+    this.host.commitFollowing(draft => clearToRests(draft, refs));
+  }
+
+  /** Pastes the clipboard at the caret. See `pasteBeats`. */
+  paste(): void {
+    const state = this.host.state();
+    const clipboard = this.clipboard;
+    if (!clipboard) return this.host.refuse('Nothing has been copied yet.');
+    if (this.refusesEntryAt(state.doc, state.cursor)) return;
+    this.host.commit(draft => {
+      const result = pasteBeats(draft, state.cursor, clipboard);
+      if (typeof result === 'string') return result;
+      if (result.appendedBars > 0) this.host.markDiverged(draft);
+      return null;
+    });
+  }
+
+  /**
+   * Whether note entry, rest entry or a delete at `cursor` is refused - on a generated track, or in a
+```
+
+In `composer.service.ts`:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  setInputDuration(duration: DurationValue, dots = 0): void {
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** Copies the selection's beats to the composer's clipboard. */
+  copy(): void {
+    this.entry.copy();
+  }
+
+  /** Copies the selection's beats and clears them to rests. */
+  cut(): void {
+    this.entry.cut();
+  }
+
+  /** Pastes the clipboard at the caret. See `pasteBeats`. */
+  paste(): void {
+    this.entry.paste();
+  }
+
+  setInputDuration(duration: DurationValue, dots = 0): void {
+```
+
+**Step 4: Run** both spec files. Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: Cut, copy and paste beats`.
+
+### Task 1.15: Repeat close as a toggle, and inserting and deleting the selected bars
+
+- **Repeat close** (`]`) is a toggle over the selected bars: a repeat played twice, unless every
+  selected bar already closes one, and then none. M1's `setMasterBarValue('repeatCount', …)` takes a
+  number, which a key cannot.
+- **Insert bar** inserts as many bars as are selected, in front of the first.
+- **Delete bar** removes the selected bars, refusing to remove every bar. Removing bars that declared a
+  meter moves the declaration to the bar that now follows, so a 3/4 score does not become 4/4 when its
+  first bar goes - the fault M1 fixed for `insertBar(0)`, which `removeBar(0)` still had. `removeBar`
+  now goes through the same function.
+
+**Files:**
+- Modify: `client/src/app/services/bar-edits.ts`, `client/src/app/services/composer-service-structure.ts`,
+  `client/src/app/services/composer.service.ts`
+- Test: `client/src/app/services/bar-edits.spec.ts`, `client/src/app/services/composer.service.editing.spec.ts`
+
+**Step 1: Failing specs.** Append to `bar-edits.spec.ts`:
+
+<!-- apply: append client/src/app/services/bar-edits.spec.ts -->
+```typescript
+describe('toggleRepeatClose, insertBarsBefore and deleteBars', () => {
+  const threeFour = THREE_FOUR;
+
+  it('closes a repeat played twice, and opens it again when every bar closes one', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.masterBars[1].repeatCount = 3;
+
+    toggleRepeatClose(doc, { first: 0, last: 1 });
+    expect(doc.masterBars.slice(0, 2).map(bar => bar.repeatCount)).toEqual([2, 3]);
+
+    toggleRepeatClose(doc, { first: 0, last: 1 });
+    expect(doc.masterBars.slice(0, 2).map(bar => bar.repeatCount)).toEqual([0, 0]);
+  });
+
+  it('inserts bars in front of a bar, on every staff', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    insertBarsBefore(doc, 1, 2);
+
+    expect(doc.masterBars.length).toBe(6);
+    expect(doc.tracks[0].staves[0].bars.length).toBe(6);
+  });
+
+  it('refuses to delete every bar', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(deleteBars(doc, { first: 0, last: 3 })).toMatch(/at least one bar/i);
+    expect(doc.masterBars.length).toBe(4);
+  });
+
+  it('keeps the meter the deleted first bar declared', () => {
+    const doc = ComposerService.createEmptyScore();
+    setTimeSignature(doc, 0, threeFour);
+
+    expect(deleteBars(doc, { first: 0, last: 0 })).toBeNull();
+
+    expect(doc.masterBars.length).toBe(3);
+    expect(doc.masterBars[0].timeSignature).toEqual(threeFour);
+  });
+
+  it('moves a later declaration to the bar that follows the deleted ones, and drops one that repeats', () => {
+    const doc = ComposerService.createEmptyScore();
+    setTimeSignature(doc, 2, threeFour);
+
+    deleteBars(doc, { first: 1, last: 2 });
+    expect(doc.masterBars[1].timeSignature).toEqual(threeFour);
+
+    // Bar 3 repeats bar 1's 3/4 - a shape a loaded file can have. With bar 2 gone it follows bar 1
+    // directly, so its declaration repeats the meter in force and is dropped.
+    const same = ComposerService.createEmptyScore();
+    setTimeSignature(same, 1, threeFour);
+    same.masterBars[3].timeSignature = { ...threeFour };
+    deleteBars(same, { first: 2, last: 2 });
+    expect(same.masterBars.map(bar => bar.timeSignature?.numerator ?? null)).toEqual([4, 3, null]);
+  });
+});
+```
+
+and import the three beside the existing `bar-edits` imports:
+
+<!-- apply: find client/src/app/services/bar-edits.spec.ts -->
+```typescript
+  toggleMasterBarFlag
+} from './bar-edits';
+```
+
+<!-- apply: replace client/src/app/services/bar-edits.spec.ts -->
+```typescript
+  toggleMasterBarFlag,
+  deleteBars,
+  insertBarsBefore,
+  toggleRepeatClose
+} from './bar-edits';
+```
+
+Append to `composer.service.editing.spec.ts`:
+
+<!-- apply: append client/src/app/services/composer.service.editing.spec.ts -->
+```typescript
+describe('ComposerService bars over the selection', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('closes a repeat over the selected bars and opens it again', () => {
+    service.setCursor({ barIndex: 1 });
+    service.extendSelectionTo({ barIndex: 2 });
+
+    service.toggleRepeatClose();
+    expect(service.doc.masterBars.map(bar => bar.repeatCount)).toEqual([0, 2, 2, 0]);
+
+    service.toggleRepeatClose();
+    expect(service.doc.masterBars.map(bar => bar.repeatCount)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('inserts as many bars as are selected, and the selection follows its beats', () => {
+    service.setCursor({ barIndex: 1 });
+    service.extendSelectionTo({ barIndex: 2 });
+
+    service.insertBarsBeforeSelection();
+
+    expect(service.doc.masterBars.length).toBe(6);
+    expect(stateOf(service).anchor?.barIndex).toBe(3);
+  });
+
+  it('refuses to delete every bar, saying why', () => {
+    service.selectAllInTrack();
+
+    service.deleteSelectedBars();
+
+    expect(service.doc.masterBars.length).toBe(4);
+    expect(stateOf(service).refusal).toMatch(/at least one bar/i);
+  });
+
+  it('keeps a 3/4 score in 3/4 when its first bar is removed', () => {
+    service.setTimeSignature({ numerator: 3, denominator: 4, isCommon: false });
+
+    service.removeBar(0);
+
+    expect(service.scoreMeter.numerator).toBe(3);
+  });
+});
+```
+
+**Step 2: Run** both spec files. Expected: compile errors,
+`TS2305: Module '"./bar-edits"' has no exported member 'deleteBars'.` (and the other two) and
+`TS2339: Property 'toggleRepeatClose' does not exist on type 'ComposerService'.`
+
+**Step 3: Implement.** Append to `bar-edits.ts`, and import `insertBarInto`:
+
+<!-- apply: find client/src/app/services/bar-edits.ts -->
+```typescript
+import { toggledValue } from './beat-edits';
+```
+
+<!-- apply: replace client/src/app/services/bar-edits.ts -->
+```typescript
+import { toggledValue } from './beat-edits';
+import { insertBarInto } from './score-structure';
+```
+
+<!-- apply: append client/src/app/services/bar-edits.ts -->
+```typescript
+/**
+ * Presses Repeat close over bars `first` to `last`, by the toggle rule: each bar closes a repeat played
+ * twice - or keeps the count it already has - unless every one already closes a repeat, and then none
+ * does. `repeatCount` is how many times the section plays, so two is a plain repeat.
+ */
+export function toggleRepeatClose(doc: ScoreDoc, bars: { first: number; last: number }): void {
+  const targets = doc.masterBars.slice(bars.first, bars.last + 1);
+  const closing = !targets.every(bar => bar.repeatCount > 0);
+  for (const bar of targets) bar.repeatCount = closing ? Math.max(bar.repeatCount, 2) : 0;
+}
+
+/** Inserts `count` bars in front of bar `first`, across every track. See `insertBarInto`. */
+export function insertBarsBefore(doc: ScoreDoc, first: number, count: number): void {
+  for (let inserted = 0; inserted < count; inserted++) insertBarInto(doc, first);
+}
+
+/**
+ * Removes bars `first` to `last` from every track, or returns why not: a score keeps at least one bar.
+ *
+ * The meter in force after the removed bars is kept. The bar that now follows them declares it, unless
+ * it is already the meter in force before them - the declare-on-change shape the mapper reads a file
+ * into, and the rule `insertBarInto` keeps for bar 1. Without this, removing a 3/4 score's first bar
+ * would leave a bar 1 that declares nothing, which reads as 4/4.
+ */
+export function deleteBars(doc: ScoreDoc, bars: { first: number; last: number }): string | null {
+  const count = bars.last - bars.first + 1;
+  if (count >= doc.masterBars.length) return 'A score needs at least one bar.';
+
+  const hasFollowing = bars.last + 1 < doc.masterBars.length;
+  const following = effectiveTimeSignature(doc.masterBars, bars.last + 1);
+  doc.masterBars.splice(bars.first, count);
+  for (const track of doc.tracks) {
+    for (const staff of track.staves) staff.bars.splice(bars.first, count);
+  }
+
+  if (hasFollowing) {
+    const inForce = bars.first > 0 ? effectiveTimeSignature(doc.masterBars, bars.first - 1) : null;
+    doc.masterBars[bars.first].timeSignature = sameMeter(inForce, following) ? null : { ...following };
+  }
+  return null;
+}
+```
+
+In `composer-service-structure.ts`:
+
+<!-- apply: find client/src/app/services/composer-service-structure.ts -->
+```typescript
+import {
+  keySignatureFault,
+  setClef,
+```
+
+<!-- apply: replace client/src/app/services/composer-service-structure.ts -->
+```typescript
+import {
+  deleteBars,
+  insertBarsBefore,
+  keySignatureFault,
+  toggleRepeatClose,
+  setClef,
+```
+
+<!-- apply: find client/src/app/services/composer-service-structure.ts -->
+```typescript
+  /**
+   * A bar edit over the selected bars. Score-wide, like `insertBar`: never refused on a
+```
+
+<!-- apply: replace client/src/app/services/composer-service-structure.ts -->
+```typescript
+  /** Repeat close over the selected bars, by the toggle rule. See `toggleRepeatClose`. */
+  toggleRepeatClose(): void {
+    this.applyBarEdit((draft, bars) => toggleRepeatClose(draft, bars));
+  }
+
+  /** Inserts as many bars as are selected, in front of the first. The selection follows its beats. */
+  insertBarsBeforeSelection(): void {
+    this.applyBarEdit((draft, bars) => insertBarsBefore(draft, bars.first, bars.last - bars.first + 1));
+  }
+
+  /** Removes the selected bars from every track. See `deleteBars`. */
+  deleteSelectedBars(): void {
+    const state = this.host.state();
+    const bars = selectedBars(state.anchor, state.cursor);
+    this.host.commitFollowing(draft => {
+      const refusal = deleteBars(draft, bars);
+      if (refusal) return refusal;
+      this.host.markDiverged(draft);
+      return null;
+    });
+  }
+
+  /**
+   * A bar edit over the selected bars. Score-wide, like `insertBar`: never refused on a
+```
+
+In `composer.service.ts`, the delegations, and `removeBar` through `deleteBars`:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  /** Carries the overflow of every over bar in the selection into the bars after it, all or nothing. */
+  fixBar(): void {
+    this.structure.fixBar();
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** Carries the overflow of every over bar in the selection into the bars after it, all or nothing. */
+  fixBar(): void {
+    this.structure.fixBar();
+  }
+
+  /** Repeat close over the selected bars, by the toggle rule. */
+  toggleRepeatClose(): void {
+    this.structure.toggleRepeatClose();
+  }
+
+  /** Inserts as many bars as are selected, in front of the first. */
+  insertBarsBeforeSelection(): void {
+    this.structure.insertBarsBeforeSelection();
+  }
+
+  /** Removes the selected bars from every track, keeping the meter after them. */
+  deleteSelectedBars(): void {
+    this.structure.deleteSelectedBars();
+  }
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  removeBar(index: number): void {
+    if (this.doc.masterBars.length <= 1) return;
+    this.commit(draft => {
+      const at = Math.max(0, Math.min(index, draft.masterBars.length - 1));
+      draft.masterBars.splice(at, 1);
+      for (const track of draft.tracks) {
+        for (const staff of track.staves) {
+          staff.bars.splice(at, 1);
+        }
+      }
+      this.markDiverged(draft);
+    });
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  /** Removes bar `index` from every track, keeping the meter after it. See `deleteBars`. */
+  removeBar(index: number): void {
+    if (this.doc.masterBars.length <= 1) return;
+    this.commit(draft => {
+      const at = Math.max(0, Math.min(index, draft.masterBars.length - 1));
+      deleteBars(draft, { first: at, last: at });
+      this.markDiverged(draft);
+    });
+  }
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+import { insertBarInto } from './score-structure';
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+import { deleteBars } from './bar-edits';
+import { insertBarInto } from './score-structure';
+```
+
+**Step 4: Run** both spec files. Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: Repeat close as a toggle, insert and delete the selected bars, and keep the meter when bar 1 goes`.
+
+### Task 1.16: Phase 1 checkpoint
+
+**Step 1:** Run both type checks and the whole suite (from `client/`):
+
+```bash
+npx tsc -p tsconfig.app.json --noEmit
+npx tsc -p tsconfig.spec.json --noEmit
+npx ng test --watch=false --browsers=ChromeHeadless 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E "FAILED|TOTAL|error TS" | tail -20
+```
+
+Expected: no type errors, and every spec passes. The proof run for this plan recorded the total under
+"The proof" at the top.
+
+**Step 2:** `wc -l client/src/app/services/composer.service.ts` - it must be under 1000.
+
+**Step 3:** Nothing to commit if both are clean.
+
+## Phase 2: the tool table, `toolStates`, and the keyboard handler
+
+One table declares every tool: its label, group, glyph, keys and command. The palette (Phase 3), the
+tooltips, the `?` sheet and the keyboard handler all read it, so a key cannot drift from its button.
+`toolStates` says what each button shows and why a press would be refused, from the same refusals the
+commands use. Nothing in the page reads either until Phase 3.
+
+**Phase 2 exports**
+
+| Module | Exports | Task |
+|---|---|---|
+| `editable-target.ts` (new) | `isEditableTarget` (lifted from `progression.component.ts`) | 2.1 |
+| `composer-key-bindings.ts` (new) | `KeyBinding`, `KeyPress`, `bindingMatches`, `bindingMatchesTyped`, `bindingLabelOf`, `bindingSignatureOf`, `BROWSER_RESERVED` | 2.2 |
+| `composer-tool-states.ts` (new) | `ToolState`, `IDLE_TOOL`, `toolStates`, `toolStateOf`, `TOOLS_WITH_STATE` | 2.3 |
+| `composer-tools.ts` (new) | `ToolGroup`, `ToolGlyph`, `PopoverKind`, `ComposerToolHost`, `ComposerTool`, `COMPOSER_TOOLS`, `PALETTE_GROUPS`, `KEYLESS_TOOLS`, `toolForPress`, `DURATION_ORDER` | 2.4 |
+| `composer.service.ts` | `get state()` | 2.4 |
+| `composer-fret-entry.ts` (new) | `FretDigitEntry` | 2.5 |
+| `composer-key-handler.ts` (new) | `KeyEventLike`, `ComposerKeyHandler` | 2.6 |
+| `app.component.ts` | `onEscape(event)` claims Escape only when it closes the drawer | 2.7 |
+
+### Task 2.1: One helper for "is this key press someone typing"
+
+The composer's handler skips form fields by tag name and misses `contentEditable`. The progression page
+already has the complete test as a private function; lift it into a shared module so both pages ask the
+same question.
+
+**Files:**
+- Create: `client/src/app/services/editable-target.ts`
+- Modify: `client/src/app/components/progression/progression.component.ts`
+- Test: `client/src/app/services/editable-target.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/services/editable-target.spec.ts -->
+```typescript
+import { isEditableTarget } from './editable-target';
+
+describe('isEditableTarget', () => {
+  const attached: HTMLElement[] = [];
+
+  /** An element in the document, since `isContentEditable` reads the rendered state. */
+  function element<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
+    const created = document.createElement(tag);
+    document.body.appendChild(created);
+    attached.push(created);
+    return created;
+  }
+
+  afterEach(() => attached.splice(0).forEach(node => node.remove()));
+
+  it('is true for an input, a textarea and a select', () => {
+    expect(isEditableTarget(element('input'))).toBeTrue();
+    expect(isEditableTarget(element('textarea'))).toBeTrue();
+    expect(isEditableTarget(element('select'))).toBeTrue();
+  });
+
+  it('is true inside a contentEditable element', () => {
+    const editor = element('div');
+    editor.contentEditable = 'true';
+    const inner = document.createElement('span');
+    editor.appendChild(inner);
+
+    expect(isEditableTarget(editor)).toBeTrue();
+    expect(isEditableTarget(inner)).toBeTrue();
+  });
+
+  it('is false for a button, the document body, and no target', () => {
+    expect(isEditableTarget(element('button'))).toBeFalse();
+    expect(isEditableTarget(document.body)).toBeFalse();
+    expect(isEditableTarget(null)).toBeFalse();
+  });
+});
+```
+
+**Step 2: Run** with `--include=src/app/services/editable-target.spec.ts`. Expected: a compile error,
+`TS2307: Cannot find module './editable-target'`.
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/editable-target.ts -->
+```typescript
+/**
+ * Whether a key press belongs to something the user is typing into.
+ *
+ * Asked by every page that binds document-wide shortcuts, before it takes a key: a letter typed into a
+ * title field is a letter, and `Ctrl+Z` inside a text box is the browser's undo of the typing, which
+ * `preventDefault` would take away. `<select>` is in the list because it reads its own key presses, and
+ * `isContentEditable` because a rich-text field is neither tag - and is true for every element inside
+ * one, not only the element carrying the attribute.
+ *
+ * Lifted from `progression.component.ts`, where it was private, when the composer's keyboard handler
+ * needed the same answer: the composer's own check read tag names only and missed `contentEditable`.
+ */
+export function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+
+  return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
+}
+```
+
+In `progression.component.ts`, import it, use it, and delete the private copy:
+
+<!-- apply: find client/src/app/components/progression/progression.component.ts -->
+```typescript
+import { errorOf } from '../../services/error-message';
+```
+
+<!-- apply: replace client/src/app/components/progression/progression.component.ts -->
+```typescript
+import { isEditableTarget } from '../../services/editable-target';
+import { errorOf } from '../../services/error-message';
+```
+
+<!-- apply: find client/src/app/components/progression/progression.component.ts -->
+```typescript
+    if (isEditable(event.target)) return;
+```
+
+<!-- apply: replace client/src/app/components/progression/progression.component.ts -->
+```typescript
+    if (isEditableTarget(event.target)) return;
+```
+
+<!-- apply: find client/src/app/components/progression/progression.component.ts -->
+```typescript
+  + 'open the Composer from the navigation at the top of the page to see the track.';
+
+/**
+ * Whether a key press belongs to something the user is typing into.
+ *
+ * The tempo box is on this page, and `Ctrl+Z` inside a text box means undo the
+ * typing - the browser's own, which `preventDefault` would otherwise take away.
+ * `<select>` is in the list because it is a form control that reads its own key
+ * presses, and `isContentEditable` because a rich-text field is neither tag.
+ */
+function isEditable(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+
+  return target.tagName === 'INPUT'
+    || target.tagName === 'TEXTAREA'
+    || target.tagName === 'SELECT';
+}
+```
+
+<!-- apply: replace client/src/app/components/progression/progression.component.ts -->
+```typescript
+  + 'open the Composer from the navigation at the top of the page to see the track.';
+```
+
+**Step 4: Run** `editable-target.spec.ts` and the progression component's specs
+(`--include=src/app/components/progression/progression.component.spec.ts`). Expected: all SUCCESS.
+
+**Step 5: Commit**: `refactor: Share the editable-target check between the progression page and the composer`.
+
+### Task 2.2: Key bindings, and how a press matches one
+
+The design's matching rules (Shortcuts, "Sources and how conflicts were settled"), and decision 6's
+exactness:
+
+- **Modifiers match exactly.** Ctrl and Cmd are one modifier (`ctrlKey || metaKey`), so Ctrl+Z is Cmd+Z
+  on a Mac. So Ctrl+1 binds nothing and is left to the browser, and Ctrl+Alt+Z is not undo.
+- **Ctrl or Alt combinations name a physical key** (`KeyboardEvent.code`), because macOS Option
+  rewrites `key` (Option+- is an en dash).
+- **A letter** matches `key` in either case, with Shift exactly as bound: Caps Lock does not change the
+  tool, Shift does.
+- **A digit or a symbol** matches `key` whatever Shift says, because a symbol needs Shift on one layout
+  and not another - `?` is Shift+/ in the US, and every digit needs Shift on AZERTY.
+- **A named key** - an arrow, Home, Delete, Space, Insert - matches `key` with Shift exactly as bound.
+
+One refinement the design did not state: **a symbol typed through AltGr or Option still matches**,
+checked only after every exact binding has failed. `}` is AltGr+0 on a German keyboard and `[` is
+Option+5 on a German Mac, so an exact check would put the alternate ending and repeat open out of reach
+on those layouts. Digits are never relaxed, so Alt+1 and AltGr+1 write no fret, and Alt+/ still reaches
+the tuplet tool (an exact binding) before the triplet's `/`.
+
+**Files:**
+- Create: `client/src/app/services/composer-key-bindings.ts`
+- Test: `client/src/app/services/composer-key-bindings.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/services/composer-key-bindings.spec.ts -->
+```typescript
+import {
+  BROWSER_RESERVED,
+  KeyPress,
+  bindingLabelOf,
+  bindingMatches,
+  bindingMatchesTyped,
+  bindingSignatureOf
+} from './composer-key-bindings';
+
+/** A key press with no modifiers, and `init` over it. */
+const press = (init: Partial<KeyPress>): KeyPress => ({
+  key: '', code: '', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...init
+});
+
+describe('bindingMatches', () => {
+  it('matches a letter in either case, with Shift exactly as bound', () => {
+    expect(bindingMatches({ key: 'r' }, press({ key: 'r', code: 'KeyR' }))).toBeTrue();
+    expect(bindingMatches({ key: 'r' }, press({ key: 'R', code: 'KeyR' }))).toBeTrue();
+    expect(bindingMatches({ key: 'r' }, press({ key: 'R', code: 'KeyR', shiftKey: true }))).toBeFalse();
+    expect(bindingMatches({ key: 's', shift: true }, press({ key: 'S', code: 'KeyS', shiftKey: true }))).toBeTrue();
+  });
+
+  it('matches a symbol or a digit whatever Shift says', () => {
+    expect(bindingMatches({ key: '?' }, press({ key: '?', code: 'Slash', shiftKey: true }))).toBeTrue();
+    expect(bindingMatches({ key: '1' }, press({ key: '1', code: 'Digit1', shiftKey: true }))).toBeTrue();
+  });
+
+  it('matches a named key with Shift exactly, so Space and Shift+Space differ', () => {
+    expect(bindingMatches({ key: ' ' }, press({ key: ' ', code: 'Space' }))).toBeTrue();
+    expect(bindingMatches({ key: ' ' }, press({ key: ' ', code: 'Space', shiftKey: true }))).toBeFalse();
+    expect(bindingMatches({ key: 'ArrowLeft', shift: true }, press({ key: 'ArrowLeft', shiftKey: true }))).toBeTrue();
+  });
+
+  it('checks Ctrl and Alt exactly, reading Cmd as Ctrl', () => {
+    expect(bindingMatches({ code: 'KeyZ', ctrl: true }, press({ key: 'z', code: 'KeyZ', ctrlKey: true }))).toBeTrue();
+    expect(bindingMatches({ code: 'KeyZ', ctrl: true }, press({ key: 'z', code: 'KeyZ', metaKey: true }))).toBeTrue();
+    expect(bindingMatches({ code: 'KeyZ', ctrl: true }, press({ key: 'z', code: 'KeyZ', ctrlKey: true, altKey: true }))).toBeFalse();
+    expect(bindingMatches({ key: '1' }, press({ key: '1', code: 'Digit1', ctrlKey: true }))).toBeFalse();
+    expect(bindingMatches({ key: 'ArrowRight' }, press({ key: 'ArrowRight', ctrlKey: true }))).toBeFalse();
+  });
+
+  it('matches a Ctrl or Alt combination by physical key, whatever the key produced', () => {
+    // macOS Option+- produces an en dash.
+    expect(bindingMatches({ code: 'Minus', alt: true }, press({ key: '–', code: 'Minus', altKey: true }))).toBeTrue();
+  });
+});
+
+describe('bindingMatchesTyped', () => {
+  it('matches a symbol typed through AltGr or Option', () => {
+    expect(bindingMatchesTyped({ key: '}' }, press({ key: '}', code: 'Digit0', ctrlKey: true, altKey: true }))).toBeTrue();
+    expect(bindingMatchesTyped({ key: '[' }, press({ key: '[', code: 'Digit5', altKey: true }))).toBeTrue();
+  });
+
+  it('never relaxes a digit, a letter, a named key, Ctrl alone or Cmd', () => {
+    expect(bindingMatchesTyped({ key: '1' }, press({ key: '1', code: 'Digit1', altKey: true }))).toBeFalse();
+    expect(bindingMatchesTyped({ key: 'q' }, press({ key: 'q', code: 'KeyQ', ctrlKey: true, altKey: true }))).toBeFalse();
+    expect(bindingMatchesTyped({ key: 'Home' }, press({ key: 'Home', altKey: true }))).toBeFalse();
+    expect(bindingMatchesTyped({ key: '}' }, press({ key: '}', code: 'BracketRight', ctrlKey: true }))).toBeFalse();
+    expect(bindingMatchesTyped({ key: '}' }, press({ key: '}', code: 'BracketRight', metaKey: true, altKey: true }))).toBeFalse();
+  });
+});
+
+describe('bindingLabelOf', () => {
+  it('writes modifiers, then the key as printed', () => {
+    expect(bindingLabelOf({ code: 'KeyZ', ctrl: true, shift: true })).toBe('Ctrl+Shift+Z');
+    expect(bindingLabelOf({ code: 'Minus', alt: true })).toBe('Alt+-');
+    expect(bindingLabelOf({ key: 's', shift: true })).toBe('Shift+S');
+    expect(bindingLabelOf({ key: ' ', shift: true })).toBe('Shift+Space');
+    expect(bindingLabelOf({ key: 'ArrowLeft', ctrl: true })).toBe('Ctrl+←');
+    expect(bindingLabelOf({ key: 'Escape' })).toBe('Esc');
+    expect(bindingLabelOf({ code: 'Digit3', ctrl: true, shift: true })).toBe('Ctrl+Shift+3');
+    expect(bindingLabelOf({ key: '?' })).toBe('?');
+  });
+});
+
+describe('bindingSignatureOf and BROWSER_RESERVED', () => {
+  it('writes a letter bound by key and by code the same way, so collisions are found', () => {
+    expect(bindingSignatureOf({ key: 'n', ctrl: true })).toBe(bindingSignatureOf({ code: 'KeyN', ctrl: true }));
+  });
+
+  it('reserves the browser\'s keys from the design', () => {
+    const reserved = new Set(BROWSER_RESERVED.map(bindingSignatureOf));
+
+    expect(reserved.has(bindingSignatureOf({ code: 'KeyT', ctrl: true }))).toBeTrue();
+    expect(reserved.has(bindingSignatureOf({ code: 'Digit9', ctrl: true }))).toBeTrue();
+    expect(reserved.has(bindingSignatureOf({ code: 'KeyS', alt: true }))).toBeTrue();
+    expect(reserved.has(bindingSignatureOf({ key: 'F5' }))).toBeTrue();
+    expect(reserved.has(bindingSignatureOf({ key: 'Delete', ctrl: true, shift: true }))).toBeTrue();
+  });
+});
+```
+
+**Step 2: Run** with `--include=src/app/services/composer-key-bindings.spec.ts`. Expected: a compile
+error, `TS2307: Cannot find module './composer-key-bindings'`.
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/composer-key-bindings.ts -->
+```typescript
+/**
+ * Key bindings for the composer's tools: what a binding is, whether a key press matches one, and how one
+ * is written in a tooltip and on the shortcut sheet.
+ *
+ * The rules are the design's, under "Shortcuts": modifiers exactly, with Cmd read as Ctrl; a Ctrl or Alt
+ * combination by physical key, because macOS Option rewrites `key`; a letter in either case with Shift
+ * exactly; a digit or symbol whatever Shift says, because which symbols need Shift depends on the layout;
+ * a named key with Shift exactly. And one the design did not state: a symbol typed through AltGr or
+ * Option (`bindingMatchesTyped`), asked only after every exact binding has failed.
+ */
+
+/** One key press a tool answers to. Exactly one of `key` and `code`. */
+export interface KeyBinding {
+  /** `KeyboardEvent.key`: a lower-case letter, a digit, a symbol, or a named key such as `ArrowLeft` or `' '`. */
+  key?: string;
+  /** `KeyboardEvent.code`, for a combination held with Ctrl or Alt. */
+  code?: string;
+  /** Ctrl, or Cmd on a Mac. */
+  ctrl?: boolean;
+  alt?: boolean;
+  shift?: boolean;
+}
+
+/** The parts of a `KeyboardEvent` a binding is matched against. */
+export type KeyPress = Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>;
+
+const isLetter = (key: string): boolean => /^[a-z]$/i.test(key);
+const isDigit = (key: string): boolean => /^[0-9]$/.test(key);
+/** A printable key whose Shift depends on the layout: one character, not a letter and not a space. */
+const isShiftFree = (key: string): boolean => key.length === 1 && !isLetter(key) && key !== ' ';
+
+/** Whether `press` is exactly `binding`. */
+export function bindingMatches(binding: KeyBinding, press: KeyPress): boolean {
+  if ((press.ctrlKey || press.metaKey) !== !!binding.ctrl || press.altKey !== !!binding.alt) return false;
+  if (binding.code !== undefined) return press.code === binding.code && press.shiftKey === !!binding.shift;
+
+  const key = binding.key ?? '';
+  if (isLetter(key)) return press.key.toLowerCase() === key.toLowerCase() && press.shiftKey === !!binding.shift;
+  if (isShiftFree(key)) return press.key === key;
+  return press.key === key && press.shiftKey === !!binding.shift;
+}
+
+/**
+ * Whether `press` typed `binding`'s symbol through AltGr (Windows reports it as Ctrl+Alt) or Option
+ * (Alt alone): the only way to type `}` on a German keyboard or `[` on a German Mac. Symbols only - never
+ * a digit, so no Alt or AltGr press writes a fret - and never with Cmd or Ctrl alone. Ask it only after
+ * every exact binding has failed, so Alt+/ is still the tuplet tool and not the triplet's `/`.
+ */
+export function bindingMatchesTyped(binding: KeyBinding, press: KeyPress): boolean {
+  const key = binding.key;
+  if (key === undefined || binding.ctrl || binding.alt || !isShiftFree(key) || isDigit(key)) return false;
+  if (press.metaKey || !press.altKey) return false;
+  return press.key === key;
+}
+
+/** Named keys as a tooltip prints them. */
+const KEY_LABELS: Readonly<Record<string, string>> = {
+  ' ': 'Space',
+  ArrowLeft: '←',
+  ArrowRight: '→',
+  ArrowUp: '↑',
+  ArrowDown: '↓',
+  Escape: 'Esc'
+};
+
+/** Physical keys that are not letters or digits, as a tooltip prints them. */
+const CODE_LABELS: Readonly<Record<string, string>> = {
+  Minus: '-',
+  Equal: '=',
+  Period: '.',
+  Comma: ',',
+  Slash: '/',
+  Space: 'Space'
+};
+
+/** How `binding` is written in a tooltip and on the shortcut sheet: `Ctrl+Shift+Z`, `Alt+-`, `?`. */
+export function bindingLabelOf(binding: KeyBinding): string {
+  const modifiers = [binding.ctrl ? 'Ctrl' : '', binding.alt ? 'Alt' : '', binding.shift ? 'Shift' : ''].filter(Boolean);
+  let key: string;
+  if (binding.code !== undefined) {
+    const code = binding.code;
+    key = /^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit[0-9]$/.test(code) ? code.slice(5) : CODE_LABELS[code] ?? code;
+  } else {
+    const raw = binding.key ?? '';
+    key = KEY_LABELS[raw] ?? (isLetter(raw) ? raw.toUpperCase() : raw);
+  }
+  return [...modifiers, key].join('+');
+}
+
+/**
+ * One string per distinct press, for finding two bindings that would answer the same one: modifiers,
+ * then the physical key. A letter or digit bound by `key` is written as its `code`, so `{ key: 'n' }`
+ * and `{ code: 'KeyN' }` are the same key; a shift-free symbol writes `*` for Shift, since it matches
+ * either way.
+ */
+export function bindingSignatureOf(binding: KeyBinding): string {
+  const key = binding.key ?? '';
+  const physical =
+    binding.code ?? (isLetter(key) ? `Key${key.toUpperCase()}` : isDigit(key) ? `Digit${key}` : `key:${key}`);
+  const shift = binding.code === undefined && isShiftFree(key) ? '*' : binding.shift ? 'S' : '-';
+  return `${binding.ctrl ? 'C' : '-'}${binding.alt ? 'A' : '-'}${shift} ${physical}`;
+}
+
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+/**
+ * What the browser keeps, from the design's rule 1: Ctrl+N, Ctrl+T, Ctrl+W and their Shift forms,
+ * Ctrl+Tab, Ctrl+1 to 9 (tab switching), Alt+letter (Firefox menus), F5, F11, F12 and Ctrl+Shift+Delete.
+ * The tool table's spec checks no tool is bound to any of them.
+ */
+export const BROWSER_RESERVED: readonly KeyBinding[] = [
+  ...['KeyN', 'KeyT', 'KeyW'].flatMap(code => [{ code, ctrl: true }, { code, ctrl: true, shift: true }]),
+  { key: 'Tab', ctrl: true },
+  { key: 'Tab', ctrl: true, shift: true },
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(digit => ({ code: `Digit${digit}`, ctrl: true })),
+  ...LETTERS.map(letter => ({ code: `Key${letter}`, alt: true })),
+  { key: 'F5' },
+  { key: 'F11' },
+  { key: 'F12' },
+  { key: 'Delete', ctrl: true, shift: true }
+];
+```
+
+**Step 4: Run it.** Expected: 11 SUCCESS.
+
+**Step 5: Commit**: `feat: Composer key bindings that match modifiers exactly`.
+
+### Task 2.3: What each tool shows, and why a press would be refused
+
+`toolStates(doc, anchor, cursor)` gives every palette tool a `ToolState`: `pressed` - true when every
+target already has what the press sets, `'mixed'` when some do, false when none - and `refusal`, the
+reason the command would refuse, or null. The design's rule, "the button shows what a press will do
+before it is pressed", is only true if the state and the command read the same things, so each reader
+asks the refusal its command asks (`noteEffectRefusal`, `durationRefusal`, `editRefusal`,
+`respellRefusal`) and reads the targets its command writes (`noteEffectTargets`, `fermataPositionsOf`).
+
+Two readings are not the note's own field:
+
+- **Vibrato on a tied note is read from the note it is tied from** (`tieOriginOf`), because that is
+  what alphaTab draws on it - and pressing it there is refused, which the state says too.
+- **Natural is never pressed.** It clears a forced accidental, and alphaTab 1.8 draws `ForceNatural` as
+  `Default` (the comment on `ALTER_BY_MODE` in the mapper), so there is no forced natural to show.
+
+**Files:**
+- Create: `client/src/app/services/composer-tool-states.ts`
+- Test: `client/src/app/services/composer-tool-states.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/services/composer-tool-states.spec.ts -->
+```typescript
+import { ComposerService } from './composer.service';
+import { toolStateOf, toolStates } from './composer-tool-states';
+import { EditCursor, NoteDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+
+const at = (barIndex: number, beatIndex: number, trackIndex = 0, stringIndex: number | null = 0): EditCursor =>
+  ({ trackIndex, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex, stringIndex });
+
+/** Puts a note on tab string `string` at bar `bar`, beat `beat` of track 0, and returns it. */
+function put(doc: ScoreDoc, bar: number, beat: number, string = 1, fret = 3): NoteDoc {
+  const target = doc.tracks[0].staves[0].bars[bar].voices[0].beats[beat];
+  const note: NoteDoc = { pitch: { kind: 'fretted', string, fret }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() };
+  target.isRest = false;
+  target.notes.push(note);
+  return note;
+}
+
+describe('toolStates', () => {
+  it('shows a note effect as on, mixed or off across a range', () => {
+    const doc = ComposerService.createEmptyScore();
+    put(doc, 0, 0).effects.isPalmMute = true;
+    put(doc, 0, 1);
+
+    expect(toolStateOf(doc, at(0, 0), at(0, 0), 'palmMute').pressed).toBeTrue();
+    expect(toolStateOf(doc, at(0, 0), at(0, 1), 'palmMute').pressed).toBe('mixed');
+    expect(toolStateOf(doc, null, at(0, 1), 'palmMute').pressed).toBeFalse();
+  });
+
+  it('reads a tied note\'s vibrato from the note it is tied from, and says why a press there is refused', () => {
+    const doc = ComposerService.createEmptyScore();
+    put(doc, 0, 0).effects.vibrato = 'slight';
+    put(doc, 0, 1).isTied = true;
+
+    const state = toolStateOf(doc, null, at(0, 1), 'vibrato');
+
+    expect(state.pressed).toBeTrue();
+    expect(state.refusal).toMatch(/tied from/i);
+  });
+
+  it('explains a hammer-on with nothing to land on before it is pressed', () => {
+    const doc = ComposerService.createEmptyScore();
+    put(doc, 0, 0);
+
+    expect(toolStateOf(doc, null, at(0, 0), 'hammerOn').refusal).toMatch(/land/i);
+  });
+
+  it('shows the selection\'s duration and dots, and refuses them on a grace', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[0].voices[0].beats[1].dots = 1;
+
+    expect(toolStateOf(doc, at(0, 0), at(0, 1), 'quarter').pressed).toBeTrue();
+    expect(toolStateOf(doc, at(0, 0), at(0, 1), 'dot').pressed).toBe('mixed');
+
+    doc.tracks[0].staves[0].bars[0].voices[0].beats[0].effects.grace = 'beforeBeat';
+    expect(toolStateOf(doc, null, at(0, 0), 'quarter').refusal).toMatch(/grace/i);
+  });
+
+  it('shows a fermata that is on another track at the position', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    doc.tracks[1].staves[0].bars[0].voices[0].beats[2].effects.fermata = { type: 'medium', length: 1 };
+
+    expect(toolStateOf(doc, null, at(0, 2), 'fermata').pressed).toBe('mixed');
+  });
+
+  it('refuses note tools on a generated track, by the same reason the command gives', () => {
+    const doc = ComposerService.createEmptyScore();
+    put(doc, 0, 0);
+    doc.tracks[0].generated = { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision', revision: 1 } };
+
+    expect(toolStateOf(doc, null, at(0, 0), 'ghost').refusal).toMatch(/progression/i);
+    expect(toolStateOf(doc, null, at(0, 0), 'fixBar').refusal).toMatch(/progression/i);
+  });
+
+  it('refuses Fix bar when no selected bar is over, and not when one is', () => {
+    const doc = ComposerService.createEmptyScore();
+    expect(toolStateOf(doc, null, at(0, 0), 'fixBar').refusal).toMatch(/over/i);
+
+    doc.tracks[0].staves[0].bars[0].voices[0].beats[0].duration = 1;
+    expect(toolStateOf(doc, null, at(0, 0), 'fixBar').refusal).toBeNull();
+  });
+
+  it('refuses deleting every bar', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(toolStateOf(doc, at(0, 0), at(3, 0), 'deleteBar').refusal).toMatch(/at least one bar/i);
+    expect(toolStateOf(doc, null, at(3, 0), 'deleteBar').refusal).toBeNull();
+  });
+
+  it('never shows Natural pressed, since it only clears', () => {
+    const doc = ComposerService.createEmptyScore();
+    put(doc, 0, 0);
+
+    expect(toolStateOf(doc, null, at(0, 0), 'natural').pressed).toBeFalse();
+  });
+
+  it('answers every tool it knows at once, and idle for one it does not', () => {
+    const doc = ComposerService.createEmptyScore();
+    const states = toolStates(doc, null, at(0, 0));
+
+    expect(states.get('quarter')?.pressed).toBeTrue();
+    expect(toolStateOf(doc, null, at(0, 0), 'no-such-tool')).toEqual({ pressed: false, refusal: null });
+  });
+});
+```
+
+**Step 2: Run** with `--include=src/app/services/composer-tool-states.spec.ts`. Expected: a compile
+error, `TS2307: Cannot find module './composer-tool-states'`.
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/composer-tool-states.ts -->
+```typescript
+import {
+  AccidentalMode,
+  BeatDoc,
+  BeatEffectsDoc,
+  DurationValue,
+  DynamicValue,
+  EditCursor,
+  MasterBarDoc,
+  NoteEffectsDoc,
+  ScoreDoc
+} from '../models/composer.model';
+import { barFillAt } from './bar-fill';
+import { beatsAt, fermataPositionsOf, toggledValue } from './beat-edits';
+import { BeatRef, selectedBars, selectionTargets } from './composer-selection';
+import { defaultFermata, fullBendPoints } from './composer-tool-defaults';
+import { durationRefusal, editRefusal, noteEffectRefusal } from './edit-refusals';
+import { noteEffectTargets, noteTargetsAt } from './note-edits';
+import { tieOriginOf } from './note-landing';
+import { respellRefusal } from './note-respell';
+
+/**
+ * What each palette tool shows before it is pressed: whether its targets already have what a press
+ * sets, and why a press would be refused.
+ *
+ * Pure, and read from the same functions the commands use - the refusals they ask and the targets they
+ * write - so a button cannot say one thing and its press do another. The design's rule for a mixed
+ * range decides `pressed`: on when every target has the value, so a press turns it off; mixed when some
+ * do, so a press turns it on for all.
+ */
+
+/** What a palette button shows. */
+export interface ToolState {
+  /** true: every target has it, and a press clears. 'mixed': some do. false: none do, or nothing is selected. */
+  pressed: boolean | 'mixed';
+  /** Why a press would be refused, or null. The command still refuses by itself; this only says so first. */
+  refusal: string | null;
+}
+
+/** The state of a tool with nothing to show. */
+export const IDLE_TOOL: ToolState = { pressed: false, refusal: null };
+
+/** Everything a reader needs about the selection, read once. */
+interface Reading {
+  doc: ScoreDoc;
+  cursor: EditCursor;
+  refs: BeatRef[];
+  focus: number | null;
+  bars: { first: number; last: number };
+}
+
+type Reader = (reading: Reading) => ToolState;
+
+/** true when every flag is set, 'mixed' when some are, false when none are or there are none. */
+function share(flags: readonly boolean[]): boolean | 'mixed' {
+  const set = flags.filter(Boolean).length;
+  return set === 0 ? false : set === flags.length ? true : 'mixed';
+}
+
+/** Whether two values are the same by the toggle rule's comparison, whatever order their keys are in. */
+function sameValue<T>(value: T, other: T): boolean {
+  const marker = {} as T;
+  return toggledValue([value], other, marker) === marker;
+}
+
+const beats = (reading: Reading): BeatDoc[] => beatsAt(reading.doc, reading.refs);
+const ungraced = (reading: Reading): BeatDoc[] => beats(reading).filter(beat => beat.effects.grace === 'none');
+const masterBars = (reading: Reading): MasterBarDoc[] => reading.doc.masterBars.slice(reading.bars.first, reading.bars.last + 1);
+
+function duration(value: DurationValue): Reader {
+  return reading => ({
+    pressed: share(ungraced(reading).map(beat => beat.duration === value)),
+    refusal: durationRefusal(reading.doc, reading.refs)
+  });
+}
+
+function dots(count: number): Reader {
+  return reading => ({
+    pressed: share(ungraced(reading).map(beat => beat.dots === count)),
+    refusal: durationRefusal(reading.doc, reading.refs)
+  });
+}
+
+function beatEffect<K extends Exclude<keyof BeatEffectsDoc, 'grace'>>(key: K, on: BeatEffectsDoc[K]): Reader {
+  return reading => ({
+    pressed: share(beats(reading).map(beat => sameValue(beat.effects[key], on))),
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key }, null)
+  });
+}
+
+function grace(kind: Exclude<BeatEffectsDoc['grace'], 'none'>): Reader {
+  return reading => ({
+    pressed: share(beats(reading).map(beat => beat.effects.grace === kind)),
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'grace' }, null)
+  });
+}
+
+function dynamic(value: DynamicValue): Reader {
+  return reading => ({
+    pressed: share(beats(reading).map(beat => beat.dynamics === value)),
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'dynamics' }, null)
+  });
+}
+
+/**
+ * A note effect tool. Reads the notes the command would set (`noteEffectTargets`) and asks its refusal.
+ * Vibrato on a tied note reads the vibrato of the note it is tied from, which is the one alphaTab draws.
+ */
+function noteEffect<K extends keyof NoteEffectsDoc>(key: K, on: NoteEffectsDoc[K], off: NoteEffectsDoc[K]): Reader {
+  return reading => {
+    const targets = noteEffectTargets(reading.doc, reading.refs, reading.focus, key, on);
+    const values = targets.map(({ ref, note }) => {
+      const origin = key === 'vibrato' ? tieOriginOf(reading.doc, ref, note) : null;
+      return (origin ?? note).effects[key];
+    });
+    return {
+      pressed: share(values.map(value => sameValue(value, on))),
+      refusal: noteEffectRefusal(reading.doc, reading.refs, reading.focus, key, on, off)
+    };
+  };
+}
+
+function accidental(mode: Exclude<AccidentalMode, 'auto'>): Reader {
+  return reading => ({
+    pressed: share(noteTargetsAt(reading.doc, reading.refs, reading.focus).map(({ note }) => note.accidental === mode)),
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'note', key: 'accidental', accidental: mode }, reading.focus)
+  });
+}
+
+function barFlag(read: (bar: MasterBarDoc) => boolean): Reader {
+  return reading => ({ pressed: share(masterBars(reading).map(read)), refusal: null });
+}
+
+/** Fix bar's refusal, as `ComposerStructureCommands.fixBar` gives it: a generated track, or nothing over. */
+function fixBarRefusal(reading: Reading): string | null {
+  const { trackIndex, staffIndex } = reading.cursor;
+  const generated = editRefusal(reading.doc, [], { family: 'track', trackIndex }, null);
+  if (generated) return generated;
+  for (let bar = reading.bars.first; bar <= reading.bars.last; bar++) {
+    if (barFillAt(reading.doc, trackIndex, staffIndex, bar)?.kind === 'over') return null;
+  }
+  return 'No selected bar is over its time signature.';
+}
+
+const TRIPLET = { numerator: 3, denominator: 2 };
+const FULL_BEND = fullBendPoints();
+
+/**
+ * A tool with nothing to show: its popover sets a value rather than toggling one, or it can always be
+ * pressed. Listed rather than left out, so every palette button has a reader and the table's spec can say so.
+ */
+const idle: Reader = () => IDLE_TOOL;
+
+/** One reader per palette tool, by tool id. */
+const READERS: Readonly<Record<string, Reader>> = {
+  timeSignature: idle,
+  keySignature: idle,
+  clef: idle,
+  insertBar: idle,
+  whole: duration(1),
+  half: duration(2),
+  quarter: duration(4),
+  eighth: duration(8),
+  sixteenth: duration(16),
+  thirtySecond: duration(32),
+  sixtyFourth: duration(64),
+  dot: dots(1),
+  doubleDot: dots(2),
+  triplet: reading => ({
+    pressed: share(beats(reading).map(beat => beat.tuplet !== null && sameValue(beat.tuplet, TRIPLET))),
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'tuplet' }, null)
+  }),
+  tuplet: reading => ({
+    pressed: share(beats(reading).map(beat => beat.tuplet !== null)),
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'tuplet' }, null)
+  }),
+  tie: reading => ({
+    pressed: share(noteTargetsAt(reading.doc, reading.refs, reading.focus).map(({ note }) => note.isTied)),
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'note', key: 'tie' }, reading.focus)
+  }),
+  rest: reading => ({
+    pressed: share(beats(reading).map(beat => beat.isRest)),
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'duration' }, null)
+  }),
+  repeatOpen: barFlag(bar => bar.isRepeatStart),
+  repeatClose: barFlag(bar => bar.repeatCount > 0),
+  alternateEnding: barFlag(bar => bar.alternateEndings > 0),
+  section: barFlag(bar => bar.section !== null),
+  doubleBar: barFlag(bar => bar.isDoubleBar),
+  tripletFeel: barFlag(bar => bar.tripletFeel !== 'none'),
+  freeTime: barFlag(bar => bar.isFreeTime),
+  fixBar: reading => ({ pressed: false, refusal: fixBarRefusal(reading) }),
+  deleteBar: reading => ({
+    pressed: false,
+    refusal: reading.bars.last - reading.bars.first + 1 >= reading.doc.masterBars.length ? 'A score needs at least one bar.' : null
+  }),
+  doubleFlat: accidental('doubleFlat'),
+  flat: accidental('flat'),
+  natural: reading => ({
+    pressed: false,
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'note', key: 'accidental', accidental: 'auto' }, reading.focus)
+  }),
+  sharp: accidental('sharp'),
+  doubleSharp: accidental('doubleSharp'),
+  respell: reading => ({ pressed: false, refusal: respellRefusal(reading.doc, reading.refs, reading.focus) }),
+  ppp: dynamic('ppp'),
+  pp: dynamic('pp'),
+  p: dynamic('p'),
+  mp: dynamic('mp'),
+  mf: dynamic('mf'),
+  f: dynamic('f'),
+  ff: dynamic('ff'),
+  fff: dynamic('fff'),
+  crescendo: beatEffect('crescendo', 'crescendo'),
+  decrescendo: beatEffect('crescendo', 'decrescendo'),
+  accent: noteEffect('accent', 'normal', 'none'),
+  heavyAccent: noteEffect('accent', 'heavy', 'none'),
+  staccato: noteEffect('isStaccato', true, false),
+  tenuto: noteEffect('accent', 'tenuto', 'none'),
+  fermata: reading => ({
+    pressed: share(fermataPositionsOf(reading.doc, reading.refs).map(beat => beat.effects.fermata !== null && sameValue(beat.effects.fermata, defaultFermata()))),
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'fermata' }, null)
+  }),
+  hammerOn: noteEffect('isHammerPullOrigin', true, false),
+  legatoSlide: noteEffect('slide', 'legatoSlide', 'none'),
+  shiftSlide: noteEffect('slide', 'shiftSlide', 'none'),
+  bend: noteEffect('bendPoints', FULL_BEND, []),
+  vibrato: noteEffect('vibrato', 'slight', 'none'),
+  wideVibrato: noteEffect('vibrato', 'wide', 'none'),
+  palmMute: noteEffect('isPalmMute', true, false),
+  letRing: noteEffect('isLetRing', true, false),
+  naturalHarmonic: noteEffect('harmonic', 'natural', 'none'),
+  artificialHarmonic: noteEffect('harmonic', 'artificial', 'none'),
+  ghost: noteEffect('isGhost', true, false),
+  dead: noteEffect('isDead', true, false),
+  trill: reading => ({
+    pressed: share(noteTargetsAt(reading.doc, reading.refs, reading.focus).map(({ note }) => note.effects.trill !== null)),
+    refusal: editRefusal(reading.doc, reading.refs, { family: 'note', key: 'trill' }, reading.focus)
+  }),
+  tap: beatEffect('tap', true),
+  leftHandTap: noteEffect('isLeftHandTapped', true, false),
+  slap: beatEffect('slap', true),
+  pop: beatEffect('pop', true),
+  graceBefore: grace('beforeBeat'),
+  graceOnBeat: grace('onBeat'),
+  pickDown: beatEffect('pickStroke', 'down'),
+  pickUp: beatEffect('pickStroke', 'up'),
+  fadeIn: beatEffect('fadeIn', true)
+};
+
+/** The ids of every tool `toolStates` has something to say about. */
+export const TOOLS_WITH_STATE: readonly string[] = Object.keys(READERS);
+
+function readingOf(doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor): Reading {
+  return {
+    doc,
+    cursor,
+    refs: selectionTargets(doc, anchor, cursor),
+    // The same focus the service's edits use: the caret's string, only when there is no range.
+    focus: anchor ? null : cursor.stringIndex,
+    bars: selectedBars(anchor, cursor)
+  };
+}
+
+/** Every palette tool's state for the selection from `anchor` to `cursor`. */
+export function toolStates(doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor): ReadonlyMap<string, ToolState> {
+  const reading = readingOf(doc, anchor, cursor);
+  return new Map(Object.entries(READERS).map(([id, read]) => [id, read(reading)]));
+}
+
+/** One tool's state, or `IDLE_TOOL` for a tool with nothing to show. For a command deciding a toggle. */
+export function toolStateOf(doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor, toolId: string): ToolState {
+  const read = READERS[toolId];
+  return read ? read(readingOf(doc, anchor, cursor)) : IDLE_TOOL;
+}
+```
+
+**Step 4: Run it.** Expected: 10 SUCCESS.
+
+**Step 5: Commit**: `feat: What each composer tool shows, and why a press would be refused`.
+
+### Task 2.4: The tool table
+
+`COMPOSER_TOOLS` declares every tool once. Its keys are the design's shortcut table, with these
+settled here:
+
+- **`+` and `=` mean longer, `-` shorter** (decision 4), today's direction. The design table said
+  `+ or =` / `-` for "shorter / longer", which is the other way round; the design doc is corrected in
+  the same commit as this plan.
+- **R and Shift+R both rest**, so neither Caps Lock nor Shift turns the key into nothing.
+- **macOS alternates** (decision 21). Mac keyboards have no Insert key, so the four Insert bindings
+  each get the Enter key with the same modifiers - Shift+Enter for section, Ctrl+Enter for insert bar,
+  Ctrl+Shift+Enter for add track - and insert beat, whose Insert is unmodified, gets Alt+Enter (Option+
+  Return). Enter is in no binding of the design's table, and the browser's only use of it on a page is
+  activating the focused control - which is why plain Enter is not taken: a keyboard user pressing a
+  palette button with Enter must still press the button. Play from start gets Shift+Space beside
+  Ctrl+Space, since Cmd+Space is Spotlight and Ctrl+Space switches input source on macOS. Nobody has
+  checked any of these on a Mac.
+- **Keyless tools.** The design gives the seven note values and the Select and Pen buttons no key of
+  their own: `+`/`-` step through the values, and Q toggles Select and Pen. `KEYLESS_TOOLS` names
+  them, so a new tool without a key fails the table's spec until it is added there on purpose.
+- **Natural** is labelled "Natural (clears a forced accidental)", because alphaTab 1.8 draws
+  `ForceNatural` as `Default` - the press can only return a note to `auto`.
+- **Triplet feel** opens a popover like the other valued bar tools: it has seven values, and the
+  design table writes it with an ellipsis.
+
+Glyphs are Bravura's SMuFL code points where SMuFL has the symbol, and short text where it has none (a
+hammer-on, a slide, palm mute). All 45 code points used here are glyphs in the installed
+`Bravura.woff2`'s twin, `Bravura.svg`, and 33 of them are also named in alphaTab's own `MusicFontSymbol`
+enum; the other 12 - the whole, half, 16th, 32nd and 64th notes, both repeat signs, the double barline,
+the diminuendo hairpin, the harmonic and both grace notes - sit where SMuFL's ranges put them, between
+neighbours the enum confirms. Whole to
+64th notes `U+E1D2` `U+E1D3` `U+E1D5` `U+E1D7` `U+E1D9` `U+E1DB` `U+E1DD`, augmentation dot `U+E1E7`,
+quarter rest `U+E4E5`, accidentals `U+E260`-`U+E264`, dynamics `U+E52A` `U+E52B` `U+E520` `U+E52C`
+`U+E52D` `U+E522` `U+E52F` `U+E530`, hairpins `U+E53E` `U+E53F`, accent `U+E4A0`, marcato `U+E4AC`,
+staccato `U+E4A2`, tenuto `U+E4A4`, fermata `U+E4C0`, G clef `U+E050`, common time `U+E08A`, repeats
+`U+E040` `U+E041`, double barline `U+E031`, segno `U+E047`, tuplet 3 `U+E883`, trill `U+E566`,
+harmonic `U+E614`, down and up bow (pick strokes) `U+E610` `U+E612`, grace notes `U+E560` `U+E562`,
+X notehead (dead) `U+E0A9`, vibrato `U+EAB2` `U+EAB3`.
+
+The service gains `get state()`, a synchronous read of the current state, which commands deciding a
+toggle need.
+
+**Files:**
+- Create: `client/src/app/services/composer-tools.ts`
+- Modify: `client/src/app/services/composer.service.ts`
+- Test: `client/src/app/services/composer-tools.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/services/composer-tools.spec.ts -->
+```typescript
+import { TestBed } from '@angular/core/testing';
+
+import { ComposerService } from './composer.service';
+import { BROWSER_RESERVED, KeyPress, bindingSignatureOf } from './composer-key-bindings';
+import { TOOLS_WITH_STATE } from './composer-tool-states';
+import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, KEYLESS_TOOLS, PALETTE_GROUPS, toolForPress } from './composer-tools';
+
+const press = (init: Partial<KeyPress>): KeyPress => ({
+  key: '', code: '', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...init
+});
+const tool = (id: string): ComposerTool => {
+  const found = COMPOSER_TOOLS.find(entry => entry.id === id);
+  if (!found) throw new Error(`no tool ${id}`);
+  return found;
+};
+
+/**
+ * The design's tool-table spec: every tool has a command, a glyph or text, a label and a group, and a
+ * shortcut no other tool uses - macOS alternates included - that the browser does not keep.
+ */
+describe('COMPOSER_TOOLS', () => {
+  it('names every tool once', () => {
+    const ids = COMPOSER_TOOLS.map(entry => entry.id);
+
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('gives every tool a label, a group, a glyph or text, and a command', () => {
+    for (const entry of COMPOSER_TOOLS) {
+      expect(entry.label.trim()).withContext(entry.id).not.toBe('');
+      expect(entry.group).withContext(entry.id).toBeTruthy();
+      const glyph = entry.glyph;
+      expect(glyph.kind === 'smufl' ? glyph.codePoint >= 0xe000 && glyph.codePoint <= 0xf8ff : glyph.text.trim() !== '')
+        .withContext(entry.id).toBeTrue();
+      expect(typeof entry.run).withContext(entry.id).toBe('function');
+    }
+  });
+
+  it('uses no binding twice, macOS alternates included', () => {
+    const seen = new Map<string, string>();
+    for (const entry of COMPOSER_TOOLS) {
+      for (const binding of entry.keys) {
+        const signature = bindingSignatureOf(binding);
+        expect(seen.get(signature)).withContext(`${entry.id} and ${seen.get(signature)} both use ${signature}`).toBeUndefined();
+        seen.set(signature, entry.id);
+      }
+    }
+  });
+
+  it('binds nothing the browser keeps', () => {
+    const reserved = new Set(BROWSER_RESERVED.map(bindingSignatureOf));
+    for (const entry of COMPOSER_TOOLS) {
+      for (const binding of entry.keys) {
+        expect(reserved.has(bindingSignatureOf(binding))).withContext(`${entry.id}: ${bindingSignatureOf(binding)}`).toBeFalse();
+      }
+    }
+  });
+
+  it('writes Ctrl and Alt combinations by physical key, and nothing else that way', () => {
+    const named = /^(Arrow|Home|End|Insert|Delete|Backspace|Enter|Escape|F[0-9]| $)/;
+    for (const entry of COMPOSER_TOOLS) {
+      for (const binding of entry.keys) {
+        const held = !!binding.ctrl || !!binding.alt;
+        if (binding.code !== undefined) expect(held).withContext(entry.id).toBeTrue();
+        else if (held) expect(named.test(binding.key ?? '')).withContext(`${entry.id}: ${binding.key}`).toBeTrue();
+      }
+    }
+  });
+
+  it('gives every tool a key except those the design gives none', () => {
+    const keyless = COMPOSER_TOOLS.filter(entry => entry.keys.length === 0).map(entry => entry.id);
+
+    expect(keyless.sort()).toEqual([...KEYLESS_TOOLS].sort());
+  });
+
+  it('gives every palette button but Select and Pen a state, and puts it in a palette group', () => {
+    for (const entry of COMPOSER_TOOLS.filter(candidate => candidate.inPalette)) {
+      expect(PALETTE_GROUPS).withContext(entry.id).toContain(entry.group);
+      if (entry.id !== 'select' && entry.id !== 'pen') expect(TOOLS_WITH_STATE).withContext(entry.id).toContain(entry.id);
+    }
+  });
+
+  it('offers the macOS alternates', () => {
+    const labels = (id: string): number => tool(id).keys.length;
+
+    for (const id of ['insertBeat', 'section', 'insertBar', 'addTrack', 'playFromStart']) {
+      expect(labels(id)).withContext(id).toBe(2);
+    }
+  });
+});
+
+describe('toolForPress', () => {
+  const id = (init: Partial<KeyPress>): string | null => toolForPress(press(init))?.id ?? null;
+
+  it('finds the tool a press means, by the design\'s table', () => {
+    expect(id({ key: 'r', code: 'KeyR' })).toBe('rest');
+    expect(id({ key: 'R', code: 'KeyR', shiftKey: true })).toBe('rest');
+    expect(id({ key: '+', code: 'Equal', shiftKey: true })).toBe('longer');
+    expect(id({ key: '=', code: 'Equal' })).toBe('longer');
+    expect(id({ key: '-', code: 'Minus' })).toBe('shorter');
+    expect(id({ key: 'ArrowRight', ctrlKey: true })).toBe('nextBar');
+    expect(id({ key: 'ArrowRight', shiftKey: true })).toBe('extendRight');
+    expect(id({ key: 'Enter', altKey: true })).toBe('insertBeat');
+    expect(id({ key: ' ', shiftKey: true })).toBe('playFromStart');
+    expect(id({ key: '7', code: 'Digit7' })).toBe('fret');
+  });
+
+  it('prefers an exact binding to a symbol typed through Alt', () => {
+    expect(id({ key: '/', code: 'Slash', altKey: true })).toBe('tuplet');
+    expect(id({ key: '}', code: 'Digit0', ctrlKey: true, altKey: true })).toBe('alternateEnding');
+  });
+
+  it('finds nothing for a press the browser or the table does not give the composer', () => {
+    expect(id({ key: '1', code: 'Digit1', ctrlKey: true })).toBeNull();
+    expect(id({ key: '1', code: 'Digit1', altKey: true })).toBeNull();
+    expect(id({ key: 'z', code: 'KeyZ', ctrlKey: true, altKey: true })).toBeNull();
+  });
+});
+
+describe('COMPOSER_TOOLS commands', () => {
+  let composer: ComposerService;
+  let host: jasmine.SpyObj<Omit<ComposerToolHost, 'composer'>> & { composer: ComposerService };
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    composer = TestBed.inject(ComposerService);
+    host = {
+      composer,
+      ...jasmine.createSpyObj('host', ['openPopover', 'toggleShortcutSheet', 'escape', 'playPause', 'playFromStart', 'requestSave', 'addTrack', 'typeFretDigit'])
+    };
+  });
+
+  const run = (id: string, key = ''): void => tool(id).run(host, press({ key }));
+  const firstBeat = () => composer.doc.tracks[0].staves[0].bars[0].voices[0].beats[0];
+
+  it('makes the selection longer with + and shorter with -', () => {
+    run('shorter');
+    expect(firstBeat().duration).toBe(8);
+
+    composer.setCursor({ beatIndex: 0 });
+    run('longer');
+    run('longer');
+    expect(firstBeat().duration).toBe(2);
+  });
+
+  it('dots the selection, and takes the dot off when every beat has one', () => {
+    run('dot');
+    expect(firstBeat().dots).toBe(1);
+
+    run('dot');
+    expect(firstBeat().dots).toBe(0);
+  });
+
+  it('forces a flat, and a second press returns the note to auto', () => {
+    // String 3 (G, 55) at fret 3 is B flat.
+    composer.setCursor({ stringIndex: 2 });
+    composer.setNoteAtCursor({ kind: 'fretted', string: 3, fret: 3 }, false);
+
+    run('flat');
+    expect(firstBeat().notes[0].accidental).toBe('flat');
+
+    run('flat');
+    expect(firstBeat().notes[0].accidental).toBe('auto');
+  });
+
+  it('toggles Select and Pen with Q', () => {
+    run('toggleEntryMode');
+    expect(composer.state.entryMode).toBe('pen');
+
+    run('toggleEntryMode');
+    expect(composer.state.entryMode).toBe('select');
+  });
+
+  it('rests a range without moving on, and the caret\'s beat with the input duration otherwise', () => {
+    composer.setCursor({ beatIndex: 0 });
+    composer.extendSelectionTo({ beatIndex: 1 });
+    run('rest');
+    expect(composer.state.cursor.beatIndex).toBe(1);
+
+    composer.setCursor({ beatIndex: 0 });
+    run('rest');
+    expect(composer.state.cursor.beatIndex).toBe(1);
+  });
+
+  it('hands a digit to the fret entry, and a popover tool to the page', () => {
+    run('fret', '7');
+    expect(host.typeFretDigit).toHaveBeenCalledWith(7);
+
+    run('timeSignature');
+    expect(host.openPopover).toHaveBeenCalledWith('timeSignature');
+  });
+});
+```
+
+**Step 2: Run** with `--include=src/app/services/composer-tools.spec.ts`. Expected: a compile error,
+`TS2307: Cannot find module './composer-tools'`.
+
+**Step 3: Implement.** In `composer.service.ts`, the synchronous read:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  get doc(): ScoreDoc {
+    return this.stateSubject.getValue().doc;
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  get doc(): ScoreDoc {
+    return this.stateSubject.getValue().doc;
+  }
+
+  /** The current state, for a command that decides what to do from it - a toggle, a caret step. */
+  get state(): ComposerState {
+    return this.stateSubject.getValue();
+  }
+```
+
+The table:
+
+<!-- apply: create client/src/app/services/composer-tools.ts -->
+```typescript
+import type { ComposerService } from './composer.service';
+import { DurationValue, DynamicValue, EntryMode } from '../models/composer.model';
+import { KeyBinding, KeyPress, bindingMatches, bindingMatchesTyped } from './composer-key-bindings';
+import { toolStateOf } from './composer-tool-states';
+import { fullBendPoints } from './composer-tool-defaults';
+
+/**
+ * Every tool the composer has, declared once: its label, group, glyph, keys and command.
+ *
+ * The palette draws its buttons from this table, their tooltips name the keys from it, the `?` sheet
+ * lists it, and the keyboard handler looks a press up in it - so a key cannot drift from its button.
+ * The keys are the design's shortcut table (design doc, "Shortcuts"), with the M2 plan's corrections:
+ * `+` is longer, the macOS alternates, and Shift+R beside R.
+ */
+
+/** Where a tool sits: its palette group, or the shortcut sheet's section for a tool with no button. */
+export type ToolGroup =
+  | 'Tools'
+  | 'Edit'
+  | 'Navigation'
+  | 'Playback'
+  | 'Beats'
+  | 'Duration'
+  | 'Bar'
+  | 'Tracks'
+  | 'Accidentals'
+  | 'Dynamics'
+  | 'Articulation'
+  | 'Techniques';
+
+/** The palette's groups, in the design's order. */
+export const PALETTE_GROUPS: readonly ToolGroup[] = ['Tools', 'Duration', 'Bar', 'Accidentals', 'Dynamics', 'Articulation', 'Techniques'];
+
+/** A button face: a Bravura glyph by SMuFL code point, or short text where SMuFL has no symbol. */
+export type ToolGlyph = { kind: 'smufl'; codePoint: number } | { kind: 'text'; text: string };
+
+/** The tools that take a value, each opening a small popover anchored to its button. */
+export type PopoverKind = 'timeSignature' | 'keySignature' | 'clef' | 'section' | 'alternateEnding' | 'tuplet' | 'tripletFeel';
+
+/** What a command reaches beyond the service: the page's own controls. */
+export interface ComposerToolHost {
+  readonly composer: ComposerService;
+  /** Opens the popover for a valued tool, anchored to that tool's palette button. */
+  openPopover(kind: PopoverKind): void;
+  toggleShortcutSheet(): void;
+  /** Back to Select and no range; closes the sheet and any popover. */
+  escape(): void;
+  playPause(): void;
+  playFromStart(): void;
+  /** Asks the library to save, as its own Save button does. */
+  requestSave(): void;
+  /** Adds a track of the instrument the track strip has chosen. */
+  addTrack(): void;
+  /** A fret digit, which may be the second digit of a two-digit fret. See `FretDigitEntry`. */
+  typeFretDigit(digit: number): void;
+}
+
+export interface ComposerTool {
+  id: string;
+  /** The button's accessible name, and the start of its tooltip. */
+  label: string;
+  group: ToolGroup;
+  glyph: ToolGlyph;
+  /** Every press that runs it. Empty only for the tools `KEYLESS_TOOLS` names. */
+  keys: readonly KeyBinding[];
+  /** Whether the palette draws a button for it. */
+  inPalette: boolean;
+  /** Runs the command. `press` is the key that ran it, or null for a click. */
+  run(host: ComposerToolHost, press: KeyPress | null): void;
+}
+
+/** The tools the design's shortcut table gives no key: the note values, which `+` and `-` step, and Select and Pen, which Q toggles. */
+export const KEYLESS_TOOLS: readonly string[] = ['select', 'pen', 'whole', 'half', 'quarter', 'eighth', 'sixteenth', 'thirtySecond', 'sixtyFourth'];
+
+/** The note values, longest first, as `+` and `-` step through them. */
+export const DURATION_ORDER: readonly DurationValue[] = [1, 2, 4, 8, 16, 32, 64];
+
+const key = (value: string, modifiers: Omit<KeyBinding, 'key' | 'code'> = {}): KeyBinding => ({ key: value, ...modifiers });
+const code = (value: string, modifiers: Omit<KeyBinding, 'key' | 'code'>): KeyBinding => ({ code: value, ...modifiers });
+const smufl = (codePoint: number): ToolGlyph => ({ kind: 'smufl', codePoint });
+const text = (value: string): ToolGlyph => ({ kind: 'text', text: value });
+
+/** Whether the tool `id`'s press would clear what every target has. */
+function pressedNow(host: ComposerToolHost, id: string): boolean {
+  const { doc, anchor, cursor } = host.composer.state;
+  return toolStateOf(doc, anchor, cursor, id).pressed === true;
+}
+
+/** The value `steps` along `DURATION_ORDER` from the input duration: -1 longer, +1 shorter. */
+function steppedDuration(host: ComposerToolHost, steps: -1 | 1): void {
+  const state = host.composer.state;
+  const index = DURATION_ORDER.indexOf(state.inputDuration);
+  const next = DURATION_ORDER[Math.max(0, Math.min(DURATION_ORDER.length - 1, (index < 0 ? 2 : index) + steps))];
+  host.composer.applyDurationAtCursor(next, state.inputDots);
+}
+
+function durationTool(id: string, label: string, value: DurationValue, codePoint: number): ComposerTool {
+  return {
+    id, label, group: 'Duration', glyph: smufl(codePoint), keys: [], inPalette: true,
+    run: host => host.composer.applyDurationAtCursor(value, 0)
+  };
+}
+
+function dotTool(id: string, label: string, count: number, keys: KeyBinding[], glyph: ToolGlyph): ComposerTool {
+  return {
+    id, label, group: 'Duration', glyph, keys, inPalette: true,
+    run: host => host.composer.applyDurationAtCursor(host.composer.state.inputDuration, pressedNow(host, id) ? 0 : count)
+  };
+}
+
+function dynamicTool(value: DynamicValue, digit: number, codePoint: number): ComposerTool {
+  return {
+    id: value, label: `Dynamic ${value}`, group: 'Dynamics', glyph: smufl(codePoint),
+    keys: [code(`Digit${digit}`, { ctrl: true, shift: true })], inPalette: true,
+    run: host => host.composer.setDynamics(pressedNow(host, value) ? null : value)
+  };
+}
+
+function accidentalTool(id: 'doubleFlat' | 'flat' | 'sharp' | 'doubleSharp', label: string, keys: KeyBinding[], codePoint: number): ComposerTool {
+  return {
+    id, label, group: 'Accidentals', glyph: smufl(codePoint), keys, inPalette: true,
+    run: host => host.composer.setAccidental(pressedNow(host, id) ? 'auto' : id)
+  };
+}
+
+function popoverTool(id: PopoverKind, label: string, group: ToolGroup, glyph: ToolGlyph, keys: KeyBinding[]): ComposerTool {
+  return { id, label, group, glyph, keys, inPalette: true, run: host => host.openPopover(id) };
+}
+
+function modeTool(id: EntryMode, label: string, glyph: ToolGlyph): ComposerTool {
+  return { id, label, group: 'Tools', glyph, keys: [], inPalette: true, run: host => host.composer.setEntryMode(id) };
+}
+
+/** A tool with no button, for the keyboard and the shortcut sheet. */
+function keyTool(id: string, label: string, group: ToolGroup, keys: KeyBinding[], run: ComposerTool['run']): ComposerTool {
+  return { id, label, group, glyph: text(label), keys, inPalette: false, run };
+}
+
+/** A palette tool that runs a service command. */
+function button(id: string, label: string, group: ToolGroup, glyph: ToolGlyph, keys: KeyBinding[], run: (composer: ComposerService) => void): ComposerTool {
+  return { id, label, group, glyph, keys, inPalette: true, run: host => run(host.composer) };
+}
+
+export const COMPOSER_TOOLS: readonly ComposerTool[] = [
+  // Tools
+  modeTool('select', 'Select: a click on notation moves the caret', text('Select')),
+  modeTool('pen', 'Pen: a click on notation writes that pitch', text('Pen')),
+  keyTool('toggleEntryMode', 'Toggle Select / Pen', 'Tools', [key('q')], host =>
+    host.composer.setEntryMode(host.composer.state.entryMode === 'select' ? 'pen' : 'select')
+  ),
+  keyTool('escape', 'Back to Select, clear the range', 'Tools', [key('Escape')], host => host.escape()),
+  keyTool('shortcutSheet', 'Shortcut sheet', 'Tools', [key('?')], host => host.toggleShortcutSheet()),
+
+  // Edit
+  keyTool('undo', 'Undo', 'Edit', [code('KeyZ', { ctrl: true })], host => host.composer.undo()),
+  keyTool('redo', 'Redo', 'Edit', [code('KeyZ', { ctrl: true, shift: true }), code('KeyY', { ctrl: true })], host => host.composer.redo()),
+  keyTool('cut', 'Cut', 'Edit', [code('KeyX', { ctrl: true })], host => host.composer.cut()),
+  keyTool('copy', 'Copy', 'Edit', [code('KeyC', { ctrl: true })], host => host.composer.copy()),
+  keyTool('paste', 'Paste', 'Edit', [code('KeyV', { ctrl: true })], host => host.composer.paste()),
+  keyTool('selectAll', 'Select all in track', 'Edit', [code('KeyA', { ctrl: true })], host => host.composer.selectAllInTrack()),
+  keyTool('save', 'Save', 'Edit', [code('KeyS', { ctrl: true })], host => host.requestSave()),
+
+  // Navigation
+  keyTool('previousBeat', 'Previous beat', 'Navigation', [key('ArrowLeft')], host => host.composer.moveCursor({ kind: 'beat', delta: -1 })),
+  keyTool('nextBeat', 'Next beat', 'Navigation', [key('ArrowRight')], host => host.composer.moveCursor({ kind: 'beat', delta: 1 })),
+  keyTool('previousString', 'Previous string', 'Navigation', [key('ArrowUp')], host => host.composer.moveCursor({ kind: 'string', delta: -1 })),
+  keyTool('nextString', 'Next string', 'Navigation', [key('ArrowDown')], host => host.composer.moveCursor({ kind: 'string', delta: 1 })),
+  keyTool('extendLeft', 'Extend the selection a beat left', 'Navigation', [key('ArrowLeft', { shift: true })], host =>
+    host.composer.moveCursor({ kind: 'beat', delta: -1 }, true)
+  ),
+  keyTool('extendRight', 'Extend the selection a beat right', 'Navigation', [key('ArrowRight', { shift: true })], host =>
+    host.composer.moveCursor({ kind: 'beat', delta: 1 }, true)
+  ),
+  keyTool('extendUp', 'Extend the selection to the track above', 'Navigation', [key('ArrowUp', { shift: true })], host =>
+    host.composer.moveCursor({ kind: 'track', delta: -1 }, true)
+  ),
+  keyTool('extendDown', 'Extend the selection to the track below', 'Navigation', [key('ArrowDown', { shift: true })], host =>
+    host.composer.moveCursor({ kind: 'track', delta: 1 }, true)
+  ),
+  keyTool('barStart', 'First beat of the bar', 'Navigation', [key('Home')], host => host.composer.moveCursor({ kind: 'barEdge', edge: 'first' })),
+  keyTool('barEnd', 'Last beat of the bar', 'Navigation', [key('End')], host => host.composer.moveCursor({ kind: 'barEdge', edge: 'last' })),
+  keyTool('previousBar', 'Previous bar', 'Navigation', [key('ArrowLeft', { ctrl: true })], host => host.composer.moveCursor({ kind: 'bar', delta: -1 })),
+  keyTool('nextBar', 'Next bar', 'Navigation', [key('ArrowRight', { ctrl: true })], host => host.composer.moveCursor({ kind: 'bar', delta: 1 })),
+  keyTool('firstBar', 'First bar', 'Navigation', [key('Home', { ctrl: true })], host => host.composer.moveCursor({ kind: 'scoreEdge', edge: 'first' })),
+  keyTool('lastBar', 'Last bar', 'Navigation', [key('End', { ctrl: true })], host => host.composer.moveCursor({ kind: 'scoreEdge', edge: 'last' })),
+  keyTool('previousTrack', 'Previous track', 'Navigation', [key('ArrowUp', { ctrl: true, shift: true })], host =>
+    host.composer.moveCursor({ kind: 'track', delta: -1 })
+  ),
+  keyTool('nextTrack', 'Next track', 'Navigation', [key('ArrowDown', { ctrl: true, shift: true })], host =>
+    host.composer.moveCursor({ kind: 'track', delta: 1 })
+  ),
+
+  // Playback
+  keyTool('playPause', 'Play / pause', 'Playback', [key(' ')], host => host.playPause()),
+  keyTool('playFromStart', 'Play from the start', 'Playback', [key(' ', { ctrl: true }), key(' ', { shift: true })], host => host.playFromStart()),
+
+  // Beats
+  keyTool('fret', 'Fret', 'Beats', ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].map(digit => key(digit)), (host, press) =>
+    host.typeFretDigit(Number(press?.key ?? 0))
+  ),
+  keyTool('clearBeat', 'Clear beat to rest', 'Beats', [key('Delete'), key('Backspace')], host =>
+    host.composer.state.anchor ? host.composer.clearSelectionToRests() : host.composer.deleteAtCursor()
+  ),
+  keyTool('insertBeat', 'Insert beat', 'Beats', [key('Insert'), key('Enter', { alt: true })], host => host.composer.insertBeat()),
+  keyTool('deleteBeats', 'Delete beats', 'Beats', [key('Delete', { shift: true })], host => host.composer.deleteBeats()),
+
+  // Duration
+  durationTool('whole', 'Whole note', 1, 0xe1d2),
+  durationTool('half', 'Half note', 2, 0xe1d3),
+  durationTool('quarter', 'Quarter note', 4, 0xe1d5),
+  durationTool('eighth', 'Eighth note', 8, 0xe1d7),
+  durationTool('sixteenth', 'Sixteenth note', 16, 0xe1d9),
+  durationTool('thirtySecond', 'Thirty-second note', 32, 0xe1db),
+  durationTool('sixtyFourth', 'Sixty-fourth note', 64, 0xe1dd),
+  keyTool('longer', 'Longer', 'Duration', [key('+'), key('=')], host => steppedDuration(host, -1)),
+  keyTool('shorter', 'Shorter', 'Duration', [key('-')], host => steppedDuration(host, 1)),
+  dotTool('dot', 'Dot', 1, [key('.')], smufl(0xe1e7)),
+  dotTool('doubleDot', 'Double dot', 2, [code('Period', { alt: true })], text('..')),
+  button('triplet', 'Triplet', 'Duration', smufl(0xe883), [key('/')], composer =>
+    composer.setTuplet(pressedNowOf(composer, 'triplet') ? null : { numerator: 3, denominator: 2 })
+  ),
+  popoverTool('tuplet', 'Tuplet…', 'Duration', text('n:m'), [code('Slash', { alt: true })]),
+  button('tie', 'Tie', 'Duration', text('‿'), [key('l')], composer => composer.toggleTie()),
+  {
+    id: 'rest', label: 'Rest', group: 'Duration', glyph: smufl(0xe4e5), keys: [key('r'), key('r', { shift: true })], inPalette: true,
+    run: host => (host.composer.state.anchor ? host.composer.clearSelectionToRests() : host.composer.setRestAtCursor())
+  },
+
+  // Bar
+  popoverTool('timeSignature', 'Time signature…', 'Bar', smufl(0xe08a), [key('t', { shift: true })]),
+  popoverTool('keySignature', 'Key signature…', 'Bar', smufl(0xe262), [code('KeyK', { ctrl: true })]),
+  popoverTool('clef', 'Clef…', 'Bar', smufl(0xe050), [key('k')]),
+  button('repeatOpen', 'Repeat open', 'Bar', smufl(0xe040), [key('[')], composer => composer.toggleMasterBarFlag('isRepeatStart')),
+  button('repeatClose', 'Repeat close', 'Bar', smufl(0xe041), [key(']')], composer => composer.toggleRepeatClose()),
+  popoverTool('alternateEnding', 'Alternate ending…', 'Bar', text('1.'), [key('}')]),
+  popoverTool('section', 'Section…', 'Bar', smufl(0xe047), [key('Insert', { shift: true }), key('Enter', { shift: true })]),
+  button('doubleBar', 'Double bar', 'Bar', smufl(0xe031), [key('b', { shift: true })], composer => composer.toggleMasterBarFlag('isDoubleBar')),
+  popoverTool('tripletFeel', 'Triplet feel…', 'Bar', text('3♪'), [code('Slash', { ctrl: true })]),
+  button('freeTime', 'Free time', 'Bar', text('free'), [key('|')], composer => composer.toggleMasterBarFlag('isFreeTime')),
+  button('fixBar', 'Fix bar', 'Bar', text('Fix'), [key('F4')], composer => composer.fixBar()),
+  button('insertBar', 'Insert bar', 'Bar', text('+bar'), [key('Insert', { ctrl: true }), key('Enter', { ctrl: true })], composer =>
+    composer.insertBarsBeforeSelection()
+  ),
+  button('deleteBar', 'Delete bar', 'Bar', text('−bar'), [key('Delete', { ctrl: true })], composer => composer.deleteSelectedBars()),
+
+  // Tracks
+  keyTool('addTrack', 'Add track', 'Tracks', [key('Insert', { ctrl: true, shift: true }), key('Enter', { ctrl: true, shift: true })], host => host.addTrack()),
+  keyTool('deleteTrack', 'Delete track', 'Tracks', [key('Backspace', { ctrl: true, shift: true })], host =>
+    host.composer.removeTrack(host.composer.state.cursor.trackIndex)
+  ),
+
+  // Accidentals
+  accidentalTool('doubleFlat', 'Double flat', [code('Minus', { alt: true, shift: true })], 0xe264),
+  accidentalTool('flat', 'Flat', [code('Minus', { alt: true })], 0xe260),
+  button('natural', 'Natural (clears a forced accidental)', 'Accidentals', smufl(0xe261), [code('Digit0', { alt: true })], composer =>
+    composer.setAccidental('auto')
+  ),
+  accidentalTool('sharp', 'Sharp', [code('Equal', { alt: true })], 0xe262),
+  accidentalTool('doubleSharp', 'Double sharp', [code('Equal', { alt: true, shift: true })], 0xe263),
+  button('respell', 'Respell', 'Accidentals', text('E♯/F'), [key('e')], composer => composer.respell()),
+  keyTool('semitoneDown', 'Semitone down', 'Accidentals', [key('ArrowDown', { alt: true })], host => host.composer.shiftSemitone(-1)),
+  keyTool('semitoneUp', 'Semitone up', 'Accidentals', [key('ArrowUp', { alt: true })], host => host.composer.shiftSemitone(1)),
+  keyTool('stringBelow', 'Note to the string below', 'Accidentals', [key('ArrowDown', { ctrl: true, alt: true })], host =>
+    host.composer.moveNotesToString(1)
+  ),
+  keyTool('stringAbove', 'Note to the string above', 'Accidentals', [key('ArrowUp', { ctrl: true, alt: true })], host =>
+    host.composer.moveNotesToString(-1)
+  ),
+
+  // Dynamics
+  dynamicTool('ppp', 1, 0xe52a),
+  dynamicTool('pp', 2, 0xe52b),
+  dynamicTool('p', 3, 0xe520),
+  dynamicTool('mp', 4, 0xe52c),
+  dynamicTool('mf', 5, 0xe52d),
+  dynamicTool('f', 6, 0xe522),
+  dynamicTool('ff', 7, 0xe52f),
+  dynamicTool('fff', 8, 0xe530),
+  button('crescendo', 'Crescendo', 'Dynamics', smufl(0xe53e), [code('Comma', { ctrl: true, shift: true })], composer =>
+    composer.toggleBeatEffect('crescendo', 'crescendo', 'none')
+  ),
+  button('decrescendo', 'Diminuendo', 'Dynamics', smufl(0xe53f), [code('Period', { ctrl: true, shift: true })], composer =>
+    composer.toggleBeatEffect('crescendo', 'decrescendo', 'none')
+  ),
+
+  // Articulation
+  button('accent', 'Accent', 'Articulation', smufl(0xe4a0), [key(';')], composer => composer.toggleNoteEffect('accent', 'normal', 'none')),
+  button('heavyAccent', 'Heavy accent', 'Articulation', smufl(0xe4ac), [key(':')], composer => composer.toggleNoteEffect('accent', 'heavy', 'none')),
+  button('staccato', 'Staccato', 'Articulation', smufl(0xe4a2), [key('!')], composer => composer.toggleNoteEffect('isStaccato', true, false)),
+  button('tenuto', 'Tenuto', 'Articulation', smufl(0xe4a4), [key('_')], composer => composer.toggleNoteEffect('accent', 'tenuto', 'none')),
+  button('fermata', 'Fermata', 'Articulation', smufl(0xe4c0), [key('f')], composer => composer.toggleFermata()),
+
+  // Techniques
+  button('hammerOn', 'Hammer-on / pull-off', 'Techniques', text('H'), [key('h')], composer => composer.toggleNoteEffect('isHammerPullOrigin', true, false)),
+  button('legatoSlide', 'Legato slide', 'Techniques', text('sl.'), [key('s')], composer => composer.toggleNoteEffect('slide', 'legatoSlide', 'none')),
+  button('shiftSlide', 'Shift slide', 'Techniques', text('sh.'), [key('s', { shift: true })], composer => composer.toggleNoteEffect('slide', 'shiftSlide', 'none')),
+  button('bend', 'Bend (full)', 'Techniques', text('⤴'), [key('b')], composer => composer.toggleNoteEffect('bendPoints', fullBendPoints(), [])),
+  button('vibrato', 'Vibrato', 'Techniques', smufl(0xeab2), [key('v')], composer => composer.toggleNoteEffect('vibrato', 'slight', 'none')),
+  button('wideVibrato', 'Wide vibrato', 'Techniques', smufl(0xeab3), [key('v', { shift: true })], composer => composer.toggleNoteEffect('vibrato', 'wide', 'none')),
+  button('palmMute', 'Palm mute', 'Techniques', text('P.M.'), [key('p')], composer => composer.toggleNoteEffect('isPalmMute', true, false)),
+  button('letRing', 'Let ring', 'Techniques', text('let r.'), [key('i')], composer => composer.toggleNoteEffect('isLetRing', true, false)),
+  button('naturalHarmonic', 'Natural harmonic', 'Techniques', smufl(0xe614), [key('y')], composer => composer.toggleNoteEffect('harmonic', 'natural', 'none')),
+  button('artificialHarmonic', 'Artificial harmonic', 'Techniques', text('A.H.'), [key('y', { shift: true })], composer =>
+    composer.toggleNoteEffect('harmonic', 'artificial', 'none')
+  ),
+  button('ghost', 'Ghost note', 'Techniques', text('( )'), [key('o')], composer => composer.toggleNoteEffect('isGhost', true, false)),
+  button('dead', 'Dead note', 'Techniques', smufl(0xe0a9), [key('x')], composer => composer.toggleNoteEffect('isDead', true, false)),
+  button('trill', 'Trill (whole step)', 'Techniques', smufl(0xe566), [key('n')], composer => composer.toggleTrill()),
+  button('tap', 'Tap', 'Techniques', text('T'), [key(')')], composer => composer.toggleBeatEffect('tap', true, false)),
+  button('leftHandTap', 'Left-hand tap', 'Techniques', text('LHT'), [key('(')], composer => composer.toggleNoteEffect('isLeftHandTapped', true, false)),
+  button('slap', 'Slap', 'Techniques', text('S'), [key('$')], composer => composer.toggleBeatEffect('slap', true, false)),
+  button('pop', 'Pop', 'Techniques', text('Pop'), [key('%')], composer => composer.toggleBeatEffect('pop', true, false)),
+  button('graceBefore', 'Grace note before the beat', 'Techniques', smufl(0xe560), [key('g')], composer => composer.toggleGrace('beforeBeat')),
+  button('graceOnBeat', 'Grace note on the beat', 'Techniques', smufl(0xe562), [key('g', { shift: true })], composer => composer.toggleGrace('onBeat')),
+  button('pickDown', 'Pick stroke down', 'Techniques', smufl(0xe610), [key('d', { shift: true })], composer =>
+    composer.toggleBeatEffect('pickStroke', 'down', 'none')
+  ),
+  button('pickUp', 'Pick stroke up', 'Techniques', smufl(0xe612), [key('u', { shift: true })], composer =>
+    composer.toggleBeatEffect('pickStroke', 'up', 'none')
+  ),
+  button('fadeIn', 'Fade in', 'Techniques', text('<'), [key('<')], composer => composer.toggleBeatEffect('fadeIn', true, false))
+];
+
+/** `pressedNow` for a command that has only the service. */
+function pressedNowOf(composer: ComposerService, id: string): boolean {
+  const { doc, anchor, cursor } = composer.state;
+  return toolStateOf(doc, anchor, cursor, id).pressed === true;
+}
+
+/**
+ * The tool `press` runs, or null. Exact bindings first, over the whole table; only then a symbol typed
+ * through AltGr or Option (`bindingMatchesTyped`), so an exact Alt binding always wins.
+ */
+export function toolForPress(press: KeyPress, tools: readonly ComposerTool[] = COMPOSER_TOOLS): ComposerTool | null {
+  return (
+    tools.find(tool => tool.keys.some(binding => bindingMatches(binding, press))) ??
+    tools.find(tool => tool.keys.some(binding => bindingMatchesTyped(binding, press))) ??
+    null
+  );
+}
+```
+
+**Step 4: Run it.** Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: The composer tool table - every tool, its glyph, its keys and its command`.
+
+### Task 2.5: Fret digits, two making one fret
+
+Today's digit accumulator lives in `ComposerComponent`, and rewrites the first note by moving the caret
+back, writing, and moving it forward - two commits. It moves to its own class, and the second digit goes
+through Task 1.6's `retypeNote`, so "1" then "2" is fret 12 and one undo step (decision 7).
+
+A digit continues the number when it comes within the window, the number stays on the fretboard, and
+the caret is still where the first digit left it. The last condition replaces today's reset on every
+arrow key: moving the caret is what ends a number, however it moves.
+
+**Files:**
+- Create: `client/src/app/services/composer-fret-entry.ts`
+- Test: `client/src/app/services/composer-fret-entry.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/services/composer-fret-entry.spec.ts -->
+```typescript
+import { TestBed } from '@angular/core/testing';
+
+import { ComposerService } from './composer.service';
+import { FretDigitEntry } from './composer-fret-entry';
+
+describe('FretDigitEntry', () => {
+  let composer: ComposerService;
+  let now: number;
+  let auditioned: number[];
+  let entry: FretDigitEntry;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    composer = TestBed.inject(ComposerService);
+    now = 1000;
+    auditioned = [];
+    entry = new FretDigitEntry(composer, () => now, midi => auditioned.push(midi));
+    composer.setCursor({ barIndex: 0, beatIndex: 0, stringIndex: 0 });
+  });
+
+  const beats = () => composer.doc.tracks[0].staves[0].bars[0].voices[0].beats;
+  const fretAt = (index: number): number | null => {
+    const pitch = beats()[index].notes[0]?.pitch;
+    return pitch?.kind === 'fretted' ? pitch.fret : null;
+  };
+
+  it('makes "1" then "2" fret 12 on one beat, and one undo takes it all back', () => {
+    entry.type(1);
+    now += 300;
+    entry.type(2);
+
+    expect(fretAt(0)).toBe(12);
+    expect(fretAt(1)).toBeNull();
+    expect(composer.state.cursor.beatIndex).toBe(1);
+
+    composer.undo();
+    expect(beats()[0].isRest).toBeTrue();
+    expect(composer.state.canUndo).toBeFalse();
+  });
+
+  it('starts a new note when the number would leave the fretboard', () => {
+    entry.type(3);
+    entry.type(5);
+
+    expect([fretAt(0), fretAt(1)]).toEqual([3, 5]);
+  });
+
+  it('starts a new note once the window has passed', () => {
+    entry.type(1);
+    now += 900;
+    entry.type(2);
+
+    expect([fretAt(0), fretAt(1)]).toEqual([1, 2]);
+  });
+
+  it('starts a new note when the caret has moved since the first digit', () => {
+    entry.type(1);
+    composer.moveCursor({ kind: 'beat', delta: 1 });
+    entry.type(2);
+
+    expect([fretAt(0), fretAt(1), fretAt(2)]).toEqual([1, null, 2]);
+  });
+
+  it('auditions each fret it writes, capo included', () => {
+    composer.setStaffNumber('capo', 2);
+    entry.type(1);
+    entry.type(2);
+
+    // String 1 is E4, 64: fret 1 under a capo at 2 is 67, fret 12 is 78.
+    expect(auditioned).toEqual([67, 78]);
+  });
+
+  it('writes nothing on a pitched staff', () => {
+    composer.addTrack('Piano', 0, false);
+    composer.setCursor({ trackIndex: 1 });
+    const before = JSON.stringify(composer.doc);
+
+    entry.type(5);
+
+    expect(JSON.stringify(composer.doc)).toBe(before);
+  });
+});
+```
+
+**Step 2: Run** with `--include=src/app/services/composer-fret-entry.spec.ts`. Expected: a compile
+error, `TS2307: Cannot find module './composer-fret-entry'`.
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/composer-fret-entry.ts -->
+```typescript
+import type { ComposerService } from './composer.service';
+import { EditCursor } from '../models/composer.model';
+
+/**
+ * Fret digits typed onto the caret's string, as in Guitar Pro.
+ *
+ * The first digit writes a note and advances the caret, so a melody flows. A further digit within the
+ * window belongs to the same number and rewrites that note through `retypeNote` - "1" then "2" gives
+ * fret 12 on one beat, as one undo step - and the caret stays where the first digit left it. A digit
+ * that would take the number off the fretboard starts a new note rather than being clamped, and so does
+ * one after the caret moved, however it moved.
+ *
+ * Lifted out of `ComposerComponent`, which kept the buffer in fields and rewrote the note by moving the
+ * caret back and forth - two commits, so undo left the first digit's fret behind.
+ */
+export class FretDigitEntry {
+  /** Highest fret the digits build up to. */
+  static readonly MAX_FRET = 24;
+  /** How long after a digit the next one still continues its number, in milliseconds. */
+  static readonly WINDOW_MS = 800;
+
+  /** The number being typed: its digits, where it was written, where the caret was left, and when. */
+  private typing: { digits: string; target: EditCursor; leftAt: EditCursor; at: number } | null = null;
+
+  constructor(
+    private readonly composer: ComposerService,
+    private readonly now: () => number = () => Date.now(),
+    private readonly audition: (midi: number) => void = () => undefined
+  ) {}
+
+  /** Types `digit` at the caret. Nothing happens on a pitched staff, which has no frets. */
+  type(digit: number): void {
+    const state = this.composer.state;
+    const staff = this.composer.staffAt(state.doc, state.cursor);
+    if (!staff || staff.tuning.length === 0) return;
+
+    const now = this.now();
+    const typing = this.typing;
+    const combined = typing ? Number(typing.digits + digit) : Number.NaN;
+    const continuing =
+      typing !== null &&
+      now - typing.at <= FretDigitEntry.WINDOW_MS &&
+      combined <= FretDigitEntry.MAX_FRET &&
+      sameBeat(state.cursor, typing.leftAt);
+
+    if (continuing) {
+      const string = (typing.target.stringIndex ?? 0) + 1;
+      this.composer.retypeNote(typing.target, { kind: 'fretted', string, fret: combined });
+      this.typing = { ...typing, digits: String(combined), at: now };
+      this.audition((staff.tuning[string - 1] ?? 0) + staff.capo + combined);
+      return;
+    }
+
+    const target = state.cursor;
+    const string = (target.stringIndex ?? 0) + 1;
+    this.composer.setNoteAtCursor({ kind: 'fretted', string, fret: digit }, true);
+    this.typing = { digits: String(digit), target, leftAt: this.composer.state.cursor, at: now };
+    this.audition((staff.tuning[string - 1] ?? 0) + staff.capo + digit);
+  }
+}
+
+/** Whether two cursors name the same beat and string. */
+function sameBeat(a: EditCursor, b: EditCursor): boolean {
+  return (
+    a.trackIndex === b.trackIndex &&
+    a.staffIndex === b.staffIndex &&
+    a.barIndex === b.barIndex &&
+    a.voiceIndex === b.voiceIndex &&
+    a.beatIndex === b.beatIndex &&
+    a.stringIndex === b.stringIndex
+  );
+}
+```
+
+**Step 4: Run it.** Expected: 6 SUCCESS.
+
+**Step 5: Commit**: `feat: Two fret digits make one fret and one undo step`.
+
+### Task 2.6: The keyboard handler
+
+A class the page constructs with its `ComposerToolHost`, and calls from one `document:keydown` listener.
+It takes a press only when:
+
+- **nothing before it claimed it** (`event.defaultPrevented`) - the shell's Escape, Task 2.7;
+- **the press is not someone typing** (`isEditableTarget`), including `contentEditable`;
+- **the table has a tool for it** (`toolForPress`), with modifiers exact. A press the table does not
+  bind - Ctrl+1, Alt+1, Ctrl+Alt+Z - is left alone and not `preventDefault`ed, so the browser keeps it.
+
+**Files:**
+- Create: `client/src/app/services/composer-key-handler.ts`
+- Test: `client/src/app/services/composer-key-handler.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/services/composer-key-handler.spec.ts -->
+```typescript
+import { TestBed } from '@angular/core/testing';
+
+import { ComposerService } from './composer.service';
+import { ComposerKeyHandler, KeyEventLike } from './composer-key-handler';
+import { ComposerToolHost } from './composer-tools';
+
+describe('ComposerKeyHandler', () => {
+  let composer: ComposerService;
+  let host: jasmine.SpyObj<Omit<ComposerToolHost, 'composer'>> & { composer: ComposerService };
+  let handler: ComposerKeyHandler;
+  const attached: HTMLElement[] = [];
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    composer = TestBed.inject(ComposerService);
+    host = {
+      composer,
+      ...jasmine.createSpyObj('host', ['openPopover', 'toggleShortcutSheet', 'escape', 'playPause', 'playFromStart', 'requestSave', 'addTrack', 'typeFretDigit'])
+    };
+    handler = new ComposerKeyHandler(host);
+  });
+
+  afterEach(() => attached.splice(0).forEach(node => node.remove()));
+
+  /** A key event with no modifiers, and `init` over it, whose `preventDefault` is a spy. */
+  function press(init: Partial<KeyEventLike>): KeyEventLike & { preventDefault: jasmine.Spy } {
+    return {
+      key: '', code: '', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false,
+      target: document.body, defaultPrevented: false, ...init, preventDefault: jasmine.createSpy('preventDefault')
+    };
+  }
+
+  function attach<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
+    const element = document.createElement(tag);
+    document.body.appendChild(element);
+    attached.push(element);
+    return element;
+  }
+
+  it('leaves a press in a form field or a contentEditable element alone', () => {
+    const editor = attach('div');
+    editor.contentEditable = 'true';
+    for (const target of [attach('input'), attach('textarea'), attach('select'), editor]) {
+      const event = press({ key: '5', code: 'Digit5', target });
+
+      expect(handler.handle(event)).withContext(target.tagName).toBeFalse();
+      expect(event.preventDefault).not.toHaveBeenCalled();
+    }
+    expect(host.typeFretDigit).not.toHaveBeenCalled();
+  });
+
+  it('leaves Escape alone when the shell has already used it to close the drawer', () => {
+    expect(handler.handle(press({ key: 'Escape', defaultPrevented: true }))).toBeFalse();
+    expect(host.escape).not.toHaveBeenCalled();
+
+    expect(handler.handle(press({ key: 'Escape' }))).toBeTrue();
+    expect(host.escape).toHaveBeenCalled();
+  });
+
+  it('writes no fret for Ctrl, Alt or Cmd with a digit, and leaves the press to the browser', () => {
+    for (const modifier of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
+      const event = press({ key: '1', code: 'Digit1', ...modifier });
+
+      expect(handler.handle(event)).toBeFalse();
+      expect(event.preventDefault).not.toHaveBeenCalled();
+    }
+    expect(host.typeFretDigit).not.toHaveBeenCalled();
+
+    handler.handle(press({ key: '1', code: 'Digit1' }));
+    expect(host.typeFretDigit).toHaveBeenCalledWith(1);
+  });
+
+  it('moves a bar with Ctrl+arrow and extends with Shift+arrow, rather than stepping a beat', () => {
+    handler.handle(press({ key: 'ArrowRight', ctrlKey: true }));
+    expect(composer.state.cursor.barIndex).toBe(1);
+
+    handler.handle(press({ key: 'ArrowRight', shiftKey: true }));
+    expect(composer.state.anchor?.beatIndex).toBe(0);
+    expect(composer.state.cursor.beatIndex).toBe(1);
+  });
+
+  it('undoes on Ctrl+Z and not on Ctrl+Alt+Z, which is AltGr+Z on Windows', () => {
+    composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
+
+    expect(handler.handle(press({ key: 'z', code: 'KeyZ', ctrlKey: true, altKey: true }))).toBeFalse();
+    expect(composer.state.canUndo).toBeTrue();
+
+    handler.handle(press({ key: 'z', code: 'KeyZ', ctrlKey: true }));
+    expect(composer.state.canUndo).toBeFalse();
+  });
+
+  it('rests on r and on R', () => {
+    handler.handle(press({ key: 'r', code: 'KeyR' }));
+    handler.handle(press({ key: 'R', code: 'KeyR' }));
+
+    expect(composer.state.cursor.beatIndex).toBe(2);
+  });
+
+  it('opens the shortcut sheet on ?, and saves on Ctrl+S', () => {
+    handler.handle(press({ key: '?', code: 'Slash', shiftKey: true }));
+    handler.handle(press({ key: 's', code: 'KeyS', ctrlKey: true }));
+
+    expect(host.toggleShortcutSheet).toHaveBeenCalled();
+    expect(host.requestSave).toHaveBeenCalled();
+  });
+
+  it('inserts a beat on Insert and on Alt+Enter, and plays from the start on Ctrl+Space and Shift+Space', () => {
+    handler.handle(press({ key: 'Insert' }));
+    handler.handle(press({ key: 'Enter', altKey: true }));
+    expect(composer.doc.tracks[0].staves[0].bars[0].voices[0].beats.length).toBe(6);
+
+    handler.handle(press({ key: ' ', ctrlKey: true }));
+    handler.handle(press({ key: ' ', shiftKey: true }));
+    expect(host.playFromStart).toHaveBeenCalledTimes(2);
+  });
+});
+```
+
+**Step 2: Run** with `--include=src/app/services/composer-key-handler.spec.ts`. Expected: a compile
+error, `TS2307: Cannot find module './composer-key-handler'`.
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/composer-key-handler.ts -->
+```typescript
+import { KeyPress } from './composer-key-bindings';
+import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, toolForPress } from './composer-tools';
+import { isEditableTarget } from './editable-target';
+
+/** The parts of a `KeyboardEvent` the handler reads. */
+export type KeyEventLike = KeyPress & Pick<KeyboardEvent, 'target' | 'defaultPrevented' | 'preventDefault'>;
+
+/**
+ * The composer's keyboard, as a class the page calls from its one `document:keydown` listener.
+ *
+ * Lifted out of `ComposerComponent`, whose `switch` on `event.key` could not tell Ctrl+1 from 1 and read
+ * form fields by tag name only. The keys are the tool table's (`COMPOSER_TOOLS`), so a key and its button
+ * cannot drift apart.
+ */
+export class ComposerKeyHandler {
+  constructor(
+    private readonly host: ComposerToolHost,
+    private readonly tools: readonly ComposerTool[] = COMPOSER_TOOLS
+  ) {}
+
+  /**
+   * Runs the tool `event` means and claims the press, or leaves it alone and returns false.
+   *
+   * Left alone: a press something before this listener claimed - the shell's Escape, when it closed the
+   * circle-of-fifths drawer - a press into a form field or a `contentEditable` element, and a press no
+   * tool is bound to, which the browser keeps. Only a press a tool runs is `preventDefault`ed.
+   */
+  handle(event: KeyEventLike): boolean {
+    if (event.defaultPrevented || isEditableTarget(event.target)) return false;
+    const tool = toolForPress(event, this.tools);
+    if (!tool) return false;
+
+    event.preventDefault();
+    tool.run(this.host, event);
+    return true;
+  }
+}
+```
+
+**Step 4: Run it.** Expected: 8 SUCCESS.
+
+**Step 5: Commit**: `feat: The composer keyboard handler, reading the tool table`.
+
+### Task 2.7: The shell claims Escape only when it closes the drawer
+
+The shell's `@HostListener('document:keydown.escape')` closes the circle-of-fifths drawer, and the
+composer's Escape means back to Select and clear the range (decision 5). When the drawer is open, Escape
+must close it and the composer must ignore it.
+
+A shared "is the drawer open" flag on a service would not do it: the shell's listener is registered at
+bootstrap, before any routed page's, and listeners on one target run in registration order - so by the
+time the composer asked, the shell would already have closed the drawer and the flag would read closed.
+Instead the shell claims the key with `preventDefault` only when it closed something, and the composer's
+handler ignores a press already claimed (Task 2.6). That needs the shell to run first. Registration order
+does not promise it - had the composer's listener been added first, it would have seen Escape unclaimed and
+gone back to Select while the shell closed the drawer - so, as corrected under "Corrections during
+implementation", the committed shell listens in the capture phase.
+
+**Files:**
+- Modify: `client/src/app/app.component.ts`
+- Test: `client/src/app/app.component.spec.ts`
+
+**Step 1: Failing spec.** In `app.component.spec.ts`, after `closes on Escape`:
+
+<!-- apply: find client/src/app/app.component.spec.ts -->
+```typescript
+    it('closes on Escape', () => {
+      component.toggleCircle();
+      component.onEscape();
+
+      expect(component.circleOpen).toBeFalse();
+    });
+```
+
+<!-- apply: replace client/src/app/app.component.spec.ts -->
+```typescript
+    it('closes on Escape', () => {
+      component.toggleCircle();
+      component.onEscape();
+
+      expect(component.circleOpen).toBeFalse();
+    });
+
+    /**
+     * The composer's Escape means back to Select, and it ignores a press something before it claimed.
+     * So the shell claims Escape when - and only when - it used it: a claim with the drawer closed would
+     * take Escape away from every page.
+     */
+    it('claims Escape only when it closes the drawer', () => {
+      const withDrawerClosed = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+      component.onEscape(withDrawerClosed);
+      expect(withDrawerClosed.defaultPrevented).toBeFalse();
+
+      component.toggleCircle();
+      const withDrawerOpen = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+      component.onEscape(withDrawerOpen);
+      expect(withDrawerOpen.defaultPrevented).toBeTrue();
+      expect(component.circleOpen).toBeFalse();
+    });
+```
+
+**Step 2: Run** with `--include=src/app/app.component.spec.ts`. Expected: a compile error,
+`TS2554: Expected 0 arguments, but got 1.`
+
+**Step 3: Implement.** In `app.component.ts`:
+
+<!-- apply: find client/src/app/app.component.ts -->
+```typescript
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    this.closeCircle();
+  }
+```
+
+<!-- apply: replace client/src/app/app.component.ts -->
+```typescript
+  /**
+   * Escape closes the drawer, and claims the key - `preventDefault` - only when it did.
+   *
+   * A page listening after the shell reads the claim: the composer's Escape means back to Select, and
+   * its keyboard handler ignores a press already claimed. The shell's listener is registered at
+   * bootstrap, before any routed page's, so it runs first; a shared "is the drawer open" flag would read
+   * closed by the time the page asked. With the drawer already closed nothing is claimed, so Escape stays
+   * every page's to use.
+   */
+  @HostListener('document:keydown.escape', ['$event'])
+  onEscape(event?: KeyboardEvent): void {
+    if (!this.circleOpen) return;
+    this.closeCircle();
+    event?.preventDefault();
+  }
+```
+
+**Step 4: Run it.** Expected: all SUCCESS.
+
+**Step 5: Commit**: `fix: The shell claims Escape only when it closes the drawer`.
+
+### Task 2.8: Phase 2 checkpoint
+
+**Step 1:** Both type checks and the whole suite, as in Task 1.16. Expected: no type errors, all SUCCESS.
+
+**Step 2:** Nothing to commit if clean.
+
+## Phase 3: the components
+
+The palette, its popovers, the track strip, the top bar's Library and Export menus with the saved list
+in a drawer, the status line, the shortcut sheet, and the page grid that holds them. Components read and
+write state only through `ComposerService`; what a component keeps is presentation - which menu is
+open, how tall the strip is.
+
+Colours in the new component styles are CSS custom properties with the composer's existing values as
+fallbacks (`var(--composer-accent, #3498db)`), and the page host defines them in Task 3.9, so a component
+under test - which has no page host - still renders in the house colours.
+
+**Phase 3 exports**
+
+| Module | Exports | Task |
+|---|---|---|
+| `composer-save-requests.service.ts` (new) | `ComposerSaveRequests` (`request`, `requested$`, `guard`, `refused`) | 3.1 |
+| `composer-library-panel` | answers save requests; a save in flight drops a second trigger; a refusing guard stops a save | 3.1 |
+| `composer-bar-choices.ts` (new) | `Choice`, `KEY_SIGNATURE_CHOICES`, `CLEF_CHOICES`, `OTTAVA_CHOICES`, `TRIPLET_FEEL_CHOICES`, `MAX_ENDING`, `endingsOf`, `endingBitsOf` | 3.2 |
+| `composer.model.ts` | `ComposerState.notice` | 3.3 |
+| `composer-service-structure.ts` | `commitFollowing`'s `notice`; `countOf`, `fixBarNoticeOf`, `noticeOfOutcome` | 3.3 |
+| `composer-entry-commands.ts` | `pasteNoticeOf` | 3.3 |
+| `composer-status-line` (new component) | `ComposerStatusLineComponent`, `overBarCountOf` | 3.3 |
+| `composer-shortcut-sheet` (new component) | `ComposerShortcutSheetComponent`, `ShortcutSection`, `shortcutSectionsOf` | 3.4 |
+| `composer-tool-popover` (new component) | `ComposerToolPopoverComponent`, `ViewportBox`, `PopoverPlacement`, `popoverPlacementOf` | 3.5 |
+| `composer-palette` (new component) | `ComposerPaletteComponent`, `PaletteButton`, `PaletteGroup`, `paletteGroupsOf` | 3.6 |
+| `composer-track-strip` (new component) | `ComposerTrackStripComponent`; `composer.component.spec.ts` moves to it | 3.7 |
+| `composer-library-panel` | Library and Export as menus, the saved list in a drawer, closed by Escape and an outside click | 3.8 |
+| `app.component.ts` | `--app-header-height` on the document root | 3.9 |
+| `composer.component` | the page grid, the tool host, the keyboard; `clampedStripHeight` | 3.10 |
+| `editable-target.ts` | `pressesFocusedControl` | 3.11 |
+
+### Task 3.1: Ctrl+S reaches the library's Save
+
+Save lives on `ComposerLibraryPanelComponent`, with its refusal and its live regions, and the keyboard
+handler cannot reach a component. A root service carries the request instead: the handler asks, and the
+panel, already subscribed to the composer's state, runs the same `save()` its button runs - so a
+keyboard save refuses a linked progression track, announces, and returns focus exactly as a click does.
+
+**Files:**
+- Create: `client/src/app/services/composer-save-requests.service.ts`
+- Modify: `client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts`
+- Test: `client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.spec.ts`
+
+**Step 1: Failing spec.** In the panel spec, import the service and add to `with nothing linked`:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.spec.ts -->
+```typescript
+import { ComposerService } from '../../../../services/composer.service';
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.spec.ts -->
+```typescript
+import { ComposerService } from '../../../../services/composer.service';
+import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
+```
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.spec.ts -->
+```typescript
+  describe('with nothing linked', () => {
+    it('saves', async () => {
+      await panel.save();
+
+      expect(library.save).toHaveBeenCalled();
+      expect(panel.saveBlockedReason).toBeNull();
+    });
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.spec.ts -->
+```typescript
+  describe('with nothing linked', () => {
+    it('saves', async () => {
+      await panel.save();
+
+      expect(library.save).toHaveBeenCalled();
+      expect(panel.saveBlockedReason).toBeNull();
+    });
+
+    it('saves when the keyboard asks, through the same save its button runs', async () => {
+      TestBed.inject(ComposerSaveRequests).request();
+      await fixture.whenStable();
+
+      expect(library.save).toHaveBeenCalled();
+    });
+
+    it('writes one entry when a click and Ctrl+S both arrive while the first save is still writing', async () => {
+      let finish: (id: string) => void = () => undefined;
+      (library.save as jasmine.Spy).and.returnValue(new Promise<string>(resolve => (finish = resolve)));
+
+      const click = panel.save();
+      TestBed.inject(ComposerSaveRequests).request();
+      const again = panel.save();
+      finish('saved-id');
+      await Promise.all([click, again]);
+      await fixture.whenStable();
+
+      expect(library.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not save while something on the page stands in the way, however Save is pressed', async () => {
+      const requests = TestBed.inject(ComposerSaveRequests);
+      const removeGuard = requests.guard(() => true);
+
+      await panel.save();
+      requests.request();
+      await fixture.whenStable();
+      expect(library.save).not.toHaveBeenCalled();
+
+      removeGuard();
+      await panel.save();
+      expect(library.save).toHaveBeenCalledTimes(1);
+    });
+```
+
+**Step 2: Run** with
+`--include=src/app/components/composer/components/composer-library-panel/composer-library-panel.component.spec.ts`.
+Expected: compile errors, `TS2307: Cannot find module '../../../../services/composer-save-requests.service'`,
+and where the new specs use the service it names, `TS2571: Object is of type 'unknown'.` and
+`TS18046: 'requests' is of type 'unknown'.`
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/composer-save-requests.service.ts -->
+```typescript
+import { Injectable } from '@angular/core';
+import { Observable, Subject } from 'rxjs';
+
+/**
+ * A request to save the composition, from somewhere that cannot press the library's Save button - the
+ * keyboard's Ctrl+S.
+ *
+ * Save stays the library panel's: its refusal of a linked progression track, its live regions and its
+ * focus return all belong to the press, whichever way the press arrives. So this carries no document
+ * and does no saving. It only asks, and the panel answers by running its own `save()`.
+ *
+ * It also carries the other way what can stand in the way of a save that the panel cannot see: the page's
+ * alphaTex draft. A save writes the document, not the text box, so saving with a draft not yet applied
+ * would leave the draft unsaved without a word. The page registers a guard; the panel asks before any save.
+ */
+@Injectable({ providedIn: 'root' })
+export class ComposerSaveRequests {
+  private readonly requests = new Subject<void>();
+  private guards: ReadonlyArray<() => boolean> = [];
+
+  /** Emits once per request. */
+  readonly requested$: Observable<void> = this.requests.asObservable();
+
+  request(): void {
+    this.requests.next();
+  }
+
+  /**
+   * Registers something that can refuse a save, and returns the function that removes it. A guard answers
+   * true to refuse, and says why itself, where the thing it guards is shown.
+   */
+  guard(refuses: () => boolean): () => void {
+    this.guards = [...this.guards, refuses];
+    return () => (this.guards = this.guards.filter(other => other !== refuses));
+  }
+
+  /** Whether a guard refuses a save now. Asked by the library panel before every save, clicked or keyed. */
+  refused(): boolean {
+    return this.guards.some(refuses => refuses());
+  }
+}
+```
+
+The panel asks before it saves, and before it flattens for a save:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  async save(asNew = false): Promise<void> {
+    if (!this.state) return;
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  async save(asNew = false): Promise<void> {
+    // A guard that refuses has said why where its own state is shown - the alphaTex draft, in the status line.
+    if (!this.state || this.saveRequests.refused()) return;
+```
+
+In the panel, import and inject it:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+import { ComposerService } from '../../../../services/composer.service';
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+import { ComposerService } from '../../../../services/composer.service';
+import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
+```
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+    private readonly tex: AlphaTexService,
+    private readonly cdr: ChangeDetectorRef
+  ) {}
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+    private readonly tex: AlphaTexService,
+    private readonly saveRequests: ComposerSaveRequests,
+    private readonly cdr: ChangeDetectorRef
+  ) {}
+```
+
+and answer requests in `ngOnInit`, beside the library subscription:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+    void this.library.refresh().catch(error => this.reportError(error));
+  }
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+    // Ctrl+S. The same `save()` as the button, so a keyboard save is refused, announced and followed by
+    // focus exactly as a click is.
+    this.saveRequests.requested$.pipe(takeUntil(this.destroy$)).subscribe(() => void this.save());
+
+    void this.library.refresh().catch(error => this.reportError(error));
+  }
+```
+
+A save writes to IndexedDB and takes a moment, and a second trigger in that moment - Ctrl+S just after a
+click, a double click - would write the composition twice: two library entries, since the first write's
+id is not known until it lands. So a write is guarded while one is under way. The field goes beside
+`pendingSave`:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  /** The offer or report currently occupying the announced region. */
+  pendingSave: PendingSave | null = null;
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  /** The offer or report currently occupying the announced region. */
+  pendingSave: PendingSave | null = null;
+
+  /**
+   * Whether a write to the library is under way. A second trigger while it is - Ctrl+S just after a click,
+   * a double click - is dropped: the first write's id is not known until it lands, so letting the second
+   * through would create a second entry rather than overwrite the first.
+   */
+  private saving = false;
+```
+
+`flattenAndSave` drops a press while a write is under way, before it flattens anything:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  async flattenAndSave(): Promise<void> {
+    const asNew = this.pendingSave?.asNew ?? false;
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  async flattenAndSave(): Promise<void> {
+    if (this.saving || this.saveRequests.refused()) return;
+    const asNew = this.pendingSave?.asNew ?? false;
+```
+
+and the write itself holds the guard until it lands or fails:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  private async writeToLibrary(asNew: boolean): Promise<boolean> {
+    if (!this.state) return false;
+
+    try {
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  private async writeToLibrary(asNew: boolean): Promise<boolean> {
+    if (!this.state || this.saving) return false;
+
+    this.saving = true;
+    try {
+```
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+      this.report(`Saved "${doc.title || 'Untitled'}"`);
+      return true;
+    } catch (error) {
+      this.reportError(error);
+      return false;
+    }
+  }
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+      this.report(`Saved "${doc.title || 'Untitled'}"`);
+      return true;
+    } catch (error) {
+      this.reportError(error);
+      return false;
+    } finally {
+      this.saving = false;
+    }
+  }
+```
+
+**Step 4: Run** the panel spec. Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: Let the keyboard ask the library to save`.
+
+### Task 3.2: The values a popover offers
+
+Pure lists the popovers draw from, so their content is specced without a component:
+
+- **Key signatures: all fifteen, major and minor.** The mapper's `KEY_SIGNATURES` lists majors only and
+  stops at six sharps and six flats; this lists every key from seven flats to seven sharps in both
+  modes, thirty choices, each named by its tonic and its accidentals.
+- Clefs and ottavas, the seven triplet feels, and alternate endings as a bitfield (bit 0 is the first
+  ending, as `MasterBarDoc.alternateEndings` stores them).
+
+**Files:**
+- Create: `client/src/app/services/composer-bar-choices.ts`
+- Test: `client/src/app/services/composer-bar-choices.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/services/composer-bar-choices.spec.ts -->
+```typescript
+import { keySignatureFault } from './bar-edits';
+import {
+  CLEF_CHOICES,
+  KEY_SIGNATURE_CHOICES,
+  MAX_ENDING,
+  TRIPLET_FEEL_CHOICES,
+  endingBitsOf,
+  endingsOf
+} from './composer-bar-choices';
+
+describe('composer bar choices', () => {
+  it('offers all fifteen key signatures in both modes, every one of them valid', () => {
+    expect(KEY_SIGNATURE_CHOICES.length).toBe(30);
+    for (const mode of ['major', 'minor'] as const) {
+      const fifths = KEY_SIGNATURE_CHOICES.filter(choice => choice.value.mode === mode).map(choice => choice.value.fifths);
+      expect(fifths).toEqual([-7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7]);
+    }
+    expect(KEY_SIGNATURE_CHOICES.every(choice => keySignatureFault(choice.value) === null)).toBeTrue();
+  });
+
+  it('names each key by its tonic and its accidentals', () => {
+    const label = (fifths: number, mode: 'major' | 'minor'): string =>
+      KEY_SIGNATURE_CHOICES.find(choice => choice.value.fifths === fifths && choice.value.mode === mode)?.label ?? '';
+
+    expect(label(0, 'major')).toBe('C major (no sharps or flats)');
+    expect(label(0, 'minor')).toBe('A minor (no sharps or flats)');
+    expect(label(-7, 'major')).toBe('C♭ major (7 flats)');
+    expect(label(7, 'minor')).toBe('A♯ minor (7 sharps)');
+    expect(label(1, 'major')).toBe('G major (1 sharp)');
+  });
+
+  it('offers every clef the model has, and every triplet feel', () => {
+    expect(CLEF_CHOICES.map(choice => choice.value)).toEqual(['g2', 'f4', 'c3', 'c4', 'n']);
+    expect(TRIPLET_FEEL_CHOICES.length).toBe(7);
+  });
+
+  it('reads and writes alternate endings as a bitfield, first ending in bit 0', () => {
+    expect(endingsOf(0b101)).toEqual([1, 3]);
+    expect(endingBitsOf([1, 3])).toBe(0b101);
+    expect(endingBitsOf(endingsOf(0b11000000))).toBe(0b11000000);
+    expect(MAX_ENDING).toBe(8);
+  });
+});
+```
+
+**Step 2: Run** with `--include=src/app/services/composer-bar-choices.spec.ts`. Expected: compile errors,
+`TS2307: Cannot find module './composer-bar-choices'`, and `TS7006: Parameter 'choice' implicitly has an
+'any' type.` in the lambdas over its lists.
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/composer-bar-choices.ts -->
+```typescript
+import { ClefKind, KeySignature, OttaviaKind, TripletFeelKind } from '../models/composer.model';
+
+/**
+ * The values the composer's bar popovers offer: key signatures, clefs, ottavas, triplet feels and
+ * alternate endings.
+ *
+ * The key signatures are all fifteen in both modes. The mapper's `KEY_SIGNATURES` lists majors only and
+ * stops at six accidentals, which was enough for a picker of common keys and is not enough for a tool
+ * that must reach any key a file can hold.
+ */
+
+/** One option in a popover: what it says, and the value it sets. */
+export interface Choice<T> {
+  label: string;
+  value: T;
+}
+
+/** Major tonics from seven flats to seven sharps, index 0 being `fifths` -7. */
+const MAJOR_TONICS = ['C♭', 'G♭', 'D♭', 'A♭', 'E♭', 'B♭', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F♯', 'C♯'];
+
+/** The relative minor of each, a minor third below. */
+const MINOR_TONICS = ['A♭', 'E♭', 'B♭', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F♯', 'C♯', 'G♯', 'D♯', 'A♯'];
+
+function accidentalsOf(fifths: number): string {
+  if (fifths === 0) return 'no sharps or flats';
+  const count = Math.abs(fifths);
+  return `${count} ${fifths > 0 ? 'sharp' : 'flat'}${count === 1 ? '' : 's'}`;
+}
+
+/** Every key signature, majors then minors, each from seven flats to seven sharps. */
+export const KEY_SIGNATURE_CHOICES: readonly Choice<KeySignature>[] = (['major', 'minor'] as const).flatMap(mode =>
+  (mode === 'major' ? MAJOR_TONICS : MINOR_TONICS).map((tonic, index) => {
+    const fifths = index - 7;
+    return { label: `${tonic} ${mode} (${accidentalsOf(fifths)})`, value: { fifths, mode } };
+  })
+);
+
+export const CLEF_CHOICES: readonly Choice<ClefKind>[] = [
+  { label: 'Treble (G)', value: 'g2' },
+  { label: 'Bass (F)', value: 'f4' },
+  { label: 'Alto (C on the middle line)', value: 'c3' },
+  { label: 'Tenor (C on the fourth line)', value: 'c4' },
+  { label: 'Neutral', value: 'n' }
+];
+
+export const OTTAVA_CHOICES: readonly Choice<OttaviaKind>[] = [
+  { label: 'Two octaves up (15ma)', value: '15ma' },
+  { label: 'An octave up (8va)', value: '8va' },
+  { label: 'As written', value: 'regular' },
+  { label: 'An octave down (8vb)', value: '8vb' },
+  { label: 'Two octaves down (15mb)', value: '15mb' }
+];
+
+export const TRIPLET_FEEL_CHOICES: readonly Choice<TripletFeelKind>[] = [
+  { label: 'Straight', value: 'none' },
+  { label: 'Triplet eighths', value: 'triplet8th' },
+  { label: 'Triplet sixteenths', value: 'triplet16th' },
+  { label: 'Dotted eighths', value: 'dotted8th' },
+  { label: 'Dotted sixteenths', value: 'dotted16th' },
+  { label: 'Scottish eighths', value: 'scottish8th' },
+  { label: 'Scottish sixteenths', value: 'scottish16th' }
+];
+
+/** The highest alternate ending the popover offers. */
+export const MAX_ENDING = 8;
+
+/** The endings a bitfield marks, first ending first. Bit 0 is ending 1. */
+export function endingsOf(bits: number): number[] {
+  return Array.from({ length: MAX_ENDING }, (_, index) => index + 1).filter(ending => (bits & (1 << (ending - 1))) !== 0);
+}
+
+/** The bitfield marking `endings`. */
+export function endingBitsOf(endings: readonly number[]): number {
+  return endings.reduce((bits, ending) => bits | (1 << (ending - 1)), 0);
+}
+```
+
+**Step 4: Run it.** Expected: 4 SUCCESS.
+
+**Step 5: Commit**: `feat: Every key signature, clef, triplet feel and ending a bar popover offers`.
+
+### Task 3.3: The status line, the page's live region, and what Fix bar and paste say
+
+Refusals get a display (decision 8). One polite `aria-live` region shows `state.refusal`, and the
+alphaTex panel's `texApplyError` - set by `applyTex` and never rendered - is shown there too. The region
+is always in the DOM, so it is in the accessibility tree before its content changes (the library panel's
+template comment says why that matters). The caret readout, "Bar · Beat", moves here from the old input
+panel, outside the region so a caret move is not read aloud.
+
+Design Part 4 puts two more things in that region and one beside it:
+
+- **What Fix bar and paste did.** "Refusals, Fix bar outcomes and paste results share one polite live
+  region." Both commands change bars the user may not be looking at - Fix bar carries beats into the next
+  bar and can append one, and a paste can run off the end of the score - so each says what it did:
+  `Fixed 2 bars, adding 1 bar at the end.`, `Pasted 6 beats.` The words travel in state, as
+  `ComposerState.notice`, published in the same commit as the edit (`commitFollowing`'s new `notice`),
+  and cleared wherever a refusal is: the next edit, a selection change, undo, redo, and a refusal.
+- **A fermata an edit removed.** An edit that moves beats carries each fermata with its note, or leaves it at its
+  bar position, and removes one only where it can do neither (`settleFermatas`), for one of these reasons
+  (`FermataDropReason`): its note moved where the fermata would reach other tracks (`otherTracks`), or another staff or
+  voice of its track (`otherVoices`); its note moved onto another fermata's place (`ontoAnotherFermata`); the notes
+  holding it moved apart (`notesApart`); its note became a grace note, which cannot hold a fermata of its own
+  (`becameGrace`); or no note starts at its place any more (`noNoteThere`). The edit returns a reason for each, and the
+  commit that removed it says so in the same region:
+  `1 fermata removed: its note moved where it would reach other tracks.` (`fermataNoticeOf`, joined to any other
+  words by `noticeOfOutcome`).
+- **How many bars are over their time signature**, counted with `scoreBarFills`. Part 4 lets a score with
+  overflowing bars save, "with a status warning naming how many bars are over"; the status line is where
+  that stands. It is a plain line **outside** the live region: it changes with nearly every duration edit,
+  and announcing it on each one would bury the refusals the region is for.
+
+**Files:**
+- Modify: `client/src/app/models/composer.model.ts` (`ComposerState.notice`),
+  `client/src/app/services/composer.service.ts`, `client/src/app/services/composer-service-structure.ts`,
+  `client/src/app/services/composer-entry-commands.ts`
+- Create: `client/src/app/components/composer/components/composer-status-line/composer-status-line.component.ts`,
+  `.html`, `.scss`
+- Test: `client/src/app/components/composer/components/composer-status-line/composer-status-line.component.spec.ts`,
+  `client/src/app/services/composer.service.editing.spec.ts`
+
+**Step 1: Failing specs.** The service's outcomes, appended to the editing spec:
+
+<!-- apply: append client/src/app/services/composer.service.editing.spec.ts -->
+```typescript
+describe('ComposerService outcomes', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('says what Fix bar fixed and added, and the next caret move clears it', () => {
+    for (const beatIndex of [0, 1, 2, 3]) writeFret(service, 3, beatIndex, beatIndex);
+    service.setCursor({ barIndex: 3, beatIndex: 0 });
+    service.applyDurationAtCursor(2, 0);
+
+    service.fixBar();
+    expect(stateOf(service).notice).toBe('Fixed 1 bar, adding 1 bar at the end.');
+
+    service.moveCursor({ kind: 'beat', delta: 1 });
+    expect(stateOf(service).notice).toBeNull();
+  });
+
+  it('says what a paste wrote and the bars it added, and a refusal replaces it', () => {
+    writeFret(service, 0, 0, 5);
+    writeFret(service, 0, 1, 7);
+    service.setCursor({ beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 1 });
+    service.copy();
+    service.setCursor({ barIndex: 3, beatIndex: 3 });
+
+    service.paste();
+    expect(stateOf(service).notice).toBe('Pasted 2 beats, adding 1 bar at the end.');
+
+    service.fixBar();
+    expect(stateOf(service).notice).toBeNull();
+    expect(stateOf(service).refusal).toMatch(/over/i);
+  });
+
+  it('says a fermata was removed on the commit that removed it, and the next caret move clears it', () => {
+    // The first guitar's quarters, with a fermata on the second; then a second guitar whose bar is a half then two
+    // quarters, so nothing of it starts at 960, where the fermata is - but a quarter starts at 1920.
+    for (const beatIndex of [0, 1, 2, 3]) writeFret(service, 0, beatIndex, beatIndex);
+    service.setCursor({ barIndex: 0, beatIndex: 1 });
+    service.toggleFermata();
+    service.addTrack('Guitar', 25, true);
+    service.setCursor({ trackIndex: 1, barIndex: 0, beatIndex: 0 });
+    service.applyDurationAtCursor(2, 0);
+    expect(stateOf(service).notice).toBeNull();
+
+    // The first quarter made a half pushes the fermata's note to 1920, where it would reach the second guitar.
+    service.setCursor({ trackIndex: 0, barIndex: 0, beatIndex: 0 });
+    service.applyDurationAtCursor(2, 0);
+    expect(stateOf(service).notice).toBe('1 fermata removed: its note moved where it would reach other tracks.');
+    expect(service.doc.tracks[0].staves[0].bars[0].voices[0].beats.some(beat => beat.effects.fermata)).toBeFalse();
+
+    service.moveCursor({ kind: 'beat', delta: 1 });
+    expect(stateOf(service).notice).toBeNull();
+  });
+});
+```
+
+The status line:
+
+<!-- apply: create client/src/app/components/composer/components/composer-status-line/composer-status-line.component.spec.ts -->
+```typescript
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+
+import { ComposerStatusLineComponent, overBarCountOf } from './composer-status-line.component';
+import { createDefaultCursor } from '../../../../models/composer.model';
+import { ComposerService } from '../../../../services/composer.service';
+
+describe('ComposerStatusLineComponent', () => {
+  let fixture: ComponentFixture<ComposerStatusLineComponent>;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({ imports: [ComposerStatusLineComponent] }).compileComponents();
+    fixture = TestBed.createComponent(ComposerStatusLineComponent);
+  });
+
+  const region = (): HTMLElement => fixture.nativeElement.querySelector('[aria-live="polite"]');
+
+  /** An empty score whose bar `barIndex` starts with a whole rest before its four quarters: over by a whole. */
+  function scoreWithBarOver(barIndex: number): ReturnType<typeof ComposerService.createEmptyScore> {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[barIndex].voices[0].beats[0].duration = 1;
+    return doc;
+  }
+
+  it('has its polite live region in the tree before there is anything to say', () => {
+    fixture.detectChanges();
+
+    expect(region()).not.toBeNull();
+    expect(region().textContent?.trim()).toBe('');
+  });
+
+  it('says why the last press did nothing', () => {
+    fixture.componentRef.setInput('refusal', 'There is no note there to change.');
+    fixture.detectChanges();
+
+    expect(region().textContent).toContain('There is no note there to change.');
+  });
+
+  it('shows a failed alphaTex apply beside a refusal', () => {
+    fixture.componentRef.setInput('refusal', 'Nothing is selected.');
+    fixture.componentRef.setInput('texError', 'alphaTex could not be parsed. The score is unchanged.');
+    fixture.detectChanges();
+
+    expect(region().textContent).toContain('could not be parsed');
+    expect(region().textContent).toContain('Nothing is selected.');
+  });
+
+  it('says what Fix bar or a paste did, in the same region', () => {
+    fixture.componentRef.setInput('notice', 'Fixed 1 bar, adding 1 bar at the end.');
+    fixture.detectChanges();
+
+    expect(region().textContent).toContain('Fixed 1 bar');
+  });
+
+  it('shows the caret\'s bar and beat, counting from one, outside the live region', () => {
+    fixture.componentRef.setInput('cursor', { ...createDefaultCursor(), barIndex: 2, beatIndex: 1 });
+    fixture.detectChanges();
+
+    const readout: HTMLElement = fixture.nativeElement.querySelector('.readout');
+    expect(readout.textContent).toContain('Bar 3');
+    expect(readout.textContent).toContain('Beat 2');
+    expect(region().contains(readout)).toBeFalse();
+  });
+
+  it('says how many bars are over their time signature on a plain line, outside the live region', () => {
+    fixture.componentRef.setInput('doc', ComposerService.createEmptyScore());
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.over-bars')).toBeNull();
+
+    fixture.componentRef.setInput('doc', scoreWithBarOver(1));
+    fixture.detectChanges();
+
+    const over: HTMLElement = fixture.nativeElement.querySelector('.over-bars');
+    expect(over.textContent?.trim()).toBe('1 bar over its time signature');
+    expect(region().contains(over)).toBeFalse();
+  });
+
+  it('counts every staff\'s bar that is over, with scoreBarFills', () => {
+    const doc = scoreWithBarOver(0);
+    doc.tracks[0].staves[0].bars[2].voices[0].beats[0].duration = 1;
+
+    expect(overBarCountOf(ComposerService.createEmptyScore())).toBe(0);
+    expect(overBarCountOf(doc)).toBe(2);
+  });
+});
+```
+
+**Step 2: Run** the spec type check (`npx tsc -p tsconfig.spec.json --noEmit`). Expected: compile errors,
+`TS2307: Cannot find module './composer-status-line.component'` and
+`TS2339: Property 'notice' does not exist on type 'ComposerState'.`
+
+**Step 3: Implement.** The state carries the notice, beside the refusal:
+
+<!-- apply: find client/src/app/models/composer.model.ts -->
+```typescript
+  refusal: string | null;
+  /** Select or Pen. See `EntryMode`. */
+```
+
+<!-- apply: replace client/src/app/models/composer.model.ts -->
+```typescript
+  refusal: string | null;
+  /**
+   * What the last command did, where that is worth saying aloud: Fix bar's and paste's outcomes, which
+   * change bars the user may not be looking at (design Part 4). Published with the commit, and cleared
+   * wherever `refusal` is - the next edit, a selection change, undo, redo - and by a refusal.
+   */
+  notice: string | null;
+  /** Select or Pen. See `EntryMode`. */
+```
+
+The command host's `commitFollowing` takes the words to publish with the commit, read after the edit ran,
+so a command can say what the edit found:
+
+<!-- apply: find client/src/app/services/composer-service-structure.ts -->
+```typescript
+   * `place`, when given, decides the selection instead, from the edited draft and the ends as they
+   * followed their beats - so a command that moves the caret or drops the range does it in the same
+   * commit, and the state is published once.
+   */
+  commitFollowing(
+    edit: (draft: ScoreDoc) => EditOutcome,
+    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement
+  ): void;
+```
+
+<!-- apply: replace client/src/app/services/composer-service-structure.ts -->
+```typescript
+   * `place`, when given, decides the selection instead, from the edited draft and the ends as they
+   * followed their beats - so a command that moves the caret or drops the range does it in the same
+   * commit, and the state is published once. `notice`, when given, is asked after the edit has run and
+   * its answer published as `ComposerState.notice` in that same commit, followed by why each fermata the edit
+   * removed went, when it removed one (`noticeOfOutcome`).
+   */
+  commitFollowing(
+    edit: (draft: ScoreDoc) => EditOutcome,
+    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement,
+    notice?: () => string | null
+  ): void;
+```
+
+Fix bar counts what it fixed and says so, and returns the fermatas its settling removed, for the notice:
+
+<!-- apply: find client/src/app/services/composer-service-structure.ts -->
+```typescript
+    const bars = selectedBars(state.anchor, state.cursor);
+    this.host.commitFollowing(draft => {
+      let fixed = false;
+      let appended = 0;
+      // A carry moves beats into later bars, so every fermata from the first selected bar on goes with its note or
+      // back to its bar position afterwards (`settleFermatas`), in the bars the carry appends too.
+      const staffBars = (): BarDoc[] => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.slice(bars.first) ?? [];
+      const fermatas = fermataSnapshotOf(draft, staffBars().map((_, offset) => bars.first + offset));
+      const openBefore = staffBars().flatMap(bar => openTupletGroupsOf(bar.voices[0]?.beats ?? []));
+
+      for (let index = bars.first; index <= bars.last; index++) {
+        if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
+        const result = fixBarOverflow(draft, trackIndex, staffIndex, index);
+        if (result.kind === 'refused') return result.reason;
+        fixed = true;
+        appended += result.appendedBars;
+      }
+
+      if (!fixed) return 'No selected bar is over its time signature.';
+      if (staffBars().some(bar => newOpenTupletGroup(openBefore, bar.voices[0]?.beats ?? []))) return SPLITS_A_GROUP;
+      if (appended > 0) this.host.markDiverged(draft);
+      return settleFermatas(draft, fermatas);
+    });
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer-service-structure.ts -->
+```typescript
+    const bars = selectedBars(state.anchor, state.cursor);
+    let fixed = 0;
+    let appended = 0;
+    this.host.commitFollowing(
+      draft => {
+        // A carry moves beats into later bars, so every fermata from the first selected bar on goes with its note or
+        // back to its bar position afterwards (`settleFermatas`), in the bars the carry appends too.
+        const staffBars = (): BarDoc[] => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.slice(bars.first) ?? [];
+        const fermatas = fermataSnapshotOf(draft, staffBars().map((_, offset) => bars.first + offset));
+        const openBefore = staffBars().flatMap(bar => openTupletGroupsOf(bar.voices[0]?.beats ?? []));
+
+        for (let index = bars.first; index <= bars.last; index++) {
+          if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
+          const result = fixBarOverflow(draft, trackIndex, staffIndex, index);
+          if (result.kind === 'refused') return result.reason;
+          fixed++;
+          appended += result.appendedBars;
+        }
+
+        if (fixed === 0) return 'No selected bar is over its time signature.';
+        if (staffBars().some(bar => newOpenTupletGroup(openBefore, bar.voices[0]?.beats ?? []))) return SPLITS_A_GROUP;
+        if (appended > 0) this.host.markDiverged(draft);
+        return settleFermatas(draft, fermatas);
+      },
+      undefined,
+      () => fixBarNoticeOf(fixed, appended)
+    );
+  }
+```
+
+and the words, with a count helper the entry commands share, go at the end of the file, beside what a commit says
+when its edit removed a fermata:
+
+<!-- apply: find client/src/app/services/composer-service-structure.ts -->
+```typescript
+import { FermataDrops, fermataSnapshotOf, settleFermatas } from './fermata-settling';
+```
+
+<!-- apply: replace client/src/app/services/composer-service-structure.ts -->
+```typescript
+import { FermataDrops, fermataNoticeOf, fermataSnapshotOf, settleFermatas } from './fermata-settling';
+```
+
+<!-- apply: append client/src/app/services/composer-service-structure.ts -->
+```typescript
+/**
+ * What a commit says: `said`, the command's own words, then why each fermata the edit's `outcome` removed went
+ * (`fermataNoticeOf`) - or null when neither has anything to say.
+ */
+export function noticeOfOutcome(said: string | null, outcome: EditOutcome): string | null {
+  const fermatas = Array.isArray(outcome) ? fermataNoticeOf(outcome) : null;
+  return [said, fermatas].filter((part): part is string => !!part).join(' ') || null;
+}
+
+/** `count` and `noun`, plural unless the count is one: "1 bar", "3 beats". */
+export function countOf(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+/** What Fix bar says it did: how many bars it fixed, and how many it appended when the carry ran off the end. */
+export function fixBarNoticeOf(fixed: number, appended: number): string {
+  return `Fixed ${countOf(fixed, 'bar')}${appended > 0 ? `, adding ${countOf(appended, 'bar')} at the end` : ''}.`;
+}
+```
+
+Paste says what it wrote, reading `pasteBeats`' result:
+
+<!-- apply: find client/src/app/services/composer-entry-commands.ts -->
+```typescript
+import { ComposerCommandHost, EditOutcome } from './composer-service-structure';
+```
+
+<!-- apply: replace client/src/app/services/composer-entry-commands.ts -->
+```typescript
+import { ComposerCommandHost, EditOutcome, countOf } from './composer-service-structure';
+```
+
+<!-- apply: find client/src/app/services/composer-entry-commands.ts -->
+```typescript
+    let pastedAt: BeatRef = start;
+    this.host.commitFollowing(
+      draft => {
+        const result = pasteBeats(draft, start, clipboard);
+        if (typeof result === 'string') return result;
+        pastedAt = result.at;
+        if (result.appendedBars > 0) this.host.markDiverged(draft);
+        return null;
+      },
+      () => ({ cursor: { ...state.cursor, ...pastedAt }, anchor: null })
+    );
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer-entry-commands.ts -->
+```typescript
+    let pastedAt: BeatRef = start;
+    let appended = 0;
+    this.host.commitFollowing(
+      draft => {
+        const result = pasteBeats(draft, start, clipboard);
+        if (typeof result === 'string') return result;
+        pastedAt = result.at;
+        appended = result.appendedBars;
+        if (result.appendedBars > 0) this.host.markDiverged(draft);
+        return result.droppedFermatas;
+      },
+      () => ({ cursor: { ...state.cursor, ...pastedAt }, anchor: null }),
+      () => pasteNoticeOf(clipboard.beats.length, appended)
+    );
+  }
+```
+
+<!-- apply: append client/src/app/services/composer-entry-commands.ts -->
+```typescript
+/** What a paste says it did: how many beats it wrote, and how many bars it appended when it ran off the end. */
+export function pasteNoticeOf(beats: number, appended: number): string {
+  return `Pasted ${countOf(beats, 'beat')}${appended > 0 ? `, adding ${countOf(appended, 'bar')} at the end` : ''}.`;
+}
+```
+
+In the service, the host passes the notice through:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    commitFollowing: (edit, place) => this.commitFollowing(edit, place),
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    commitFollowing: (edit, place, notice) => this.commitFollowing(edit, place, notice),
+```
+
+The first state and a reset say nothing:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject = new BehaviorSubject<ComposerState>({
+      doc: ComposerService.createEmptyScore(),
+      cursor: createDefaultCursor(),
+      anchor: null,
+      refusal: null,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject = new BehaviorSubject<ComposerState>({
+      doc: ComposerService.createEmptyScore(),
+      cursor: createDefaultCursor(),
+      anchor: null,
+      refusal: null,
+      notice: null,
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject.next({
+      doc: ComposerService.createEmptyScore(),
+      cursor: createDefaultCursor(),
+      anchor: null,
+      refusal: null,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject.next({
+      doc: ComposerService.createEmptyScore(),
+      cursor: createDefaultCursor(),
+      anchor: null,
+      refusal: null,
+      notice: null,
+```
+
+Both commits say what the edit's fermata settling removed, `commit` - note and rest entry - on its own:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+import { ComposerStructureCommands, EditOutcome, SelectionPlacement } from './composer-service-structure';
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+import { ComposerStructureCommands, EditOutcome, SelectionPlacement, noticeOfOutcome } from './composer-service-structure';
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    this.commitDocument(draft, undefined, amend);
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    this.commitDocument(draft, undefined, amend, noticeOfOutcome(null, reason));
+```
+
+`commitFollowing` asks for the notice after the edit, and `commitDocument` publishes it:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+   * after it (`followedEnd`). An end whose beat is gone stays where it was, clamped. `place`, when
+   * given, decides the selection from those followed ends instead, in the same publish.
+   */
+  private commitFollowing(
+    edit: (draft: ScoreDoc) => EditOutcome,
+    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement
+  ): void {
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+   * after it (`followedEnd`). An end whose beat is gone stays where it was, clamped. `place`, when
+   * given, decides the selection from those followed ends instead, in the same publish, and `notice`
+   * what the command says it did (`ComposerState.notice`).
+   */
+  private commitFollowing(
+    edit: (draft: ScoreDoc) => EditOutcome,
+    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement,
+    notice?: () => string | null
+  ): void {
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    this.commitDocument(draft, place ? place(draft, followed) : followed);
+  }
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    this.commitDocument(draft, place ? place(draft, followed) : followed, false, noticeOfOutcome(notice?.() ?? null, reason));
+  }
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+  private commitDocument(next: ScoreDoc, selection?: { cursor: EditCursor; anchor: EditCursor | null }, amend = false): void {
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+  private commitDocument(
+    next: ScoreDoc,
+    selection?: { cursor: EditCursor; anchor: EditCursor | null },
+    amend = false,
+    notice: string | null = null
+  ): void {
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+      refusal: null,
+      isDirty: true,
+      canUndo: true,
+      canRedo: false
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+      refusal: null,
+      notice,
+      isDirty: true,
+      canUndo: true,
+      canRedo: false
+```
+
+Undo, redo, a replaced document, a selection change and a refusal each clear it:
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+      refusal: null,
+      isDirty: true,
+      canUndo: this.undoStack.length > 0,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+      refusal: null,
+      notice: null,
+      isDirty: true,
+      canUndo: this.undoStack.length > 0,
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+      refusal: null,
+      isDirty: true,
+      canUndo: true,
+      canRedo: this.redoStack.length > 0
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+      refusal: null,
+      notice: null,
+      isDirty: true,
+      canUndo: true,
+      canRedo: this.redoStack.length > 0
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+      refusal: null,
+      isDirty: !markClean,
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+      refusal: null,
+      notice: null,
+      isDirty: !markClean,
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject.next({ ...this.stateSubject.getValue(), cursor, anchor, refusal: null });
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject.next({ ...this.stateSubject.getValue(), cursor, anchor, refusal: null, notice: null });
+```
+
+<!-- apply: find client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject.next({ ...this.stateSubject.getValue(), refusal: reason });
+```
+
+<!-- apply: replace client/src/app/services/composer.service.ts -->
+```typescript
+    this.stateSubject.next({ ...this.stateSubject.getValue(), refusal: reason, notice: null });
+```
+
+The component:
+
+<!-- apply: create client/src/app/components/composer/components/composer-status-line/composer-status-line.component.ts -->
+```typescript
+import { ChangeDetectionStrategy, Component, Input, OnChanges, SimpleChanges } from '@angular/core';
+import { CommonModule } from '@angular/common';
+
+import { EditCursor, EntryMode, ScoreDoc } from '../../../../models/composer.model';
+import { scoreBarFills } from '../../../../services/bar-fill';
+import { countOf } from '../../../../services/composer-service-structure';
+
+/** How many bars are over their time signature: every staff's, each of which Fix bar mends on its own. */
+export function overBarCountOf(doc: ScoreDoc): number {
+  return scoreBarFills(doc).flat(2).filter(fill => fill.kind === 'over').length;
+}
+
+/**
+ * The line between the score and the track strip: where the caret is, whether a click writes, how many
+ * bars are over, and why the last press did nothing or what it did.
+ *
+ * Holds the page's one polite live region. Refusals from every route - a palette button, a key, a click
+ * on the score - arrive as `ComposerState.refusal`, Fix bar's and paste's outcomes as
+ * `ComposerState.notice`, and the region reads them out; a failed alphaTex apply joins them. The caret
+ * readout and the count of bars over sit outside the region: both change with ordinary editing, and
+ * announcing them would bury what the region is for.
+ */
+@Component({
+  selector: 'app-composer-status-line',
+  standalone: true,
+  imports: [CommonModule],
+  templateUrl: './composer-status-line.component.html',
+  styleUrls: ['./composer-status-line.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class ComposerStatusLineComponent implements OnChanges {
+  /** Why the last command did nothing, from `ComposerState.refusal`. */
+  @Input() refusal: string | null = null;
+  /** What the last command did, from `ComposerState.notice`. */
+  @Input() notice: string | null = null;
+  /** Why an alphaTex apply left the score unchanged. */
+  @Input() texError: string | null = null;
+  @Input() cursor: EditCursor | null = null;
+  @Input() entryMode: EntryMode = 'select';
+  /** The document, for the count of bars over. */
+  @Input() doc: ScoreDoc | null = null;
+
+  /** "2 bars over their time signatures", or null when none is. Measured when the document changes, not per check. */
+  overBarsLabel: string | null = null;
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (!changes['doc']) return;
+    const over = this.doc ? overBarCountOf(this.doc) : 0;
+    this.overBarsLabel = over === 0 ? null : `${countOf(over, 'bar')} over ${over === 1 ? 'its time signature' : 'their time signatures'}`;
+  }
+
+  /** What the live region says: the alphaTex error, the refusal, then the outcome. */
+  get messages(): string[] {
+    return [this.texError, this.refusal, this.notice].filter((message): message is string => !!message);
+  }
+}
+```
+
+<!-- apply: create client/src/app/components/composer/components/composer-status-line/composer-status-line.component.html -->
+```html
+<div class="status-line">
+  <span class="readout" *ngIf="cursor">Bar {{ cursor.barIndex + 1 }} · Beat {{ cursor.beatIndex + 1 }}</span>
+  <span class="mode" [class.pen]="entryMode === 'pen'">{{ entryMode === 'pen' ? 'Pen' : 'Select' }}</span>
+  <!-- Not announced: it changes with ordinary duration edits. Fix bar is the remedy, and says what it did. -->
+  <span class="over-bars" *ngIf="overBarsLabel">{{ overBarsLabel }}</span>
+
+  <!--
+    The page's polite live region. Always rendered, and only its content comes and goes: a region
+    inserted already holding its message is the case screen readers miss, so the element has to be in
+    the accessibility tree before there is anything to say.
+  -->
+  <p class="messages" aria-live="polite">
+    <span class="message" *ngFor="let message of messages">{{ message }}</span>
+  </p>
+</div>
+```
+
+<!-- apply: create client/src/app/components/composer/components/composer-status-line/composer-status-line.component.scss -->
+```scss
+// The status line: caret, mode, bars over, and the live region for refusals and outcomes.
+
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-height: 1.9rem;
+  padding: 0.25rem 0.9rem;
+  background-color: var(--composer-nav, #2c3e50);
+  border-top: 1px solid var(--composer-border, #465666);
+  color: var(--composer-text-secondary, #bdc3c7);
+  font-size: 0.78rem;
+}
+
+.readout,
+.mode,
+.over-bars {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.mode.pen {
+  color: var(--composer-text, #ecf0f1);
+}
+
+.over-bars {
+  color: var(--composer-warning, #f39c12);
+}
+
+.messages {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--composer-text, #ecf0f1);
+}
+
+.message + .message::before {
+  content: ' · ';
+  color: var(--composer-text-secondary, #bdc3c7);
+}
+```
+
+**Step 4: Run** the status line's spec and `composer.service.editing.spec.ts`. Expected: all SUCCESS - 7
+in the status line's.
+
+**Step 5: Commit**: `feat: A status line that says why a press did nothing, what Fix bar and paste did, and how many bars are over`.
+
+### Task 3.4: The shortcut sheet
+
+`?` opens a sheet listing every tool with a key, grouped as the design's table is, read from
+`COMPOSER_TOOLS` - so the sheet cannot disagree with the keys. The fret digits are written `0-9`, and a
+tool with two bindings shows both, so the macOS alternates are discoverable where a Mac user would look.
+The sheet is hidden with CSS rather than removed, like the library drawer.
+
+**Files:**
+- Create: `client/src/app/components/composer/components/composer-shortcut-sheet/composer-shortcut-sheet.component.ts`,
+  `.html`, `.scss`
+- Test: `client/src/app/components/composer/components/composer-shortcut-sheet/composer-shortcut-sheet.component.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/components/composer/components/composer-shortcut-sheet/composer-shortcut-sheet.component.spec.ts -->
+```typescript
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+
+import { ComposerShortcutSheetComponent, shortcutSectionsOf } from './composer-shortcut-sheet.component';
+import { COMPOSER_TOOLS } from '../../../../services/composer-tools';
+
+describe('shortcutSectionsOf', () => {
+  const sections = shortcutSectionsOf(COMPOSER_TOOLS);
+  const keysOf = (label: string): string | undefined =>
+    sections.flatMap(section => section.rows).find(row => row.label === label)?.keys;
+
+  it('groups the tools in the design table\'s order', () => {
+    expect(sections.map(section => section.group)).toEqual([
+      'Tools', 'Edit', 'Navigation', 'Playback', 'Beats', 'Duration', 'Bar', 'Tracks', 'Accidentals', 'Dynamics', 'Articulation', 'Techniques'
+    ]);
+  });
+
+  it('writes the fret digits as a range, and both bindings where a tool has two', () => {
+    expect(keysOf('Fret')).toBe('0-9');
+    expect(keysOf('Insert beat')).toBe('Insert or Alt+Enter');
+    expect(keysOf('Play from the start')).toBe('Ctrl+Space or Shift+Space');
+    expect(keysOf('Longer')).toBe('+ or =');
+  });
+
+  it('leaves out the tools with no key', () => {
+    expect(keysOf('Quarter note')).toBeUndefined();
+  });
+});
+
+describe('ComposerShortcutSheetComponent', () => {
+  let fixture: ComponentFixture<ComposerShortcutSheetComponent>;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({ imports: [ComposerShortcutSheetComponent] }).compileComponents();
+    fixture = TestBed.createComponent(ComposerShortcutSheetComponent);
+    fixture.detectChanges();
+  });
+
+  it('is in the page while closed, hidden rather than removed', () => {
+    const sheet: HTMLElement = fixture.nativeElement.querySelector('[role="dialog"]');
+
+    expect(sheet).not.toBeNull();
+    expect(sheet.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('says it is open, and asks to close from its close button', () => {
+    let closed = false;
+    fixture.componentInstance.closed.subscribe(() => (closed = true));
+    fixture.componentRef.setInput('open', true);
+    fixture.detectChanges();
+
+    const sheet: HTMLElement = fixture.nativeElement.querySelector('[role="dialog"]');
+    expect(sheet.getAttribute('aria-hidden')).toBe('false');
+    (fixture.nativeElement.querySelector('.sheet-close') as HTMLButtonElement).click();
+    expect(closed).toBeTrue();
+  });
+});
+```
+
+**Step 2: Run** with
+`--include=src/app/components/composer/components/composer-shortcut-sheet/composer-shortcut-sheet.component.spec.ts`.
+Expected: compile errors, `TS2307: Cannot find module './composer-shortcut-sheet.component'`, and
+`TS7006` for the untyped `section` and `row` parameters that follow from it.
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/components/composer/components/composer-shortcut-sheet/composer-shortcut-sheet.component.ts -->
+```typescript
+import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output } from '@angular/core';
+import { CommonModule } from '@angular/common';
+
+import { bindingLabelOf } from '../../../../services/composer-key-bindings';
+import { COMPOSER_TOOLS, ComposerTool, ToolGroup } from '../../../../services/composer-tools';
+
+/** One line of the sheet. */
+export interface ShortcutRow {
+  label: string;
+  keys: string;
+}
+
+/** One group of the sheet. */
+export interface ShortcutSection {
+  group: ToolGroup;
+  rows: ShortcutRow[];
+}
+
+/** The groups in the order of the design's shortcut table. */
+const SHEET_ORDER: readonly ToolGroup[] = [
+  'Tools', 'Edit', 'Navigation', 'Playback', 'Beats', 'Duration', 'Bar', 'Tracks', 'Accidentals', 'Dynamics', 'Articulation', 'Techniques'
+];
+
+/** A tool's keys as the sheet writes them: every binding, joined with "or", and the ten digits as a range. */
+function keysOf(tool: ComposerTool): string {
+  const labels = tool.keys.map(bindingLabelOf);
+  return labels.length === 10 && labels.every((label, index) => label === String(index)) ? '0-9' : labels.join(' or ');
+}
+
+/** The sheet's content, from the tool table: each group's tools that have a key, in table order. */
+export function shortcutSectionsOf(tools: readonly ComposerTool[]): ShortcutSection[] {
+  return SHEET_ORDER.map(group => ({
+    group,
+    rows: tools.filter(tool => tool.group === group && tool.keys.length > 0).map(tool => ({ label: tool.label, keys: keysOf(tool) }))
+  })).filter(section => section.rows.length > 0);
+}
+
+/**
+ * Every keyboard shortcut, opened with `?`.
+ *
+ * Read from `COMPOSER_TOOLS`, so it lists exactly the keys the handler answers to. Hidden with CSS rather
+ * than removed while closed, so opening it builds nothing.
+ */
+@Component({
+  selector: 'app-composer-shortcut-sheet',
+  standalone: true,
+  imports: [CommonModule],
+  templateUrl: './composer-shortcut-sheet.component.html',
+  styleUrls: ['./composer-shortcut-sheet.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class ComposerShortcutSheetComponent {
+  @Input() open = false;
+  @Output() readonly closed = new EventEmitter<void>();
+
+  readonly sections: readonly ShortcutSection[] = shortcutSectionsOf(COMPOSER_TOOLS);
+
+  trackByGroup(_index: number, section: ShortcutSection): string {
+    return section.group;
+  }
+}
+```
+
+<!-- apply: create client/src/app/components/composer/components/composer-shortcut-sheet/composer-shortcut-sheet.component.html -->
+```html
+<section class="sheet" [class.open]="open" role="dialog" aria-label="Keyboard shortcuts" [attr.aria-hidden]="!open">
+  <header class="sheet-header">
+    <h2>Keyboard shortcuts</h2>
+    <button type="button" class="sheet-close" aria-label="Close keyboard shortcuts" (click)="closed.emit()">×</button>
+  </header>
+
+  <p class="sheet-note">
+    Ctrl is Cmd on a Mac. A key written as a symbol - <kbd>?</kbd>, <kbd>&#125;</kbd> - is pressed however your keyboard
+    layout types that symbol. Keys are ignored while you type in a field.
+  </p>
+
+  <div class="sections">
+    <section class="section" *ngFor="let section of sections; trackBy: trackByGroup">
+      <h3>{{ section.group }}</h3>
+      <dl>
+        <ng-container *ngFor="let row of section.rows">
+          <dt>{{ row.label }}</dt>
+          <dd><kbd>{{ row.keys }}</kbd></dd>
+        </ng-container>
+      </dl>
+    </section>
+  </div>
+</section>
+```
+
+<!-- apply: create client/src/app/components/composer/components/composer-shortcut-sheet/composer-shortcut-sheet.component.scss -->
+```scss
+// The shortcut sheet: an overlay over the score, hidden with CSS while closed.
+
+.sheet {
+  position: fixed;
+  inset: 5vh 5vw;
+  z-index: 950;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: var(--composer-nav, #2c3e50);
+  color: var(--composer-text, #ecf0f1);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+
+  &.open {
+    display: flex;
+  }
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--composer-border, #465666);
+
+  h2 {
+    margin: 0;
+    font-size: 1rem;
+  }
+}
+
+.sheet-close {
+  background: none;
+  border: none;
+  color: var(--composer-text-secondary, #bdc3c7);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--composer-text, #ecf0f1);
+  }
+}
+
+.sheet-note {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  font-size: 0.78rem;
+  color: var(--composer-text-secondary, #bdc3c7);
+}
+
+.sections {
+  overflow-y: auto;
+  padding: 0.5rem 1rem 1rem;
+  columns: 18rem;
+  column-gap: 1.5rem;
+}
+
+.section {
+  break-inside: avoid;
+  margin-bottom: 1rem;
+
+  h3 {
+    margin: 0 0 0.35rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--composer-text-secondary, #bdc3c7);
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.2rem 0.75rem;
+    margin: 0;
+    font-size: 0.8rem;
+  }
+
+  dd {
+    margin: 0;
+    text-align: right;
+  }
+}
+
+kbd {
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: 0.75rem;
+}
+```
+
+**Step 4: Run it.** Expected: 5 SUCCESS.
+
+**Step 5: Commit**: `feat: A shortcut sheet read from the tool table`.
+
+### Task 3.5: Popovers for the tools that take a value
+
+Time signature, key signature, clef, section, alternate ending, tuplet and triplet feel each open a small
+popover beside their palette button - not a modal (decision 17). Each reads its starting values from
+the caret's bar, validates before committing - `timeSignatureFault`, `keySignatureFault`, a section needs a
+name - and refuses an invalid entry inline, in a `role="alert"` region inside the popover that is
+rendered before there is anything to say. A valid entry commits through the service and closes the
+popover; anything the service itself refuses goes to the status line, like every other press.
+
+Common time is allowed for 4/4 and cut time for 2/2, which are the two meters alphaTab draws with a C.
+
+How it opens, and where, was corrected before this task was applied:
+
+- **In the top layer.** The palette scrolls (`overflow-y: auto`, and `overflow-x: hidden` so it never
+  scrolls sideways), and an absolutely positioned popover beside a palette button is clipped by that very
+  box. So the popover is an HTML `popover="manual"` element, which the browser draws in the top layer
+  above every ancestor's overflow, placed in window coordinates beside its trigger by
+  `popoverPlacementOf`: to the right, or the left when the right has no room, and moved up and given a
+  scrolling height so it stays inside a short window.
+- **Focus.** Opening a popover - from its button, or from its key: K, Shift+T, Ctrl+K and the rest -
+  focuses its first control, so a keyboard user lands in it. Closing gives focus back to its trigger.
+- **Typing survives.** `state` arrives with every edit and caret move; the fields are read from it only
+  when the popover's kind changes, so a render or a playback tick does not reset what is being typed.
+- **Escape closes the popover alone.** The popover claims the key (`preventDefault`), and the page's
+  keyboard handler ignores a claimed press, so it does not also go back to Select and drop the range.
+
+The popover finds its trigger in the element the palette passes as `triggers`, by the `data-tool`
+attribute every palette button carries.
+
+**Files:**
+- Create: `client/src/app/components/composer/components/composer-tool-popover/composer-tool-popover.component.ts`,
+  `.html`, `.scss`
+- Test: `client/src/app/components/composer/components/composer-tool-popover/composer-tool-popover.component.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/components/composer/components/composer-tool-popover/composer-tool-popover.component.spec.ts -->
+```typescript
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+
+import { ComposerToolPopoverComponent, popoverPlacementOf } from './composer-tool-popover.component';
+import { ComposerService } from '../../../../services/composer.service';
+import { KEY_SIGNATURE_CHOICES } from '../../../../services/composer-bar-choices';
+import { PopoverKind } from '../../../../services/composer-tools';
+
+describe('popoverPlacementOf', () => {
+  const viewport = { width: 1000, height: 600 };
+  const size = { width: 240, height: 200 };
+
+  it('goes to the right of its trigger, level with the trigger\'s top', () => {
+    expect(popoverPlacementOf({ left: 10, top: 100, right: 50, bottom: 140 }, size, viewport)).toEqual({ left: 56, top: 100, maxHeight: 588 });
+  });
+
+  it('goes to the left when the right has no room', () => {
+    expect(popoverPlacementOf({ left: 900, top: 100, right: 940, bottom: 140 }, size, viewport).left).toBe(654);
+  });
+
+  it('moves up to keep its bottom in the window, and scrolls in a window shorter than itself', () => {
+    expect(popoverPlacementOf({ left: 10, top: 550, right: 50, bottom: 590 }, size, viewport).top).toBe(394);
+    expect(popoverPlacementOf({ left: 10, top: 50, right: 50, bottom: 90 }, size, { width: 1000, height: 150 })).toEqual({
+      left: 56,
+      top: 6,
+      maxHeight: 138
+    });
+  });
+});
+
+describe('ComposerToolPopoverComponent', () => {
+  let fixture: ComponentFixture<ComposerToolPopoverComponent>;
+  let popover: ComposerToolPopoverComponent;
+  let composer: ComposerService;
+  let closed: number;
+  let triggers: HTMLElement;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({ imports: [ComposerToolPopoverComponent] }).compileComponents();
+    composer = TestBed.inject(ComposerService);
+    fixture = TestBed.createComponent(ComposerToolPopoverComponent);
+    popover = fixture.componentInstance;
+    closed = 0;
+    popover.closed.subscribe(() => closed++);
+
+    // The palette's buttons, as the popover finds them: one per valued tool, marked `data-tool`.
+    triggers = document.createElement('div');
+    for (const kind of ['timeSignature', 'keySignature', 'clef', 'section', 'alternateEnding', 'tuplet', 'tripletFeel']) {
+      const button = document.createElement('button');
+      button.dataset['tool'] = kind;
+      triggers.appendChild(button);
+    }
+    document.body.appendChild(triggers);
+    fixture.componentRef.setInput('triggers', triggers);
+  });
+
+  afterEach(() => triggers.remove());
+
+  function open(kind: PopoverKind | null): void {
+    fixture.componentRef.setInput('kind', kind);
+    fixture.componentRef.setInput('state', composer.state);
+    fixture.detectChanges();
+  }
+
+  const alert = (): HTMLElement => fixture.nativeElement.querySelector('[role="alert"]');
+  const panel = (): HTMLElement => fixture.nativeElement.querySelector('.popover');
+  const trigger = (kind: PopoverKind): HTMLElement => triggers.querySelector(`[data-tool="${kind}"]`) as HTMLElement;
+
+  it('opens in the top layer beside its trigger, and focuses its first control', () => {
+    open('clef');
+
+    expect(panel().matches(':popover-open')).toBeTrue();
+    expect(panel().getBoundingClientRect().left).toBeGreaterThanOrEqual(trigger('clef').getBoundingClientRect().right);
+    expect(document.activeElement).toBe(panel().querySelector('select'));
+  });
+
+  it('gives focus back to its trigger when it closes', () => {
+    open('clef');
+    open(null);
+
+    expect(panel().matches(':popover-open')).toBeFalse();
+    expect(document.activeElement).toBe(trigger('clef'));
+  });
+
+  it('keeps what is being typed while the state moves on, and starts again for another kind', () => {
+    open('timeSignature');
+    popover.numerator = 7;
+
+    composer.setCursor({ beatIndex: 1 });
+    open('timeSignature');
+    expect(popover.numerator).toBe(7);
+
+    open('keySignature');
+    open('timeSignature');
+    expect(popover.numerator).toBe(4);
+  });
+
+  it('closes on Escape and claims it, so the page does not also go back to Select', () => {
+    open('clef');
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+
+    document.activeElement?.dispatchEvent(escape);
+
+    expect(escape.defaultPrevented).toBeTrue();
+    expect(closed).toBe(1);
+  });
+
+  it('starts from the caret\'s meter', () => {
+    composer.setTimeSignature({ numerator: 3, denominator: 4, isCommon: false });
+
+    open('timeSignature');
+
+    expect(popover.numerator).toBe(3);
+  });
+
+  it('refuses an invalid time signature inline, commits nothing, and stays open', () => {
+    open('timeSignature');
+    const before = JSON.stringify(composer.doc);
+
+    popover.numerator = 0;
+    popover.applyTimeSignature();
+    fixture.detectChanges();
+
+    expect(alert().textContent).toMatch(/numerator/i);
+    expect(JSON.stringify(composer.doc)).toBe(before);
+    expect(closed).toBe(0);
+  });
+
+  it('sets a valid time signature and closes', () => {
+    // The empty score is in common time, so the popover opens with the box ticked.
+    open('timeSignature');
+    expect(popover.isCommon).toBeTrue();
+
+    popover.numerator = 6;
+    popover.denominator = 8;
+    popover.isCommon = false;
+    popover.applyTimeSignature();
+
+    expect(composer.scoreMeter).toEqual({ numerator: 6, denominator: 8, isCommon: false });
+    expect(closed).toBe(1);
+  });
+
+  it('refuses common time for a meter alphaTab does not draw with a C', () => {
+    open('timeSignature');
+
+    popover.numerator = 3;
+    popover.denominator = 4;
+    popover.isCommon = true;
+    popover.applyTimeSignature();
+
+    expect(popover.fault).toMatch(/4\/4/);
+    expect(closed).toBe(0);
+  });
+
+  it('offers every key and sets the one chosen', () => {
+    open('keySignature');
+    expect(popover.keyChoices.length).toBe(30);
+
+    popover.keyIndex = KEY_SIGNATURE_CHOICES.findIndex(choice => choice.value.fifths === 7 && choice.value.mode === 'minor');
+    popover.applyKeySignature();
+
+    expect(composer.doc.tracks[0].staves[0].bars[0].keySignature).toEqual({ fifths: 7, mode: 'minor' });
+  });
+
+  it('refuses a section with no name, and sets one with a name', () => {
+    open('section');
+
+    popover.sectionText = '   ';
+    popover.applySection();
+    fixture.detectChanges();
+    expect(alert().textContent).toMatch(/name/i);
+
+    popover.sectionText = 'Chorus';
+    popover.sectionMarker = 'B';
+    popover.applySection();
+    expect(composer.doc.masterBars[0].section).toEqual({ marker: 'B', text: 'Chorus' });
+  });
+
+  it('sets alternate endings from the boxes ticked', () => {
+    open('alternateEnding');
+
+    popover.endings[0] = true;
+    popover.endings[1] = true;
+    popover.applyEndings();
+
+    expect(composer.doc.masterBars[0].alternateEndings).toBe(0b11);
+  });
+
+  it('puts the selected beats under the tuplet chosen', () => {
+    // Three quarters, so the 3:2 makes a whole group; fewer is refused (`tupletRefusal`).
+    composer.setCursor({ barIndex: 0, beatIndex: 0 });
+    composer.extendSelectionTo({ barIndex: 0, beatIndex: 2 });
+    open('tuplet');
+
+    popover.applyTuplet({ numerator: 3, denominator: 2 });
+
+    const beats = composer.doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    expect(beats.slice(0, 3).map(beat => beat.tuplet)).toEqual([0, 1, 2].map(() => ({ numerator: 3, denominator: 2 })));
+    expect(closed).toBe(1);
+  });
+});
+```
+
+**Step 2: Run** with
+`--include=src/app/components/composer/components/composer-tool-popover/composer-tool-popover.component.spec.ts`.
+Expected: a compile error, `TS2307: Cannot find module './composer-tool-popover.component'`.
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/components/composer/components/composer-tool-popover/composer-tool-popover.component.ts -->
+```typescript
+import {
+  AfterViewChecked,
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  ElementRef,
+  EventEmitter,
+  Input,
+  OnChanges,
+  Output,
+  SimpleChanges,
+  ViewChild
+} from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+
+import {
+  ClefKind,
+  ComposerState,
+  OttaviaKind,
+  TripletFeelKind,
+  Tuplet,
+  effectiveTimeSignature
+} from '../../../../models/composer.model';
+import { keySignatureFault, timeSignatureFault } from '../../../../services/bar-edits';
+import {
+  CLEF_CHOICES,
+  KEY_SIGNATURE_CHOICES,
+  MAX_ENDING,
+  OTTAVA_CHOICES,
+  TRIPLET_FEEL_CHOICES,
+  endingBitsOf,
+  endingsOf
+} from '../../../../services/composer-bar-choices';
+import { ComposerService } from '../../../../services/composer.service';
+import { TUPLET_CHOICES } from '../../../../services/composer-tool-defaults';
+import { PopoverKind } from '../../../../services/composer-tools';
+
+/** What each popover is called, for its dialog label and heading. */
+const TITLES: Readonly<Record<PopoverKind, string>> = {
+  timeSignature: 'Time signature',
+  keySignature: 'Key signature',
+  clef: 'Clef',
+  section: 'Section',
+  alternateEnding: 'Alternate ending',
+  tuplet: 'Tuplet',
+  tripletFeel: 'Triplet feel'
+};
+
+/** How far a popover keeps from its trigger and from the window's edges, in pixels. */
+const POPOVER_GAP = 6;
+
+/** A box in window coordinates, as `getBoundingClientRect` reports one. */
+export interface ViewportBox {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** Where a popover goes, in window coordinates, and the most it may be tall. */
+export interface PopoverPlacement {
+  left: number;
+  top: number;
+  maxHeight: number;
+}
+
+/**
+ * Where a popover `size` big goes beside a trigger at `anchor`, in a window `viewport` big: right of the
+ * trigger, or left of it when the right has no room; level with the trigger's top, moved up so its bottom
+ * stays in the window; and never taller than the window, which it then scrolls within.
+ */
+export function popoverPlacementOf(
+  anchor: ViewportBox,
+  size: { width: number; height: number },
+  viewport: { width: number; height: number }
+): PopoverPlacement {
+  const maxHeight = Math.max(0, viewport.height - 2 * POPOVER_GAP);
+  const height = Math.min(size.height, maxHeight);
+  const fitsRight = anchor.right + POPOVER_GAP + size.width <= viewport.width - POPOVER_GAP;
+  const left = fitsRight ? anchor.right + POPOVER_GAP : Math.max(POPOVER_GAP, anchor.left - POPOVER_GAP - size.width);
+  const top = Math.max(POPOVER_GAP, Math.min(anchor.top, viewport.height - POPOVER_GAP - height));
+  return { left, top, maxHeight };
+}
+
+/**
+ * The small popover a valued tool opens beside its palette button (design Part 3).
+ *
+ * Validates what it can before committing - the same `timeSignatureFault` and `keySignatureFault` the
+ * service checks, and that a section has a name - and refuses an invalid entry inline, in a region
+ * rendered before there is anything to say. A valid entry commits through `ComposerService` and asks to
+ * close. It holds only the values being typed; the document is the service's.
+ *
+ * Drawn in the top layer (`popover="manual"`), so the palette's scrolling box cannot clip it, and placed
+ * beside its trigger by `popoverPlacementOf`. Opening focuses its first control and closing gives focus
+ * back to the trigger, so a popover opened by a key is as usable from the keyboard as one clicked open.
+ */
+@Component({
+  selector: 'app-composer-tool-popover',
+  standalone: true,
+  imports: [CommonModule, FormsModule],
+  templateUrl: './composer-tool-popover.component.html',
+  styleUrls: ['./composer-tool-popover.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked {
+  @Input() kind: PopoverKind | null = null;
+  @Input() state: ComposerState | null = null;
+  /**
+   * The element holding the triggers - the palette - each a button marked `data-tool` with its tool's id.
+   * The popover is placed beside its kind's trigger, and gives focus back to it when it closes.
+   */
+  @Input() triggers: ParentNode | null = null;
+  @Output() readonly closed = new EventEmitter<void>();
+
+  readonly keyChoices = KEY_SIGNATURE_CHOICES;
+  readonly clefChoices = CLEF_CHOICES;
+  readonly ottavaChoices = OTTAVA_CHOICES;
+  readonly tripletFeelChoices = TRIPLET_FEEL_CHOICES;
+  readonly tupletChoices = TUPLET_CHOICES;
+  readonly endingNumbers = Array.from({ length: MAX_ENDING }, (_, index) => index + 1);
+
+  numerator = 4;
+  denominator = 4;
+  isCommon = false;
+  keyIndex = 7;
+  clef: ClefKind = 'g2';
+  ottava: OttaviaKind = 'regular';
+  sectionText = '';
+  sectionMarker = '';
+  endings: boolean[] = new Array<boolean>(MAX_ENDING).fill(false);
+  tripletFeel: TripletFeelKind = 'none';
+
+  /** Why the entry cannot be applied, shown inline. */
+  fault: string | null = null;
+
+  @ViewChild('panel', { static: true }) private panel?: ElementRef<HTMLElement>;
+
+  /** The kind the popover was last opened for, so it is placed and focused once per opening, not on every check. */
+  private shown: PopoverKind | null = null;
+
+  constructor(
+    private readonly composer: ComposerService,
+    private readonly cdr: ChangeDetectorRef
+  ) {}
+
+  get title(): string {
+    return this.kind ? TITLES[this.kind] : '';
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    // Only a new kind starts the fields again. `state` arrives with every edit and caret move, and reading
+    // it each time would throw away what is being typed.
+    if (!changes['kind']) return;
+    this.fault = null;
+    this.readSelection();
+  }
+
+  /**
+   * Opens, moves or closes the popover once the view shows the kind asked for. After the check rather
+   * than in `ngOnChanges`, so the fields a new kind draws exist to be measured and focused.
+   */
+  ngAfterViewChecked(): void {
+    const panel = this.panel?.nativeElement;
+    if (!panel || this.kind === this.shown) return;
+    const previous = this.shown;
+    this.shown = this.kind;
+
+    if (this.kind === null) {
+      if (panel.matches(':popover-open')) panel.hidePopover();
+      this.triggerOf(previous)?.focus();
+      return;
+    }
+
+    if (!panel.matches(':popover-open')) panel.showPopover();
+    this.place(panel);
+    panel.querySelector<HTMLElement>('input, select, textarea, button')?.focus();
+  }
+
+  /**
+   * Escape closes this popover and nothing else. Claimed with `preventDefault`: the page's keyboard handler
+   * ignores a claimed press, so it does not also go back to Select and drop the range.
+   */
+  onEscape(event: Event): void {
+    event.preventDefault();
+    this.closed.emit();
+  }
+
+  applyTimeSignature(): void {
+    const timeSignature = { numerator: Number(this.numerator), denominator: Number(this.denominator), isCommon: this.isCommon };
+    const commonFault =
+      timeSignature.isCommon && !((timeSignature.numerator === 4 && timeSignature.denominator === 4) || (timeSignature.numerator === 2 && timeSignature.denominator === 2))
+        ? 'Common time is drawn only for 4/4, and cut time only for 2/2.'
+        : null;
+    if (this.refuse(timeSignatureFault(timeSignature) ?? commonFault)) return;
+    this.composer.setTimeSignature(timeSignature);
+    this.closed.emit();
+  }
+
+  applyKeySignature(): void {
+    const choice = this.keyChoices[Number(this.keyIndex)];
+    if (!choice || this.refuse(keySignatureFault(choice.value))) return;
+    this.composer.setKeySignature({ ...choice.value });
+    this.closed.emit();
+  }
+
+  applyClef(): void {
+    this.composer.setClef(this.clef, this.ottava);
+    this.closed.emit();
+  }
+
+  applySection(): void {
+    if (this.refuse(this.sectionText.trim() ? null : 'A section needs a name.')) return;
+    this.composer.setMasterBarValue('section', { marker: this.sectionMarker.trim(), text: this.sectionText.trim() });
+    this.closed.emit();
+  }
+
+  removeSection(): void {
+    this.composer.setMasterBarValue('section', null);
+    this.closed.emit();
+  }
+
+  applyEndings(): void {
+    const chosen = this.endingNumbers.filter((_, index) => this.endings[index]);
+    this.composer.setMasterBarValue('alternateEndings', endingBitsOf(chosen));
+    this.closed.emit();
+  }
+
+  applyTuplet(tuplet: Readonly<Tuplet> | null): void {
+    this.composer.setTuplet(tuplet ? { ...tuplet } : null);
+    this.closed.emit();
+  }
+
+  applyTripletFeel(): void {
+    this.composer.setMasterBarValue('tripletFeel', this.tripletFeel);
+    this.closed.emit();
+  }
+
+  /**
+   * Shows `fault` inline when there is one, and says whether there was. Marks the view: an apply can
+   * arrive from a form submit or from the keyboard, and an OnPush view repaints only when told.
+   */
+  private refuse(fault: string | null): boolean {
+    this.fault = fault;
+    this.cdr.markForCheck();
+    return fault !== null;
+  }
+
+  /** The palette button that opens `kind`, or null. */
+  private triggerOf(kind: PopoverKind | null): HTMLElement | null {
+    return kind ? this.triggers?.querySelector<HTMLElement>(`[data-tool="${kind}"]`) ?? null : null;
+  }
+
+  /**
+   * Places the open popover beside its trigger. Written to the element's style rather than bound: the
+   * placement needs the popover's own size, which exists only after the view is checked, and a binding
+   * changed there would be changed after its check.
+   */
+  private place(panel: HTMLElement): void {
+    const trigger = this.triggerOf(this.kind);
+    if (!trigger) return;
+    panel.style.maxHeight = '';
+    const placement = popoverPlacementOf(trigger.getBoundingClientRect(), panel.getBoundingClientRect(), {
+      width: window.innerWidth,
+      height: window.innerHeight
+    });
+    panel.style.left = `${placement.left}px`;
+    panel.style.top = `${placement.top}px`;
+    panel.style.maxHeight = `${placement.maxHeight}px`;
+  }
+
+  /** Starts every field from the caret's bar, so a popover opens on what is already there. */
+  private readSelection(): void {
+    const state = this.state;
+    if (!state) return;
+    const { barIndex, trackIndex, staffIndex } = state.cursor;
+    const meter = effectiveTimeSignature(state.doc.masterBars, barIndex);
+    this.numerator = meter.numerator;
+    this.denominator = meter.denominator;
+    this.isCommon = meter.isCommon;
+
+    const bar = state.doc.tracks[trackIndex]?.staves[staffIndex]?.bars[barIndex];
+    if (bar) {
+      const key = this.keyChoices.findIndex(choice => choice.value.fifths === bar.keySignature.fifths && choice.value.mode === bar.keySignature.mode);
+      this.keyIndex = key >= 0 ? key : this.keyIndex;
+      this.clef = bar.clef;
+      this.ottava = bar.clefOttava;
+    }
+
+    const masterBar = state.doc.masterBars[barIndex];
+    if (masterBar) {
+      this.sectionText = masterBar.section?.text ?? '';
+      this.sectionMarker = masterBar.section?.marker ?? '';
+      const marked = endingsOf(masterBar.alternateEndings);
+      this.endings = this.endingNumbers.map(ending => marked.includes(ending));
+      this.tripletFeel = masterBar.tripletFeel;
+    }
+  }
+}
+```
+
+<!-- apply: create client/src/app/components/composer/components/composer-tool-popover/composer-tool-popover.component.html -->
+```html
+<!--
+  `popover="manual"`: drawn in the top layer when shown, above the palette's scrolling box, which would clip
+  it otherwise; manual, so the browser neither light-dismisses it nor takes Escape - `onEscape` does, and
+  claims the key.
+-->
+<div #panel class="popover" popover="manual" role="dialog" [attr.aria-label]="title" (keydown.escape)="onEscape($event)">
+  <h3 class="popover-title">{{ title }}</h3>
+
+  <ng-container [ngSwitch]="kind">
+    <form *ngSwitchCase="'timeSignature'" (ngSubmit)="applyTimeSignature()">
+      <div class="fields">
+        <label>Top <input type="number" min="1" max="32" name="numerator" [(ngModel)]="numerator" /></label>
+        <label>Bottom
+          <select name="denominator" [(ngModel)]="denominator">
+            <option *ngFor="let value of [1, 2, 4, 8, 16, 32]" [ngValue]="value">{{ value }}</option>
+          </select>
+        </label>
+      </div>
+      <label class="check"><input type="checkbox" name="isCommon" [(ngModel)]="isCommon" /> Draw as common or cut time</label>
+      <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
+    </form>
+
+    <form *ngSwitchCase="'keySignature'" (ngSubmit)="applyKeySignature()">
+      <label>Key
+        <select name="key" [(ngModel)]="keyIndex">
+          <option *ngFor="let choice of keyChoices; let index = index" [ngValue]="index">{{ choice.label }}</option>
+        </select>
+      </label>
+      <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
+    </form>
+
+    <form *ngSwitchCase="'clef'" (ngSubmit)="applyClef()">
+      <label>Clef
+        <select name="clef" [(ngModel)]="clef">
+          <option *ngFor="let choice of clefChoices" [ngValue]="choice.value">{{ choice.label }}</option>
+        </select>
+      </label>
+      <label>Octave
+        <select name="ottava" [(ngModel)]="ottava">
+          <option *ngFor="let choice of ottavaChoices" [ngValue]="choice.value">{{ choice.label }}</option>
+        </select>
+      </label>
+      <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
+    </form>
+
+    <form *ngSwitchCase="'section'" (ngSubmit)="applySection()">
+      <label>Name <input type="text" name="sectionText" [(ngModel)]="sectionText" /></label>
+      <label>Mark <input type="text" name="sectionMarker" maxlength="3" [(ngModel)]="sectionMarker" /></label>
+      <div class="actions">
+        <button type="submit" class="text-btn">Apply</button>
+        <button type="button" class="text-btn" (click)="removeSection()">Remove</button>
+        <button type="button" class="text-btn" (click)="closed.emit()">Cancel</button>
+      </div>
+    </form>
+
+    <form *ngSwitchCase="'alternateEnding'" (ngSubmit)="applyEndings()">
+      <fieldset class="endings">
+        <legend>Played on repeat</legend>
+        <label class="check" *ngFor="let ending of endingNumbers; let index = index">
+          <input type="checkbox" [name]="'ending' + ending" [(ngModel)]="endings[index]" /> {{ ending }}
+        </label>
+      </fieldset>
+      <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
+    </form>
+
+    <div *ngSwitchCase="'tuplet'" class="actions tuplets">
+      <button type="button" class="text-btn" *ngFor="let tuplet of tupletChoices" (click)="applyTuplet(tuplet)">
+        {{ tuplet.numerator }}:{{ tuplet.denominator }}
+      </button>
+      <button type="button" class="text-btn" (click)="applyTuplet(null)">None</button>
+    </div>
+
+    <form *ngSwitchCase="'tripletFeel'" (ngSubmit)="applyTripletFeel()">
+      <label>Feel
+        <select name="tripletFeel" [(ngModel)]="tripletFeel">
+          <option *ngFor="let choice of tripletFeelChoices" [ngValue]="choice.value">{{ choice.label }}</option>
+        </select>
+      </label>
+      <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
+    </form>
+  </ng-container>
+
+  <!-- Always rendered: an alert region inserted already holding its message is the case screen readers miss. -->
+  <p class="fault" role="alert">{{ fault }}</p>
+</div>
+```
+
+<!-- apply: create client/src/app/components/composer/components/composer-tool-popover/composer-tool-popover.component.scss -->
+```scss
+// A valued tool's popover: in the top layer, placed beside its palette button in window coordinates.
+
+.popover {
+  // The `popover` attribute's own styles centre it in the window with a margin; it is placed by
+  // `popoverPlacementOf` instead, which writes `left`, `top` and `max-height`.
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  width: 15rem;
+  overflow-y: auto;
+  padding: 0.6rem;
+  background-color: var(--composer-nav, #2c3e50);
+  color: var(--composer-text, #ecf0f1);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.popover-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+}
+
+form,
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.fields {
+  flex-direction: row;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--composer-text-secondary, #bdc3c7);
+}
+
+label.check {
+  flex-direction: row;
+  align-items: center;
+}
+
+input[type='number'],
+input[type='text'],
+select {
+  min-width: 0;
+  padding: 0.25rem 0.35rem;
+  background-color: var(--composer-nav-secondary, #34495e);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+  color: var(--composer-text, #ecf0f1);
+}
+
+.endings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.6rem;
+  margin: 0;
+  padding: 0.3rem;
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+
+  legend {
+    font-size: 0.72rem;
+    color: var(--composer-text-secondary, #bdc3c7);
+  }
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.2rem;
+}
+
+.text-btn {
+  background-color: var(--composer-nav-secondary, #34495e);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+  color: var(--composer-text, #ecf0f1);
+  cursor: pointer;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.75rem;
+
+  &:hover {
+    background-color: var(--composer-accent, #3498db);
+  }
+}
+
+.fault {
+  margin: 0.4rem 0 0;
+  font-size: 0.72rem;
+  color: var(--composer-warning, #f39c12);
+
+  &:empty {
+    margin: 0;
+  }
+}
+```
+
+**Step 4: Run it.** Expected: 15 SUCCESS.
+
+**Step 5: Commit**: `feat: Popovers for the composer tools that take a value, in the top layer and reachable by keyboard`.
+
+### Task 3.6: The palette
+
+The palette draws a button for every palette tool in `COMPOSER_TOOLS`, grouped in the design's order,
+and reads what each shows from `toolStates(doc, anchor, cursor, entryMode)`:
+
+- **What a button says about being pressed follows its tool's `kind`.** A `toggle` or a `radio` - the
+  note values, and Select and Pen - says `aria-pressed`: `true`, `false` or `mixed`. A `popover` tool says
+  `aria-haspopup="dialog"` and `aria-expanded`, and no `aria-pressed`. An `action` - Fix bar, insert and
+  delete bar, Natural, Respell, Rest - says neither.
+- A tool `toolStates` refuses says `aria-disabled="true"`, and its accessible name and tooltip carry the
+  reason. It stays pressable: the command refuses by itself and publishes the reason to the status line,
+  which is the M4 rule that the gate is a refusal, not a disabled button.
+- Each tooltip ends with the tool's shortcut, read from the same table the keyboard reads.
+- Buttons are Bravura glyphs where SMuFL has one. An `@font-face` in the palette's component styles
+  points at `/font/Bravura.woff2`, which `angular.json` already serves from
+  `node_modules/@coderline/alphatab/dist/font`, with `Bravura.woff` as the fallback. Test builds do not
+  load fonts, so no spec depends on how a glyph renders.
+- The palette scrolls vertically and never sideways (`overflow-x: hidden`) - which is why its one popover
+  (Task 3.5) is drawn in the top layer rather than beside its button inside this box, and finds its
+  button through the palette's host element and the `data-tool` attribute.
+
+**Files:**
+- Create: `client/src/app/components/composer/components/composer-palette/composer-palette.component.ts`,
+  `.html`, `.scss`
+- Test: `client/src/app/components/composer/components/composer-palette/composer-palette.component.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/components/composer/components/composer-palette/composer-palette.component.spec.ts -->
+```typescript
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+
+import { ComposerPaletteComponent, PaletteButton, paletteGroupsOf } from './composer-palette.component';
+import { ComposerService } from '../../../../services/composer.service';
+import { COMPOSER_TOOLS, ComposerTool } from '../../../../services/composer-tools';
+
+describe('paletteGroupsOf', () => {
+  let composer: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    composer = TestBed.inject(ComposerService);
+  });
+
+  const buttonFor = (id: string): PaletteButton => {
+    const found = paletteGroupsOf(composer.state).flatMap(group => group.buttons).find(button => button.tool.id === id);
+    if (!found) throw new Error(`no button ${id}`);
+    return found;
+  };
+
+  it('draws every palette tool once, in the design\'s groups', () => {
+    const groups = paletteGroupsOf(composer.state);
+
+    expect(groups.map(group => group.group)).toEqual(['Tools', 'Duration', 'Bar', 'Accidentals', 'Dynamics', 'Articulation', 'Techniques']);
+    expect(groups.flatMap(group => group.buttons).length).toBe(COMPOSER_TOOLS.filter(tool => tool.inPalette).length);
+  });
+
+  it('says a toggle is mixed across a range', () => {
+    composer.setCursor({ beatIndex: 0, stringIndex: 0 });
+    composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
+    composer.toggleNoteEffect('isGhost', true, false);
+    composer.setCursor({ beatIndex: 1 });
+    composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 5 }, false);
+    composer.setCursor({ beatIndex: 0 });
+    composer.extendSelectionTo({ beatIndex: 1 });
+
+    expect(buttonFor('ghost').pressed).toBe('mixed');
+  });
+
+  it('carries a refusal in the name and the tooltip, and the shortcut in the tooltip', () => {
+    const ghost = buttonFor('ghost');
+
+    expect(ghost.refusal).toMatch(/note/i);
+    expect(ghost.label).toContain('unavailable');
+    expect(ghost.tooltip).toContain('(O)');
+    expect(ghost.tooltip).toContain(ghost.refusal ?? '');
+  });
+
+  it('says pressed only for toggles and radios: Select from the entry mode, never a popover tool or an action', () => {
+    expect(buttonFor('select').pressed).toBe('true');
+    expect(buttonFor('pen').pressed).toBe('false');
+    expect(buttonFor('quarter').pressed).toBe('true');
+    expect(buttonFor('timeSignature').pressed).toBeNull();
+    expect(buttonFor('timeSignature').opensPopover).toBeTrue();
+    expect(buttonFor('fixBar').pressed).toBeNull();
+    expect(buttonFor('fixBar').opensPopover).toBeFalse();
+
+    composer.setEntryMode('pen');
+    expect(buttonFor('pen').pressed).toBe('true');
+  });
+
+  it('writes a SMuFL glyph as its character, and text as it is', () => {
+    expect(buttonFor('quarter').face).toBe(String.fromCodePoint(0xe1d5));
+    expect(buttonFor('quarter').smufl).toBeTrue();
+    expect(buttonFor('hammerOn').face).toBe('H');
+  });
+});
+
+describe('ComposerPaletteComponent', () => {
+  let fixture: ComponentFixture<ComposerPaletteComponent>;
+  let composer: ComposerService;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({ imports: [ComposerPaletteComponent] }).compileComponents();
+    composer = TestBed.inject(ComposerService);
+    fixture = TestBed.createComponent(ComposerPaletteComponent);
+    fixture.componentRef.setInput('state', composer.state);
+    fixture.detectChanges();
+  });
+
+  const button = (id: string): HTMLButtonElement => fixture.nativeElement.querySelector(`[data-tool="${id}"]`);
+
+  it('names each button, says pressed by kind, and says refusing with aria-disabled while staying focusable', () => {
+    expect(button('quarter').getAttribute('aria-label')).toBe('Quarter note');
+    expect(button('quarter').getAttribute('aria-pressed')).toBe('true');
+    expect(button('ghost').getAttribute('aria-disabled')).toBe('true');
+    expect(button('ghost').disabled).toBeFalse();
+
+    expect(button('clef').getAttribute('aria-pressed')).toBeNull();
+    expect(button('clef').getAttribute('aria-haspopup')).toBe('dialog');
+    expect(button('clef').getAttribute('aria-expanded')).toBe('false');
+
+    expect(button('fixBar').getAttribute('aria-pressed')).toBeNull();
+    expect(button('fixBar').getAttribute('aria-haspopup')).toBeNull();
+    expect(button('fixBar').getAttribute('aria-expanded')).toBeNull();
+  });
+
+  it('asks the page to run a pressed tool, refused or not', () => {
+    const pressed: ComposerTool[] = [];
+    fixture.componentInstance.toolPressed.subscribe((tool: ComposerTool) => pressed.push(tool));
+
+    button('rest').click();
+    button('ghost').click();
+
+    expect(pressed.map(tool => tool.id)).toEqual(['rest', 'ghost']);
+  });
+
+  it('opens the popover of its kind in the top layer, says so on its button, and focuses it', () => {
+    fixture.componentRef.setInput('popover', 'clef');
+    fixture.detectChanges();
+
+    const open: HTMLElement | null = fixture.nativeElement.querySelector('.popover:popover-open');
+    expect(button('clef').getAttribute('aria-expanded')).toBe('true');
+    expect(open?.getAttribute('aria-label')).toBe('Clef');
+    expect(open?.contains(document.activeElement)).toBeTrue();
+  });
+});
+```
+
+**Step 2: Run** with
+`--include=src/app/components/composer/components/composer-palette/composer-palette.component.spec.ts`.
+Expected: compile errors, `TS2307: Cannot find module './composer-palette.component'`, and `TS7006`
+for the untyped `group` and `button` parameters that follow from it.
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/components/composer/components/composer-palette/composer-palette.component.ts -->
+```typescript
+import {
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  EventEmitter,
+  Input,
+  OnChanges,
+  Output,
+  SimpleChanges,
+  inject
+} from '@angular/core';
+import { CommonModule } from '@angular/common';
+
+import { ComposerToolPopoverComponent } from '../composer-tool-popover/composer-tool-popover.component';
+import { ComposerState } from '../../../../models/composer.model';
+import { bindingLabelOf } from '../../../../services/composer-key-bindings';
+import { IDLE_TOOL, ToolState, toolStates } from '../../../../services/composer-tool-states';
+import { COMPOSER_TOOLS, ComposerTool, PALETTE_GROUPS, PopoverKind, ToolGroup } from '../../../../services/composer-tools';
+
+/** One palette button, as the template draws it. */
+export interface PaletteButton {
+  tool: ComposerTool;
+  /** The glyph's character, or the tool's text. */
+  face: string;
+  /** Whether `face` is a Bravura glyph. */
+  smufl: boolean;
+  /** The accessible name: the tool's label, and why it is refusing when it is. */
+  label: string;
+  /** The label, the shortcut, and any refusal. */
+  tooltip: string;
+  /** `aria-pressed`, for a toggle or a radio; null for a popover tool or an action, which have none. */
+  pressed: 'true' | 'false' | 'mixed' | null;
+  /** Whether a popover tool's value is set on the selection - a cue for styling, since it has no pressed state. */
+  hasValue: boolean;
+  refusal: string | null;
+  /** Whether it opens a popover, and so says `aria-haspopup` and `aria-expanded`. */
+  opensPopover: boolean;
+}
+
+export interface PaletteGroup {
+  group: ToolGroup;
+  buttons: PaletteButton[];
+}
+
+function buttonOf(tool: ComposerTool, states: ReadonlyMap<string, ToolState>): PaletteButton {
+  const toolState = states.get(tool.id) ?? IDLE_TOOL;
+  // Select and Pen have no key of their own; the key that reaches them is Q.
+  const isMode = tool.id === 'select' || tool.id === 'pen';
+  const shortcut = isMode ? 'Q toggles Select and Pen' : tool.keys.map(bindingLabelOf).join(' or ');
+  const pressable = tool.kind === 'toggle' || tool.kind === 'radio';
+  const pressed = toolState.pressed === 'mixed' ? 'mixed' : toolState.pressed ? 'true' : 'false';
+
+  return {
+    tool,
+    face: tool.glyph.kind === 'smufl' ? String.fromCodePoint(tool.glyph.codePoint) : tool.glyph.text,
+    smufl: tool.glyph.kind === 'smufl',
+    label: toolState.refusal ? `${tool.label}, unavailable: ${toolState.refusal}` : tool.label,
+    tooltip: `${tool.label}${shortcut ? ` (${shortcut})` : ''}${toolState.refusal ? ` - unavailable: ${toolState.refusal}` : ''}`,
+    pressed: pressable ? pressed : null,
+    hasValue: tool.kind === 'popover' && toolState.pressed !== false,
+    refusal: toolState.refusal,
+    opensPopover: tool.kind === 'popover'
+  };
+}
+
+/** The palette's groups and buttons for `state`, from the tool table and `toolStates`. */
+export function paletteGroupsOf(state: ComposerState, tools: readonly ComposerTool[] = COMPOSER_TOOLS): PaletteGroup[] {
+  const states = toolStates(state.doc, state.anchor, state.cursor, state.entryMode);
+  return PALETTE_GROUPS.map(group => ({
+    group,
+    buttons: tools.filter(tool => tool.inPalette && tool.group === group).map(tool => buttonOf(tool, states))
+  }));
+}
+
+/**
+ * Every notation tool as a button, in the design's groups (design Part 3, "Palette").
+ *
+ * Draws from `COMPOSER_TOOLS` and `toolStates`, computed once per state change rather than in the
+ * template. A press is handed to the page, which runs the tool with its host exactly as a key press
+ * does, so a button and its key cannot differ. The one popover is drawn in the top layer, because this
+ * box scrolls and would clip it; it finds its button here, by `data-tool`.
+ */
+@Component({
+  selector: 'app-composer-palette',
+  standalone: true,
+  imports: [CommonModule, ComposerToolPopoverComponent],
+  templateUrl: './composer-palette.component.html',
+  styleUrls: ['./composer-palette.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class ComposerPaletteComponent implements OnChanges {
+  @Input() state: ComposerState | null = null;
+  /** The popover open, if any: the page holds it, since a key can open one too. */
+  @Input() popover: PopoverKind | null = null;
+  @Output() readonly toolPressed = new EventEmitter<ComposerTool>();
+  @Output() readonly popoverClosed = new EventEmitter<void>();
+
+  /** This palette's element, where the popover looks for the button that opened it. */
+  readonly element: HTMLElement = inject(ElementRef<HTMLElement>).nativeElement;
+
+  groups: PaletteGroup[] = [];
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['state']) this.groups = this.state ? paletteGroupsOf(this.state) : [];
+  }
+
+  press(button: PaletteButton): void {
+    this.toolPressed.emit(button.tool);
+  }
+
+  trackByGroup(_index: number, group: PaletteGroup): string {
+    return group.group;
+  }
+
+  trackByTool(_index: number, button: PaletteButton): string {
+    return button.tool.id;
+  }
+}
+```
+
+<!-- apply: create client/src/app/components/composer/components/composer-palette/composer-palette.component.html -->
+```html
+<nav class="palette" aria-label="Notation tools">
+  <section class="group" *ngFor="let group of groups; trackBy: trackByGroup">
+    <h2 class="group-heading">{{ group.group }}</h2>
+    <div class="buttons">
+      <!--
+        `aria-disabled` rather than `disabled`: a refusing tool keeps its focus and its tooltip, and a
+        press still runs the command, which refuses and says why in the status line. `aria-pressed` only
+        where the tool's kind has a pressed state; `aria-haspopup` and `aria-expanded` only where it opens
+        a popover.
+      -->
+      <button
+        *ngFor="let button of group.buttons; trackBy: trackByTool"
+        type="button"
+        class="tool"
+        [class.smufl]="button.smufl"
+        [class.on]="button.pressed === 'true' || button.hasValue"
+        [class.mixed]="button.pressed === 'mixed'"
+        [attr.data-tool]="button.tool.id"
+        [attr.aria-label]="button.label"
+        [title]="button.tooltip"
+        [attr.aria-pressed]="button.pressed"
+        [attr.aria-disabled]="button.refusal ? 'true' : null"
+        [attr.aria-haspopup]="button.opensPopover ? 'dialog' : null"
+        [attr.aria-expanded]="button.opensPopover ? popover === button.tool.id : null"
+        (click)="press(button)"
+      >{{ button.face }}</button>
+    </div>
+  </section>
+
+  <!-- One popover for every valued tool, in the top layer when open. See ComposerToolPopoverComponent. -->
+  <app-composer-tool-popover
+    [kind]="popover"
+    [state]="state"
+    [triggers]="element"
+    (closed)="popoverClosed.emit()"
+  ></app-composer-tool-popover>
+</nav>
+```
+
+<!-- apply: create client/src/app/components/composer/components/composer-palette/composer-palette.component.scss -->
+```scss
+// The notation palette: every tool as a button, Bravura glyphs where SMuFL has one.
+
+// alphaTab serves Bravura at /font (angular.json copies node_modules/@coderline/alphatab/dist/font
+// there). A @font-face is not encapsulated, so declaring it here registers the family for the page.
+@font-face {
+  font-family: 'Bravura';
+  src: url('/font/Bravura.woff2') format('woff2'), url('/font/Bravura.woff') format('woff');
+  font-display: block;
+}
+
+// Scrolls vertically, never sideways. The popover is in the top layer, so this box does not clip it.
+:host {
+  display: block;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background-color: var(--composer-nav, #2c3e50);
+  border-right: 1px solid var(--composer-border, #465666);
+}
+
+.palette {
+  padding: 0.5rem;
+}
+
+.group + .group {
+  margin-top: 0.6rem;
+}
+
+.group-heading {
+  margin: 0 0 0.3rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--composer-text-secondary, #bdc3c7);
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2.3rem, 1fr));
+  gap: 0.25rem;
+}
+
+.tool {
+  width: 100%;
+  height: 2.3rem;
+  padding: 0;
+  overflow: hidden;
+  background-color: var(--composer-nav-secondary, #34495e);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+  color: var(--composer-text, #ecf0f1);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  white-space: nowrap;
+
+  &.smufl {
+    // Bravura's glyphs sit on the baseline with a tall ascent, so they are drawn larger and nudged
+    // down to sit in the middle of the button.
+    font-family: 'Bravura', serif;
+    font-size: 1.35rem;
+    padding-top: 0.55rem;
+  }
+
+  &:hover:not([aria-disabled='true']) {
+    background-color: var(--composer-accent, #3498db);
+  }
+
+  &.on {
+    background-color: var(--composer-accent, #3498db);
+    border-color: var(--composer-accent-hover, #2980b9);
+  }
+
+  &.mixed {
+    box-shadow: inset 0 -3px 0 var(--composer-accent, #3498db);
+  }
+
+  &[aria-disabled='true'] {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--composer-text, #ecf0f1);
+    outline-offset: 1px;
+  }
+}
+```
+
+**Step 4: Run it.** Expected: 8 SUCCESS.
+
+**Step 5: Commit**: `feat: The composer palette, drawn from the tool table`.
+
+### Task 3.7: The track strip, with the generated-track controls and their specs
+
+The Tracks panel's rows move to a bottom strip, a row per track: name, remove, and a generated track's
+badge, status, Update and Flatten; then the add-track controls - instrument, Add track, and "Add
+progression track" (decision 3). The markup keeps every selector and label the M4 specs pin, and the
+code moves with it unchanged, comments included. `composer.component.spec.ts` moves with the markup it
+tests, to `composer-track-strip.component.spec.ts`: the same tests, now against the strip. Mixer, bar grid
+and inspector stay M3.
+
+`ComposerComponent` keeps its old Tracks panel until Task 3.10 replaces its template, so this task
+compiles and the suite stays green on its own.
+
+**Files:**
+- Create: `client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.ts`,
+  `.html`, `.scss`
+- Move: `client/src/app/components/composer/composer.component.spec.ts` to
+  `client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.spec.ts`
+
+**Step 1: Move the spec and point it at the strip.** The move:
+
+<!-- apply: move client/src/app/components/composer/composer.component.spec.ts client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.spec.ts -->
+
+```bash
+git mv client/src/app/components/composer/composer.component.spec.ts client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.spec.ts
+```
+
+Its imports:
+
+<!-- apply: find client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.spec.ts -->
+```typescript
+import { Component } from '@angular/core';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+
+import { ComposerComponent } from './composer.component';
+import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
+import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
+import { ComposerService } from '../../services/composer.service';
+import { ProgressionService } from '../../services/progression.service';
+import { TrackDoc } from '../../models/composer.model';
+
+/**
+ * The Tracks panel, and the four controls a generated track adds to it.
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.spec.ts -->
+```typescript
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+
+import { ComposerTrackStripComponent } from './composer-track-strip.component';
+import { ComposerService } from '../../../../services/composer.service';
+import { ProgressionService } from '../../../../services/progression.service';
+import { TrackDoc } from '../../../../models/composer.model';
+
+/**
+ * The track strip, and the four controls a generated track adds to a row.
+```
+
+The stubs are no longer needed - the strip has no score or library child:
+
+<!-- apply: find client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.spec.ts -->
+```typescript
+ * ## The two children are stubbed
+ *
+ * `ComposerScoreComponent` owns the alphaTab instance and engraves on
+ * `AfterViewInit`; `ComposerLibraryPanelComponent` reads IndexedDB. Neither is
+ * involved in a track row, and building either for real would make every test
+ * in this file depend on a renderer and a database. `overrideComponent` swaps
+ * both for empty standalone components wearing the same selectors, so the
+ * template still compiles against known elements rather than a loosened schema.
+ */
+@Component({ selector: 'app-composer-score', standalone: true, template: '' })
+class StubScoreComponent {}
+
+@Component({ selector: 'app-composer-library-panel', standalone: true, template: '' })
+class StubLibraryPanelComponent {}
+
+describe('ComposerComponent tracks panel', () => {
+  let fixture: ComponentFixture<ComposerComponent>;
+  let component: ComposerComponent;
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.spec.ts -->
+```typescript
+ * ## Where these came from
+ *
+ * These were `composer.component.spec.ts` until M2 moved the Tracks panel out of
+ * the page and into this strip. They moved with the markup unchanged, so every
+ * selector, status string and label pattern M4 pinned is still pinned; only the
+ * fixture changed. The strip has no alphaTab or IndexedDB child, so nothing is
+ * stubbed.
+ */
+describe('ComposerTrackStripComponent', () => {
+  let fixture: ComponentFixture<ComposerTrackStripComponent>;
+  let component: ComposerTrackStripComponent;
+```
+
+<!-- apply: find client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.spec.ts -->
+```typescript
+    await TestBed.configureTestingModule({
+      imports: [ComposerComponent]
+    })
+      .overrideComponent(ComposerComponent, {
+        remove: { imports: [ComposerScoreComponent, ComposerLibraryPanelComponent] },
+        add: { imports: [StubScoreComponent, StubLibraryPanelComponent] }
+      })
+      .compileComponents();
+
+    composer = TestBed.inject(ComposerService);
+    progression = TestBed.inject(ProgressionService);
+
+    fixture = TestBed.createComponent(ComposerComponent);
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.spec.ts -->
+```typescript
+    await TestBed.configureTestingModule({
+      imports: [ComposerTrackStripComponent]
+    }).compileComponents();
+
+    composer = TestBed.inject(ComposerService);
+    progression = TestBed.inject(ProgressionService);
+
+    fixture = TestBed.createComponent(ComposerTrackStripComponent);
+```
+
+**Step 2: Run** with
+`--include=src/app/components/composer/components/composer-track-strip/composer-track-strip.component.spec.ts`.
+Expected: a compile error, `TS2307: Cannot find module './composer-track-strip.component'`.
+
+**Step 3: Implement.** The strip carries over, from `composer.component.ts`, the instrument options,
+`addTrack`, `removeTrack`, `selectTrack`, every generated-track method and the section comment above
+them, and `trackByIndex`:
+
+<!-- apply: create client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.ts -->
+```typescript
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, OnDestroy, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { Subject, takeUntil } from 'rxjs';
+
+import { ComposerState, TrackDoc } from '../../../../models/composer.model';
+import { ProgressionState } from '../../../../models/progression.model';
+import { ComposerService } from '../../../../services/composer.service';
+import { ProgressionService } from '../../../../services/progression.service';
+import {
+  GeneratedTrackState,
+  generatedTrackState,
+  progressionLabel,
+  progressionTrack
+} from '../../../../services/progression-track';
+
+interface InstrumentOption {
+  name: string;
+  program: number;
+  fretted: boolean;
+}
+
+/**
+ * How one generated row stands to the progression that is open.
+ *
+ * `GeneratedTrackState` answers this for a score and a progression as a *pair*,
+ * which is one answer short of what a row has to draw: it splits `'stale'` into
+ * neither of its two halves, and it has no word at all for a row built from
+ * some progression other than the one open, because from its point of view that
+ * score holds nothing of this progression. This is that answer widened by the
+ * two facts the row knows and the pair does not - which marker this row carries,
+ * and what kind of source it names.
+ *
+ * Still derived from `generatedTrackState` rather than computed beside it. The
+ * splitting is a *reading* of the one answer, not a second opinion about it, so
+ * the enabled/refused line stays where every other caller reads it.
+ */
+type GeneratedRowState = 'current' | 'behind' | 'moved' | 'foreign';
+
+/**
+ * The track strip along the bottom of the composer: a row per track, and adding one.
+ *
+ * Moved out of `ComposerComponent` in M2 (design Part 3, "Track strip"), with the progression track's
+ * badge, status, Update and Flatten and every comment that argues them, unchanged. The mixer - mute,
+ * solo, volume, pan - and the bar grid are M3's. The page asks it to add a track from the keyboard, so
+ * `addTrack` uses the instrument chosen here either way.
+ */
+@Component({
+  selector: 'app-composer-track-strip',
+  standalone: true,
+  imports: [CommonModule, FormsModule],
+  templateUrl: './composer-track-strip.component.html',
+  styleUrls: ['./composer-track-strip.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class ComposerTrackStripComponent implements OnInit, OnDestroy {
+  private readonly destroy$ = new Subject<void>();
+
+  state: ComposerState | null = null;
+
+  /**
+   * The progression this page can send, or null before the first publish.
+   *
+   * Held rather than read on demand because the rows ask about it on every
+   * change-detection pass - the badge, the row's status, whether Update and the
+   * strip's own send button are refusing, and all four of their labels come from
+   * it - and `OnPush` needs the answer to change in step with the subscription
+   * that delivered it.
+   */
+  progressionState: ProgressionState | null = null;
+
+  readonly instruments: InstrumentOption[] = [
+    { name: 'Acoustic Guitar', program: 25, fretted: true },
+    { name: 'Electric Guitar', program: 27, fretted: true },
+    { name: 'Bass', program: 33, fretted: true },
+    { name: 'Piano', program: 0, fretted: false },
+    { name: 'Strings', program: 48, fretted: false },
+    { name: 'Flute', program: 73, fretted: false },
+    { name: 'Trumpet', program: 56, fretted: false }
+  ];
+
+  newTrackInstrument: InstrumentOption = this.instruments[3];
+
+  constructor(
+    private readonly composer: ComposerService,
+    private readonly progression: ProgressionService,
+    private readonly cdr: ChangeDetectorRef
+  ) {}
+
+  ngOnInit(): void {
+    this.composer
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(state => {
+        this.state = state;
+        this.cdr.markForCheck();
+      });
+
+    // The `markForCheck` here is not held by the suite, and saying so is
+    // cheaper than a test that would pin it. `fixture.detectChanges()` refreshes
+    // the fixture's own view whether or not it was marked dirty, so deleting
+    // this line leaves every test in the strip's spec green while the rows stop
+    // repainting in the app. What keeps the risk small is that the two pages are
+    // separate routes: a progression cannot be edited while this component is
+    // alive today, so the only emission it currently sees is the synchronous
+    // first one, which arrives before the first render anyway. A progression
+    // editable beside the score - a split view, or the library this feature is
+    // heading for - is what would make the line load-bearing, and is when it is
+    // worth a test that drives change detection itself.
+    this.progression
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(state => {
+        this.progressionState = state;
+        this.cdr.markForCheck();
+      });
+  }
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  /** Adds a track of the chosen instrument. The keyboard's Ctrl+Shift+Insert comes here too. */
+  addTrack(): void {
+    const instrument = this.newTrackInstrument;
+    this.composer.addTrack(instrument.name, instrument.program, instrument.fretted);
+  }
+
+  removeTrack(index: number): void {
+    this.composer.removeTrack(index);
+  }
+
+  selectTrack(index: number): void {
+    this.composer.setCursor({ trackIndex: index, staffIndex: 0 });
+  }
+
+  // -------------------------------------------------------------------------
+  // The progression's track
+  //
+  // ## Where the state is said, and what the two buttons do about it
+  //
+  // Three facts settle the shape of everything below, and the first two were
+  // found by review rather than by design.
+  //
+  // A `disabled` button hides its own explanation from nearly everybody. It is
+  // out of the tab order, so its `aria-label` cannot be reached by focus, and
+  // browsers suppress `title` on it - so the sentence explaining *why* Update
+  // is greyed out reached only a screen-reader user browsing the page outside
+  // focus order. That is the smallest audience of the three who need it.
+  //
+  // And a refusal one button makes is not a refusal the strip makes. "Add
+  // progression track" is the same `sendProgression` call, so pressing it on an
+  // up-to-date track committed a byte-identical merge - an undo entry and a
+  // dirty document for no visible change - which is exactly what the Update
+  // beside it was greyed out to prevent.
+  //
+  // So: **the state is said on the row, in words, where nothing has to be
+  // focused to read it**; both buttons refuse on one reading of that state; and
+  // both refuse with `aria-disabled` plus an early return rather than with
+  // `disabled`, which keeps them focusable, keeps the tooltip, and leaves the
+  // reason reachable by every route. The early return is what makes the refusal
+  // real - `aria-disabled` is advisory, so a handler that ignored it would let
+  // a click through the announcement.
+  //
+  // The alternative considered was relabelling the strip's button ("Update
+  // progression track" when the score already holds it). It was rejected: the
+  // word on a button is what a speech-input user says to press it, so a caption
+  // that changes underneath the state is a control whose name moves, and the
+  // row already carries an Update whose whole job is that case.
+  // -------------------------------------------------------------------------
+
+  /**
+   * What this score holds of the progression that is open, or null before the
+   * first publish.
+   *
+   * The single reading every control below is derived from: whether either
+   * button refuses, what each of the four labels says, and what the row's
+   * status shows. Deriving them rather than each asking `generatedTrackState`
+   * on its own terms is what stops the strip refusing a press for one reason
+   * and explaining it with another.
+   *
+   * Null is the pre-publish state and it is not reachable today - `getState()`
+   * is a `BehaviorSubject` and emits synchronously inside `ngOnInit`, so the
+   * field is set before the first render. It is a branch rather than a `!`
+   * because a page that could be opened without a progression is the cheaper
+   * thing to keep true than to prove impossible.
+   */
+  private sendState(): GeneratedTrackState | null {
+    if (!this.state || !this.progressionState) return null;
+
+    return generatedTrackState(this.state.doc, this.progressionState.doc);
+  }
+
+  /**
+   * Whether "Add progression track" would change the score.
+   *
+   * `'current'` is the one answer that refuses, and it refuses for the reason
+   * the section comment gives: the merge would be byte-identical, so the press
+   * would spend an undo entry and the dirty flag on nothing. `'absent'` adds and
+   * `'stale'` refreshes, and both are real changes.
+   */
+  canAddProgressionTrack(): boolean {
+    const state = this.sendState();
+
+    return state !== null && state !== 'current';
+  }
+
+  /**
+   * What the strip's send button is offering, in a sentence that starts with
+   * the words printed on it.
+   *
+   * Leading with the visible label is WCAG 2.1 SC 2.5.3 and not house style: an
+   * accessible name that does not contain the visible one is a control a
+   * speech-input user cannot address by the name they can see. The old label -
+   * "Add the current progression to this score as a track" - shared no phrase
+   * with "Add progression track", so saying the words on the button matched
+   * nothing.
+   */
+  addProgressionTrackLabel(): string {
+    const state = this.progressionState;
+    if (!state) return 'Add progression track: there is no progression to add yet';
+
+    const from = progressionLabel(state.doc.name);
+
+    switch (this.sendState()) {
+      case 'stale':
+        return `Add progression track: refreshes the copy of ${from} this score already holds`;
+      case 'current':
+        return `Add progression track: this score already holds ${from} as it stands`;
+      default:
+        return `Add progression track: puts ${from} into this score as a track`;
+    }
+  }
+
+  /**
+   * Puts the progression into the score, or refreshes the copy already in it.
+   *
+   * "Add progression track" and a row's Update are one call, because
+   * `sendProgression` is one command: the merge appends when the score holds
+   * nothing of this progression and replaces it in place when it does, so the
+   * difference is a fact about the score rather than a choice this component
+   * makes. The progression page's Send is the third button over the same call -
+   * the push is where the user made the thing, the pull is where it will
+   * appear, and the design doc settles that under "Where the controls are".
+   *
+   * The guard is `canAddProgressionTrack` and not a null check, because
+   * `aria-disabled` only says a control is refusing - it does not stop the
+   * click, and the handler is where the refusal is actually made.
+   */
+  addProgressionTrack(): void {
+    // The refusal is the second half; the first is only how a null field
+    // becomes a `ProgressionState` below, since `canAddProgressionTrack`
+    // already answers false for it.
+    const state = this.progressionState;
+    if (!state || !this.canAddProgressionTrack()) return;
+
+    // Projected fresh on every press and not retained. `sendProgression` states
+    // both of the preconditions this expression satisfies: the merged score
+    // shares bar objects with the projection, so a kept copy edited afterwards
+    // would be writing into a committed score behind undo's back; and the
+    // track has to be barred in the *score's* meter, because it will share the
+    // score's bar lines - a mismatch throws rather than engraving music that
+    // disagrees with the lines drawn over it. `scoreMeter` is the service's own
+    // name for the meter its guard asks about, so the two cannot answer
+    // differently-shaped questions.
+    //
+    // The scale comes from the published state because `progressionTrack` is
+    // pure and cannot resolve `key.scaleId` itself. Empty when the id resolves
+    // to nothing, which spells every note from the key's preference; the
+    // progression page's own export does the same for the same reason.
+    this.composer.sendProgression(
+      progressionTrack(
+        state.doc,
+        state.keyScale ? state.keyScale.intervals : [],
+        this.composer.scoreMeter
+      )
+    );
+  }
+
+  /**
+   * Update, which is a Send into a score that already holds the track.
+   *
+   * Almost an alias, and deliberately little more: the button is named for what
+   * the user is doing rather than for what the service calls it, and a second
+   * method with a body of its own would be a second place for the two to drift.
+   *
+   * ## Why it takes no track when everything beside it does
+   *
+   * `flattenGeneratedTrack` takes an index, `canUpdate` and the labels take a
+   * track, and this takes nothing - which is correct only because of an
+   * invariant worth naming rather than rediscovering. **At most one track in a
+   * score can carry the open progression's id**: `mergeGeneratedTrack` matches
+   * on `progressionId` and replaces in place, so a second Send never appends a
+   * second copy. A row whose marker names some *other* progression is refused
+   * below rather than updated. So there is only ever one row this could mean,
+   * and passing the row in would be passing in a value the call could not use.
+   *
+   * The day that stops being true - a score holding two progressions' tracks
+   * with the second one open, which is what a progression library brings - this
+   * has to take the track and send *that* row's progression, or it becomes a
+   * wrong-row update: the press would refresh whichever track matches the open
+   * progression rather than the one whose button was pressed.
+   *
+   * The refusal is `'stale'` and not "anything but current", which matters for
+   * exactly that case: a row built from a progression that is not open reads
+   * `'absent'` here, and falling through to the send would *append* a second
+   * generated track rather than refuse.
+   */
+  updateGeneratedTrack(): void {
+    if (this.sendState() !== 'stale') return;
+
+    this.addProgressionTrack();
+  }
+
+  /** Hands the track over to the user, keeping the music and dropping the link. */
+  flattenGeneratedTrack(index: number): void {
+    this.composer.flattenTrack(index);
+  }
+
+  /**
+   * How this row stands to the progression that is open.
+   *
+   * The one branch point the row has: the status on screen, whether Update
+   * refuses and what its label says are all this answer said three ways, so
+   * they cannot disagree about which of them the user is looking at.
+   *
+   * `generatedTrackState` is still the function that decides *stale or not* -
+   * it is the one the badge, the edit gate and the service's own refusals all
+   * read, and answering that here would be a second opinion about it. What this
+   * adds is the two distinctions it does not carry:
+   *
+   *  - **Which row.** The state is a fact about a score and a progression as a
+   *    pair, so a score holding some *other* progression's track would read that
+   *    track's freshness off this row. `'foreign'` is that case named, and it is
+   *    a refusal rather than a claim: whether that track matches its own
+   *    progression is a question this page has no document to answer.
+   *  - **Which half of stale.** `'stale'` is one answer to two questions, and
+   *    `GeneratedOrigin.source` is where they stay apart - which is the whole
+   *    reason the marker holds a union rather than a revision and a flag. A
+   *    moved revision means the progression changed; `'diverged'` means a
+   *    score-wide bar edit moved this track while the progression stood still.
+   *    Telling a user the second was the first is a claim about a document they
+   *    did not touch.
+   *
+   * A track that is both - a bar inserted and then the progression edited -
+   * reads `'moved'`, because the marker was restated as `'diverged'` and no
+   * longer holds a revision to compare. Both are stale and one Update fixes
+   * both, so the cost is the less complete of two true sentences.
+   */
+  private generatedStatus(track: TrackDoc): GeneratedRowState {
+    const marker = track.generated;
+    if (!marker || marker.progressionId !== this.progressionState?.doc.id) return 'foreign';
+    if (marker.source.kind === 'diverged') return 'moved';
+
+    return this.sendState() === 'stale' ? 'behind' : 'current';
+  }
+
+  /**
+   * That state in the fewest true words, drawn beside the badge.
+   *
+   * On screen because a `disabled` control's explanation is unreachable by
+   * focus and its tooltip is suppressed - see the section comment. The row is
+   * where the state can be read without pressing or focusing anything, which is
+   * also what lets the labels below stay a sentence each rather than the only
+   * copy of the information.
+   *
+   * Short because it sits under a name the user is scanning for. "behind the
+   * progression" and "moved by a score edit" are the two halves of stale in the
+   * plainest words that distinguish them.
+   */
+  generatedStatusLabel(track: TrackDoc): string {
+    switch (this.generatedStatus(track)) {
+      case 'behind':
+        return 'behind the progression';
+      case 'moved':
+        return 'moved by a score edit';
+      case 'foreign':
+        return 'progression not open';
+      default:
+        return 'up to date';
+    }
+  }
+
+  /** Whether this row's Update would change anything. Refuses on the other three. */
+  canUpdate(track: TrackDoc): boolean {
+    const state = this.generatedStatus(track);
+
+    return state === 'behind' || state === 'moved';
+  }
+
+  /**
+   * What Update is offering, in a sentence.
+   *
+   * The badge and the status sit *beside* this button rather than inside it,
+   * and nothing carries a neighbouring element into a button's accessible name,
+   * so the label has to name the track and the reason itself. Which track,
+   * because a strip of rows offers one of these per row; and why, because a
+   * refusal that does not say why is a greyed-out control and nothing more.
+   *
+   * Every answer leads with "Update", the word printed on the button. That is
+   * WCAG 2.1 SC 2.5.3: an accessible name that drops the visible one leaves a
+   * speech-input user saying what they can see and matching nothing. It applies
+   * to the refusals too, now that they are focusable.
+   *
+   * Four answers, one per state, and the two halves of stale are two of them.
+   * The `'foreign'` sentence is the one the app cannot currently produce - see
+   * `openAnotherProgression` in the spec for what would - and it is still not
+   * "up to date", because that would be a claim this page has no document to
+   * check.
+   */
+  updateLabel(track: TrackDoc): string {
+    const from = this.sourceOf(track);
+
+    switch (this.generatedStatus(track)) {
+      case 'behind':
+        return `Update ${track.name} from ${from}, which has changed since this track was `
+          + 'written';
+      case 'moved':
+        return `Update ${track.name} from ${from}, because a score edit has moved this track `
+          + 'since it was written';
+      case 'foreign':
+        return `Update ${track.name}: ${from} is not the one that is open, so this track `
+          + 'cannot be updated here';
+      default:
+        return `Update ${track.name}: it already matches ${from}`;
+    }
+  }
+
+  /** What Flatten is offering, named the same way and for the same reason. */
+  flattenLabel(track: TrackDoc): string {
+    return `Flatten ${track.name}, detaching it from ${this.sourceOf(track)} and keeping the music`;
+  }
+
+  /**
+   * How a label refers to the progression a track came from.
+   *
+   * Two names that are usually one string. The row is labelled with the track's
+   * name and the marker carries the progression's, and they start out equal
+   * because nothing renames a progression - so naming both said "it already
+   * matches the progression Progression", which is what nearly every user
+   * heard. They are still two different facts, and they come apart the moment
+   * either end is renamed, so the fix is to stop saying the second aloud when
+   * it would only repeat the first rather than to drop it from the sentence.
+   *
+   * Every caller reads this as a noun phrase mid-sentence, which is why the
+   * article is in here and not at the call sites: "the progression it came
+   * from" and "the progression Verse" have to substitute for one another in
+   * all five, including `'foreign'`, where the phrase is the subject.
+   */
+  private sourceOf(track: TrackDoc): string {
+    const from = track.generated?.progressionName ?? '';
+    return from === track.name ? 'the progression it came from' : `the progression ${from}`;
+  }
+
+  trackByIndex(index: number): number {
+    return index;
+  }
+}
+```
+
+<!-- apply: create client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.html -->
+```html
+<section class="track-strip" aria-label="Tracks" *ngIf="state as s">
+  <ul class="track-list">
+    <li
+      *ngFor="let track of s.doc.tracks; let i = index; trackBy: trackByIndex"
+      class="track-item"
+      [class.selected]="s.cursor.trackIndex === i"
+      (click)="selectTrack(i)"
+    >
+      <span class="track-swatch" [style.background-color]="track.color"></span>
+      <span class="track-name">{{ track.name }}</span>
+
+      <!--
+        The badge says the marker's own copy of the name, not the row's.
+        `mergeGeneratedTrack` keeps whatever the track is already called across
+        an Update so a rename survives, which leaves `track.name` free to be the
+        user's word for the row while `generated.progressionName` stays the
+        progression's.
+
+        The status beside it is the same state Update refuses on, said where
+        nothing has to be focused to read it - a `disabled` control's own
+        explanation is unreachable by focus and its tooltip is suppressed, so a
+        label was the wrong and only place to keep it.
+      -->
+      <ng-container *ngIf="track.generated as origin">
+        <span class="track-origin">
+          <span class="track-badge">From {{ origin.progressionName }}</span>
+          <span class="track-status" [class.is-stale]="canUpdate(track)">{{ generatedStatusLabel(track) }}</span>
+        </span>
+        <span class="track-generated">
+          <!--
+            `aria-disabled` and not `disabled`: the button keeps its place in
+            the tab order and keeps its tooltip, so the sentence saying why it
+            is refusing stays reachable. It only *says* it is refusing, so
+            `updateGeneratedTrack` makes the refusal itself.
+
+            `handler(); $event.stopPropagation()` runs the handler first, so a
+            throw would skip the stop and the click would fall through to the
+            row and move the caret. Nothing in either handler throws today -
+            the one guard that does is `sendProgression`'s meter check, and it
+            is handed `this.composer.scoreMeter`, which is the same meter it
+            compares against.
+          -->
+          <button
+            class="text-btn track-update"
+            (click)="updateGeneratedTrack(); $event.stopPropagation()"
+            [attr.aria-disabled]="!canUpdate(track)"
+            [attr.aria-label]="updateLabel(track)"
+            [title]="updateLabel(track)"
+          >Update</button>
+          <button
+            class="text-btn track-flatten"
+            (click)="flattenGeneratedTrack(i); $event.stopPropagation()"
+            [attr.aria-label]="flattenLabel(track)"
+            [title]="flattenLabel(track)"
+          >Flatten</button>
+        </span>
+      </ng-container>
+
+      <button
+        class="track-remove"
+        (click)="removeTrack(i); $event.stopPropagation()"
+        [disabled]="s.doc.tracks.length <= 1"
+        [attr.aria-label]="'Remove ' + track.name"
+        title="Remove track"
+      >×</button>
+    </li>
+  </ul>
+
+  <div class="add-track">
+    <select [(ngModel)]="newTrackInstrument" aria-label="Instrument for new track">
+      <option *ngFor="let inst of instruments" [ngValue]="inst">{{ inst.name }}</option>
+    </select>
+    <button class="text-btn" (click)="addTrack()">Add track</button>
+    <!--
+      The pull half of the same service call the progression page's Send is the
+      push half of. Pressed with the progression already in the score it is an
+      Update, because the merge matches on the progression's id rather than
+      appending - and it refuses on the same reading the rows' Update refuses
+      on, so the strip cannot do from here what the button in the row is
+      greyed out to prevent.
+
+      The label leads with the words printed on the button (WCAG 2.1 SC 2.5.3);
+      the caption itself never changes, because the word on a control is what a
+      speech-input user says to press it.
+    -->
+    <button
+      class="text-btn add-progression-track"
+      (click)="addProgressionTrack()"
+      [attr.aria-disabled]="!canAddProgressionTrack()"
+      [attr.aria-label]="addProgressionTrackLabel()"
+      [title]="addProgressionTrackLabel()"
+    >Add progression track</button>
+  </div>
+</section>
+```
+
+<!-- apply: create client/src/app/components/composer/components/composer-track-strip/composer-track-strip.component.scss -->
+```scss
+// The track strip: a row per track along the bottom of the composer.
+
+:host {
+  display: block;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background-color: var(--composer-nav, #2c3e50);
+  color: var(--composer-text, #ecf0f1);
+}
+
+.track-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem 0.6rem;
+}
+
+.track-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.track-item {
+  display: flex;
+  align-items: center;
+  // Wraps rather than squeezes: on a narrow page the badge, status and buttons go under the name
+  // rather than eating it, since the name is what a user scans the strip for.
+  flex-wrap: wrap;
+  gap: 0.35rem 0.6rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+  }
+
+  &.selected {
+    background-color: rgba(52, 152, 219, 0.25);
+    box-shadow: inset 2px 0 0 var(--composer-accent, #3498db);
+  }
+}
+
+.track-swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.track-name {
+  flex: 0 1 14rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// The badge and the status as one phrase. `min-width: 0` is load-bearing: a flex item's automatic
+// minimum is its content, and the badge does not wrap, so without it a long progression name widens the
+// row past the strip.
+.track-origin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.35rem;
+  min-width: 0;
+}
+
+.track-badge {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--composer-text-secondary, #bdc3c7);
+  background-color: rgba(52, 152, 219, 0.18);
+  border: 1px solid rgba(52, 152, 219, 0.5);
+  border-radius: 3px;
+  padding: 0.1rem 0.35rem;
+}
+
+// Brightness rather than hue marks a stale row: the words already say which state it is, and the
+// accent blue fails contrast against a selected row, whose tint is that same blue.
+.track-status {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--composer-text-secondary, #bdc3c7);
+
+  &.is-stale {
+    color: var(--composer-text, #ecf0f1);
+  }
+}
+
+.track-generated {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.track-remove {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--composer-text-secondary, #bdc3c7);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.2rem;
+
+  &:hover:not(:disabled) {
+    color: var(--composer-error, #e74c3c);
+  }
+
+  &:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+}
+
+.add-track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+
+  select {
+    padding: 0.3rem;
+    background-color: var(--composer-nav-secondary, #34495e);
+    border: 1px solid var(--composer-border, #465666);
+    border-radius: 4px;
+    color: var(--composer-text, #ecf0f1);
+  }
+}
+
+.text-btn {
+  background-color: var(--composer-nav-secondary, #34495e);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+  color: var(--composer-text, #ecf0f1);
+  cursor: pointer;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+
+  &:hover:not([aria-disabled='true']) {
+    background-color: var(--composer-accent, #3498db);
+  }
+
+  &[aria-disabled='true'] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+```
+
+**Step 4: Run** the strip's spec. Expected: all SUCCESS - every test `composer.component.spec.ts` held.
+
+**Step 5: Commit**
+
+```bash
+git add client/src/app/components/composer
+git commit -m "refactor: Move the tracks panel and its specs into a bottom track strip" -m "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+### Task 3.8: Library and Export as top-bar menus, and the saved list in a drawer
+
+The library panel moves into the top bar: a Library menu (Save, Save as copy, Saved compositions…),
+an Export menu (Guitar Pro, alphaTex, MIDI), and the saved list in a drawer. Menus and drawer are
+hidden with CSS, not `*ngIf` (decision 20), and the panel's `role="alert"` region and its polite status
+region sit outside them, always rendered: a region inside a `display: none` menu is out of the
+accessibility tree, and announcing into it would fail silently.
+
+Returning focus to Save now opens the Library menu first, since a button inside a hidden menu cannot take
+focus. A press of Export or Load closes what it was pressed in.
+
+**Files:**
+- Modify: `client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts`
+- Replace: `composer-library-panel.component.html`, `composer-library-panel.component.scss`
+- Test: `client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.spec.ts`
+
+**Step 1: Failing specs.** Add to the panel spec, after the `with nothing linked` block:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.spec.ts -->
+```typescript
+  describe('with a generated track linked', () => {
+    beforeEach(() => link('Verse'));
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.spec.ts -->
+```typescript
+  /**
+   * Menus and a drawer in the top bar, hidden with CSS rather than removed - and the announced regions
+   * outside them, since a region inside a hidden menu is out of the accessibility tree.
+   */
+  describe('as top-bar menus', () => {
+    it('keeps both menus and the drawer in the page while closed', () => {
+      const menus: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.menu-panel'));
+      const drawer: HTMLElement = fixture.nativeElement.querySelector('.library-drawer');
+
+      expect(menus.length).toBe(2);
+      expect(menus.every(menu => getComputedStyle(menu).display === 'none')).toBeTrue();
+      expect(drawer.getAttribute('aria-hidden')).toBe('true');
+    });
+
+    it('keeps the announced regions outside the menus and the drawer', () => {
+      const alert: HTMLElement = fixture.nativeElement.querySelector('[role="alert"]');
+      const polite: HTMLElement = fixture.nativeElement.querySelector('[aria-live="polite"]');
+
+      expect(alert.closest('.menu-panel, .library-drawer')).toBeNull();
+      expect(polite.closest('.menu-panel, .library-drawer')).toBeNull();
+    });
+
+    it('opens a menu from its button, and the saved list in a drawer', () => {
+      (fixture.nativeElement.querySelector('[aria-controls="composer-library-menu"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      const library: HTMLElement = fixture.nativeElement.querySelector('#composer-library-menu');
+      expect(getComputedStyle(library).display).not.toBe('none');
+
+      (fixture.nativeElement.querySelector('.open-drawer') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('.library-drawer').getAttribute('aria-hidden')).toBe('false');
+      expect(panel.libraryMenuOpen).toBeFalse();
+    });
+
+    it('closes the Export menu when an export is chosen', () => {
+      panel.toggleExportMenu();
+
+      panel.exportMidi();
+
+      expect(panel.exportMenuOpen).toBeFalse();
+    });
+
+    it('closes a menu and the drawer on Escape, claiming it so the page\'s own Escape does not also act', () => {
+      panel.toggleExportMenu();
+      panel.openDrawer();
+      let claimedBeforeThePage = false;
+      const page = (event: KeyboardEvent): void => void (claimedBeforeThePage = event.defaultPrevented);
+      document.addEventListener('keydown', page);
+
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      document.removeEventListener('keydown', page);
+
+      expect(panel.exportMenuOpen).toBeFalse();
+      expect(panel.drawerOpen).toBeFalse();
+      expect(claimedBeforeThePage).toBeTrue();
+    });
+
+    it('leaves Escape to the page while nothing is open', () => {
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+
+      document.body.dispatchEvent(escape);
+
+      expect(escape.defaultPrevented).toBeFalse();
+    });
+
+    it('closes on a click outside the panel, and not on a click inside it', () => {
+      panel.toggleLibraryMenu();
+      fixture.detectChanges();
+
+      (fixture.nativeElement.querySelector('#composer-library-menu') as HTMLElement).click();
+      expect(panel.libraryMenuOpen).toBeTrue();
+
+      document.body.click();
+      expect(panel.libraryMenuOpen).toBeFalse();
+    });
+  });
+
+  describe('with a generated track linked', () => {
+    beforeEach(() => link('Verse'));
+```
+
+**Step 2: Run** the panel spec. Expected: compile errors,
+`TS2339: Property 'libraryMenuOpen' does not exist on type 'ComposerLibraryPanelComponent'.` and the same
+for `toggleExportMenu`, `exportMenuOpen`, `openDrawer`, `drawerOpen` and `toggleLibraryMenu` - ten in all.
+
+**Step 3: Implement.** In the panel's class, the menu state after `pendingSave`:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  /** The offer or report currently occupying the announced region. */
+  pendingSave: PendingSave | null = null;
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  /** The offer or report currently occupying the announced region. */
+  pendingSave: PendingSave | null = null;
+
+  /**
+   * Which of the top bar's menus is open, and whether the saved list's drawer is. Presentation only:
+   * the three are hidden with CSS rather than removed, so the announced regions beside them stay in the
+   * accessibility tree whichever is open.
+   */
+  libraryMenuOpen = false;
+  exportMenuOpen = false;
+  drawerOpen = false;
+```
+
+The toggles, before `save`:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  // -------------------------------------------------------------------------
+  // Save / load
+  // -------------------------------------------------------------------------
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  // -------------------------------------------------------------------------
+  // Menus and drawer
+  // -------------------------------------------------------------------------
+
+  toggleLibraryMenu(): void {
+    this.libraryMenuOpen = !this.libraryMenuOpen;
+    this.exportMenuOpen = false;
+  }
+
+  toggleExportMenu(): void {
+    this.exportMenuOpen = !this.exportMenuOpen;
+    this.libraryMenuOpen = false;
+  }
+
+  /** Opens the saved list, closing the menu it was opened from. */
+  openDrawer(): void {
+    this.drawerOpen = true;
+    this.libraryMenuOpen = false;
+  }
+
+  closeDrawer(): void {
+    this.drawerOpen = false;
+  }
+
+  /** A click anywhere outside the panel closes its menus and its drawer, as a menu is expected to. */
+  @HostListener('document:click', ['$event'])
+  onDocumentClick(event: MouseEvent): void {
+    if (!this.anyOpen || (event.target instanceof Node && this.host.nativeElement.contains(event.target))) return;
+    this.closeMenus();
+  }
+
+  /** Whether a menu or the drawer is open. */
+  private get anyOpen(): boolean {
+    return this.libraryMenuOpen || this.exportMenuOpen || this.drawerOpen;
+  }
+
+  private closeMenus(): void {
+    this.libraryMenuOpen = false;
+    this.exportMenuOpen = false;
+    this.drawerOpen = false;
+    this.cdr.markForCheck();
+  }
+
+  /**
+   * Escape closes an open menu or the drawer, and claims the key - and gives focus back to the menu's
+   * button when it was inside what closed, since a focused element that is hidden drops focus to the page.
+   *
+   * On the document in the capture phase, for the reason the shell's Escape is (`AppComponent.onEscape`):
+   * the page's keyboard handler listens on the document too, and was added before this panel existed, so a
+   * bubbling listener here would run after it had gone back to Select and dropped the range. A press
+   * something earlier claimed - the shell closing the circle-of-fifths drawer - is left alone, and with
+   * nothing open nothing is claimed, so Escape stays the page's.
+   */
+  private readonly escapeListener = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || event.defaultPrevented || !this.anyOpen) return;
+    event.preventDefault();
+    const focusWasInside = this.host.nativeElement.contains(document.activeElement);
+    const toggle = this.exportMenuOpen && !this.libraryMenuOpen ? this.exportToggle : this.libraryToggle;
+    this.closeMenus();
+    if (focusWasInside) toggle?.nativeElement.focus();
+  };
+
+  // -------------------------------------------------------------------------
+  // Save / load
+  // -------------------------------------------------------------------------
+```
+
+The two menu buttons, for that focus, and the panel's element, for the outside click:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  @ViewChild('saveButton') private saveButton?: ElementRef<HTMLButtonElement>;
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  @ViewChild('saveButton') private saveButton?: ElementRef<HTMLButtonElement>;
+
+  /** The Library and Export menu buttons, which take focus back when Escape closes their menu. */
+  @ViewChild('libraryToggle') private libraryToggle?: ElementRef<HTMLButtonElement>;
+  @ViewChild('exportToggle') private exportToggle?: ElementRef<HTMLButtonElement>;
+```
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  OnInit,
+  ViewChild
+} from '@angular/core';
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  HostListener,
+  OnInit,
+  ViewChild
+} from '@angular/core';
+```
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+    private readonly saveRequests: ComposerSaveRequests,
+    private readonly cdr: ChangeDetectorRef
+  ) {}
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+    private readonly saveRequests: ComposerSaveRequests,
+    private readonly cdr: ChangeDetectorRef,
+    private readonly host: ElementRef<HTMLElement>
+  ) {}
+```
+
+The Escape listener is added with the panel and removed with it:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+    // Ctrl+S. The same `save()` as the button, so a keyboard save is refused, announced and followed by
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+    document.addEventListener('keydown', this.escapeListener, true);
+
+    // Ctrl+S. The same `save()` as the button, so a keyboard save is refused, announced and followed by
+```
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  ngOnDestroy(): void {
+    document.removeEventListener('keydown', this.escapeListener, true);
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+```
+
+Focus returns to Save inside an open menu:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  private returnFocusToSave(): void {
+    this.cdr.detectChanges();
+    this.saveButton?.nativeElement.focus();
+  }
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  private returnFocusToSave(): void {
+    // Save lives in the Library menu, and a button in a hidden menu cannot take focus.
+    this.libraryMenuOpen = true;
+    this.cdr.detectChanges();
+    this.saveButton?.nativeElement.focus();
+  }
+```
+
+A load closes the drawer, and an export its menu:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+      this.composer.replaceDocument(this.mapper.toDoc(parsed.score), true);
+      this.currentId = id;
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+      this.composer.replaceDocument(this.mapper.toDoc(parsed.score), true);
+      this.currentId = id;
+      this.drawerOpen = false;
+```
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  exportGuitarPro(): void {
+    if (!this.state) return;
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  exportGuitarPro(): void {
+    this.exportMenuOpen = false;
+    if (!this.state) return;
+```
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  exportAlphaTex(): void {
+    if (!this.state) return;
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  exportAlphaTex(): void {
+    this.exportMenuOpen = false;
+    if (!this.state) return;
+```
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  exportMidi(): void {
+    if (!this.state) return;
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+  exportMidi(): void {
+    this.exportMenuOpen = false;
+    if (!this.state) return;
+```
+
+The class comment says where it lives now:
+
+<!-- apply: find client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+/**
+ * Save, load and export for the composer.
+ *
+ * Kept out of ComposerComponent so neither file outgrows the project's
+ * 1000-line guideline. Every dependency is a root service, so this needs no
+ * inputs or outputs.
+ */
+```
+
+<!-- apply: replace client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.ts -->
+```typescript
+/**
+ * Save, load and export for the composer: the top bar's Library and Export menus, and the saved list
+ * in a drawer.
+ *
+ * Kept out of ComposerComponent so neither file outgrows the project's 1000-line guideline. Every
+ * dependency is a root service, so this needs no inputs or outputs; the keyboard's Ctrl+S reaches
+ * `save` through `ComposerSaveRequests`.
+ */
+```
+
+Replace the template:
+
+<!-- apply: create client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.html -->
+```html
+<div class="library-panel">
+  <!--
+    The menus and the drawer are hidden with CSS, never removed: see the regions below for why nothing
+    announced may live inside them.
+  -->
+  <div class="menu">
+    <button
+      #libraryToggle
+      type="button"
+      class="text-btn menu-toggle"
+      aria-controls="composer-library-menu"
+      [attr.aria-expanded]="libraryMenuOpen"
+      (click)="toggleLibraryMenu()"
+    >Library</button>
+    <div id="composer-library-menu" class="menu-panel" [class.open]="libraryMenuOpen" role="group" aria-label="Library">
+      <div class="save-actions">
+        <button class="text-btn" #saveButton (click)="save()">
+          {{ currentId ? 'Save' : 'Save to library' }}
+        </button>
+        <button class="text-btn" (click)="save(true)" *ngIf="currentId">Save as copy</button>
+        <button class="text-btn open-drawer" (click)="openDrawer()">Saved compositions…</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="menu">
+    <button
+      #exportToggle
+      type="button"
+      class="text-btn menu-toggle"
+      aria-controls="composer-export-menu"
+      [attr.aria-expanded]="exportMenuOpen"
+      (click)="toggleExportMenu()"
+    >Export</button>
+    <div id="composer-export-menu" class="menu-panel" [class.open]="exportMenuOpen" role="group" aria-label="Export">
+      <div class="export-actions">
+        <button class="text-btn" (click)="exportGuitarPro()" title="Guitar Pro 7 file">Guitar Pro (.gp)</button>
+        <button class="text-btn" (click)="exportAlphaTex()" title="Plain alphaTex source">alphaTex</button>
+        <button class="text-btn" (click)="exportMidi()" title="Standard MIDI file">MIDI</button>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    Save stays pressable and the refusal answers the press, rather than Save
+    being disabled with the reason sitting beside it. A disabled button is out
+    of the tab order, so a reason hung off it with aria-describedby is attached
+    to something a keyboard user never lands on. role="alert" announces the
+    refusal when it appears, and the offer is a real button inside the same
+    region, so hearing the reason and reaching the remedy are one move.
+
+    The region itself is always in the DOM and only its contents come and go. A
+    node inserted with role="alert" already on it is the documented flake case:
+    the reliable pattern is a live region that was in the accessibility tree
+    before its content changed. Neither `hidden` nor `display: none` would do
+    for the empty state, both being ways of taking the node back out of the
+    tree - so the empty region simply has no content and no chrome, which
+    collapses it to nothing without removing it. The chrome arrives with the
+    content, on `.showing`.
+
+    It sits outside both menus and the drawer for the same reason: they are
+    hidden with `display: none` while closed, which would take it out of the
+    tree with them.
+  -->
+  <div class="save-blocked" role="alert" [class.showing]="pendingSave">
+    <ng-container *ngIf="pendingSave as pending">
+      <p class="save-blocked-reason">{{ pending.reason }}</p>
+      <div class="save-blocked-actions">
+        <!--
+          Once the flatten has committed there is nothing left to flatten, so
+          the offer goes and the region is a report rather than a question.
+        -->
+        <button class="text-btn" *ngIf="!pending.flattened" (click)="flattenAndSave()">
+          Flatten and save
+        </button>
+        <button class="text-btn" (click)="dismissSaveBlock()">
+          {{ pending.flattened ? 'Dismiss' : 'Keep the link' }}
+        </button>
+      </div>
+    </ng-container>
+  </div>
+
+  <!--
+    Announced for the same reason the refusal is, and always present for the
+    same reason its region is. Without this a keyboard user hears the objection
+    to the press and then nothing at all when the retry works.
+  -->
+  <div class="status-region" aria-live="polite">
+    <p class="status" *ngIf="statusMessage">{{ statusMessage }}</p>
+    <p class="status error" *ngIf="errorMessage">{{ errorMessage }}</p>
+  </div>
+
+  <aside class="library-drawer" [class.open]="drawerOpen" [attr.aria-hidden]="!drawerOpen" aria-label="Saved compositions">
+    <header class="drawer-header">
+      <h2 class="panel-heading">Saved compositions</h2>
+      <button type="button" class="drawer-close" aria-label="Close saved compositions" (click)="closeDrawer()">×</button>
+    </header>
+
+    <ul class="composition-list" *ngIf="entries.length > 0; else emptyLibrary">
+      <li
+        *ngFor="let entry of entries; trackBy: trackById"
+        class="composition-item"
+        [class.current]="entry.id === currentId"
+        (click)="load(entry.id)"
+        [title]="'Load ' + entry.title"
+      >
+        <span class="composition-title">{{ entry.title }}</span>
+        <span class="composition-meta">
+          {{ entry.trackCount }} track{{ entry.trackCount === 1 ? '' : 's' }} ·
+          {{ entry.barCount }} bar{{ entry.barCount === 1 ? '' : 's' }}
+        </span>
+        <button
+          class="composition-remove"
+          (click)="remove(entry.id, entry.title, $event)"
+          title="Delete composition"
+        >×</button>
+      </li>
+    </ul>
+
+    <ng-template #emptyLibrary>
+      <p class="hint">Nothing saved yet.</p>
+    </ng-template>
+  </aside>
+</div>
+```
+
+Replace the styles:
+
+<!-- apply: create client/src/app/components/composer/components/composer-library-panel/composer-library-panel.component.scss -->
+```scss
+// Library and Export menus in the composer's top bar, and the saved list in a drawer.
+//
+// Colours are the page host's custom properties, with the composer's values as fallbacks for the
+// component's own spec, which has no page host.
+
+:host {
+  display: block;
+}
+
+.library-panel {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.menu {
+  position: relative;
+}
+
+// Hidden with `display: none` while closed, never removed - and so nothing announced lives inside.
+.menu-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  z-index: 60;
+  min-width: 12rem;
+  padding: 0.4rem;
+  background-color: var(--composer-nav, #2c3e50);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+
+  &.open {
+    display: block;
+  }
+}
+
+.panel-heading {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--composer-text-secondary, #bdc3c7);
+}
+
+.text-btn {
+  background-color: var(--composer-nav-secondary, #34495e);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+  color: var(--composer-text, #ecf0f1);
+  cursor: pointer;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  text-align: left;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+
+  &:hover:not(:disabled) {
+    background-color: var(--composer-accent, #3498db);
+    border-color: var(--composer-accent-hover, #2980b9);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+.save-actions,
+.export-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+// The refusal, and the offer that resolves it, dropped below the top bar. The element is in the DOM
+// whether or not there is anything to say; the chrome is what toggles, so an empty region takes no space.
+.save-blocked {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  z-index: 70;
+  width: min(26rem, 80vw);
+
+  &.showing {
+    padding: 0.6rem;
+    border: 1px solid var(--composer-warning, #f39c12);
+    border-radius: 4px;
+    background-color: var(--composer-nav, #2c3e50);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  }
+
+  .save-blocked-reason {
+    margin: 0 0 0.5rem;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--composer-text, #ecf0f1);
+  }
+
+  .save-blocked-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+}
+
+.status-region {
+  min-width: 0;
+}
+
+.status {
+  margin: 0;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  color: var(--composer-success, #27ae60);
+
+  &.error {
+    color: var(--composer-error, #e74c3c);
+  }
+}
+
+// The saved list slides in from the right, over the page. Hidden with CSS while closed.
+.library-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
+  width: min(22rem, 90vw);
+  display: flex;
+  flex-direction: column;
+  background-color: var(--composer-nav, #2c3e50);
+  color: var(--composer-text, #ecf0f1);
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.35);
+  visibility: hidden;
+  transform: translateX(100%);
+  transition: transform 0.2s ease-out, visibility 0s linear 0.2s;
+
+  &.open {
+    visibility: visible;
+    transform: translateX(0);
+    transition: transform 0.2s ease-out;
+  }
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--composer-border, #465666);
+}
+
+.drawer-close {
+  background: none;
+  border: none;
+  color: var(--composer-text-secondary, #bdc3c7);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.composition-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem;
+  overflow-y: auto;
+}
+
+.composition-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.45rem 1.5rem 0.45rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+  }
+
+  &.current {
+    background-color: rgba(52, 152, 219, 0.25);
+    box-shadow: inset 2px 0 0 var(--composer-accent, #3498db);
+  }
+
+  .composition-title {
+    font-size: 0.85rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .composition-meta {
+    font-size: 0.7rem;
+    color: var(--composer-text-secondary, #bdc3c7);
+  }
+
+  .composition-remove {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.3rem;
+    background: none;
+    border: none;
+    color: var(--composer-text-secondary, #bdc3c7);
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 0.2rem;
+
+    &:hover {
+      color: var(--composer-error, #e74c3c);
+    }
+  }
+}
+
+.hint {
+  margin: 0.75rem 1rem;
+  font-size: 0.75rem;
+  color: var(--composer-text-secondary, #bdc3c7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .library-drawer,
+  .library-drawer.open {
+    transition: none;
+  }
+}
+```
+
+**Step 4: Run** the panel spec. Expected: all SUCCESS, including the focus-return, `role="alert"` and
+`aria-live` specs M4 wrote.
+
+**Step 5: Commit**: `feat: Library and Export menus in the top bar, and the saved list in a drawer`.
+
+### Task 3.9: The shell says how tall its header is
+
+The composer's grid is sized to the viewport minus the app header (design Part 3). The header's height
+is not a constant - its navigation wraps on a narrow window - so the shell measures it and publishes it
+as `--app-header-height` on the document root, and the page reads the property with a fallback. A CSS
+custom property is the contract between shell and page, which is why this is the one place a component
+writes a style onto the document.
+
+**Files:**
+- Modify: `client/src/app/app.component.ts`, `client/src/app/app.component.html`
+- Test: `client/src/app/app.component.spec.ts`
+
+**Step 1: Failing spec.** Append inside the top-level `describe('AppComponent', ...)`, after the
+`opening and closing` block:
+
+<!-- apply: find client/src/app/app.component.spec.ts -->
+```typescript
+  describe('opening and closing', () => {
+```
+
+<!-- apply: replace client/src/app/app.component.spec.ts -->
+```typescript
+  describe('the header\'s height', () => {
+    it('is published for a page that fills the rest of the viewport', () => {
+      component.publishHeaderHeight();
+
+      const header: HTMLElement = fixture.nativeElement.querySelector('header');
+      expect(document.documentElement.style.getPropertyValue('--app-header-height')).toBe(`${header.offsetHeight}px`);
+    });
+  });
+
+  describe('opening and closing', () => {
+```
+
+**Step 2: Run** `app.component.spec.ts`. Expected: a compile error,
+`TS2339: Property 'publishHeaderHeight' does not exist on type 'AppComponent'.`
+
+**Step 3: Implement.** In `app.component.html`, name the header:
+
+<!-- apply: find client/src/app/app.component.html -->
+```html
+<div class="app-container">
+  <header>
+```
+
+<!-- apply: replace client/src/app/app.component.html -->
+```html
+<div class="app-container">
+  <header #appHeader>
+```
+
+In `app.component.ts`:
+
+<!-- apply: find client/src/app/app.component.ts -->
+```typescript
+import { Component, OnDestroy, OnInit, inject } from '@angular/core';
+```
+
+<!-- apply: replace client/src/app/app.component.ts -->
+```typescript
+import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
+```
+
+<!-- apply: find client/src/app/app.component.ts -->
+```typescript
+export class AppComponent implements OnInit, OnDestroy {
+  title = 'MusicTheory';
+```
+
+<!-- apply: replace client/src/app/app.component.ts -->
+```typescript
+export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
+  title = 'MusicTheory';
+
+  @ViewChild('appHeader') private header?: ElementRef<HTMLElement>;
+  private headerObserver: ResizeObserver | null = null;
+```
+
+<!-- apply: find client/src/app/app.component.ts -->
+```typescript
+  ngOnDestroy(): void {
+    this.document.removeEventListener('keydown', this.escapeListener, true);
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+```
+
+<!-- apply: replace client/src/app/app.component.ts -->
+```typescript
+  ngAfterViewInit(): void {
+    this.publishHeaderHeight();
+    const header = this.header?.nativeElement;
+    if (header && typeof ResizeObserver !== 'undefined') {
+      this.headerObserver = new ResizeObserver(() => this.publishHeaderHeight());
+      this.headerObserver.observe(header);
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.document.removeEventListener('keydown', this.escapeListener, true);
+    this.destroy$.next();
+    this.destroy$.complete();
+    this.headerObserver?.disconnect();
+  }
+
+  /**
+   * Publishes the header's height as `--app-header-height` on the document root.
+   *
+   * A page that fills the viewport under the header - the composer's grid - reads it, because the
+   * header's height is not a constant: its navigation wraps on a narrow window. A CSS custom property is
+   * the contract between the shell and such a page, so this is the one place a component sets a style
+   * on the document. Re-published whenever the header resizes.
+   */
+  publishHeaderHeight(): void {
+    const height = this.header?.nativeElement.offsetHeight;
+    if (height !== undefined) this.document.documentElement.style.setProperty('--app-header-height', `${height}px`);
+  }
+```
+
+**Step 4: Run** `app.component.spec.ts`. Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: The shell publishes its header height for pages that fill the viewport`.
+
+### Task 3.10: The page grid
+
+`ComposerComponent` becomes the page that holds the parts: a CSS grid sized to the viewport minus the
+app header (`--app-header-height`, Task 3.9), with
+
+- the **top bar**: title, transport, BPM, Metronome, Count-in, Undo, Redo, New, the alphaTex toggle, the
+  Library and Export menus, and a `?` button for the shortcut sheet;
+- the **palette** on the left;
+- the **score** in the centre, with the alphaTex panel under it when open;
+- the **status line**;
+- the **track strip** along the bottom, under a separator that drags its height - and, as a focusable
+  `role="separator"`, takes the arrow keys too;
+- no inspector column: that is M3's.
+
+The page implements `ComposerToolHost` - popovers, the sheet, transport, the save request, adding a track
+through the strip - and hands every key press to `ComposerKeyHandler` and every palette press to the same
+tool's `run`, so a button and its key cannot differ.
+
+Seven things the page owns were corrected before this task was applied:
+
+- **The key handler is built with the score's element** (its third argument), a `#score` view query on
+  `<app-composer-score>`. Without it every text selection counts as outside the score, and Ctrl+C and
+  Ctrl+X would be left to the browser while the score's own text was selected.
+- **Escape closes an open popover and does nothing else**, whoever has the focus: the popover claims the
+  key when it has the focus (Task 3.5), and the page's `escape` closes the popover alone when it does not.
+- **A popover's button toggles it**: `openPopover` closes the kind already open, by its button or its key. **Opening the
+  shortcut sheet closes an open popover**, which is in the top layer and would otherwise stay above the sheet, inside the
+  inert palette, taking the first Escape and none of the backdrop's clicks. A key pressed inside a popover - `?` included -
+  stays in it, but for Tab, Escape and Ctrl, Alt or Cmd presses (Task 3.5, as committed). Opening a Library or Export
+  menu, or the saved list, closes an open popover too: the panel says so through `menuOpened`, which the page binds to
+  `closePopover`. The menus are disclosure buttons, not ARIA menus (design decision 20).
+- **Save refuses while the alphaTex draft is not applied.** Ctrl+S runs from a text field, the draft's
+  textarea included, and a save writes the document, not the draft. So while the alphaTex panel is open
+  with a draft that differs from the document's alphaTex, a save - Ctrl+S, or Save in the Library menu,
+  through the guard `ComposerSaveRequests` carries - is refused, and the status line says "Apply or revert
+  the alphaTex draft before saving."
+- **A failed apply's message goes when the alphaTex panel closes**, whichever way it closes.
+- **The shortcut sheet is a modal.** While it is open only its own key and Escape reach the key handler, whose
+  fourth argument is `() => this.sheetOpen`, so Delete, R, a digit or Ctrl+V cannot edit the score hidden behind
+  it. Escape closes the sheet alone, as it closes a popover alone. The sheet gives the focus back to what had it,
+  or to the score when that is gone: its `fallbackFocus` is a function returning the score's host, asked as the sheet
+  closes rather than bound while the `#score` view query may still be unset, and the host takes the focus through
+  `tabindex="-1"`.
+- **The sheet is modal to the mouse and to Ctrl keys too.** It draws a backdrop over the whole window, and a click
+  there closes it as Escape does. The page's own parts - top bar, palette, score column, status line, separator and
+  strip - are `inert` while it is open, so neither a click nor the focus reaches them. The sheet is first in the
+  template, so it records what had the focus before the page goes inert, and it gives the focus back after the view
+  is checked, once the page is not. Behind the sheet the key handler claims and drops every Ctrl, Alt or Cmd binding
+  but Ctrl+C and Ctrl+X, so Ctrl+K does not focus the browser's search. The Library panel is told
+  (`[modalOpen]="sheetOpen"`): it closes its menus and drawer, and its Escape listener stands aside, so Escape
+  reaches the sheet.
+- **Undo's and Redo's tooltips** are built with `shortcutTitleOf` and `KEY_PLATFORM`, so a Mac reads ⌘+Z.
+
+The status line also takes the notice, its message id and the document, for Task 3.3's outcomes, a message said
+twice in the same words, and the count of bars over; and the alphaTex message's own id, `texErrorId`, which the page
+moves on each time it says one, so "Apply or revert the alphaTex draft before saving." said twice is read out twice. The old keyboard `switch`, the fret buffer, the
+duration buttons and the Tracks panel go: the key handler, `FretDigitEntry`, the palette and the track
+strip now hold them. Composer colours become CSS custom properties on the page host (design Part 3,
+"Styling"), and the child components read them with fallbacks.
+
+The track strip's own specs moved in Task 3.7; `composer.component.spec.ts` is recreated here for what
+the page itself is answerable for.
+
+**Files:**
+- Replace: `client/src/app/components/composer/composer.component.ts`, `composer.component.html`,
+  `composer.component.scss`
+- Test: create `client/src/app/components/composer/composer.component.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/components/composer/composer.component.spec.ts -->
+```typescript
+import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
+
+import { ComposerComponent, clampedStripHeight } from './composer.component';
+import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
+import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
+import { AlphaTexService } from '../../services/alpha-tex.service';
+import { ComposerService } from '../../services/composer.service';
+import { KEY_PLATFORM } from '../../services/composer-key-platform';
+import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
+import { shortcutTitleOf } from '../../services/composer-tools';
+
+/**
+ * The composer page: what it is answerable for beyond its parts.
+ *
+ * The parts have their own specs - the palette, the strip, the status line, the tool table and the key
+ * handler. What is pinned here is the wiring: a refusal and an alphaTex error reach the live region, a key
+ * press reaches the tool table and a key typed into a field does not, a palette press and a key run one
+ * command, and the page's own controls - the sheet, a popover, adding a track - answer the keyboard.
+ *
+ * The score and the library panel are stubbed: one owns alphaTab and engraves on `AfterViewInit`, the
+ * other reads IndexedDB, and neither is part of the wiring.
+ */
+@Component({ selector: 'app-composer-score', standalone: true, template: '' })
+class StubScoreComponent {}
+
+@Component({ selector: 'app-composer-library-panel', standalone: true, template: '' })
+class StubLibraryPanelComponent {
+  @Input() modalOpen = false;
+  @Output() readonly menuOpened = new EventEmitter<void>();
+}
+
+describe('ComposerComponent', () => {
+  let fixture: ComponentFixture<ComposerComponent>;
+  let component: ComposerComponent;
+  let composer: ComposerService;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({ imports: [ComposerComponent] })
+      .overrideComponent(ComposerComponent, {
+        remove: { imports: [ComposerScoreComponent, ComposerLibraryPanelComponent] },
+        add: { imports: [StubScoreComponent, StubLibraryPanelComponent] }
+      })
+      .compileComponents();
+
+    composer = TestBed.inject(ComposerService);
+    fixture = TestBed.createComponent(ComposerComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+  });
+
+  const region = (): HTMLElement => fixture.nativeElement.querySelector('[aria-live="polite"]');
+
+  /** Dispatches a key press on `target`, bubbling to the document as a real one does. */
+  function press(init: KeyboardEventInit, target: EventTarget = document): void {
+    target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
+    fixture.detectChanges();
+  }
+
+  it('says why a press did nothing in the page\'s polite live region', () => {
+    composer.toggleNoteEffect('isGhost', true, false);
+    fixture.detectChanges();
+
+    expect(region().textContent).toMatch(/no note/i);
+  });
+
+  it('shows a failed alphaTex apply in the same region', () => {
+    spyOn(TestBed.inject(AlphaTexService), 'parse').and.returnValue({ score: null, diagnostics: [] });
+
+    component.applyTex();
+    fixture.detectChanges();
+
+    expect(region().textContent).toContain('could not be parsed');
+  });
+
+  it('runs a key press through the tool table, and leaves one typed into the title alone', () => {
+    press({ key: 'q', code: 'KeyQ' });
+    expect(composer.state.entryMode).toBe('pen');
+
+    press({ key: 'q', code: 'KeyQ' }, fixture.nativeElement.querySelector('.title-input'));
+    expect(composer.state.entryMode).toBe('pen');
+  });
+
+  it('opens the shortcut sheet on ?, and Escape closes it alone - still Pen, still a range - until the next Escape', () => {
+    press({ key: 'q', code: 'KeyQ' });
+    composer.extendSelectionTo({ beatIndex: 2 });
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(component.sheetOpen).toBeTrue();
+
+    press({ key: 'Escape' });
+    expect(component.sheetOpen).toBeFalse();
+    expect(composer.state.entryMode).toBe('pen');
+    expect(composer.state.anchor).not.toBeNull();
+
+    press({ key: 'Escape' });
+    expect(composer.state.entryMode).toBe('select');
+  });
+
+  it('leaves the score alone behind the open shortcut sheet: Delete clears nothing until the sheet closes', () => {
+    composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
+    const doc = composer.doc;
+    press({ key: '?', code: 'Slash', shiftKey: true });
+
+    press({ key: 'Delete' });
+    expect(composer.doc).toBe(doc);
+
+    press({ key: 'Escape' });
+    press({ key: 'Delete' });
+    expect(composer.doc).not.toBe(doc);
+  });
+
+  it('gives the focus back to the ? button when Escape closes the sheet it opened', () => {
+    const toggle: HTMLButtonElement = fixture.nativeElement.querySelector('.shortcuts-toggle');
+    toggle.focus();
+    toggle.click();
+    fixture.detectChanges();
+    const sheet: HTMLElement = fixture.nativeElement.querySelector('app-composer-shortcut-sheet [role="dialog"]');
+    expect(sheet.contains(document.activeElement)).toBeTrue();
+
+    press({ key: 'Escape' }, document.activeElement ?? document);
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it('runs a palette button through the same command as its key', () => {
+    (fixture.nativeElement.querySelector('[data-tool="rest"]') as HTMLButtonElement).click();
+
+    expect(composer.state.cursor.beatIndex).toBe(1);
+  });
+
+  it('opens a valued tool\'s popover from its key, with the focus in it', () => {
+    press({ key: 'k', code: 'KeyK' });
+
+    const open: HTMLElement | null = fixture.nativeElement.querySelector('.popover:popover-open');
+    expect(component.popover).toBe('clef');
+    expect(open?.contains(document.activeElement)).toBeTrue();
+  });
+
+  it('closes only the popover on Escape - still Pen, still a range - and gives focus back to its button', () => {
+    press({ key: 'q', code: 'KeyQ' });
+    composer.extendSelectionTo({ beatIndex: 2 });
+    press({ key: 'k', code: 'KeyK' });
+
+    press({ key: 'Escape' }, document.activeElement ?? document);
+
+    expect(component.popover).toBeNull();
+    expect(composer.state.entryMode).toBe('pen');
+    expect(composer.state.anchor).not.toBeNull();
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('[data-tool="clef"]'));
+  });
+
+  it('closes an open popover when its button is pressed again, and opens it on the next press', () => {
+    press({ key: 'k', code: 'KeyK' });
+    const clef: HTMLButtonElement = fixture.nativeElement.querySelector('[data-tool="clef"]');
+
+    clef.click();
+    fixture.detectChanges();
+    expect(component.popover).toBeNull();
+
+    clef.click();
+    fixture.detectChanges();
+    expect(component.popover).toBe('clef');
+  });
+
+  it('keeps ? pressed inside a popover in the popover, and closes an open popover when the sheet opens', () => {
+    press({ key: '/', code: 'Slash', altKey: true });
+    expect(component.popover).toBe('tuplet');
+
+    // Inside the popover, ? is the popover's: no sheet opens under a popover in the top layer.
+    press({ key: '?', code: 'Slash', shiftKey: true }, document.activeElement ?? document);
+    expect(component.sheetOpen).toBeFalse();
+    expect(component.popover).toBe('tuplet');
+
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(component.sheetOpen).toBeTrue();
+    expect(component.popover).toBeNull();
+    expect(document.querySelector(':popover-open')).toBeNull();
+  });
+
+  it('says what Fix bar did in the live region, and how many bars are over outside it', () => {
+    for (const beatIndex of [0, 1]) {
+      composer.setCursor({ beatIndex, stringIndex: 0 });
+      composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
+    }
+    composer.setCursor({ beatIndex: 0 });
+    composer.applyDurationAtCursor(1, 0);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.over-bars')?.textContent).toContain('1 bar over');
+
+    composer.fixBar();
+    fixture.detectChanges();
+    expect(region().textContent).toContain('Fixed 1 bar');
+    expect(fixture.nativeElement.querySelector('.over-bars')).toBeNull();
+  });
+
+  it('clears a failed alphaTex apply when the alphaTex panel closes', () => {
+    spyOn(TestBed.inject(AlphaTexService), 'parse').and.returnValue({ score: null, diagnostics: [] });
+    component.toggleTexPanel();
+    component.applyTex();
+    fixture.detectChanges();
+    expect(region().textContent).toContain('could not be parsed');
+
+    component.toggleTexPanel();
+    fixture.detectChanges();
+    expect(region().textContent).not.toContain('could not be parsed');
+  });
+
+  it('refuses a save while the alphaTex draft is not applied, from the textarea or anywhere, and says why', () => {
+    const requests = TestBed.inject(ComposerSaveRequests);
+    const requested = spyOn(requests, 'request');
+    component.toggleTexPanel();
+    fixture.detectChanges();
+    const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.tex-editor');
+
+    press({ key: 's', code: 'KeyS', ctrlKey: true }, textarea);
+    expect(requested).toHaveBeenCalledTimes(1);
+
+    component.texDraft = `${component.texDraft} `;
+    press({ key: 's', code: 'KeyS', ctrlKey: true }, textarea);
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+    expect(requested).toHaveBeenCalledTimes(1);
+    expect(requests.refused()).toBeTrue();
+    expect(region().textContent).toContain('Apply or revert the alphaTex draft before saving.');
+
+    component.revertTex();
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+    expect(requested).toHaveBeenCalledTimes(2);
+  });
+
+  it('says the alphaTex draft refusal again when Save is pressed again, as a new message the live region reads out', () => {
+    component.toggleTexPanel();
+    component.texDraft = `${component.texDraft} `;
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+    const first = region().querySelector('.message');
+    expect(first?.textContent).toContain('Apply or revert the alphaTex draft before saving.');
+
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+    const second = region().querySelector('.message');
+
+    expect(second?.textContent).toBe(first?.textContent ?? '');
+    expect(second).not.toBe(first);
+  });
+
+  it('puts the page behind the open shortcut sheet out of reach: inert, and a click over the palette lands on the backdrop, closing the sheet and changing nothing', () => {
+    const palette: HTMLElement = fixture.nativeElement.querySelector('app-composer-palette');
+    const doc = composer.doc;
+    const cursor = composer.state.cursor;
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(palette.closest('[inert]')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('.top-bar').closest('[inert]')).not.toBeNull();
+
+    // A script's click() still reaches an inert element, and a pointer does not, so ask what a pointer there would hit.
+    // The sheet is inset from the window's edges; a few pixels in from the palette's left edge is in that margin.
+    const box = palette.getBoundingClientRect();
+    const hit = document.elementFromPoint(Math.max(1, box.left + 4), Math.min(innerHeight - 2, Math.max(1, box.top + 4)));
+    expect(hit?.classList.contains('sheet-backdrop')).toBeTrue();
+    (hit as HTMLElement).click();
+    fixture.detectChanges();
+
+    expect(component.sheetOpen).toBeFalse();
+    expect(palette.closest('[inert]')).toBeNull();
+    expect(composer.doc).toBe(doc);
+    expect(composer.state.cursor).toEqual(cursor);
+  });
+
+  it('tells the Library panel a modal is open while the shortcut sheet is, so it closes its menus and leaves Escape to the sheet', () => {
+    const panel = fixture.debugElement.query(By.directive(StubLibraryPanelComponent)).componentInstance as StubLibraryPanelComponent;
+    expect(panel.modalOpen).toBeFalse();
+
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(panel.modalOpen).toBeTrue();
+
+    press({ key: 'Escape' });
+    expect(component.sheetOpen).toBeFalse();
+    expect(panel.modalOpen).toBeFalse();
+  });
+
+  it('closes an open popover when a Library or Export menu, or the saved list, opens', () => {
+    press({ key: 'k', code: 'KeyK' });
+    expect(component.popover).toBe('clef');
+    const panel = fixture.debugElement.query(By.directive(StubLibraryPanelComponent)).componentInstance as StubLibraryPanelComponent;
+
+    panel.menuOpened.emit();
+    fixture.detectChanges();
+
+    expect(component.popover).toBeNull();
+    expect(document.querySelector(':popover-open')).toBeNull();
+  });
+
+  it('writes the shortcuts of Undo and Redo with the modifiers of the platform keyboard', () => {
+    const platform = TestBed.inject(KEY_PLATFORM);
+    const [undo, redo] = Array.from(fixture.nativeElement.querySelectorAll('.header-actions .text-btn')) as HTMLButtonElement[];
+
+    expect(undo.title).toBe(shortcutTitleOf('undo', platform));
+    expect(redo.title).toBe(shortcutTitleOf('redo', platform));
+  });
+
+  it('adds a track of the strip\'s chosen instrument from the keyboard', () => {
+    press({ key: 'Insert', ctrlKey: true, shiftKey: true });
+
+    expect(composer.doc.tracks.length).toBe(2);
+    expect(composer.doc.tracks[1].name).toBe('Piano');
+  });
+});
+
+describe('clampedStripHeight', () => {
+  it('keeps the strip between one row and most of the window', () => {
+    expect(clampedStripHeight(10, 1000)).toBe(72);
+    expect(clampedStripHeight(300, 1000)).toBe(300);
+    expect(clampedStripHeight(900, 1000)).toBe(600);
+  });
+});
+```
+
+**Step 2: Run** with `--include=src/app/components/composer/composer.component.spec.ts`. Expected: a
+compile errors, `TS2305: Module '"./composer.component"' has no exported member 'clampedStripHeight'.`, and
+`TS2339` for `sheetOpen` and `popover`, which the old page does not have.
+
+**Step 3: Implement.** Replace `composer.component.ts`:
+
+<!-- apply: create client/src/app/components/composer/composer.component.ts -->
+```typescript
+import {
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  ElementRef,
+  HostListener,
+  OnDestroy,
+  OnInit,
+  ViewChild,
+  inject
+} from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { Subject, takeUntil } from 'rxjs';
+import * as alphaTab from '@coderline/alphatab';
+
+import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
+import { ComposerPaletteComponent } from './components/composer-palette/composer-palette.component';
+import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
+import { ComposerShortcutSheetComponent } from './components/composer-shortcut-sheet/composer-shortcut-sheet.component';
+import { ComposerStatusLineComponent } from './components/composer-status-line/composer-status-line.component';
+import { ComposerTrackStripComponent } from './components/composer-track-strip/composer-track-strip.component';
+import { AlphaTabState } from '../../models/alpha-tab.model';
+import { ComposerState, TexDiagnostic } from '../../models/composer.model';
+import { AlphaTabService } from '../../services/alpha-tab.service';
+import { AlphaTexService } from '../../services/alpha-tex.service';
+import { ComposerService } from '../../services/composer.service';
+import { FretDigitEntry } from '../../services/composer-fret-entry';
+import { ComposerKeyHandler } from '../../services/composer-key-handler';
+import { KEY_PLATFORM } from '../../services/composer-key-platform';
+import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
+import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, PopoverKind, shortcutTitleOf } from '../../services/composer-tools';
+import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
+
+/** What the status line says when a save meets an alphaTex draft that is not applied. */
+const TEX_DRAFT_UNSAVED = 'Apply or revert the alphaTex draft before saving.';
+
+/** The shortest the track strip can be dragged, in pixels: about one row and the add-track controls. */
+const STRIP_MIN_HEIGHT = 72;
+
+/** The tallest the track strip can be dragged, as a share of the window. */
+const STRIP_MAX_SHARE = 0.6;
+
+/** How far one arrow key moves the strip's separator, in pixels. */
+const STRIP_KEY_STEP = 16;
+
+/** `height` clamped between the strip's minimum and its share of a window `viewportHeight` tall. */
+export function clampedStripHeight(height: number, viewportHeight: number): number {
+  const max = Math.max(STRIP_MIN_HEIGHT, Math.round(viewportHeight * STRIP_MAX_SHARE));
+  return Math.max(STRIP_MIN_HEIGHT, Math.min(max, Math.round(height)));
+}
+
+/**
+ * The composer page: top bar, palette, score, status line and track strip, in one grid.
+ *
+ * Holds no document state - that is `ComposerService`'s - only what the page presents: which popover
+ * is open, whether the shortcut sheet is, the alphaTex draft, and how tall the strip is. It is the
+ * `ComposerToolHost` every tool runs against, so a palette press and a key press run one command. The
+ * keyboard is `ComposerKeyHandler`'s, fret digits are `FretDigitEntry`'s, the track rows are the strip's,
+ * and save, load and export are the library panel's.
+ */
+@Component({
+  selector: 'app-composer',
+  standalone: true,
+  imports: [
+    CommonModule,
+    FormsModule,
+    ComposerLibraryPanelComponent,
+    ComposerPaletteComponent,
+    ComposerScoreComponent,
+    ComposerShortcutSheetComponent,
+    ComposerStatusLineComponent,
+    ComposerTrackStripComponent
+  ],
+  templateUrl: './composer.component.html',
+  styleUrls: ['./composer.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class ComposerComponent implements OnInit, OnDestroy {
+  @ViewChild(ComposerTrackStripComponent) private strip?: ComposerTrackStripComponent;
+  /** The score's element, where a text selection is the score's own rather than the page's. */
+  @ViewChild('score', { read: ElementRef }) private scoreElement?: ElementRef<HTMLElement>;
+
+  private readonly destroy$ = new Subject<void>();
+
+  state: ComposerState | null = null;
+  playerState: AlphaTabState | null = null;
+
+  texDraft = '';
+  texDiagnostics: TexDiagnostic[] = [];
+  showTexPanel = false;
+  /**
+   * Why the alphaTex draft is in the way, for the status line: an apply that could not parse, or a save
+   * refused while the draft is not applied. Cleared by a good apply, a revert, and closing the panel.
+   */
+  texApplyError: string | null = null;
+  /**
+   * Which saying of `texApplyError` it is, moved on each time the page says it, so the status line replaces the
+   * message's node and a screen reader reads the same words again - as `ComposerState.messageId` does for a refusal.
+   */
+  texErrorId = 0;
+
+  metronomeEnabled = false;
+  countInEnabled = false;
+
+  /** The valued tool whose popover is open. The page holds it, because a key can open one as well as a button. */
+  popover: PopoverKind | null = null;
+  sheetOpen = false;
+  stripHeight = 180;
+
+  /** Undo's and Redo's tooltips, with the keys the platform's keyboard writes: Ctrl+Z, or ⌘+Z on a Mac. */
+  readonly undoTitle: string = shortcutTitleOf('undo', inject(KEY_PLATFORM));
+  readonly redoTitle: string = shortcutTitleOf('redo', inject(KEY_PLATFORM));
+
+  /** What every tool runs against. */
+  readonly host: ComposerToolHost;
+
+  private readonly keyHandler: ComposerKeyHandler;
+  private readonly fretEntry: FretDigitEntry;
+  /** Where a drag of the strip's separator started, while one is under way. */
+  private stripDrag: { startY: number; startHeight: number } | null = null;
+  /** Takes the page's save guard back off `ComposerSaveRequests`. */
+  private removeSaveGuard: () => void = () => undefined;
+
+  constructor(
+    private readonly composer: ComposerService,
+    private readonly mapper: ScoreDocMapperService,
+    private readonly alphaTabService: AlphaTabService,
+    private readonly texService: AlphaTexService,
+    private readonly saveRequests: ComposerSaveRequests,
+    private readonly cdr: ChangeDetectorRef
+  ) {
+    this.fretEntry = new FretDigitEntry(composer, () => Date.now(), midi =>
+      this.alphaTabService.auditionNote(midi, this.currentTrackProgram)
+    );
+    this.host = {
+      composer,
+      // A popover's own button, or its key, closes it when it is the one open, as a disclosure button does.
+      openPopover: kind => this.present(() => (this.popover = this.popover === kind ? null : kind)),
+      toggleShortcutSheet: () => this.present(() => this.toggleShortcutSheet()),
+      escape: () =>
+        this.present(() => {
+          // An open popover takes Escape alone - as the popover itself does when it has the focus - and so does the
+          // open shortcut sheet, a modal over the score: the press that closes either does not also drop the range.
+          if (this.popover) {
+            this.popover = null;
+            return;
+          }
+          if (this.sheetOpen) {
+            this.sheetOpen = false;
+            return;
+          }
+          composer.setEntryMode('select');
+          composer.setCursor({});
+        }),
+      playPause: () => this.alphaTabService.playPause(),
+      // Stop rewinds to the start, so stop then play is play from the start.
+      playFromStart: () => {
+        this.alphaTabService.stop();
+        this.alphaTabService.play();
+      },
+      requestSave: () => {
+        if (!this.refusesSaveForDraft()) this.saveRequests.request();
+      },
+      addTrack: () => this.strip?.addTrack(),
+      typeFretDigit: digit => this.fretEntry.type(digit)
+    };
+    // The score's element, so a text selection inside the score does not stop Ctrl+C and Ctrl+X copying beats.
+    // And the sheet's state: while it is open, only its own key and Escape reach the tools, so no key edits the score
+    // hidden behind it (`TOOLS_OVER_A_MODAL`), and a Ctrl, Alt or Cmd press is claimed and dropped, so the browser's own
+    // shortcuts do not act behind it either.
+    this.keyHandler = new ComposerKeyHandler(
+      this.host,
+      COMPOSER_TOOLS,
+      () => this.scoreElement?.nativeElement ?? null,
+      () => this.sheetOpen
+    );
+  }
+
+  ngOnInit(): void {
+    this.composer
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(state => {
+        this.state = state;
+        this.cdr.markForCheck();
+      });
+
+    this.alphaTabService
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(state => {
+        this.playerState = state;
+        // alphaTab events originate outside Angular's zone.
+        this.cdr.detectChanges();
+      });
+
+    // Save in the Library menu asks the same question Ctrl+S does (`requestSave`).
+    this.removeSaveGuard = this.saveRequests.guard(() => this.refusesSaveForDraft());
+  }
+
+  ngOnDestroy(): void {
+    this.removeSaveGuard();
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  /** The page's one keyboard listener. See `ComposerKeyHandler` for what it takes and what it leaves. */
+  @HostListener('document:keydown', ['$event'])
+  onKeyDown(event: KeyboardEvent): void {
+    this.keyHandler.handle(event);
+  }
+
+  /** A palette press runs the same tool, against the same host, as its key. */
+  runTool(tool: ComposerTool): void {
+    tool.run(this.host, null);
+  }
+
+  closePopover(): void {
+    this.popover = null;
+  }
+
+  /**
+   * Opens or closes the shortcut sheet. Opening it closes an open popover: the popover is in the top layer, so it would
+   * stay above the sheet, inside a palette gone inert, and take the first Escape and none of the backdrop's clicks.
+   */
+  toggleShortcutSheet(): void {
+    this.sheetOpen = !this.sheetOpen;
+    if (this.sheetOpen) this.popover = null;
+  }
+
+  closeShortcutSheet(): void {
+    this.sheetOpen = false;
+  }
+
+  /**
+   * The score's host, where the shortcut sheet gives the focus back when what had it before is gone. A function the
+   * sheet asks as it closes: `scoreElement` is a view query inside `*ngIf`, unset when the sheet's input is first bound.
+   */
+  readonly scoreHost = (): HTMLElement | null => this.scoreElement?.nativeElement ?? null;
+
+  /** The program of the caret's track, for auditioning a typed fret on its own sound. */
+  get currentTrackProgram(): number {
+    return this.state?.doc.tracks[this.state.cursor.trackIndex]?.playback.program ?? 25;
+  }
+
+  // -------------------------------------------------------------------------
+  // Transport and score info
+  // -------------------------------------------------------------------------
+
+  playPause(): void {
+    this.alphaTabService.playPause();
+  }
+
+  stop(): void {
+    this.alphaTabService.stop();
+  }
+
+  toggleMetronome(): void {
+    this.metronomeEnabled = !this.metronomeEnabled;
+    this.alphaTabService.setMetronomeVolume(this.metronomeEnabled ? 1 : 0);
+  }
+
+  toggleCountIn(): void {
+    this.countInEnabled = !this.countInEnabled;
+    this.alphaTabService.setCountInVolume(this.countInEnabled ? 1 : 0);
+  }
+
+  onTempoChange(value: string): void {
+    const tempo = Number(value);
+    if (!Number.isNaN(tempo)) this.composer.setTempo(tempo);
+  }
+
+  onTitleChange(value: string): void {
+    this.composer.updateScoreInfo({ title: value });
+  }
+
+  undo(): void {
+    this.composer.undo();
+  }
+
+  redo(): void {
+    this.composer.redo();
+  }
+
+  newScore(): void {
+    this.composer.reset();
+  }
+
+  // -------------------------------------------------------------------------
+  // The track strip's height
+  // -------------------------------------------------------------------------
+
+  onStripResizeStart(event: PointerEvent): void {
+    this.stripDrag = { startY: event.clientY, startHeight: this.stripHeight };
+    // Captured, so the drag keeps its pointer when it leaves the thin separator.
+    if (event.target instanceof Element) event.target.setPointerCapture(event.pointerId);
+  }
+
+  onStripResize(event: PointerEvent): void {
+    if (!this.stripDrag) return;
+    this.stripHeight = clampedStripHeight(this.stripDrag.startHeight + this.stripDrag.startY - event.clientY, window.innerHeight);
+  }
+
+  onStripResizeEnd(): void {
+    this.stripDrag = null;
+  }
+
+  /**
+   * The separator's arrow keys. Stopped here, so the page's keyboard listener does not also move the
+   * caret's string with the same press.
+   */
+  onStripResizeKey(event: KeyboardEvent): void {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    event.stopPropagation();
+    const step = event.key === 'ArrowUp' ? STRIP_KEY_STEP : -STRIP_KEY_STEP;
+    this.stripHeight = clampedStripHeight(this.stripHeight + step, window.innerHeight);
+  }
+
+  // -------------------------------------------------------------------------
+  // alphaTex escape hatch
+  // -------------------------------------------------------------------------
+
+  /** Opens or closes the alphaTex panel. Either way its message goes: it was about a draft that is gone or new. */
+  toggleTexPanel(): void {
+    this.showTexPanel = !this.showTexPanel;
+    this.texApplyError = null;
+    if (this.showTexPanel) {
+      this.texDraft = this.currentTex();
+      this.texDiagnostics = [];
+    }
+    this.cdr.markForCheck();
+  }
+
+  /** Canonical alphaTex for the current document, generated on demand. */
+  private currentTex(): string {
+    if (!this.state) return '';
+    try {
+      const score = this.mapper.toScore(this.state.doc, new alphaTab.Settings());
+      return this.texService.export(score);
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Refuses a save while the alphaTex panel is open on a draft that is not the document's alphaTex, saying
+   * why in the status line. A save writes the document, not the draft, so saving then would leave what is in
+   * the text box unsaved without a word - and Ctrl+S runs from the textarea itself (`inTextFields`).
+   */
+  private refusesSaveForDraft(): boolean {
+    if (!this.showTexPanel || this.texDraft === this.currentTex()) return false;
+    this.texApplyError = TEX_DRAFT_UNSAVED;
+    this.texErrorId++;
+    this.cdr.markForCheck();
+    return true;
+  }
+
+  applyTex(): void {
+    const result = this.texService.parse(this.texDraft);
+    this.texDiagnostics = result.diagnostics;
+
+    if (!result.score) {
+      // Keep the last good document; the diagnostics explain the failure, and the status line says so.
+      this.texApplyError = 'alphaTex could not be parsed. The score is unchanged.';
+      this.texErrorId++;
+      this.cdr.markForCheck();
+      return;
+    }
+
+    this.texApplyError = null;
+    this.composer.replaceDocument(this.mapper.toDoc(result.score));
+    this.cdr.markForCheck();
+  }
+
+  revertTex(): void {
+    this.texDraft = this.currentTex();
+    this.texDiagnostics = [];
+    this.texApplyError = null;
+  }
+
+  /** Runs a change the host makes from outside a template event, and marks the page for checking. */
+  private present(change: () => void): void {
+    change();
+    this.cdr.markForCheck();
+  }
+}
+```
+
+Replace `composer.component.html`:
+
+<!-- apply: create client/src/app/components/composer/composer.component.html -->
+```html
+<div class="composer-page" *ngIf="state as s">
+  <!--
+    First, so it hears it is opening before the parts below go inert. Its backdrop covers the window, and while it is
+    open every part of the page is inert: no click and no focus reaches the page behind it.
+  -->
+  <app-composer-shortcut-sheet [open]="sheetOpen" [fallbackFocus]="scoreHost" (closed)="closeShortcutSheet()"></app-composer-shortcut-sheet>
+
+  <header class="top-bar" [attr.inert]="sheetOpen ? '' : null">
+    <div class="score-info">
+      <input
+        class="title-input"
+        type="text"
+        [ngModel]="s.doc.title"
+        (ngModelChange)="onTitleChange($event)"
+        aria-label="Score title"
+      />
+      <span class="dirty-marker" *ngIf="s.isDirty" title="Unsaved changes">●</span>
+    </div>
+
+    <div class="transport">
+      <button
+        class="icon-btn"
+        type="button"
+        (click)="playPause()"
+        [attr.aria-label]="playerState?.isPlaying ? 'Pause' : 'Play'"
+        [title]="playerState?.isPlaying ? 'Pause (Space)' : 'Play (Space)'"
+      >
+        <span *ngIf="!playerState?.isPlaying">▶</span>
+        <span *ngIf="playerState?.isPlaying">❚❚</span>
+      </button>
+      <button class="icon-btn" type="button" (click)="stop()" aria-label="Stop" title="Stop">■</button>
+
+      <label class="tempo-field">
+        <span>BPM</span>
+        <input type="number" min="20" max="400" [ngModel]="s.doc.tempo" (ngModelChange)="onTempoChange($event)" />
+      </label>
+
+      <button class="toggle-btn" type="button" [class.active]="metronomeEnabled" [attr.aria-pressed]="metronomeEnabled" (click)="toggleMetronome()">
+        Metronome
+      </button>
+      <button class="toggle-btn" type="button" [class.active]="countInEnabled" [attr.aria-pressed]="countInEnabled" (click)="toggleCountIn()">
+        Count-in
+      </button>
+    </div>
+
+    <div class="header-actions">
+      <button class="text-btn" type="button" (click)="undo()" [disabled]="!s.canUndo" [title]="undoTitle">Undo</button>
+      <button class="text-btn" type="button" (click)="redo()" [disabled]="!s.canRedo" [title]="redoTitle">Redo</button>
+      <button class="text-btn" type="button" (click)="newScore()" title="Start a new score">New</button>
+      <button class="text-btn" type="button" [class.active]="showTexPanel" [attr.aria-pressed]="showTexPanel" (click)="toggleTexPanel()">
+        alphaTex
+      </button>
+      <app-composer-library-panel [modalOpen]="sheetOpen" (menuOpened)="closePopover()"></app-composer-library-panel>
+      <button
+        class="text-btn shortcuts-toggle"
+        type="button"
+        aria-label="Keyboard shortcuts"
+        title="Keyboard shortcuts (?)"
+        [attr.aria-expanded]="sheetOpen"
+        (click)="toggleShortcutSheet()"
+      >?</button>
+    </div>
+  </header>
+
+  <app-composer-palette
+    class="palette"
+    [attr.inert]="sheetOpen ? '' : null"
+    [state]="s"
+    [popover]="popover"
+    (toolPressed)="runTool($event)"
+    (popoverClosed)="closePopover()"
+  ></app-composer-palette>
+
+  <div class="score-column" [attr.inert]="sheetOpen ? '' : null">
+    <!-- Focusable by script only, for the shortcut sheet to give the focus back to. -->
+    <app-composer-score #score tabindex="-1"></app-composer-score>
+
+    <section class="tex-panel" *ngIf="showTexPanel">
+      <div class="tex-header">
+        <h2 class="panel-heading">alphaTex source</h2>
+        <div class="tex-actions">
+          <button class="text-btn" type="button" (click)="applyTex()">Apply</button>
+          <button class="text-btn" type="button" (click)="revertTex()">Revert</button>
+        </div>
+      </div>
+
+      <textarea class="tex-editor" [(ngModel)]="texDraft" spellcheck="false" aria-label="alphaTex source"></textarea>
+
+      <ul class="diagnostics" *ngIf="texDiagnostics.length > 0">
+        <li
+          *ngFor="let d of texDiagnostics"
+          class="diagnostic"
+          [class.error]="d.severity === 'error'"
+          [class.warning]="d.severity === 'warning'"
+        >
+          <span class="location">{{ d.line }}:{{ d.column }}</span>
+          <span class="message">{{ d.message }}</span>
+        </li>
+      </ul>
+    </section>
+  </div>
+
+  <app-composer-status-line
+    class="status"
+    [attr.inert]="sheetOpen ? '' : null"
+    [refusal]="s.refusal"
+    [notice]="s.notice"
+    [messageId]="s.messageId"
+    [texError]="texApplyError"
+    [texErrorId]="texErrorId"
+    [cursor]="s.cursor"
+    [entryMode]="s.entryMode"
+    [doc]="s.doc"
+  ></app-composer-status-line>
+
+  <div
+    class="strip-resize"
+    [attr.inert]="sheetOpen ? '' : null"
+    role="separator"
+    tabindex="0"
+    aria-orientation="horizontal"
+    aria-label="Track strip height"
+    aria-valuemin="72"
+    [attr.aria-valuenow]="stripHeight"
+    (pointerdown)="onStripResizeStart($event)"
+    (pointermove)="onStripResize($event)"
+    (pointerup)="onStripResizeEnd()"
+    (pointercancel)="onStripResizeEnd()"
+    (keydown)="onStripResizeKey($event)"
+  ></div>
+
+  <app-composer-track-strip class="strip" [attr.inert]="sheetOpen ? '' : null" [style.height.px]="stripHeight"></app-composer-track-strip>
+</div>
+```
+
+Replace `composer.component.scss`:
+
+<!-- apply: create client/src/app/components/composer/composer.component.scss -->
+```scss
+// The composer page: a grid of top bar, palette, score, status line and track strip.
+//
+// The composer's colours are custom properties on the page host, so every child component reads one
+// set rather than re-declaring SCSS variables in each file (design Part 3, "Styling"). The children
+// give each a fallback of the same value, for their own specs, which have no page host.
+
+:host {
+  --composer-nav: #2c3e50;
+  --composer-nav-secondary: #34495e;
+  --composer-accent: #3498db;
+  --composer-accent-hover: #2980b9;
+  --composer-text: #ecf0f1;
+  --composer-text-secondary: #bdc3c7;
+  --composer-border: #465666;
+  --composer-error: #e74c3c;
+  --composer-warning: #f39c12;
+  --composer-success: #27ae60;
+  --composer-surface: #1a252f;
+
+  display: block;
+}
+
+// Sized to the viewport minus the app header, which the shell publishes (it wraps on a narrow window).
+// No inspector column until M3.
+.composer-page {
+  display: grid;
+  grid-template-columns: minmax(8.5rem, 12.5rem) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto 0.4rem auto;
+  grid-template-areas:
+    'top top'
+    'palette score'
+    'status status'
+    'resize resize'
+    'strip strip';
+  height: calc(100vh - var(--app-header-height, 57px));
+  height: calc(100dvh - var(--app-header-height, 57px));
+  min-height: 24rem;
+  overflow: hidden;
+  background-color: var(--composer-surface);
+  color: var(--composer-text);
+}
+
+@media (max-width: 40rem) {
+  .composer-page {
+    grid-template-columns: minmax(6.5rem, 8rem) minmax(0, 1fr);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Top bar
+// ---------------------------------------------------------------------------
+
+.top-bar {
+  grid-area: top;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.25rem;
+  padding: 0.5rem 1rem;
+  background-color: var(--composer-nav);
+  border-bottom: 1px solid var(--composer-border);
+}
+
+.score-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+
+  .title-input {
+    min-width: 8rem;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--composer-text);
+    font-size: 1.05rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+
+    &:hover {
+      border-color: var(--composer-border);
+    }
+
+    &:focus {
+      outline: none;
+      border-color: var(--composer-accent);
+      background-color: rgba(0, 0, 0, 0.2);
+    }
+  }
+
+  .dirty-marker {
+    color: var(--composer-accent);
+    font-size: 0.7rem;
+  }
+}
+
+.transport,
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.tempo-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--composer-text-secondary);
+  font-size: 0.8rem;
+
+  input {
+    width: 4.5rem;
+    padding: 0.3rem 0.4rem;
+    background-color: var(--composer-nav-secondary);
+    border: 1px solid var(--composer-border);
+    border-radius: 4px;
+    color: var(--composer-text);
+
+    &:focus {
+      outline: none;
+      border-color: var(--composer-accent);
+    }
+  }
+}
+
+.icon-btn,
+.text-btn,
+.toggle-btn {
+  background-color: var(--composer-nav-secondary);
+  border: 1px solid var(--composer-border);
+  border-radius: 4px;
+  color: var(--composer-text);
+  cursor: pointer;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.82rem;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+
+  &:hover:not(:disabled):not([aria-disabled='true']) {
+    background-color: var(--composer-accent);
+    border-color: var(--composer-accent-hover);
+  }
+
+  &:disabled,
+  &[aria-disabled='true'] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  &.active {
+    background-color: var(--composer-accent);
+    border-color: var(--composer-accent-hover);
+  }
+}
+
+.icon-btn {
+  min-width: 2.2rem;
+  font-size: 0.95rem;
+}
+
+// ---------------------------------------------------------------------------
+// Palette, score and status line
+// ---------------------------------------------------------------------------
+
+.palette {
+  grid-area: palette;
+}
+
+.score-column {
+  grid-area: score;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+
+  app-composer-score {
+    min-height: 0;
+  }
+}
+
+.status {
+  grid-area: status;
+}
+
+// ---------------------------------------------------------------------------
+// The track strip and its separator
+// ---------------------------------------------------------------------------
+
+.strip-resize {
+  grid-area: resize;
+  cursor: row-resize;
+  touch-action: none;
+  background-color: var(--composer-border);
+
+  &:hover,
+  &:focus-visible {
+    outline: none;
+    background-color: var(--composer-accent);
+  }
+}
+
+.strip {
+  grid-area: strip;
+}
+
+// ---------------------------------------------------------------------------
+// alphaTex panel
+// ---------------------------------------------------------------------------
+
+.tex-panel {
+  flex-shrink: 0;
+  max-height: 45%;
+  display: flex;
+  flex-direction: column;
+  padding: 0.6rem 1rem 0.8rem;
+  background-color: var(--composer-nav);
+  border-top: 1px solid var(--composer-border);
+}
+
+.panel-heading {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--composer-text-secondary);
+}
+
+.tex-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.tex-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.tex-editor {
+  width: 100%;
+  min-height: 7rem;
+  resize: vertical;
+  box-sizing: border-box;
+  background-color: #11181f;
+  border: 1px solid var(--composer-border);
+  border-radius: 4px;
+  color: var(--composer-text);
+  font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 0.6rem;
+
+  &:focus {
+    outline: none;
+    border-color: var(--composer-accent);
+  }
+}
+
+.diagnostics {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  overflow-y: auto;
+  max-height: 8rem;
+}
+
+.diagnostic {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.3rem 0.4rem;
+  border-left: 3px solid var(--composer-text-secondary);
+  margin-bottom: 2px;
+  font-size: 0.78rem;
+  background-color: rgba(0, 0, 0, 0.2);
+
+  &.error {
+    border-left-color: var(--composer-error);
+  }
+
+  &.warning {
+    border-left-color: var(--composer-warning);
+  }
+
+  .location {
+    flex-shrink: 0;
+    color: var(--composer-text-secondary);
+    font-family: 'Consolas', monospace;
+  }
+
+  .message {
+    color: var(--composer-text);
+  }
+}
+```
+
+**Step 4: Run** `composer.component.spec.ts`, then both type checks. Expected: all SUCCESS, no type errors.
+
+**Step 5: Commit**: `feat: The composer page grid - top bar, palette, score, status line and track strip`.
+
+### Task 3.11: Space and Enter press a focused button
+
+The page now has buttons everywhere - the palette, the Library and Export menus, the track strip's rows - and
+every one of them is pressed by Space or Enter while it has the focus. The keyboard handler binds Space to
+play and pause, Shift+Space to play from the start, and Shift+Enter to Section; with nothing in the way it
+would claim those presses (`preventDefault`) and a keyboard user could never press a focused button.
+
+So the page asks first: Space or Enter, without Ctrl, Alt or Cmd, on a control the browser presses with
+them - a button, a link, a checkbox or radio, a `<summary>`, or an element with a pressable ARIA role - is
+left to the browser, and the key handler is not asked. With Ctrl held it is the composer's again (Ctrl+Enter
+inserts a bar from a focused button too). The question lives beside `isEditableTarget`, the other "whose key
+is this" helper, and the page's one listener asks it; `ComposerKeyHandler` itself is unchanged.
+
+**Files:**
+- Modify: `client/src/app/services/editable-target.ts`, `client/src/app/components/composer/composer.component.ts`
+- Test: `client/src/app/services/editable-target.spec.ts`, `client/src/app/components/composer/composer.component.spec.ts`
+
+**Step 1: Failing specs.** The helper:
+
+<!-- apply: find client/src/app/services/editable-target.spec.ts -->
+```typescript
+import { isEditableTarget } from './editable-target';
+```
+
+<!-- apply: replace client/src/app/services/editable-target.spec.ts -->
+```typescript
+import { isEditableTarget, pressesFocusedControl } from './editable-target';
+```
+
+<!-- apply: append client/src/app/services/editable-target.spec.ts -->
+```typescript
+describe('pressesFocusedControl', () => {
+  const attached: HTMLElement[] = [];
+
+  function element<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
+    const created = document.createElement(tag);
+    document.body.appendChild(created);
+    attached.push(created);
+    return created;
+  }
+
+  afterEach(() => attached.splice(0).forEach(node => node.remove()));
+
+  const press = (key: string, target: EventTarget, modifiers: Partial<KeyboardEvent> = {}) => ({
+    key, target, ctrlKey: false, altKey: false, metaKey: false, ...modifiers
+  });
+
+  it('is true for Space and Enter, Shift or not, on a button, a link, a checkbox and a role="button"', () => {
+    const link = element('a');
+    link.href = '#';
+    const checkbox = element('input');
+    checkbox.type = 'checkbox';
+    const custom = element('div');
+    custom.setAttribute('role', 'button');
+
+    for (const target of [element('button'), link, checkbox, custom]) {
+      expect(pressesFocusedControl(press(' ', target))).withContext(target.tagName).toBeTrue();
+      expect(pressesFocusedControl(press('Enter', target, { shiftKey: true }))).withContext(target.tagName).toBeTrue();
+    }
+  });
+
+  it('is false with Ctrl, Alt or Cmd, for any other key, and off a control', () => {
+    const button = element('button');
+
+    expect(pressesFocusedControl(press(' ', button, { ctrlKey: true }))).toBeFalse();
+    expect(pressesFocusedControl(press('Enter', button, { altKey: true }))).toBeFalse();
+    expect(pressesFocusedControl(press('Enter', button, { metaKey: true }))).toBeFalse();
+    expect(pressesFocusedControl(press('q', button))).toBeFalse();
+    expect(pressesFocusedControl(press(' ', document.body))).toBeFalse();
+    expect(pressesFocusedControl(press(' ', element('a')))).toBeFalse();
+  });
+});
+```
+
+And the page:
+
+<!-- apply: find client/src/app/components/composer/composer.component.spec.ts -->
+```typescript
+import { AlphaTexService } from '../../services/alpha-tex.service';
+```
+
+<!-- apply: replace client/src/app/components/composer/composer.component.spec.ts -->
+```typescript
+import { AlphaTabService } from '../../services/alpha-tab.service';
+import { AlphaTexService } from '../../services/alpha-tex.service';
+```
+
+<!-- apply: find client/src/app/components/composer/composer.component.spec.ts -->
+```typescript
+});
+
+describe('clampedStripHeight', () => {
+```
+
+<!-- apply: replace client/src/app/components/composer/composer.component.spec.ts -->
+```typescript
+  it('leaves Space on a focused button to press it, and plays on Space anywhere else', () => {
+    const playPause = spyOn(TestBed.inject(AlphaTabService), 'playPause');
+    const rest: HTMLButtonElement = fixture.nativeElement.querySelector('[data-tool="rest"]');
+    rest.focus();
+
+    press({ key: ' ', code: 'Space' }, rest);
+    expect(playPause).not.toHaveBeenCalled();
+
+    press({ key: ' ', code: 'Space' });
+    expect(playPause).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('clampedStripHeight', () => {
+```
+
+**Step 2: Run** the spec type check. Expected: a compile error,
+`TS2305: Module '"./editable-target"' has no exported member 'pressesFocusedControl'.`
+
+**Step 3: Implement.** The helper:
+
+<!-- apply: append client/src/app/services/editable-target.ts -->
+```typescript
+/**
+ * Whether a key press is Space or Enter on a control the browser presses with that key: a button, a link, a
+ * checkbox or radio, a `<summary>`, or an element with a pressable ARIA role. Shift does not change that;
+ * Ctrl, Alt or Cmd does, and the press is the page's shortcut again.
+ *
+ * Asked before a page's document-wide shortcuts, which bind Space (play) and Shift+Enter (Section): a
+ * focused button must still be pressed by the keys that press buttons, or a keyboard user cannot use it.
+ */
+export function pressesFocusedControl(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'altKey' | 'metaKey' | 'target'>): boolean {
+  if ((event.key !== ' ' && event.key !== 'Enter') || event.ctrlKey || event.altKey || event.metaKey) return false;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return false;
+  if (target instanceof HTMLButtonElement || target.tagName === 'SUMMARY') return true;
+  if (target instanceof HTMLAnchorElement) return target.hasAttribute('href');
+  if (target instanceof HTMLInputElement) return PRESSED_INPUTS.has(target.type);
+  return PRESSED_ROLES.has(target.getAttribute('role') ?? '');
+}
+
+/** The input types Space or Enter presses. */
+const PRESSED_INPUTS: ReadonlySet<string> = new Set(['button', 'submit', 'reset', 'image', 'checkbox', 'radio']);
+
+/** The ARIA roles of controls that Space or Enter presses. */
+const PRESSED_ROLES: ReadonlySet<string> = new Set([
+  'button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'option', 'menuitem', 'menuitemcheckbox', 'menuitemradio'
+]);
+```
+
+The page asks it before its key handler:
+
+<!-- apply: find client/src/app/components/composer/composer.component.ts -->
+```typescript
+import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
+```
+
+<!-- apply: replace client/src/app/components/composer/composer.component.ts -->
+```typescript
+import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
+import { pressesFocusedControl } from '../../services/editable-target';
+```
+
+<!-- apply: find client/src/app/components/composer/composer.component.ts -->
+```typescript
+  /** The page's one keyboard listener. See `ComposerKeyHandler` for what it takes and what it leaves. */
+  @HostListener('document:keydown', ['$event'])
+  onKeyDown(event: KeyboardEvent): void {
+    this.keyHandler.handle(event);
+  }
+```
+
+<!-- apply: replace client/src/app/components/composer/composer.component.ts -->
+```typescript
+  /**
+   * The page's one keyboard listener. See `ComposerKeyHandler` for what it takes and what it leaves. Space
+   * and Enter on a focused button - a palette tool, a menu item, a track row's Update - press that button,
+   * so the handler is not asked (`pressesFocusedControl`).
+   */
+  @HostListener('document:keydown', ['$event'])
+  onKeyDown(event: KeyboardEvent): void {
+    if (pressesFocusedControl(event)) return;
+    this.keyHandler.handle(event);
+  }
+```
+
+**Step 4: Run** `editable-target.spec.ts` and `composer.component.spec.ts`. Expected: all SUCCESS.
+
+**Step 5: Commit**: `fix: Leave Space and Enter to a focused button`.
+
+### Task 3.12: Phase 3 checkpoint
+
+**Step 1:** Both type checks and the whole suite, as in Task 1.16. Expected: no type errors, all SUCCESS.
+
+**Step 2:** Line counts - every file under 1000:
+
+```bash
+wc -l client/src/app/components/composer/composer.component.ts client/src/app/services/composer.service.ts client/src/app/services/composer-tools.ts
+```
+
+**Step 3:** Nothing to commit if clean.
+
+## Phase 4: score interaction
+
+A click on the score now depends on the entry mode, a drag makes a range, the range is drawn, Pen shows
+where a click would write, and the caret is drawn from state before the first click (decision 22).
+`ComposerScoreComponent` has no spec - it owns alphaTab and engraves after view init - so the decisions
+live in pure functions with specs of their own (Task 4.1), alphaTab's events and highlight get thin
+wrappers (Task 4.2), and the component only wires them (Task 4.3).
+
+One alphaTab fact shapes all of it. With `player.enableUserInteraction` on - the composer's setting
+until now - alphaTab runs its own selection: a mouse-down starts a highlight, a move extends it, and a
+mouse-up calls `applyPlaybackRangeFromHighlight`, which **sets the playback range**
+(`AlphaTabApiBase._onBeatMouseDown`/`_onBeatMouseMove`/`_onBeatMouseUp`, `alphaTab.core.mjs` ~53080-53130
+in 1.8). The design says selecting must never change what the transport loops. So the composer turns
+alphaTab's interaction off: the beat mouse events still fire (`_setupClickHandling`, ~53156, runs either
+way, and `_isBeatMouseDown` is set whatever the setting), and the composer draws the highlight itself with
+`highlightPlaybackRange`, which sets nothing. Two things come with the setting: alphaTab no longer calls
+`preventDefault` on a mouse-down, so the score container takes `user-select: none` to keep a drag from
+selecting text; and alphaTab no longer re-applies its highlight after a render (~53215 checks the setting),
+which is why the composer redraws it after every `renderFinished`.
+
+Two more came with it, found in review before this phase was applied. alphaTab's click set the playback
+position too (`applyPlaybackRangeFromHighlight` sets `tickPosition` before the range, ~53330), so turning its
+interaction off took click-to-seek away; the composer seeks itself, on a click while stopped, and sets no
+range. And alphaTab hears mouse-up only on its own surface (`canvasElement.mouseUp`, ~53195), so a button
+released outside the score left its beat mouse-move firing; the composer reads the move's own buttons and
+listens for mouse-up on the document.
+
+**Phase 4 exports**
+
+| Module | Exports | Task |
+|---|---|---|
+| `composer-score-interaction.ts` (new) | `StaffKind`, `StaffSlot`, `staffSlotsOf`, `ScorePress`, `scorePressOf`, `dragExtends`, `dragContinues`, `seeksOnPress`, `scoreRedrawOf`, `caretSlotIndexOf`, `caretHalfStepsOf`, `highlightEndsOf`, `penHoverHalfStepsOf`, `snappedHoverX`, `hoverKeyOf` | 4.1 |
+| `alpha-tab.service.ts` | `onBeatMouseMove`, `onBeatMouseUp`, `highlightRange`, `clearHighlight`, `seekToBeat` | 4.2 |
+| `staff-hit-test.service.ts` | `staffIndexAt` and `caretRect` take a measure the caller holds | 4.3 |
+| `composer-score.component` | Select / Pen clicks, click-to-seek, drag selection that ends wherever the button is released, rendering only on a new document, the highlight, Pen's hover notehead outside the zone, the caret from state | 4.3 |
+
+### Task 4.1: What a click, a drag and the caret mean, as pure functions
+
+- **A mouse-down** extends the range with Shift held; otherwise it moves the caret, and in Pen on
+  standard notation it also writes the clicked pitch. Tablature never writes on a click - digits write
+  there, in both modes.
+- **A click sets the playback position** while playback is stopped: a mouse-down that moves the caret or
+  writes puts alphaTab's tick position at the clicked beat, as alphaTab's own interaction did before it was
+  turned off - and sets no playback range. A Shift-click only extends the range, and a click during playback
+  does not jump the transport.
+- **A drag** - moving with the button held - extends the range from where the mouse-down put the caret:
+  anywhere in Select, and on tablature in Pen. A notation drag in Pen would extend from the caret the
+  write just advanced, which is never what a hand meant. It goes on only while the primary button is still
+  down (`MouseEvent.buttons` bit 0): alphaTab listens for mouse-up on its own surface, so a button released
+  outside the score never reaches it, and without the check the next move over the score, button up, would
+  still extend.
+- **The caret** is drawn on the caret's own staff: on the staff last clicked when that is the caret's,
+  otherwise on its tablature when the caret has a string and its notation when not. On notation it
+  sits at the last clicked position, or the middle line before any click.
+- **The highlight** runs from the range's first target beat to its last; a caret alone has none.
+- **What a state change redraws**: a new document is engraved again; anything else - the selection, the
+  caret, the entry mode - only redraws the highlight and the caret over the engraving. Engraving on every
+  emission re-engraved the whole score for each beat a drag crossed.
+- **Pen's hover notehead** is drawn only in Pen, over standard notation, where the pointer's position
+  names a pitch. Its position snaps to half a line spacing, and what it draws is named by a key - staff,
+  pitch, snapped position, scroll - so a pointer move that changes none of those does no work in Angular.
+
+**Files:**
+- Create: `client/src/app/services/composer-score-interaction.ts`
+- Test: `client/src/app/services/composer-score-interaction.spec.ts`
+
+**Step 1: Failing spec**
+
+<!-- apply: create client/src/app/services/composer-score-interaction.spec.ts -->
+```typescript
+import { ComposerService } from './composer.service';
+import {
+  StaffSlot,
+  caretHalfStepsOf,
+  caretSlotIndexOf,
+  dragContinues,
+  dragExtends,
+  highlightEndsOf,
+  hoverKeyOf,
+  penHoverHalfStepsOf,
+  scorePressOf,
+  scoreRedrawOf,
+  seeksOnPress,
+  snappedHoverX,
+  staffSlotsOf
+} from './composer-score-interaction';
+import { EditCursor } from '../models/composer.model';
+
+const at = (trackIndex: number, barIndex: number, beatIndex: number, stringIndex: number | null = 0): EditCursor =>
+  ({ trackIndex, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex, stringIndex });
+
+describe('staffSlotsOf', () => {
+  it('lists the staves alphaTab draws, notation before tablature, track by track', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+
+    expect(staffSlotsOf(doc)).toEqual([
+      { trackIndex: 0, staffIndex: 0, kind: 'notation' },
+      { trackIndex: 0, staffIndex: 0, kind: 'tab' },
+      { trackIndex: 1, staffIndex: 0, kind: 'notation' }
+    ]);
+  });
+});
+
+describe('scorePressOf and dragExtends', () => {
+  it('writes only in Pen, on notation, without Shift', () => {
+    expect(scorePressOf('pen', 'notation', false)).toBe('write');
+    expect(scorePressOf('select', 'notation', false)).toBe('caret');
+    expect(scorePressOf('pen', 'tab', false)).toBe('caret');
+    expect(scorePressOf('pen', null, false)).toBe('caret');
+  });
+
+  it('extends with Shift in either mode', () => {
+    expect(scorePressOf('pen', 'notation', true)).toBe('extend');
+    expect(scorePressOf('select', 'tab', true)).toBe('extend');
+  });
+
+  it('drags a range anywhere in Select, and only on tablature in Pen', () => {
+    expect(dragExtends('select', 'notation')).toBeTrue();
+    expect(dragExtends('select', null)).toBeTrue();
+    expect(dragExtends('pen', 'tab')).toBeTrue();
+    expect(dragExtends('pen', 'notation')).toBeFalse();
+  });
+});
+
+describe('dragContinues', () => {
+  it('goes on only while the drag is on and the primary button is still down', () => {
+    expect(dragContinues(true, 1)).toBeTrue();
+    expect(dragContinues(true, 3)).toBeTrue();
+    // Released outside the score: alphaTab never heard the mouse-up, and the button is up.
+    expect(dragContinues(true, 0)).toBeFalse();
+    expect(dragContinues(true, 2)).toBeFalse();
+    expect(dragContinues(false, 1)).toBeFalse();
+  });
+});
+
+describe('seeksOnPress', () => {
+  it('moves the playback position on a click that moves the caret or writes, while playback is stopped', () => {
+    expect(seeksOnPress('caret', false)).toBeTrue();
+    expect(seeksOnPress('write', false)).toBeTrue();
+    expect(seeksOnPress('extend', false)).toBeFalse();
+    expect(seeksOnPress('caret', true)).toBeFalse();
+  });
+});
+
+describe('scoreRedrawOf', () => {
+  it('engraves again only for a document it has not engraved, and otherwise redraws what sits over it', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(scoreRedrawOf(null, doc)).toBe('render');
+    expect(scoreRedrawOf(doc, doc)).toBe('overlay');
+    expect(scoreRedrawOf(doc, structuredClone(doc))).toBe('render');
+  });
+});
+
+describe('caretSlotIndexOf and caretHalfStepsOf', () => {
+  const slots: StaffSlot[] = [
+    { trackIndex: 0, staffIndex: 0, kind: 'notation' },
+    { trackIndex: 0, staffIndex: 0, kind: 'tab' },
+    { trackIndex: 1, staffIndex: 0, kind: 'notation' }
+  ];
+
+  it('draws the caret before any click: on tablature for a string, on notation without one', () => {
+    expect(caretSlotIndexOf(slots, at(0, 0, 0, 2), null)).toBe(1);
+    expect(caretSlotIndexOf(slots, at(1, 0, 0, null), null)).toBe(2);
+  });
+
+  it('keeps the staff last clicked while it is still the caret\'s', () => {
+    expect(caretSlotIndexOf(slots, at(0, 1, 2), 0)).toBe(0);
+    expect(caretSlotIndexOf(slots, at(1, 1, 2, null), 0)).toBe(2);
+  });
+
+  it('finds no staff for a caret on a track that draws none', () => {
+    expect(caretSlotIndexOf(slots, at(4, 0, 0), null)).toBeNull();
+  });
+
+  it('puts a tablature caret on its string, and a notation caret where it was clicked or on the middle line', () => {
+    // Six lines, string 1 on top: string 1 is 10 half-steps above the bottom line, string 6 is 0.
+    expect(caretHalfStepsOf('tab', 6, 0, null)).toBe(10);
+    expect(caretHalfStepsOf('tab', 6, 5, null)).toBe(0);
+    expect(caretHalfStepsOf('notation', 0, null, 7)).toBe(7);
+    expect(caretHalfStepsOf('notation', 0, null, null)).toBe(4);
+  });
+});
+
+describe('highlightEndsOf', () => {
+  it('runs from the range\'s first beat to its last, whichever end was clicked first', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    const ends = highlightEndsOf(doc, at(0, 1, 2), at(0, 0, 3));
+
+    expect(ends?.first).toEqual({ trackIndex: 0, staffIndex: 0, barIndex: 0, voiceIndex: 0, beatIndex: 3 });
+    expect(ends?.last).toEqual({ trackIndex: 0, staffIndex: 0, barIndex: 1, voiceIndex: 0, beatIndex: 2 });
+  });
+
+  it('draws nothing for the caret alone', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(highlightEndsOf(doc, null, at(0, 0, 0))).toBeNull();
+    expect(highlightEndsOf(doc, at(0, 0, 1), at(0, 0, 1))).toBeNull();
+  });
+});
+
+describe('penHoverHalfStepsOf, snappedHoverX and hoverKeyOf', () => {
+  it('places a hover notehead only in Pen, over notation, with a clef that has pitches', () => {
+    // Treble clef's bottom line is E4, diatonic 30; G4, 32, is two half-steps above it.
+    expect(penHoverHalfStepsOf('pen', 'notation', 32, 'g2')).toBe(2);
+    expect(penHoverHalfStepsOf('select', 'notation', 32, 'g2')).toBeNull();
+    expect(penHoverHalfStepsOf('pen', 'tab', 32, 'g2')).toBeNull();
+    expect(penHoverHalfStepsOf('pen', 'notation', null, 'g2')).toBeNull();
+    expect(penHoverHalfStepsOf('pen', 'notation', 32, 'n')).toBeNull();
+  });
+
+  it('snaps the notehead\'s position to half a line spacing', () => {
+    expect(snappedHoverX(101.5, 8)).toBe(100);
+    expect(snappedHoverX(106.2, 8)).toBe(108);
+    expect(snappedHoverX(6.4, 0)).toBe(6);
+  });
+
+  it('names a hover by what it draws, so a move within one snapped position changes nothing', () => {
+    const key = hoverKeyOf(1, 4, 100, 8, 0);
+
+    expect(hoverKeyOf(1, 4, snappedHoverX(101.5, 8), 8, 0)).toBe(key);
+    expect(hoverKeyOf(2, 4, 100, 8, 0)).not.toBe(key);
+    expect(hoverKeyOf(1, 5, 100, 8, 0)).not.toBe(key);
+    expect(hoverKeyOf(1, 4, 104, 8, 0)).not.toBe(key);
+    expect(hoverKeyOf(1, 4, 100, 8, 40)).not.toBe(key);
+  });
+});
+```
+
+**Step 2: Run** with `--include=src/app/services/composer-score-interaction.spec.ts`. Expected: a compile
+error, `TS2307: Cannot find module './composer-score-interaction'`.
+
+**Step 3: Implement**
+
+<!-- apply: create client/src/app/services/composer-score-interaction.ts -->
+```typescript
+import { ClefKind, EditCursor, EntryMode, ScoreDoc } from '../models/composer.model';
+import { BeatRef, selectionTargets } from './composer-selection';
+import { bottomLineDiatonic } from './staff-pitch';
+
+/**
+ * What the mouse means on the engraved score, as pure functions of the entry mode, the staff under the
+ * pointer and the selection.
+ *
+ * `ComposerScoreComponent` owns alphaTab and has no spec, so every decision it makes about a click, a
+ * drag, the caret, the highlight and what to redraw is made here, where it can be specced; the component
+ * only measures the page and calls these.
+ */
+
+export type StaffKind = 'notation' | 'tab';
+
+/** One staff as alphaTab draws it, tied back to the track and staff it came from. */
+export interface StaffSlot {
+  trackIndex: number;
+  staffIndex: number;
+  kind: StaffKind;
+}
+
+/**
+ * The staves alphaTab draws, in render order, described from the document. alphaTab lays out each
+ * track's staves in order, standard notation before tablature, so this lines up index for index with
+ * `StaffHitTestService.allStaves` and says which track a measured staff belongs to.
+ */
+export function staffSlotsOf(doc: ScoreDoc): StaffSlot[] {
+  return doc.tracks.flatMap((track, trackIndex) =>
+    track.staves.flatMap((staff, staffIndex) => [
+      ...(staff.showStandardNotation ? [{ trackIndex, staffIndex, kind: 'notation' as const }] : []),
+      ...(staff.showTablature && staff.tuning.length > 0 ? [{ trackIndex, staffIndex, kind: 'tab' as const }] : [])
+    ])
+  );
+}
+
+/** What a mouse-down on the score does. */
+export type ScorePress = 'extend' | 'caret' | 'write';
+
+/**
+ * What a mouse-down does: Shift extends the range; otherwise the caret moves, and in Pen, on standard
+ * notation, the clicked pitch is written too. Tablature writes by digit in both modes, never by click.
+ */
+export function scorePressOf(mode: EntryMode, staff: StaffKind | null, shiftKey: boolean): ScorePress {
+  if (shiftKey) return 'extend';
+  return mode === 'pen' && staff === 'notation' ? 'write' : 'caret';
+}
+
+/**
+ * Whether moving with the button held extends the range from where the mouse-down put the caret:
+ * anywhere in Select, and on tablature in Pen. A notation drag in Pen would extend from the caret a write
+ * just advanced.
+ */
+export function dragExtends(mode: EntryMode, staff: StaffKind | null): boolean {
+  return mode === 'select' || staff === 'tab';
+}
+
+/**
+ * Whether a drag the last mouse-down started still extends, given `MouseEvent.buttons` from the latest
+ * pointer move: only while the primary button (bit 0) is down.
+ *
+ * alphaTab listens for mouse-up on its own surface, so a button released outside the score never reaches
+ * it - its beat mouse-move goes on firing as the pointer comes back, button up. The buttons the move itself
+ * reports are the truth.
+ */
+export function dragContinues(dragging: boolean, buttons: number): boolean {
+  return dragging && (buttons & 1) === 1;
+}
+
+/**
+ * Whether a mouse-down moves the playback position to the clicked beat: a click that moves the caret or
+ * writes, while playback is stopped. alphaTab's own interaction did this before the composer turned it off
+ * (`applyPlaybackRangeFromHighlight`, which also set the range - this sets no range). A Shift-click only
+ * extends the selection, and a click during playback must not jump the transport.
+ */
+export function seeksOnPress(press: ScorePress, playing: boolean): boolean {
+  return press !== 'extend' && !playing;
+}
+
+/**
+ * What a state change redraws: `'render'` - engrave the score again - when `doc` is not the document last
+ * engraved, and `'overlay'` - the highlight and the caret, drawn over the engraving - otherwise. By identity,
+ * since `ComposerService` replaces the document on every edit and never mutates a published one: a
+ * selection, a caret move or an entry mode change keeps the same document.
+ */
+export function scoreRedrawOf(lastRenderedDoc: ScoreDoc | null, doc: ScoreDoc): 'render' | 'overlay' {
+  return doc === lastRenderedDoc ? 'overlay' : 'render';
+}
+
+/**
+ * The index in `slots` of the staff the caret is drawn on, or null when its track draws none.
+ *
+ * The staff last clicked (`clicked`), while it is still the caret's; otherwise the caret's tablature when
+ * the caret has a string, and its notation when it has not - which is what draws the caret before the
+ * first click, when nothing has been clicked to learn a staff from.
+ */
+export function caretSlotIndexOf(slots: readonly StaffSlot[], cursor: EditCursor, clicked: number | null): number | null {
+  const isCaretStaff = (slot: StaffSlot | undefined): boolean =>
+    slot !== undefined && slot.trackIndex === cursor.trackIndex && slot.staffIndex === cursor.staffIndex;
+  if (clicked !== null && isCaretStaff(slots[clicked])) return clicked;
+
+  const own = slots.map((slot, index) => ({ slot, index })).filter(({ slot }) => isCaretStaff(slot));
+  const wanted: StaffKind = cursor.stringIndex !== null ? 'tab' : 'notation';
+  const found = own.find(({ slot }) => slot.kind === wanted) ?? own[0];
+  return found ? found.index : null;
+}
+
+/**
+ * How far above its staff's bottom line the caret box sits, in half line-spacings: a tablature caret on
+ * its string (string 1 is the top line), a notation caret where notation was last clicked, or on the
+ * middle line before any click.
+ */
+export function caretHalfStepsOf(staff: StaffKind, stringCount: number, stringIndex: number | null, clickedHalfSteps: number | null): number {
+  if (staff === 'tab') return (stringCount - ((stringIndex ?? 0) + 1)) * 2;
+  return clickedHalfSteps ?? 4;
+}
+
+/**
+ * The range's first and last target beats, for alphaTab's `highlightPlaybackRange` - or null when there
+ * is no range, or it covers one beat, which alphaTab would not draw anyway (`_cursorSelectRange` returns
+ * early when both ends are one beat, ~53441).
+ */
+export function highlightEndsOf(doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor): { first: BeatRef; last: BeatRef } | null {
+  if (!anchor) return null;
+  const refs = selectionTargets(doc, anchor, cursor);
+  return refs.length > 1 ? { first: refs[0], last: refs[refs.length - 1] } : null;
+}
+
+/**
+ * Where Pen's hover notehead goes, in half line-spacings above the bottom line - or null when none is
+ * drawn: outside Pen, off standard notation, where the pointer names no position, or under a clef with
+ * no pitches.
+ */
+export function penHoverHalfStepsOf(mode: EntryMode, staff: StaffKind | null, diatonic: number | null, clef: ClefKind): number | null {
+  const bottom = bottomLineDiatonic(clef);
+  if (mode !== 'pen' || staff !== 'notation' || diatonic === null || bottom === null) return null;
+  return diatonic - bottom;
+}
+
+/**
+ * The hover notehead's horizontal position, in surface units, snapped to half a line spacing - so it moves
+ * in steps a notehead's width can see, not with every pixel the pointer crosses.
+ */
+export function snappedHoverX(x: number, spacing: number): number {
+  const step = spacing / 2;
+  return step > 0 ? Math.round(x / step) * step : Math.round(x);
+}
+
+/**
+ * What a hover notehead draws, as a key: the staff, the pitch, the snapped position, and how far the score
+ * has scrolled (the box is placed in the scrolled container). Pointer moves run outside Angular, and only a
+ * move that changes this key enters it to draw.
+ */
+export function hoverKeyOf(slotIndex: number, halfSteps: number, snappedX: number, spacing: number, scrollTop: number): string {
+  return `${slotIndex}:${halfSteps}:${snappedX}:${spacing}:${scrollTop}`;
+}
+```
+
+**Step 4: Run it.** Expected: 16 SUCCESS.
+
+**Step 5: Commit**: `feat: What a click, a drag and the caret mean on the score, as pure functions`.
+
+### Task 4.2: alphaTab's mouse-move, mouse-up, highlight and seek, wrapped
+
+**Files:**
+- Modify: `client/src/app/services/alpha-tab.service.ts`
+- Test: create `client/src/app/services/alpha-tab.service.spec.ts`
+
+**Step 1: Failing spec.** The wrappers only forward to the api, which a headless spec does not build, so
+what is pinned is the contract every existing wrapper keeps: before `initializeApi` they do nothing and
+do not throw.
+
+<!-- apply: create client/src/app/services/alpha-tab.service.spec.ts -->
+```typescript
+import { TestBed } from '@angular/core/testing';
+import * as alphaTab from '@coderline/alphatab';
+
+import { AlphaTabService } from './alpha-tab.service';
+
+describe('AlphaTabService before an api exists', () => {
+  it('registers mouse-move and mouse-up handlers, draws and clears a highlight, and seeks, without throwing', () => {
+    TestBed.configureTestingModule({});
+    const service = TestBed.inject(AlphaTabService);
+    const beat = new alphaTab.model.Beat();
+
+    expect(() => {
+      service.onBeatMouseMove(() => undefined);
+      service.onBeatMouseUp(() => undefined);
+      service.highlightRange(beat, beat);
+      service.clearHighlight();
+      service.seekToBeat(beat);
+    }).not.toThrow();
+  });
+});
+```
+
+**Step 2: Run** with `--include=src/app/services/alpha-tab.service.spec.ts`. Expected: compile errors,
+`TS2551: Property 'onBeatMouseMove' does not exist on type 'AlphaTabService'. Did you mean 'onBeatMouseDown'?`
+and `TS2339` for `onBeatMouseUp`, `highlightRange`, `clearHighlight` and `seekToBeat`.
+
+**Step 3: Implement.** In `alpha-tab.service.ts`, correct `onBeatMouseDown`'s comment - it does not need
+`enableUserInteraction` - and add the wrappers after it:
+
+<!-- apply: find client/src/app/services/alpha-tab.service.ts -->
+```typescript
+  /**
+   * Notify when a rendered beat is clicked. alphaTab does the hit testing, so
+   * the caller gets the exact beat without any pixel maths of its own.
+   * Requires `player.enableUserInteraction`.
+   */
+  onBeatMouseDown(handler: (beat: alphaTab.model.Beat) => void): void {
+    this.api?.beatMouseDown.on(beat => this.ngZone.run(() => handler(beat)));
+  }
+```
+
+<!-- apply: replace client/src/app/services/alpha-tab.service.ts -->
+```typescript
+  /**
+   * Notify when a rendered beat is clicked. alphaTab does the hit testing, so
+   * the caller gets the exact beat without any pixel maths of its own.
+   *
+   * Fires whatever `player.enableUserInteraction` says: `_setupClickHandling` wires the beat mouse events
+   * either way, and the flag only decides whether alphaTab also runs its own selection - which sets the
+   * playback range on mouse-up.
+   */
+  onBeatMouseDown(handler: (beat: alphaTab.model.Beat) => void): void {
+    this.api?.beatMouseDown.on(beat => this.ngZone.run(() => handler(beat)));
+  }
+
+  /**
+   * Notify when the pointer crosses a beat after a `beatMouseDown`, until alphaTab sees the mouse-up. alphaTab
+   * hears that mouse-up only on its own surface, so after a release outside the score this goes on firing;
+   * a caller checks the move's own `MouseEvent.buttons`.
+   */
+  onBeatMouseMove(handler: (beat: alphaTab.model.Beat) => void): void {
+    this.api?.beatMouseMove.on(beat => this.ngZone.run(() => handler(beat)));
+  }
+
+  /** Notify when the button is released over alphaTab's surface after a `beatMouseDown`, with the beat under the pointer or null. */
+  onBeatMouseUp(handler: (beat: alphaTab.model.Beat | null) => void): void {
+    this.api?.beatMouseUp.on(beat => this.ngZone.run(() => handler(beat)));
+  }
+
+  /**
+   * Draws alphaTab's selection markers from `startBeat` to `endBeat` without setting the playback range,
+   * so selecting never changes what the transport plays. alphaTab does not redraw it after a render while
+   * `enableUserInteraction` is off, so a caller redraws after `renderFinished`.
+   */
+  highlightRange(startBeat: alphaTab.model.Beat, endBeat: alphaTab.model.Beat): void {
+    this.api?.highlightPlaybackRange(startBeat, endBeat);
+  }
+
+  /** Removes the selection markers. */
+  clearHighlight(): void {
+    this.api?.clearPlaybackRangeHighlight();
+  }
+
+  /**
+   * Moves the playback position to the start of `beat`, as a click did while alphaTab's own interaction was
+   * on - and nothing more: no playback range is set. The start comes from the tick cache, which counts
+   * repeats (`MidiTickLookup.getBeatStart`, the beat's first playing). Does nothing before the player has
+   * built a tick cache.
+   */
+  seekToBeat(beat: alphaTab.model.Beat): void {
+    const api = this.api;
+    const cache = api?.tickCache;
+    if (!api || !cache) return;
+    api.tickPosition = cache.getBeatStart(beat);
+  }
+```
+
+**Step 4: Run it.** Expected: 1 SUCCESS.
+
+**Step 5: Commit**: `feat: Wrap alphaTab's beat mouse-move, mouse-up, highlight and seek`.
+
+### Task 4.3: The score: Select and Pen, drag selection, click-to-seek, the highlight, Pen's hover, and the caret from state
+
+This task wires Tasks 4.1 and 4.2 into `ComposerScoreComponent`, which has no spec: the decisions are
+Task 4.1's, specced there, and the result is checked by hand in Task 5.2. So its red is not a failing
+spec. Step 2 runs the suite as the baseline the replacement must keep.
+
+- **alphaTab's own interaction is off** (`enableUserInteraction: false`), so it never sets the playback
+  range; the container takes `user-select: none`.
+- **A mouse-down** asks `scorePressOf`: Shift extends; otherwise the caret moves, and Pen on notation
+  writes the clicked pitch as today. A Select click on notation remembers where it landed, so the caret
+  box sits there, and writes nothing. While playback is stopped (`seeksOnPress`) the click also moves the
+  playback position to the clicked beat (`seekToBeat`), with no playback range - what alphaTab's own
+  interaction did, and what turning it off had taken away.
+- **A drag** extends the range as the pointer crosses beats, on the staff under the pointer, while
+  `dragExtends` said so at the mouse-down and `dragContinues` says the primary button is still down. The
+  pointer's `buttons` are recorded on every move, in the capture phase so they are current when alphaTab's
+  own beat mouse-move fires, and a `document` mouse-up ends the drag wherever the button is released -
+  alphaTab hears mouse-up only on its own surface. The listener is removed in `ngOnDestroy`.
+- **A render only when the document changes** (`scoreRedrawOf`). A state change that keeps the document -
+  the selection, the caret, the entry mode - redraws the highlight and the caret directly; before, each
+  beat a drag crossed re-engraved the whole score.
+- **The highlight** is drawn from state with `highlightRange`: straight away for a selection change, and
+  after every `renderFinished`, since a render replaces the beats it was drawn on. It is cleared when there
+  is no range.
+- **Pen's hover notehead** is an overlay drawn from `hitTest.diatonicIn` as the pointer moves over a
+  notation staff, placed with `caretRect`, under the clef of the caret's bar on that staff. It is
+  rendering only and never touches the document. **It runs outside Angular's zone**: the pointer listeners
+  are added in `runOutsideAngular`, and so is alphaTab itself, whose own mouse-move listener on its surface
+  would otherwise run change detection for every pixel. A move enters the zone only when `hoverKeyOf`
+  changes - another staff, pitch, snapped position or scroll. The staves are measured once per settled
+  render and kept (`staves()`), not measured on every move, and the slots are read once per document.
+- **The caret is drawn from state**: `caretSlotIndexOf` finds its staff without a click.
+
+`StaffHitTestService.staffIndexAt` and `caretRect` take the staves a caller already measured, as an
+optional last argument, so the component's cache reaches them. The service stays stateless; the component
+drops its measure whenever alphaTab replaces the surface.
+
+**Files:**
+- Modify: `client/src/app/services/staff-hit-test.service.ts`
+- Replace: `client/src/app/components/composer/components/composer-score/composer-score.component.ts`,
+  `composer-score.component.html`, `composer-score.component.scss`
+
+**Step 1: No new spec** - see above.
+
+**Step 2: Run the suite** (both type checks and `ng test`). Expected: all SUCCESS, as after Task 4.2.
+
+**Step 3: Implement.** The hit test takes a measure the caller holds:
+
+<!-- apply: find client/src/app/services/staff-hit-test.service.ts -->
+```typescript
+  /** Index into `allStaves` of the staff the pointer is over, if any. */
+  staffIndexAt(container: HTMLElement, clientX: number, clientY: number): number | null {
+    const staves = this.allStaves(container);
+
+```
+
+<!-- apply: replace client/src/app/services/staff-hit-test.service.ts -->
+```typescript
+  /**
+   * Index into `allStaves` of the staff the pointer is over, if any. `staves` is a measure the caller
+   * already holds, for a caller asking on every pointer move; by default the page is measured now.
+   */
+  staffIndexAt(container: HTMLElement, clientX: number, clientY: number, staves: StaffLines[] = this.allStaves(container)): number | null {
+```
+
+<!-- apply: find client/src/app/services/staff-hit-test.service.ts -->
+```typescript
+    beatWidth: number,
+    halfSteps: number
+  ): Rect | null {
+    const staff = this.allStaves(container)[staffIndex];
+```
+
+<!-- apply: replace client/src/app/services/staff-hit-test.service.ts -->
+```typescript
+    beatWidth: number,
+    halfSteps: number,
+    staves: StaffLines[] = this.allStaves(container)
+  ): Rect | null {
+    const staff = staves[staffIndex];
+```
+
+Replace `composer-score.component.ts`:
+
+<!-- apply: create client/src/app/components/composer/components/composer-score/composer-score.component.ts -->
+```typescript
+import {
+  AfterViewInit,
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  ElementRef,
+  NgZone,
+  OnDestroy,
+  OnInit,
+  ViewChild
+} from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { Subject, debounceTime, takeUntil } from 'rxjs';
+import * as alphaTab from '@coderline/alphatab';
+
+import { AlphaTabService } from '../../../../services/alpha-tab.service';
+import { ComposerService } from '../../../../services/composer.service';
+import {
+  StaffSlot,
+  caretHalfStepsOf,
+  caretSlotIndexOf,
+  dragContinues,
+  dragExtends,
+  highlightEndsOf,
+  hoverKeyOf,
+  penHoverHalfStepsOf,
+  scorePressOf,
+  scoreRedrawOf,
+  seeksOnPress,
+  snappedHoverX,
+  staffSlotsOf
+} from '../../../../services/composer-score-interaction';
+import { BeatRef } from '../../../../services/composer-selection';
+import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
+import { Rect, StaffHitTestService, StaffLines } from '../../../../services/staff-hit-test.service';
+import { bottomLineDiatonic, diatonicToPitch, pitchToMidi } from '../../../../services/staff-pitch';
+import { ComposerState, EditCursor, ScoreDoc } from '../../../../models/composer.model';
+
+/** The pointer as the last mouse event over the score left it. */
+interface Pointer {
+  x: number;
+  y: number;
+  shiftKey: boolean;
+  /** `MouseEvent.buttons`: bit 0 is the primary button. See `dragContinues`. */
+  buttons: number;
+}
+
+/**
+ * The engraved score, and the mouse over it.
+ *
+ * Owns the alphaTab instance, the render pipeline, the caret box, the range highlight and Pen's hover
+ * notehead. What a click, a drag, the caret and a redraw mean is decided in `composer-score-interaction.ts`,
+ * which has the specs this component cannot; this measures the page with `StaffHitTestService` and calls it.
+ *
+ * alphaTab's own selection is off (`enableUserInteraction: false`): with it on, a mouse-up sets the
+ * playback range, and selecting must never change what the transport plays. The beat mouse events fire
+ * either way; the highlight is drawn from state, and a click moves the playback position itself.
+ */
+@Component({
+  selector: 'app-composer-score',
+  standalone: true,
+  imports: [CommonModule],
+  templateUrl: './composer-score.component.html',
+  styleUrls: ['./composer-score.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy {
+  // Assigned by Angular before `ngAfterViewInit`, which is the first place it is read.
+  @ViewChild('alphaTabContainer') alphaTabContainer!: ElementRef<HTMLDivElement>;
+
+  private readonly destroy$ = new Subject<void>();
+  /** Coalesces renders so typing does not re-engrave on every keystroke. */
+  private readonly renderRequest$ = new Subject<void>();
+
+  state: ComposerState | null = null;
+  renderError: string | null = null;
+
+  /** Caret box drawn over the staff, in container-relative pixels. */
+  caretRect: Rect | null = null;
+  /** Pen's hover notehead, in container-relative pixels, or null. */
+  hoverRect: Rect | null = null;
+
+  private resizeObserver: ResizeObserver | null = null;
+  private lastRenderedWidth = 0;
+  /** Set when a render was skipped because the container had no width yet. */
+  private renderPending = false;
+  private destroyed = false;
+  private pointer: Pointer | null = null;
+
+  /** The document last handed to alphaTab. See `scoreRedrawOf`. */
+  private lastRenderedDoc: ScoreDoc | null = null;
+  /** The rendered staff last clicked, which the caret stays on while it is the caret's. */
+  private clickedSlotIndex: number | null = null;
+  /** Where on notation the last click landed, in half line-spacings above the bottom line. */
+  private clickedHalfSteps: number | null = null;
+  /** Whether moving with the button held extends the range, for the drag the last mouse-down started. */
+  private dragging = false;
+  /** The staves as last measured, dropped whenever alphaTab replaces its surface. See `staves`. */
+  private stavesMeasured: StaffLines[] | null = null;
+  /** The staves the document draws, for the document they were read from. */
+  private slotsRead: { doc: ScoreDoc; slots: StaffSlot[] } | null = null;
+  /** What the hover notehead last drew, by `hoverKeyOf`, or null for none. */
+  private hoverKey: string | null = null;
+
+  constructor(
+    private readonly composer: ComposerService,
+    private readonly mapper: ScoreDocMapperService,
+    private readonly alphaTabService: AlphaTabService,
+    private readonly hitTest: StaffHitTestService,
+    private readonly cdr: ChangeDetectorRef,
+    private readonly ngZone: NgZone
+  ) {}
+
+  ngOnInit(): void {
+    // Subscribe to render requests first so the initial document state below is
+    // picked up. The debounce also defers the first render past
+    // ngAfterViewInit, giving alphaTab time to boot its workers.
+    this.renderRequest$
+      .pipe(debounceTime(150), takeUntil(this.destroy$))
+      .subscribe(() => this.renderCurrentDocument());
+
+    this.composer
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(state => {
+        this.state = state;
+        // Engrave only a document alphaTab has not been given. A selection, a caret move or an entry mode
+        // change redraws what sits over the engraving - otherwise a drag re-engraved the score per beat.
+        if (scoreRedrawOf(this.lastRenderedDoc, state.doc) === 'render') this.renderRequest$.next();
+        else this.drawHighlight();
+        this.scheduleCaretUpdate();
+        this.cdr.markForCheck();
+      });
+  }
+
+  ngAfterViewInit(): void {
+    // Outside Angular's zone: alphaTab listens to every pointer move on its surface, and inside the zone
+    // each one would run change detection. `AlphaTabService` re-enters the zone for every event it forwards.
+    this.ngZone.runOutsideAngular(() =>
+      this.alphaTabService.initializeApi(this.alphaTabContainer.nativeElement, {
+        core: { fontDirectory: '/font/', useWorkers: true },
+        display: { scale: 1.0, staveProfile: 'default', layoutMode: 'page' },
+        player: {
+          enablePlayer: true,
+          enableCursor: true,
+          // Off: with it on, alphaTab's own mouse-up sets the playback range. See the class comment.
+          enableUserInteraction: false,
+          soundFont: '/soundfont/sonivox.sf2',
+          scrollElement: this.alphaTabContainer.nativeElement
+        }
+      })
+    );
+
+    this.observeContainerWidth();
+    this.wireScoreInteraction();
+    this.renderRequest$.next();
+  }
+
+  ngOnDestroy(): void {
+    this.destroyed = true;
+    this.destroy$.next();
+    this.destroy$.complete();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    const element = this.alphaTabContainer?.nativeElement;
+    element?.removeEventListener('mousedown', this.onScorePointerDown, { capture: true });
+    element?.removeEventListener('mousemove', this.onScorePointerMove, { capture: true });
+    element?.removeEventListener('mouseleave', this.onScorePointerLeave);
+    document.removeEventListener('mouseup', this.onDocumentMouseUp);
+    this.alphaTabService.dispose();
+  }
+
+  // -------------------------------------------------------------------------
+  // Rendering
+  // -------------------------------------------------------------------------
+
+  private renderCurrentDocument(): void {
+    if (!this.state) return;
+
+    // alphaTab refuses to draw into a zero-width element, logging "skipped
+    // rendering because of width=0", and never retries by itself. Defer until
+    // the ResizeObserver reports a real width.
+    if ((this.alphaTabContainer?.nativeElement.clientWidth ?? 0) === 0) {
+      this.renderPending = true;
+      return;
+    }
+    this.renderPending = false;
+    // Recorded before the attempt: a document the mapper cannot draw is not tried again on every caret move.
+    this.lastRenderedDoc = this.state.doc;
+
+    try {
+      const score = this.mapper.toScore(this.state.doc, new alphaTab.Settings());
+      // Render every track: without explicit indices alphaTab shows only the
+      // first, which hides all but one staff on a multi-track score.
+      this.alphaTabService.renderScore(
+        score,
+        score.tracks.map((_, index) => index)
+      );
+      this.renderError = null;
+    } catch (error) {
+      this.renderError =
+        error instanceof Error ? error.message : 'Failed to render the score';
+    }
+    this.cdr.markForCheck();
+  }
+
+  /**
+   * alphaTab refuses to render into a zero-width element and does not retry on
+   * its own. Watch for the container gaining width and render then; this also
+   * re-flows the score when the window or side panels resize.
+   */
+  private observeContainerWidth(): void {
+    const element = this.alphaTabContainer?.nativeElement;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+
+    this.resizeObserver = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width <= 0) return;
+
+      if (this.renderPending) {
+        this.renderCurrentDocument();
+      } else if (width !== this.lastRenderedWidth) {
+        this.alphaTabService.render();
+      }
+      this.lastRenderedWidth = width;
+      this.stavesMeasured = null;
+      this.scheduleCaretUpdate();
+    });
+    this.resizeObserver.observe(element);
+  }
+
+  // -------------------------------------------------------------------------
+  // The mouse
+  // -------------------------------------------------------------------------
+
+  /**
+   * The pointer is read on the container in the capture phase, so its position, Shift and buttons are
+   * current when alphaTab's own beat events fire, and outside Angular's zone, since it runs on every move.
+   * A mouse-up anywhere on the page ends a drag: alphaTab hears mouse-up only on its own surface. Every
+   * render moves the beats, so the highlight is redrawn and the caret re-measured after each one.
+   */
+  private wireScoreInteraction(): void {
+    const element = this.alphaTabContainer?.nativeElement;
+    if (!element) return;
+
+    this.ngZone.runOutsideAngular(() => {
+      element.addEventListener('mousedown', this.onScorePointerDown, { capture: true });
+      element.addEventListener('mousemove', this.onScorePointerMove, { capture: true });
+      element.addEventListener('mouseleave', this.onScorePointerLeave);
+      document.addEventListener('mouseup', this.onDocumentMouseUp);
+    });
+    this.alphaTabService.onBeatMouseDown(beat => this.pressBeat(beat));
+    this.alphaTabService.onBeatMouseMove(beat => this.dragOverBeat(beat));
+    this.alphaTabService.onBeatMouseUp(() => (this.dragging = false));
+
+    // alphaTab attaches the rendered surface after this event, so measuring
+    // has to wait for the DOM to settle.
+    this.alphaTabService.onRenderFinished(() => {
+      this.stavesMeasured = null;
+      this.drawHighlight();
+      this.scheduleCaretUpdate();
+    });
+  }
+
+  /**
+   * Recomputes the caret once the DOM has settled.
+   *
+   * markForCheck alone is not enough: these callbacks originate from alphaTab,
+   * outside Angular's change detection, so the view is refreshed explicitly as
+   * the project's alphaTab guidance recommends. The staves are measured afresh
+   * here, once the surface a render attached is in place.
+   */
+  private scheduleCaretUpdate(): void {
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (this.destroyed) return;
+        this.stavesMeasured = null;
+        this.updateCaretOverlay();
+        this.cdr.detectChanges();
+      })
+    );
+  }
+
+  private readonly onScorePointerDown = (event: MouseEvent): void => {
+    this.pointer = { x: event.clientX, y: event.clientY, shiftKey: event.shiftKey, buttons: event.buttons };
+  };
+
+  private readonly onScorePointerMove = (event: MouseEvent): void => {
+    this.pointer = { x: event.clientX, y: event.clientY, shiftKey: event.shiftKey, buttons: event.buttons };
+    this.updateHover();
+  };
+
+  private readonly onScorePointerLeave = (): void => {
+    if (this.hoverKey === null) return;
+    this.hoverKey = null;
+    this.ngZone.run(() => {
+      this.hoverRect = null;
+      this.cdr.detectChanges();
+    });
+  };
+
+  /** The button went up somewhere on the page, which alphaTab may not have heard. */
+  private readonly onDocumentMouseUp = (): void => {
+    this.dragging = false;
+  };
+
+  /**
+   * The rendered staves, measured once and kept until alphaTab replaces its surface - a render, a resize, a
+   * settled caret update - rather than measured on every pointer move. An empty measure, before a surface is
+   * attached, is not kept.
+   */
+  private staves(element: HTMLElement): StaffLines[] {
+    if (this.stavesMeasured) return this.stavesMeasured;
+    const measured = this.hitTest.allStaves(element);
+    if (measured.length > 0) this.stavesMeasured = measured;
+    return measured;
+  }
+
+  /** The staves `doc` draws (`staffSlotsOf`), read once per document. */
+  private slots(doc: ScoreDoc): StaffSlot[] {
+    let read = this.slotsRead;
+    if (!read || read.doc !== doc) read = this.slotsRead = { doc, slots: staffSlotsOf(doc) };
+    return read.slots;
+  }
+
+  /** The staff under the pointer: its index among the rendered staves, what it is, and its lines. */
+  private staffUnderPointer(): { index: number; slot: StaffSlot; lines: StaffLines } | null {
+    const element = this.alphaTabContainer?.nativeElement;
+    if (!element || !this.state || !this.pointer) return null;
+    const staves = this.staves(element);
+    const index = this.hitTest.staffIndexAt(element, this.pointer.x, this.pointer.y, staves);
+    if (index === null) return null;
+    const slot = this.slots(this.state.doc)[index];
+    const lines = staves[index];
+    return slot && lines ? { index, slot, lines } : null;
+  }
+
+  /**
+   * Where a beat under the pointer is, as a caret. The beat comes from alphaTab, but the track and staff
+   * cannot: a beat's bounds cover every staff in the system, so alphaTab always reports the first track.
+   * Both come from where the pointer is vertically, and on tablature so does the string.
+   */
+  private cursorAt(beat: alphaTab.model.Beat, under: { slot: StaffSlot; lines: StaffLines } | null): Partial<EditCursor> {
+    const cursor: Partial<EditCursor> = {
+      trackIndex: under ? under.slot.trackIndex : beat.voice.bar.staff.track.index,
+      staffIndex: under ? under.slot.staffIndex : beat.voice.bar.staff.index,
+      barIndex: beat.voice.bar.index,
+      voiceIndex: beat.voice.index,
+      beatIndex: beat.index
+    };
+    if (under?.slot.kind === 'tab' && this.pointer) {
+      cursor.stringIndex = this.hitTest.stringIn(under.lines, this.pointer.y) - 1;
+    }
+    return cursor;
+  }
+
+  /** A mouse-down on a beat. See `scorePressOf` and `seeksOnPress`. */
+  private pressBeat(beat: alphaTab.model.Beat): void {
+    if (!this.state) return;
+    const under = this.staffUnderPointer();
+    const mode = this.state.entryMode;
+    const cursor = this.cursorAt(beat, under);
+    const press = scorePressOf(mode, under?.slot.kind ?? null, this.pointer?.shiftKey ?? false);
+
+    // Before any write: the beat belongs to the score alphaTab holds now, which a write re-renders.
+    if (seeksOnPress(press, this.alphaTabService.getCurrentState().isPlaying)) this.alphaTabService.seekToBeat(beat);
+
+    if (press === 'extend') {
+      this.composer.extendSelectionTo(cursor);
+      this.dragging = false;
+    } else {
+      this.composer.setCursor(cursor);
+      this.dragging = dragExtends(mode, under?.slot.kind ?? null);
+      if (under) this.clickedSlotIndex = under.index;
+      if (under?.slot.kind === 'notation') this.rememberNotationClick(under.lines);
+      if (press === 'write' && under) this.placeClickedPitch(under.lines);
+    }
+
+    this.scheduleCaretUpdate();
+  }
+
+  /** A beat crossed after a mouse-down: extends the range to it, while this drag extends and the button is down. */
+  private dragOverBeat(beat: alphaTab.model.Beat): void {
+    if (!this.state) return;
+    if (!dragContinues(this.dragging, this.pointer?.buttons ?? 0)) {
+      this.dragging = false;
+      return;
+    }
+    const cursor = this.cursorAt(beat, this.staffUnderPointer());
+    const current = this.state.cursor;
+    const same =
+      cursor.trackIndex === current.trackIndex &&
+      cursor.staffIndex === current.staffIndex &&
+      cursor.barIndex === current.barIndex &&
+      cursor.beatIndex === current.beatIndex;
+    if (!same) this.composer.extendSelectionTo(cursor);
+  }
+
+  /** Records where on a notation staff the click landed, so the caret box sits there. */
+  private rememberNotationClick(lines: StaffLines): void {
+    if (!this.pointer || !this.state) return;
+    const bar = this.composer.barAt(this.state.doc, this.state.cursor);
+    if (!bar) return;
+    const diatonic = this.hitTest.diatonicIn(lines, bar.clef, this.pointer.y);
+    const bottom = bottomLineDiatonic(bar.clef);
+    this.clickedHalfSteps = diatonic !== null && bottom !== null ? diatonic - bottom : null;
+  }
+
+  /** Writes the note the pointer landed on, for standard notation staves in Pen. */
+  private placeClickedPitch(lines: StaffLines): void {
+    if (!this.pointer || !this.state) return;
+
+    const bar = this.composer.barAt(this.state.doc, this.state.cursor);
+    if (!bar) return;
+
+    const diatonic = this.hitTest.diatonicIn(lines, bar.clef, this.pointer.y);
+    if (diatonic === null) return;
+
+    const pitch = diatonicToPitch(diatonic, bar.keySignature, bar.clefOttava);
+    const program = this.state.doc.tracks[this.state.cursor.trackIndex]?.playback.program ?? 0;
+
+    this.alphaTabService.auditionNote(pitchToMidi(pitch), program);
+    // Advance so a melody flows, matching fret entry.
+    this.composer.setNoteAtCursor(pitch, true);
+  }
+
+  /**
+   * Pen's hover notehead: rendering only, it never touches the document. Runs outside Angular's zone on
+   * every pointer move, and enters it to draw only when what is drawn changes (`hoverKeyOf`).
+   */
+  private updateHover(): void {
+    const hover = this.hoverUnderPointer();
+    const key = hover?.key ?? null;
+    if (key === this.hoverKey) return;
+    this.hoverKey = key;
+    this.ngZone.run(() => {
+      this.hoverRect = hover ? hover.rect() : null;
+      this.cdr.detectChanges();
+    });
+  }
+
+  /**
+   * The hover notehead for the pointer now - its key, and how to place it - or null when none is drawn. See
+   * `penHoverHalfStepsOf`. The box is placed only when the key has changed, so a move within one snapped
+   * position measures no more than it must.
+   */
+  private hoverUnderPointer(): { key: string; rect: () => Rect | null } | null {
+    const element = this.alphaTabContainer?.nativeElement;
+    const state = this.state;
+    const pointer = this.pointer;
+    if (!element || !state || !pointer || state.entryMode !== 'pen') return null;
+    const under = this.staffUnderPointer();
+    if (!under) return null;
+
+    const bar = state.doc.tracks[under.slot.trackIndex]?.staves[under.slot.staffIndex]?.bars[state.cursor.barIndex];
+    const diatonic = bar ? this.hitTest.diatonicIn(under.lines, bar.clef, pointer.y) : null;
+    const halfSteps = bar ? penHoverHalfStepsOf(state.entryMode, under.slot.kind, diatonic, bar.clef) : null;
+    if (halfSteps === null) return null;
+
+    const surface = under.lines.surface.getBoundingClientRect();
+    const viewBoxWidth = under.lines.surface.viewBox.baseVal.width;
+    const scale = surface.width > 0 && viewBoxWidth > 0 ? surface.width / viewBoxWidth : 1;
+    const spacing = under.lines.spacing;
+    const x = snappedHoverX((pointer.x - surface.left) / scale, spacing);
+    return {
+      key: hoverKeyOf(under.index, halfSteps, x, spacing, element.scrollTop),
+      rect: () => this.hitTest.caretRect(element, under.index, x - spacing * 0.65, spacing * 1.3, halfSteps, this.staves(element))
+    };
+  }
+
+  /**
+   * Draws the range from state with alphaTab's highlight, or clears it. Called for every selection change,
+   * and after every render, since a render replaces the beats the highlight was drawn on.
+   */
+  private drawHighlight(): void {
+    const api = this.alphaTabService.getApi();
+    const state = this.state;
+    const ends = state ? highlightEndsOf(state.doc, state.anchor, state.cursor) : null;
+    const score = api?.score;
+    const beatOf = (ref: BeatRef): alphaTab.model.Beat | undefined =>
+      score?.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex]?.beats[ref.beatIndex];
+
+    const first = ends ? beatOf(ends.first) : undefined;
+    const last = ends ? beatOf(ends.last) : undefined;
+    if (first && last) this.alphaTabService.highlightRange(first, last);
+    else this.alphaTabService.clearHighlight();
+  }
+
+  /** Measures the caret box from state: its staff (`caretSlotIndexOf`), its beat, its string or pitch. */
+  private updateCaretOverlay(): void {
+    const element = this.alphaTabContainer?.nativeElement;
+    const api = this.alphaTabService.getApi();
+    const lookup = this.alphaTabService.getBoundsLookup();
+    const state = this.state;
+
+    if (!element || !api?.score || !lookup || !state) {
+      this.caretRect = null;
+      return;
+    }
+
+    const cursor = state.cursor;
+    const slots = this.slots(state.doc);
+    const slotIndex = caretSlotIndexOf(slots, cursor, this.clickedSlotIndex);
+    const beat = api.score.tracks[cursor.trackIndex]
+      ?.staves[cursor.staffIndex]
+      ?.bars[cursor.barIndex]
+      ?.voices[cursor.voiceIndex]
+      ?.beats[cursor.beatIndex];
+    const bounds = beat ? lookup.findBeat(beat) : null;
+
+    if (slotIndex === null || !bounds) {
+      this.caretRect = null;
+      return;
+    }
+
+    const slot = slots[slotIndex];
+    const stringCount = this.composer.staffAt(state.doc, cursor)?.tuning.length ?? 0;
+    const clicked = slotIndex === this.clickedSlotIndex ? this.clickedHalfSteps : null;
+    const halfSteps = caretHalfStepsOf(slot.kind, stringCount, cursor.stringIndex, clicked);
+
+    this.caretRect = this.hitTest.caretRect(
+      element,
+      slotIndex,
+      bounds.visualBounds.x,
+      bounds.visualBounds.w,
+      halfSteps,
+      this.staves(element)
+    );
+  }
+}
+```
+
+Replace `composer-score.component.html`:
+
+<!-- apply: create client/src/app/components/composer/components/composer-score/composer-score.component.html -->
+```html
+<div class="score-area">
+  <div class="alphatab-container" #alphaTabContainer [class.pen]="state?.entryMode === 'pen'">
+    <div
+      class="tab-caret"
+      *ngIf="caretRect"
+      [style.left.px]="caretRect.left"
+      [style.top.px]="caretRect.top"
+      [style.width.px]="caretRect.width"
+      [style.height.px]="caretRect.height"
+    ></div>
+    <!-- Pen's hover notehead: where a click would write. Rendering only. -->
+    <div
+      class="pen-hover"
+      *ngIf="hoverRect"
+      aria-hidden="true"
+      [style.left.px]="hoverRect.left"
+      [style.top.px]="hoverRect.top"
+      [style.width.px]="hoverRect.width"
+      [style.height.px]="hoverRect.height"
+    ></div>
+  </div>
+
+  <p class="render-error" *ngIf="renderError">{{ renderError }}</p>
+</div>
+```
+
+Replace `composer-score.component.scss`:
+
+<!-- apply: create client/src/app/components/composer/components/composer-score/composer-score.component.scss -->
+```scss
+// Score view: the engraved output, the caret, the range highlight and Pen's hover notehead.
+//
+// Colours are the composer page's custom properties, with fallbacks for a page that does not set them.
+
+:host {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.score-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: #ffffff;
+  position: relative;
+}
+
+.alphatab-container {
+  position: relative;
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  cursor: default;
+  // alphaTab's own interaction is off, so it no longer prevents a mouse-down's default: without this, a
+  // drag across the score to select beats would select the page's text as well.
+  user-select: none;
+
+  &.pen {
+    cursor: crosshair;
+  }
+}
+
+// Caret drawn over the staff, showing where typing will land.
+.tab-caret {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 2px;
+  background-color: rgba(52, 152, 219, 0.25);
+  box-shadow: 0 0 0 1px var(--composer-accent, #3498db) inset;
+  transition: left 0.08s ease, top 0.08s ease;
+  z-index: 5;
+}
+
+// Where a Pen click would write: a notehead-shaped mark that follows the pointer.
+.pen-hover {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 50%;
+  background-color: var(--composer-accent, #3498db);
+  opacity: 0.45;
+  transform: rotate(-20deg);
+  z-index: 6;
+}
+
+.render-error {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  background-color: rgba(231, 76, 60, 0.15);
+  border-top: 1px solid var(--composer-error, #e74c3c);
+  color: var(--composer-error, #e74c3c);
+  font-size: 0.85rem;
+}
+```
+
+**Step 4: Run** both type checks and the whole suite. Expected: all SUCCESS.
+
+**Step 5: Commit**: `feat: Select and Pen on the score, drag selection, click-to-seek, the range highlight, Pen's hover and a caret drawn from state`.
+
+### Task 4.4: Phase 4 checkpoint
+
+**Step 1:** Both type checks and the whole suite, as in Task 1.16. Expected: no type errors, all SUCCESS.
+
+**Step 2:** Nothing to commit if clean.
+
+## Phase 5: documentation and the hand check
+
+### Task 5.1: Record M2 in the design doc, the TODO and the roadmap
+
+The decisions M2 rests on were recorded when this plan was committed. What is left is what shipped and
+what implementation changed.
+
+**Files:**
+- Modify: `docs/plans/2026-09-13-composer-editor-design.md`, `docs/TODO.md`, `docs/ROADMAP.md`,
+  and this plan's "Corrections during implementation"
+
+**Step 1:** In the design doc, change the status line to `M1 and M2 implemented, to [the M1 plan] and
+[the M2 plan]`, and add an "M2 hand check" paragraph under the M1 one with Task 5.2's results.
+
+**Step 2:** In `docs/TODO.md`: take "Refusals are not displayed yet" and "A whole tuplet group moves the
+notes after it earlier" out of "Bugs, recorded and not yet fixed"; take the hammer-on, fermata, grace,
+tied-vibrato and pitched-harmonic items out of "Known limitations" where M2 settled them, leaving the
+settlement in the design doc; move "Next milestone" on to the GP Viewer milestone. Keep, or add if it is
+not there, the limitation this plan leaves: **a hammer-on's or a shift or legato slide's landing is checked
+only when the tool is pressed.** Later edits - deleting beats, a cut, a string move elsewhere in the bar,
+an insert that pushes the landing past the next bar's first beat, a rest over a range - can still leave one
+with nothing to land on; the palette still shows it, and alphaTab drops it on save. Nothing re-checks a
+landing after the press that made it.
+
+**Step 3:** In `docs/ROADMAP.md`, the M2 row reads `Shipped` with a one-line summary.
+
+**Step 4:** If review changed code after a task was written, list it under "Corrections during
+implementation" at the top of this plan, as M1's plan does, and say that the committed code supersedes
+those tasks' blocks.
+
+**Step 5: Commit**: `docs: Record M2 of the composer editor - what shipped and what it corrected`.
+
+### Task 5.2: The hand check
+
+The suite is headless: it cannot see a glyph, a layout or a real keyboard. Perform each step, and record
+each result - including every step that could not be performed and why - in the design doc's "M2 hand
+check" paragraph. **A step that cannot be performed is recorded as not performed, with the reason; it is
+never dropped.** Steps 18 to 28 were added when Phases 3 and 4 were corrected before they were applied, and Steps 30 to 33
+after the score's branch merged and was reviewed. **Performed on 2026-09-14**, in the Claude desktop app's Browser pane: the
+results are in the design doc's "M2 hand check" paragraph, the faults found under "Corrections during implementation", and
+the steps still owed in a real browser in `docs/TODO.md`, under "Checks nobody has performed".
+
+**Step 1: Start the app.** From `client/`, `npm start`, and open `http://localhost:4200/composer` in
+Chrome at about 1920×1080.
+
+**Step 2: Bravura renders in the palette.** Every glyph button (the note values, rest, dot, triplet,
+accidentals, dynamics, hairpins, accent, marcato, staccato, tenuto, fermata, G clef, common time, repeats,
+double bar, segno, trill, harmonic, pick strokes, grace notes, X notehead, vibrato) shows a notation
+symbol - not an empty box, not a letter in another font - and sits inside its button. Check again at
+200% browser zoom. In DevTools, Network, confirm `/font/Bravura.woff2` loaded with status 200.
+
+**Step 3: The caret before any click.** Reload. The caret box is visible on the tab staff at bar 1,
+beat 1, before anything is clicked, and `→` moves it.
+
+**Step 4: Frets and undo.** Type `1` then `2` quickly: beat 1 is fret 12 and the caret is on beat 2.
+Ctrl+Z once: beat 1 is a rest again. Type `3` then `5`: two notes, 3 and 5.
+
+**Step 5: Select and Pen.** In Select, click the standard notation staff: the caret moves, nothing is
+written. Press Q: the status line says Pen, and moving over the notation staff shows the hover notehead
+snapping to lines and spaces and following the pointer. Click: the pitch is written and heard. Press
+Esc: back to Select. Add a Piano track and bars until the score has at least four systems, scroll to the third, and
+repeat on it: the caret lands on the staff clicked, in the bar clicked, and the hover notehead sits under the pointer. In
+Pen, click a ledger line just above that system's first staff: the note is written in that system's bar, under its clef,
+not in the bar above it. Click between two systems: the caret moves.
+
+**Step 6: Ranges and the transport.** Drag across four beats in Select: they highlight while dragging and
+stay highlighted after the score re-renders. Press Space: playback starts from the start of the score (or
+where it was paused), not from the highlighted range, and does not loop it. Shift+click extends the
+range; `→` alone drops it. Select a range, then click a beat outside it and type a fret there with Shift+click back: the
+range is highlighted on the new engraving after the re-render, not cleared and not left where the beats were. On the
+two-track score, drag along the Piano's notation from bar 1 to bar 2 with the pointer drifting into the gap above it: the
+range stays on the Piano, and does not jump to the guitar's beats. Do the same on the third system.
+
+**Step 7: Every palette group.** With a range of notes selected, press one tool from each group and see
+its mark appear and `aria-pressed` change (Elements panel): Quarter, Dot, Triplet, Tie; Repeat open,
+Double bar; Flat on a B flat; mf, Crescendo; Accent, Staccato; Palm mute, Vibrato. On a range where some
+notes have staccato and some do not, the Staccato button shows the mixed state.
+
+**Step 8: Popovers.** Shift+T on the empty score's common-time bar, type 3 in Top: the common-time box unticks
+and greys, its label saying it applies only to 4/4 and 2/2; type 4 again and it is ticked again. Set 3, Apply: bar 1
+re-bars as 3/4, with no refusal. Shift+T, type 40 in Top, Apply: the popover says why inline and stays open. Ctrl+K: the
+list has C♭ major to C♯ major and A♭ minor to A♯ minor; pick A♯ minor: seven sharps. K: set bass clef. Alt+/: 5:4.
+Shift+Insert, type Chorus, press Enter: the section is applied and the popover closes; Shift+Insert, clear the name,
+Enter: the popover says why inline and stays open.
+
+**Step 9: Refusals are displayed and announced.** Put a note on the last beat, press H: the status line
+says there is nothing to land on. With Narrator (Windows) or NVDA running, repeat: the reason is read out.
+Press → : the message clears.
+
+**Step 10: A hammer-on that lands.** Notes on beats 1 and 2 of one string, H on beat 1: the slur draws.
+Save, reload, load: it is still there. Delete beat 2 by Shift+Delete: note what alphaTab now draws.
+
+**Step 11: Fermata on every track.** Add a Piano track. On guitar beat 3 press F: both tracks show a
+fermata at that position. Press F on the piano's beat 3: both clear.
+
+**Step 12: Escape and the circle of fifths.** In Pen, open the Circle of Fifths drawer and press Esc: the
+drawer closes and the status line still says Pen. Press Esc again: Select.
+
+**Step 13: Save from the keyboard.** Add a progression track (from the progression page's Send), then
+Ctrl+S: the refusal appears under the top bar; press Save in the Library menu instead and the menu closes as
+the refusal shows, with the focus on the Library button; after "Keep the link" the focus is on the Library button.
+Flatten the track, Ctrl+S: "Saved". Library, Saved compositions…: the drawer opens with the focus on its close
+button; Tab to a saved row and press Enter: it loads, the drawer closes and the focus is on Library. Export,
+alphaTex: the focus is on Export. New, then Save: a new entry, and the composition loaded before is unchanged. Open the alphaTex panel, type a space into the draft, and press Ctrl+S with the focus in the
+textarea: nothing is saved, and the status line says "Apply or revert the alphaTex draft before saving."
+Do the same with Save in the Library menu. Revert, Ctrl+S: "Saved". Click Save twice quickly: one entry. Every
+"Saved", "Loaded", "Deleted" and "Exported" is in the status line, and nowhere else. With the panel open and its draft
+untouched, type a fret into the score: the draft shows the fret, and Ctrl+S saves. Type into the draft, then type a fret
+into the score: the panel says the draft was written against an earlier score, Ctrl+S says so in the status line, and
+Apply asks before it replaces the fret. Save, type a fret, and load another composition: Undo is unavailable, and Save
+writes the composition loaded. Open a transcription in the composer (Transcribe, then Open in Composer) - with an edit unsaved it asks first, and Cancel
+stays on the transcription - and Save: a new
+entry, and the composition open before is unchanged. Delete the open composition from the saved list, then Save: a new
+entry.
+
+**Step 14: Narrow width.** Resize the window to 1000px, 768px, 480px and 375px wide. The palette scrolls
+vertically with no horizontal scrollbar; the shell's navigation and the top bar wrap; the page never scrolls sideways; the
+track strip's separator drags with the mouse and moves with ↑ and ↓ when focused, and Home and End take it to its
+shortest and tallest. Drag the strip tall, then make the window shorter: the strip shrinks with it, and the score keeps
+about 160px. Open the alphaTex panel on a short window: the panel scrolls within itself, and the score keeps its room. With the
+panel open, drag the strip to its tallest: nothing covers the status line. Set Chrome's font size to Very large and drag
+the strip to its tallest again: the score keeps its larger minimum. Make the window narrow enough that a refusal wraps the
+status line onto two lines: the strip shrinks to leave the score its room.
+
+**Step 15: Firefox.** Repeat Steps 2, 4, 5, 6 and 12 in Firefox, then press each symbol key - `?` `}` `|`
+`:` `!` `_` `)` `(` `$` `%` `<` `[` `]` `;` `/` `.` `+` `=` `-` - and Alt+-, Alt+=, Alt+0, Alt+/, Ctrl+/,
+Ctrl+K. Each runs its tool, and no Firefox menu opens.
+
+**Step 16: A non-US keyboard layout.** Add German (QWERTZ) and French (AZERTY) in Windows' language
+settings and switch to each. On German, type `}` `|` `[` `]` `$` `<` through AltGr and Shift as the layout
+does: each runs its tool. On French, type digits with and without Shift: frets are written. If a layout
+cannot be added on the machine, record this step as not performed.
+
+**Step 17: macOS.** On a Mac, in Safari and Chrome: Option+Return inserts a beat, Shift+Return a section,
+Cmd+Return a bar, Cmd+Shift+Return a track, Shift+Space plays from the start, Cmd+Z undoes, and `[` on a
+German Mac layout (Option+5) opens a repeat. If no Mac is available, record this step as not performed -
+the plan already says nobody has checked these.
+
+**Step 18: Undo, redo and select all on German and French layouts.** On German (QWERTZ), where Z and Y
+swap places: write a note, Ctrl+Z undoes it (does not redo), Ctrl+Y redoes it, Ctrl+Shift+Z redoes too. On
+French (AZERTY), where A and Q swap: Ctrl+A selects the whole track (it does not toggle Pen), and Ctrl+Z
+undoes. If a layout cannot be added, record this step as not performed.
+
+**Step 19: AZERTY's unshifted digit row.** On French, with the caret on tablature, press each digit-row key
+without Shift - `& é " ' ( - è _ ç à` - and record what each does: the design expects `(` (5) to press
+left-hand tap, `-` (6) Shorter, `_` (8) Tenuto, and the rest nothing, and no fret written. Record whether a
+French player could live with Shift for frets, for the design's open question.
+
+**Step 20: A drag released outside the score.** In Select, press on a beat, drag across two beats, carry
+the pointer off the score onto the palette and release there. Move back over the score with the button up:
+the range does not grow. Press and drag again: a new range starts.
+
+**Step 21: Click-to-seek.** With playback stopped, click bar 3, beat 2: press Space, and playback starts
+there, plays past the selection, and does not loop (no playback range was set). During playback, click
+another beat: the caret moves and playback does not jump.
+
+**Step 22: French Mac Option symbols.** On a Mac with the French layout, type `}` (Option+`)`) and `]`
+(Option+Shift+`)`), and Option+- and Option+= as bound. Alt's accidentals are bound by `code` - `Minus`,
+`Equal` - and on the French Mac layout `)` is the key in the `Minus` place, so `}` and `]` may press Flat
+and Double flat instead of Alternate ending and Repeat close. Record what each press runs. If no Mac is
+available, record this step as not performed.
+
+**Step 23: A popover at the palette's edge.** Scroll the palette so Triplet feel is its last visible button,
+at the bottom of the palette and near the bottom of the window. Click it: the popover is whole - beside its
+button, not clipped by the palette, not off the bottom of the window. Narrow the window until the palette is
+at its narrowest and open Clef: the popover still sits beside the palette, in the window. With it open, scroll the
+palette, and resize the window: the popover follows its button each time. Open Alternate ending and tick a box
+until the popover grows: it stays inside the window and scrolls within itself.
+
+**Step 24: A short window.** Make the window about 500px tall. Open Key signature and Alternate ending: each
+popover stays inside the window and scrolls within itself if taller; the page grid keeps its minimum height
+and the status line and strip stay reachable.
+
+**Step 25: A popover, the menus and the palette by keyboard alone.** Tab to the Clef button: Space opens its
+popover (Space does not play) and the focus is in the popover's first field. Change the clef, Tab to Apply,
+Enter: applied, and the focus is back on the Clef button. Press Q for Pen, Shift+→ for a range, then K: the
+popover opens with the focus in it; Escape closes it, the status line still says Pen, the range is still
+highlighted, and the focus is on the Clef button. Tab to the Library button, Enter, Escape: the menu closes,
+the mode is still Pen and the focus is on Library. Click the Export menu open, then click the score: it
+closes. Tab to a track row's Update and press Space: it presses Update. Open Clef and click the Clef button: it
+closes; open it and click the score: it closes, the focus stays where the click put it, and that click does nothing else - no
+caret move, no seek, and in Pen no note written or heard. Click the score again: that click moves the caret. Open Clef,
+press on the palette, drag onto the score and release there, then click the score: the click acts. Open Tuplet, Tab to 3:2,
+and press 5, R and →: the score does not change and nothing plays; press `?`: no sheet opens. Press Space: it presses
+the focused 3:2, as Space presses any focused button - applied, or refused with the reason inline - and nothing plays.
+Open a popover, then the Library menu: the popover closes. Open Clef and press Ctrl+Z: the popover closes, and the undo
+is all that changed. Select bars 2 to 4 with a key change at bar 3 and open Key signature: it says Mixed, and Apply
+leaves both keys; choose D major and Apply: bars 2 to 4 are in D major and bar 5 keeps its key. With a second track in
+another key at bar 2, a caret on bar 2 shows Key signature as Mixed. Select a treble bar and a bass bar, open Clef and
+change only the ottava to 8va: each bar keeps its clef and both are 8va. Click Delete bar with the mouse, then press
+Space: playback starts and no second bar is deleted. Click Composer in the shell's navigation, then press Space:
+playback starts. Tab to Fix bar and hold Enter: it runs once. With one track, Tab to its Remove: it is announced as unavailable, with the
+reason; Space: the status line says "A score needs at least one track." Open the shortcut sheet and click its
+backdrop: the sheet closes and the focus is back where it was; open it, press Ctrl+A and Ctrl+End: the sheet's text
+is selected and scrolled, and the score is unchanged.
+
+**Step 26: Drag performance on a long score.** Build a score of about 64 bars (Ctrl+Enter repeatedly, or
+alphaTex). In DevTools, Performance, record a drag across a system of beats: no re-engraving per beat
+crossed (the score is engraved only when the document changes), and the highlight keeps up. Record Pen's
+hover over notation for a few seconds: no long tasks, and no change-detection work per pointer move.
+
+**Step 27: Ctrl+Alt+↑ and Ctrl+Alt+↓ against the operating system.** On Windows with Intel graphics
+hotkeys enabled, Ctrl+Alt+↑/↓ rotate the display; on GNOME they have switched workspaces. Press each with a
+note selected and record whether the note moves string or the system takes the keys. If neither machine is
+available, record this step as not performed.
+
+**Step 28: A Mac's missing Delete, Home and End.** On a Mac keyboard without them: fn+Backspace (Delete)
+clears a beat, fn+Shift+Backspace deletes beats, Cmd+fn+Backspace deletes a bar, and fn+← and fn+→ (Home,
+End) go to the bar's first and last beat, Cmd+fn+← and → to the first and last bar. Record which work. If
+no Mac is available, record this step as not performed.
+
+**Step 29: Guitar Pro.** Export the score from Step 7 as `.gp` and open it in Guitar Pro, if it is
+installed; record what differs. This is the design's standing per-milestone check, and `docs/TODO.md`
+lists it as unperformed.
+
+**Step 30: Slash and numbered staves.** Open the alphaTex panel, change the guitar's `\staff` to `{slash score tabs}` and
+Apply. Click each staff on the first and second systems: the caret goes to the staff clicked. In Pen, a click on notation
+writes; a click on the slash staff moves the caret and writes nothing; a digit writes on tablature. Apply `{numbered tabs}`
+and click the tablature: the caret goes there, on the string clicked. Record where the caret box is drawn on each.
+
+**Step 31: Escape from a popover, then Space.** In Chrome, Firefox and Safari, open Clef by clicking its button and press
+Escape, then Space: playback starts. Tab to Clef, press Space to open it, Escape, then Space: the Clef button is pressed
+and the popover opens again, and nothing plays. Record each browser.
+
+**Step 32: Add bar on a Mac, and AltGr+Enter.** On a Mac, in Safari and Chrome, Cmd+Option+Enter adds a bar at the end, and
+neither browser nor macOS takes the key. On Windows with the German and French layouts, press AltGr+Enter, which the
+browser reports as Ctrl+Alt+Enter: record whether it adds a bar, and whether that is a key a player would press by
+accident. If no Mac is available, record that half as not performed.
+
+**Step 33: Unsaved work.** Type a fret, then press New: it asks "Discard unsaved changes and start a new score?"; Cancel,
+and the fret is there and Undo takes it away. Type a fret again, then load a saved composition and Cancel, and Open in
+Composer from Transcribe and Cancel: the score, Undo and the page are as they were. Save; open the alphaTex panel and type
+into the draft, then load another composition: it asks; go ahead, then Apply: the loaded composition is unchanged and the
+draft shows its alphaTex. Put an unparsable line in a draft written before an edit and press Apply: it says the draft
+could not be parsed, and asks nothing.
+
+**Step 34: Commit** the results with Task 5.1's documentation, or separately:
+`docs: Record the M2 hand check`.
+
+### Task 5.3: The M2 checkpoint
+
+**Step 1:** Both type checks and the whole suite. Expected: no type errors, all SUCCESS, and a total
+above the plan's proof total by however many specs review added.
+
+**Step 2:** Every file under 1000 lines:
+
+```bash
+wc -l client/src/app/services/composer*.ts client/src/app/components/composer/**/*.ts | sort -n | tail -8
+```
+
+**Step 3:** Merge `feature/composer-editor-m2` as the project merges milestones.
+

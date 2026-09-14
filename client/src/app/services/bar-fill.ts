@@ -15,6 +15,9 @@ import {
 import { insertBarInto } from './score-structure';
 import { DurationUnit, barGridFault, metricFrame, slotsToDurations } from './transcription-quantize';
 
+/** Fix bar's refusal when no selected bar is over: said by the command and by its palette button's state. */
+export const NO_BAR_OVER = 'No selected bar is over its time signature.';
+
 /**
  * Bar arithmetic for the composer: how full a bar is, filling its gaps with rests, and
  * carrying its overflow into the next bar when the user asks.
@@ -60,6 +63,45 @@ export function beatTicks(beat: Pick<BeatDoc, 'duration' | 'dots' | 'tuplet' | '
     ticks = ((ticks * beat.tuplet.denominator) / beat.tuplet.numerator) | 0;
   }
   return ticks;
+}
+
+/**
+ * The playback length of each grace in a run of `size`: alphaTab writes a lone grace as an eighth, two as sixteenths
+ * and more as 32nds (`Beat.finish`, `alphaTab.core.mjs` ~7772), and plays them as a 32nd, a 64th and a 128th
+ * (`Beat.updateDurations` ~7713).
+ */
+export function gracePlaybackTicks(size: number): number {
+  return size === 1 ? 120 : size === 2 ? 60 : 30;
+}
+
+/**
+ * For each of `beats` - one voice of one bar, in order - the tick alphaTab plays it at, which is where it files the
+ * beat's fermata and where it looks for one to hand the beat (`Voice.finish` ~3226-3294, `MasterBar.getFermata`
+ * ~2728). Not where it is drawn (`beatTicks`): the two differ around graces.
+ *
+ * - A grace plays one after another from the tick of the beat it leads into, each for its playback length
+ *   (`gracePlaybackTicks`), and its fermata is filed while it is finished, at that tick.
+ * - A beat that on-beat graces lead into plays after them: they take their playback lengths from its start
+ *   (`GraceType.OnBeat`, ~3262). A run's first grace decides what kind it is.
+ * - A beat that before-beat graces lead into plays at its own tick; they take their lengths from the beat before.
+ * - Every other beat plays at its own tick.
+ */
+export function playbackStartsOf(beats: readonly Pick<BeatDoc, 'duration' | 'dots' | 'tuplet' | 'effects'>[]): number[] {
+  const starts: number[] = [];
+  let tick = 0;
+  let index = 0;
+  while (index < beats.length) {
+    let end = index;
+    while (end < beats.length && beats[end].effects.grace !== 'none') end++;
+    const size = end - index;
+    const each = gracePlaybackTicks(size);
+    for (let grace = 0; grace < size; grace++) starts.push(tick + grace * each);
+    if (end === beats.length) break;
+    starts.push(size > 0 && beats[index].effects.grace === 'onBeat' ? tick + size * each : tick);
+    tick += beatTicks(beats[end]);
+    index = end + 1;
+  }
+  return starts;
 }
 
 /** How a bar's contents compare with its meter. */
@@ -187,7 +229,7 @@ const SLOT_TICKS = TICKS_PER_QUARTER / 16;
  * alphaTab leaves its group incomplete (`GraceGroup.isComplete` stays false) - and it stays
  * last, where it was written.
  */
-function graceRunStart(voice: VoiceDoc, index: number): number {
+export function graceRunStart(voice: VoiceDoc, index: number): number {
   let start = index;
   while (start > 0 && voice.beats[start - 1].effects.grace !== 'none') start--;
   return start;
@@ -423,10 +465,11 @@ export function fixBarOverflow(
 type LineCut = { kind: 'cut'; carried: BeatDoc[] } | { kind: 'refused'; reason: string };
 
 /**
- * Whether alphaTab draws `beat` as a tuplet: `Beat.hasTuplet` (`alphaTab.core.mjs` ~7370), any
- * ratio but -1:-1, its default, and 1:1. The mapper writes a model tuplet's ratio as it is.
+ * Whether alphaTab reads `beat` as under a tuplet: `Beat.hasTuplet` (`alphaTab.core.mjs` ~7370), any
+ * ratio but -1:-1, its default, and 1:1. The mapper writes a model tuplet's ratio as it is. What draws a
+ * bracket, and what `Beat.finishTuplet` groups (`tupletGroupsOf`).
  */
-function hasTuplet(beat: BeatDoc): boolean {
+export function hasTuplet(beat: Pick<BeatDoc, 'tuplet'>): boolean {
   const tuplet = beat.tuplet;
   return (
     tuplet !== null &&
@@ -467,19 +510,46 @@ function beatsPastBarLine(
 
     if (start >= capacity) return { kind: 'cut', carried: voice.beats.splice(graceRunStart(voice, index)) };
 
-    if (hasTuplet(beat)) return { kind: 'refused', reason: TUPLET_ACROSS_LINE };
-    if (barGridFault(timeSignature, SLOT_DIVISION) !== null || barGridFault(nextTimeSignature, SLOT_DIVISION) !== null) {
-      return { kind: 'refused', reason: NO_GRID_AT_LINE };
-    }
-    const head = spelledTicks(capacity - start, start, timeSignature);
-    const tail = spelledTicks(end - capacity, 0, nextTimeSignature);
-    if (!head || !tail) return { kind: 'refused', reason: OFF_GRID_AT_LINE };
+    const split = splitAtBarLine(beat, start, timeSignature, nextTimeSignature);
+    if (split.kind === 'refused') return split;
 
     const after = voice.beats.splice(index + 1);
-    voice.beats.splice(index, 1, ...piecesOf(beat, head, false));
-    return { kind: 'cut', carried: [...piecesOf(beat, tail, true), ...after] };
+    voice.beats.splice(index, 1, ...split.head);
+    return { kind: 'cut', carried: [...split.tail, ...after] };
   }
   return { kind: 'cut', carried: [] };
+}
+
+/** A beat split at a bar line: its pieces before the line and its tied pieces after, or why it cannot be. */
+export type BarLineSplit = { kind: 'split'; head: BeatDoc[]; tail: BeatDoc[] } | { kind: 'refused'; reason: string };
+
+/**
+ * `beat`, starting `start` ticks into a bar of `timeSignature`, split at that bar's line into written
+ * values: the head up to the line, and a tail tied on from it spelled from the start of a bar of
+ * `nextTimeSignature` - or why it cannot be split, with Fix bar's reasons. `beat` must cross the line.
+ *
+ * The split Fix bar makes (`beatsPastBarLine`), and a paste across a bar line makes too: a tuplet is
+ * refused, since its pieces would lose the bracket; so is a meter on either side with no 64th grid, and
+ * a split between 64ths. The head's first piece is `beat` itself, re-valued; every other piece is a
+ * continuation carrying what goes on sounding (`piecesOf`, `CARRIED_OVER_A_TIE`). `beat` must not be
+ * held anywhere else afterwards: the head's first piece shares its effects.
+ */
+export function splitAtBarLine(
+  beat: BeatDoc,
+  start: number,
+  timeSignature: TimeSignature,
+  nextTimeSignature: TimeSignature
+): BarLineSplit {
+  const capacity = barCapacityTicks(timeSignature);
+  const end = start + beatTicks(beat);
+  if (hasTuplet(beat)) return { kind: 'refused', reason: TUPLET_ACROSS_LINE };
+  if (barGridFault(timeSignature, SLOT_DIVISION) !== null || barGridFault(nextTimeSignature, SLOT_DIVISION) !== null) {
+    return { kind: 'refused', reason: NO_GRID_AT_LINE };
+  }
+  const head = spelledTicks(capacity - start, start, timeSignature);
+  const tail = spelledTicks(end - capacity, 0, nextTimeSignature);
+  if (!head || !tail) return { kind: 'refused', reason: OFF_GRID_AT_LINE };
+  return { kind: 'split', head: piecesOf(beat, head, false), tail: piecesOf(beat, tail, true) };
 }
 
 /**

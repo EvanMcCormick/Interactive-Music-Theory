@@ -3,11 +3,18 @@ import {
   ChangeDetectorRef,
   Component,
   ElementRef,
+  EventEmitter,
   OnDestroy,
+  HostListener,
+  Input,
+  OnChanges,
   OnInit,
-  ViewChild
+  Output,
+  SimpleChanges,
+  ViewChild,
+  inject
 } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { CommonModule, DOCUMENT } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subject, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
@@ -19,6 +26,7 @@ import {
   CompositionSummary
 } from '../../../../services/composer-library.service';
 import { ComposerService } from '../../../../services/composer.service';
+import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { ComposerState } from '../../../../models/composer.model';
 
@@ -44,12 +52,19 @@ interface PendingSave {
   flattened: boolean;
 }
 
+/** A save pressed while a write was under way (`queuedSaves`): which kind, and how many tracks Flatten and save detached for it. */
+interface QueuedSave {
+  asNew: boolean;
+  flattened: number;
+}
+
 /**
- * Save, load and export for the composer.
+ * Save, load and export for the composer: the top bar's Library and Export menus, and the saved list
+ * in a drawer.
  *
- * Kept out of ComposerComponent so neither file outgrows the project's
- * 1000-line guideline. Every dependency is a root service, so this needs no
- * inputs or outputs.
+ * Kept out of ComposerComponent so neither file outgrows the project's 1000-line guideline. Every
+ * dependency is a root service, so this needs no inputs or outputs; the keyboard's Ctrl+S reaches
+ * `save` through `ComposerSaveRequests`.
  */
 @Component({
   selector: 'app-composer-library-panel',
@@ -59,13 +74,13 @@ interface PendingSave {
   styleUrls: ['./composer-library-panel.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
+export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestroy {
   private readonly destroy$ = new Subject<void>();
 
   entries: CompositionSummary[] = [];
   state: ComposerState | null = null;
   currentId: string | null = null;
-  statusMessage: string | null = null;
+  /** The last failure's words, for the report of a flatten nothing saved. Said in the status line (`reportError`). */
   errorMessage: string | null = null;
 
   /**
@@ -87,6 +102,71 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   pendingSave: PendingSave | null = null;
 
   /**
+   * Which of the top bar's menus is open, and whether the saved list's drawer is. Presentation only:
+   * the three are hidden with CSS rather than removed, so the announced regions beside them stay in the
+   * accessibility tree whichever is open.
+   */
+  libraryMenuOpen = false;
+  exportMenuOpen = false;
+  drawerOpen = false;
+
+  /**
+   * Whether a modal - the shortcut sheet - is open over the page. Opening one closes the menus and the drawer, and
+   * while it is open the panel's Escape listener stands aside, so Escape closes the modal rather than a menu hidden
+   * behind it.
+   */
+  @Input() modalOpen = false;
+
+  /** Emits when a menu or the drawer opens. */
+  @Output() readonly menuOpened = new EventEmitter<void>();
+
+  /**
+   * Whether a write to the library is under way. A trigger while it is - Ctrl+S just after a click, a double
+   * click, Ctrl+S after an edit made mid-write - does not start a second write at once: the first write's id is
+   * not known until it lands, so letting the second through would create a second entry rather than overwrite
+   * the first. It is queued instead, in `queuedSaves`.
+   */
+  private saving = false;
+
+  /**
+   * The saves asked for while a write was under way, in the order first pressed: at most one plain Save and one
+   * Save as copy, however many times each was pressed. They run one at a time after that write lands, through
+   * `save` and its refusals - a plain Save over the entry the write left current. Each runs only if it still has
+   * something to write: a plain Save when the document moved on since the write before it began, a copy unless
+   * that write was a copy of the same document, so a double click on Save as copy makes one copy. Dropped when
+   * the write failed, which has been reported and would only fail again; when another composition replaces the document,
+   * since they were pressed for what is gone (`forgetEntry`); a plain Save when its entry is deleted, which it would
+   * write back (`remove`); and when the panel is destroyed, since the page's guards are gone.
+   */
+  private queuedSaves: QueuedSave[] = [];
+
+  /**
+   * Bumped whenever another composition replaces the document - a load, New, an opened transcription (`forgetEntry`). A
+   * write that began before it still lands in the entry it was writing, but leaves `currentId` as it now is: otherwise
+   * the next Save would write the new document over the entry that write was for.
+   */
+  private loadGeneration = 0;
+
+  /**
+   * Bumped when the entry being edited is deleted (`forgetDeletedEntry`). The document stays, so a write that began
+   * before it and made a new entry - Save as copy, or a Save pressed while the delete was under way - is adopted when it
+   * lands; one that wrote the deleted entry is not.
+   */
+  private deletions = 0;
+
+  /**
+   * The entry being edited while its delete is under way, or null. A Save meanwhile writes a new entry, not this one,
+   * which the delete could not then remove, and which would put the entry back if it landed after the delete.
+   */
+  private deleting: string | null = null;
+
+  /** The write under way, settled either way, or a settled promise. A delete of an entry waits for it (`remove`). */
+  private writing: Promise<void> = Promise.resolve();
+
+  /** Set on destroy: a queued save must not run against a page that has gone, whose guards are no longer asked. */
+  private destroyed = false;
+
+  /**
    * Why the last press of Save was refused, or `null` if it was not.
    *
    * A view onto `pendingSave` rather than a field of its own. See `PendingSave`
@@ -98,13 +178,17 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * The Save button, so dismissing the offer can hand focus back to it.
-   *
-   * Both buttons in the announced region destroy the region they live in, so
-   * without this the browser drops focus to `<body>` and a keyboard user
-   * restarts tabbing from the top of the page.
+   * The Library and Export menu buttons, which take the focus back when Escape closes their menu, and when a refusal,
+   * the saved list or an export takes away what held it. Both buttons in the announced region destroy the region they
+   * live in, so without one the browser drops the focus to `<body>` and a keyboard user restarts tabbing from the top.
    */
-  @ViewChild('saveButton') private saveButton?: ElementRef<HTMLButtonElement>;
+  @ViewChild('libraryToggle') private libraryToggle?: ElementRef<HTMLButtonElement>;
+  @ViewChild('exportToggle') private exportToggle?: ElementRef<HTMLButtonElement>;
+  /** The saved list, and its close button, which takes the focus when the list opens. */
+  @ViewChild('drawer') private drawer?: ElementRef<HTMLElement>;
+  @ViewChild('drawerClose') private drawerClose?: ElementRef<HTMLButtonElement>;
+
+  private readonly document = inject(DOCUMENT);
 
   constructor(
     private readonly composer: ComposerService,
@@ -112,7 +196,9 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
     private readonly exporter: ComposerExportService,
     private readonly mapper: ScoreDocMapperService,
     private readonly tex: AlphaTexService,
-    private readonly cdr: ChangeDetectorRef
+    private readonly saveRequests: ComposerSaveRequests,
+    private readonly cdr: ChangeDetectorRef,
+    private readonly host: ElementRef<HTMLElement>
   ) {}
 
   ngOnInit(): void {
@@ -120,6 +206,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
       .getState()
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
+        // Another composition - New, a load, an opened transcription - is not the entry last loaded or saved (`forgetEntry`).
+        if (this.state && state.documentId !== this.state.documentId) this.forgetEntry();
         this.state = state;
 
         const linked = state.doc.tracks.flatMap(track =>
@@ -157,13 +245,108 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
         this.cdr.markForCheck();
       });
 
+    this.document.addEventListener('keydown', this.escapeListener, true);
+
+    // Ctrl+S. The same `save()` as the button, so a keyboard save is refused, announced and followed by
+    // focus exactly as a click is.
+    this.saveRequests.requested$.pipe(takeUntil(this.destroy$)).subscribe(() => void this.save());
+
     void this.library.refresh().catch(error => this.reportError(error));
   }
 
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['modalOpen'] && this.modalOpen) this.closeMenus();
+  }
+
   ngOnDestroy(): void {
+    this.destroyed = true;
+    this.queuedSaves = [];
+    this.document.removeEventListener('keydown', this.escapeListener, true);
     this.destroy$.next();
     this.destroy$.complete();
   }
+
+  // -------------------------------------------------------------------------
+  // Menus and drawer
+  // -------------------------------------------------------------------------
+
+  toggleLibraryMenu(): void {
+    this.libraryMenuOpen = !this.libraryMenuOpen;
+    this.exportMenuOpen = false;
+    if (this.libraryMenuOpen) this.menuOpened.emit();
+  }
+
+  toggleExportMenu(): void {
+    this.exportMenuOpen = !this.exportMenuOpen;
+    this.libraryMenuOpen = false;
+    if (this.exportMenuOpen) this.menuOpened.emit();
+  }
+
+  /**
+   * Opens the saved list, closing the menu it was opened from, and puts the focus on its close button: the menu item
+   * that opened it is hidden now, and a hidden element drops the focus to the page.
+   */
+  openDrawer(): void {
+    this.drawerOpen = true;
+    this.libraryMenuOpen = false;
+    this.menuOpened.emit();
+    this.cdr.detectChanges();
+    this.drawerClose?.nativeElement.focus();
+  }
+
+  /** Closes the saved list, giving the focus to the Library button when it was in the list - on its ×, or a row that loaded. */
+  closeDrawer(): void {
+    const focusWasInside = !!this.drawer?.nativeElement.contains(this.document.activeElement);
+    this.drawerOpen = false;
+    this.cdr.detectChanges();
+    if (focusWasInside) this.libraryToggle?.nativeElement.focus();
+  }
+
+  /** Closes the Export menu on a choice, giving the focus to its button: the item chosen is hidden with the menu. */
+  private closeExportMenu(): void {
+    const focusWasInside = this.host.nativeElement.contains(this.document.activeElement);
+    this.exportMenuOpen = false;
+    this.cdr.detectChanges();
+    if (focusWasInside) this.exportToggle?.nativeElement.focus();
+  }
+
+  /** A click anywhere outside the panel closes its menus and its drawer, as a menu is expected to. */
+  @HostListener('document:click', ['$event'])
+  onDocumentClick(event: MouseEvent): void {
+    if (!this.anyOpen || (event.target instanceof Node && this.host.nativeElement.contains(event.target))) return;
+    this.closeMenus();
+  }
+
+  /** Whether a menu or the drawer is open. */
+  private get anyOpen(): boolean {
+    return this.libraryMenuOpen || this.exportMenuOpen || this.drawerOpen;
+  }
+
+  private closeMenus(): void {
+    this.libraryMenuOpen = false;
+    this.exportMenuOpen = false;
+    this.drawerOpen = false;
+    this.cdr.markForCheck();
+  }
+
+  /**
+   * Escape closes an open menu or the drawer, and claims the key - and gives focus back to the menu's
+   * button when it was inside what closed, since a focused element that is hidden drops focus to the page.
+   *
+   * On the document in the capture phase, for the reason the shell's Escape is (`AppComponent.onEscape`):
+   * the page's keyboard handler listens on the document too, and was added before this panel existed, so a
+   * bubbling listener here would run after it had gone back to Select and dropped the range. A press
+   * something earlier claimed - the shell closing the circle-of-fifths drawer - is left alone, and with
+   * nothing open nothing is claimed, so Escape stays the page's.
+   */
+  private readonly escapeListener = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || event.defaultPrevented || this.modalOpen || !this.anyOpen) return;
+    event.preventDefault();
+    const focusWasInside = this.host.nativeElement.contains(this.document.activeElement);
+    const toggle = this.exportMenuOpen && !this.libraryMenuOpen ? this.exportToggle : this.libraryToggle;
+    this.closeMenus();
+    if (focusWasInside) toggle?.nativeElement.focus();
+  };
 
   // -------------------------------------------------------------------------
   // Save / load
@@ -194,14 +377,25 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
    * already left the app and has nothing to stay linked to.
    */
   async save(asNew = false): Promise<void> {
-    if (!this.state) return;
+    await this.requestSave(asNew, 0);
+  }
+
+  /** `save`, for a save that is to write the `flattened` tracks a Flatten and save detached, which is reported if it never does. */
+  private async requestSave(asNew: boolean, flattened: number): Promise<void> {
+    // A guard that refuses has said why where its own state is shown - the alphaTex draft, in the status line.
+    if (!this.state || this.destroyed || this.saveRequests.refused()) return;
+
+    if (this.saving) {
+      this.queueSave(asNew, flattened);
+      return;
+    }
 
     if (this.linkedProgressions.length > 0) {
       this.refuseToSave(asNew);
       return;
     }
 
-    await this.writeToLibrary(asNew);
+    await this.writeToLibrary(asNew, flattened);
   }
 
   /**
@@ -227,50 +421,73 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
    * already listening to, having just pressed a button inside it.
    */
   async flattenAndSave(): Promise<void> {
+    if (this.destroyed || this.saveRequests.refused()) return;
     const asNew = this.pendingSave?.asNew ?? false;
     const flattened = this.flattenEveryLinkedTrack();
     this.pendingSave = null;
 
-    if (!(await this.writeToLibrary(asNew))) {
-      this.pendingSave = {
-        reason: this.describeFlattenedButUnsaved(flattened),
-        asNew,
-        flattened: true
-      };
-      // The message has moved into the announced region, so the unannounced
-      // paragraph at the foot of the panel would only be saying it a second
-      // time - and it is the copy a screen reader would not read out.
-      this.errorMessage = null;
-    }
+    // Pressed while a write is under way: flattened as pressed, and saved once that write lands, as a Save pressed now
+    // is (`queuedSaves`) - the entry that write makes is not known until it lands. Whichever way it goes, a flatten no
+    // write saves is reported in the announced region (`dropQueuedSaves`).
+    if (this.saving) this.queueSave(asNew, flattened);
+    else await this.writeToLibrary(asNew, flattened);
 
-    this.returnFocusToSave();
+    this.returnFocusToLibrary();
   }
 
   /** Declines the offer, leaving the link and the composition unsaved. */
   dismissSaveBlock(): void {
     this.pendingSave = null;
-    this.returnFocusToSave();
+    this.returnFocusToLibrary();
   }
 
-  private refuseToSave(asNew: boolean): void {
-    this.pendingSave = { reason: this.describeRefusal(), asNew, flattened: false };
-    this.statusMessage = null;
-    // A failure from an earlier press sits directly under the refusal, where it
-    // reads as part of it.
+  /** Remembers a save pressed while a write is under way, once for each kind, with the tracks a flatten detached for it (`queuedSaves`). */
+  private queueSave(asNew: boolean, flattened: number): void {
+    const queued = this.queuedSaves.find(save => save.asNew === asNew);
+    if (queued) queued.flattened += flattened;
+    else this.queuedSaves.push({ asNew, flattened });
+  }
+
+  /**
+   * Drops the queued saves, after a write failed or a queued save was refused. The tracks Flatten and save detached for
+   * one of them, or for the save that failed (`flattened`), are now detached with nothing written, which is reported in
+   * the announced region as when the flatten's own write fails.
+   */
+  private dropQueuedSaves(flattened: number, asNew: boolean): void {
+    const unsaved = this.queuedSaves.reduce((count, queued) => count + queued.flattened, flattened);
+    this.queuedSaves = [];
+    if (unsaved === 0 || this.destroyed) return;
+    this.pendingSave = { reason: this.describeFlattenedButUnsaved(unsaved), asNew, flattened: true };
+    // The failure is said here, in the alert, and not in the status line as well (`writeToLibrary`).
     this.errorMessage = null;
     this.cdr.markForCheck();
   }
 
+  private refuseToSave(asNew: boolean): void {
+    // The refusal drops below the top bar, where the menus open, so it closes them rather than cover Save; a focus in
+    // the Library menu goes to its button, since a hidden Save drops it to the page.
+    const focusWasInMenu = this.libraryMenuOpen && this.host.nativeElement.contains(this.document.activeElement);
+    this.libraryMenuOpen = false;
+    this.exportMenuOpen = false;
+    this.pendingSave = { reason: this.describeRefusal(), asNew, flattened: false };
+    // A failure from an earlier press sits directly under the refusal, where it
+    // reads as part of it.
+    this.errorMessage = null;
+    this.cdr.markForCheck();
+    if (focusWasInMenu) this.returnFocusToLibrary();
+  }
+
   /**
-   * Puts focus back on Save after the announced region is torn down.
+   * Puts the focus on the Library button after the announced region is torn down, or a refusal closed the menu.
    *
    * Change detection has to run first: the region is still in the DOM at the
    * moment the handler returns, and moving focus before it goes would be undone
    * by the browser when it does.
    */
-  private returnFocusToSave(): void {
+  private returnFocusToLibrary(): void {
+    // Not Save: it is in the Library menu, which, opened, would sit under a refusal still showing.
     this.cdr.detectChanges();
-    this.saveButton?.nativeElement.focus();
+    this.libraryToggle?.nativeElement.focus();
   }
 
   private describeRefusal(): string {
@@ -336,41 +553,85 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
     return linked.length;
   }
 
-  /** Writes the composition, reporting any failure. True when it landed. */
-  private async writeToLibrary(asNew: boolean): Promise<boolean> {
-    if (!this.state) return false;
+  /**
+   * Writes the composition, reporting any failure - and that the `flattened` tracks Flatten and save detached for it were
+   * not saved. True when it landed.
+   */
+  private async writeToLibrary(asNew: boolean, flattened = 0): Promise<boolean> {
+    if (!this.state || this.saving) return false;
 
+    this.saving = true;
+    // The document this write holds. Only it is marked saved, and a queued save runs after it only when it still has
+    // something to write (`runQueuedSave`).
+    const doc = this.state.doc;
+    // A load or New while this write is under way leaves `currentId` as they left it (`loadGeneration`), and so does a
+    // delete of the entry, unless this write made a new one (`deletions`).
+    const generation = this.loadGeneration;
+    const deletions = this.deletions;
+    const target = asNew || this.currentId === this.deleting ? undefined : this.currentId ?? undefined;
+    // What this write holds, as alphaTex: a queued save runs after it only when the document would write something else.
+    let written: string | null = null;
+    let landed = false;
     try {
-      const doc = this.state.doc;
-      const score = this.buildScore();
+      written = this.tex.export(this.buildScore());
 
-      const id = await this.library.save(
+      const write = this.library.save(
         {
           title: doc.title || 'Untitled',
           artist: doc.artist,
-          tex: this.tex.export(score),
+          tex: written,
           tempo: doc.tempo,
           trackCount: doc.tracks.length,
           barCount: doc.masterBars.length
         },
-        asNew ? undefined : this.currentId ?? undefined
+        target
       );
+      this.writing = write.then(
+        () => undefined,
+        () => undefined
+      );
+      const id = await write;
 
-      this.currentId = id;
-      this.composer.markSaved();
+      if (generation === this.loadGeneration && (deletions === this.deletions || target === undefined)) this.currentId = id;
+      this.composer.markSaved(doc);
       this.pendingSave = null;
       this.report(`Saved "${doc.title || 'Untitled'}"`);
-      return true;
+      landed = true;
     } catch (error) {
-      this.reportError(error);
-      return false;
+      // A flatten this write was to save, or a queued save was, is reported with the failure in the alert instead.
+      const flattenReported = !this.destroyed && (flattened > 0 || this.queuedSaves.some(queued => queued.flattened > 0));
+      this.reportError(error, !flattenReported);
+    } finally {
+      this.saving = false;
+    }
+
+    if (landed && !this.destroyed && written !== null) this.runQueuedSave(written, asNew);
+    else this.dropQueuedSaves(landed ? 0 : flattened, asNew);
+    return landed;
+  }
+
+  /**
+   * Runs the first queued save that still has something to write, after a write of `written` - the alphaTex it held,
+   * a copy when `wroteCopy` - has landed. The rest stay queued behind the write it starts. A plain Save of a document
+   * that writes the same alphaTex would write it again, and so would a copy after a copy of it; both are skipped.
+   * Compared as alphaTex rather than by identity: undo gives back a copy of the document the write held. A save that
+   * starts no write has been refused, and said why, and the rest would be refused the same way, so they are dropped, and
+   * a flatten one of them was to save is reported (`dropQueuedSaves`). One skipped has nothing to save: the write before
+   * it already held what a flatten left.
+   */
+  private runQueuedSave(written: string, wroteCopy: boolean): void {
+    for (let queued = this.queuedSaves.shift(); queued; queued = this.queuedSaves.shift()) {
+      const moved = this.texOfDocument() !== written;
+      if (!moved && (!queued.asNew || wroteCopy)) continue;
+      void this.requestSave(queued.asNew, queued.flattened);
+      if (!this.saving) this.dropQueuedSaves(queued.flattened, queued.asNew);
+      return;
     }
   }
 
   async load(id: string): Promise<void> {
-    if (this.state?.isDirty && !confirm('Discard unsaved changes and load this composition?')) {
-      return;
-    }
+    // A load starts a fresh history, so unsaved work - the document's, or an edited alphaTex draft - is asked about first.
+    if (!this.composer.confirmDiscard('load this composition')) return;
 
     try {
       const entry = await this.library.get(id);
@@ -385,24 +646,64 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
         return;
       }
 
-      this.composer.replaceDocument(this.mapper.toDoc(parsed.score), true);
+      // A new composition (`documentId`), with a fresh history, so the panel forgets the one it replaces as the state
+      // arrives - dropping the saves queued for it - and then names the loaded entry. Clean: it is what the entry holds.
+      this.composer.replaceDocument(this.mapper.toDoc(parsed.score), { markClean: true, newComposition: true });
       this.currentId = id;
+      this.closeDrawer();
       this.report(`Loaded "${entry.title}"`);
     } catch (error) {
       this.reportError(error);
     }
   }
 
+  /**
+   * Forgets the composition the document was, when another replaces it - a load, New, an opened transcription
+   * (`ComposerState.documentId`). Saves queued for it were pressed for it and are dropped; a write still under way for it
+   * lands in its entry but does not make that entry current again (`loadGeneration`); and the next Save writes a new
+   * entry, until a load or a save names one.
+   */
+  private forgetEntry(): void {
+    this.loadGeneration++;
+    this.queuedSaves = [];
+    this.currentId = null;
+    this.cdr.markForCheck();
+  }
+
+  /**
+   * Forgets the entry being edited once its delete has succeeded. The document stays open, so the next Save writes a new
+   * entry, and a write that already made one is still adopted when it lands (`deletions`).
+   */
+  private forgetDeletedEntry(): void {
+    this.deletions++;
+    this.currentId = null;
+    this.cdr.markForCheck();
+  }
+
   async remove(id: string, title: string, event: Event): Promise<void> {
     event.stopPropagation();
     if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
 
+    // Deleting the entry being edited: a queued Save would write it again, so it is dropped, and a Save pressed while the
+    // delete is under way writes a new entry (`deleting`). A write under way to it would put it back, so the delete waits
+    // for that write. The entry is forgotten only once the delete succeeds: a failed one leaves it current, to be saved.
+    const editing = this.currentId === id;
+    if (editing) {
+      const copies = this.queuedSaves.filter(queued => queued.asNew);
+      this.queuedSaves = this.queuedSaves.filter(queued => !queued.asNew);
+      this.dropQueuedSaves(0, false);
+      this.queuedSaves = copies;
+      this.deleting = id;
+    }
     try {
+      await this.writing;
       await this.library.delete(id);
-      if (this.currentId === id) this.currentId = null;
+      if (this.currentId === id) this.forgetDeletedEntry();
       this.report(`Deleted "${title}"`);
     } catch (error) {
       this.reportError(error);
+    } finally {
+      if (editing && this.deleting === id) this.deleting = null;
     }
   }
 
@@ -411,6 +712,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   // -------------------------------------------------------------------------
 
   exportGuitarPro(): void {
+    this.closeExportMenu();
     if (!this.state) return;
     try {
       const settings = new alphaTab.Settings();
@@ -427,6 +729,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   }
 
   exportAlphaTex(): void {
+    this.closeExportMenu();
     if (!this.state) return;
     try {
       this.exporter.downloadAlphaTex(
@@ -440,6 +743,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
   }
 
   exportMidi(): void {
+    this.closeExportMenu();
     if (!this.state) return;
     try {
       // Same three steps as the Guitar Pro export: build the score, hand it to
@@ -466,20 +770,41 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
     return this.mapper.toScore(this.state!.doc, new alphaTab.Settings());
   }
 
-  private report(message: string): void {
-    this.statusMessage = message;
-    this.errorMessage = null;
-    this.cdr.markForCheck();
-    setTimeout(() => {
-      this.statusMessage = null;
-      this.cdr.markForCheck();
-    }, 2500);
+  /** The document's alphaTex as a save would write it, or null when it cannot be built. */
+  private texOfDocument(): string | null {
+    try {
+      return this.state ? this.tex.export(this.buildScore()) : null;
+    } catch {
+      return null;
+    }
   }
 
-  private reportError(error: unknown): void {
-    this.errorMessage = error instanceof Error ? error.message : String(error);
-    this.statusMessage = null;
+  /**
+   * Says what the panel did in the page's status line, whose live region is the page's one (design Part 4), through the
+   * service. It stays until the next edit or caret move, as a Fix bar notice does.
+   */
+  private report(message: string): void {
+    this.errorMessage = null;
+    this.composer.announce(message);
     this.cdr.markForCheck();
+  }
+
+  /** Keeps a failure's words, and says them in the status line unless a report in the alert will (`announce` false). */
+  private reportError(error: unknown, announce = true): void {
+    this.errorMessage = error instanceof Error ? error.message : String(error);
+    if (announce) this.composer.announce(this.errorMessage, true);
+    this.cdr.markForCheck();
+  }
+
+  /**
+   * Keeps a key pressed in the saved list from the page's shortcuts, which listen on the document as it bubbles: an arrow
+   * would move the caret and R rest a beat in the score the list covers. Tab, Escape - claimed in the capture phase, where
+   * it closes the list - and presses with Ctrl, Alt or Cmd go on, as they do from a popover. Space and Enter still press
+   * the list's buttons: stopping a press's propagation leaves its default action.
+   */
+  onDrawerKey(event: KeyboardEvent): void {
+    if (event.key === 'Tab' || event.key === 'Escape' || event.ctrlKey || event.altKey || event.metaKey) return;
+    event.stopPropagation();
   }
 
   trackById(_index: number, entry: CompositionSummary): string {

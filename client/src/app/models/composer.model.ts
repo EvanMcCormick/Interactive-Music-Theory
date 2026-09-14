@@ -410,6 +410,13 @@ export interface TexDiagnostic {
   column: number;
 }
 
+/**
+ * What a click on standard notation does: `select` moves the caret and never writes, `pen` writes
+ * the clicked pitch. Digits on tablature write in both. The design's decision 5: a click meant to
+ * select must not write a note.
+ */
+export type EntryMode = 'select' | 'pen';
+
 export interface ComposerState {
   doc: ScoreDoc;
   cursor: EditCursor;
@@ -418,14 +425,53 @@ export interface ComposerState {
    * selection is the caret alone. See `selectionTargets` for what a range covers.
    */
   anchor: EditCursor | null;
-  /** Why the last command did nothing, for the status line. The next edit clears it. */
+  /**
+   * Why the last command did nothing, for the status line. The next edit clears it, and so does a
+   * selection change, undo and redo.
+   */
   refusal: string | null;
+  /**
+   * What the last command did, where that is worth saying aloud: Fix bar's and paste's outcomes, which
+   * change bars the user may not be looking at (design Part 4). Published with the commit, and cleared
+   * wherever `refusal` is - the next edit, a selection change, undo, redo - and by a refusal.
+   */
+  notice: string | null;
+  /**
+   * Which refusal or notice is showing. Bumped each time one is published, so the same words published twice - two
+   * Fix bar refusals, the same paste twice - are two messages, and the live region replaces its node and says them
+   * again. Unchanged by anything that publishes neither, and by the second digit of a fret, which keeps the first
+   * digit's notice rather than saying it again.
+   */
+  messageId: number;
+  /**
+   * Which composition the document is, apart from whether it is saved. Bumped when `reset` starts a new one and when
+   * `replaceDocument` puts in a new composition - a load, a transcription opened in the composer - and by nothing that
+   * changes the same composition: an edit, undo, redo, an applied alphaTex draft. The library panel forgets the entry
+   * it last loaded or saved when this changes, so Save never writes a new score over it.
+   */
+  documentId: number;
+  /** Select or Pen. See `EntryMode`. */
+  entryMode: EntryMode;
   /** Duration applied to the next entered note. */
   inputDuration: DurationValue;
   inputDots: number;
   isDirty: boolean;
   canUndo: boolean;
   canRedo: boolean;
+}
+
+/**
+ * What a document handed to `ComposerService.replaceDocument` is. Identity and cleanliness are separate: a transcription
+ * opened in the composer is a new composition that is not saved, and an applied alphaTex draft is neither.
+ */
+export interface DocumentReplacement {
+  /** It is what the library holds: a load. */
+  markClean?: boolean;
+  /**
+   * It is another composition, not an edit of this one: `documentId` moves on and the history starts again, as opening
+   * a file does in Guitar Pro, so no undo puts back the composition before under the name of the one opened.
+   */
+  newComposition?: boolean;
 }
 
 // ---------------------------------------------------------------------------

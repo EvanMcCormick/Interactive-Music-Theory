@@ -3,6 +3,7 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { AlphaTexService } from './alpha-tex.service';
+import { ComposerService } from './composer.service';
 import {
   BeatDoc,
   MasterBarDoc,
@@ -392,5 +393,36 @@ describe('AlphaTexService diagnostics', () => {
 
     expect(result.score).not.toBeNull();
     expect(result.score!.masterBars.length).toBe(2);
+  });
+});
+
+describe('ScoreDocMapperService.toScore as the last guard for a pitched note on strings', () => {
+  let mapper: ScoreDocMapperService;
+  let warn: jasmine.Spy;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    mapper = TestBed.inject(ScoreDocMapperService);
+    warn = spyOn(console, 'warn');
+  });
+
+  it('warns in dev mode, naming the count, when it frets a note or leaves one out', () => {
+    const doc = ComposerService.createEmptyScore();
+    const beats = doc.tracks[0].staves[0].bars[0].voices[0].beats;
+    // D5 is fretted; E1 is below the guitar's low E, so no string reaches it.
+    beats[0] = pitchedBeat(2, 5);
+    beats[1] = pitchedBeat(4, 1);
+
+    mapper.toScore(doc, new alphaTab.Settings());
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.calls.mostRecent().args[0])).toMatch(/fretted 1 /);
+    expect(String(warn.calls.mostRecent().args[0])).toMatch(/left out 1 /);
+  });
+
+  it('says nothing for a document whose notes on strings are already fretted', () => {
+    mapper.toScore(ComposerService.createEmptyScore(), new alphaTab.Settings());
+
+    expect(warn).not.toHaveBeenCalled();
   });
 });

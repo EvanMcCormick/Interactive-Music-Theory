@@ -144,4 +144,24 @@ describe('CircleOfFifthsComponent', () => {
       expect(service.getCurrentState().selectedKey).toBe('D');
     });
   });
+
+  describe('keys', () => {
+    /**
+     * A wedge is a button, so Space and Enter choose it - and claim the press, so a page listening on the
+     * document for Space, as the composer's play and pause does, leaves a press already used alone.
+     */
+    it('claims Space and Enter on every key it chooses', () => {
+      // The buttons: the signature ring's wedges are not focusable and take no keys.
+      const wedges: Element[] = Array.from(fixture.nativeElement.querySelectorAll('path.wedge[role="button"]'));
+      expect(wedges.length).toBeGreaterThan(0);
+
+      for (const wedge of wedges) {
+        for (const key of [' ', 'Enter']) {
+          const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+          wedge.dispatchEvent(event);
+          expect(event.defaultPrevented).withContext(`${wedge.getAttribute('aria-label')}: ${JSON.stringify(key)}`).toBeTrue();
+        }
+      }
+    });
+  });
 });

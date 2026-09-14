@@ -1,5 +1,5 @@
-import { CommonModule } from '@angular/common';
-import { Component, HostListener, OnDestroy, OnInit, inject } from '@angular/core';
+import { CommonModule, DOCUMENT } from '@angular/common';
+import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
 import { Subject, filter, takeUntil } from 'rxjs';
 
@@ -30,8 +30,11 @@ import { CircleOfFifthsComponent } from './components/circle-of-fifths/circle-of
   standalone: true,
   imports: [CommonModule, RouterModule, CircleOfFifthsComponent]
 })
-export class AppComponent implements OnInit, OnDestroy {
+export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
   title = 'MusicTheory';
+
+  @ViewChild('appHeader') private header?: ElementRef<HTMLElement>;
+  private headerObserver: ResizeObserver | null = null;
 
   /**
    * Routes whose view reads `selectedKey`.
@@ -49,6 +52,7 @@ export class AppComponent implements OnInit, OnDestroy {
   circleOpen = false;
 
   private readonly router = inject(Router);
+  private readonly document = inject(DOCUMENT);
   private readonly destroy$ = new Subject<void>();
 
   /**
@@ -74,6 +78,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    this.document.addEventListener('keydown', this.escapeListener, true);
     this.router.events
       .pipe(
         filter((event): event is NavigationEnd => event instanceof NavigationEnd),
@@ -82,9 +87,34 @@ export class AppComponent implements OnInit, OnDestroy {
       .subscribe(event => this.onNavigated(event.urlAfterRedirects));
   }
 
+  ngAfterViewInit(): void {
+    this.publishHeaderHeight();
+    const header = this.header?.nativeElement;
+    if (header && typeof ResizeObserver !== 'undefined') {
+      this.headerObserver = new ResizeObserver(() => this.publishHeaderHeight());
+      this.headerObserver.observe(header);
+    }
+  }
+
   ngOnDestroy(): void {
+    this.document.removeEventListener('keydown', this.escapeListener, true);
     this.destroy$.next();
     this.destroy$.complete();
+    this.headerObserver?.disconnect();
+  }
+
+  /**
+   * Publishes the header's height as `--app-header-height` on the document root.
+   *
+   * A page that fills the viewport under the header - the composer's grid - reads it, because the
+   * header's height is not a constant: its navigation wraps on a narrow window. A CSS custom property is
+   * the contract between the shell and such a page, so this is the one place a component sets a style
+   * on the document. Re-published whenever the header resizes, to the fraction of a pixel the layout gives it:
+   * `offsetHeight` rounds, and a page sized to a rounded-down header ends half a pixel past the viewport.
+   */
+  publishHeaderHeight(): void {
+    const height = this.header?.nativeElement.getBoundingClientRect().height;
+    if (height !== undefined) this.document.documentElement.style.setProperty('--app-header-height', `${height}px`);
   }
 
   /**
@@ -111,8 +141,25 @@ export class AppComponent implements OnInit, OnDestroy {
     this.circleOpen = false;
   }
 
-  @HostListener('document:keydown.escape')
-  onEscape(): void {
+  /**
+   * Escape closes the drawer, and claims the key - `preventDefault` - only when it did.
+   *
+   * A page listening on the document reads the claim: the composer's Escape means back to Select, and its
+   * keyboard handler ignores a press already claimed. So the shell must see Escape first, whatever order
+   * the listeners were added in, and it listens in the capture phase (`escapeListener`), which runs before
+   * every bubbling listener on the document - not by registering first, which a page set up earlier, or a
+   * listener added by a library, would quietly undo. A shared "is the drawer open" flag would not do
+   * either: it would read closed by the time the page asked. With the drawer already closed nothing is
+   * claimed, so Escape stays every page's to use.
+   */
+  onEscape(event?: KeyboardEvent): void {
+    if (!this.circleOpen) return;
     this.closeCircle();
+    event?.preventDefault();
   }
+
+  /** `onEscape` for every keydown on the document, in the capture phase. */
+  private readonly escapeListener = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') this.onEscape(event);
+  };
 }

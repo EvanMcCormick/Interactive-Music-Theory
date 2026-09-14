@@ -8,6 +8,7 @@ import {
   DEFAULT_ALPHA_TAB_STATE
 } from '../models/alpha-tab.model';
 import * as alphaTab from '@coderline/alphatab';
+import { AuditionQueue } from './audition-queue';
 
 /**
  * Service for managing alphaTab API interactions
@@ -19,6 +20,8 @@ import * as alphaTab from '@coderline/alphatab';
 export class AlphaTabService {
   private stateSubject = new BehaviorSubject<AlphaTabState>(DEFAULT_ALPHA_TAB_STATE);
   private api: alphaTab.AlphaTabApi | null = null;
+  /** A note entry's audition, held until its render's MIDI has loaded. See `auditionAfterRender`. */
+  private readonly auditions = new AuditionQueue();
 
   constructor(private ngZone: NgZone) {}
 
@@ -122,6 +125,12 @@ export class AlphaTabService {
       });
     });
 
+    // MIDI loaded: a render's `loadMidiFile` has stopped the player, so a note entry's audition can sound now.
+    this.api.midiLoaded.on(() => {
+      const audition = this.auditions.midiLoaded();
+      if (audition) this.auditionNote(audition.midiKey, audition.program);
+    });
+
     // Player ready
     this.api.playerReady.on(() => {
       this.ngZone.run(() => {
@@ -193,6 +202,7 @@ export class AlphaTabService {
       throw new Error('alphaTab API not initialized');
     }
     this.updateState({ loadingState: 'loading', errorMessage: null });
+    this.auditions.rendered();
     this.api.renderScore(score, trackIndices);
   }
 
@@ -217,6 +227,22 @@ export class AlphaTabService {
    * @param durationMs How long to hold the note
    */
   auditionNote(midiKey: number, program = 25, durationMs = 500): void {
+    this.playNote(midiKey, program, durationMs);
+  }
+
+  /**
+   * Sounds the note an edit wrote, once the render that edit asks for has loaded its MIDI (`AuditionQueue`).
+   *
+   * Sounded at once, the render's `loadMidiFile` stopped it a moment later, and that stop could reach alphaTab's
+   * AudioWorklet output before its buffer source had started - the `InvalidStateError`s "cannot call stop without
+   * calling start first" and "cannot call start more than once".
+   */
+  auditionAfterRender(midiKey: number, program = 25): void {
+    if (!this.api?.player) return;
+    this.auditions.queue({ midiKey, program });
+  }
+
+  private playNote(midiKey: number, program: number, durationMs: number): void {
     if (!this.api) return;
 
     const midi = new alphaTab.midi.MidiFile();
@@ -410,10 +436,58 @@ export class AlphaTabService {
   /**
    * Notify when a rendered beat is clicked. alphaTab does the hit testing, so
    * the caller gets the exact beat without any pixel maths of its own.
-   * Requires `player.enableUserInteraction`.
+   *
+   * Fires whatever `player.enableUserInteraction` says: `_setupClickHandling` wires the beat mouse events
+   * either way, and the flag only decides whether alphaTab also runs its own selection - which sets the
+   * playback range on mouse-up.
    */
   onBeatMouseDown(handler: (beat: alphaTab.model.Beat) => void): void {
     this.api?.beatMouseDown.on(beat => this.ngZone.run(() => handler(beat)));
+  }
+
+  /**
+   * Notify when the pointer crosses a beat after a `beatMouseDown`, until alphaTab sees the mouse-up.
+   *
+   * Unlike every other handler here, `handler` runs **outside** Angular's zone. alphaTab raises this on every
+   * pointer move while its `_isBeatMouseDown` is set, and it hears mouse-up only on its own surface
+   * (`canvasElement.mouseUp`, `alphaTab.core.mjs` ~53195 in 1.8), so after a release outside the score it goes
+   * on firing for every move over the score until the next mouse-up there - and nothing public clears the flag.
+   * A caller checks the move's own `MouseEvent.buttons` and enters the zone only for a move that changes state.
+   */
+  onBeatMouseMove(handler: (beat: alphaTab.model.Beat) => void): void {
+    this.api?.beatMouseMove.on(beat => this.ngZone.runOutsideAngular(() => handler(beat)));
+  }
+
+  /** Notify when the button is released over alphaTab's surface after a `beatMouseDown`, with the beat under the pointer or null. */
+  onBeatMouseUp(handler: (beat: alphaTab.model.Beat | null) => void): void {
+    this.api?.beatMouseUp.on(beat => this.ngZone.run(() => handler(beat)));
+  }
+
+  /**
+   * Draws alphaTab's selection markers from `startBeat` to `endBeat` without setting the playback range,
+   * so selecting never changes what the transport plays. alphaTab does not redraw it after a render while
+   * `enableUserInteraction` is off, so a caller redraws after `renderFinished`.
+   */
+  highlightRange(startBeat: alphaTab.model.Beat, endBeat: alphaTab.model.Beat): void {
+    this.api?.highlightPlaybackRange(startBeat, endBeat);
+  }
+
+  /** Removes the selection markers. */
+  clearHighlight(): void {
+    this.api?.clearPlaybackRangeHighlight();
+  }
+
+  /**
+   * Moves the playback position to the start of `beat`, as a click did while alphaTab's own interaction was
+   * on - and nothing more: no playback range is set. The start comes from the tick cache, which counts
+   * repeats (`MidiTickLookup.getBeatStart`, the beat's first playing). Does nothing before the player has
+   * built a tick cache.
+   */
+  seekToBeat(beat: alphaTab.model.Beat): void {
+    const api = this.api;
+    const cache = api?.tickCache;
+    if (!api || !cache) return;
+    api.tickPosition = cache.getBeatStart(beat);
   }
 
   /**
@@ -437,9 +511,21 @@ export class AlphaTabService {
     this.api?.noteMouseDown.on(note => this.ngZone.run(() => handler(note)));
   }
 
-  /** Notify once each render pass finishes, when bounds become valid. */
+  /**
+   * Notify once each render pass finishes. The bounds lookup is not yet the new render's: with workers,
+   * `renderFinished` fires before `BoundsLookup.fromJson` replaces it (`alphaTab.core.mjs` ~55561-55567 in
+   * 1.8). Anything that reads bounds waits for `onPostRenderFinished`.
+   */
   onRenderFinished(handler: () => void): void {
     this.api?.renderFinished.on(() => this.ngZone.run(() => handler()));
+  }
+
+  /**
+   * Notify once a render's bounds lookup is in place - after `renderFinished`, and after a resize re-layout -
+   * so beats of the score just rendered can be found in it.
+   */
+  onPostRenderFinished(handler: () => void): void {
+    this.api?.postRenderFinished.on(() => this.ngZone.run(() => handler()));
   }
 
   /** Positions of rendered beats and notes, valid after a render completes. */

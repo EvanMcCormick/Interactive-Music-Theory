@@ -1,6 +1,8 @@
 import {
+  BarDoc,
   ClefKind,
   ComposerState,
+  EditCursor,
   KeySignature,
   MasterBarDoc,
   OttaviaKind,
@@ -10,7 +12,10 @@ import {
   TimeSignature
 } from '../models/composer.model';
 import {
+  deleteBars,
+  insertBarsBefore,
   keySignatureFault,
+  toggleRepeatClose,
   setClef,
   setKeySignature,
   setMasterBarValue,
@@ -18,9 +23,12 @@ import {
   timeSignatureFault,
   toggleMasterBarFlag
 } from './bar-edits';
-import { barFillAt, fixBarOverflow } from './bar-fill';
+import { NO_BAR_OVER, barFillAt, fixBarOverflow } from './bar-fill';
+import { newOpenTupletGroup, openTupletGroupsOf } from './beat-edits';
 import { selectedBars } from './composer-selection';
+import { fixBarNoticeOf } from './composer-text';
 import { editRefusal } from './edit-refusals';
+import { FermataDrops, fermataNoticeOf, fermataSnapshotOf, settleFermatas } from './fermata-settling';
 import { renameTrack, setPlayback, setStaffNumber, setStaffTuning, setStaffViews } from './track-edits';
 
 /**
@@ -32,6 +40,18 @@ import { renameTrack, setPlayback, setStaffNumber, setStaffTuning, setStaffViews
  * this class reaches the service only through `ComposerCommandHost`.
  */
 
+/** A selection: the caret, and the fixed end of a range or null. */
+export interface SelectionPlacement {
+  cursor: EditCursor;
+  anchor: EditCursor | null;
+}
+
+/**
+ * What an edit run by the service returns: a reason, which refuses it and commits nothing; nothing; or why each
+ * fermata it removed went (`settleFermatas`), which commits it.
+ */
+export type EditOutcome = string | null | void | FermataDrops;
+
 /** What the bar and track commands need from `ComposerService`. */
 export interface ComposerCommandHost {
   /** The current state. */
@@ -39,13 +59,27 @@ export interface ComposerCommandHost {
   /**
    * Runs `edit` on a clone and commits it with the selection still on its beats - or, when
    * `edit` returns a reason, publishes that and commits nothing.
+   *
+   * `place`, when given, decides the selection instead, from the edited draft and the ends as they
+   * followed their beats - so a command that moves the caret or drops the range does it in the same
+   * commit, and the state is published once. `notice`, when given, is asked after the edit has run and
+   * its answer published as `ComposerState.notice` in that same commit, followed by why each fermata the edit
+   * removed went, when it removed one (`noticeOfOutcome`).
    */
-  commitFollowing(edit: (draft: ScoreDoc) => string | null | void): void;
+  commitFollowing(
+    edit: (draft: ScoreDoc) => EditOutcome,
+    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement,
+    notice?: () => string | null
+  ): void;
   /** Publishes why a command did nothing. Commits nothing. */
   refuse(reason: string): void;
   /** Stamps every generated track in `draft` as diverged from its progression. */
   markDiverged(draft: ScoreDoc): void;
 }
+
+const SPLITS_A_GROUP =
+  'The bar line falls inside a tuplet group, so carrying the overflow would split it and leave both parts unfinished. ' +
+  'Shorten the beats before the group until the whole group fits, or lies past the line.';
 
 /** Bar, track and Fix bar commands on the selection, run through a `ComposerCommandHost`. */
 export class ComposerStructureCommands {
@@ -60,12 +94,12 @@ export class ComposerStructureCommands {
   setKeySignature(keySignature: KeySignature): void {
     const fault = keySignatureFault(keySignature);
     if (fault) return this.host.refuse(fault);
-    this.applyBarEdit((draft, bars) => setKeySignature(draft, bars.first, keySignature));
+    this.applyBarEdit((draft, bars) => setKeySignature(draft, bars, keySignature));
   }
 
-  setClef(clef: ClefKind, ottava: OttaviaKind): void {
+  setClef(clef: ClefKind | null, ottava: OttaviaKind | null): void {
     const { trackIndex, staffIndex } = this.host.state().cursor;
-    this.applyBarEdit((draft, bars) => setClef(draft, trackIndex, staffIndex, bars.first, clef, ottava));
+    this.applyBarEdit((draft, bars) => setClef(draft, trackIndex, staffIndex, bars, clef, ottava));
   }
 
   /**
@@ -122,6 +156,11 @@ export class ComposerStructureCommands {
    * `barFillAt`, against its own meter and free time, rather than measuring the whole score
    * once per bar. The selection follows its beats where they survive; the beat split at a line
    * is replaced by its pieces, so an end on it stays where it was.
+   *
+   * Refused, too, when the line falls inside a tuplet group, so that any bar it carries into or out of would hold
+   * a group alphaTab never closes that no bar held before (`newOpenTupletGroup`): `fixBarOverflow` refuses only a
+   * tuplet beat that crosses the line itself. The edit that overfilled the bar stands, as Guitar Pro lets a bar be
+   * over and flags it: the user shortens the beats before the group.
    */
   fixBar(): void {
     const state = this.host.state();
@@ -130,22 +169,65 @@ export class ComposerStructureCommands {
     if (refusal) return this.host.refuse(refusal);
 
     const bars = selectedBars(state.anchor, state.cursor);
-    this.host.commitFollowing(draft => {
-      let fixed = false;
-      let appended = 0;
+    let fixed = 0;
+    let appended = 0;
+    this.host.commitFollowing(
+      draft => {
+        // A carry moves beats into later bars, so every fermata from the first selected bar on goes with its note or
+        // back to its bar position afterwards (`settleFermatas`), in the bars the carry appends too.
+        const staffBars = (): BarDoc[] => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.slice(bars.first) ?? [];
+        const fermatas = fermataSnapshotOf(draft, staffBars().map((_, offset) => bars.first + offset));
+        const openBefore = staffBars().flatMap(bar => openTupletGroupsOf(bar.voices[0]?.beats ?? []));
+        const isOver = (index: number): boolean => barFillAt(draft, trackIndex, staffIndex, index)?.kind === 'over';
 
-      for (let index = bars.first; index <= bars.last; index++) {
-        if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
-        const result = fixBarOverflow(draft, trackIndex, staffIndex, index);
-        if (result.kind === 'refused') return result.reason;
-        fixed = true;
-        appended += result.appendedBars;
-      }
+        // Counted before anything is carried: carrying one bar's overflow can mend a later selected bar on the way,
+        // and the loop below then finds that bar no longer over and skips it, though Fix bar mended it.
+        const overBefore = Array.from({ length: bars.last - bars.first + 1 }, (_, offset) => bars.first + offset).filter(isOver);
+        if (overBefore.length === 0) return NO_BAR_OVER;
 
-      if (!fixed) return 'No selected bar is over its time signature.';
-      if (appended > 0) this.host.markDiverged(draft);
-      return null;
-    });
+        for (let index = bars.first; index <= bars.last; index++) {
+          if (!isOver(index)) continue;
+          const result = fixBarOverflow(draft, trackIndex, staffIndex, index);
+          if (result.kind === 'refused') return result.reason;
+          appended += result.appendedBars;
+        }
+        fixed = overBefore.length;
+
+        if (staffBars().some(bar => newOpenTupletGroup(openBefore, bar.voices[0]?.beats ?? []))) return SPLITS_A_GROUP;
+        if (appended > 0) this.host.markDiverged(draft);
+        return settleFermatas(draft, fermatas);
+      },
+      undefined,
+      () => fixBarNoticeOf(fixed, appended)
+    );
+  }
+
+  /** Repeat close over the selected bars, by the toggle rule. See `toggleRepeatClose`. */
+  toggleRepeatClose(): void {
+    this.applyBarEdit((draft, bars) => toggleRepeatClose(draft, bars));
+  }
+
+  /** Inserts as many bars as are selected, in front of the first. The selection follows its beats. */
+  insertBarsBeforeSelection(): void {
+    this.applyBarEdit((draft, bars) => insertBarsBefore(draft, bars.first, bars.last - bars.first + 1));
+  }
+
+  /**
+   * Removes the selected bars from every track (see `deleteBars`), and drops the range: its beats are
+   * gone. The caret goes to the first beat of the bar that took their place, on its own staff.
+   */
+  deleteSelectedBars(): void {
+    const state = this.host.state();
+    const bars = selectedBars(state.anchor, state.cursor);
+    this.host.commitFollowing(
+      draft => {
+        const refusal = deleteBars(draft, bars);
+        if (refusal) return refusal;
+        this.host.markDiverged(draft);
+        return null;
+      },
+      () => ({ cursor: { ...state.cursor, barIndex: bars.first, beatIndex: 0 }, anchor: null })
+    );
   }
 
   /**
@@ -177,4 +259,13 @@ export class ComposerStructureCommands {
     }
     this.host.commitFollowing(draft => edit(draft, trackIndex, staffIndex));
   }
+}
+
+/**
+ * What a commit says: `said`, the command's own words, then why each fermata the edit's `outcome` removed went
+ * (`fermataNoticeOf`) - or null when neither has anything to say.
+ */
+export function noticeOfOutcome(said: string | null, outcome: EditOutcome): string | null {
+  const fermatas = Array.isArray(outcome) ? fermataNoticeOf(outcome) : null;
+  return [said, fermatas].filter((part): part is string => !!part).join(' ') || null;
 }

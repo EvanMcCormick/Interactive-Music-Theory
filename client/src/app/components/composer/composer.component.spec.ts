@@ -1,73 +1,53 @@
-import { Component } from '@angular/core';
+import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 
-import { ComposerComponent } from './composer.component';
+import { ComposerComponent, clampedStripHeight, stripHeightRangeOf } from './composer.component';
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
+import { ComposerPaletteComponent } from './components/composer-palette/composer-palette.component';
 import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
+import { AlphaTabService } from '../../services/alpha-tab.service';
+import { AlphaTexService } from '../../services/alpha-tex.service';
+import { ComposerExportService } from '../../services/composer-export.service';
+import { ComposerLibraryService } from '../../services/composer-library.service';
 import { ComposerService } from '../../services/composer.service';
-import { ProgressionService } from '../../services/progression.service';
-import { TrackDoc } from '../../models/composer.model';
+import { KEY_PLATFORM } from '../../services/composer-key-platform';
+import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
+import { shortcutTitleOf } from '../../services/composer-tools';
 
 /**
- * The Tracks panel, and the four controls a generated track adds to it.
+ * The composer page: what it is answerable for beyond its parts.
  *
- * `composer.service.generated.spec.ts` has already pinned what the three
- * commands do to a document, and `progression-track.spec.ts` what the merge,
- * the flatten and the staleness read do as pure functions. Nothing here
- * re-checks any of that. What is pinned below is only what the panel is
- * answerable for, and it is four things:
+ * The parts have their own specs - the palette, the strip, the status line, the tool table and the key
+ * handler. What is pinned here is the wiring: a refusal and an alphaTex error reach the live region, a key
+ * press reaches the tool table and a key typed into a field does not, a palette press and a key run one
+ * command, and the page's own controls - the sheet, a popover, adding a track - answer the keyboard.
  *
- *  - **Which name the badge says.** `mergeGeneratedTrack` deliberately keeps
- *    the incumbent track's name across an Update so a user's rename is never
- *    silently reverted, which means `track.name` can be older than the
- *    progression while `generated.progressionName` is always the marker's own
- *    current copy. A badge reading the wrong one of those would be right until
- *    the first rename and quietly wrong afterwards.
- *  - **What the row says the state is.** The status beside the badge is the
- *    only place the four answers are readable without focusing a control, and
- *    it is the reason the labels below can be short. It has to tell the two
- *    halves of stale apart: a moved revision and a score edit that moved the
- *    track are not the same sentence, and only one of them is about the
- *    progression having changed.
- *  - **Which controls refuse.** Update refuses unless the score's copy is
- *    behind the progression, and "Add progression track" refuses on exactly the
- *    same reading, so the panel cannot do from one button what the button
- *    beside it is greyed out to prevent. Both refuse with `aria-disabled` and
- *    an early return rather than `disabled`, so a refusal keeps its focus and
- *    its tooltip; a refused press must therefore commit nothing. Remove never
- *    refuses, and the caret can still land on a generated row.
- *  - **What a screen reader is told.** The badge sits *beside* Update rather
- *    than inside it, so nothing carries it into the button's accessible name on
- *    its own. Every label leads with the word on the button, because an
- *    accessible name that drops the visible one is a speech-input user saying
- *    "click Update" and matching nothing (WCAG 2.1 SC 2.5.3). The labels are
- *    asserted; the styling is not.
- *
- * ## The two children are stubbed
- *
- * `ComposerScoreComponent` owns the alphaTab instance and engraves on
- * `AfterViewInit`; `ComposerLibraryPanelComponent` reads IndexedDB. Neither is
- * involved in a track row, and building either for real would make every test
- * in this file depend on a renderer and a database. `overrideComponent` swaps
- * both for empty standalone components wearing the same selectors, so the
- * template still compiles against known elements rather than a loosened schema.
+ * The score and the library panel are stubbed: one owns alphaTab and engraves on `AfterViewInit`, the
+ * other reads IndexedDB, and neither is part of the wiring.
  */
 @Component({ selector: 'app-composer-score', standalone: true, template: '' })
-class StubScoreComponent {}
+class StubScoreComponent {
+  ignoredPresses = 0;
+
+  ignoreNextPress(): void {
+    this.ignoredPresses++;
+  }
+}
 
 @Component({ selector: 'app-composer-library-panel', standalone: true, template: '' })
-class StubLibraryPanelComponent {}
+class StubLibraryPanelComponent {
+  @Input() modalOpen = false;
+  @Output() readonly menuOpened = new EventEmitter<void>();
+}
 
-describe('ComposerComponent tracks panel', () => {
+describe('ComposerComponent', () => {
   let fixture: ComponentFixture<ComposerComponent>;
   let component: ComposerComponent;
   let composer: ComposerService;
-  let progression: ProgressionService;
 
   beforeEach(async () => {
-    await TestBed.configureTestingModule({
-      imports: [ComposerComponent]
-    })
+    await TestBed.configureTestingModule({ imports: [ComposerComponent] })
       .overrideComponent(ComposerComponent, {
         remove: { imports: [ComposerScoreComponent, ComposerLibraryPanelComponent] },
         add: { imports: [StubScoreComponent, StubLibraryPanelComponent] }
@@ -75,588 +55,575 @@ describe('ComposerComponent tracks panel', () => {
       .compileComponents();
 
     composer = TestBed.inject(ComposerService);
-    progression = TestBed.inject(ProgressionService);
-
     fixture = TestBed.createComponent(ComposerComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
   });
 
-  // -------------------------------------------------------------------------
-  // Helpers
-  // -------------------------------------------------------------------------
+  const region = (): HTMLElement => fixture.nativeElement.querySelector('app-composer-status-line .messages');
 
-  /** The track rows, in the order the panel draws them. */
-  function rows(): HTMLElement[] {
-    return Array.from(fixture.nativeElement.querySelectorAll('.track-item'));
-  }
-
-  function row(index: number): HTMLElement {
-    const found = rows()[index];
-    if (!found) throw new Error(`the panel drew no row ${index}`);
-    return found;
-  }
-
-  function within(parent: HTMLElement, selector: string): HTMLElement | null {
-    return parent.querySelector(selector);
-  }
-
-  /** A control that must be there, as the button it is. */
-  function button(parent: HTMLElement, selector: string): HTMLButtonElement {
-    const found = parent.querySelector(selector);
-    if (!(found instanceof HTMLButtonElement)) {
-      throw new Error(`the row holds no ${selector}`);
-    }
-    return found;
-  }
-
-  /** A control's accessible name, which is the `aria-label` on all of these. */
-  function label(parent: HTMLElement, selector: string): string {
-    return button(parent, selector).getAttribute('aria-label') ?? '';
-  }
-
-  /** Whether a control is refusing, which these say with `aria-disabled`. */
-  function refuses(parent: HTMLElement, selector: string): boolean {
-    return button(parent, selector).getAttribute('aria-disabled') === 'true';
-  }
-
-  /** The status the row shows beside the badge, trimmed of the template's space. */
-  function status(index: number): string {
-    return within(row(index), '.track-status')?.textContent?.trim() ?? '';
-  }
-
-  /** The panel's own send button, which is not inside any row. */
-  function addProgression(): HTMLButtonElement {
-    return button(fixture.nativeElement, '.add-progression-track');
+  /** Dispatches a key press on `target`, bubbling to the document as a real one does. */
+  function press(init: KeyboardEventInit, target: EventTarget = document): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+    target.dispatchEvent(event);
+    fixture.detectChanges();
+    return event;
   }
 
   /**
-   * The progression under a name of its own.
-   *
-   * Nothing renames a progression through the service today - the model's
-   * `UNTITLED_PROGRESSION_NAME` docstring says as much - so the document is
-   * replaced wholesale. A name that is not `Untitled` is what lets the badge
-   * assertions below distinguish the marker's copy from the row's own label.
+   * The palette button for `id`, focused from the keyboard: it matches `:focus-visible`, or, with `visible` false, it
+   * does not, as a button the mouse left the focus on. Faked, since a headless browser decides `:focus-visible` from how
+   * the focus arrived, which a script's `focus()` does not reliably set.
    */
-  function nameProgression(name: string): void {
-    progression.replaceDocument({ ...progression.doc, name });
+  function focusedTool(id: string, visible = true): HTMLButtonElement {
+    const button: HTMLButtonElement = fixture.nativeElement.querySelector(`[data-tool="${id}"]`);
+    button.focus();
+    spyOn(button, 'matches').and.callFake((selector: string) => visible && selector === ':focus-visible');
+    return button;
   }
 
-  /**
-   * A progression with something in it, sent into the score.
-   *
-   * `appendSlot` is what moves `revision`, so the send below marks the track
-   * with 1 rather than with the empty document's 0 - which is what lets a
-   * second append make it stale without any other setup.
-   */
-  function sendAProgression(): void {
-    progression.appendSlot(0);
-    component.addProgressionTrack();
-    fixture.detectChanges();
-  }
-
-  /** The score's generated track, or a failure. */
-  function generatedTrack(): TrackDoc {
-    const found = composer.doc.tracks.find(track => track.generated !== null);
-    if (!found) throw new Error('the score holds no generated track');
-    return found;
-  }
-
-  /** Index of that track, which is what the row controls take. */
-  function generatedIndex(): number {
-    return composer.doc.tracks.findIndex(track => track.generated !== null);
-  }
-
-  /**
-   * Opens a progression that is not the one the score's track came from.
-   *
-   * The state the app cannot reach today and the component guards anyway:
-   * `ProgressionDoc.id` is minted once per service, nothing else calls
-   * `replaceDocument` with a new one, markers do not survive save and load, and
-   * the two pages are separate routes. A progression library is what would make
-   * it live, and this is the shape it would arrive in - so the branch is tested
-   * here rather than left as the one of four with nobody reading it.
-   *
-   * The id is a literal rather than a `randomUUID`, because nothing here needs
-   * it to be unique - it needs it to be *not the marker's*, and a name says so
-   * where a UUID would only imply it.
-   */
-  function openAnotherProgression(): void {
-    progression.replaceDocument({
-      ...progression.doc,
-      id: 'some-other-progression',
-      name: 'Chorus'
-    });
-    fixture.detectChanges();
-  }
-
-  // -------------------------------------------------------------------------
-  // Adding
-  // -------------------------------------------------------------------------
-
-  it('adds the progression as a track carrying its marker', () => {
-    progression.appendSlot(0);
-
-    component.addProgressionTrack();
+  it('says why a press did nothing in the page\'s polite live region', () => {
+    composer.toggleNoteEffect('isGhost', true, false);
     fixture.detectChanges();
 
-    const track = generatedTrack();
-    expect(track.generated?.progressionId).toBe(progression.doc.id);
-    expect(track.generated?.source).toEqual({ kind: 'revision', revision: progression.doc.revision });
+    expect(region().textContent).toMatch(/no note/i);
   });
 
-  it('leaves the tracks that were already there alone', () => {
-    const before = composer.doc.tracks[0].id;
+  it('shows a failed alphaTex apply in the same region', () => {
+    spyOn(TestBed.inject(AlphaTexService), 'parse').and.returnValue({ score: null, diagnostics: [] });
 
-    sendAProgression();
+    component.applyTex();
+    fixture.detectChanges();
+
+    expect(region().textContent).toContain('could not be parsed');
+  });
+
+  it('runs a key press through the tool table, and leaves one typed into the title alone', () => {
+    press({ key: 'q', code: 'KeyQ' });
+    expect(composer.state.entryMode).toBe('pen');
+
+    press({ key: 'q', code: 'KeyQ' }, fixture.nativeElement.querySelector('.title-input'));
+    expect(composer.state.entryMode).toBe('pen');
+  });
+
+  it('opens the shortcut sheet on ?, and Escape closes it alone - still Pen, still a range - until the next Escape', () => {
+    press({ key: 'q', code: 'KeyQ' });
+    composer.extendSelectionTo({ beatIndex: 2 });
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(component.sheetOpen).toBeTrue();
+
+    press({ key: 'Escape' });
+    expect(component.sheetOpen).toBeFalse();
+    expect(composer.state.entryMode).toBe('pen');
+    expect(composer.state.anchor).not.toBeNull();
+
+    press({ key: 'Escape' });
+    expect(composer.state.entryMode).toBe('select');
+  });
+
+  it('leaves the score alone behind the open shortcut sheet: Delete clears nothing until the sheet closes', () => {
+    composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
+    const doc = composer.doc;
+    press({ key: '?', code: 'Slash', shiftKey: true });
+
+    press({ key: 'Delete' });
+    expect(composer.doc).toBe(doc);
+
+    press({ key: 'Escape' });
+    press({ key: 'Delete' });
+    expect(composer.doc).not.toBe(doc);
+  });
+
+  it('gives the focus back to the ? button when Escape closes the sheet it opened', () => {
+    const toggle: HTMLButtonElement = fixture.nativeElement.querySelector('.shortcuts-toggle');
+    toggle.focus();
+    toggle.click();
+    fixture.detectChanges();
+    const sheet: HTMLElement = fixture.nativeElement.querySelector('app-composer-shortcut-sheet [role="dialog"]');
+    expect(sheet.contains(document.activeElement)).toBeTrue();
+
+    press({ key: 'Escape' }, document.activeElement ?? document);
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it('runs a palette button through the same command as its key', () => {
+    (fixture.nativeElement.querySelector('[data-tool="rest"]') as HTMLButtonElement).click();
+
+    expect(composer.state.cursor.beatIndex).toBe(1);
+  });
+
+  it('opens a valued tool\'s popover from its key, with the focus in it', () => {
+    press({ key: 'k', code: 'KeyK' });
+
+    const open: HTMLElement | null = fixture.nativeElement.querySelector('.popover:popover-open');
+    expect(component.popover).toBe('clef');
+    expect(open?.contains(document.activeElement)).toBeTrue();
+  });
+
+  it('closes only the popover on Escape - still Pen, still a range - and gives focus back to its button', () => {
+    press({ key: 'q', code: 'KeyQ' });
+    composer.extendSelectionTo({ beatIndex: 2 });
+    press({ key: 'k', code: 'KeyK' });
+
+    press({ key: 'Escape' }, document.activeElement ?? document);
+
+    expect(component.popover).toBeNull();
+    expect(composer.state.entryMode).toBe('pen');
+    expect(composer.state.anchor).not.toBeNull();
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('[data-tool="clef"]'));
+  });
+
+  it('closes an open popover when its button is pressed again, and opens it on the next press', () => {
+    press({ key: 'k', code: 'KeyK' });
+    const clef: HTMLButtonElement = fixture.nativeElement.querySelector('[data-tool="clef"]');
+
+    clef.click();
+    fixture.detectChanges();
+    expect(component.popover).toBeNull();
+
+    clef.click();
+    fixture.detectChanges();
+    expect(component.popover).toBe('clef');
+  });
+
+  it('keeps ? pressed inside a popover in the popover, and closes an open popover when the sheet opens', () => {
+    press({ key: '/', code: 'Slash', altKey: true });
+    expect(component.popover).toBe('tuplet');
+
+    // Inside the popover, ? is the popover's: no sheet opens under a popover in the top layer.
+    press({ key: '?', code: 'Slash', shiftKey: true }, document.activeElement ?? document);
+    expect(component.sheetOpen).toBeFalse();
+    expect(component.popover).toBe('tuplet');
+
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(component.sheetOpen).toBeTrue();
+    expect(component.popover).toBeNull();
+    expect(document.querySelector(':popover-open')).toBeNull();
+  });
+
+  it('says what Fix bar did in the live region, and how many bars are over outside it', () => {
+    for (const beatIndex of [0, 1]) {
+      composer.setCursor({ beatIndex, stringIndex: 0 });
+      composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
+    }
+    composer.setCursor({ beatIndex: 0 });
+    composer.applyDurationAtCursor(1, 0);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.over-bars')?.textContent).toContain('1 bar over');
+
+    composer.fixBar();
+    fixture.detectChanges();
+    expect(region().textContent).toContain('Fixed 1 bar');
+    expect(fixture.nativeElement.querySelector('.over-bars')).toBeNull();
+  });
+
+  it('clears a failed alphaTex apply when the alphaTex panel closes', () => {
+    spyOn(TestBed.inject(AlphaTexService), 'parse').and.returnValue({ score: null, diagnostics: [] });
+    component.toggleTexPanel();
+    component.applyTex();
+    fixture.detectChanges();
+    expect(region().textContent).toContain('could not be parsed');
+
+    component.toggleTexPanel();
+    fixture.detectChanges();
+    expect(region().textContent).not.toContain('could not be parsed');
+  });
+
+  it('refuses a save while the alphaTex draft is not applied, from the textarea or anywhere, and says why', () => {
+    const requests = TestBed.inject(ComposerSaveRequests);
+    const requested = spyOn(requests, 'request');
+    component.toggleTexPanel();
+    fixture.detectChanges();
+    const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.tex-editor');
+
+    press({ key: 's', code: 'KeyS', ctrlKey: true }, textarea);
+    expect(requested).toHaveBeenCalledTimes(1);
+
+    component.texDraft = `${component.texDraft} `;
+    press({ key: 's', code: 'KeyS', ctrlKey: true }, textarea);
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+    expect(requested).toHaveBeenCalledTimes(1);
+    expect(requests.refused()).toBeTrue();
+    expect(region().textContent).toContain('Apply or revert the alphaTex draft before saving.');
+
+    component.revertTex();
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+    expect(requested).toHaveBeenCalledTimes(2);
+  });
+
+  it('says the alphaTex draft refusal again when Save is pressed again, as a new message the live region reads out', () => {
+    component.toggleTexPanel();
+    component.texDraft = `${component.texDraft} `;
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+    const first = region().querySelector('.message');
+    expect(first?.textContent).toContain('Apply or revert the alphaTex draft before saving.');
+
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+    const second = region().querySelector('.message');
+
+    expect(second?.textContent).toBe(first?.textContent ?? '');
+    expect(second).not.toBe(first);
+  });
+
+  it('puts the page behind the open shortcut sheet out of reach: inert, and a click over the palette lands on the backdrop, closing the sheet and changing nothing', () => {
+    const palette: HTMLElement = fixture.nativeElement.querySelector('app-composer-palette');
+    const doc = composer.doc;
+    const cursor = composer.state.cursor;
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(palette.closest('[inert]')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('.top-bar').closest('[inert]')).not.toBeNull();
+
+    // A script's click() still reaches an inert element, and a pointer does not, so ask what a pointer there would hit.
+    // The sheet is inset from the window's edges; a few pixels in from the palette's left edge is in that margin.
+    const box = palette.getBoundingClientRect();
+    const hit = document.elementFromPoint(Math.max(1, box.left + 4), Math.min(innerHeight - 2, Math.max(1, box.top + 4)));
+    expect(hit?.classList.contains('sheet-backdrop')).toBeTrue();
+    (hit as HTMLElement).click();
+    fixture.detectChanges();
+
+    expect(component.sheetOpen).toBeFalse();
+    expect(palette.closest('[inert]')).toBeNull();
+    expect(composer.doc).toBe(doc);
+    expect(composer.state.cursor).toEqual(cursor);
+  });
+
+  it('tells the Library panel a modal is open while the shortcut sheet is, so it closes its menus and leaves Escape to the sheet', () => {
+    const panel = fixture.debugElement.query(By.directive(StubLibraryPanelComponent)).componentInstance as StubLibraryPanelComponent;
+    expect(panel.modalOpen).toBeFalse();
+
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(panel.modalOpen).toBeTrue();
+
+    press({ key: 'Escape' });
+    expect(component.sheetOpen).toBeFalse();
+    expect(panel.modalOpen).toBeFalse();
+  });
+
+  it('closes an open popover when a Library or Export menu, or the saved list, opens', () => {
+    press({ key: 'k', code: 'KeyK' });
+    expect(component.popover).toBe('clef');
+    const panel = fixture.debugElement.query(By.directive(StubLibraryPanelComponent)).componentInstance as StubLibraryPanelComponent;
+
+    panel.menuOpened.emit();
+    fixture.detectChanges();
+
+    expect(component.popover).toBeNull();
+    expect(document.querySelector(':popover-open')).toBeNull();
+  });
+
+  it('writes the shortcuts of Undo and Redo with the modifiers of the platform keyboard', () => {
+    const platform = TestBed.inject(KEY_PLATFORM);
+    const [undo, redo] = Array.from(fixture.nativeElement.querySelectorAll('.header-actions .text-btn')) as HTMLButtonElement[];
+
+    expect(undo.title).toBe(shortcutTitleOf('undo', platform));
+    expect(redo.title).toBe(shortcutTitleOf('redo', platform));
+  });
+
+  it('adds a track of the strip\'s chosen instrument from the keyboard', () => {
+    press({ key: 'Insert', ctrlKey: true, shiftKey: true });
 
     expect(composer.doc.tracks.length).toBe(2);
-    expect(composer.doc.tracks[0].id).toBe(before);
+    expect(composer.doc.tracks[1].name).toBe('Piano');
   });
 
-  // -------------------------------------------------------------------------
-  // The badge
-  // -------------------------------------------------------------------------
+  it('leaves Space to a button focused from the keyboard, and plays on Space anywhere else', () => {
+    const playPause = spyOn(TestBed.inject(AlphaTabService), 'playPause');
+    const rest = focusedTool('rest');
 
-  it('draws no badge on an ordinary track', () => {
-    expect(within(row(0), '.track-badge')).toBeNull();
+    press({ key: ' ', code: 'Space' }, rest);
+    expect(playPause).not.toHaveBeenCalled();
+
+    press({ key: ' ', code: 'Space' });
+    expect(playPause).toHaveBeenCalledTimes(1);
   });
 
-  it('badges a generated track with the progression it came from', () => {
-    nameProgression('Verse');
-    sendAProgression();
+  it('plays on Space when a mouse click left the focus on a button, rather than pressing that button again', () => {
+    const playPause = spyOn(TestBed.inject(AlphaTabService), 'playPause');
+    const deleteBar = focusedTool('deleteBar', false);
 
-    const badge = within(row(generatedIndex()), '.track-badge');
-    expect(badge).not.toBeNull();
-    expect(badge!.textContent).toContain('Verse');
+    const space = press({ key: ' ', code: 'Space' }, deleteBar);
+
+    expect(playPause).toHaveBeenCalledTimes(1);
+    expect(space.defaultPrevented).withContext('claimed, so the browser does not press the button too').toBeTrue();
   });
 
-  /**
-   * The rule the marker exists for. `mergeGeneratedTrack` keeps the incumbent
-   * name across an Update so a rename survives, so `track.name` is the user's
-   * word for the row and `generated.progressionName` is the progression's own -
-   * a badge that read the first would say "Rhythm gtr came from Rhythm gtr".
-   */
-  it('says the progression\'s name and not the renamed track\'s', () => {
-    nameProgression('Verse');
-    sendAProgression();
+  it('opens Section once for Shift+Enter on its focused button: the browser presses the button, and the shortcut stands aside', () => {
+    const section = focusedTool('section');
 
-    const renamed = composer.doc.tracks.map(track =>
-      track.generated ? { ...track, name: 'Rhythm gtr' } : track
-    );
-    composer.replaceDocument({ ...composer.doc, tracks: renamed });
+    press({ key: 'Enter', code: 'Enter', shiftKey: true }, section);
+    section.click();
     fixture.detectChanges();
 
-    const generatedRow = row(generatedIndex());
-    expect(within(generatedRow, '.track-name')!.textContent).toContain('Rhythm gtr');
-    expect(within(generatedRow, '.track-badge')!.textContent).toContain('Verse');
-    expect(within(generatedRow, '.track-badge')!.textContent).not.toContain('Rhythm gtr');
+    expect(component.popover).toBe('section');
   });
 
-  // -------------------------------------------------------------------------
-  // The status beside the badge
-  // -------------------------------------------------------------------------
+  it('presses a focused palette button once for a held Enter, as a held key runs a tool that does not repeat once', () => {
+    const fixBar = focusedTool('fixBar');
 
-  it('shows no status on an ordinary track', () => {
-    expect(within(row(0), '.track-status')).toBeNull();
+    const first = press({ key: 'Enter', code: 'Enter' }, fixBar);
+    const held = press({ key: 'Enter', code: 'Enter', repeat: true }, fixBar);
+
+    expect(first.defaultPrevented).toBeFalse();
+    expect(held.defaultPrevented).toBeTrue();
   });
 
-  it('says on screen that the track matches the progression', () => {
-    sendAProgression();
+  it('adds a bar at the end from the palette\'s Add bar, and from its key', () => {
+    const bars = composer.doc.masterBars.length;
 
-    expect(status(generatedIndex())).toBe('up to date');
+    (fixture.nativeElement.querySelector('[data-tool="appendBar"]') as HTMLButtonElement).click();
+    press({ key: 'Insert', code: 'Insert', ctrlKey: true, altKey: true });
+
+    expect(composer.doc.masterBars.length).toBe(bars + 2);
+    expect(composer.state.cursor.barIndex).withContext('added at the end, not before the caret').toBe(0);
   });
 
-  it('says on screen that the track is behind the progression', () => {
-    sendAProgression();
+  it('lets a save through with the alphaTex panel open on an untouched draft, which follows the score as it changes', () => {
+    const requested = spyOn(TestBed.inject(ComposerSaveRequests), 'request');
+    component.toggleTexPanel();
+    const seeded = component.texDraft;
 
-    progression.appendSlot(1);
+    composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+
+    expect(requested).toHaveBeenCalledTimes(1);
+    expect(component.texDraft).not.toBe(seeded);
+  });
+
+  it('says an edited alphaTex draft is out of date once the score moves on, and asks before Apply replaces that change', () => {
+    const requested = spyOn(TestBed.inject(ComposerSaveRequests), 'request');
+    component.toggleTexPanel();
+    component.texDraft = `${component.texDraft} `;
+
+    composer.setTempo(140);
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+
+    expect(requested).not.toHaveBeenCalled();
+    expect(region().textContent).toContain('written against an earlier score');
+    expect(fixture.nativeElement.querySelector('.tex-stale')?.textContent).toContain('written against an earlier score');
+
+    const asked = spyOn(window, 'confirm').and.returnValue(false);
+    component.applyTex();
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(composer.doc.tempo).toBe(140);
+  });
+
+  it('parses an out-of-date draft before asking, and asks nothing when it does not parse', () => {
+    component.toggleTexPanel();
+    component.texDraft = `${component.texDraft} `;
+    composer.setTempo(140);
+    spyOn(TestBed.inject(AlphaTexService), 'parse').and.returnValue({ score: null, diagnostics: [] });
+    const asked = spyOn(window, 'confirm');
+
+    component.applyTex();
+
+    expect(asked).not.toHaveBeenCalled();
+    expect(component.texApplyError).toContain('could not be parsed');
+    expect(composer.doc.tempo).toBe(140);
+  });
+
+  it('asks before New throws away unsaved changes, and keeps them when told no', () => {
+    composer.setTempo(140);
+    const before = composer.state.documentId;
+    const asked = spyOn(window, 'confirm').and.returnValues(false, true);
+
+    component.newScore();
+    expect(asked).toHaveBeenCalledOnceWith('Discard unsaved changes and start a new score?');
+    expect(composer.doc.tempo).toBe(140);
+    expect(composer.state.canUndo).toBeTrue();
+    expect(composer.state.documentId).toBe(before);
+
+    component.newScore();
+    expect(composer.state.documentId).toBe(before + 1);
+    expect(composer.doc.tempo).toBe(120);
+  });
+
+  it('counts an edited alphaTex draft as unsaved work, and seeds the draft again for the next composition', () => {
+    component.toggleTexPanel();
+    component.texDraft = `${component.texDraft} `;
+    const asked = spyOn(window, 'confirm').and.returnValue(true);
+
+    expect(composer.state.isDirty).toBeFalse();
+    expect(composer.confirmDiscard('load this composition')).toBeTrue();
+    expect(asked).toHaveBeenCalledTimes(1);
+
+    composer.replaceDocument({ ...ComposerService.createEmptyScore(), tempo: 90 }, { markClean: true, newComposition: true });
     fixture.detectChanges();
 
-    expect(status(generatedIndex())).toBe('behind the progression');
+    expect(component.texDraftEdited).withContext('the draft written for the composition before is gone').toBeFalse();
+    expect(component.texDraft).toContain('90');
+    expect(composer.confirmDiscard('load this composition')).toBeTrue();
+    expect(asked).withContext('nothing unsaved is left to ask about').toHaveBeenCalledTimes(1);
   });
 
-  /**
-   * The half of stale the label used to lie about. A bar inserted into the
-   * score moves the track's content and leaves the progression exactly as it
-   * was, so a row saying the progression had changed would be telling a user
-   * something false about a document they had not touched.
-   */
-  it('says on screen that a score edit moved the track', () => {
-    sendAProgression();
+  it('asks nothing for a draft left untouched', () => {
+    component.toggleTexPanel();
+    const asked = spyOn(window, 'confirm');
 
-    composer.insertBar(1);
+    expect(composer.confirmDiscard('start a new score')).toBeTrue();
+    expect(asked).not.toHaveBeenCalled();
+  });
+
+  it('takes its save guard off when it is destroyed', () => {
+    const requests = TestBed.inject(ComposerSaveRequests);
+    component.toggleTexPanel();
+    component.texDraft = `${component.texDraft} `;
+    expect(requests.refused()).toBeTrue();
+
+    fixture.destroy();
+
+    expect(requests.refused()).toBeFalse();
+  });
+
+  it('copies beats on Ctrl+C while the text selected is inside the score, which the key handler knows by the score\'s element', () => {
+    const copy = spyOn(composer, 'copy');
+    const score: HTMLElement = fixture.nativeElement.querySelector('app-composer-score');
+    score.textContent = 'engraved text';
+    const selection = document.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(score);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    press({ key: 'c', code: 'KeyC', ctrlKey: true });
+    selection?.removeAllRanges();
+
+    expect(copy).toHaveBeenCalledTimes(1);
+  });
+
+  it('resizes the strip from its separator\'s keys within the range it announces, without moving the caret', () => {
+    composer.setCursor({ beatIndex: 1, stringIndex: 2 });
+    const cursor = composer.state.cursor;
+    const separator: HTMLElement = fixture.nativeElement.querySelector('.strip-resize');
+
+    press({ key: 'Home' }, separator);
+    expect(component.stripHeight).toBe(component.stripRange.min);
+    press({ key: 'End' }, separator);
+    expect(component.stripHeight).toBe(component.stripRange.max);
+    press({ key: 'ArrowDown' }, separator);
+    expect(component.stripHeight).toBe(clampedStripHeight(component.stripRange.max - 16, component.stripRange));
+    press({ key: 'ArrowUp' }, separator);
+    expect(component.stripHeight).toBe(component.stripRange.max);
+
+    expect(composer.state.cursor).toEqual(cursor);
+    expect(separator.getAttribute('aria-valuemin')).toBe(`${component.stripRange.min}`);
+    expect(separator.getAttribute('aria-valuemax')).toBe(`${component.stripRange.max}`);
+    expect(separator.getAttribute('aria-valuenow')).toBe(`${component.stripHeight}`);
+  });
+
+  it('tells the score to ignore the press that closed a popover, so that press only closes it', () => {
+    const score = fixture.debugElement.query(By.directive(StubScoreComponent)).componentInstance as StubScoreComponent;
+    const palette = fixture.debugElement.query(By.directive(ComposerPaletteComponent)).componentInstance as ComposerPaletteComponent;
+
+    palette.popoverPressedOutside.emit();
+
+    expect(score.ignoredPresses).toBe(1);
+  });
+
+  /** The page made tall, so the strip's range is not held at one row, and the separator whose End measures it again. */
+  function tallPage(): HTMLElement {
+    (fixture.nativeElement.querySelector('.composer-page') as HTMLElement).style.height = '1200px';
+    return fixture.nativeElement.querySelector('.strip-resize');
+  }
+
+  it('leaves the score the minimum height the page styles give it, as measured rather than assumed', () => {
+    const separator = tallPage();
+    press({ key: 'End' }, separator);
+    const tallest = component.stripRange.max;
+
+    // As a larger root font makes the score's 10rem taller.
+    (fixture.nativeElement.querySelector('app-composer-score') as HTMLElement).style.minHeight = '300px';
+    press({ key: 'End' }, separator);
+
+    expect(tallest - component.stripRange.max).toBe(140);
+  });
+
+  it('counts the open alphaTex panel as a row the strip leaves room for', () => {
+    const separator = tallPage();
+    press({ key: 'End' }, separator);
+    const tallest = component.stripRange.max;
+    press({ key: 'Home' }, separator);
+
+    component.toggleTexPanel();
+    fixture.detectChanges();
+    const panel: HTMLElement = fixture.nativeElement.querySelector('.tex-panel');
+    const panelHeight = panel.offsetHeight;
+    press({ key: 'End' }, separator);
+
+    expect(panelHeight).toBeGreaterThan(0);
+    expect(tallest - component.stripRange.max).toBe(panelHeight);
+  });
+
+  it('fits the strip again when the status line or the open alphaTex panel changes height, as a long message wraps', () => {
+    const observed: Element[] = [];
+    const original = window.ResizeObserver;
+    class RecordingObserver {
+      observe(target: Element): void {
+        observed.push(target);
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    window.ResizeObserver = RecordingObserver as unknown as typeof ResizeObserver;
+    try {
+      const page = TestBed.createComponent(ComposerComponent);
+      page.detectChanges();
+      page.componentInstance.toggleTexPanel();
+      page.detectChanges();
+
+      expect(observed).toContain(page.nativeElement.querySelector('app-composer-status-line'));
+      expect(observed).toContain(page.nativeElement.querySelector('.tex-panel'));
+      page.destroy();
+    } finally {
+      window.ResizeObserver = original;
+    }
+  });
+
+  it('presses any other control focused from the keyboard once for a held Enter, as a menu item or a saved row is', () => {
+    const toggle: HTMLButtonElement = fixture.nativeElement.querySelector('.shortcuts-toggle');
+    toggle.focus();
+    spyOn(toggle, 'matches').and.callFake((selector: string) => selector === ':focus-visible');
+
+    const held = press({ key: 'Enter', code: 'Enter', repeat: true }, toggle);
+
+    expect(held.defaultPrevented).withContext('a held Enter would open and close the sheet on every repeat').toBeTrue();
+  });
+});
+
+describe('ComposerComponent with its Library panel', () => {
+  it('has one polite live region: the library says what it did in the status line', async () => {
+    await TestBed.configureTestingModule({ imports: [ComposerComponent] })
+      .overrideComponent(ComposerComponent, { remove: { imports: [ComposerScoreComponent] }, add: { imports: [StubScoreComponent] } })
+      .compileComponents();
+    spyOn(TestBed.inject(ComposerLibraryService), 'refresh').and.resolveTo([]);
+    spyOn(TestBed.inject(ComposerExportService), 'downloadMidiFile');
+    const fixture = TestBed.createComponent(ComposerComponent);
     fixture.detectChanges();
 
-    expect(status(generatedIndex())).toBe('moved by a score edit');
-  });
+    expect(fixture.nativeElement.querySelectorAll('[aria-live]').length).toBe(1);
 
-  it('says on screen that the track came from a progression that is not open', () => {
-    sendAProgression();
-
-    openAnotherProgression();
-
-    expect(status(generatedIndex())).toBe('progression not open');
-  });
-
-  // -------------------------------------------------------------------------
-  // Update
-  // -------------------------------------------------------------------------
-
-  it('offers no Update on an ordinary track', () => {
-    expect(within(row(0), '.track-update')).toBeNull();
-  });
-
-  /**
-   * `aria-disabled` and not `disabled`, and the difference is the whole point
-   * of the branch: `disabled` takes the button out of the tab order, which puts
-   * its `aria-label` out of reach of the keyboard, and browsers suppress the
-   * `title` tooltip on it as well. A refusal that hides its own reason from
-   * everyone but a screen reader in browse mode is the reason the row now says
-   * the state out loud too.
-   */
-  it('refuses Update while the track is current, and stays focusable', () => {
-    sendAProgression();
-
-    expect(refuses(row(generatedIndex()), '.track-update')).toBeTrue();
-    expect(button(row(generatedIndex()), '.track-update').disabled).toBeFalse();
-  });
-
-  it('offers Update once the progression has moved on', () => {
-    sendAProgression();
-
-    progression.appendSlot(1);
+    (fixture.debugElement.query(By.directive(ComposerLibraryPanelComponent)).componentInstance as ComposerLibraryPanelComponent).exportMidi();
     fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[aria-live]').textContent).toContain('Exported MIDI file');
+  });
+});
 
-    expect(refuses(row(generatedIndex()), '.track-update')).toBeFalse();
+describe('stripHeightRangeOf and clampedStripHeight', () => {
+  it('lets the strip grow until the score keeps its minimum height, and never shrink below one row', () => {
+    // A page 700 tall whose top bar, status line and separator take 140: the score keeps 160, so the strip may take 400.
+    const range = stripHeightRangeOf(700, 140);
+
+    expect(range).toEqual({ min: 72, max: 400 });
+    expect(clampedStripHeight(10, range)).toBe(72);
+    expect(clampedStripHeight(300, range)).toBe(300);
+    expect(clampedStripHeight(900, range)).toBe(400);
   });
 
-  /**
-   * Divergence is the other half of stale, and the panel must not have learned
-   * only the revision half: a score-wide bar insertion moves the track's
-   * content without moving the progression's revision.
-   */
-  it('offers Update when the score itself has moved the track', () => {
-    sendAProgression();
-
-    composer.insertBar(1);
-    fixture.detectChanges();
-
-    expect(refuses(row(generatedIndex()), '.track-update')).toBeFalse();
+  it('keeps one row on a page too short for both the score\'s minimum and a strip', () => {
+    expect(stripHeightRangeOf(300, 140)).toEqual({ min: 72, max: 72 });
   });
 
-  it('refuses Update for a track built from a progression that is not open', () => {
-    sendAProgression();
-
-    openAnotherProgression();
-
-    expect(refuses(row(generatedIndex()), '.track-update')).toBeTrue();
-  });
-
-  /**
-   * A refusal that is only advisory has to be honoured by the handler, and this
-   * is the case that would go wrong quietly: the open progression is not the
-   * one this row came from, so a press that fell through to the send would
-   * append a *second* generated track rather than refreshing this one.
-   */
-  it('commits nothing when a refused Update is pressed', () => {
-    sendAProgression();
-    openAnotherProgression();
-    const before = composer.doc;
-
-    button(row(generatedIndex()), '.track-update').click();
-    fixture.detectChanges();
-
-    expect(composer.doc).toBe(before);
-  });
-
-  it('refreshes the marker when Update is pressed', () => {
-    sendAProgression();
-    const first = progression.doc.revision;
-
-    progression.appendSlot(1);
-    fixture.detectChanges();
-    button(row(generatedIndex()), '.track-update').click();
-    fixture.detectChanges();
-
-    expect(generatedTrack().generated?.source).toEqual({
-      kind: 'revision',
-      revision: progression.doc.revision
-    });
-    expect(progression.doc.revision).not.toBe(first);
-  });
-
-  /**
-   * The default case, and so the one nearly every user hears: nothing renames a
-   * progression, so the track and the marker are both called *Progression* and
-   * naming the source produced "it already matches the progression Progression".
-   * Grammatical, and it reads like a stutter.
-   *
-   * The two names are the same string here but not the same fact - one is the
-   * row's label and one is where the music came from - so the fix is to stop
-   * saying the second out loud when it would only repeat the first, not to drop
-   * either from the sentence.
-   */
-  it('does not name the progression twice when the track carries its name', () => {
-    sendAProgression();
-
-    const current = label(row(generatedIndex()), '.track-update');
-    const flatten = label(row(generatedIndex()), '.track-flatten');
-
-    expect(current).not.toMatch(/progression Progression/i);
-    expect(flatten).not.toMatch(/progression Progression/i);
-    expect(current).toMatch(/^Update\b/);
-    expect(current).toMatch(/came from/i);
-  });
-
-  it('names the track and the reason in Update\'s accessible label', () => {
-    nameProgression('Verse');
-    sendAProgression();
-
-    const current = label(row(generatedIndex()), '.track-update');
-    expect(current).toContain(generatedTrack().name);
-    expect(current).toContain('Verse');
-    expect(current).toMatch(/already matches/i);
-
-    progression.appendSlot(1);
-    fixture.detectChanges();
-
-    const stale = label(row(generatedIndex()), '.track-update');
-    expect(stale).toContain(generatedTrack().name);
-    expect(stale).toContain('Verse');
-    expect(stale).toMatch(/changed/i);
-  });
-
-  /**
-   * The one label that used to state something false. `'stale'` has two halves
-   * and the marker keeps them apart precisely so a reader can be told which
-   * one; saying the progression had changed after `insertBar` told a
-   * screen-reader user the opposite of what happened.
-   */
-  it('says a score edit moved the track rather than that the progression changed', () => {
-    nameProgression('Verse');
-    sendAProgression();
-
-    composer.insertBar(1);
-    fixture.detectChanges();
-
-    const moved = label(row(generatedIndex()), '.track-update');
-    expect(moved).toMatch(/score edit/i);
-    expect(moved).not.toMatch(/progression Verse, which has changed/i);
-  });
-
-  it('says which progression is in the way when it is not the one open', () => {
-    nameProgression('Verse');
-    sendAProgression();
-
-    openAnotherProgression();
-
-    const foreign = label(row(generatedIndex()), '.track-update');
-    // "Verse" survives as the track's own name at the head of the sentence. The
-    // source clause no longer repeats it, because here too the two names are
-    // the same string - see the stutter test above for why that is not a loss.
-    expect(foreign).toContain('Verse');
-    expect(foreign).toMatch(/is not the one that is open/i);
-  });
-
-  /**
-   * WCAG 2.1 SC 2.5.3. An accessible name that does not contain the visible one
-   * is a speech-input user saying "click Update" and matching nothing, so every
-   * answer the button can give has to lead with the word printed on it - the
-   * refusals included, since they are focusable now.
-   */
-  it('leads every Update label with the word on the button', () => {
-    nameProgression('Verse');
-    sendAProgression();
-    expect(label(row(generatedIndex()), '.track-update')).toMatch(/^Update\b/);
-
-    progression.appendSlot(1);
-    fixture.detectChanges();
-    expect(label(row(generatedIndex()), '.track-update')).toMatch(/^Update\b/);
-
-    composer.insertBar(1);
-    fixture.detectChanges();
-    expect(label(row(generatedIndex()), '.track-update')).toMatch(/^Update\b/);
-
-    openAnotherProgression();
-    expect(label(row(generatedIndex()), '.track-update')).toMatch(/^Update\b/);
-  });
-
-  /**
-   * Update is the control with a conditional refusal, so it is the one whose
-   * `stopPropagation` can regress without the suite noticing - and it has to
-   * hold in both states, because a refused press still runs the handler now.
-   */
-  it('does not select the track when Update is pressed', () => {
-    sendAProgression();
-    component.selectTrack(0);
-    fixture.detectChanges();
-
-    button(row(generatedIndex()), '.track-update').click();
-    fixture.detectChanges();
-    expect(component.state?.cursor.trackIndex).toBe(0);
-
-    progression.appendSlot(1);
-    fixture.detectChanges();
-    button(row(generatedIndex()), '.track-update').click();
-    fixture.detectChanges();
-    expect(component.state?.cursor.trackIndex).toBe(0);
-  });
-
-  // -------------------------------------------------------------------------
-  // Flatten
-  // -------------------------------------------------------------------------
-
-  it('offers no Flatten on an ordinary track', () => {
-    expect(within(row(0), '.track-flatten')).toBeNull();
-  });
-
-  it('detaches the track from its progression when Flatten is pressed', () => {
-    sendAProgression();
-    const index = generatedIndex();
-    const before = composer.doc.tracks.length;
-
-    button(row(index), '.track-flatten').click();
-    fixture.detectChanges();
-
-    expect(composer.doc.tracks.length).toBe(before);
-    expect(composer.doc.tracks[index].generated).toBeNull();
-    expect(within(row(index), '.track-badge')).toBeNull();
-  });
-
-  it('names the track and the progression in Flatten\'s accessible label', () => {
-    nameProgression('Verse');
-    sendAProgression();
-
-    const label =
-      button(row(generatedIndex()), '.track-flatten').getAttribute('aria-label') ?? '';
-    expect(label).toContain(generatedTrack().name);
-    expect(label).toContain('Verse');
-  });
-
-  // -------------------------------------------------------------------------
-  // What a generated track does not take away
-  // -------------------------------------------------------------------------
-
-  /** Removing the track is not an edit of the progression. */
-  it('leaves Remove enabled on a generated track', () => {
-    sendAProgression();
-
-    expect(button(row(generatedIndex()), '.track-remove').disabled).toBeFalse();
-  });
-
-  it('removes a generated track when Remove is pressed', () => {
-    sendAProgression();
-
-    button(row(generatedIndex()), '.track-remove').click();
-    fixture.detectChanges();
-
-    expect(composer.doc.tracks.every(track => track.generated === null)).toBeTrue();
-  });
-
-  /**
-   * The caret can rest on a generated track. Only note- and beat-level edits
-   * are refused, and that refusal lives in the service; a row the caret could
-   * not reach would leave the user unable to read the track through the cursor
-   * at all.
-   */
-  it('still selects a generated track when its row is clicked', () => {
-    sendAProgression();
-    const index = generatedIndex();
-
-    row(index).click();
-    fixture.detectChanges();
-
-    expect(component.state?.cursor.trackIndex).toBe(index);
-  });
-
-  it('does not select the track when a row control is pressed', () => {
-    sendAProgression();
-    component.selectTrack(0);
-    fixture.detectChanges();
-
-    button(row(generatedIndex()), '.track-flatten').click();
-    fixture.detectChanges();
-
-    expect(component.state?.cursor.trackIndex).toBe(0);
-  });
-
-  // -------------------------------------------------------------------------
-  // The panel's own button
-  // -------------------------------------------------------------------------
-
-  it('offers Add progression track beside Add track', () => {
-    const panel: HTMLElement = fixture.nativeElement;
-    const add = panel.querySelector('.add-progression-track');
-
-    expect(add).not.toBeNull();
-    expect(panel.querySelector('.add-track')!.contains(add)).toBeTrue();
-  });
-
-  it('sends the progression when Add progression track is pressed', () => {
-    progression.appendSlot(0);
-    fixture.detectChanges();
-
-    addProgression().click();
-    fixture.detectChanges();
-
-    expect(generatedTrack().generated?.progressionId).toBe(progression.doc.id);
-  });
-
-  /**
-   * Pressed twice, it is a Send and then an Update - `sendProgression` merges
-   * in place on `progressionId`. A second row would be a second engraving of
-   * one progression that Update could then only refresh one of.
-   */
-  it('refreshes rather than appending a second copy', () => {
-    sendAProgression();
-    progression.appendSlot(1);
-    fixture.detectChanges();
-
-    addProgression().click();
-    fixture.detectChanges();
-
-    expect(composer.doc.tracks.filter(track => track.generated !== null).length).toBe(1);
-  });
-
-  /**
-   * The two buttons read one state. Left always enabled, this one would commit
-   * a byte-identical merge - an undo entry and a dirty document for no change
-   * on the page - which is the thing the Update beside it is refusing to do.
-   */
-  it('refuses to send a progression the score already holds unchanged', () => {
-    sendAProgression();
-    const before = composer.doc;
-
-    expect(addProgression().getAttribute('aria-disabled')).toBe('true');
-    expect(addProgression().disabled).toBeFalse();
-
-    addProgression().click();
-    fixture.detectChanges();
-
-    expect(composer.doc).toBe(before);
-  });
-
-  it('offers itself again once the progression has moved on', () => {
-    sendAProgression();
-
-    progression.appendSlot(1);
-    fixture.detectChanges();
-
-    expect(addProgression().getAttribute('aria-disabled')).toBe('false');
-  });
-
-  /**
-   * WCAG 2.1 SC 2.5.3 again, and the failure it names exactly: the button says
-   * "Add progression track" and used to answer to "Add the current progression
-   * to this score as a track", which shares no phrase with it.
-   */
-  it('keeps its visible label inside its accessible name', () => {
-    const add = addProgression();
-    const visible = add.textContent?.trim() ?? '';
-
-    expect(visible).toBe('Add progression track');
-    expect(add.getAttribute('aria-label')).toContain(visible);
-    expect(add.getAttribute('aria-label')).toMatch(/^Add progression track\b/);
+  it('leaves the score the minimum it is given, which follows the root font size', () => {
+    // At a 20px root font the score's 10rem is 200.
+    expect(stripHeightRangeOf(700, 140, 200)).toEqual({ min: 72, max: 360 });
   });
 });

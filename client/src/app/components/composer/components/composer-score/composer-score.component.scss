@@ -1,13 +1,18 @@
-// Score view: the engraved output plus the click-to-edit caret.
-@use 'sass:color';
-
-$accent-color: #3498db;
-$error-color: #e74c3c;
+// Score view: the engraved output, the caret, the range highlight and Pen's hover notehead.
+//
+// Colours are the composer page's custom properties (`composer.component.scss`), with fallbacks for a page
+// that does not set them. The one colour of the score's own is its paper: alphaTab engraves black, and the
+// page's `--composer-surface` is dark, so the paper is a property of this host that a page may override.
 
 :host {
+  --composer-score-paper: #ffffff;
+
   display: flex;
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  // The page gives the host `tabindex="-1"` and moves focus to it; the rings below replace the browser's.
+  outline: none;
 }
 
 .score-area {
@@ -15,8 +20,21 @@ $error-color: #e74c3c;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background-color: #ffffff;
+  background-color: var(--composer-score-paper);
   position: relative;
+}
+
+// Where keys go. A click leaves a subtle ring - `:focus-visible` does not match a mouse click on a
+// non-text element, and after a click the score still takes the keys - and focus moved by keyboard, or by
+// the page after a keyboard action, a full one. Drawn inset on the area, under the engraving.
+:host(:focus) .score-area {
+  // Each `color-mix` has a plain fallback before it: the build's browser baseline includes Firefox 112, which has none.
+  box-shadow: inset 0 0 0 1px rgba(52, 152, 219, 0.45);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--composer-accent, #3498db) 45%, transparent);
+}
+
+:host(:focus-visible) .score-area {
+  box-shadow: inset 0 0 0 2px var(--composer-accent, #3498db);
 }
 
 .alphatab-container {
@@ -24,25 +42,72 @@ $error-color: #e74c3c;
   flex: 1;
   overflow: auto;
   min-height: 0;
-  cursor: text;
+  cursor: default;
+  // alphaTab's own interaction is off, so it no longer prevents a mouse-down's default: without this, a
+  // drag across the score to select beats would select the page's text as well.
+  user-select: none;
+
+  &.pen {
+    cursor: crosshair;
+  }
 }
 
-// Caret drawn over the tab staff, showing where typing will land.
+// alphaTab's range highlight and playback cursors. alphaTab creates `.at-cursors` inside the container and places
+// its children - `.at-selection > div` for the range, `.at-cursor-bar` and `.at-cursor-beat` for playback - but
+// leaves their look to the host page, so unstyled they are transparent. They are made outside Angular's view, hence
+// `::ng-deep`, kept under `:host` so nothing outside the score is touched. alphaTab sets `pointer-events: none` on
+// the wrapper inline; it is restated so a click always reaches the score beneath.
+:host ::ng-deep .alphatab-container {
+  .at-cursors {
+    pointer-events: none;
+  }
+
+  .at-selection div {
+    background-color: rgba(52, 152, 219, 0.2);
+    background-color: color-mix(in srgb, var(--composer-accent, #3498db) 20%, transparent);
+  }
+
+  .at-cursor-bar {
+    background-color: rgba(52, 152, 219, 0.08);
+    background-color: color-mix(in srgb, var(--composer-accent, #3498db) 8%, transparent);
+  }
+
+  // alphaTab sizes the beat cursor 3px wide and centres it on the beat.
+  .at-cursor-beat {
+    background-color: var(--composer-accent, #3498db);
+    width: 3px;
+  }
+}
+
+// Caret drawn over the staff, showing where typing will land.
 .tab-caret {
   position: absolute;
   pointer-events: none;
   border-radius: 2px;
-  background-color: rgba($accent-color, 0.25);
-  box-shadow: 0 0 0 1px rgba($accent-color, 0.9) inset;
+  background-color: rgba(52, 152, 219, 0.25);
+  background-color: color-mix(in srgb, var(--composer-accent, #3498db) 25%, transparent);
+  box-shadow: 0 0 0 1px var(--composer-accent, #3498db) inset;
   transition: left 0.08s ease, top 0.08s ease;
   z-index: 5;
+}
+
+// Where a Pen click would write: a notehead-shaped mark that follows the pointer.
+.pen-hover {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 50%;
+  background-color: var(--composer-accent, #3498db);
+  opacity: 0.45;
+  transform: rotate(-20deg);
+  z-index: 6;
 }
 
 .render-error {
   margin: 0;
   padding: 0.6rem 1rem;
-  background-color: rgba($error-color, 0.15);
-  border-top: 1px solid $error-color;
-  color: $error-color;
+  background-color: rgba(231, 76, 60, 0.15);
+  background-color: color-mix(in srgb, var(--composer-error, #e74c3c) 15%, transparent);
+  border-top: 1px solid var(--composer-error, #e74c3c);
+  color: var(--composer-error, #e74c3c);
   font-size: 0.85rem;
 }

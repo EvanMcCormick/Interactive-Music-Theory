@@ -1,0 +1,16 @@
+<div class="status-line">
+  <span class="readout" *ngIf="cursor">Bar {{ cursor.barIndex + 1 }}<ng-container *ngIf="barCount > 0"> of {{ barCount }}</ng-container> · Beat {{ cursor.beatIndex + 1 }}</span>
+  <span class="mode" [class.pen]="entryMode === 'pen'">{{ entryMode === 'pen' ? 'Pen' : 'Select' }}</span>
+  <!-- Not announced: it changes with ordinary duration edits. Fix bar is the remedy, and says what it did. -->
+  <span class="over-bars" *ngIf="overBarsLabel">{{ overBarsLabel }}</span>
+
+  <!--
+    The page's polite live region. Always rendered, and only its content comes and goes: a region
+    inserted already holding its message is the case screen readers miss, so the element has to be in
+    the accessibility tree before there is anything to say. Each message is tracked by its key, not its
+    words, so a message published again in the same words is a new node, which is what makes it heard.
+  -->
+  <p class="messages" aria-live="polite">
+    <span class="message" *ngFor="let message of messages; trackBy: trackByKey">{{ message.text }}</span>
+  </p>
+</div>

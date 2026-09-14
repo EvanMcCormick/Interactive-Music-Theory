@@ -1,124 +1,148 @@
-// Composer Component Styles
-// Follows the dark theme established by the fretboard and GP viewer components
-@use 'sass:color';
+// The composer page: a grid of top bar, palette, score, status line and track strip.
+//
+// The composer's colours are custom properties on the page host, so every child component reads one
+// set rather than re-declaring SCSS variables in each file (design Part 3, "Styling"). The children
+// give each a fallback of the same value, for their own specs, which have no page host.
 
-$nav-bg-primary: #2c3e50;
-$nav-bg-secondary: #34495e;
-$accent-color: #3498db;
-$accent-hover: #2980b9;
-$text-primary: #ecf0f1;
-$text-secondary: #bdc3c7;
-$border-color: #465666;
-$error-color: #e74c3c;
-$warning-color: #f39c12;
-$surface-bg: #1a252f;
+:host {
+  --composer-nav: #2c3e50;
+  --composer-nav-secondary: #34495e;
+  --composer-accent: #3498db;
+  --composer-accent-hover: #2980b9;
+  --composer-text: #ecf0f1;
+  --composer-text-secondary: #bdc3c7;
+  --composer-border: #465666;
+  --composer-error: #e74c3c;
+  --composer-warning: #f39c12;
+  --composer-success: #27ae60;
+  --composer-surface: #1a252f;
+  --composer-editor-surface: #11181f;
 
-.composer-container {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  background-color: $surface-bg;
-  color: $text-primary;
+  display: block;
+}
+
+// Sized to the viewport minus the app header, which the shell publishes (it wraps on a narrow window).
+// No inspector column until M3.
+.composer-page {
+  display: grid;
+  grid-template-columns: minmax(8.5rem, 12.5rem) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto 0.4rem auto;
+  grid-template-areas:
+    'top top'
+    'palette score'
+    'status status'
+    'resize resize'
+    'strip strip';
+  height: calc(100vh - var(--app-header-height, 57px));
+  height: calc(100dvh - var(--app-header-height, 57px));
+  min-height: 24rem;
+  overflow: hidden;
+  background-color: var(--composer-surface);
+  color: var(--composer-text);
+}
+
+@media (max-width: 40rem) {
+  .composer-page {
+    grid-template-columns: minmax(6.5rem, 8rem) minmax(0, 1fr);
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Toolbar
+// Top bar
 // ---------------------------------------------------------------------------
 
-.composer-header {
+.top-bar {
+  grid-area: top;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1.5rem;
-  padding: 0.75rem 1.25rem;
-  background-color: $nav-bg-primary;
-  border-bottom: 1px solid $border-color;
-  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  padding: 0.5rem 1rem;
+  background-color: var(--composer-nav);
+  border-bottom: 1px solid var(--composer-border);
 }
 
 .score-info {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  min-width: 0;
 
   .title-input {
+    min-width: 8rem;
     background: transparent;
     border: 1px solid transparent;
     border-radius: 4px;
-    color: $text-primary;
-    font-size: 1.15rem;
+    color: var(--composer-text);
+    font-size: 1.05rem;
     font-weight: 600;
-    padding: 0.25rem 0.5rem;
-    min-width: 12rem;
+    padding: 0.2rem 0.5rem;
 
-    &:hover { border-color: $border-color; }
+    &:hover {
+      border-color: var(--composer-border);
+    }
+
     &:focus {
       outline: none;
-      border-color: $accent-color;
+      border-color: var(--composer-accent);
       background-color: rgba(0, 0, 0, 0.2);
     }
   }
 
   .dirty-marker {
-    color: $accent-color;
+    color: var(--composer-accent);
     font-size: 0.7rem;
   }
 }
 
-.transport {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.tempo-field,
-.octave-field {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: $text-secondary;
-  font-size: 0.8rem;
-
-  input,
-  select {
-    width: 4.5rem;
-    padding: 0.3rem 0.4rem;
-    background-color: $nav-bg-secondary;
-    border: 1px solid $border-color;
-    border-radius: 4px;
-    color: $text-primary;
-
-    &:focus { outline: none; border-color: $accent-color; }
-  }
-}
-
+.transport,
 .header-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 0.4rem;
+}
+
+.tempo-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--composer-text-secondary);
+  font-size: 0.8rem;
+
+  input {
+    width: 4.5rem;
+    padding: 0.3rem 0.4rem;
+    background-color: var(--composer-nav-secondary);
+    border: 1px solid var(--composer-border);
+    border-radius: 4px;
+    color: var(--composer-text);
+
+    &:focus {
+      outline: none;
+      border-color: var(--composer-accent);
+    }
+  }
 }
 
 .icon-btn,
 .text-btn,
 .toggle-btn {
-  background-color: $nav-bg-secondary;
-  border: 1px solid $border-color;
+  background-color: var(--composer-nav-secondary);
+  border: 1px solid var(--composer-border);
   border-radius: 4px;
-  color: $text-primary;
+  color: var(--composer-text);
   cursor: pointer;
-  padding: 0.4rem 0.75rem;
-  font-size: 0.85rem;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.82rem;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 
   &:hover:not(:disabled):not([aria-disabled='true']) {
-    background-color: $accent-color;
-    border-color: $accent-hover;
+    background-color: var(--composer-accent);
+    border-color: var(--composer-accent-hover);
   }
 
-  // A refusal looks the same whichever way it is made. `aria-disabled` is the
-  // one the progression's two send buttons use, because `disabled` would take
-  // the sentence explaining the refusal out of the tab order and suppress its
-  // tooltip with it; the button still looks unavailable, and its handler
-  // returns early.
   &:disabled,
   &[aria-disabled='true'] {
     opacity: 0.4;
@@ -126,258 +150,90 @@ $surface-bg: #1a252f;
   }
 
   &.active {
-    background-color: $accent-color;
-    border-color: $accent-hover;
+    background-color: var(--composer-accent);
+    border-color: var(--composer-accent-hover);
   }
 }
 
 .icon-btn {
-  min-width: 2.4rem;
+  min-width: 2.2rem;
   font-size: 0.95rem;
 }
 
 // ---------------------------------------------------------------------------
-// Body: track panel + score
+// Palette, score and status line
 // ---------------------------------------------------------------------------
 
-.composer-body {
+.palette {
+  grid-area: palette;
+}
+
+.score-column {
+  grid-area: score;
   display: flex;
-  flex: 1;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
-}
+  // The strip leaves this column room for the score's minimum and the open alphaTex panel (`fitStrip`); until it has
+  // fitted again, what does not fit is clipped here rather than spilling over the status line.
+  overflow: hidden;
 
-.track-panel {
-  width: 15rem;
-  flex-shrink: 0;
-  padding: 1rem;
-  background-color: $nav-bg-primary;
-  border-right: 1px solid $border-color;
-  overflow-y: auto;
-}
-
-.panel-heading {
-  margin: 0 0 0.6rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: $text-secondary;
-}
-
-.track-list {
-  list-style: none;
-  margin: 0 0 1rem;
-  padding: 0;
-}
-
-.track-item {
-  display: flex;
-  align-items: center;
-  // The badge and the generated row's two buttons wrap under the name rather
-  // than squeezing it: the panel is 15rem wide and the track's own name is the
-  // thing a user scans this list for.
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.45rem 0.5rem;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.85rem;
-
-  &:hover { background-color: rgba(255, 255, 255, 0.06); }
-
-  &.selected {
-    background-color: rgba($accent-color, 0.25);
-    box-shadow: inset 2px 0 0 $accent-color;
-  }
-
-  .track-swatch {
-    width: 0.7rem;
-    height: 0.7rem;
-    border-radius: 2px;
-    flex-shrink: 0;
-  }
-
-  .track-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .track-remove {
-    background: none;
-    border: none;
-    color: $text-secondary;
-    cursor: pointer;
-    font-size: 1rem;
-    line-height: 1;
-    padding: 0 0.2rem;
-
-    &:hover:not(:disabled) { color: $error-color; }
-    &:disabled { opacity: 0.3; cursor: not-allowed; }
-  }
-
-  // The badge and the status on a line of their own, below the track's name.
-  //
-  // The wrapper is what breaks the line, and it has no `max-width` on purpose.
-  // Flex line-breaking measures an item by its *hypothetical* main size - the
-  // flex base size clamped by the max main size - so `flex-basis: 100%` breaks
-  // the line only while nothing clamps it back under the container's width.
-  // The badge used to carry both itself, and a measurement says what that
-  // actually did: in a 15rem panel, "From Verse" came out 71px and sat on the
-  // same line as the track name, and only a long name wrapped. The comment here
-  // claimed its own line in both cases, which is the one thing a comment must
-  // not do.
-  //
-  // So the clamp moved inside, where it shapes the chip without deciding the
-  // line: the badge sizes to its content and truncates when there is not room,
-  // and the status keeps its width. `.track-generated` below has no clamp and
-  // has always broken the line for this reason.
-  .track-origin {
-    flex-basis: 100%;
-    display: flex;
-    // Wraps rather than squeezing: a long badge and a long status together
-    // exceed the panel, and two lines is better than a status eaten by
-    // whichever of them shrinks first.
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.2rem 0.35rem;
-    // Load-bearing, and measured: a flex item's automatic minimum size is its
-    // content, and this one's content is a badge that does not wrap. Without
-    // it a long progression name took the row to 485px inside a 240px panel.
-    // The badge below needs no such floor of its own - `overflow: hidden`
-    // already resolves `min-width: auto` to zero, which is what lets it ellipse
-    // rather than overflow.
-    min-width: 0;
-  }
-
-  .track-badge {
-    box-sizing: border-box;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.7rem;
-    letter-spacing: 0.04em;
-    color: $text-secondary;
-    background-color: rgba($accent-color, 0.18);
-    border: 1px solid rgba($accent-color, 0.5);
-    border-radius: 3px;
-    padding: 0.1rem 0.35rem;
-  }
-
-  // Not a chip: the badge names the progression and this qualifies it, so it
-  // reads as the second half of one phrase rather than a second label.
-  .track-status {
-    flex-shrink: 0;
-    font-size: 0.7rem;
-    color: $text-secondary;
-
-    // Brightness and not hue. Colour is the redundant half of this - the words
-    // say which state it is - so all it has to do is separate "there is
-    // something to do here" from "there is not", which is the same line the two
-    // buttons refuse on. `$accent-color` was the obvious pick and fails on the
-    // background it would matter most on: 3.5:1 against the panel and 2.5:1
-    // against a *selected* row, whose tint is that same blue at 25%. The full
-    // text colour clears 4.5:1 on both, and reads as emphasis against the
-    // secondary grey beside it without asking anyone to tell two blues apart.
-    &.is-stale { color: $text-primary; }
-  }
-
-  .track-generated {
-    flex-basis: 100%;
-    display: flex;
-    gap: 0.3rem;
-
-    .text-btn {
-      flex: 1;
-      font-size: 0.7rem;
-      padding: 0.2rem 0.3rem;
-    }
+  // The score keeps 10rem, which the strip is clamped against as computed (`fitStrip`), however tall the alphaTex panel below it.
+  app-composer-score {
+    flex: 1 1 auto;
+    min-height: 10rem;
   }
 }
 
-.add-track {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  margin-bottom: 1.5rem;
-
-  select {
-    padding: 0.35rem;
-    background-color: $nav-bg-secondary;
-    border: 1px solid $border-color;
-    border-radius: 4px;
-    color: $text-primary;
-  }
-}
-
-.bar-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.hint {
-  margin: 0.5rem 0 0;
-  font-size: 0.75rem;
-  color: $text-secondary;
+.status {
+  grid-area: status;
 }
 
 // ---------------------------------------------------------------------------
-// Note input
+// The track strip and its separator
 // ---------------------------------------------------------------------------
 
-.input-panel {
-  background-color: $nav-bg-primary;
-  border-top: 1px solid $border-color;
-  padding: 0.75rem 1.25rem;
-  max-height: 40vh;
-  overflow-y: auto;
-}
+.strip-resize {
+  grid-area: resize;
+  cursor: row-resize;
+  touch-action: none;
+  background-color: var(--composer-border);
 
-.duration-palette {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin-bottom: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.duration-btn {
-  min-width: 2.4rem;
-  height: 2.2rem;
-  background-color: $nav-bg-secondary;
-  border: 1px solid $border-color;
-  border-radius: 4px;
-  color: $text-primary;
-  cursor: pointer;
-  font-size: 1.1rem;
-  line-height: 1;
-
-  &:hover { background-color: $accent-color; }
-  &.active {
-    background-color: $accent-color;
-    border-color: $accent-hover;
+  &:hover,
+  &:focus-visible {
+    outline: none;
+    background-color: var(--composer-accent);
   }
 }
 
-.cursor-readout {
-  margin-left: auto;
-  font-size: 0.8rem;
-  color: $text-secondary;
+.strip {
+  grid-area: strip;
 }
 
 // ---------------------------------------------------------------------------
 // alphaTex panel
 // ---------------------------------------------------------------------------
 
+// Scrolls within itself when its editor and diagnostics are taller than the room it has.
 .tex-panel {
-  background-color: $nav-bg-primary;
-  border-top: 1px solid $border-color;
-  padding: 0.75rem 1.25rem 1rem;
-  max-height: 45vh;
+  flex-shrink: 0;
+  max-height: 45%;
+  min-height: 0;
+  overflow: auto;
   display: flex;
   flex-direction: column;
+  padding: 0.6rem 1rem 0.8rem;
+  background-color: var(--composer-nav);
+  border-top: 1px solid var(--composer-border);
+}
+
+.panel-heading {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--composer-text-secondary);
 }
 
 .tex-header {
@@ -385,8 +241,6 @@ $surface-bg: #1a252f;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0.5rem;
-
-  .panel-heading { margin: 0; }
 }
 
 .tex-actions {
@@ -394,20 +248,30 @@ $surface-bg: #1a252f;
   gap: 0.4rem;
 }
 
+.tex-stale {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  color: var(--composer-warning);
+}
+
 .tex-editor {
   width: 100%;
-  min-height: 9rem;
+  min-height: 7rem;
   resize: vertical;
-  background-color: #11181f;
-  border: 1px solid $border-color;
+  box-sizing: border-box;
+  background-color: var(--composer-editor-surface);
+  border: 1px solid var(--composer-border);
   border-radius: 4px;
-  color: $text-primary;
+  color: var(--composer-text);
   font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
   font-size: 0.8rem;
   line-height: 1.5;
   padding: 0.6rem;
 
-  &:focus { outline: none; border-color: $accent-color; }
+  &:focus {
+    outline: none;
+    border-color: var(--composer-accent);
+  }
 }
 
 .diagnostics {
@@ -422,19 +286,26 @@ $surface-bg: #1a252f;
   display: flex;
   gap: 0.6rem;
   padding: 0.3rem 0.4rem;
-  border-left: 3px solid $text-secondary;
+  border-left: 3px solid var(--composer-text-secondary);
   margin-bottom: 2px;
   font-size: 0.78rem;
   background-color: rgba(0, 0, 0, 0.2);
 
-  &.error { border-left-color: $error-color; }
-  &.warning { border-left-color: $warning-color; }
+  &.error {
+    border-left-color: var(--composer-error);
+  }
+
+  &.warning {
+    border-left-color: var(--composer-warning);
+  }
 
   .location {
     flex-shrink: 0;
-    color: $text-secondary;
+    color: var(--composer-text-secondary);
     font-family: 'Consolas', monospace;
   }
 
-  .message { color: $text-primary; }
+  .message {
+    color: var(--composer-text);
+  }
 }

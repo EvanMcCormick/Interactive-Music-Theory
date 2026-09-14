@@ -62,16 +62,43 @@ export class StaffHitTestService {
     return staves;
   }
 
-  /** Index into `allStaves` of the staff the pointer is over, if any. */
-  staffIndexAt(container: HTMLElement, clientX: number, clientY: number): number | null {
-    const staves = this.allStaves(container);
+  /**
+   * alphaTab's `.at-surface` on screen: the origin of every bounds lookup coordinate, which the partials are
+   * placed in. Null before alphaTab has made one.
+   */
+  surfaceOriginOf(container: HTMLElement): DOMRect | null {
+    return container.querySelector('.at-surface')?.getBoundingClientRect() ?? null;
+  }
 
+  /**
+   * The y of each staff's middle line, in the bounds lookup's pixels (from the top of `.at-surface`), index for
+   * index with `staves` - or empty before a surface exists. Both boxes move together as the score scrolls, so
+   * this holds until alphaTab lays the page out again. Each surface is measured once.
+   */
+  staffCentresIn(container: HTMLElement, staves: readonly StaffLines[]): number[] {
+    const origin = this.surfaceOriginOf(container);
+    if (!origin) return [];
+    const boxes = new Map<SVGSVGElement, DOMRect>();
+    return staves.map(staff => {
+      const box = this.boxOf(boxes, staff.surface);
+      const middle = (staff.lineY[0] + staff.lineY[staff.lineY.length - 1]) / 2;
+      return box.top - origin.top + middle * this.scaleOf(staff.surface, box);
+    });
+  }
+
+  /**
+   * Index into `allStaves` of the staff the pointer is over, if any. `staves` is a measure the caller
+   * already holds, for a caller asking on every pointer move; by default the page is measured now. Each
+   * surface - one per system - is measured once per call, not once per staff.
+   */
+  staffIndexAt(container: HTMLElement, clientX: number, clientY: number, staves: StaffLines[] = this.allStaves(container)): number | null {
     let bestIndex = -1;
     let bestDistance = Number.POSITIVE_INFINITY;
+    const boxes = new Map<SVGSVGElement, DOMRect>();
 
     for (let index = 0; index < staves.length; index++) {
       const staff = staves[index];
-      const box = staff.surface.getBoundingClientRect();
+      const box = this.boxOf(boxes, staff.surface);
       if (clientX < box.left || clientX > box.right) continue;
 
       const localY = this.toLocalY(staff, box, clientY);
@@ -137,9 +164,10 @@ export class StaffHitTestService {
     staffIndex: number,
     beatX: number,
     beatWidth: number,
-    halfSteps: number
+    halfSteps: number,
+    staves: StaffLines[] = this.allStaves(container)
   ): Rect | null {
-    const staff = this.allStaves(container)[staffIndex];
+    const staff = staves[staffIndex];
     if (!staff) return null;
 
     const containerBox = container.getBoundingClientRect();
@@ -159,44 +187,87 @@ export class StaffHitTestService {
     };
   }
 
-  /** Half-steps above the bottom line for a tab string on an N-line staff. */
-  stringToHalfSteps(stringNumber: number, lineCount: number): number {
-    return (lineCount - stringNumber) * 2;
+  /**
+   * Caret box centred at `centreY`, in the bounds lookup's pixels (from the top of `.at-surface`): for a staff with no
+   * lines to measure, a numbered staff, whose caret sits in the middle of its band. Null before a surface exists.
+   */
+  bandCaretRect(container: HTMLElement, beatX: number, beatWidth: number, centreY: number): Rect | null {
+    const origin = this.surfaceOriginOf(container);
+    if (!origin) return null;
+    const containerBox = container.getBoundingClientRect();
+    const height = 10;
+    return {
+      left: origin.left - containerBox.left + beatX,
+      top: origin.top - containerBox.top + centreY - height / 2 + container.scrollTop,
+      width: Math.max(10, beatWidth),
+      height
+    };
+  }
+
+  /** `surface`'s box, measured once per call that holds `boxes`. */
+  private boxOf(boxes: Map<SVGSVGElement, DOMRect>, surface: SVGSVGElement): DOMRect {
+    let box = boxes.get(surface);
+    if (!box) {
+      box = surface.getBoundingClientRect();
+      boxes.set(surface, box);
+    }
+    return box;
   }
 
   private toLocalY(staff: StaffLines, box: DOMRect, clientY: number): number {
     return (clientY - box.top) / this.scaleOf(staff.surface, box);
   }
 
-  /** alphaTab renders without a viewBox, so this is normally 1. */
-  private scaleOf(surface: SVGSVGElement, box: DOMRect): number {
+  /**
+   * Screen pixels per surface unit, for a surface measured as `box`: its drawn width over its viewBox width.
+   * alphaTab renders without a viewBox, so this is normally 1.
+   */
+  scaleOf(surface: SVGSVGElement, box: DOMRect): number {
     const viewBoxWidth = surface.viewBox.baseVal.width;
     if (!viewBoxWidth || !box.width) return 1;
     return box.width / viewBoxWidth;
   }
 
-  /** Staves on one surface, found by clustering line positions on their gap. */
+  /**
+   * Staves on one surface, found by clustering line positions on their gap.
+   *
+   * A slash staff draws one line. Paired with the line after it, it took the top line of the staff below: a slash
+   * staff above notation measured as a staff of two lines 33 apart, and the notation as four. So a line that is the
+   * last on its surface, or is followed by a run of three or more lines at another gap, is a staff of its own, and
+   * borrows the spacing of the staff after it - or else before it - for how far a press still reaches it. A numbered
+   * staff draws no lines and is not measured; its band still counts in `slotIndexAt`, which ranks bands, not lines.
+   */
   private staffGroups(surface: SVGSVGElement): StaffLines[] {
     const ys = this.lineYs(surface);
     const groups: StaffLines[] = [];
 
     let start = 0;
-    while (start < ys.length - 1) {
-      const spacing = ys[start + 1] - ys[start];
-      let end = start + 1;
-
-      while (
-        end + 1 < ys.length &&
-        Math.abs(ys[end + 1] - ys[end] - spacing) <= StaffHitTestService.SPACING_TOLERANCE
-      ) {
-        end++;
+    while (start < ys.length) {
+      const run = this.runFrom(ys, start);
+      if (run === 1 || (run === 2 && this.runFrom(ys, start + 1) >= 3)) {
+        groups.push({ surface, lineY: [ys[start]], spacing: 0 });
+        start += 1;
+        continue;
       }
-
-      groups.push({ surface, lineY: ys.slice(start, end + 1), spacing });
-      start = end + 1;
+      groups.push({ surface, lineY: ys.slice(start, start + run), spacing: ys[start + 1] - ys[start] });
+      start += run;
     }
 
+    groups.forEach((group, index) => {
+      if (group.lineY.length > 1) return;
+      const beside = [...groups.slice(index + 1), ...groups.slice(0, index).reverse()].find(other => other.lineY.length > 1);
+      group.spacing = beside?.spacing ?? 0;
+    });
     return groups;
+  }
+
+  /** How many lines from `ys[start]` on are evenly spaced at the gap after it: 1 for the last line. */
+  private runFrom(ys: readonly number[], start: number): number {
+    if (start + 1 >= ys.length) return 1;
+    const spacing = ys[start + 1] - ys[start];
+    let end = start + 1;
+    while (end + 1 < ys.length && Math.abs(ys[end + 1] - ys[end] - spacing) <= StaffHitTestService.SPACING_TOLERANCE) end++;
+    return end - start + 1;
   }
 
   /** Distinct y values of the thin, wide rects alphaTab uses for staff lines. */

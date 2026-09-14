@@ -184,8 +184,23 @@ A comprehensive web application for exploring scales, modes, chords, and music t
 
 ### Sheet Music Composer
 - Multi-track score editing with standard notation and guitar tab side by side
-- Note entry directly on the staff or the tab
-- Key and time signature changes, dynamics, repeats
+- **Palette**: Bravura-glyph tools in seven groups — Tools, Duration, Bar, Accidentals,
+  Dynamics, Articulation and Techniques — each showing whether the selection has it, and
+  saying why when it refuses
+- **Select and Pen**: in Select a click on the notation moves the caret and a drag or
+  Shift-click selects a range; in Pen a click writes the pitch under the pointer, shown
+  first as a hover notehead. Digits write frets on the tab in either
+- **A key for every tool**, from one table behind every button, tooltip and key — press
+  `?` for the shortcut sheet. On a Mac the keys are written with ⌘ and ⌥
+- **Value popovers** for the seven tools that take a value: time signature, key
+  signature, clef, section, alternate ending, tuplet and triplet feel
+- **Click to seek**: a click on a beat while playback is stopped moves the playback
+  position there
+- **Status line**: the caret's bar ("Bar 3 of 4"), and what an edit, a save or a load
+  did or why it was refused, announced to screen readers
+- **Track strip** under a draggable separator: add and remove tracks, and a linked
+  progression track's badge, Update and Flatten
+- **Library and Export menus** in the top bar, with the saved compositions in a drawer
 - Score model shaped after Guitar Pro 7, engraved and played by alphaTab
 - Undo/redo, and an alphaTex escape hatch for editing the source directly
 - Export to MIDI and to a real `.gp` file
@@ -424,6 +439,23 @@ When you like it, **Send to Composer** puts it on a staff beside your own tracks
 **Export MIDI** or **Export .gp** takes it out of the app entirely.
 
 ## Recent Updates
+
+### Composer Editor (September 2026)
+- ✨ **New**: A palette of tools in seven groups — note values, dots, tuplets and ties;
+  bar tools from time signatures and repeats to Fix bar; accidentals and respelling;
+  dynamics; articulations; and techniques from hammer-ons and bends to harmonics and pick
+  strokes. Each button shows whether the selection has it, and says why when it refuses
+- ✨ **New**: Select and Pen. Drag across the score to select a range, Shift-click to
+  extend it, and click a beat while stopped to seek there; in Pen a click writes the pitch
+  under the pointer, on a guitar at the lowest fret that plays it
+- ✨ **New**: A key for every tool, and `?` opens a sheet listing them all. A Mac gets ⌘ and
+  ⌥, and Control where macOS keeps ⌘ for itself — the dynamics' ⌘+Shift+3 is a screenshot
+- ✨ **New**: The page rebuilt around the score: Library and Export menus in the top bar
+  with the saved list in a drawer, a status line that says what each edit, save or load
+  did, and a track strip to add, remove, update and flatten tracks
+- 🐛 **Fixed**: A composition that loads with a note no string can reach says it left the
+  note out, and shows as unsaved, since it no longer matches what was stored
+- 🧪 **Tests**: 3,351 passing
 
 ### Composer Editor Foundations (September 2026)
 - 🐛 **Fixed**: Saving a composition keeps hammer-ons, bends, slides, wide vibrato,

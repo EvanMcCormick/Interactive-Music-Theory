@@ -7,12 +7,13 @@ import {
   BeatEffectsDoc,
   ClefKind,
   ComposerState,
+  DocumentReplacement,
   DurationValue,
   DynamicValue,
   EditCursor,
+  EntryMode,
   KeySignature,
   MasterBarDoc,
-  NoteDoc,
   NoteEffectsDoc,
   NotePitch,
   OttaviaKind,
@@ -26,7 +27,6 @@ import {
   effectiveTimeSignature,
   createDefaultCursor,
   createDefaultMasterBar,
-  createDefaultNoteEffects,
   createDefaultPlaybackInfo,
   STANDARD_GUITAR_TUNING
 } from '../models/composer.model';
@@ -37,23 +37,44 @@ import {
   setGrace,
   setTuplet,
   toggleBeatEffect,
+  toggleFermata,
   toggledValue
 } from './beat-edits';
-import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
-import { ComposerStructureCommands } from './composer-service-structure';
-import { EditScope, editRefusal } from './edit-refusals';
-import { setAccidental, toggleNoteEffect, toggleTie } from './note-edits';
+import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
+import { defaultFermata } from './composer-tool-defaults';
+import { BeatRef, selectionTargets } from './composer-selection';
+import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
+import { ComposerHistory } from './composer-history';
+import { frettedDocOf, outOfReachNoticeOf } from './pitch-on-strings';
+import { ComposerStructureCommands, EditOutcome } from './composer-service-structure';
+import {
+  EditScope,
+  beatEffectRefusal,
+  durationRefusal,
+  editRefusal,
+  fermataRefusal,
+  graceRefusal,
+  noteEffectRefusal,
+  tieRefusal,
+  trillRefusal,
+  tupletRefusal
+} from './edit-refusals';
+import { fermataSnapshotOf, settleFermatas } from './fermata-settling';
+import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-edits';
+import { moveNotesToString, shiftSemitone } from './note-moves';
+import { respellNotes, respellRefusal } from './note-respell';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
+import { deleteBars } from './bar-edits';
+import { LAST_TRACK_REFUSAL } from './composer-text';
 import { insertBarInto } from './score-structure';
 
 /**
  * Owns the editable score document, the edit caret, and undo/redo.
  *
  * All mutations go through `commit()`, which snapshots the previous document
- * onto the undo stack. ScoreDoc is an acyclic plain object, so a snapshot is a
- * structuredClone - this is the reason the composer keeps its own model rather
- * than mutating alphaTab's Score, whose cyclic parent references cannot be
- * cloned cheaply.
+ * onto the undo stack. The commits, undo and redo, and the refusals and notices
+ * published beside them live in `ComposerHistory` (composer-history.ts), which
+ * holds the stacks and reaches the state only through its host.
  *
  * INVARIANT: every staff of every track has exactly `masterBars.length` bars.
  * Bar insertion and removal always apply across all tracks, so the shared
@@ -74,31 +95,43 @@ import { insertBarInto } from './score-structure';
  */
 @Injectable({ providedIn: 'root' })
 export class ComposerService {
-  private static readonly MAX_HISTORY = 100;
+  private readonly stateSubject = new BehaviorSubject<ComposerState>(ComposerService.initialState(0));
 
-  private readonly stateSubject: BehaviorSubject<ComposerState>;
-  private undoStack: ScoreDoc[] = [];
-  private redoStack: ScoreDoc[] = [];
-
-  private readonly structure = new ComposerStructureCommands({
+  /** Commits, undo and redo, and the refusals and notices beside them. See composer-history.ts. */
+  private readonly history = new ComposerHistory({
     state: () => this.stateSubject.getValue(),
-    commitFollowing: edit => this.commitFollowing(edit),
-    refuse: reason => this.refuse(reason),
-    markDiverged: draft => this.markDiverged(draft)
+    publish: state => this.stateSubject.next(state)
   });
 
-  constructor() {
-    this.stateSubject = new BehaviorSubject<ComposerState>({
+  /** What the command modules reach back through. */
+  private readonly host: ComposerEntryHost = {
+    state: () => this.stateSubject.getValue(),
+    commit: (edit, amend) => this.history.commit(edit, amend),
+    commitFollowing: (edit, place, notice) => this.history.commitFollowing(edit, place, notice),
+    refuse: reason => this.history.refuse(reason),
+    markDiverged: draft => this.markDiverged(draft),
+    setInputDuration: (duration, dots) => this.setInputDuration(duration, dots)
+  };
+  private readonly structure = new ComposerStructureCommands(this.host);
+  private readonly entry = new ComposerEntryCommands(this.host);
+
+  /** A new score's state: an empty score, the caret at its start, Select, and no history. */
+  private static initialState(documentId: number): ComposerState {
+    return {
       doc: ComposerService.createEmptyScore(),
       cursor: createDefaultCursor(),
       anchor: null,
       refusal: null,
+      notice: null,
+      messageId: 0,
+      documentId,
+      entryMode: 'select',
       inputDuration: 4,
       inputDots: 0,
       isDirty: false,
       canUndo: false,
       canRedo: false
-    });
+    };
   }
 
   getState(): Observable<ComposerState> {
@@ -107,6 +140,11 @@ export class ComposerService {
 
   get doc(): ScoreDoc {
     return this.stateSubject.getValue().doc;
+  }
+
+  /** The current state, for a command that decides what to do from it - a toggle, a caret step. */
+  get state(): ComposerState {
+    return this.stateSubject.getValue();
   }
 
   /**
@@ -185,124 +223,61 @@ export class ComposerService {
   }
 
   // -------------------------------------------------------------------------
-  // History
+  // History: see composer-history.ts
   // -------------------------------------------------------------------------
 
-  /** Applies a mutation to a cloned document and commits the result. */
-  private commit(mutate: (draft: ScoreDoc) => void): void {
-    const draft = structuredClone(this.stateSubject.getValue().doc);
-    mutate(draft);
-    this.commitDocument(draft);
-  }
-
-  /**
-   * Runs `edit` on a clone of the document and commits it with the selection still on its
-   * beats - or, when `edit` returns a reason, publishes that and commits nothing, so an edit
-   * that refuses part-way leaves nothing behind.
-   *
-   * The selection's ends name beats by position, and an edit can move the beats they name: a
-   * duration change puts rests right after each beat it shortens, a new grace gets its gap's
-   * rests in front of it, Fix bar splits and carries beats. Left by position, a range of four
-   * notes made eighths would end on a rest halfway through them, and the next press would miss
-   * half the notes. So the beat each end names is found before the edit and looked for again
-   * after it (`followedEnd`). An end whose beat is gone stays where it was, clamped.
-   */
-  private commitFollowing(edit: (draft: ScoreDoc) => string | null | void): void {
-    const state = this.stateSubject.getValue();
-    const draft = structuredClone(state.doc);
-    const cursorBeat = this.beatAt(draft, state.cursor);
-    const anchorBeat = state.anchor ? this.beatAt(draft, state.anchor) : null;
-
-    const reason = edit(draft);
-    if (typeof reason === 'string') return this.refuse(reason);
-
-    this.commitDocument(draft, {
-      cursor: followedEnd(draft, state.cursor, cursorBeat),
-      anchor: state.anchor ? followedEnd(draft, state.anchor, anchorBeat) : null
-    });
-  }
-
-  /**
-   * Publishes a prepared document and pushes the old one onto undo, with `selection` in place
-   * of the current one when given. Either way the selection is clamped into the new document.
-   */
-  private commitDocument(next: ScoreDoc, selection?: { cursor: EditCursor; anchor: EditCursor | null }): void {
-    const state = this.stateSubject.getValue();
-    const cursor = selection ? selection.cursor : state.cursor;
-    const anchor = selection ? selection.anchor : state.anchor;
-    this.undoStack.push(structuredClone(state.doc));
-    if (this.undoStack.length > ComposerService.MAX_HISTORY) {
-      this.undoStack.shift();
-    }
-    this.redoStack = [];
-
-    this.stateSubject.next({
-      ...state,
-      doc: next,
-      cursor: this.clampCursor(cursor, next),
-      anchor: anchor ? this.clampCursor(anchor, next) : null,
-      refusal: null,
-      isDirty: true,
-      canUndo: true,
-      canRedo: false
-    });
-  }
-
   undo(): void {
-    const state = this.stateSubject.getValue();
-    const previous = this.undoStack.pop();
-    if (!previous) return;
-
-    this.redoStack.push(structuredClone(state.doc));
-    this.stateSubject.next({
-      ...state,
-      doc: previous,
-      cursor: this.clampCursor(state.cursor, previous),
-      anchor: state.anchor ? this.clampCursor(state.anchor, previous) : null,
-      isDirty: true,
-      canUndo: this.undoStack.length > 0,
-      canRedo: true
-    });
+    this.history.undo();
   }
 
   redo(): void {
-    const state = this.stateSubject.getValue();
-    const next = this.redoStack.pop();
-    if (!next) return;
-
-    this.undoStack.push(structuredClone(state.doc));
-    this.stateSubject.next({
-      ...state,
-      doc: next,
-      cursor: this.clampCursor(state.cursor, next),
-      anchor: state.anchor ? this.clampCursor(state.anchor, next) : null,
-      isDirty: true,
-      canUndo: true,
-      canRedo: this.redoStack.length > 0
-    });
+    this.history.redo();
   }
 
-  /** Replaces the whole document, e.g. after importing edited alphaTex. */
-  replaceDocument(doc: ScoreDoc, markClean = false): void {
-    const state = this.stateSubject.getValue();
-    this.undoStack.push(structuredClone(state.doc));
-    this.redoStack = [];
-
-    this.stateSubject.next({
-      ...state,
-      doc,
-      cursor: this.clampCursor(state.cursor, doc),
-      anchor: null,
-      refusal: null,
-      isDirty: !markClean,
-      canUndo: true,
-      canRedo: false
-    });
+  /**
+   * Replaces the whole document: by default an edit of this composition, as an applied alphaTex draft is, on the undo
+   * stack. A new composition - a load, an opened transcription - moves `documentId` on and starts a fresh history.
+   *
+   * A pitched note on a staff with a tuning is fretted first, and one no string reaches is left out and said
+   * (`frettedDocOf`): alphaTab cannot draw a note on tablature without a string. A load that left a note out is not
+   * marked clean, whatever `markClean` says, so the unsaved marker shows that the stored file still holds it. One whose
+   * notes were only fretted stays clean: every note is kept and sounds as it did, and nothing is said.
+   */
+  replaceDocument(doc: ScoreDoc, replacement: DocumentReplacement = {}): void {
+    const fretted = frettedDocOf(doc);
+    this.history.replaceDocument(fretted.doc, fretted.dropped > 0 ? { ...replacement, markClean: false } : replacement);
+    if (fretted.dropped > 0) this.announce(outOfReachNoticeOf(fretted.dropped));
   }
 
-  markSaved(): void {
-    const state = this.stateSubject.getValue();
-    this.stateSubject.next({ ...state, isDirty: false });
+  /** Marks the document clean, if `saved` - the document that was written - is still it. See `ComposerHistory.markSaved`. */
+  markSaved(saved: ScoreDoc): void {
+    this.history.markSaved(saved);
+  }
+
+  /**
+   * Whether a new composition may replace this one, asking "Discard unsaved changes and `action`?" when anything is
+   * unsaved. Every path that starts a new composition asks it first. See `ComposerHistory.confirmDiscard`.
+   */
+  confirmDiscard(action: string): boolean {
+    return this.history.confirmDiscard(action);
+  }
+
+  /** Counts unsaved work held outside the document in `confirmDiscard`, until the returned release. */
+  holdUnsavedWork(unsaved: () => boolean): () => void {
+    return this.history.holdUnsavedWork(unsaved);
+  }
+
+  /**
+   * Says what happened outside the document's commands - a save, a load, an export - in the status line's one live region,
+   * as a notice; or, when `failed`, why it did not, as a refusal. Commits nothing.
+   */
+  announce(message: string, failed = false): void {
+    this.history.announce(message, failed);
+  }
+
+  reset(): void {
+    this.history.clear();
+    this.stateSubject.next(ComposerService.initialState(this.stateSubject.getValue().documentId + 1));
   }
 
   // -------------------------------------------------------------------------
@@ -312,11 +287,7 @@ export class ComposerService {
   /** Moves the caret, and drops any range: a plain click or arrow key. */
   setCursor(cursor: Partial<EditCursor>): void {
     const state = this.stateSubject.getValue();
-    this.stateSubject.next({
-      ...state,
-      anchor: null,
-      cursor: this.clampCursor({ ...state.cursor, ...cursor }, state.doc)
-    });
+    this.publishSelection(clampedCursor({ ...state.cursor, ...cursor }, state.doc), null);
   }
 
   /**
@@ -325,192 +296,101 @@ export class ComposerService {
    */
   extendSelectionTo(cursor: Partial<EditCursor>): void {
     const state = this.stateSubject.getValue();
-    this.stateSubject.next({
-      ...state,
-      anchor: state.anchor ?? state.cursor,
-      cursor: this.clampCursor({ ...state.cursor, ...cursor }, state.doc)
-    });
+    this.publishSelection(clampedCursor({ ...state.cursor, ...cursor }, state.doc), state.anchor ?? state.cursor);
   }
 
   /** Selects every beat of the caret's staff, first bar to last. */
   selectAllInTrack(): void {
-    const state = this.stateSubject.getValue();
-    const staff = this.staffAt(state.doc, state.cursor);
-    if (!staff) return;
-    const lastBar = staff.bars.length - 1;
-    const lastBeat = (staff.bars[lastBar]?.voices[state.cursor.voiceIndex]?.beats.length ?? 1) - 1;
-    this.stateSubject.next({
-      ...state,
-      anchor: { ...state.cursor, barIndex: 0, beatIndex: 0 },
-      cursor: this.clampCursor({ ...state.cursor, barIndex: lastBar, beatIndex: lastBeat }, state.doc)
-    });
+    const { doc, cursor } = this.stateSubject.getValue();
+    this.publishSelection(
+      movedCursor(doc, cursor, { kind: 'scoreEdge', edge: 'last' }),
+      movedCursor(doc, cursor, { kind: 'scoreEdge', edge: 'first' })
+    );
   }
 
-  /** Moves the caret forward or backward, wrapping across bars. */
-  moveCursorByBeat(delta: number): void {
+  /**
+   * Moves the caret by `move` (see `movedCursor`) - or, with `extend`, the selection's moving end.
+   * A plain move drops the range, except a change of string, which moves the focus within it.
+   */
+  moveCursor(move: CursorMove, extend = false): void {
     const state = this.stateSubject.getValue();
-    const cursor = { ...state.cursor };
-    const staff = this.staffAt(state.doc, cursor);
-    if (!staff) return;
+    const anchor = extend ? state.anchor ?? state.cursor : move.kind === 'string' ? state.anchor : null;
+    this.publishSelection(movedCursor(state.doc, state.cursor, move), anchor);
+  }
 
-    let beatIndex = cursor.beatIndex + delta;
-
-    while (beatIndex < 0 && cursor.barIndex > 0) {
-      cursor.barIndex--;
-      beatIndex += staff.bars[cursor.barIndex].voices[cursor.voiceIndex]?.beats.length ?? 1;
-    }
-    while (
-      cursor.barIndex < staff.bars.length - 1 &&
-      beatIndex >= (staff.bars[cursor.barIndex].voices[cursor.voiceIndex]?.beats.length ?? 1)
-    ) {
-      beatIndex -= staff.bars[cursor.barIndex].voices[cursor.voiceIndex]?.beats.length ?? 1;
-      cursor.barIndex++;
-    }
-
-    cursor.beatIndex = beatIndex;
-    this.setCursor(cursor);
+  moveCursorByBeat(delta: number): void {
+    this.moveCursor({ kind: 'beat', delta });
   }
 
   moveCursorByString(delta: number): void {
-    const state = this.stateSubject.getValue();
-    const staff = this.staffAt(state.doc, state.cursor);
-    if (!staff || staff.tuning.length === 0) return;
-
-    const current = state.cursor.stringIndex ?? 0;
-    const next = Math.max(0, Math.min(staff.tuning.length - 1, current + delta));
-    this.stateSubject.next({ ...state, cursor: { ...state.cursor, stringIndex: next } });
+    this.moveCursor({ kind: 'string', delta });
   }
 
-  private clampCursor(cursor: EditCursor, doc: ScoreDoc): EditCursor {
-    const trackIndex = this.clamp(cursor.trackIndex, 0, doc.tracks.length - 1);
-    const track = doc.tracks[trackIndex];
-    if (!track) return createDefaultCursor();
-
-    const staffIndex = this.clamp(cursor.staffIndex, 0, track.staves.length - 1);
-    const staff = track.staves[staffIndex];
-    const barIndex = this.clamp(cursor.barIndex, 0, staff.bars.length - 1);
-    const bar = staff.bars[barIndex];
-    const voiceIndex = this.clamp(cursor.voiceIndex, 0, bar.voices.length - 1);
-    const beats = bar.voices[voiceIndex].beats;
-    const beatIndex = this.clamp(cursor.beatIndex, 0, Math.max(0, beats.length - 1));
-
-    const stringIndex =
-      staff.tuning.length > 0
-        ? this.clamp(cursor.stringIndex ?? 0, 0, staff.tuning.length - 1)
-        : null;
-
-    return { trackIndex, staffIndex, barIndex, voiceIndex, beatIndex, stringIndex };
+  /** Chooses what a notation click does. Not an edit, so no undo step. See `EntryMode`. */
+  setEntryMode(entryMode: EntryMode): void {
+    this.stateSubject.next({ ...this.stateSubject.getValue(), entryMode });
   }
 
-  private clamp(value: number, min: number, max: number): number {
-    if (max < min) return min;
-    return Math.max(min, Math.min(max, value));
+  /**
+   * Publishes a selection, and clears any refusal: it answered a press on the selection that was,
+   * and left standing it would read as the reason a press on this one failed.
+   */
+  private publishSelection(cursor: EditCursor, anchor: EditCursor | null): void {
+    this.stateSubject.next({ ...this.stateSubject.getValue(), cursor, anchor, refusal: null, notice: null });
   }
 
   // -------------------------------------------------------------------------
   // Note entry
   // -------------------------------------------------------------------------
 
-  /**
-   * Whether note entry, rest entry or a delete at the caret is refused - on a generated track,
-   * or in a second voice, which a click can reach in a loaded bar and bar filling cannot measure.
-   * Publishes the reason and commits nothing, so a refusal costs no undo step and the caret does
-   * not advance. A beat scope, not a note one: a delete on a rest clears nothing, and a note
-   * scope would refuse it as a note tool on a rest.
-   */
-  private refusesEntryAt(doc: ScoreDoc, cursor: EditCursor): boolean {
-    const refusal = editRefusal(doc, [cursor], { family: 'beat', key: 'duration' }, null);
-    if (refusal) this.refuse(refusal);
-    return refusal !== null;
-  }
-
-  /** Writes a note at the caret, replacing any note already on that string. */
+  /** Writes a note at the caret, replacing any note already on that string, and by default advances. */
   setNoteAtCursor(pitch: NotePitch, advance = true): void {
-    const state = this.stateSubject.getValue();
-    const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor)) return;
-
-    this.commit(draft => {
-      const beat = this.beatAt(draft, cursor);
-      if (!beat) return;
-
-      // Length first, so the bar settles before the note lands. Settling only removes or
-      // inserts beats after this one, so `beat` is still the caret's beat.
-      setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
-      beat.isRest = false;
-
-      const note: NoteDoc = {
-        pitch,
-        isTied: false,
-        accidental: 'auto',
-        effects: createDefaultNoteEffects()
-      };
-
-      // On a fretted staff one string holds at most one note, so replace.
-      if (pitch.kind === 'fretted') {
-        const existing = beat.notes.findIndex(
-          n => n.pitch.kind === 'fretted' && n.pitch.string === pitch.string
-        );
-        if (existing >= 0) {
-          beat.notes[existing] = note;
-          return;
-        }
-      } else {
-        const existing = beat.notes.findIndex(
-          n =>
-            n.pitch.kind === 'pitched' &&
-            n.pitch.noteValue === pitch.noteValue &&
-            n.pitch.octave === pitch.octave
-        );
-        if (existing >= 0) {
-          beat.notes.splice(existing, 1);
-          beat.isRest = beat.notes.length === 0;
-          return;
-        }
-      }
-
-      beat.notes.push(note);
-    });
-
-    if (advance) this.moveCursorByBeat(1);
+    this.entry.setNoteAtCursor(pitch, advance);
   }
 
-  /** Turns the beat at the caret into a rest. */
+  /** Rewrites the note just written at `target`, as one undo step with it. See `retypeNote` in composer-entry-commands.ts. */
+  retypeNote(target: EditCursor, pitch: NotePitch): void {
+    this.entry.retypeNote(target, pitch);
+  }
+
+  /** Turns the beat at the caret into a rest, and by default advances. */
   setRestAtCursor(advance = true): void {
-    const state = this.stateSubject.getValue();
-    const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor)) return;
-
-    this.commit(draft => {
-      const beat = this.beatAt(draft, cursor);
-      if (!beat) return;
-      beat.notes = [];
-      beat.isRest = true;
-      setBeatDurations(draft, [cursor], state.inputDuration, state.inputDots);
-    });
-
-    if (advance) this.moveCursorByBeat(1);
+    this.entry.setRestAtCursor(advance);
   }
 
-  /**
-   * Clears the beat at the caret back to a rest.
-   *
-   * The slot is kept rather than removed: bars are pre-filled with a full
-   * measure of rests, so deleting a note should empty its position, not
-   * shorten the bar.
-   */
+  /** Clears the beat at the caret back to a rest, keeping its slot. */
   deleteAtCursor(): void {
-    const state = this.stateSubject.getValue();
-    const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor)) return;
+    this.entry.deleteAtCursor();
+  }
 
-    this.commit(draft => {
-      const voice = this.voiceAt(draft, cursor);
-      const beat = voice?.beats[cursor.beatIndex];
-      if (!beat) return;
-      beat.notes = [];
-      beat.isRest = true;
-    });
+  /** Clears every beat in the selection to a rest, keeping their values. */
+  clearSelectionToRests(): void {
+    this.entry.clearSelectionToRests();
+  }
+
+  /** Inserts a rest at the input duration in front of the caret, leaving the caret on it. */
+  insertBeat(): void {
+    this.entry.insertBeat();
+  }
+
+  /** Removes the selected beats; the beats after them move earlier. */
+  deleteBeats(): void {
+    this.entry.deleteBeats();
+  }
+
+  /** Copies the selection's beats to the composer's clipboard. */
+  copy(): void {
+    this.entry.copy();
+  }
+
+  /** Copies the selection's beats and clears them to rests. */
+  cut(): void {
+    this.entry.cut();
+  }
+
+  /** Pastes the clipboard from the start of the selection, as one run. See `pasteBeats`. */
+  paste(): void {
+    this.entry.paste();
   }
 
   setInputDuration(duration: DurationValue, dots = 0): void {
@@ -519,61 +399,53 @@ export class ComposerService {
   }
 
   /**
-   * Applies the current input duration to the beat under the caret, and
-   * remembers it as the choice for the next note.
+   * Applies a duration to the selection, and remembers it as the choice for the next note.
    *
-   * The gate covers the write and stops there, because these are two effects
-   * and only one of them is the generated track's business. The score is the
-   * track's; the input duration is the *toolbar's*, and the toolbar belongs to
-   * whichever track the caret moves to next.
+   * The refusal covers the write and stops there, because these are two effects and only one of
+   * them is the score's business. The input duration is the palette's, and the palette belongs to
+   * whichever track the caret moves to next: refusing both would freeze it while the caret rests on a
+   * generated track, and take away choosing a duration there to carry back to your own. So a refused
+   * press still remembers the choice - and says why the beat did not change (`durationRefusal`),
+   * since a palette that moves while the score does not needs a reason beside it.
    *
-   * Refusing both is what a read of the gate suggests and it is wrong twice
-   * over. Every route to the input duration runs through here - the palette,
-   * the dot toggle, and the `+`/`-` keys all call this method, and nothing else
-   * in the app calls `setInputDuration` - so a blanket refusal freezes the
-   * palette outright for as long as the caret rests on a generated track, which
-   * the design explicitly permits and which is how a user reads one. It also
-   * takes away the pre-selection: choose a duration while looking at the
-   * generated track, move back to your own, and type.
-   *
-   * Nor is there an atomicity to protect. `commit()` runs its callback against
-   * a draft, so a caret on an empty beat already returns early and lands an
-   * empty commit with the choice remembered anyway - "write the beat and
-   * remember the choice, always together" was never the invariant. What is
-   * left is the honest half: a toolbar showing a duration the score under the
-   * caret does not have, which is what a toolbar showing an *input* duration
-   * means everywhere else in the editor.
-   *
-   * It acts on the selection, not only the caret, and keeps each bar honest through
-   * `setBeatDurations`: a gap fills with rests where it opened, and a beat that grows takes
-   * only rests. The selection follows its beats past the rests that inserts (`commitFollowing`).
+   * It keeps each bar honest through `setBeatDurations`: a gap fills with rests where it opened, and
+   * a beat that grows takes only rests. The selection follows its beats past the rests that inserts.
    */
   applyDurationAtCursor(duration: DurationValue, dots: number): void {
     const state = this.stateSubject.getValue();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const refusal = durationRefusal(state.doc, refs, duration, dots);
 
-    if (!editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null)) {
-      this.commitFollowing(draft => setBeatDurations(draft, refs, duration, dots));
-    }
+    if (refusal) this.history.refuse(refusal);
+    else this.history.commitFollowing(draft => setBeatDurations(draft, refs, duration, dots));
 
     this.setInputDuration(duration, dots);
+  }
+
+  /** Dots the selection's beats at their own values, and remembers the dots. See `applyDotsAtCursor` in composer-entry-commands.ts. */
+  applyDotsAtCursor(dots: number): void {
+    this.entry.applyDotsAtCursor(dots);
   }
 
   // -------------------------------------------------------------------------
   // Edits on the selection
   // -------------------------------------------------------------------------
 
-  /** Presses a note effect tool on the selection. See `toggleNoteEffect` in note-edits.ts. */
+  /** Presses a note effect tool on the selection. See `toggleNoteEffect` in note-edits.ts, and `noteEffectRefusal`. */
   toggleNoteEffect<K extends keyof NoteEffectsDoc>(key: K, on: NoteEffectsDoc[K], off: NoteEffectsDoc[K]): void {
-    this.applyEdit({ family: 'note', key }, (draft, refs, focus) => toggleNoteEffect(draft, refs, focus, key, on, off));
+    this.applyEdit(
+      (doc, refs, focus) => noteEffectRefusal(doc, refs, focus, key, on, off),
+      (draft, refs, focus) => toggleNoteEffect(draft, refs, focus, key, on, off)
+    );
   }
 
   setAccidental(accidental: AccidentalMode): void {
     this.applyEdit({ family: 'note', key: 'accidental', accidental }, (draft, refs, focus) => setAccidental(draft, refs, focus, accidental));
   }
 
+  /** Presses Tie on the notes with a note to tie from. See `toggleTie` and `tieRefusal`. */
   toggleTie(): void {
-    this.applyEdit({ family: 'note', key: 'tie' }, (draft, refs, focus) => toggleTie(draft, refs, focus));
+    this.applyEdit(tieRefusal, (draft, refs, focus) => toggleTie(draft, refs, focus));
   }
 
   /** Presses a beat effect tool on the selection. Not grace: see `toggleGrace`. */
@@ -582,7 +454,10 @@ export class ComposerService {
     on: BeatEffectsDoc[K],
     off: BeatEffectsDoc[K]
   ): void {
-    this.applyEdit({ family: 'beat', key }, (draft, refs) => toggleBeatEffect(draft, refs, key, on, off));
+    this.applyEdit(
+      (doc, refs) => beatEffectRefusal(doc, refs, key, on, off),
+      (draft, refs) => toggleBeatEffect(draft, refs, key, on, off)
+    );
   }
 
   /**
@@ -597,7 +472,7 @@ export class ComposerService {
    * it makes takes only the rests after it, so the rests in front stay. Undo takes it back.
    */
   toggleGrace(grace: Exclude<BeatEffectsDoc['grace'], 'none'>): void {
-    this.applyEdit({ family: 'beat', key: 'grace' }, (draft, refs) =>
+    this.applyEdit((doc, refs) => graceRefusal(doc, refs, grace), (draft, refs) =>
       setGrace(draft, refs, toggledValue(beatsAt(draft, refs).map(beat => beat.effects.grace), grace, 'none'))
     );
   }
@@ -607,7 +482,37 @@ export class ComposerService {
   }
 
   setTuplet(tuplet: Tuplet | null): void {
-    this.applyEdit({ family: 'beat', key: 'tuplet' }, (draft, refs) => setTuplet(draft, refs, tuplet));
+    this.applyEdit((doc, refs) => tupletRefusal(doc, refs, tuplet), (draft, refs) => setTuplet(draft, refs, tuplet));
+  }
+
+  /** Presses Trill: each note a whole step above itself at the default speed, or none. See `toggleTrill`. */
+  toggleTrill(): void {
+    this.applyEdit(trillRefusal, (draft, refs, focus) => toggleTrill(draft, refs, focus));
+  }
+
+  /** Presses Fermata: at the selection's positions, on every track. See `toggleFermata`. */
+  toggleFermata(): void {
+    this.applyEdit(fermataRefusal, (draft, refs) => toggleFermata(draft, refs, defaultFermata()));
+  }
+
+  /** Respell: each note to its next spelling. See note-respell.ts. */
+  respell(): void {
+    this.applyEdit(respellRefusal, (draft, refs, focus) => respellNotes(draft, refs, focus));
+  }
+
+  /** Moves the selection's notes a semitone up (+1) or down (-1). See `shiftSemitone`. */
+  shiftSemitone(delta: 1 | -1): void {
+    this.applyEdit({ family: 'note', key: 'notes' }, (draft, refs, focus) => shiftSemitone(draft, refs, focus, delta));
+  }
+
+  /**
+   * Moves the selection's notes to the string above (-1) or below (+1), keeping their pitch. See
+   * `moveNotesToString`. On the caret alone, the caret's string follows the note.
+   */
+  moveNotesToString(delta: 1 | -1): void {
+    const before = this.doc;
+    this.applyEdit({ family: 'note', key: 'notes' }, (draft, refs, focus) => moveNotesToString(draft, refs, focus, delta));
+    if (this.doc !== before && !this.stateSubject.getValue().anchor) this.moveCursor({ kind: 'string', delta });
   }
 
   /**
@@ -619,23 +524,18 @@ export class ComposerService {
    * beats through whatever the edit inserts or removes (`commitFollowing`).
    */
   private applyEdit(
-    scope: EditScope,
-    edit: (draft: ScoreDoc, refs: BeatRef[], focus: number | null) => void
+    scope: EditScope | ((doc: ScoreDoc, refs: BeatRef[], focus: number | null) => string | null),
+    edit: (draft: ScoreDoc, refs: BeatRef[], focus: number | null) => EditOutcome
   ): void {
     const state = this.stateSubject.getValue();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
     const focus = state.anchor ? null : state.cursor.stringIndex;
-    const refusal = editRefusal(state.doc, refs, scope, focus);
+    const refusal = typeof scope === 'function' ? scope(state.doc, refs, focus) : editRefusal(state.doc, refs, scope, focus);
     if (refusal) {
-      this.refuse(refusal);
+      this.history.refuse(refusal);
       return;
     }
-    this.commitFollowing(draft => edit(draft, refs, focus));
-  }
-
-  /** Publishes why a command did nothing. Commits nothing, so it costs no undo step. */
-  private refuse(reason: string): void {
-    this.stateSubject.next({ ...this.stateSubject.getValue(), refusal: reason });
+    this.history.commitFollowing(draft => edit(draft, refs, focus));
   }
 
   // -------------------------------------------------------------------------
@@ -647,13 +547,13 @@ export class ComposerService {
     this.structure.setTimeSignature(timeSignature);
   }
 
-  /** Sets the key on every staff from the selection's first bar. */
+  /** Sets the key on every staff over the selected bars, or from the caret's bar until the key changes. */
   setKeySignature(keySignature: KeySignature): void {
     this.structure.setKeySignature(keySignature);
   }
 
-  /** Sets clef and ottava on the caret's staff from the selection's first bar. */
-  setClef(clef: ClefKind, ottava: OttaviaKind): void {
+  /** Sets clef and ottava - null keeps each bar's - on the caret's staff, as `setKeySignature` sets the key. */
+  setClef(clef: ClefKind | null, ottava: OttaviaKind | null): void {
     this.structure.setClef(clef, ottava);
   }
 
@@ -694,6 +594,21 @@ export class ComposerService {
     this.structure.fixBar();
   }
 
+  /** Repeat close over the selected bars, by the toggle rule. */
+  toggleRepeatClose(): void {
+    this.structure.toggleRepeatClose();
+  }
+
+  /** Inserts as many bars as are selected, in front of the first. */
+  insertBarsBeforeSelection(): void {
+    this.structure.insertBarsBeforeSelection();
+  }
+
+  /** Removes the selected bars from every track, keeping the meter after them. */
+  deleteSelectedBars(): void {
+    this.structure.deleteSelectedBars();
+  }
+
 
   // -------------------------------------------------------------------------
   // Structure: bars and tracks
@@ -701,7 +616,7 @@ export class ComposerService {
 
   /** Inserts a bar at `index` across every track. See `insertBarInto`. */
   insertBar(index: number): void {
-    this.commit(draft => {
+    this.history.commit(draft => {
       insertBarInto(draft, index);
       this.markDiverged(draft);
     });
@@ -711,37 +626,38 @@ export class ComposerService {
     this.insertBar(this.doc.masterBars.length);
   }
 
+  /** Removes bar `index` from every track, keeping the meter after it. See `deleteBars`. */
   removeBar(index: number): void {
     if (this.doc.masterBars.length <= 1) return;
-    this.commit(draft => {
-      const at = this.clamp(index, 0, draft.masterBars.length - 1);
-      draft.masterBars.splice(at, 1);
-      for (const track of draft.tracks) {
-        for (const staff of track.staves) {
-          staff.bars.splice(at, 1);
-        }
-      }
+    this.history.commit(draft => {
+      const at = Math.max(0, Math.min(index, draft.masterBars.length - 1));
+      deleteBars(draft, { first: at, last: at });
       this.markDiverged(draft);
     });
   }
 
+  /** Adds a track of rests, holding every bar position's fermata as the other tracks do (`settleFermatas`). */
   addTrack(name: string, program: number, fretted: boolean): void {
-    this.commit(draft => {
-      draft.tracks.push(
-        ComposerService.createTrack(
-          name,
-          name.slice(0, 3).toLowerCase(),
-          program,
-          fretted,
-          draft.masterBars
-        )
-      );
+    this.history.commit(draft => {
+      const fermatas = fermataSnapshotOf(draft, draft.masterBars.keys());
+      const track = ComposerService.createTrack(name, name.slice(0, 3).toLowerCase(), program, fretted, draft.masterBars);
+      // The key is the music's, and a key command writes it to every staff; so the new staff reads each bar's key from
+      // the first track's, copied. Its clef stays the instrument's own: a clef belongs to the staff.
+      const keys = draft.tracks[0]?.staves[0]?.bars ?? [];
+      for (const staff of track.staves) {
+        staff.bars.forEach((bar, index) => {
+          const key = keys[index]?.keySignature;
+          if (key) bar.keySignature = { ...key };
+        });
+      }
+      draft.tracks.push(track);
+      settleFermatas(draft, fermatas);
     });
   }
 
   removeTrack(index: number): void {
-    if (this.doc.tracks.length <= 1) return;
-    this.commit(draft => {
+    if (this.doc.tracks.length <= 1) return this.history.refuse(LAST_TRACK_REFUSAL);
+    this.history.commit(draft => {
       draft.tracks.splice(index, 1);
     });
   }
@@ -751,7 +667,7 @@ export class ComposerService {
    * because `masterBars` and `tracks` share an invariant a blind assign could break.
    */
   updateScoreInfo(changes: Partial<Pick<ScoreDoc, 'title' | 'subTitle' | 'artist' | 'album'>>): void {
-    this.commit(draft => {
+    this.history.commit(draft => {
       draft.title = changes.title ?? draft.title;
       draft.subTitle = changes.subTitle ?? draft.subTitle;
       draft.artist = changes.artist ?? draft.artist;
@@ -760,7 +676,7 @@ export class ComposerService {
   }
 
   setTempo(tempo: number): void {
-    this.commit(draft => {
+    this.history.commit(draft => {
       draft.tempo = Math.max(20, Math.min(400, Math.round(tempo)));
     });
   }
@@ -803,7 +719,7 @@ export class ComposerService {
    */
   sendProgression(generated: GeneratedTrack): void {
     this.requireScoreMeter(generated);
-    this.commit(draft => Object.assign(draft, mergeGeneratedTrack(draft, generated)));
+    this.history.commit(draft => void Object.assign(draft, mergeGeneratedTrack(draft, generated)));
   }
 
   /**
@@ -816,7 +732,7 @@ export class ComposerService {
    */
   flattenTrack(index: number): void {
     if (!this.isGenerated(this.doc, index)) return;
-    this.commit(draft => Object.assign(draft, flattenGeneratedTrack(draft, index)));
+    this.history.commit(draft => void Object.assign(draft, flattenGeneratedTrack(draft, index)));
   }
 
   /**
@@ -933,21 +849,5 @@ export class ComposerService {
 
   beatAt(doc: ScoreDoc, cursor: EditCursor): BeatDoc | null {
     return this.voiceAt(doc, cursor)?.beats[cursor.beatIndex] ?? null;
-  }
-
-  reset(): void {
-    this.undoStack = [];
-    this.redoStack = [];
-    this.stateSubject.next({
-      doc: ComposerService.createEmptyScore(),
-      cursor: createDefaultCursor(),
-      anchor: null,
-      refusal: null,
-      inputDuration: 4,
-      inputDots: 0,
-      isDirty: false,
-      canUndo: false,
-      canRedo: false
-    });
   }
 }

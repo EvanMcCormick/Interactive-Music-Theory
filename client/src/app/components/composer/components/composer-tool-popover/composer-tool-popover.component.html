@@ -1,0 +1,102 @@
+<!--
+  `popover="manual"`: drawn in the top layer when shown, above the palette's scrolling box, which would clip
+  it otherwise; manual, so the browser neither light-dismisses it nor takes Escape - `onEscape` does, and
+  claims the key.
+-->
+<div #panel class="popover" popover="manual" role="dialog" [attr.aria-label]="title" (keydown)="onPanelKey($event)" (keydown.escape)="onEscape($event)">
+  <h3 class="popover-title">{{ title }}</h3>
+
+  <ng-container [ngSwitch]="kind">
+    <form *ngSwitchCase="'timeSignature'" (ngSubmit)="applyTimeSignature()">
+      <div class="fields">
+        <label>Top <input type="number" min="1" max="32" name="numerator" [ngModel]="numerator" (ngModelChange)="numerator = $event; followMeterNumbers()" /></label>
+        <label>Bottom
+          <select name="denominator" [ngModel]="denominator" (ngModelChange)="denominator = $event; followMeterNumbers()">
+            <option *ngFor="let value of [1, 2, 4, 8, 16, 32]" [ngValue]="value">{{ value }}</option>
+          </select>
+        </label>
+      </div>
+      <!-- Follows Top and Bottom (`followMeterNumbers`): only 4/4 and 2/2 are drawn as a C. -->
+      <label class="check">
+        <input type="checkbox" name="isCommon" [(ngModel)]="isCommon" [disabled]="!commonTimeApplies" />
+        Draw as common or cut time<ng-container *ngIf="!commonTimeApplies"> - only for 4/4 and 2/2</ng-container>
+      </label>
+      <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
+    </form>
+
+    <form *ngSwitchCase="'keySignature'" (ngSubmit)="applyKeySignature()">
+      <label>Key
+        <select name="key" [(ngModel)]="keyIndex">
+          <option *ngIf="keyIndex === null" [ngValue]="null">Mixed</option>
+          <option *ngFor="let choice of keyChoices; let index = index" [ngValue]="index">{{ choice.label }}</option>
+        </select>
+      </label>
+      <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
+    </form>
+
+    <form *ngSwitchCase="'clef'" (ngSubmit)="applyClef()">
+      <label>Clef
+        <select name="clef" [(ngModel)]="clef">
+          <option *ngIf="clef === null" [ngValue]="null">Mixed</option>
+          <option *ngFor="let choice of clefChoices" [ngValue]="choice.value">{{ choice.label }}</option>
+        </select>
+      </label>
+      <label>Octave
+        <select name="ottava" [(ngModel)]="ottava">
+          <option *ngIf="ottava === null" [ngValue]="null">Mixed</option>
+          <option *ngFor="let choice of ottavaChoices" [ngValue]="choice.value">{{ choice.label }}</option>
+        </select>
+      </label>
+      <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
+    </form>
+
+    <form *ngSwitchCase="'section'" (ngSubmit)="applySection()">
+      <p class="mixed" *ngIf="sectionMixed">Mixed: the selected bars have different sections. Left empty, each keeps its own.</p>
+      <label>Name <input type="text" name="sectionText" [(ngModel)]="sectionText" /></label>
+      <label>Mark <input type="text" name="sectionMarker" maxlength="3" [(ngModel)]="sectionMarker" /></label>
+      <div class="actions">
+        <button type="submit" class="text-btn">Apply</button>
+        <button type="button" class="text-btn" (click)="removeSection()">Remove</button>
+        <button type="button" class="text-btn" (click)="closed.emit()">Cancel</button>
+      </div>
+    </form>
+
+    <form *ngSwitchCase="'alternateEnding'" (ngSubmit)="applyEndings()">
+      <p class="mixed" *ngIf="endingsMixed && !endingsTouched">Mixed: the selected bars have different endings. Left alone, each keeps its own.</p>
+      <fieldset class="endings">
+        <legend>Played on repeat</legend>
+        <label class="check" *ngFor="let ending of endingNumbers; let index = index">
+          <input type="checkbox" [name]="'ending' + ending" [(ngModel)]="endings[index]" (ngModelChange)="endingsTouched = true" /> {{ ending }}
+        </label>
+      </fieldset>
+      <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
+    </form>
+
+    <ng-container *ngSwitchCase="'tuplet'">
+      <p class="current">Now: {{ tupletNow }}</p>
+      <div class="actions tuplets">
+        <button
+          type="button"
+          class="text-btn"
+          *ngFor="let tuplet of tupletChoices; let index = index"
+          [attr.aria-pressed]="tupletPressed[index]"
+          (click)="applyTuplet(tuplet)"
+        >{{ tuplet.numerator }}:{{ tuplet.denominator }}</button>
+        <button type="button" class="text-btn" [attr.aria-pressed]="tupletNow === 'none'" (click)="applyTuplet(null)">None</button>
+      </div>
+    </ng-container>
+
+    <form *ngSwitchCase="'tripletFeel'" (ngSubmit)="applyTripletFeel()">
+      <label>Feel
+        <select name="tripletFeel" [(ngModel)]="tripletFeel">
+          <option *ngIf="tripletFeel === null" [ngValue]="null">Mixed</option>
+          <option *ngFor="let choice of tripletFeelChoices" [ngValue]="choice.value">{{ choice.label }}</option>
+        </select>
+      </label>
+      <div class="actions"><button type="submit" class="text-btn">Apply</button><button type="button" class="text-btn" (click)="closed.emit()">Cancel</button></div>
+    </form>
+  </ng-container>
+
+  <!-- Always rendered: an alert region inserted already holding its message is the case screen readers miss. -->
+  <p class="fault" role="alert">{{ fault }}</p>
+</div>

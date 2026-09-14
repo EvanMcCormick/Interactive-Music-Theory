@@ -4,9 +4,12 @@ import {
   BeatEffectsDoc,
   DurationValue,
   DynamicValue,
+  FermataDoc,
   ScoreDoc,
   Tuplet,
-  VoiceDoc
+  VoiceDoc,
+  createDefaultBeatEffects,
+  createRestBeat
 } from '../models/composer.model';
 import {
   BarMeter,
@@ -15,9 +18,14 @@ import {
   barMeterAt,
   beatTicks,
   fillBarGaps,
-  insertRestsAt
+  gracePlaybackTicks,
+  graceRunStart,
+  hasTuplet,
+  insertRestsAt,
+  playbackStartsOf
 } from './bar-fill';
 import { BeatRef, beatAt } from './composer-selection';
+import { FermataDrops, fermataSnapshotOf, settleFermatas } from './fermata-settling';
 
 /**
  * Edits that act on whole beats: their effects, dynamics and lengths.
@@ -43,7 +51,7 @@ export function toggledValue<T>(current: readonly T[], on: T, off: T): T {
 }
 
 /** `value` as JSON with every object's keys sorted, so equal values always print alike. */
-function canonicalJsonOf(value: unknown): string {
+export function canonicalJsonOf(value: unknown): string {
   return JSON.stringify(value, (_key, inner: unknown) =>
     inner !== null && typeof inner === 'object' && !Array.isArray(inner)
       ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
@@ -80,7 +88,68 @@ export function setDynamics(doc: ScoreDoc, refs: readonly BeatRef[], dynamics: D
 }
 
 /**
- * Gives every beat in `refs` a written value, then keeps each bar honest. See `relength`.
+ * Every beat a fermata pressed on `refs` belongs to: for the tick each ref's beat plays at in its bar, the beat that
+ * plays there in every voice of every staff of every track. A fermata belongs to a bar position, not to a beat, and
+ * alphaTab hands one to a loaded second voice's beat at that tick as it does to any other.
+ *
+ * That is alphaTab's model and Guitar Pro's. `Voice.finish` files a beat's fermata on the master bar by the tick it
+ * plays at (`alphaTab.core.mjs` ~3294), and `MasterBar.getFermata` (~2728) hands it to every beat finished later at
+ * that tick without one - so a fermata written on one track showed on every later track anyway, and clearing it left
+ * the copies. Written on every track, the document says what the page shows, whichever track the press came from.
+ *
+ * The tick is where the beat plays, not where it is drawn (`playbackStartsOf`): a beat that on-beat graces lead into
+ * plays after them, so it is at a position of its own, and the grace in front of it at the tick it is drawn at.
+ *
+ * A grace beat names no position of its own to press: a ref on one is skipped, and a selection of graces alone has
+ * none (`fermataRefusal`). But a grace that plays *at* a position is one of its beats. alphaTab files its fermata at
+ * that tick, so it takes the fermata on the way in - and a clear that skipped it would leave that copy to spread back
+ * to every track on the next save. So graces playing at the tick are returned with the other beats there, and written
+ * and cleared with them; the toggle reads only the non-grace beats (`toggleFermata`). A staff with no beat playing at
+ * the tick - a half note spans it - gets nothing. A generated track is left alone, as every edit leaves one; alphaTab
+ * may still draw the position's fermata there, and the track's document stays the progression's.
+ */
+export function fermataPositionsOf(doc: ScoreDoc, refs: readonly BeatRef[]): BeatDoc[] {
+  const ticksByBar = new Map<number, Set<number>>();
+  for (const ref of refs) {
+    const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
+    const beat = voice?.beats[ref.beatIndex];
+    if (!voice || !beat || beat.effects.grace !== 'none') continue;
+    const ticks = ticksByBar.get(ref.barIndex) ?? new Set<number>();
+    ticks.add(playbackStartsOf(voice.beats)[ref.beatIndex]);
+    ticksByBar.set(ref.barIndex, ticks);
+  }
+
+  const beats: BeatDoc[] = [];
+  for (const track of doc.tracks) {
+    if (track.generated) continue;
+    for (const staff of track.staves) {
+      for (const [barIndex, ticks] of ticksByBar) {
+        for (const voice of staff.bars[barIndex]?.voices ?? []) {
+          const starts = playbackStartsOf(voice.beats);
+          voice.beats.forEach((beat, index) => {
+            if (ticks.has(starts[index])) beats.push(beat);
+          });
+        }
+      }
+    }
+  }
+  return beats;
+}
+
+/**
+ * Presses Fermata on `refs`, by the toggle rule. The rule reads the non-grace beats at those positions;
+ * the value is written to every beat there, graces included (`fermataPositionsOf`).
+ */
+export function toggleFermata(doc: ScoreDoc, refs: readonly BeatRef[], fermata: FermataDoc): void {
+  const beats = fermataPositionsOf(doc, refs);
+  const read = beats.filter(beat => beat.effects.grace === 'none');
+  const value = toggledValue(read.map(beat => beat.effects.fermata), fermata, null);
+  for (const beat of beats) beat.effects.fermata = value ? { ...value } : null;
+}
+
+/**
+ * Gives every beat in `refs` a written value, then keeps each bar honest. See `relength`, which says what it
+ * returns: why each fermata it could not keep went.
  *
  * Grace beats keep theirs. alphaTab sets a grace's written value itself when the score is
  * finished - an eighth, sixteenth or thirty-second by the size of its grace group
@@ -93,17 +162,37 @@ export function setBeatDurations(
   refs: readonly BeatRef[],
   duration: DurationValue,
   dots: number
-): void {
-  relength(doc, refs, beat => {
+): FermataDrops {
+  return relength(doc, refs, beat => {
     if (beat.effects.grace !== 'none') return;
     beat.duration = duration;
     beat.dots = dots;
   });
 }
 
-/** Puts every beat in `refs` under `tuplet`, or out of any tuplet with null. See `relength`. */
-export function setTuplet(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuplet | null): void {
-  relength(doc, refs, beat => {
+/**
+ * Gives every beat in `refs` `dots` augmentation dots at its own written value, then keeps each bar
+ * honest. See `relength`. What the dot tool does, so dotting a half makes a dotted half whatever note
+ * value the palette holds. Grace beats keep theirs, as `setBeatDurations` leaves them.
+ */
+export function setBeatDots(doc: ScoreDoc, refs: readonly BeatRef[], dots: number): FermataDrops {
+  return relength(doc, refs, beat => {
+    if (beat.effects.grace !== 'none') return;
+    beat.dots = dots;
+  });
+}
+
+/**
+ * Puts every beat in `refs` under `tuplet`, or out of any tuplet with null. See `relength`.
+ *
+ * A grace is left out of a tuplet being set, as `setBeatDurations` leaves its value. alphaTab counts a grace that
+ * carries a tuplet into its group at the grace's playback length, so a group a grace starts never closes
+ * (`tupletGroupsOf`). A clear takes a grace's tuplet off too, since only a loaded file can have given it one.
+ */
+export function setTuplet(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuplet | null): FermataDrops {
+  const setting = tuplet !== null && hasTuplet({ tuplet });
+  return relength(doc, refs, beat => {
+    if (setting && beat.effects.grace !== 'none') return;
     beat.tuplet = tuplet ? { ...tuplet } : null;
   });
 }
@@ -116,10 +205,22 @@ export function setTuplet(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuple
  * one frees its value's worth of the bar, which fills with rests where it stood - in front of
  * the grace, so it still leads into the beat after it - and a grace that becomes an ordinary
  * beat takes room, which takes the rests after it or is left as overflow.
+ *
+ * A beat that becomes a grace leaves its fermata at its bar position (the design's M2 decision 2): the
+ * rest that fills its room, or the beat that moves up to its tick in a bar that was over, takes it, and the
+ * grace takes the fermata at the position it plays at (`settleFermatas`, which `relength` runs). A grace that
+ * becomes an ordinary beat takes its tick's fermata the same way.
+ *
+ * A beat made a grace loses its tuplet in the same edit. A grace carrying one starts a group alphaTab never closes on
+ * a written value, and a bar's leading one is joined to the group the bar before ends in, which the one-bar reading of
+ * `tupletGroupsOf` cannot see. What is left is judged as any edit is (`graceRefusal`): a triplet beat made a grace
+ * leaves its group a beat short, and that is refused. A grace made an ordinary beat keeps whatever tuplet it has - only
+ * a loaded file can have given it one.
  */
-export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEffectsDoc['grace']): void {
-  relength(doc, refs, beat => {
+export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEffectsDoc['grace']): FermataDrops {
+  return relength(doc, refs, beat => {
     beat.effects.grace = grace;
+    if (grace !== 'none') beat.tuplet = null;
   });
 }
 
@@ -148,6 +249,13 @@ export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEff
  *    as much as it is short. So room a shrinking beat frees pays for growth elsewhere in the
  *    range first, and a beat that shrinks in an overflowing bar uses up the overflow. Four
  *    quarters set to eighths are `n8 r8 n8 r8 n8 r8 n8 r8`; `n4 r4 r4 r4` dotted is `n4. r8 r4 r4`.
+ *    Room no rest can spell where it opened - a tuplet's remainder, off the 64th grid - carries to
+ *    the next beat while that beat is changing too and directly follows, and is placed after the
+ *    run: `n8 n8 n8 n8 n2` with its first three beats made a triplet is `n8 n8 n8 r8 n8 n2`. Inside a
+ *    tuplet group alphaTab has not closed, room is held however it spells, and goes after the beat
+ *    where alphaTab closes the group, whether or not that beat is changing, so a rest never ends a
+ *    group half-way: six sixteenths made 6:4 free a sixteenth after three beats, and an eighth rest
+ *    goes after the sixth (`tupletGroupEndOf`).
  * 3. **Blocked growth takes the rests after the range.** A beat blocked only by its changing
  *    neighbour is still owed room when the bar is over - less whatever room phase 2 freed and
  *    did not place, which has paid for it already. So a bar that arrived over keeps exactly its
@@ -158,8 +266,11 @@ export function setGrace(doc: ScoreDoc, refs: readonly BeatRef[], grace: BeatEff
  *    no freed room paid for, stays as overflow for Fix bar, as the design asks.
  * 4. A bar still short - one that arrived short, or a gap no rest could spell at its position,
  *    such as a tuplet's remainder - fills at its end (`fillBarGaps`), where that can be spelled.
+ * 5. Every fermata in the bars goes with its note or stays at its bar position, on every track
+ *    (`settleFermatas`). What it returns: why each fermata it could keep neither way went.
  */
-function relength(doc: ScoreDoc, refs: readonly BeatRef[], change: (beat: BeatDoc) => void): void {
+function relength(doc: ScoreDoc, refs: readonly BeatRef[], change: (beat: BeatDoc) => void): FermataDrops {
+  const fermatas = fermataSnapshotOf(doc, refs.filter(ref => ref.voiceIndex === 0).map(ref => ref.barIndex));
   const changing = new Set(beatsAt(doc, refs));
   // Grouped by voice, not bar: a range's beats are settled against the voice they are in.
   const voices = new Map<VoiceDoc, { bar: BarDoc; barIndex: number; beats: BeatDoc[] }>();
@@ -181,6 +292,7 @@ function relength(doc: ScoreDoc, refs: readonly BeatRef[], change: (beat: BeatDo
   for (const [voice, { bar, barIndex, beats }] of voices) {
     settleRange(voice, bar, barMeterAt(doc, barIndex), beats, changing, change);
   }
+  return settleFermatas(doc, fermatas);
 }
 
 /** `relength`'s passes for one voice. `beats` are the changing beats in it, in any order. */
@@ -210,16 +322,44 @@ function settleRange(
     }
   }
 
-  // Room freed but not placed, because the bar was not short when its turn came. That room has
-  // already paid for growth within the range, so phase 3 must not take rests for it again.
+  // Room freed but not placed, because the bar was not short when its turn came or no rest could
+  // spell it. That room has already paid for growth within the range, so phase 3 must not take
+  // rests for it again.
+  //
+  // Room no rest can spell where it opened - a tuplet's remainder is off the 64th grid - is carried
+  // to the next beat when that beat is changing too and directly follows, and placed after the run:
+  // three eighths made a triplet each free 160 ticks, which nothing can spell, and together free 480,
+  // an eighth rest right after the group. So the beats after a whole group keep their ticks.
+  //
+  // Inside a tuplet group that alphaTab has not closed yet, room is held without trying to place it,
+  // however it spells: a 6:4 beat frees a third of its value, so three of them free a whole value, and
+  // a rest there would end alphaTab's group half-way (`TupletGroup.check`, ~6760). It carries to the next
+  // beat of the run while that beat is in the same group, and otherwise goes after the beat that closes
+  // the group (`tupletGroupEndOf`) - which need not be changing: beats already 6:4 after the run close
+  // the group the run's beats join. So the room goes after each group, when the run holds several.
   let unplaced = 0;
-  for (const beat of inOrder) {
-    const room = freed.get(beat) ?? 0;
+  let carried = 0;
+  inOrder.forEach((beat, order) => {
+    const room = carried + (freed.get(beat) ?? 0);
+    carried = 0;
+    const next = inOrder[order + 1];
+    const index = voice.beats.indexOf(beat);
+    const end = tupletGroupEndOf(voice.beats, index);
+    if (end > index && next && voice.beats.indexOf(next) <= end) {
+      carried = room;
+      return;
+    }
+    const after = end + 1;
     const fill = barFillOf(bar, meter);
-    const placed = room > 0 && fill.kind === 'under' ? Math.min(room, fill.ticks) : 0;
-    if (placed > 0) insertRestsAt(voice, voice.beats.indexOf(beat) + 1, placed, meter);
-    unplaced += room - placed;
-  }
+    const wanted = room > 0 && fill.kind === 'under' ? Math.min(room, fill.ticks) : 0;
+    if (wanted > 0 && insertRestsAt(voice, after, wanted, meter)) {
+      unplaced += room - wanted;
+    } else if (wanted > 0 && voice.beats[after] === next) {
+      carried = room;
+    } else {
+      unplaced += room;
+    }
+  });
 
   // Blocked growth the unplaced room did not pay for. Capped by the bar's overflow below, but the
   // overflow alone is no measure of it: a bar can arrive over, and that overflow is not owed.
@@ -232,4 +372,215 @@ function settleRange(
   }
 
   fillBarGaps(bar, meter);
+}
+
+/** alphaTab's `TupletGroup._allTicks`: the written values a mixed-length group's total is checked against. */
+const TUPLET_GROUP_TICKS: readonly number[] = [1920, 960, 480, 240, 120, 60, 30, 15];
+
+/** A tuplet group as alphaTab builds one while it finishes a voice (`TupletGroup`, ~6720). */
+export interface TupletGroupRun {
+  first: BeatDoc;
+  /** The beats counted: the first, and every later one but a grace. */
+  count: number;
+  /** The first beat's playback length, then each later counted beat's written length, as `TupletGroup.check` adds them. */
+  ticks: number;
+  equal: boolean;
+  /** Whether alphaTab has closed the group, so it takes no more beats but graces. */
+  full: boolean;
+}
+
+/**
+ * For each of `beats` - one voice of one bar, in order - the tuplet group alphaTab puts it in, or null. Beats
+ * in one group share one `TupletGroupRun`, and its `full` says whether the group was closed by its end.
+ *
+ * alphaTab groups a voice's beats as it finishes them (`Beat.finishTuplet`, ~7741, and `TupletGroup.check`,
+ * ~6765), and this replays it:
+ * - A beat under a tuplet (`hasTuplet`), or a grace after a beat in a group, is checked against the group
+ *   before it; any other beat is in no group, and ends the one before it.
+ * - A group's first beat is counted at its playback length at that moment. A grace's is a 32nd, 64th or 128th
+ *   by the size of its grace run (`Beat.finish` ~7772, `Beat.updateDurations` ~7713), so a grace that carries a
+ *   tuplet can start a group, and that group never closes on a written value. An ordinary beat's is its written
+ *   length less what the on-beat graces just before it take from it (`Voice.finish` ~3240), so a mixed group
+ *   after an on-beat grace comes up short.
+ * - A later grace joins the group, closed or not, and is not counted.
+ * - A later beat joins when the group is not closed and has the same tuplet, and is counted at its written
+ *   length (`beatTicks`, alphaTab's `displayDuration`). Otherwise it starts a new group.
+ * - A group of equal written lengths closes at as many beats as the tuplet's numerator; a mixed one when its
+ *   total is a written value times the numerator over the denominator, truncated.
+ *
+ * Groups never cross a bar: `check` refuses a beat from another voice. One bar is read at a time, so a grace
+ * leading a bar and carrying a tuplet is read as starting a group, which alphaTab does only when the bar before
+ * does not end in one.
+ */
+export function tupletGroupsOf(beats: readonly BeatDoc[]): (TupletGroupRun | null)[] {
+  const groups: (TupletGroupRun | null)[] = [];
+  let group: TupletGroupRun | null = null;
+  for (let index = 0; index < beats.length; index++) {
+    const beat = beats[index];
+    if (!hasTuplet(beat) && !(beat.effects.grace !== 'none' && group)) {
+      group = null;
+    } else if (!group || !joinedTupletGroup(group, beat)) {
+      group = { first: beat, count: 1, ticks: groupStartTicks(beats, index), equal: true, full: false };
+    }
+    groups.push(group);
+  }
+  return groups;
+}
+
+/** Whether `beat`, not a group's first, joins `group` - counting it in when it does (`TupletGroup.check`). */
+function joinedTupletGroup(group: TupletGroupRun, beat: BeatDoc): boolean {
+  if (beat.effects.grace !== 'none') return true;
+  if (group.full || !sameTuplet(beat, group.first)) return false;
+  const ticks = beatTicks(beat);
+  if (ticks !== beatTicks(group.first)) group.equal = false;
+  group.count++;
+  group.ticks += ticks;
+  const { numerator, denominator } = group.first.tuplet ?? { numerator: 1, denominator: 1 };
+  const factor = (numerator / denominator) | 0;
+  group.full = group.equal ? group.count === numerator : TUPLET_GROUP_TICKS.some(value => group.ticks === value * factor);
+  return true;
+}
+
+/** The playback length alphaTab counts for `beats[index]` when it starts a tuplet group. See `tupletGroupsOf`. */
+function groupStartTicks(beats: readonly BeatDoc[], index: number): number {
+  let start = index;
+  while (start > 0 && beats[start - 1].effects.grace !== 'none') start--;
+  if (beats[index].effects.grace !== 'none') {
+    let end = index;
+    while (end + 1 < beats.length && beats[end + 1].effects.grace !== 'none') end++;
+    return gracePlaybackTicks(end - start + 1);
+  }
+  const graces = index - start;
+  const stolen = graces > 0 && beats[start].effects.grace === 'onBeat' ? graces * gracePlaybackTicks(graces) : 0;
+  return beatTicks(beats[index]) - stolen;
+}
+
+/** Whether two beats are under the same tuplet, by alphaTab's comparison of numerator and denominator. */
+function sameTuplet(a: BeatDoc, b: BeatDoc): boolean {
+  return a.tuplet?.numerator === b.tuplet?.numerator && a.tuplet?.denominator === b.tuplet?.denominator;
+}
+
+/** A tuplet group alphaTab leaves open: the beats it counts, in order, and its tuplet as written when it was read. */
+export interface OpenTupletGroup {
+  beats: BeatDoc[];
+  tuplet: string;
+}
+
+/** The tuplet groups alphaTab leaves open among `beats`, one voice of one bar (`tupletGroupsOf`). */
+export function openTupletGroupsOf(beats: readonly BeatDoc[]): OpenTupletGroup[] {
+  const groups = tupletGroupsOf(beats);
+  const open = new Map<TupletGroupRun, OpenTupletGroup>();
+  groups.forEach((group, index) => {
+    const beat = beats[index];
+    if (!group || group.full || (beat.effects.grace !== 'none' && beat !== group.first)) return;
+    const entry = open.get(group) ?? { beats: [], tuplet: `${group.first.tuplet?.numerator}:${group.first.tuplet?.denominator}` };
+    entry.beats.push(beat);
+    open.set(group, entry);
+  });
+  return [...open.values()];
+}
+
+/**
+ * The first group alphaTab leaves open among `after` that is not one of `before` - the same beats, by identity,
+ * under the same tuplet - or null. How an edit is found to have opened a group: `before` is read from the voice
+ * before the edit, `after` is the voice once it is made.
+ */
+export function newOpenTupletGroup(before: readonly OpenTupletGroup[], after: readonly BeatDoc[]): OpenTupletGroup | null {
+  const same = (a: OpenTupletGroup, b: OpenTupletGroup): boolean =>
+    a.tuplet === b.tuplet && a.beats.length === b.beats.length && a.beats.every((beat, index) => beat === b.beats[index]);
+  return openTupletGroupsOf(after).find(group => !before.some(old => same(old, group))) ?? null;
+}
+
+/**
+ * The index of the last of `beats` in the tuplet group `beats[index]` is in - where alphaTab closes it, or
+ * where the bar ends it unclosed - or `index` itself when it is in none (`tupletGroupsOf`).
+ */
+function tupletGroupEndOf(beats: readonly BeatDoc[], index: number): number {
+  const groups = tupletGroupsOf(beats);
+  const group = groups[index];
+  let end = index;
+  while (group && groups[end + 1] === group) end++;
+  return end;
+}
+
+/**
+ * Clears every beat in `refs` to a rest, keeping each beat's value, so no bar's fill changes.
+ *
+ * What a rest cannot do goes with its notes: every beat effect returns to its default - let ring, palm
+ * mute, tap, slap, pop, a pick stroke, fade in, vibrato, a brush, a crescendo - since on a rest each is
+ * an attack with nothing to attack, and a cut would carry it to wherever it is pasted. Two stay: the
+ * dynamic, which stands until the next one, and the fermata, which belongs to the bar position rather
+ * than to the notes (the design's M2 decision 2).
+ *
+ * A grace beat is removed rather than left as a grace rest. It takes no room, so the bar's fill is
+ * unchanged, and a rest that leads into the beat after it is nothing a score writes.
+ *
+ * But a grace moves where beats play: an on-beat grace takes its length from the start of the beat it leads
+ * into, and a grace run's lengths depend on its size (`playbackStartsOf`). So when a clear removes one, every
+ * fermata in those bars goes with its note or stays at its bar position, on every track (`settleFermatas`), and
+ * what it returns is why each one it could keep neither way went. A clear that removes no grace moves nothing
+ * and returns none. Removing a grace can also leave a tuplet group open, which `clearRefusal` refuses first.
+ */
+export function clearToRests(doc: ScoreDoc, refs: readonly BeatRef[]): FermataDrops {
+  const targets = beatsAt(doc, refs);
+  const graces = new Set(targets.filter(beat => beat.effects.grace !== 'none'));
+  const fermatas = graces.size > 0 ? fermataSnapshotOf(doc, refs.map(ref => ref.barIndex)) : null;
+  for (const beat of targets) {
+    if (graces.has(beat)) continue;
+    beat.notes = [];
+    beat.isRest = true;
+    beat.effects = { ...createDefaultBeatEffects(), fermata: beat.effects.fermata };
+  }
+  if (!fermatas) return [];
+  for (const ref of refs) {
+    const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
+    if (voice) voice.beats = voice.beats.filter(beat => !graces.has(beat));
+  }
+  return settleFermatas(doc, fermatas);
+}
+
+/**
+ * Inserts a rest of `duration` and `dots` in front of the beat `ref` names - in front of any graces that
+ * lead into it (`graceRunStart`), so they still lead into their beat. The bar grows, and whatever it
+ * holds beyond its meter is left as overflow for Fix bar: an insertion moves beats later, and taking
+ * rests from the end of the bar to make room would be a second edit the user did not ask for.
+ *
+ * Returns the index the rest went in at, and why each fermata it could not keep went - or null when `ref` names no
+ * voice. Every fermata in the bar goes with its note or stays at its bar position (`settleFermatas`).
+ */
+export function insertBeatAt(
+  doc: ScoreDoc,
+  ref: BeatRef,
+  duration: DurationValue,
+  dots: number
+): { index: number; droppedFermatas: FermataDrops } | null {
+  const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
+  if (!voice) return null;
+  const fermatas = fermataSnapshotOf(doc, [ref.barIndex]);
+  const at = graceRunStart(voice, Math.min(ref.beatIndex, voice.beats.length));
+  voice.beats.splice(at, 0, { ...createRestBeat(duration), dots });
+  return { index: at, droppedFermatas: settleFermatas(doc, fermatas) };
+}
+
+/**
+ * Removes the beats `refs` name, so the beats after them move earlier, and fills each bar left short at
+ * its end (`fillBarGaps`) - unlike a clear, which keeps every later beat where it was. A voice left
+ * with no beats at all, in a free-time bar that nothing fills, gets a quarter rest, since alphaTab
+ * cannot chain a voice with none. Every fermata in those bars goes with its note or stays at its bar position
+ * (`settleFermatas`); what it returns is why each one it could keep neither way went.
+ */
+export function deleteBeats(doc: ScoreDoc, refs: readonly BeatRef[]): FermataDrops {
+  const removing = new Set(beatsAt(doc, refs));
+  const bars = new Map<BarDoc, number>();
+  for (const ref of refs) {
+    const bar = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex];
+    if (bar) bars.set(bar, ref.barIndex);
+  }
+  const fermatas = fermataSnapshotOf(doc, bars.values());
+  for (const [bar, barIndex] of bars) {
+    for (const voice of bar.voices) voice.beats = voice.beats.filter(beat => !removing.has(beat));
+    fillBarGaps(bar, barMeterAt(doc, barIndex));
+    for (const voice of bar.voices) if (voice.beats.length === 0) voice.beats.push(createRestBeat(4));
+  }
+  return settleFermatas(doc, fermatas);
 }

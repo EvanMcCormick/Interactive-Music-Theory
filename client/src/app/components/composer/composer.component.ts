@@ -1,168 +1,251 @@
 import {
+  AfterViewInit,
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
+  ElementRef,
   HostListener,
   OnDestroy,
-  OnInit
+  OnInit,
+  ViewChild,
+  inject
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subject, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
+import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
+import { ComposerPaletteComponent } from './components/composer-palette/composer-palette.component';
+import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
+import { ComposerShortcutSheetComponent } from './components/composer-shortcut-sheet/composer-shortcut-sheet.component';
+import { ComposerStatusLineComponent } from './components/composer-status-line/composer-status-line.component';
+import { ComposerTrackStripComponent } from './components/composer-track-strip/composer-track-strip.component';
+import { AlphaTabState } from '../../models/alpha-tab.model';
+import { ComposerState, ScoreDoc, TexDiagnostic } from '../../models/composer.model';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerService } from '../../services/composer.service';
-import { ProgressionService } from '../../services/progression.service';
-import {
-  GeneratedTrackState,
-  generatedTrackState,
-  progressionLabel,
-  progressionTrack
-} from '../../services/progression-track';
+import { FretDigitEntry } from '../../services/composer-fret-entry';
+import { ComposerKeyHandler } from '../../services/composer-key-handler';
+import { KEY_PLATFORM } from '../../services/composer-key-platform';
+import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
+import { pressesFocusedControl } from '../../services/editable-target';
+import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, PopoverKind, shortcutTitleOf } from '../../services/composer-tools';
 import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
-import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
-import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
-import { AlphaTabState } from '../../models/alpha-tab.model';
-import {
-  ComposerState,
-  DurationValue,
-  EditCursor,
-  NotePitch,
-  TexDiagnostic,
-  TrackDoc
-} from '../../models/composer.model';
-import { ProgressionState } from '../../models/progression.model';
 
-interface DurationOption {
-  label: string;
-  value: DurationValue;
-  dots: number;
-}
+/** What the status line says when a save meets an alphaTex draft that has been edited and not applied. */
+const TEX_DRAFT_UNSAVED = 'Apply or revert the alphaTex draft before saving.';
 
-interface InstrumentOption {
-  name: string;
-  program: number;
-  fretted: boolean;
+/** What the status line and the panel say when that draft was written against a score that has changed since. */
+const TEX_DRAFT_OUT_OF_DATE =
+  'The alphaTex draft was written against an earlier score; revert it, or apply it to replace the changes made since.';
+
+/** The shortest the track strip can be dragged, in pixels: about one row and the add-track controls. */
+const STRIP_MIN_HEIGHT = 72;
+
+/**
+ * The least height the strip leaves the score, in pixels, where the score's own minimum cannot be read: `10rem` at a 16px
+ * root font. `fitStrip` reads the minimum the page's styles give the score, which follows the root font size.
+ */
+const SCORE_MIN_HEIGHT = 160;
+
+/** How far one arrow key moves the strip's separator, in pixels. */
+const STRIP_KEY_STEP = 16;
+
+/** The heights the track strip may take, which its separator announces as its range. */
+export interface StripHeightRange {
+  min: number;
+  max: number;
 }
 
 /**
- * How one generated row stands to the progression that is open.
- *
- * `GeneratedTrackState` answers this for a score and a progression as a *pair*,
- * which is one answer short of what a row has to draw: it splits `'stale'` into
- * neither of its two halves, and it has no word at all for a row built from
- * some progression other than the one open, because from its point of view that
- * score holds nothing of this progression. This is that answer widened by the
- * two facts the row knows and the pair does not - which marker this row carries,
- * and what kind of source it names.
- *
- * Still derived from `generatedTrackState` rather than computed beside it. The
- * splitting is a *reading* of the one answer, not a second opinion about it, so
- * the enabled/refused line stays where every other caller reads it.
+ * The heights the strip may take in a page `pageHeight` tall whose other fixed rows - the top bar, the status line, the
+ * separator, and the alphaTex panel while it is open - take `fixedRowsHeight`: from one row up to what leaves the score
+ * `scoreMinHeight`, and never less than one row, however short the page.
  */
-type GeneratedRowState = 'current' | 'behind' | 'moved' | 'foreign';
+export function stripHeightRangeOf(pageHeight: number, fixedRowsHeight: number, scoreMinHeight = SCORE_MIN_HEIGHT): StripHeightRange {
+  return { min: STRIP_MIN_HEIGHT, max: Math.max(STRIP_MIN_HEIGHT, Math.floor(pageHeight - fixedRowsHeight - scoreMinHeight)) };
+}
 
+/** `height` clamped to `range`, in whole pixels. */
+export function clampedStripHeight(height: number, range: StripHeightRange): number {
+  return Math.max(range.min, Math.min(range.max, Math.round(height)));
+}
+
+/**
+ * The composer page: top bar, palette, score, status line and track strip, in one grid.
+ *
+ * Holds no document state - that is `ComposerService`'s - only what the page presents: which popover
+ * is open, whether the shortcut sheet is, the alphaTex draft, and how tall the strip is. It is the
+ * `ComposerToolHost` every tool runs against, so a palette press and a key press run one command. The
+ * keyboard is `ComposerKeyHandler`'s, fret digits are `FretDigitEntry`'s, the track rows are the strip's,
+ * and save, load and export are the library panel's.
+ */
 @Component({
   selector: 'app-composer',
   standalone: true,
-  imports: [CommonModule, FormsModule, ComposerLibraryPanelComponent, ComposerScoreComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    ComposerLibraryPanelComponent,
+    ComposerPaletteComponent,
+    ComposerScoreComponent,
+    ComposerShortcutSheetComponent,
+    ComposerStatusLineComponent,
+    ComposerTrackStripComponent
+  ],
   templateUrl: './composer.component.html',
   styleUrls: ['./composer.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class ComposerComponent implements OnInit, OnDestroy {
-  /** Highest fret the digit accumulator will build up to. */
-  private static readonly MAX_FRET = 24;
-  /** How long consecutive digits keep combining into one fret number. */
-  private static readonly FRET_BUFFER_MS = 800;
+export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
+  @ViewChild(ComposerTrackStripComponent) private strip?: ComposerTrackStripComponent;
+  /** The score's element, where a text selection is the score's own rather than the page's. */
+  @ViewChild('score', { read: ElementRef }) private scoreElement?: ElementRef<HTMLElement>;
+  /** The page grid, and the rows the strip's range is measured against (`fitStrip`). */
+  @ViewChild('page') private page?: ElementRef<HTMLElement>;
+  @ViewChild('topBar') private topBar?: ElementRef<HTMLElement>;
+  @ViewChild('statusLine', { read: ElementRef }) private statusLine?: ElementRef<HTMLElement>;
+  @ViewChild('stripSeparator') private stripSeparator?: ElementRef<HTMLElement>;
+  /** The alphaTex panel while it is open: a row the strip leaves room for, watched as its diagnostics grow (`fitStrip`). */
+  @ViewChild('texPanel') private set texPanelRef(ref: ElementRef<HTMLElement> | undefined) {
+    const panel = ref?.nativeElement ?? null;
+    if (panel === this.texPanel) return;
+    if (this.texPanel) this.pageObserver?.unobserve(this.texPanel);
+    this.texPanel = panel;
+    if (panel) this.pageObserver?.observe(panel);
+  }
+  private texPanel: HTMLElement | null = null;
 
   private readonly destroy$ = new Subject<void>();
 
   state: ComposerState | null = null;
   playerState: AlphaTabState | null = null;
 
-  /**
-   * The progression this page can send, or null before the first publish.
-   *
-   * Held rather than read on demand because the Tracks panel asks about it on
-   * every change-detection pass - the badge, the row's status, whether Update
-   * and the panel's own send button are refusing, and all four of their labels
-   * come from it - and `OnPush` needs the answer to change in step with the
-   * subscription that delivered it.
-   */
-  progressionState: ProgressionState | null = null;
-
   texDraft = '';
   texDiagnostics: TexDiagnostic[] = [];
   showTexPanel = false;
+  /** What the panel says while an edited draft is out of date (`texDraftOutOfDate`). */
+  readonly texOutOfDate = TEX_DRAFT_OUT_OF_DATE;
+  /**
+   * The alphaTex the draft was seeded from, or last applied as: a draft still equal to it has not been typed into, so it
+   * follows the score as the score changes, and never stands in the way of a save.
+   */
+  private texDraftBase = '';
+  /** The document the draft was written against: once the score is another, an edited draft is out of date. */
+  private texDraftDoc: ScoreDoc | null = null;
+  /**
+   * The composition the draft was written for (`ComposerState.documentId`). Once another is open - a load, New, an opened
+   * transcription - the draft is thrown away and seeded again: applied, it would be an edit of the wrong composition.
+   */
+  private texDraftDocumentId: number | null = null;
+  /** Takes the edited draft back out of the unsaved work a new composition asks about (`confirmDiscard`). */
+  private releaseUnsavedDraft: () => void = () => undefined;
+  /**
+   * Why the alphaTex draft is in the way, for the status line: an apply that could not parse, or a save
+   * refused while the draft is not applied. Cleared by a good apply, a revert, and closing the panel.
+   */
   texApplyError: string | null = null;
+  /**
+   * Which saying of `texApplyError` it is, moved on each time the page says it, so the status line replaces the
+   * message's node and a screen reader reads the same words again - as `ComposerState.messageId` does for a refusal.
+   */
+  texErrorId = 0;
 
   metronomeEnabled = false;
   countInEnabled = false;
 
-  /** Accumulates digits so two-digit frets like 12 can be typed. */
-  private fretBuffer = '';
-  private fretBufferTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Where the digits currently being typed were written. */
-  private fretTarget: EditCursor | null = null;
+  /** The valued tool whose popover is open. The page holds it, because a key can open one as well as a button. */
+  popover: PopoverKind | null = null;
+  sheetOpen = false;
+  stripHeight = 180;
+  /** The heights the strip may take, measured from the page as laid out (`fitStrip`); the window's until it is. */
+  stripRange: StripHeightRange = stripHeightRangeOf(window.innerHeight, 0);
+  /** Measures the strip's range again when the page or its top bar changes size, and clamps the strip to it. */
+  private pageObserver: ResizeObserver | null = null;
 
-  readonly durations: DurationOption[] = [
-    { label: '𝅝', value: 1, dots: 0 },
-    { label: '𝅗𝅥', value: 2, dots: 0 },
-    { label: '𝅘𝅥', value: 4, dots: 0 },
-    { label: '𝅘𝅥𝅮', value: 8, dots: 0 },
-    { label: '𝅘𝅥𝅯', value: 16, dots: 0 },
-    { label: '𝅘𝅥𝅰', value: 32, dots: 0 }
-  ];
+  /** Undo's and Redo's tooltips, with the keys the platform's keyboard writes: Ctrl+Z, or ⌘+Z on a Mac. */
+  readonly undoTitle: string = shortcutTitleOf('undo', inject(KEY_PLATFORM));
+  readonly redoTitle: string = shortcutTitleOf('redo', inject(KEY_PLATFORM));
 
-  readonly instruments: InstrumentOption[] = [
-    { name: 'Acoustic Guitar', program: 25, fretted: true },
-    { name: 'Electric Guitar', program: 27, fretted: true },
-    { name: 'Bass', program: 33, fretted: true },
-    { name: 'Piano', program: 0, fretted: false },
-    { name: 'Strings', program: 48, fretted: false },
-    { name: 'Flute', program: 73, fretted: false },
-    { name: 'Trumpet', program: 56, fretted: false }
-  ];
+  /** What every tool runs against. */
+  readonly host: ComposerToolHost;
 
-  newTrackInstrument: InstrumentOption = this.instruments[3];
+  private readonly keyHandler: ComposerKeyHandler;
+  private readonly fretEntry: FretDigitEntry;
+  /** Where a drag of the strip's separator started, while one is under way. */
+  private stripDrag: { startY: number; startHeight: number } | null = null;
+  /** Takes the page's save guard back off `ComposerSaveRequests`. */
+  private removeSaveGuard: () => void = () => undefined;
 
   constructor(
     private readonly composer: ComposerService,
-    private readonly progression: ProgressionService,
     private readonly mapper: ScoreDocMapperService,
     private readonly alphaTabService: AlphaTabService,
     private readonly texService: AlphaTexService,
+    private readonly saveRequests: ComposerSaveRequests,
     private readonly cdr: ChangeDetectorRef
-  ) {}
+  ) {
+    this.fretEntry = new FretDigitEntry(composer, () => Date.now(), midi =>
+      this.alphaTabService.auditionAfterRender(midi, this.currentTrackProgram)
+    );
+    this.host = {
+      composer,
+      // A popover's own button, or its key, closes it when it is the one open, as a disclosure button does.
+      openPopover: kind => this.present(() => (this.popover = this.popover === kind ? null : kind)),
+      toggleShortcutSheet: () => this.present(() => this.toggleShortcutSheet()),
+      escape: () =>
+        this.present(() => {
+          // An open popover takes Escape alone - as the popover itself does when it has the focus - and so does the
+          // open shortcut sheet, a modal over the score: the press that closes either does not also drop the range.
+          if (this.popover) {
+            this.popover = null;
+            return;
+          }
+          if (this.sheetOpen) {
+            this.sheetOpen = false;
+            return;
+          }
+          composer.setEntryMode('select');
+          composer.setCursor({});
+        }),
+      playPause: () => this.alphaTabService.playPause(),
+      // Stop rewinds to the start, so stop then play is play from the start.
+      playFromStart: () => {
+        this.alphaTabService.stop();
+        this.alphaTabService.play();
+      },
+      requestSave: () => {
+        if (!this.refusesSaveForDraft()) this.saveRequests.request();
+      },
+      addTrack: () => this.strip?.addTrack(),
+      typeFretDigit: digit => this.fretEntry.type(digit)
+    };
+    // The score's element, so a text selection inside the score does not stop Ctrl+C and Ctrl+X copying beats.
+    // And the sheet's state: while it is open, only its own key and Escape reach the tools, so no key edits the score
+    // hidden behind it (`TOOLS_OVER_A_MODAL`), and a Ctrl, Alt or Cmd press is claimed and dropped, so the browser's own
+    // shortcuts do not act behind it either.
+    this.keyHandler = new ComposerKeyHandler(
+      this.host,
+      COMPOSER_TOOLS,
+      () => this.scoreElement?.nativeElement ?? null,
+      () => this.sheetOpen
+    );
+  }
 
   ngOnInit(): void {
     this.composer
       .getState()
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
+        const docChanged = this.state !== null && state.doc !== this.state.doc;
         this.state = state;
-        this.cdr.markForCheck();
-      });
-
-    // The `markForCheck` here is not held by the suite, and saying so is
-    // cheaper than a test that would pin it. `fixture.detectChanges()` refreshes
-    // the fixture's own view whether or not it was marked dirty, so deleting
-    // this line leaves every test in `composer.component.spec.ts` green while
-    // the panel stops repainting in the app. What keeps the risk small is that
-    // the two pages are separate routes: a progression cannot be edited while
-    // this component is alive today, so the only emission it currently sees is
-    // the synchronous first one, which arrives before the first render anyway.
-    // A progression editable beside the score - a split view, or the library
-    // this feature is heading for - is what would make the line load-bearing,
-    // and is when it is worth a test that drives change detection itself.
-    this.progression
-      .getState()
-      .pipe(takeUntil(this.destroy$))
-      .subscribe(state => {
-        this.progressionState = state;
+        // An untouched draft follows the score - an edit, a load, New - so it never refuses a save. One typed into is left
+        // as typed, and is out of date from here (`texDraftOutOfDate`) - until another composition opens, which asked about
+        // it first (`confirmDiscard`) and throws it away.
+        if (this.showTexPanel && state.documentId !== this.texDraftDocumentId) this.discardTexDraft();
+        else if (docChanged && this.showTexPanel && !this.texDraftEdited) this.seedTexDraft();
         this.cdr.markForCheck();
       });
 
@@ -174,16 +257,98 @@ export class ComposerComponent implements OnInit, OnDestroy {
         // alphaTab events originate outside Angular's zone.
         this.cdr.detectChanges();
       });
+
+    // Save in the Library menu asks the same question Ctrl+S does (`requestSave`).
+    this.removeSaveGuard = this.saveRequests.guard(() => this.refusesSaveForDraft());
+    // An edited draft is unsaved work that a load, New or an opened transcription would throw away.
+    this.releaseUnsavedDraft = this.composer.holdUnsavedWork(() => this.showTexPanel && this.texDraftEdited);
+  }
+
+  /**
+   * Watches the page and the rows it leaves the strip less room for - the top bar, which wraps on a narrow window; the
+   * status line, which wraps on a long message; and the alphaTex panel while it is open (`texPanelRef`) - and fits the
+   * strip to the room they leave. The observer's first report comes after layout, outside any template pass, so the bound
+   * height and range change there.
+   */
+  ngAfterViewInit(): void {
+    const page = this.page?.nativeElement;
+    if (!page || typeof ResizeObserver === 'undefined') return;
+    this.pageObserver = new ResizeObserver(() => {
+      const before = `${this.stripHeight}:${this.stripRange.max}`;
+      this.fitStrip();
+      if (`${this.stripHeight}:${this.stripRange.max}` !== before) this.cdr.detectChanges();
+    });
+    this.pageObserver.observe(page);
+    for (const row of [this.topBar?.nativeElement, this.statusLine?.nativeElement, this.texPanel]) {
+      if (row) this.pageObserver.observe(row);
+    }
   }
 
   ngOnDestroy(): void {
+    this.pageObserver?.disconnect();
+    this.removeSaveGuard();
+    this.releaseUnsavedDraft();
     this.destroy$.next();
     this.destroy$.complete();
-    this.resetFretBuffer();
+  }
+
+  /**
+   * The page's one keyboard listener. See `ComposerKeyHandler` for what it takes and what it leaves. Space
+   * and Enter on a button focused from the keyboard - a palette tool, a menu item, a track row's Update - press
+   * that button, so the handler is not asked (`pressesFocusedControl`). A held Enter would press it again on every
+   * repeat - a menu's Save, a saved row's load, a track's Remove - so a repeat is dropped on every such control, and let
+   * through only on a palette button whose tool's key repeats (`ComposerTool.repeatable`).
+   */
+  @HostListener('document:keydown', ['$event'])
+  onKeyDown(event: KeyboardEvent): void {
+    if (pressesFocusedControl(event)) {
+      if (event.key === 'Enter' && event.repeat && !this.repeatableToolAt(event.target)) event.preventDefault();
+      return;
+    }
+    this.keyHandler.handle(event);
+  }
+
+  /** Whether `target` is a palette button whose tool a held key runs again. */
+  private repeatableToolAt(target: EventTarget | null): boolean {
+    const id = target instanceof HTMLElement ? target.closest<HTMLElement>('[data-tool]')?.dataset['tool'] : undefined;
+    return COMPOSER_TOOLS.some(tool => tool.id === id && tool.repeatable === true);
+  }
+
+  /** A palette press runs the same tool, against the same host, as its key. */
+  runTool(tool: ComposerTool): void {
+    tool.run(this.host, null);
+  }
+
+  closePopover(): void {
+    this.popover = null;
+  }
+
+  /**
+   * Opens or closes the shortcut sheet. Opening it closes an open popover: the popover is in the top layer, so it would
+   * stay above the sheet, inside a palette gone inert, and take the first Escape and none of the backdrop's clicks.
+   */
+  toggleShortcutSheet(): void {
+    this.sheetOpen = !this.sheetOpen;
+    if (this.sheetOpen) this.popover = null;
+  }
+
+  closeShortcutSheet(): void {
+    this.sheetOpen = false;
+  }
+
+  /**
+   * The score's host, where the shortcut sheet gives the focus back when what had it before is gone. A function the
+   * sheet asks as it closes: `scoreElement` is a view query inside `*ngIf`, unset when the sheet's input is first bound.
+   */
+  readonly scoreHost = (): HTMLElement | null => this.scoreElement?.nativeElement ?? null;
+
+  /** The program of the caret's track, for auditioning a typed fret on its own sound. */
+  get currentTrackProgram(): number {
+    return this.state?.doc.tracks[this.state.cursor.trackIndex]?.playback.program ?? 25;
   }
 
   // -------------------------------------------------------------------------
-  // Transport
+  // Transport and score info
   // -------------------------------------------------------------------------
 
   playPause(): void {
@@ -213,423 +378,6 @@ export class ComposerComponent implements OnInit, OnDestroy {
     this.composer.updateScoreInfo({ title: value });
   }
 
-  // -------------------------------------------------------------------------
-  // Note entry
-  // -------------------------------------------------------------------------
-
-  get currentStaffIsFretted(): boolean {
-    if (!this.state) return false;
-    const staff = this.composer.staffAt(this.state.doc, this.state.cursor);
-    return !!staff && staff.tuning.length > 0;
-  }
-
-  get currentTrackProgram(): number {
-    if (!this.state) return 25;
-    return this.state.doc.tracks[this.state.cursor.trackIndex]?.playback.program ?? 25;
-  }
-
-  /**
-   * Writes a fret and moves on, or rewrites the note just written.
-   *
-   * The first digit places a note and advances the caret so a melody flows.
-   * A further digit typed within the window belongs to the same number, so it
-   * rewrites that note in place - "1" then "2" gives fret 12 on one beat, not
-   * fret 1 followed by fret 2 - and the caret stays where it moved to.
-   */
-  private writeFret(fret: number, continuing: boolean): void {
-    if (!this.state) return;
-
-    const target = continuing && this.fretTarget ? this.fretTarget : this.state.cursor;
-    const stringIndex = target.stringIndex ?? 0;
-    const pitch: NotePitch = { kind: 'fretted', string: stringIndex + 1, fret };
-
-    this.auditionFretted(stringIndex, fret);
-
-    if (continuing && this.fretTarget) {
-      const resume = this.state.cursor;
-      this.composer.setCursor(this.fretTarget);
-      this.composer.setNoteAtCursor(pitch, false);
-      this.composer.setCursor(resume);
-      return;
-    }
-
-    this.fretTarget = { ...target };
-    this.composer.setNoteAtCursor(pitch, true);
-  }
-
-  private auditionFretted(stringIndex: number, fret: number): void {
-    if (!this.state) return;
-    const staff = this.composer.staffAt(this.state.doc, this.state.cursor);
-    const openString = staff?.tuning[stringIndex];
-    if (openString === undefined) return;
-    this.alphaTabService.auditionNote(openString + fret, this.currentTrackProgram);
-  }
-
-  enterRest(): void {
-    this.composer.setRestAtCursor();
-  }
-
-  deleteAtCursor(): void {
-    this.composer.deleteAtCursor();
-  }
-
-  selectDuration(option: DurationOption): void {
-    this.composer.applyDurationAtCursor(option.value, option.dots);
-  }
-
-  toggleDot(): void {
-    if (!this.state) return;
-    const dots = this.state.inputDots > 0 ? 0 : 1;
-    this.composer.applyDurationAtCursor(this.state.inputDuration, dots);
-  }
-
-  isDurationActive(option: DurationOption): boolean {
-    return this.state?.inputDuration === option.value;
-  }
-
-  // -------------------------------------------------------------------------
-  // Structure
-  // -------------------------------------------------------------------------
-
-  addBar(): void {
-    this.composer.appendBar();
-  }
-
-  removeBar(): void {
-    if (this.state) this.composer.removeBar(this.state.cursor.barIndex);
-  }
-
-  addTrack(): void {
-    const instrument = this.newTrackInstrument;
-    this.composer.addTrack(instrument.name, instrument.program, instrument.fretted);
-  }
-
-  removeTrack(index: number): void {
-    this.composer.removeTrack(index);
-  }
-
-  selectTrack(index: number): void {
-    this.composer.setCursor({ trackIndex: index, staffIndex: 0 });
-  }
-
-  // -------------------------------------------------------------------------
-  // The progression's track
-  //
-  // ## Where the state is said, and what the two buttons do about it
-  //
-  // Three facts settle the shape of everything below, and the first two were
-  // found by review rather than by design.
-  //
-  // A `disabled` button hides its own explanation from nearly everybody. It is
-  // out of the tab order, so its `aria-label` cannot be reached by focus, and
-  // browsers suppress `title` on it - so the sentence explaining *why* Update
-  // is greyed out reached only a screen-reader user browsing the page outside
-  // focus order. That is the smallest audience of the three who need it.
-  //
-  // And a refusal one button makes is not a refusal the panel makes. "Add
-  // progression track" is the same `sendProgression` call, so pressing it on an
-  // up-to-date track committed a byte-identical merge - an undo entry and a
-  // dirty document for no visible change - which is exactly what the Update
-  // beside it was greyed out to prevent.
-  //
-  // So: **the state is said on the row, in words, where nothing has to be
-  // focused to read it**; both buttons refuse on one reading of that state; and
-  // both refuse with `aria-disabled` plus an early return rather than with
-  // `disabled`, which keeps them focusable, keeps the tooltip, and leaves the
-  // reason reachable by every route. The early return is what makes the refusal
-  // real - `aria-disabled` is advisory, so a handler that ignored it would let
-  // a click through the announcement.
-  //
-  // The alternative considered was relabelling the panel button ("Update
-  // progression track" when the score already holds it). It was rejected: the
-  // word on a button is what a speech-input user says to press it, so a caption
-  // that changes underneath the state is a control whose name moves, and the
-  // row already carries an Update whose whole job is that case.
-  // -------------------------------------------------------------------------
-
-  /**
-   * What this score holds of the progression that is open, or null before the
-   * first publish.
-   *
-   * The single reading every control below is derived from: whether either
-   * button refuses, what each of the four labels says, and what the row's
-   * status shows. Deriving them rather than each asking `generatedTrackState`
-   * on its own terms is what stops the panel refusing a press for one reason
-   * and explaining it with another.
-   *
-   * Null is the pre-publish state and it is not reachable today - `getState()`
-   * is a `BehaviorSubject` and emits synchronously inside `ngOnInit`, so the
-   * field is set before the first render. It is a branch rather than a `!`
-   * because a page that could be opened without a progression is the cheaper
-   * thing to keep true than to prove impossible.
-   */
-  private sendState(): GeneratedTrackState | null {
-    if (!this.state || !this.progressionState) return null;
-
-    return generatedTrackState(this.state.doc, this.progressionState.doc);
-  }
-
-  /**
-   * Whether "Add progression track" would change the score.
-   *
-   * `'current'` is the one answer that refuses, and it refuses for the reason
-   * the section comment gives: the merge would be byte-identical, so the press
-   * would spend an undo entry and the dirty flag on nothing. `'absent'` adds and
-   * `'stale'` refreshes, and both are real changes.
-   */
-  canAddProgressionTrack(): boolean {
-    const state = this.sendState();
-
-    return state !== null && state !== 'current';
-  }
-
-  /**
-   * What the panel's send button is offering, in a sentence that starts with
-   * the words printed on it.
-   *
-   * Leading with the visible label is WCAG 2.1 SC 2.5.3 and not house style: an
-   * accessible name that does not contain the visible one is a control a
-   * speech-input user cannot address by the name they can see. The old label -
-   * "Add the current progression to this score as a track" - shared no phrase
-   * with "Add progression track", so saying the words on the button matched
-   * nothing.
-   */
-  addProgressionTrackLabel(): string {
-    const state = this.progressionState;
-    if (!state) return 'Add progression track: there is no progression to add yet';
-
-    const from = progressionLabel(state.doc.name);
-
-    switch (this.sendState()) {
-      case 'stale':
-        return `Add progression track: refreshes the copy of ${from} this score already holds`;
-      case 'current':
-        return `Add progression track: this score already holds ${from} as it stands`;
-      default:
-        return `Add progression track: puts ${from} into this score as a track`;
-    }
-  }
-
-  /**
-   * Puts the progression into the score, or refreshes the copy already in it.
-   *
-   * "Add progression track" and a row's Update are one call, because
-   * `sendProgression` is one command: the merge appends when the score holds
-   * nothing of this progression and replaces it in place when it does, so the
-   * difference is a fact about the score rather than a choice this component
-   * makes. The progression page's Send is the third button over the same call -
-   * the push is where the user made the thing, the pull is where it will
-   * appear, and the design doc settles that under "Where the controls are".
-   *
-   * The guard is `canAddProgressionTrack` and not a null check, because
-   * `aria-disabled` only says a control is refusing - it does not stop the
-   * click, and the handler is where the refusal is actually made.
-   */
-  addProgressionTrack(): void {
-    // The refusal is the second half; the first is only how a null field
-    // becomes a `ProgressionState` below, since `canAddProgressionTrack`
-    // already answers false for it.
-    const state = this.progressionState;
-    if (!state || !this.canAddProgressionTrack()) return;
-
-    // Projected fresh on every press and not retained. `sendProgression` states
-    // both of the preconditions this expression satisfies: the merged score
-    // shares bar objects with the projection, so a kept copy edited afterwards
-    // would be writing into a committed score behind undo's back; and the
-    // track has to be barred in the *score's* meter, because it will share the
-    // score's bar lines - a mismatch throws rather than engraving music that
-    // disagrees with the lines drawn over it. `scoreMeter` is the service's own
-    // name for the meter its guard asks about, so the two cannot answer
-    // differently-shaped questions.
-    //
-    // The scale comes from the published state because `progressionTrack` is
-    // pure and cannot resolve `key.scaleId` itself. Empty when the id resolves
-    // to nothing, which spells every note from the key's preference; the
-    // progression page's own export does the same for the same reason.
-    this.composer.sendProgression(
-      progressionTrack(
-        state.doc,
-        state.keyScale ? state.keyScale.intervals : [],
-        this.composer.scoreMeter
-      )
-    );
-  }
-
-  /**
-   * Update, which is a Send into a score that already holds the track.
-   *
-   * Almost an alias, and deliberately little more: the button is named for what
-   * the user is doing rather than for what the service calls it, and a second
-   * method with a body of its own would be a second place for the two to drift.
-   *
-   * ## Why it takes no track when everything beside it does
-   *
-   * `flattenGeneratedTrack` takes an index, `canUpdate` and the labels take a
-   * track, and this takes nothing - which is correct only because of an
-   * invariant worth naming rather than rediscovering. **At most one track in a
-   * score can carry the open progression's id**: `mergeGeneratedTrack` matches
-   * on `progressionId` and replaces in place, so a second Send never appends a
-   * second copy. A row whose marker names some *other* progression is refused
-   * below rather than updated. So there is only ever one row this could mean,
-   * and passing the row in would be passing in a value the call could not use.
-   *
-   * The day that stops being true - a score holding two progressions' tracks
-   * with the second one open, which is what a progression library brings - this
-   * has to take the track and send *that* row's progression, or it becomes a
-   * wrong-row update: the press would refresh whichever track matches the open
-   * progression rather than the one whose button was pressed.
-   *
-   * The refusal is `'stale'` and not "anything but current", which matters for
-   * exactly that case: a row built from a progression that is not open reads
-   * `'absent'` here, and falling through to the send would *append* a second
-   * generated track rather than refuse.
-   */
-  updateGeneratedTrack(): void {
-    if (this.sendState() !== 'stale') return;
-
-    this.addProgressionTrack();
-  }
-
-  /** Hands the track over to the user, keeping the music and dropping the link. */
-  flattenGeneratedTrack(index: number): void {
-    this.composer.flattenTrack(index);
-  }
-
-  /**
-   * How this row stands to the progression that is open.
-   *
-   * The one branch point the row has: the status on screen, whether Update
-   * refuses and what its label says are all this answer said three ways, so
-   * they cannot disagree about which of them the user is looking at.
-   *
-   * `generatedTrackState` is still the function that decides *stale or not* -
-   * it is the one the badge, the edit gate and the service's own refusals all
-   * read, and answering that here would be a second opinion about it. What this
-   * adds is the two distinctions it does not carry:
-   *
-   *  - **Which row.** The state is a fact about a score and a progression as a
-   *    pair, so a score holding some *other* progression's track would read that
-   *    track's freshness off this row. `'foreign'` is that case named, and it is
-   *    a refusal rather than a claim: whether that track matches its own
-   *    progression is a question this page has no document to answer.
-   *  - **Which half of stale.** `'stale'` is one answer to two questions, and
-   *    `GeneratedOrigin.source` is where they stay apart - which is the whole
-   *    reason the marker holds a union rather than a revision and a flag. A
-   *    moved revision means the progression changed; `'diverged'` means a
-   *    score-wide bar edit moved this track while the progression stood still.
-   *    Telling a user the second was the first is a claim about a document they
-   *    did not touch.
-   *
-   * A track that is both - a bar inserted and then the progression edited -
-   * reads `'moved'`, because the marker was restated as `'diverged'` and no
-   * longer holds a revision to compare. Both are stale and one Update fixes
-   * both, so the cost is the less complete of two true sentences.
-   */
-  private generatedStatus(track: TrackDoc): GeneratedRowState {
-    const marker = track.generated;
-    if (!marker || marker.progressionId !== this.progressionState?.doc.id) return 'foreign';
-    if (marker.source.kind === 'diverged') return 'moved';
-
-    return this.sendState() === 'stale' ? 'behind' : 'current';
-  }
-
-  /**
-   * That state in the fewest true words, drawn beside the badge.
-   *
-   * On screen because a `disabled` control's explanation is unreachable by
-   * focus and its tooltip is suppressed - see the section comment. The row is
-   * where the state can be read without pressing or focusing anything, which is
-   * also what lets the labels below stay a sentence each rather than the only
-   * copy of the information.
-   *
-   * Short because the panel is 15rem wide and this sits under a name the user
-   * is scanning for. "behind the progression" and "moved by a score edit" are
-   * the two halves of stale in the plainest words that distinguish them.
-   */
-  generatedStatusLabel(track: TrackDoc): string {
-    switch (this.generatedStatus(track)) {
-      case 'behind':
-        return 'behind the progression';
-      case 'moved':
-        return 'moved by a score edit';
-      case 'foreign':
-        return 'progression not open';
-      default:
-        return 'up to date';
-    }
-  }
-
-  /** Whether this row's Update would change anything. Refuses on the other three. */
-  canUpdate(track: TrackDoc): boolean {
-    const state = this.generatedStatus(track);
-
-    return state === 'behind' || state === 'moved';
-  }
-
-  /**
-   * What Update is offering, in a sentence.
-   *
-   * The badge and the status sit *beside* this button rather than inside it,
-   * and nothing carries a neighbouring element into a button's accessible name,
-   * so the label has to name the track and the reason itself. Which track,
-   * because a panel of rows offers one of these per row; and why, because a
-   * refusal that does not say why is a greyed-out control and nothing more.
-   *
-   * Every answer leads with "Update", the word printed on the button. That is
-   * WCAG 2.1 SC 2.5.3: an accessible name that drops the visible one leaves a
-   * speech-input user saying what they can see and matching nothing. It applies
-   * to the refusals too, now that they are focusable.
-   *
-   * Four answers, one per state, and the two halves of stale are two of them.
-   * The `'foreign'` sentence is the one the app cannot currently produce - see
-   * `openAnotherProgression` in the spec for what would - and it is still not
-   * "up to date", because that would be a claim this page has no document to
-   * check.
-   */
-  updateLabel(track: TrackDoc): string {
-    const from = this.sourceOf(track);
-
-    switch (this.generatedStatus(track)) {
-      case 'behind':
-        return `Update ${track.name} from ${from}, which has changed since this track was `
-          + 'written';
-      case 'moved':
-        return `Update ${track.name} from ${from}, because a score edit has moved this track `
-          + 'since it was written';
-      case 'foreign':
-        return `Update ${track.name}: ${from} is not the one that is open, so this track `
-          + 'cannot be updated here';
-      default:
-        return `Update ${track.name}: it already matches ${from}`;
-    }
-  }
-
-  /** What Flatten is offering, named the same way and for the same reason. */
-  flattenLabel(track: TrackDoc): string {
-    return `Flatten ${track.name}, detaching it from ${this.sourceOf(track)} and keeping the music`;
-  }
-
-  /**
-   * How a label refers to the progression a track came from.
-   *
-   * Two names that are usually one string. The row is labelled with the track's
-   * name and the marker carries the progression's, and they start out equal
-   * because nothing renames a progression - so naming both said "it already
-   * matches the progression Progression", which is what nearly every user
-   * heard. They are still two different facts, and they come apart the moment
-   * either end is renamed, so the fix is to stop saying the second aloud when
-   * it would only repeat the first rather than to drop it from the sentence.
-   *
-   * Every caller reads this as a noun phrase mid-sentence, which is why the
-   * article is in here and not at the call sites: "the progression it came
-   * from" and "the progression Verse" have to substitute for one another in
-   * all five, including `'foreign'`, where the phrase is the subject.
-   */
-  private sourceOf(track: TrackDoc): string {
-    const from = track.generated?.progressionName ?? '';
-    return from === track.name ? 'the progression it came from' : `the progression ${from}`;
-  }
-
   undo(): void {
     this.composer.undo();
   }
@@ -638,21 +386,108 @@ export class ComposerComponent implements OnInit, OnDestroy {
     this.composer.redo();
   }
 
+  /** A new, empty score, with a fresh history - asked first when anything is unsaved (`confirmDiscard`). */
   newScore(): void {
-    this.composer.reset();
+    if (this.composer.confirmDiscard('start a new score')) this.composer.reset();
+  }
+
+  // -------------------------------------------------------------------------
+  // The track strip's height
+  // -------------------------------------------------------------------------
+
+  onStripResizeStart(event: PointerEvent): void {
+    this.fitStrip();
+    this.stripDrag = { startY: event.clientY, startHeight: this.stripHeight };
+    // Captured, so the drag keeps its pointer when it leaves the thin separator.
+    if (event.target instanceof Element) event.target.setPointerCapture(event.pointerId);
+  }
+
+  onStripResize(event: PointerEvent): void {
+    if (!this.stripDrag) return;
+    this.stripHeight = clampedStripHeight(this.stripDrag.startHeight + this.stripDrag.startY - event.clientY, this.stripRange);
+  }
+
+  onStripResizeEnd(): void {
+    this.stripDrag = null;
+  }
+
+  /**
+   * The separator's keys, as a separator's are: ↑ and ↓ a step, Home the shortest and End the tallest. Stopped here, so
+   * the page's keyboard listener does not also move the caret with the same press.
+   */
+  onStripResizeKey(event: KeyboardEvent): void {
+    const heightFor: Readonly<Record<string, (range: StripHeightRange) => number>> = {
+      ArrowUp: () => this.stripHeight + STRIP_KEY_STEP,
+      ArrowDown: () => this.stripHeight - STRIP_KEY_STEP,
+      Home: range => range.min,
+      End: range => range.max
+    };
+    const next = heightFor[event.key];
+    if (!next) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.fitStrip();
+    this.stripHeight = clampedStripHeight(next(this.stripRange), this.stripRange);
+  }
+
+  /**
+   * Measures the strip's range from the page as it is laid out - its height, less the top bar, the status line, the
+   * separator and the open alphaTex panel, and less the score's minimum as its styles compute it (`stripHeightRangeOf`) -
+   * and clamps the strip to it.
+   */
+  private fitStrip(): void {
+    const page = this.page?.nativeElement;
+    if (!page) return;
+    const rows = [this.topBar?.nativeElement, this.statusLine?.nativeElement, this.stripSeparator?.nativeElement, this.texPanel];
+    const fixedRows = rows.reduce((sum, row) => sum + (row?.offsetHeight ?? 0), 0);
+    this.stripRange = stripHeightRangeOf(page.clientHeight, fixedRows, this.scoreMinHeight());
+    this.stripHeight = clampedStripHeight(this.stripHeight, this.stripRange);
+  }
+
+  /** The least height the page's styles give the score, in pixels: `10rem`, so it follows the root font size. */
+  private scoreMinHeight(): number {
+    const score = this.scoreElement?.nativeElement;
+    const minHeight = score ? parseFloat(getComputedStyle(score).minHeight) : Number.NaN;
+    return Number.isFinite(minHeight) ? minHeight : SCORE_MIN_HEIGHT;
   }
 
   // -------------------------------------------------------------------------
   // alphaTex escape hatch
   // -------------------------------------------------------------------------
 
+  /** Opens or closes the alphaTex panel. Either way its message goes: it was about a draft that is gone or new. */
   toggleTexPanel(): void {
     this.showTexPanel = !this.showTexPanel;
+    this.texApplyError = null;
     if (this.showTexPanel) {
-      this.texDraft = this.currentTex();
+      this.seedTexDraft();
       this.texDiagnostics = [];
-      this.texApplyError = null;
     }
+    this.cdr.markForCheck();
+  }
+
+  /** Whether the draft has been typed into since it was seeded, reverted or applied. */
+  get texDraftEdited(): boolean {
+    return this.texDraft !== this.texDraftBase;
+  }
+
+  /** Whether the open panel's draft has been typed into and the score has changed since it was written. */
+  get texDraftOutOfDate(): boolean {
+    return this.showTexPanel && this.texDraftEdited && this.state?.doc !== this.texDraftDoc;
+  }
+
+  /** Seeds the draft from the score as it is now. */
+  private seedTexDraft(): void {
+    this.texDraft = this.texDraftBase = this.currentTex();
+    this.texDraftDoc = this.state?.doc ?? null;
+    this.texDraftDocumentId = this.state?.documentId ?? null;
+  }
+
+  /** Throws the draft away for the next composition's, with what the panel said about it. */
+  private discardTexDraft(): void {
+    this.seedTexDraft();
+    this.texDiagnostics = [];
+    this.texApplyError = null;
   }
 
   /** Canonical alphaTex for the current document, generated on demand. */
@@ -666,136 +501,58 @@ export class ComposerComponent implements OnInit, OnDestroy {
     }
   }
 
+  /**
+   * Refuses a save while the alphaTex panel is open on a draft that has been typed into, saying why in the status
+   * line. A save writes the document, not the draft, so saving then would leave what is in the text box unsaved
+   * without a word - and Ctrl+S runs from the textarea itself (`inTextFields`). A draft written against an earlier
+   * score says so, since applying it would replace what changed since. An untouched draft follows the score and
+   * refuses nothing, and no alphaTex is built to ask.
+   */
+  private refusesSaveForDraft(): boolean {
+    if (!this.showTexPanel || !this.texDraftEdited) return false;
+    this.texApplyError = this.texDraftOutOfDate ? TEX_DRAFT_OUT_OF_DATE : TEX_DRAFT_UNSAVED;
+    this.texErrorId++;
+    this.cdr.markForCheck();
+    return true;
+  }
+
+  /**
+   * Applies the draft as an edit of this composition, on the undo stack (`replaceDocument`). A draft out of date would
+   * replace the changes made since it was written, so that is asked - once the draft parses, since a draft that cannot
+   * be applied has nothing to ask about.
+   */
   applyTex(): void {
     const result = this.texService.parse(this.texDraft);
     this.texDiagnostics = result.diagnostics;
 
     if (!result.score) {
-      // Keep the last good document; the diagnostics explain the failure.
+      // Keep the last good document; the diagnostics explain the failure, and the status line says so.
       this.texApplyError = 'alphaTex could not be parsed. The score is unchanged.';
+      this.texErrorId++;
       this.cdr.markForCheck();
+      return;
+    }
+    if (this.texDraftOutOfDate && !confirm('The alphaTex draft was written against an earlier score. Apply it anyway, replacing the changes made since?')) {
       return;
     }
 
     this.texApplyError = null;
     this.composer.replaceDocument(this.mapper.toDoc(result.score));
+    // The score is now what the draft says: the draft counts as untouched from here, and follows the next change.
+    this.texDraftBase = this.texDraft;
+    this.texDraftDoc = this.composer.doc;
     this.cdr.markForCheck();
   }
 
   revertTex(): void {
-    this.texDraft = this.currentTex();
+    this.seedTexDraft();
     this.texDiagnostics = [];
     this.texApplyError = null;
   }
 
-  // -------------------------------------------------------------------------
-  // Keyboard shortcuts (Guitar Pro style)
-  // -------------------------------------------------------------------------
-
-  @HostListener('document:keydown', ['$event'])
-  onKeyDown(event: KeyboardEvent): void {
-    const target = event.target as HTMLElement | null;
-    if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
-
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-      event.preventDefault();
-      event.shiftKey ? this.composer.redo() : this.composer.undo();
-      return;
-    }
-
-    switch (event.key) {
-      case 'ArrowLeft':
-        event.preventDefault();
-        this.resetFretBuffer();
-        this.composer.moveCursorByBeat(-1);
-        break;
-      case 'ArrowRight':
-        event.preventDefault();
-        this.resetFretBuffer();
-        this.composer.moveCursorByBeat(1);
-        break;
-      case 'ArrowUp':
-        event.preventDefault();
-        this.resetFretBuffer();
-        this.composer.moveCursorByString(-1);
-        break;
-      case 'ArrowDown':
-        event.preventDefault();
-        this.resetFretBuffer();
-        this.composer.moveCursorByString(1);
-        break;
-      case 'Delete':
-      case 'Backspace':
-        event.preventDefault();
-        this.composer.deleteAtCursor();
-        break;
-      case 'r':
-        event.preventDefault();
-        this.enterRest();
-        break;
-      case '+':
-        event.preventDefault();
-        this.shiftDuration(-1);
-        break;
-      case '-':
-        event.preventDefault();
-        this.shiftDuration(1);
-        break;
-      case ' ':
-        event.preventDefault();
-        this.playPause();
-        break;
-      default:
-        this.handleFretDigit(event);
-    }
-  }
-
-  /**
-   * Number keys type frets onto the current string, as in Guitar Pro.
-   *
-   * Digits accumulate briefly so two-digit frets can be typed: "1" then "2"
-   * within the window means fret 12, not fret 1 followed by fret 2. A digit
-   * that would overshoot the fretboard starts a fresh number rather than being
-   * silently clamped.
-   */
-  private handleFretDigit(event: KeyboardEvent): void {
-    if (!this.currentStaffIsFretted) return;
-    if (!/^[0-9]$/.test(event.key)) return;
-
-    event.preventDefault();
-
-    const combined = Number(this.fretBuffer + event.key);
-    const continuing = this.fretBuffer !== '' && combined <= ComposerComponent.MAX_FRET;
-    const fret = continuing ? combined : Number(event.key);
-
-    this.fretBuffer = String(fret);
-    if (this.fretBufferTimer) clearTimeout(this.fretBufferTimer);
-    this.fretBufferTimer = setTimeout(
-      () => this.resetFretBuffer(),
-      ComposerComponent.FRET_BUFFER_MS
-    );
-
-    this.writeFret(fret, continuing);
-  }
-
-  private resetFretBuffer(): void {
-    this.fretBuffer = '';
-    this.fretTarget = null;
-    if (this.fretBufferTimer) {
-      clearTimeout(this.fretBufferTimer);
-      this.fretBufferTimer = null;
-    }
-  }
-
-  private shiftDuration(direction: number): void {
-    if (!this.state) return;
-    const index = this.durations.findIndex(d => d.value === this.state!.inputDuration);
-    const next =
-      this.durations[Math.max(0, Math.min(this.durations.length - 1, index + direction))];
-    if (next) this.composer.applyDurationAtCursor(next.value, this.state.inputDots);
-  }
-
-  trackByIndex(index: number): number {
-    return index;
+  /** Runs a change the host makes from outside a template event, and marks the page for checking. */
+  private present(change: () => void): void {
+    change();
+    this.cdr.markForCheck();
   }
 }

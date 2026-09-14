@@ -5,7 +5,10 @@ import {
   setKeySignature,
   setTimeSignature,
   timeSignatureFault,
-  toggleMasterBarFlag
+  toggleMasterBarFlag,
+  deleteBars,
+  insertBarsBefore,
+  toggleRepeatClose
 } from './bar-edits';
 import { scoreBarFills } from './bar-fill';
 import { createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
@@ -23,6 +26,12 @@ describe('timeSignatureFault and keySignatureFault', () => {
     expect(timeSignatureFault({ numerator: 5, denominator: 6, isCommon: false })).toMatch(/denominator/i);
     expect(timeSignatureFault({ numerator: 0, denominator: 4, isCommon: false })).toMatch(/top[\s\S]*numerator/i);
     expect(keySignatureFault({ fifths: 8, mode: 'major' })).toMatch(/7/);
+  });
+
+  it('draws a C only for 4/4 and 2/2, and refuses common time on any other meter', () => {
+    expect(timeSignatureFault({ numerator: 4, denominator: 4, isCommon: true })).toBeNull();
+    expect(timeSignatureFault({ numerator: 2, denominator: 2, isCommon: true })).toBeNull();
+    expect(timeSignatureFault({ numerator: 3, denominator: 4, isCommon: true })).toBe('Common time is drawn only for 4/4, and cut time only for 2/2.');
   });
 });
 
@@ -124,7 +133,7 @@ describe('setKeySignature and setClef', () => {
     const doc = ComposerService.createEmptyScore();
     doc.tracks[0].staves[0].bars[3].keySignature = { fifths: -1, mode: 'major' };
 
-    setKeySignature(doc, 1, { fifths: 2, mode: 'major' });
+    setKeySignature(doc, { first: 1, last: 1 }, { fifths: 2, mode: 'major' });
 
     expect(doc.tracks[0].staves[0].bars.map(bar => bar.keySignature.fifths)).toEqual([0, 2, 2, -1]);
   });
@@ -133,10 +142,45 @@ describe('setKeySignature and setClef', () => {
     const doc = ComposerService.createEmptyScore();
     doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
 
-    setClef(doc, 1, 0, 0, 'f4', 'regular');
+    setClef(doc, 1, 0, { first: 0, last: 0 }, 'f4', 'regular');
 
     expect(doc.tracks[1].staves[0].bars.every(bar => bar.clef === 'f4')).toBeTrue();
     expect(doc.tracks[0].staves[0].bars[0].clef).toBe('g2');
+  });
+
+  it('runs a clef forward from one bar until the bars carry a different clef or ottava', () => {
+    const doc = ComposerService.createEmptyScore();
+    const bars = doc.tracks[0].staves[0].bars;
+    bars[3].clefOttava = '8va';
+
+    setClef(doc, 0, 0, { first: 1, last: 1 }, 'f4', 'regular');
+
+    expect(bars.map(bar => bar.clef)).toEqual(['g2', 'f4', 'f4', 'g2']);
+  });
+
+  it('writes a key over the whole of a range, on every staff, when a key change falls inside it', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    for (const track of doc.tracks) {
+      for (const index of [2, 3]) track.staves[0].bars[index].keySignature = { fifths: -1, mode: 'major' };
+    }
+
+    setKeySignature(doc, { first: 1, last: 2 }, { fifths: 2, mode: 'major' });
+
+    for (const track of doc.tracks) {
+      expect(track.staves[0].bars.map(bar => bar.keySignature.fifths)).withContext(track.name).toEqual([0, 2, 2, -1]);
+    }
+  });
+
+  it('writes a changed ottava over the whole of a range whose clefs are mixed, each bar keeping its own clef', () => {
+    const doc = ComposerService.createEmptyScore();
+    const bars = doc.tracks[0].staves[0].bars;
+    bars[2].clef = 'f4';
+    bars[3].clef = 'f4';
+
+    setClef(doc, 0, 0, { first: 1, last: 2 }, null, '8va');
+
+    expect(bars.map(bar => `${bar.clef}/${bar.clefOttava}`)).toEqual(['g2/regular', 'g2/8va', 'f4/8va', 'f4/regular']);
   });
 });
 
@@ -183,5 +227,62 @@ describe('toggleMasterBarFlag', () => {
     expect(doc.masterBars[1].isFreeTime).toBeTrue();
     expect(doc.tracks[0].staves[0].bars[1].voices[0].beats.map(beat => beat.duration)).toEqual([4]);
     expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'full' });
+  });
+});
+
+describe('toggleRepeatClose, insertBarsBefore and deleteBars', () => {
+  const threeFour = THREE_FOUR;
+
+  it('closes a repeat played twice, and opens it again when every bar closes one', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.masterBars[1].repeatCount = 3;
+
+    toggleRepeatClose(doc, { first: 0, last: 1 });
+    expect(doc.masterBars.slice(0, 2).map(bar => bar.repeatCount)).toEqual([2, 3]);
+
+    toggleRepeatClose(doc, { first: 0, last: 1 });
+    expect(doc.masterBars.slice(0, 2).map(bar => bar.repeatCount)).toEqual([0, 0]);
+  });
+
+  it('inserts bars in front of a bar, on every staff', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    insertBarsBefore(doc, 1, 2);
+
+    expect(doc.masterBars.length).toBe(6);
+    expect(doc.tracks[0].staves[0].bars.length).toBe(6);
+  });
+
+  it('refuses to delete every bar', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(deleteBars(doc, { first: 0, last: 3 })).toMatch(/at least one bar/i);
+    expect(doc.masterBars.length).toBe(4);
+  });
+
+  it('keeps the meter the deleted first bar declared', () => {
+    const doc = ComposerService.createEmptyScore();
+    setTimeSignature(doc, 0, threeFour);
+
+    expect(deleteBars(doc, { first: 0, last: 0 })).toBeNull();
+
+    expect(doc.masterBars.length).toBe(3);
+    expect(doc.masterBars[0].timeSignature).toEqual(threeFour);
+  });
+
+  it('moves a later declaration to the bar that follows the deleted ones, and drops one that repeats', () => {
+    const doc = ComposerService.createEmptyScore();
+    setTimeSignature(doc, 2, threeFour);
+
+    deleteBars(doc, { first: 1, last: 2 });
+    expect(doc.masterBars[1].timeSignature).toEqual(threeFour);
+
+    // Bar 3 repeats bar 1's 3/4 - a shape a loaded file can have. With bar 2 gone it follows bar 1
+    // directly, so its declaration repeats the meter in force and is dropped.
+    const same = ComposerService.createEmptyScore();
+    setTimeSignature(same, 1, threeFour);
+    same.masterBars[3].timeSignature = { ...threeFour };
+    deleteBars(same, { first: 2, last: 2 });
+    expect(same.masterBars.map(bar => bar.timeSignature?.numerator ?? null)).toEqual([4, 3, null]);
   });
 });

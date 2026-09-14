@@ -3,9 +3,14 @@ import { By } from '@angular/platform-browser';
 
 import { ComposerLibraryPanelComponent } from './composer-library-panel.component';
 import { ScoreDoc } from '../../../../models/composer.model';
+import * as alphaTab from '@coderline/alphatab';
+
+import { AlphaTexService } from '../../../../services/alpha-tex.service';
 import { ComposerExportService } from '../../../../services/composer-export.service';
-import { ComposerLibraryService } from '../../../../services/composer-library.service';
+import { CompositionEntry, ComposerLibraryService } from '../../../../services/composer-library.service';
+import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { ComposerService } from '../../../../services/composer.service';
+import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
 
 /**
  * What the Library panel refuses to save, and what it still exports.
@@ -85,11 +90,53 @@ describe('ComposerLibraryPanelComponent', () => {
     spyOn(exporter, 'downloadMidiFile');
 
     composer = TestBed.inject(ComposerService);
-    composer.replaceDocument(ComposerService.createEmptyScore(), true);
+    composer.replaceDocument(ComposerService.createEmptyScore(), { markClean: true, newComposition: true });
 
     fixture = TestBed.createComponent(ComposerLibraryPanelComponent);
     panel = fixture.componentInstance;
     fixture.detectChanges();
+  });
+
+  describe('loading over unsaved work', () => {
+    beforeEach(() => {
+      const doc = { ...ComposerService.createEmptyScore(), title: 'C', tempo: 90 };
+      const tex = TestBed.inject(AlphaTexService).export(TestBed.inject(ScoreDocMapperService).toScore(doc, new alphaTab.Settings()));
+      const now = new Date();
+      spyOn(library, 'get').and.resolveTo({ id: 'c-id', title: 'C', artist: '', tex, tempo: 90, trackCount: 1, barCount: 4, dateCreated: now, dateModified: now });
+    });
+
+    it('asks first, and loads nothing when told not to discard the changes', async () => {
+      composer.setTempo(140);
+      const asked = spyOn(window, 'confirm').and.returnValue(false);
+
+      await panel.load('c-id');
+
+      expect(asked).toHaveBeenCalledOnceWith('Discard unsaved changes and load this composition?');
+      expect(library.get).not.toHaveBeenCalled();
+      expect(composer.doc.tempo).toBe(140);
+      expect(composer.state.canUndo).toBeTrue();
+    });
+
+    it('loads when told to discard them', async () => {
+      composer.setTempo(140);
+      spyOn(window, 'confirm').and.returnValue(true);
+
+      await panel.load('c-id');
+
+      expect(composer.doc.tempo).toBe(90);
+      expect(panel.currentId).toBe('c-id');
+    });
+
+    it('asks about unsaved work held outside the document, as an edited alphaTex draft is', async () => {
+      const release = composer.holdUnsavedWork(() => true);
+      const asked = spyOn(window, 'confirm').and.returnValue(false);
+
+      await panel.load('c-id');
+
+      expect(asked).toHaveBeenCalledTimes(1);
+      expect(library.get).not.toHaveBeenCalled();
+      release();
+    });
   });
 
   describe('with nothing linked', () => {
@@ -98,6 +145,286 @@ describe('ComposerLibraryPanelComponent', () => {
 
       expect(library.save).toHaveBeenCalled();
       expect(panel.saveBlockedReason).toBeNull();
+    });
+
+    it('saves when the keyboard asks, through the same save its button runs', async () => {
+      TestBed.inject(ComposerSaveRequests).request();
+      await fixture.whenStable();
+
+      expect(library.save).toHaveBeenCalled();
+    });
+
+    it('writes one entry when a click and Ctrl+S both arrive while the first save is still writing', async () => {
+      let finish: (id: string) => void = () => undefined;
+      (library.save as jasmine.Spy).and.returnValue(new Promise<string>(resolve => (finish = resolve)));
+
+      const click = panel.save();
+      TestBed.inject(ComposerSaveRequests).request();
+      const again = panel.save();
+      finish('saved-id');
+      await Promise.all([click, again]);
+      await fixture.whenStable();
+
+      expect(library.save).toHaveBeenCalledTimes(1);
+    });
+
+    describe('when Save is asked for again while a write is under way', () => {
+      /** Resolves each write the library was asked for, in order. */
+      let writes: Array<(id: string) => void>;
+      /** Lets every pending promise callback run. */
+      const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve));
+
+      beforeEach(() => {
+        writes = [];
+        (library.save as jasmine.Spy).and.callFake(() => new Promise<string>(resolve => writes.push(resolve)));
+      });
+
+      it('leaves an edit made mid-write unsaved until one more write, over the same entry, lands', async () => {
+        const first = panel.save();
+        composer.setTempo(140);
+        TestBed.inject(ComposerSaveRequests).request();
+
+        writes[0]('saved-id');
+        await first;
+        await settle();
+        expect(composer.state.isDirty).withContext('the first write held the tempo before the edit').toBeTrue();
+        expect(library.save).toHaveBeenCalledTimes(2);
+        expect((library.save as jasmine.Spy).calls.argsFor(1)[1]).toBe('saved-id');
+
+        writes[1]('saved-id');
+        await settle();
+        expect(composer.state.isDirty).toBeFalse();
+        expect(library.save).toHaveBeenCalledTimes(2);
+      });
+
+      it('writes one entry for a click and Ctrl+S, the second write updating the entry the first made', async () => {
+        const click = panel.save();
+        composer.setTempo(140);
+        TestBed.inject(ComposerSaveRequests).request();
+        writes[0]('saved-id');
+        await click;
+        await settle();
+        writes[1]('saved-id');
+        await settle();
+
+        const ids = (library.save as jasmine.Spy).calls.allArgs().map(args => args[1]);
+        expect(ids).toEqual([undefined, 'saved-id']);
+      });
+
+      it('runs one follow-up for three triggers', async () => {
+        const first = panel.save();
+        composer.setTempo(140);
+        TestBed.inject(ComposerSaveRequests).request();
+        void panel.save();
+        TestBed.inject(ComposerSaveRequests).request();
+
+        writes[0]('saved-id');
+        await first;
+        await settle();
+        writes[1]('saved-id');
+        await settle();
+
+        expect(library.save).toHaveBeenCalledTimes(2);
+        expect(composer.state.isDirty).toBeFalse();
+      });
+    });
+
+    it('does not save while something on the page stands in the way, however Save is pressed', async () => {
+      const requests = TestBed.inject(ComposerSaveRequests);
+      const removeGuard = requests.guard(() => true);
+
+      await panel.save();
+      requests.request();
+      await fixture.whenStable();
+      expect(library.save).not.toHaveBeenCalled();
+
+      removeGuard();
+      await panel.save();
+      expect(library.save).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * Menus and a drawer in the top bar, hidden with CSS rather than removed - and the announced regions
+   * outside them, since a region inside a hidden menu is out of the accessibility tree.
+   */
+  describe('as top-bar menus', () => {
+    it('keeps both menus and the drawer in the page while closed', () => {
+      const menus: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.menu-panel'));
+      const drawer: HTMLElement = fixture.nativeElement.querySelector('.library-drawer');
+
+      expect(menus.length).toBe(2);
+      expect(menus.every(menu => getComputedStyle(menu).display === 'none')).toBeTrue();
+      expect(drawer.getAttribute('aria-hidden')).toBe('true');
+    });
+
+    it('keeps its alert outside the menus and the drawer, and holds no polite live region of its own', () => {
+      const alert: HTMLElement = fixture.nativeElement.querySelector('[role="alert"]');
+
+      expect(alert.closest('.menu-panel, .library-drawer')).toBeNull();
+      expect(fixture.nativeElement.querySelector('[aria-live]')).withContext('the page\'s status line is its one polite live region').toBeNull();
+    });
+
+    it('keeps a plain key pressed in the saved list from the score behind it, and lets Tab and Ctrl through', () => {
+      panel.openDrawer();
+      fixture.detectChanges();
+      const heard: string[] = [];
+      const page = (event: KeyboardEvent): void => void heard.push(event.key);
+      document.addEventListener('keydown', page);
+
+      const close: HTMLElement = fixture.nativeElement.querySelector('.drawer-close');
+      for (const init of [{ key: 'ArrowRight' }, { key: 'r' }, { key: '5' }, { key: ' ' }, { key: 'Tab' }, { key: 's', ctrlKey: true }]) {
+        close.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
+      }
+      document.removeEventListener('keydown', page);
+
+      expect(heard).toEqual(['Tab', 's']);
+    });
+
+    it('opens a menu from its button, and the saved list in a drawer', () => {
+      (fixture.nativeElement.querySelector('[aria-controls="composer-library-menu"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      const library: HTMLElement = fixture.nativeElement.querySelector('#composer-library-menu');
+      expect(getComputedStyle(library).display).not.toBe('none');
+
+      (fixture.nativeElement.querySelector('.open-drawer') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('.library-drawer').getAttribute('aria-hidden')).toBe('false');
+      expect(panel.libraryMenuOpen).toBeFalse();
+    });
+
+    it('closes the Export menu when an export is chosen', () => {
+      panel.toggleExportMenu();
+
+      panel.exportMidi();
+
+      expect(panel.exportMenuOpen).toBeFalse();
+    });
+
+    it('closes a menu and the drawer on Escape, claiming it so the page\'s own Escape does not also act', () => {
+      panel.toggleExportMenu();
+      panel.openDrawer();
+      let claimedBeforeThePage = false;
+      const page = (event: KeyboardEvent): void => void (claimedBeforeThePage = event.defaultPrevented);
+      document.addEventListener('keydown', page);
+
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      document.removeEventListener('keydown', page);
+
+      expect(panel.exportMenuOpen).toBeFalse();
+      expect(panel.drawerOpen).toBeFalse();
+      expect(claimedBeforeThePage).toBeTrue();
+    });
+
+    it('closes its menus and the drawer when a modal opens over the page, so Escape reaches the modal', () => {
+      panel.toggleExportMenu();
+      panel.openDrawer();
+
+      fixture.componentRef.setInput('modalOpen', true);
+      fixture.detectChanges();
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      document.body.dispatchEvent(escape);
+
+      expect(panel.exportMenuOpen).toBeFalse();
+      expect(panel.drawerOpen).toBeFalse();
+      expect(escape.defaultPrevented).toBeFalse();
+    });
+
+    it('leaves Escape to the page while nothing is open', () => {
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+
+      document.body.dispatchEvent(escape);
+
+      expect(escape.defaultPrevented).toBeFalse();
+    });
+
+    it('focuses the drawer\'s close button when it opens, and gives the focus to Library when × or Escape closes it', () => {
+      const toggle: HTMLButtonElement = fixture.nativeElement.querySelector('[aria-controls="composer-library-menu"]');
+      const close: HTMLButtonElement = fixture.nativeElement.querySelector('.drawer-close');
+
+      panel.openDrawer();
+      fixture.detectChanges();
+      expect(document.activeElement).toBe(close);
+
+      close.click();
+      fixture.detectChanges();
+      expect(panel.drawerOpen).toBeFalse();
+      expect(document.activeElement).toBe(toggle);
+
+      panel.openDrawer();
+      fixture.detectChanges();
+      document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      fixture.detectChanges();
+      expect(panel.drawerOpen).toBeFalse();
+      expect(document.activeElement).toBe(toggle);
+    });
+
+    it('gives the focus to Export after an export, whose item closed with its menu', () => {
+      const toggle: HTMLButtonElement = fixture.nativeElement.querySelector('[aria-controls="composer-export-menu"]');
+      toggle.click();
+      fixture.detectChanges();
+      (fixture.nativeElement.querySelector('#composer-export-menu button') as HTMLButtonElement).focus();
+
+      panel.exportAlphaTex();
+      fixture.detectChanges();
+
+      expect(document.activeElement).toBe(toggle);
+    });
+
+    it('says when a menu or the drawer opens, so the page can close an open popover', () => {
+      let opened = 0;
+      panel.menuOpened.subscribe(() => opened++);
+
+      panel.toggleLibraryMenu();
+      panel.toggleLibraryMenu();
+      panel.toggleExportMenu();
+      panel.openDrawer();
+
+      expect(opened).toBe(3);
+    });
+
+    it('says what it did, and why it failed, in the page\'s status line through the service', () => {
+      panel.exportMidi();
+      expect(composer.state.notice).toBe('Exported MIDI file');
+
+      (exporter.downloadMidiFile as jasmine.Spy).and.throwError('No MIDI device');
+      panel.exportMidi();
+      expect(composer.state.refusal).toBe('No MIDI device');
+      expect(composer.state.notice).toBeNull();
+    });
+
+    it('draws each saved composition as a button, which loads it and gives the focus to Library as the drawer closes', async () => {
+      const doc = { ...ComposerService.createEmptyScore(), title: 'C' };
+      const tex = TestBed.inject(AlphaTexService).export(TestBed.inject(ScoreDocMapperService).toScore(doc, new alphaTab.Settings()));
+      const now = new Date();
+      const entry: CompositionEntry = { id: 'c-id', title: 'C', artist: '', tex, tempo: 120, trackCount: 1, barCount: 4, dateCreated: now, dateModified: now };
+      spyOn(library, 'get').and.resolveTo(entry);
+      panel.entries = [entry];
+      panel.openDrawer();
+      fixture.detectChanges();
+
+      // A button is pressed by Enter and Space as well as a click, and reached by Tab.
+      const load: HTMLElement = fixture.nativeElement.querySelector('.composition-load');
+      expect(load instanceof HTMLButtonElement).withContext('a row loads through a button').toBeTrue();
+      load.focus();
+      load.click();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(panel.currentId).toBe('c-id');
+      expect(panel.drawerOpen).toBeFalse();
+      expect(document.activeElement).toBe(fixture.nativeElement.querySelector('[aria-controls="composer-library-menu"]'));
+    });
+
+    it('closes on a click outside the panel, and not on a click inside it', () => {
+      panel.toggleLibraryMenu();
+      fixture.detectChanges();
+
+      (fixture.nativeElement.querySelector('#composer-library-menu') as HTMLElement).click();
+      expect(panel.libraryMenuOpen).toBeTrue();
+
+      document.body.click();
+      expect(panel.libraryMenuOpen).toBeFalse();
     });
   });
 
@@ -331,23 +658,43 @@ describe('ComposerLibraryPanelComponent', () => {
         await panel.save();
         fixture.detectChanges();
 
-        const polite = fixture.debugElement.query(By.css('[aria-live="polite"]'));
-        expect(polite).not.toBeNull();
-        expect(polite.nativeElement.textContent).toContain('Saved');
+        // In the page's status line, which reads out `ComposerState.notice`.
+        expect(composer.state.notice).toContain('Saved');
       });
 
-      it('returns focus to Save when the offer is declined', async () => {
+      /**
+       * Save is in the Library menu, and the refusal drops below the top bar where that menu opens, so the two cannot be
+       * shown together: a refusal closes the menu, and the focus goes to the Library button rather than into a menu the
+       * refusal would cover.
+       */
+      const libraryToggle = (): HTMLButtonElement => fixture.nativeElement.querySelector('[aria-controls="composer-library-menu"]');
+
+      it('closes the Library menu when Save pressed in it is refused, giving the focus to Library', async () => {
+        libraryToggle().click();
+        fixture.detectChanges();
+        const save: HTMLButtonElement = fixture.nativeElement.querySelector('.save-actions button');
+        save.focus();
+        expect(document.activeElement).withContext('Save has the focus in the open menu').toBe(save);
+
+        await panel.save();
+        fixture.detectChanges();
+
+        expect(panel.libraryMenuOpen).toBeFalse();
+        expect(document.activeElement).toBe(libraryToggle());
+      });
+
+      it('gives the focus to Library when the offer is declined, leaving the menu closed', async () => {
         await panel.save();
         fixture.detectChanges();
 
         panel.dismissSaveBlock();
         fixture.detectChanges();
 
-        const save = fixture.debugElement.query(By.css('.save-actions button'));
-        expect(document.activeElement).toBe(save.nativeElement);
+        expect(panel.libraryMenuOpen).toBeFalse();
+        expect(document.activeElement).toBe(libraryToggle());
       });
 
-      it('returns focus to Save when the offer is taken', async () => {
+      it('gives the focus to Library when the offer is taken, leaving the menu closed', async () => {
         // Both buttons destroy the element they live in, so without this focus
         // falls back to <body> and the keyboard user restarts from the top.
         await panel.save();
@@ -356,8 +703,8 @@ describe('ComposerLibraryPanelComponent', () => {
         await panel.flattenAndSave();
         fixture.detectChanges();
 
-        const save = fixture.debugElement.query(By.css('.save-actions button'));
-        expect(document.activeElement).toBe(save.nativeElement);
+        expect(panel.libraryMenuOpen).toBeFalse();
+        expect(document.activeElement).toBe(libraryToggle());
       });
     });
 

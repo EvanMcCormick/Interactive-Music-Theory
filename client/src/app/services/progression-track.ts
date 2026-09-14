@@ -307,9 +307,10 @@ export function generatedTrackState(score: ScoreDoc, doc: ProgressionDoc): Gener
  * bar with no context and wrong for every bar that has one. The Composer's own
  * `insertBar` says as much - it builds the bar and then copies clef, ottava and
  * key signature off a neighbour - and the reason is that a score does not
- * generally start out in the defaults. `composer-library-panel.component.ts`
- * and `composer.component.ts` both `replaceDocument` a `.gp` file mapped into a
- * `ScoreDoc`, so the Composer routinely holds a bass staff in `f4` with three
+ * generally start out in the defaults. The library panel loads a saved
+ * composition, the page applies an alphaTex draft, and a transcription opens its
+ * derived score, each through `replaceDocument` and none of them bound to the
+ * defaults, so the Composer routinely holds a bass staff in `f4` with three
  * flats on every bar; padding it with the defaults would append treble-clef,
  * no-accidental bars to its tail, and the notes the user then wrote there would
  * read a fifth and three accidentals away from the rest of the staff.

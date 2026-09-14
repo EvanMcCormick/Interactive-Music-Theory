@@ -1,6 +1,11 @@
-<div class="composer-container" *ngIf="state as s">
-  <!-- Toolbar -->
-  <header class="composer-header">
+<div #page class="composer-page" *ngIf="state as s">
+  <!--
+    First, so it hears it is opening before the parts below go inert. Its backdrop covers the window, and while it is
+    open every part of the page is inert: no click and no focus reaches the page behind it.
+  -->
+  <app-composer-shortcut-sheet [open]="sheetOpen" [fallbackFocus]="scoreHost" (closed)="closeShortcutSheet()"></app-composer-shortcut-sheet>
+
+  <header #topBar class="top-bar" [attr.inert]="sheetOpen ? '' : null">
     <div class="score-info">
       <input
         class="title-input"
@@ -13,228 +18,123 @@
     </div>
 
     <div class="transport">
-      <button class="icon-btn" (click)="playPause()" [title]="playerState?.isPlaying ? 'Pause (Space)' : 'Play (Space)'">
+      <button
+        class="icon-btn"
+        type="button"
+        (click)="playPause()"
+        [attr.aria-label]="playerState?.isPlaying ? 'Pause' : 'Play'"
+        [title]="playerState?.isPlaying ? 'Pause (Space)' : 'Play (Space)'"
+      >
         <span *ngIf="!playerState?.isPlaying">▶</span>
         <span *ngIf="playerState?.isPlaying">❚❚</span>
       </button>
-      <button class="icon-btn" (click)="stop()" title="Stop">■</button>
+      <button class="icon-btn" type="button" (click)="stop()" aria-label="Stop" title="Stop">■</button>
 
       <label class="tempo-field">
         <span>BPM</span>
-        <input
-          type="number"
-          min="20"
-          max="400"
-          [ngModel]="s.doc.tempo"
-          (ngModelChange)="onTempoChange($event)"
-        />
+        <input type="number" min="20" max="400" [ngModel]="s.doc.tempo" (ngModelChange)="onTempoChange($event)" />
       </label>
 
-      <button
-        class="toggle-btn"
-        [class.active]="metronomeEnabled"
-        (click)="toggleMetronome()"
-        title="Metronome"
-      >Metronome</button>
-      <button
-        class="toggle-btn"
-        [class.active]="countInEnabled"
-        (click)="toggleCountIn()"
-        title="Count-in"
-      >Count-in</button>
+      <button class="toggle-btn" type="button" [class.active]="metronomeEnabled" [attr.aria-pressed]="metronomeEnabled" (click)="toggleMetronome()">
+        Metronome
+      </button>
+      <button class="toggle-btn" type="button" [class.active]="countInEnabled" [attr.aria-pressed]="countInEnabled" (click)="toggleCountIn()">
+        Count-in
+      </button>
     </div>
 
     <div class="header-actions">
-      <button class="text-btn" (click)="undo()" [disabled]="!s.canUndo" title="Undo (Ctrl+Z)">Undo</button>
-      <button class="text-btn" (click)="redo()" [disabled]="!s.canRedo" title="Redo (Ctrl+Shift+Z)">Redo</button>
-      <button class="text-btn" (click)="newScore()" title="Start a new score">New</button>
-      <button class="text-btn" [class.active]="showTexPanel" (click)="toggleTexPanel()">alphaTex</button>
+      <button class="text-btn" type="button" (click)="undo()" [disabled]="!s.canUndo" [title]="undoTitle">Undo</button>
+      <button class="text-btn" type="button" (click)="redo()" [disabled]="!s.canRedo" [title]="redoTitle">Redo</button>
+      <button class="text-btn" type="button" (click)="newScore()" title="Start a new score">New</button>
+      <button class="text-btn" type="button" [class.active]="showTexPanel" [attr.aria-pressed]="showTexPanel" (click)="toggleTexPanel()">
+        alphaTex
+      </button>
+      <app-composer-library-panel [modalOpen]="sheetOpen" (menuOpened)="closePopover()"></app-composer-library-panel>
+      <button
+        class="text-btn shortcuts-toggle"
+        type="button"
+        aria-label="Keyboard shortcuts"
+        title="Keyboard shortcuts (?)"
+        [attr.aria-expanded]="sheetOpen"
+        (click)="toggleShortcutSheet()"
+      >?</button>
     </div>
   </header>
 
-  <div class="composer-body">
-    <!-- Track list -->
-    <aside class="track-panel">
-      <h2 class="panel-heading">Tracks</h2>
-      <ul class="track-list">
+  <app-composer-palette
+    class="palette"
+    [attr.inert]="sheetOpen ? '' : null"
+    [state]="s"
+    [popover]="popover"
+    (toolPressed)="runTool($event)"
+    (popoverClosed)="closePopover()"
+    (popoverPressedOutside)="score.ignoreNextPress()"
+  ></app-composer-palette>
+
+  <div class="score-column" [attr.inert]="sheetOpen ? '' : null">
+    <!-- Focusable by script only, for the shortcut sheet to give the focus back to. -->
+    <app-composer-score #score tabindex="-1"></app-composer-score>
+
+    <section #texPanel class="tex-panel" *ngIf="showTexPanel">
+      <div class="tex-header">
+        <h2 class="panel-heading">alphaTex source</h2>
+        <div class="tex-actions">
+          <button class="text-btn" type="button" (click)="applyTex()">Apply</button>
+          <button class="text-btn" type="button" (click)="revertTex()">Revert</button>
+        </div>
+      </div>
+
+      <p class="tex-stale" *ngIf="texDraftOutOfDate">{{ texOutOfDate }}</p>
+
+      <textarea class="tex-editor" [(ngModel)]="texDraft" spellcheck="false" aria-label="alphaTex source"></textarea>
+
+      <ul class="diagnostics" *ngIf="texDiagnostics.length > 0">
         <li
-          *ngFor="let track of s.doc.tracks; let i = index; trackBy: trackByIndex"
-          class="track-item"
-          [class.selected]="s.cursor.trackIndex === i"
-          (click)="selectTrack(i)"
+          *ngFor="let d of texDiagnostics"
+          class="diagnostic"
+          [class.error]="d.severity === 'error'"
+          [class.warning]="d.severity === 'warning'"
         >
-          <span class="track-swatch" [style.background-color]="track.color"></span>
-          <span class="track-name">{{ track.name }}</span>
-          <button
-            class="track-remove"
-            (click)="removeTrack(i); $event.stopPropagation()"
-            [disabled]="s.doc.tracks.length <= 1"
-            title="Remove track"
-          >×</button>
-
-          <!--
-            The badge says the marker's own copy of the name, not the row's.
-            `mergeGeneratedTrack` keeps whatever the track is already called across
-            an Update so a rename survives, which leaves `track.name` free to be the
-            user's word for the row while `generated.progressionName` stays the
-            progression's.
-
-            The status beside it is the same state Update refuses on, said where
-            nothing has to be focused to read it - a `disabled` control's own
-            explanation is unreachable by focus and its tooltip is suppressed, so a
-            label was the wrong and only place to keep it.
-          -->
-          <ng-container *ngIf="track.generated as origin">
-            <div class="track-origin">
-              <span class="track-badge">From {{ origin.progressionName }}</span>
-              <span
-                class="track-status"
-                [class.is-stale]="canUpdate(track)"
-              >{{ generatedStatusLabel(track) }}</span>
-            </div>
-            <div class="track-generated">
-              <!--
-                `aria-disabled` and not `disabled`: the button keeps its place in
-                the tab order and keeps its tooltip, so the sentence saying why it
-                is refusing stays reachable. It only *says* it is refusing, so
-                `updateGeneratedTrack` makes the refusal itself.
-
-                `handler(); $event.stopPropagation()` runs the handler first, so a
-                throw would skip the stop and the click would fall through to the
-                row and move the caret. Nothing in either handler throws today -
-                the one guard that does is `sendProgression`'s meter check, and it
-                is handed `this.composer.scoreMeter`, which is the same meter it
-                compares against. `$event.stopPropagation(); handler()` would be
-                proof against a future one, at the cost of reading backwards.
-              -->
-              <button
-                class="text-btn track-update"
-                (click)="updateGeneratedTrack(); $event.stopPropagation()"
-                [attr.aria-disabled]="!canUpdate(track)"
-                [attr.aria-label]="updateLabel(track)"
-                [title]="updateLabel(track)"
-              >Update</button>
-              <button
-                class="text-btn track-flatten"
-                (click)="flattenGeneratedTrack(i); $event.stopPropagation()"
-                [attr.aria-label]="flattenLabel(track)"
-                [title]="flattenLabel(track)"
-              >Flatten</button>
-            </div>
-          </ng-container>
+          <span class="location">{{ d.line }}:{{ d.column }}</span>
+          <span class="message">{{ d.message }}</span>
         </li>
       </ul>
-
-      <div class="add-track">
-        <select [(ngModel)]="newTrackInstrument" aria-label="Instrument for new track">
-          <option *ngFor="let inst of instruments" [ngValue]="inst">{{ inst.name }}</option>
-        </select>
-        <button class="text-btn" (click)="addTrack()">Add track</button>
-        <!--
-          The pull half of the same service call the progression page's Send is the
-          push half of. Pressed with the progression already in the score it is an
-          Update, because the merge matches on the progression's id rather than
-          appending - and it refuses on the same reading the rows' Update refuses
-          on, so the panel cannot do from here what the button in the row is
-          greyed out to prevent.
-
-          The label leads with the words printed on the button (WCAG 2.1 SC 2.5.3);
-          the caption itself never changes, because the word on a control is what a
-          speech-input user says to press it.
-        -->
-        <button
-          class="text-btn add-progression-track"
-          (click)="addProgressionTrack()"
-          [attr.aria-disabled]="!canAddProgressionTrack()"
-          [attr.aria-label]="addProgressionTrackLabel()"
-          [title]="addProgressionTrackLabel()"
-        >Add progression track</button>
-      </div>
-
-      <h2 class="panel-heading">Bars</h2>
-      <div class="bar-controls">
-        <button class="text-btn" (click)="addBar()">Add bar</button>
-        <button class="text-btn" (click)="removeBar()" [disabled]="s.doc.masterBars.length <= 1">
-          Remove bar
-        </button>
-      </div>
-      <p class="hint">{{ s.doc.masterBars.length }} bars</p>
-
-      <app-composer-library-panel></app-composer-library-panel>
-    </aside>
-
-    <!-- Score -->
-    <app-composer-score></app-composer-score>
+    </section>
   </div>
 
-  <!-- Note input -->
-  <section class="input-panel">
-    <div class="duration-palette">
-      <button
-        *ngFor="let d of durations"
-        class="duration-btn"
-        [class.active]="isDurationActive(d)"
-        (click)="selectDuration(d)"
-        [title]="d.value + 'th note'"
-      >{{ d.label }}</button>
+  <app-composer-status-line
+    #statusLine
+    class="status"
+    [attr.inert]="sheetOpen ? '' : null"
+    [refusal]="s.refusal"
+    [notice]="s.notice"
+    [messageId]="s.messageId"
+    [texError]="texApplyError"
+    [texErrorId]="texErrorId"
+    [cursor]="s.cursor"
+    [entryMode]="s.entryMode"
+    [doc]="s.doc"
+  ></app-composer-status-line>
 
-      <button class="duration-btn" [class.active]="s.inputDots > 0" (click)="toggleDot()" title="Dotted">
-        ·
-      </button>
-      <button class="duration-btn" (click)="enterRest()" title="Rest (R)">𝄽</button>
-      <button class="duration-btn" (click)="deleteAtCursor()" title="Delete (Del)">⌫</button>
+  <!-- Its range is the one the strip is clamped to (`stripRange`), measured from the page as it is laid out. -->
+  <div
+    #stripSeparator
+    class="strip-resize"
+    [attr.inert]="sheetOpen ? '' : null"
+    role="separator"
+    tabindex="0"
+    aria-orientation="horizontal"
+    aria-label="Track strip height"
+    [attr.aria-valuemin]="stripRange.min"
+    [attr.aria-valuemax]="stripRange.max"
+    [attr.aria-valuenow]="stripHeight"
+    (pointerdown)="onStripResizeStart($event)"
+    (pointermove)="onStripResize($event)"
+    (pointerup)="onStripResizeEnd()"
+    (pointercancel)="onStripResizeEnd()"
+    (keydown)="onStripResizeKey($event)"
+  ></div>
 
-      <span class="cursor-readout">
-        Bar {{ s.cursor.barIndex + 1 }} · Beat {{ s.cursor.beatIndex + 1 }}
-      </span>
-    </div>
-
-    <p class="edit-hint" *ngIf="currentStaffIsFretted; else pitchedHint">
-      Click the tab to place the caret, then type a fret number.
-      <span class="keys-hint">← →</span> move,
-      <span class="keys-hint">↑ ↓</span> change string,
-      <span class="keys-hint">R</span> rest,
-      <span class="keys-hint">Del</span> delete.
-    </p>
-
-    <ng-template #pitchedHint>
-      <p class="edit-hint">
-        Click the staff to place a note at that pitch.
-        <span class="keys-hint">← →</span> move,
-        <span class="keys-hint">R</span> rest,
-        <span class="keys-hint">Del</span> delete.
-      </p>
-    </ng-template>
-
-  </section>
-
-  <!-- alphaTex escape hatch -->
-  <section class="tex-panel" *ngIf="showTexPanel">
-    <div class="tex-header">
-      <h2 class="panel-heading">alphaTex source</h2>
-      <div class="tex-actions">
-        <button class="text-btn" (click)="applyTex()">Apply</button>
-        <button class="text-btn" (click)="revertTex()">Revert</button>
-      </div>
-    </div>
-
-    <textarea
-      class="tex-editor"
-      [(ngModel)]="texDraft"
-      spellcheck="false"
-      aria-label="alphaTex source"
-    ></textarea>
-
-    <ul class="diagnostics" *ngIf="texDiagnostics.length > 0">
-      <li
-        *ngFor="let d of texDiagnostics"
-        class="diagnostic"
-        [class.error]="d.severity === 'error'"
-        [class.warning]="d.severity === 'warning'"
-      >
-        <span class="location">{{ d.line }}:{{ d.column }}</span>
-        <span class="message">{{ d.message }}</span>
-      </li>
-    </ul>
-  </section>
+  <app-composer-track-strip class="strip" [attr.inert]="sheetOpen ? '' : null" [style.height.px]="stripHeight"></app-composer-track-strip>
 </div>
