@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 
 import { ComposerService } from './composer.service';
-import { BROWSER_RESERVED, KeyPress, bindingSignatureOf } from './composer-key-bindings';
+import { BROWSER_RESERVED, KeyPress, bindingMatches, bindingSignatureOf } from './composer-key-bindings';
 import { TOOLS_WITH_STATE } from './composer-tool-states';
 import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, KEYLESS_TOOLS, PALETTE_GROUPS, toolForPress } from './composer-tools';
 
@@ -140,6 +140,15 @@ describe('toolForPress', () => {
     expect(id({ key: 'y', code: 'KeyZ', ctrlKey: true })).toBe('redo');
     expect(id({ key: 'a', code: 'KeyQ', ctrlKey: true })).toBe('selectAll');
     expect(id({ key: 'q', code: 'KeyA', ctrlKey: true })).toBeNull();
+  });
+
+  it('lets a typed letter beat a physical-key match, so Dvorak Ctrl+Z is undo and nothing else', () => {
+    // Dvorak types z on the key a US keyboard calls Slash, where Triplet feel's Ctrl+/ is bound.
+    const dvorakCtrlZ = press({ key: 'z', code: 'Slash', ctrlKey: true });
+    const matching = COMPOSER_TOOLS.filter(entry => entry.keys.some(binding => bindingMatches(binding, dvorakCtrlZ))).map(entry => entry.id);
+
+    expect(matching).toEqual(['undo']);
+    expect(id({ key: '/', code: 'Slash', ctrlKey: true })).toBe('tripletFeel');
   });
 
   it('falls back to the physical key for a letter when the layout typed no Latin letter', () => {

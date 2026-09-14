@@ -71,6 +71,27 @@ describe('ComposerKeyHandler', () => {
     expect(copy).toHaveBeenCalled();
   });
 
+  it('leaves Ctrl+C to the browser when a text selection runs from the score out into the page, either way', () => {
+    const words = attach('p');
+    words.textContent = 'Some words on the page';
+    const score = attach('div');
+    score.textContent = 'The score';
+    const scored = new ComposerKeyHandler(host, undefined, () => score);
+    const copy = spyOn(composer, 'copy');
+    const inScore = score.firstChild as Text;
+    const onPage = words.firstChild as Text;
+
+    document.getSelection()?.setBaseAndExtent(inScore, 1, onPage, 4);
+    expect(scored.handle(press({ key: 'c', code: 'KeyC', ctrlKey: true }))).toBeFalse();
+    document.getSelection()?.setBaseAndExtent(onPage, 4, inScore, 1);
+    expect(scored.handle(press({ key: 'c', code: 'KeyC', ctrlKey: true }))).toBeFalse();
+    expect(copy).not.toHaveBeenCalled();
+
+    document.getSelection()?.setBaseAndExtent(inScore, 1, inScore, 5);
+    expect(scored.handle(press({ key: 'c', code: 'KeyC', ctrlKey: true }))).toBeTrue();
+    expect(copy).toHaveBeenCalled();
+  });
+
   it('saves on Ctrl+S even from a text field, so the browser\'s own Save dialog never opens', () => {
     const event = press({ key: 's', code: 'KeyS', ctrlKey: true, target: attach('input') });
 

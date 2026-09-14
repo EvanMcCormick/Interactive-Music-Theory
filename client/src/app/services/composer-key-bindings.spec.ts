@@ -53,6 +53,13 @@ describe('bindingMatches', () => {
     expect(bindingMatches({ code: 'KeyZ', ctrl: true }, press({ key: 'я', code: 'KeyZ', ctrlKey: true }))).toBeTrue();
   });
 
+  it('never matches a Ctrl binding by physical key when the press typed a Latin letter of its own', () => {
+    // Dvorak types z on Slash: Ctrl+Z there is undo's, not Ctrl+/'s.
+    expect(bindingMatches({ code: 'Slash', ctrl: true }, press({ key: 'z', code: 'Slash', ctrlKey: true }))).toBeFalse();
+    expect(bindingMatches({ code: 'KeyZ', ctrl: true }, press({ key: 'z', code: 'Slash', ctrlKey: true }))).toBeTrue();
+    expect(bindingMatches({ code: 'Slash', ctrl: true }, press({ key: '/', code: 'Slash', ctrlKey: true }))).toBeTrue();
+  });
+
   it('matches an unmodified letter by its physical key when the layout typed no Latin letter', () => {
     expect(bindingMatches({ key: 'r' }, press({ key: 'к', code: 'KeyR' }))).toBeTrue();
     expect(bindingMatches({ key: 'r' }, press({ key: 'к', code: 'KeyT' }))).toBeFalse();

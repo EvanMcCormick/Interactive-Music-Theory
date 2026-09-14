@@ -42,13 +42,17 @@ const isShiftFree = (key: string): boolean => key.length === 1 && !isLetter(key)
  * binding with Ctrl and no Alt is matched on `key`. Alt stays physical: macOS Option rewrites `key` to
  * another character. Where the layout types no Latin letter at all - Cyrillic `к` on `KeyR` - `key` says
  * nothing a binding can use, so the physical key decides, for a Ctrl letter and an unmodified one alike.
+ *
+ * A Ctrl press that typed a Latin letter is that letter's, and matches no other Ctrl binding by its
+ * physical key: Dvorak types z on the key a US keyboard calls `Slash`, so its Ctrl+Z would otherwise be
+ * undo by the letter and Ctrl+/ (triplet feel) by the key.
  */
 export function bindingMatches(binding: KeyBinding, press: KeyPress): boolean {
   if ((press.ctrlKey || press.metaKey) !== !!binding.ctrl || press.altKey !== !!binding.alt) return false;
   if (binding.code !== undefined) {
     if (press.shiftKey !== !!binding.shift) return false;
     const letter = /^Key([A-Z])$/.exec(binding.code)?.[1];
-    if (letter && binding.ctrl && !binding.alt && isLetter(press.key)) return press.key.toUpperCase() === letter;
+    if (binding.ctrl && !binding.alt && isLetter(press.key)) return letter !== undefined && press.key.toUpperCase() === letter;
     return press.code === binding.code;
   }
 

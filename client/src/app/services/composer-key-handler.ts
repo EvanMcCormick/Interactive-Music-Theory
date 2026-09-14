@@ -50,10 +50,14 @@ export class ComposerKeyHandler {
   }
 }
 
-/** Whether the page has a non-collapsed text selection that does not start inside `score`. */
+/**
+ * Whether the page has a non-collapsed text selection that is not wholly inside `score`: either end - where
+ * the drag started, or where it ended - outside. A selection dragged from the score out into page text holds
+ * page text, so Ctrl+C there is the browser's.
+ */
 function textSelectedOutside(score: Element | null): boolean {
   const selection = typeof document === 'undefined' ? null : document.getSelection();
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
-  const node = selection.anchorNode;
-  return !(score && node && score.contains(node));
+  const inScore = (node: Node | null): boolean => !!(score && node && score.contains(node));
+  return !(inScore(selection.anchorNode) && inScore(selection.focusNode));
 }
