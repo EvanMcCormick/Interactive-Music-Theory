@@ -45,7 +45,10 @@ export interface ComposerToolHost {
   /** Opens the popover for a valued tool, anchored to that tool's palette button. */
   openPopover(kind: PopoverKind): void;
   toggleShortcutSheet(): void;
-  /** Back to Select and no range; closes the sheet and any popover. */
+  /**
+   * Closes an open popover, or the open shortcut sheet, and does nothing else - a modal takes Escape alone; with
+   * neither open, back to Select and no range.
+   */
   escape(): void;
   playPause(): void;
   playFromStart(): void;

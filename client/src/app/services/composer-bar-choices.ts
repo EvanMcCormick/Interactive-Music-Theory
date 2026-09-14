@@ -69,7 +69,13 @@ export function endingsOf(bits: number): number[] {
   return Array.from({ length: MAX_ENDING }, (_, index) => index + 1).filter(ending => (bits & (1 << (ending - 1))) !== 0);
 }
 
-/** The bitfield marking `endings`. */
+/**
+ * The bitfield marking `endings`. An ending outside 1 to `MAX_ENDING`, or not a whole number, is left out rather than
+ * written: 0 would shift by -1, which JavaScript takes as 31 and so makes the field negative, and 9 would set a bit
+ * for an ending the popover never offers and `endingsOf` never reads back.
+ */
 export function endingBitsOf(endings: readonly number[]): number {
-  return endings.reduce((bits, ending) => bits | (1 << (ending - 1)), 0);
+  return endings
+    .filter(ending => Number.isInteger(ending) && ending >= 1 && ending <= MAX_ENDING)
+    .reduce((bits, ending) => bits | (1 << (ending - 1)), 0);
 }

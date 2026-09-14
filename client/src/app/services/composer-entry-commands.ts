@@ -3,7 +3,8 @@ import { CopiedBeats, copiedBeatsOf, pasteBeats } from './beat-clipboard';
 import { clearToRests, deleteBeats, insertBeatAt, setBeatDots, setBeatDurations } from './beat-edits';
 import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { BeatRef, beatAt, selectionTargets } from './composer-selection';
-import { ComposerCommandHost, EditOutcome, countOf } from './composer-service-structure';
+import { ComposerCommandHost, EditOutcome } from './composer-service-structure';
+import { pasteNoticeOf } from './composer-text';
 import { deleteBeatsRefusal, dotsRefusal, editRefusal, entryValueOf, insertBeatRefusal, noteEntryRefusal } from './edit-refusals';
 import { FermataDrops } from './fermata-settling';
 
@@ -298,9 +299,4 @@ function writeNote(draft: ScoreDoc, cursor: EditCursor, pitch: NotePitch, durati
 
   beat.notes.push(note);
   return dropped;
-}
-
-/** What a paste says it did: how many beats it wrote, and how many bars it appended when it ran off the end. */
-export function pasteNoticeOf(beats: number, appended: number): string {
-  return `Pasted ${countOf(beats, 'beat')}${appended > 0 ? `, adding ${countOf(appended, 'bar')} at the end` : ''}.`;
 }

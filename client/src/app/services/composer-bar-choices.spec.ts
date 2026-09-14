@@ -3,6 +3,7 @@ import {
   CLEF_CHOICES,
   KEY_SIGNATURE_CHOICES,
   MAX_ENDING,
+  OTTAVA_CHOICES,
   TRIPLET_FEEL_CHOICES,
   endingBitsOf,
   endingsOf
@@ -39,5 +40,17 @@ describe('composer bar choices', () => {
     expect(endingBitsOf([1, 3])).toBe(0b101);
     expect(endingBitsOf(endingsOf(0b11000000))).toBe(0b11000000);
     expect(MAX_ENDING).toBe(8);
+  });
+
+  it('leaves out an ending outside 1 to MAX_ENDING, which no bit of the field it offers means', () => {
+    expect(endingBitsOf([0])).toBe(0);
+    expect(endingBitsOf([MAX_ENDING + 1])).toBe(0);
+    expect(endingBitsOf([0, 2, 9])).toBe(0b10);
+    expect(endingsOf(endingBitsOf([0, 1, MAX_ENDING, MAX_ENDING + 1]))).toEqual([1, MAX_ENDING]);
+  });
+
+  it('offers every ottava, highest first, with as written in the middle', () => {
+    expect(OTTAVA_CHOICES.map(choice => choice.value)).toEqual(['15ma', '8va', 'regular', '8vb', '15mb']);
+    expect(OTTAVA_CHOICES.every(choice => choice.label.length > 0)).toBeTrue();
   });
 });

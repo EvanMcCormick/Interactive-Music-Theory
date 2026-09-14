@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 
 import { EditCursor, EntryMode, ScoreDoc } from '../../../../models/composer.model';
 import { scoreBarFills } from '../../../../services/bar-fill';
-import { countOf } from '../../../../services/composer-service-structure';
+import { countOf } from '../../../../services/composer-text';
 
 /** How many bars are over their time signature: every staff's, each of which Fix bar mends on its own. */
 export function overBarCountOf(doc: ScoreDoc): number {

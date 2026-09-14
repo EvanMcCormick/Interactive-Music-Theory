@@ -26,6 +26,7 @@ import {
 import { barFillAt, fixBarOverflow } from './bar-fill';
 import { newOpenTupletGroup, openTupletGroupsOf } from './beat-edits';
 import { selectedBars } from './composer-selection';
+import { fixBarNoticeOf } from './composer-text';
 import { editRefusal } from './edit-refusals';
 import { FermataDrops, fermataNoticeOf, fermataSnapshotOf, settleFermatas } from './fermata-settling';
 import { renameTrack, setPlayback, setStaffNumber, setStaffTuning, setStaffViews } from './track-edits';
@@ -267,14 +268,4 @@ export class ComposerStructureCommands {
 export function noticeOfOutcome(said: string | null, outcome: EditOutcome): string | null {
   const fermatas = Array.isArray(outcome) ? fermataNoticeOf(outcome) : null;
   return [said, fermatas].filter((part): part is string => !!part).join(' ') || null;
-}
-
-/** `count` and `noun`, plural unless the count is one: "1 bar", "3 beats". */
-export function countOf(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`;
-}
-
-/** What Fix bar says it did: how many bars it fixed, and how many it appended when the carry ran off the end. */
-export function fixBarNoticeOf(fixed: number, appended: number): string {
-  return `Fixed ${countOf(fixed, 'bar')}${appended > 0 ? `, adding ${countOf(appended, 'bar')} at the end` : ''}.`;
 }
