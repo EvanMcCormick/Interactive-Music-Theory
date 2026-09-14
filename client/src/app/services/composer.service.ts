@@ -39,6 +39,7 @@ import {
   toggleBeatEffect,
   toggledValue
 } from './beat-edits';
+import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
 import { ComposerStructureCommands } from './composer-service-structure';
 import { EditScope, editRefusal } from './edit-refusals';
@@ -239,8 +240,8 @@ export class ComposerService {
     this.stateSubject.next({
       ...state,
       doc: next,
-      cursor: this.clampCursor(cursor, next),
-      anchor: anchor ? this.clampCursor(anchor, next) : null,
+      cursor: clampedCursor(cursor, next),
+      anchor: anchor ? clampedCursor(anchor, next) : null,
       refusal: null,
       isDirty: true,
       canUndo: true,
@@ -257,8 +258,9 @@ export class ComposerService {
     this.stateSubject.next({
       ...state,
       doc: previous,
-      cursor: this.clampCursor(state.cursor, previous),
-      anchor: state.anchor ? this.clampCursor(state.anchor, previous) : null,
+      cursor: clampedCursor(state.cursor, previous),
+      anchor: state.anchor ? clampedCursor(state.anchor, previous) : null,
+      refusal: null,
       isDirty: true,
       canUndo: this.undoStack.length > 0,
       canRedo: true
@@ -274,8 +276,9 @@ export class ComposerService {
     this.stateSubject.next({
       ...state,
       doc: next,
-      cursor: this.clampCursor(state.cursor, next),
-      anchor: state.anchor ? this.clampCursor(state.anchor, next) : null,
+      cursor: clampedCursor(state.cursor, next),
+      anchor: state.anchor ? clampedCursor(state.anchor, next) : null,
+      refusal: null,
       isDirty: true,
       canUndo: true,
       canRedo: this.redoStack.length > 0
@@ -291,7 +294,7 @@ export class ComposerService {
     this.stateSubject.next({
       ...state,
       doc,
-      cursor: this.clampCursor(state.cursor, doc),
+      cursor: clampedCursor(state.cursor, doc),
       anchor: null,
       refusal: null,
       isDirty: !markClean,
@@ -312,11 +315,7 @@ export class ComposerService {
   /** Moves the caret, and drops any range: a plain click or arrow key. */
   setCursor(cursor: Partial<EditCursor>): void {
     const state = this.stateSubject.getValue();
-    this.stateSubject.next({
-      ...state,
-      anchor: null,
-      cursor: this.clampCursor({ ...state.cursor, ...cursor }, state.doc)
-    });
+    this.publishSelection(clampedCursor({ ...state.cursor, ...cursor }, state.doc), null);
   }
 
   /**
@@ -325,86 +324,42 @@ export class ComposerService {
    */
   extendSelectionTo(cursor: Partial<EditCursor>): void {
     const state = this.stateSubject.getValue();
-    this.stateSubject.next({
-      ...state,
-      anchor: state.anchor ?? state.cursor,
-      cursor: this.clampCursor({ ...state.cursor, ...cursor }, state.doc)
-    });
+    this.publishSelection(clampedCursor({ ...state.cursor, ...cursor }, state.doc), state.anchor ?? state.cursor);
   }
 
   /** Selects every beat of the caret's staff, first bar to last. */
   selectAllInTrack(): void {
-    const state = this.stateSubject.getValue();
-    const staff = this.staffAt(state.doc, state.cursor);
-    if (!staff) return;
-    const lastBar = staff.bars.length - 1;
-    const lastBeat = (staff.bars[lastBar]?.voices[state.cursor.voiceIndex]?.beats.length ?? 1) - 1;
-    this.stateSubject.next({
-      ...state,
-      anchor: { ...state.cursor, barIndex: 0, beatIndex: 0 },
-      cursor: this.clampCursor({ ...state.cursor, barIndex: lastBar, beatIndex: lastBeat }, state.doc)
-    });
+    const { doc, cursor } = this.stateSubject.getValue();
+    this.publishSelection(
+      movedCursor(doc, cursor, { kind: 'scoreEdge', edge: 'last' }),
+      movedCursor(doc, cursor, { kind: 'scoreEdge', edge: 'first' })
+    );
   }
 
-  /** Moves the caret forward or backward, wrapping across bars. */
-  moveCursorByBeat(delta: number): void {
+  /**
+   * Moves the caret by `move` (see `movedCursor`) - or, with `extend`, the selection's moving end.
+   * A plain move drops the range, except a change of string, which moves the focus within it.
+   */
+  moveCursor(move: CursorMove, extend = false): void {
     const state = this.stateSubject.getValue();
-    const cursor = { ...state.cursor };
-    const staff = this.staffAt(state.doc, cursor);
-    if (!staff) return;
+    const anchor = extend ? state.anchor ?? state.cursor : move.kind === 'string' ? state.anchor : null;
+    this.publishSelection(movedCursor(state.doc, state.cursor, move), anchor);
+  }
 
-    let beatIndex = cursor.beatIndex + delta;
-
-    while (beatIndex < 0 && cursor.barIndex > 0) {
-      cursor.barIndex--;
-      beatIndex += staff.bars[cursor.barIndex].voices[cursor.voiceIndex]?.beats.length ?? 1;
-    }
-    while (
-      cursor.barIndex < staff.bars.length - 1 &&
-      beatIndex >= (staff.bars[cursor.barIndex].voices[cursor.voiceIndex]?.beats.length ?? 1)
-    ) {
-      beatIndex -= staff.bars[cursor.barIndex].voices[cursor.voiceIndex]?.beats.length ?? 1;
-      cursor.barIndex++;
-    }
-
-    cursor.beatIndex = beatIndex;
-    this.setCursor(cursor);
+  moveCursorByBeat(delta: number): void {
+    this.moveCursor({ kind: 'beat', delta });
   }
 
   moveCursorByString(delta: number): void {
-    const state = this.stateSubject.getValue();
-    const staff = this.staffAt(state.doc, state.cursor);
-    if (!staff || staff.tuning.length === 0) return;
-
-    const current = state.cursor.stringIndex ?? 0;
-    const next = Math.max(0, Math.min(staff.tuning.length - 1, current + delta));
-    this.stateSubject.next({ ...state, cursor: { ...state.cursor, stringIndex: next } });
+    this.moveCursor({ kind: 'string', delta });
   }
 
-  private clampCursor(cursor: EditCursor, doc: ScoreDoc): EditCursor {
-    const trackIndex = this.clamp(cursor.trackIndex, 0, doc.tracks.length - 1);
-    const track = doc.tracks[trackIndex];
-    if (!track) return createDefaultCursor();
-
-    const staffIndex = this.clamp(cursor.staffIndex, 0, track.staves.length - 1);
-    const staff = track.staves[staffIndex];
-    const barIndex = this.clamp(cursor.barIndex, 0, staff.bars.length - 1);
-    const bar = staff.bars[barIndex];
-    const voiceIndex = this.clamp(cursor.voiceIndex, 0, bar.voices.length - 1);
-    const beats = bar.voices[voiceIndex].beats;
-    const beatIndex = this.clamp(cursor.beatIndex, 0, Math.max(0, beats.length - 1));
-
-    const stringIndex =
-      staff.tuning.length > 0
-        ? this.clamp(cursor.stringIndex ?? 0, 0, staff.tuning.length - 1)
-        : null;
-
-    return { trackIndex, staffIndex, barIndex, voiceIndex, beatIndex, stringIndex };
-  }
-
-  private clamp(value: number, min: number, max: number): number {
-    if (max < min) return min;
-    return Math.max(min, Math.min(max, value));
+  /**
+   * Publishes a selection, and clears any refusal: it answered a press on the selection that was,
+   * and left standing it would read as the reason a press on this one failed.
+   */
+  private publishSelection(cursor: EditCursor, anchor: EditCursor | null): void {
+    this.stateSubject.next({ ...this.stateSubject.getValue(), cursor, anchor, refusal: null });
   }
 
   // -------------------------------------------------------------------------
@@ -714,7 +669,7 @@ export class ComposerService {
   removeBar(index: number): void {
     if (this.doc.masterBars.length <= 1) return;
     this.commit(draft => {
-      const at = this.clamp(index, 0, draft.masterBars.length - 1);
+      const at = Math.max(0, Math.min(index, draft.masterBars.length - 1));
       draft.masterBars.splice(at, 1);
       for (const track of draft.tracks) {
         for (const staff of track.staves) {

@@ -1,0 +1,123 @@
+import { TestBed } from '@angular/core/testing';
+
+import { ComposerService } from './composer.service';
+import { ComposerState } from '../models/composer.model';
+
+/**
+ * The service commands M2's palette and keyboard reach, beyond M1's.
+ *
+ * Each `describe` belongs to one task of the M2 plan. The pure edit functions under these commands
+ * have their own specs; what is pinned here is what only the service can get wrong - a range pressed
+ * as one undo step, a refusal published and nothing committed, the selection after the press.
+ */
+
+/** The service's current state. */
+function stateOf(service: ComposerService): ComposerState {
+  let latest: ComposerState | undefined;
+  service.getState().subscribe(value => (latest = value)).unsubscribe();
+  if (!latest) throw new Error('no state');
+  return latest;
+}
+
+/** Writes `fret` on tab string `string` at bar `barIndex`, beat `beatIndex`, leaving the caret there. */
+function writeFret(service: ComposerService, barIndex: number, beatIndex: number, fret: number, string = 1): void {
+  service.setCursor({ barIndex, beatIndex, stringIndex: string - 1 });
+  service.setNoteAtCursor({ kind: 'fretted', string, fret }, false);
+}
+
+/** The first track's beats in bar `barIndex`. */
+function beatsIn(service: ComposerService, barIndex = 0) {
+  return service.doc.tracks[0].staves[0].bars[barIndex].voices[0].beats;
+}
+
+describe('ComposerService moveCursor', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('extends a range beat by beat, keeping where it started', () => {
+    service.setCursor({ barIndex: 0, beatIndex: 1 });
+
+    service.moveCursor({ kind: 'beat', delta: 1 }, true);
+    service.moveCursor({ kind: 'beat', delta: 1 }, true);
+
+    expect(stateOf(service).anchor?.beatIndex).toBe(1);
+    expect(stateOf(service).cursor.beatIndex).toBe(3);
+  });
+
+  it('drops the range on a plain move', () => {
+    service.moveCursor({ kind: 'beat', delta: 1 }, true);
+
+    service.moveCursor({ kind: 'bar', delta: 1 });
+
+    expect(stateOf(service).anchor).toBeNull();
+    expect(stateOf(service).cursor.barIndex).toBe(1);
+  });
+
+  it('keeps the range when the string changes, since that moves the focus and not the selection', () => {
+    service.moveCursor({ kind: 'beat', delta: 1 }, true);
+
+    service.moveCursor({ kind: 'string', delta: 1 });
+
+    expect(stateOf(service).anchor).not.toBeNull();
+    expect(stateOf(service).cursor.stringIndex).toBe(1);
+  });
+});
+
+describe('ComposerService refusals clear', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  /** A refusal on screen: a note tool pressed on the caret's rest. */
+  const refuseAPress = (): void => {
+    service.toggleNoteEffect('isGhost', true, false);
+    expect(stateOf(service).refusal).not.toBeNull();
+  };
+
+  it('when the caret moves', () => {
+    refuseAPress();
+    service.setCursor({ beatIndex: 1 });
+    expect(stateOf(service).refusal).toBeNull();
+  });
+
+  it('when the caret steps or changes string', () => {
+    refuseAPress();
+    service.moveCursorByBeat(1);
+    expect(stateOf(service).refusal).toBeNull();
+
+    refuseAPress();
+    service.moveCursorByString(1);
+    expect(stateOf(service).refusal).toBeNull();
+  });
+
+  it('when a range is extended or the whole track selected', () => {
+    refuseAPress();
+    service.extendSelectionTo({ beatIndex: 2 });
+    expect(stateOf(service).refusal).toBeNull();
+
+    service.setCursor({ beatIndex: 0 });
+    refuseAPress();
+    service.selectAllInTrack();
+    expect(stateOf(service).refusal).toBeNull();
+  });
+
+  it('on undo and on redo', () => {
+    writeFret(service, 0, 0, 3);
+    service.setCursor({ beatIndex: 1 });
+
+    refuseAPress();
+    service.undo();
+    expect(stateOf(service).refusal).toBeNull();
+
+    refuseAPress();
+    service.redo();
+    expect(stateOf(service).refusal).toBeNull();
+  });
+});
