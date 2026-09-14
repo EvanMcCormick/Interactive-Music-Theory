@@ -774,3 +774,61 @@ describe('ComposerService Fix bar and a tuplet group', () => {
     expect(writtenOf(beatsIn(service, 1))).toBe('n8t3 n8t3 n8t3 r4 r4 r4');
   });
 });
+
+describe('ComposerService outcomes', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('says what Fix bar fixed and added, and the next caret move clears it', () => {
+    for (const beatIndex of [0, 1, 2, 3]) writeFret(service, 3, beatIndex, beatIndex);
+    service.setCursor({ barIndex: 3, beatIndex: 0 });
+    service.applyDurationAtCursor(2, 0);
+
+    service.fixBar();
+    expect(stateOf(service).notice).toBe('Fixed 1 bar, adding 1 bar at the end.');
+
+    service.moveCursor({ kind: 'beat', delta: 1 });
+    expect(stateOf(service).notice).toBeNull();
+  });
+
+  it('says what a paste wrote and the bars it added, and a refusal replaces it', () => {
+    writeFret(service, 0, 0, 5);
+    writeFret(service, 0, 1, 7);
+    service.setCursor({ beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 1 });
+    service.copy();
+    service.setCursor({ barIndex: 3, beatIndex: 3 });
+
+    service.paste();
+    expect(stateOf(service).notice).toBe('Pasted 2 beats, adding 1 bar at the end.');
+
+    service.fixBar();
+    expect(stateOf(service).notice).toBeNull();
+    expect(stateOf(service).refusal).toMatch(/over/i);
+  });
+
+  it('says a fermata was removed on the commit that removed it, and the next caret move clears it', () => {
+    // The first guitar's quarters, with a fermata on the second; then a second guitar whose bar is a half then two
+    // quarters, so nothing of it starts at 960, where the fermata is - but a quarter starts at 1920.
+    for (const beatIndex of [0, 1, 2, 3]) writeFret(service, 0, beatIndex, beatIndex);
+    service.setCursor({ barIndex: 0, beatIndex: 1 });
+    service.toggleFermata();
+    service.addTrack('Guitar', 25, true);
+    service.setCursor({ trackIndex: 1, barIndex: 0, beatIndex: 0 });
+    service.applyDurationAtCursor(2, 0);
+    expect(stateOf(service).notice).toBeNull();
+
+    // The first quarter made a half pushes the fermata's note to 1920, where it would reach the second guitar.
+    service.setCursor({ trackIndex: 0, barIndex: 0, beatIndex: 0 });
+    service.applyDurationAtCursor(2, 0);
+    expect(stateOf(service).notice).toBe('1 fermata removed: its note moved where it would reach other tracks.');
+    expect(service.doc.tracks[0].staves[0].bars[0].voices[0].beats.some(beat => beat.effects.fermata)).toBeFalse();
+
+    service.moveCursor({ kind: 'beat', delta: 1 });
+    expect(stateOf(service).notice).toBeNull();
+  });
+});

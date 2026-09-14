@@ -430,6 +430,12 @@ export interface ComposerState {
    * selection change, undo and redo.
    */
   refusal: string | null;
+  /**
+   * What the last command did, where that is worth saying aloud: Fix bar's and paste's outcomes, which
+   * change bars the user may not be looking at (design Part 4). Published with the commit, and cleared
+   * wherever `refusal` is - the next edit, a selection change, undo, redo - and by a refusal.
+   */
+  notice: string | null;
   /** Select or Pen. See `EntryMode`. */
   entryMode: EntryMode;
   /** Duration applied to the next entered note. */

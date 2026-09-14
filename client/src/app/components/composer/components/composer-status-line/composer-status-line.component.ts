@@ -1,0 +1,56 @@
+import { ChangeDetectionStrategy, Component, Input, OnChanges, SimpleChanges } from '@angular/core';
+import { CommonModule } from '@angular/common';
+
+import { EditCursor, EntryMode, ScoreDoc } from '../../../../models/composer.model';
+import { scoreBarFills } from '../../../../services/bar-fill';
+import { countOf } from '../../../../services/composer-service-structure';
+
+/** How many bars are over their time signature: every staff's, each of which Fix bar mends on its own. */
+export function overBarCountOf(doc: ScoreDoc): number {
+  return scoreBarFills(doc).flat(2).filter(fill => fill.kind === 'over').length;
+}
+
+/**
+ * The line between the score and the track strip: where the caret is, whether a click writes, how many
+ * bars are over, and why the last press did nothing or what it did.
+ *
+ * Holds the page's one polite live region. Refusals from every route - a palette button, a key, a click
+ * on the score - arrive as `ComposerState.refusal`, Fix bar's and paste's outcomes as
+ * `ComposerState.notice`, and the region reads them out; a failed alphaTex apply joins them. The caret
+ * readout and the count of bars over sit outside the region: both change with ordinary editing, and
+ * announcing them would bury what the region is for.
+ */
+@Component({
+  selector: 'app-composer-status-line',
+  standalone: true,
+  imports: [CommonModule],
+  templateUrl: './composer-status-line.component.html',
+  styleUrls: ['./composer-status-line.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class ComposerStatusLineComponent implements OnChanges {
+  /** Why the last command did nothing, from `ComposerState.refusal`. */
+  @Input() refusal: string | null = null;
+  /** What the last command did, from `ComposerState.notice`. */
+  @Input() notice: string | null = null;
+  /** Why an alphaTex apply left the score unchanged. */
+  @Input() texError: string | null = null;
+  @Input() cursor: EditCursor | null = null;
+  @Input() entryMode: EntryMode = 'select';
+  /** The document, for the count of bars over. */
+  @Input() doc: ScoreDoc | null = null;
+
+  /** "2 bars over their time signatures", or null when none is. Measured when the document changes, not per check. */
+  overBarsLabel: string | null = null;
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (!changes['doc']) return;
+    const over = this.doc ? overBarCountOf(this.doc) : 0;
+    this.overBarsLabel = over === 0 ? null : `${countOf(over, 'bar')} over ${over === 1 ? 'its time signature' : 'their time signatures'}`;
+  }
+
+  /** What the live region says: the alphaTex error, the refusal, then the outcome. */
+  get messages(): string[] {
+    return [this.texError, this.refusal, this.notice].filter((message): message is string => !!message);
+  }
+}

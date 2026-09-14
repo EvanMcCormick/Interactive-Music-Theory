@@ -1,0 +1,45 @@
+// The status line: caret, mode, bars over, and the live region for refusals and outcomes.
+
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-height: 1.9rem;
+  padding: 0.25rem 0.9rem;
+  background-color: var(--composer-nav, #2c3e50);
+  border-top: 1px solid var(--composer-border, #465666);
+  color: var(--composer-text-secondary, #bdc3c7);
+  font-size: 0.78rem;
+}
+
+.readout,
+.mode,
+.over-bars {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.mode.pen {
+  color: var(--composer-text, #ecf0f1);
+}
+
+.over-bars {
+  color: var(--composer-warning, #f39c12);
+}
+
+.messages {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--composer-text, #ecf0f1);
+}
+
+.message + .message::before {
+  content: ' · ';
+  color: var(--composer-text-secondary, #bdc3c7);
+}

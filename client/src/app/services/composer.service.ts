@@ -43,7 +43,7 @@ import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { defaultFermata } from './composer-tool-defaults';
 import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
-import { ComposerStructureCommands, EditOutcome, SelectionPlacement } from './composer-service-structure';
+import { ComposerStructureCommands, EditOutcome, SelectionPlacement, noticeOfOutcome } from './composer-service-structure';
 import {
   EditScope,
   beatEffectRefusal,
@@ -102,7 +102,7 @@ export class ComposerService {
   private readonly host: ComposerEntryHost = {
     state: () => this.stateSubject.getValue(),
     commit: (edit, amend) => this.commit(edit, amend),
-    commitFollowing: (edit, place) => this.commitFollowing(edit, place),
+    commitFollowing: (edit, place, notice) => this.commitFollowing(edit, place, notice),
     refuse: reason => this.refuse(reason),
     markDiverged: draft => this.markDiverged(draft),
     moveCursor: move => this.moveCursor(move),
@@ -117,6 +117,7 @@ export class ComposerService {
       cursor: createDefaultCursor(),
       anchor: null,
       refusal: null,
+      notice: null,
       entryMode: 'select',
       inputDuration: 4,
       inputDots: 0,
@@ -227,7 +228,7 @@ export class ComposerService {
     const draft = structuredClone(this.stateSubject.getValue().doc);
     const reason = edit(draft);
     if (typeof reason === 'string') return this.refuse(reason);
-    this.commitDocument(draft, undefined, amend);
+    this.commitDocument(draft, undefined, amend, noticeOfOutcome(null, reason));
   }
 
   /**
@@ -241,11 +242,13 @@ export class ComposerService {
    * notes made eighths would end on a rest halfway through them, and the next press would miss
    * half the notes. So the beat each end names is found before the edit and looked for again
    * after it (`followedEnd`). An end whose beat is gone stays where it was, clamped. `place`, when
-   * given, decides the selection from those followed ends instead, in the same publish.
+   * given, decides the selection from those followed ends instead, in the same publish, and `notice`
+   * what the command says it did (`ComposerState.notice`).
    */
   private commitFollowing(
     edit: (draft: ScoreDoc) => EditOutcome,
-    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement
+    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement,
+    notice?: () => string | null
   ): void {
     const state = this.stateSubject.getValue();
     const draft = structuredClone(state.doc);
@@ -259,14 +262,19 @@ export class ComposerService {
       cursor: followedEnd(draft, state.cursor, cursorBeat),
       anchor: state.anchor ? followedEnd(draft, state.anchor, anchorBeat) : null
     };
-    this.commitDocument(draft, place ? place(draft, followed) : followed);
+    this.commitDocument(draft, place ? place(draft, followed) : followed, false, noticeOfOutcome(notice?.() ?? null, reason));
   }
 
   /**
    * Publishes a prepared document and pushes the old one onto undo, with `selection` in place
    * of the current one when given. Either way the selection is clamped into the new document.
    */
-  private commitDocument(next: ScoreDoc, selection?: { cursor: EditCursor; anchor: EditCursor | null }, amend = false): void {
+  private commitDocument(
+    next: ScoreDoc,
+    selection?: { cursor: EditCursor; anchor: EditCursor | null },
+    amend = false,
+    notice: string | null = null
+  ): void {
     const state = this.stateSubject.getValue();
     const cursor = selection ? selection.cursor : state.cursor;
     const anchor = selection ? selection.anchor : state.anchor;
@@ -282,6 +290,7 @@ export class ComposerService {
       cursor: clampedCursor(cursor, next),
       anchor: anchor ? clampedCursor(anchor, next) : null,
       refusal: null,
+      notice,
       isDirty: true,
       canUndo: true,
       canRedo: false
@@ -300,6 +309,7 @@ export class ComposerService {
       cursor: clampedCursor(state.cursor, previous),
       anchor: state.anchor ? clampedCursor(state.anchor, previous) : null,
       refusal: null,
+      notice: null,
       isDirty: true,
       canUndo: this.undoStack.length > 0,
       canRedo: true
@@ -318,6 +328,7 @@ export class ComposerService {
       cursor: clampedCursor(state.cursor, next),
       anchor: state.anchor ? clampedCursor(state.anchor, next) : null,
       refusal: null,
+      notice: null,
       isDirty: true,
       canUndo: true,
       canRedo: this.redoStack.length > 0
@@ -336,6 +347,7 @@ export class ComposerService {
       cursor: clampedCursor(state.cursor, doc),
       anchor: null,
       refusal: null,
+      notice: null,
       isDirty: !markClean,
       canUndo: true,
       canRedo: false
@@ -403,7 +415,7 @@ export class ComposerService {
    * and left standing it would read as the reason a press on this one failed.
    */
   private publishSelection(cursor: EditCursor, anchor: EditCursor | null): void {
-    this.stateSubject.next({ ...this.stateSubject.getValue(), cursor, anchor, refusal: null });
+    this.stateSubject.next({ ...this.stateSubject.getValue(), cursor, anchor, refusal: null, notice: null });
   }
 
   // -------------------------------------------------------------------------
@@ -607,7 +619,7 @@ export class ComposerService {
 
   /** Publishes why a command did nothing. Commits nothing, so it costs no undo step. */
   private refuse(reason: string): void {
-    this.stateSubject.next({ ...this.stateSubject.getValue(), refusal: reason });
+    this.stateSubject.next({ ...this.stateSubject.getValue(), refusal: reason, notice: null });
   }
 
   // -------------------------------------------------------------------------
@@ -929,6 +941,7 @@ export class ComposerService {
       cursor: createDefaultCursor(),
       anchor: null,
       refusal: null,
+      notice: null,
       entryMode: 'select',
       inputDuration: 4,
       inputDots: 0,

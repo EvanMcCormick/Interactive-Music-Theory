@@ -27,7 +27,7 @@ import { barFillAt, fixBarOverflow } from './bar-fill';
 import { newOpenTupletGroup, openTupletGroupsOf } from './beat-edits';
 import { selectedBars } from './composer-selection';
 import { editRefusal } from './edit-refusals';
-import { FermataDrops, fermataSnapshotOf, settleFermatas } from './fermata-settling';
+import { FermataDrops, fermataNoticeOf, fermataSnapshotOf, settleFermatas } from './fermata-settling';
 import { renameTrack, setPlayback, setStaffNumber, setStaffTuning, setStaffViews } from './track-edits';
 
 /**
@@ -61,11 +61,14 @@ export interface ComposerCommandHost {
    *
    * `place`, when given, decides the selection instead, from the edited draft and the ends as they
    * followed their beats - so a command that moves the caret or drops the range does it in the same
-   * commit, and the state is published once.
+   * commit, and the state is published once. `notice`, when given, is asked after the edit has run and
+   * its answer published as `ComposerState.notice` in that same commit, followed by why each fermata the edit
+   * removed went, when it removed one (`noticeOfOutcome`).
    */
   commitFollowing(
     edit: (draft: ScoreDoc) => EditOutcome,
-    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement
+    place?: (draft: ScoreDoc, followed: SelectionPlacement) => SelectionPlacement,
+    notice?: () => string | null
   ): void;
   /** Publishes why a command did nothing. Commits nothing. */
   refuse(reason: string): void;
@@ -165,28 +168,32 @@ export class ComposerStructureCommands {
     if (refusal) return this.host.refuse(refusal);
 
     const bars = selectedBars(state.anchor, state.cursor);
-    this.host.commitFollowing(draft => {
-      let fixed = false;
-      let appended = 0;
-      // A carry moves beats into later bars, so every fermata from the first selected bar on goes with its note or
-      // back to its bar position afterwards (`settleFermatas`), in the bars the carry appends too.
-      const staffBars = (): BarDoc[] => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.slice(bars.first) ?? [];
-      const fermatas = fermataSnapshotOf(draft, staffBars().map((_, offset) => bars.first + offset));
-      const openBefore = staffBars().flatMap(bar => openTupletGroupsOf(bar.voices[0]?.beats ?? []));
+    let fixed = 0;
+    let appended = 0;
+    this.host.commitFollowing(
+      draft => {
+        // A carry moves beats into later bars, so every fermata from the first selected bar on goes with its note or
+        // back to its bar position afterwards (`settleFermatas`), in the bars the carry appends too.
+        const staffBars = (): BarDoc[] => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.slice(bars.first) ?? [];
+        const fermatas = fermataSnapshotOf(draft, staffBars().map((_, offset) => bars.first + offset));
+        const openBefore = staffBars().flatMap(bar => openTupletGroupsOf(bar.voices[0]?.beats ?? []));
 
-      for (let index = bars.first; index <= bars.last; index++) {
-        if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
-        const result = fixBarOverflow(draft, trackIndex, staffIndex, index);
-        if (result.kind === 'refused') return result.reason;
-        fixed = true;
-        appended += result.appendedBars;
-      }
+        for (let index = bars.first; index <= bars.last; index++) {
+          if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
+          const result = fixBarOverflow(draft, trackIndex, staffIndex, index);
+          if (result.kind === 'refused') return result.reason;
+          fixed++;
+          appended += result.appendedBars;
+        }
 
-      if (!fixed) return 'No selected bar is over its time signature.';
-      if (staffBars().some(bar => newOpenTupletGroup(openBefore, bar.voices[0]?.beats ?? []))) return SPLITS_A_GROUP;
-      if (appended > 0) this.host.markDiverged(draft);
-      return settleFermatas(draft, fermatas);
-    });
+        if (fixed === 0) return 'No selected bar is over its time signature.';
+        if (staffBars().some(bar => newOpenTupletGroup(openBefore, bar.voices[0]?.beats ?? []))) return SPLITS_A_GROUP;
+        if (appended > 0) this.host.markDiverged(draft);
+        return settleFermatas(draft, fermatas);
+      },
+      undefined,
+      () => fixBarNoticeOf(fixed, appended)
+    );
   }
 
   /** Repeat close over the selected bars, by the toggle rule. See `toggleRepeatClose`. */
@@ -246,4 +253,23 @@ export class ComposerStructureCommands {
     }
     this.host.commitFollowing(draft => edit(draft, trackIndex, staffIndex));
   }
+}
+
+/**
+ * What a commit says: `said`, the command's own words, then why each fermata the edit's `outcome` removed went
+ * (`fermataNoticeOf`) - or null when neither has anything to say.
+ */
+export function noticeOfOutcome(said: string | null, outcome: EditOutcome): string | null {
+  const fermatas = Array.isArray(outcome) ? fermataNoticeOf(outcome) : null;
+  return [said, fermatas].filter((part): part is string => !!part).join(' ') || null;
+}
+
+/** `count` and `noun`, plural unless the count is one: "1 bar", "3 beats". */
+export function countOf(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+/** What Fix bar says it did: how many bars it fixed, and how many it appended when the carry ran off the end. */
+export function fixBarNoticeOf(fixed: number, appended: number): string {
+  return `Fixed ${countOf(fixed, 'bar')}${appended > 0 ? `, adding ${countOf(appended, 'bar')} at the end` : ''}.`;
 }
