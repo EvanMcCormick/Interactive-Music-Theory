@@ -1,6 +1,6 @@
-import { BeatDoc, ScoreDoc } from '../models/composer.model';
+import { BeatDoc, FermataDoc, ScoreDoc } from '../models/composer.model';
 import { barCapacityTicks, barFillOf, barMeterAt, beatTicks, fillBarGaps, graceRunStart, insertRestsAt, splitAtBarLine } from './bar-fill';
-import { fermataPositionsOf, graceFermataOf, tupletGroupsOf } from './beat-edits';
+import { fermataSnapshotOf, settleFermatas, tupletGroupsOf } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
 import { insertBarInto } from './score-structure';
 
@@ -52,11 +52,11 @@ const PAST_THE_LINE = 'That beat is past the bar line; Fix bar first.';
  * diverged, with where the run starts, for the caret.
  *
  * A fermata belongs to a bar position on every track (the design's M2 decision 2). So each pasted beat
- * that carries one puts it on every track's beat at its position (`fermataPositionsOf`), and one that
- * carries none takes the fermata already at its position, if any - so a paste neither leaves a fermata on
- * one staff alone nor wipes one from the others. A pasted grace has no position of its own: it takes the
- * fermata at the position of the beat it leads into, or none (`graceFermataOf`), since alphaTab files a
- * grace's fermata there and a copied one would spread to every track on save.
+ * that carries one puts it on every track's beat at its position, and every other beat in the bars pasted
+ * into - pasted or moved - takes the fermata already at its position, if any, so a paste neither leaves a
+ * fermata on one staff alone nor wipes one from the others (`settleFermatas`). A pasted grace has no position
+ * of its own: it takes the fermata at the position of the beat it leads into, or none (`graceFermataOf`),
+ * since alphaTab files a grace's fermata there and a copied one would spread to every track on save.
  *
  * Refused before anything changes: a copy holding part of a tuplet group (`tupletGroupsOf`), which would
  * start a group alphaTab never closes and leave room off the 64th grid; and a paste at a beat that starts at
@@ -121,6 +121,12 @@ export function pasteBeats(doc: ScoreDoc, at: BeatRef, copied: CopiedBeats): { a
     }
   }
 
+  const fermatas = fermataSnapshotOf(doc, segments.map(segment => segment.barIndex));
+  const pasted = new Map<BeatDoc, FermataDoc>();
+  for (const segment of segments) {
+    for (const beat of segment.beats) if (beat.effects.fermata && beat.effects.grace === 'none') pasted.set(beat, beat.effects.fermata);
+  }
+
   for (const segment of segments) {
     const bar = staff.bars[segment.barIndex];
     const voice = bar?.voices[at.voiceIndex];
@@ -139,25 +145,7 @@ export function pasteBeats(doc: ScoreDoc, at: BeatRef, copied: CopiedBeats): { a
     fillBarGaps(bar, meter);
   }
 
-  for (const segment of segments) {
-    const voice = staff.bars[segment.barIndex]?.voices[at.voiceIndex];
-    for (const beat of segment.beats) {
-      if (!voice || beat.effects.grace !== 'none') continue;
-      const ref: BeatRef = { ...at, barIndex: segment.barIndex, beatIndex: voice.beats.indexOf(beat) };
-      const positions = fermataPositionsOf(doc, [ref]);
-      const standing = positions.find(other => other !== beat && other.effects.grace === 'none' && other.effects.fermata !== null);
-      const fermata = beat.effects.fermata ?? standing?.effects.fermata ?? null;
-      for (const other of positions) other.effects.fermata = fermata ? { ...fermata } : null;
-    }
-  }
-
-  for (const segment of segments) {
-    const voice = staff.bars[segment.barIndex]?.voices[at.voiceIndex];
-    for (const beat of segment.beats) {
-      if (!voice || beat.effects.grace === 'none') continue;
-      beat.effects.fermata = graceFermataOf(doc, { ...at, barIndex: segment.barIndex, beatIndex: voice.beats.indexOf(beat) });
-    }
-  }
+  settleFermatas(doc, fermatas, pasted);
 
   return { appendedBars, at: { ...at, beatIndex: startIndex } };
 }

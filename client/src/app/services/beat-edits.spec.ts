@@ -709,3 +709,103 @@ describe('clearToRests, insertBeatAt and deleteBeats', () => {
     expect(shape(doc)).toEqual(['r1']);
   });
 });
+
+describe('a fermata through an edit that moves beats', () => {
+  // alphaTab finishes tracks in order and files a beat's fermata on the master bar at the tick the beat starts
+  // at, handing it to every beat finished later at that tick without one (`Voice.finish` ~3294,
+  // `MasterBar.addFermata` ~2705, `MasterBar.getFermata` ~2728). So when an edit on an early track moves a
+  // fermata beat to a tick where a later track has a beat, that beat takes the fermata on save. A fermata
+  // stays at its bar position instead: the beat that moved away loses it, and whatever now starts there takes it.
+  let mapper: ScoreDocMapperService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    mapper = TestBed.inject(ScoreDocMapperService);
+  });
+
+  const F = 'medium';
+  const fermatas = (doc: ScoreDoc): (string | null)[][] =>
+    doc.tracks.map(track => track.staves[0].bars[0].voices[0].beats.map(beat => beat.effects.fermata?.type ?? null));
+  const saved = (doc: ScoreDoc): ScoreDoc => mapper.toDoc(mapper.toScore(doc, new alphaTab.Settings()));
+  const onTrack = (trackIndex: number, beatIndex: number): BeatRef => ({ ...ref(0, beatIndex), trackIndex });
+
+  /**
+   * A guitar, a piano and an organ, each bar 0 a note on every quarter with a fermata on the second - or, with
+   * `guitarQuarters`, that many quarters on the guitar and the fermata on the third quarter of every track.
+   */
+  const threeTracks = (guitarQuarters = 4): ScoreDoc => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    doc.tracks.push(ComposerService.createTrack('Organ', 'org', 16, false, doc.masterBars));
+    while (beats(doc).length < guitarQuarters) beats(doc).push(createRestBeat(4));
+    const at = guitarQuarters > 4 ? 2 : 1;
+    doc.tracks.forEach((track, trackIndex) => {
+      track.staves[0].bars[0].voices[0].beats.forEach((beat, index) => {
+        beat.isRest = false;
+        beat.notes = [{
+          pitch: trackIndex === 0 ? { kind: 'fretted', string: 1, fret: 0 } : { kind: 'pitched', noteValue: 0, octave: 4 },
+          isTied: false, accidental: 'auto', effects: createDefaultNoteEffects()
+        }];
+        if (index === at) beat.effects.fermata = { type: 'medium', length: 1 };
+      });
+    });
+    return doc;
+  };
+
+  it('keeps it at its position when a beat before it grows into the note that holds it', () => {
+    const doc = threeTracks();
+
+    setBeatDurations(doc, [ref(0, 0)], 2, 0);
+
+    // The half spans the second quarter's tick, so the guitar has no beat there; the quarter that moved to 1920
+    // is at a position with no fermata.
+    expect(fermatas(doc)).toEqual([[null, null, null, null], [null, F, null, null], [null, F, null, null]]);
+    expect(fermatas(saved(doc))).toEqual(fermatas(doc));
+  });
+
+  it('keeps it at its position when a dot blocked by the note that holds it moves that note', () => {
+    const doc = threeTracks();
+
+    setBeatDots(doc, [ref(0, 0)], 1);
+
+    expect(fermatas(doc)).toEqual([[null, null, null, null], [null, F, null, null], [null, F, null, null]]);
+    expect(fermatas(saved(doc))).toEqual(fermatas(doc));
+  });
+
+  it('gives it to the beat an insert moves onto its position', () => {
+    const doc = threeTracks();
+
+    insertBeatAt(doc, ref(0, 0), 4, 0);
+
+    expect(fermatas(doc)).toEqual([[null, F, null, null, null], [null, F, null, null], [null, F, null, null]]);
+    expect(fermatas(saved(doc))).toEqual(fermatas(doc));
+  });
+
+  it('gives it to the beat a delete moves onto its position', () => {
+    const doc = threeTracks();
+
+    deleteBeats(doc, [ref(0, 0)]);
+
+    expect(fermatas(doc)).toEqual([[null, F, null, null], [null, F, null, null], [null, F, null, null]]);
+    expect(fermatas(saved(doc))).toEqual(fermatas(doc));
+  });
+
+  it('gives it to the beat that moves onto its position when a beat in a bar already over becomes a grace', () => {
+    const doc = threeTracks(5);
+
+    setGrace(doc, [ref(0, 0)], 'beforeBeat');
+
+    // No rest fills the grace's room, since the bar was a quarter over, so every later beat moves a quarter earlier.
+    expect(fermatas(doc)).toEqual([[null, null, null, F, null], [null, null, F, null], [null, null, F, null]]);
+    expect(fermatas(saved(doc))).toEqual(fermatas(doc));
+  });
+
+  it('keeps it at its position when the edit is on the last track, which would save cleanly anyway', () => {
+    const doc = threeTracks();
+
+    setBeatDurations(doc, [onTrack(2, 0)], 2, 0);
+
+    expect(fermatas(doc)).toEqual([[null, F, null, null], [null, F, null, null], [null, null, null, null]]);
+    expect(fermatas(saved(doc))).toEqual(fermatas(doc));
+  });
+});

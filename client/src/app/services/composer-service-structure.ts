@@ -23,6 +23,7 @@ import {
   toggleMasterBarFlag
 } from './bar-edits';
 import { barFillAt, fixBarOverflow } from './bar-fill';
+import { fermataSnapshotOf, settleFermatas } from './beat-edits';
 import { selectedBars } from './composer-selection';
 import { editRefusal } from './edit-refusals';
 import { renameTrack, setPlayback, setStaffNumber, setStaffTuning, setStaffViews } from './track-edits';
@@ -150,6 +151,11 @@ export class ComposerStructureCommands {
     this.host.commitFollowing(draft => {
       let fixed = false;
       let appended = 0;
+      // A carry moves beats into later bars, so every fermata from the first selected bar on goes back to its
+      // bar position afterwards (`settleFermatas`); bars the carry appends held none.
+      const barCount = (): number => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.length ?? 0;
+      const before = barCount();
+      const fermatas = new Map(fermataSnapshotOf(draft, Array.from({ length: Math.max(0, before - bars.first) }, (_, offset) => bars.first + offset)));
 
       for (let index = bars.first; index <= bars.last; index++) {
         if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
@@ -160,6 +166,8 @@ export class ComposerStructureCommands {
       }
 
       if (!fixed) return 'No selected bar is over its time signature.';
+      for (let index = before; index < barCount(); index++) fermatas.set(index, new Map());
+      settleFermatas(draft, fermatas);
       if (appended > 0) this.host.markDiverged(draft);
       return null;
     });

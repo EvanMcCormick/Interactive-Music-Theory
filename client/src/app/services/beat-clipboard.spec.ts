@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import * as alphaTab from '@coderline/alphatab';
 
 import { CopiedBeats, copiedBeatsOf, pasteBeats } from './beat-clipboard';
-import { scoreBarFills } from './bar-fill';
+import { barMeterAt, fillBarGaps, scoreBarFills } from './bar-fill';
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
@@ -213,6 +213,32 @@ describe('pasteBeats, a grace and a fermata', () => {
 
     expect(beats(doc, 0)[3].effects.grace).toBe('beforeBeat');
     expect(fermatas(doc)).toEqual([[null, null, null, null, null], [null, null, null, null], [null, null, null, null]]);
+    expect(fermatas(saved(doc))).toEqual(fermatas(doc));
+  });
+
+  it('keeps a fermata at its position when a paste pulls the beat holding it earlier', () => {
+    // A 64th pasted over a dotted 64th leaves 30 ticks, which no rest spells, so the beats after it move 30
+    // ticks earlier. The dotted 64th with the fermata moves off its position on the guitar alone.
+    const doc = threeTracks();
+    doc.tracks.forEach((track, trackIndex) => {
+      const bar = track.staves[0].bars[0];
+      const note = (): BeatDoc => ({
+        ...createRestBeat(64), dots: 1, isRest: false,
+        notes: [{
+          pitch: trackIndex === 0 ? { kind: 'fretted', string: 1, fret: 3 } : { kind: 'pitched', noteValue: 0, octave: 4 },
+          isTied: false, accidental: 'auto', effects: createDefaultNoteEffects()
+        }]
+      });
+      bar.voices[0].beats = [note(), note()];
+      bar.voices[0].beats[1].effects.fermata = { type: 'medium', length: 1 };
+      fillBarGaps(bar, barMeterAt(doc, 0));
+    });
+    const sixtyFourth: BeatDoc = { ...createRestBeat(64), isRest: false };
+    sixtyFourth.notes = [{ pitch: { kind: 'fretted', string: 1, fret: 5 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
+
+    pasteBeats(doc, ref(0, 0), { fretted: true, beats: [sixtyFourth] });
+
+    expect(fermatas(doc).map(list => list.indexOf('medium'))).toEqual([-1, 1, 1]);
     expect(fermatas(saved(doc))).toEqual(fermatas(doc));
   });
 

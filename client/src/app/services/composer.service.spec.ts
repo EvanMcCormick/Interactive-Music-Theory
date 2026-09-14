@@ -1,6 +1,8 @@
 import { TestBed } from '@angular/core/testing';
+import * as alphaTab from '@coderline/alphatab';
 
 import { scoreBarFills } from './bar-fill';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
 import { ComposerService } from './composer.service';
 import { selectionTargets } from './composer-selection';
 import { progressionTrack } from './progression-track';
@@ -592,6 +594,26 @@ describe('ComposerService fix bar', () => {
     const carried = service.doc.tracks[0].staves[0].bars[1].voices[0].beats[0];
     expect(carried.isRest).toBeFalse();
     expect(carried.duration).toBe(8);
+  });
+
+  it('leaves a carried beat\'s fermata at its bar position, not on the beat, so a save adds none', () => {
+    // alphaTab files a fermata by bar and tick, and hands it to every later track's beat at that tick. The
+    // eighth's fermata was at 3840 in bar 1, where no track has a beat once it is carried; carried to the start
+    // of bar 2, it would reach the piano's rest there on save.
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    doc.tracks[0].staves[0].bars[0].voices[0].beats = [noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(4), noteBeat(8)];
+    doc.tracks[0].staves[0].bars[0].voices[0].beats[4].effects.fermata = { type: 'medium', length: 1 };
+    service.replaceDocument(doc);
+    service.setCursor({ barIndex: 0, beatIndex: 4 });
+    const fermatas = (score: ScoreDoc): (string | null)[][][] =>
+      score.tracks.map(track => track.staves[0].bars.slice(0, 2).map(bar => bar.voices[0].beats.map(beat => beat.effects.fermata?.type ?? null)));
+
+    service.fixBar();
+
+    expect(fermatas(service.doc).flat(2).filter(type => type !== null)).toEqual([]);
+    const saved = TestBed.inject(ScoreDocMapperService).toDoc(TestBed.inject(ScoreDocMapperService).toScore(service.doc, new alphaTab.Settings()));
+    expect(fermatas(saved)).toEqual(fermatas(service.doc));
   });
 });
 
