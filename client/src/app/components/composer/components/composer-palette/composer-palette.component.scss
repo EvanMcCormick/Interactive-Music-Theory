@@ -1,4 +1,8 @@
-// The notation palette: every tool as a button, Bravura glyphs where SMuFL has one.
+// The notation palette: every tool as a flat icon, Bravura glyphs where SMuFL has one.
+//
+// The look follows Guitar Pro's tool sidebar: no button chrome, icons sitting straight on the panel,
+// a hairline between groups, and colour used for one thing only - what is currently on. Hover is a
+// faint wash, so the eye finds the highlighted tool rather than a grid of boxes.
 
 // alphaTab serves Bravura at /font (angular.json copies node_modules/@coderline/alphatab/dist/font
 // there). A @font-face is not encapsulated, so declaring it here registers the family for the page.
@@ -16,73 +20,103 @@
   overflow-x: hidden;
   background-color: var(--composer-nav, #2c3e50);
   border-right: 1px solid var(--composer-border, #465666);
+
+  // A thin scrollbar, so the tools keep the width rather than the track.
+  scrollbar-width: thin;
+  scrollbar-color: var(--composer-border, #465666) transparent;
+
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--composer-border, #465666);
+    border-radius: 4px;
+  }
 }
 
 .palette {
-  padding: 0.5rem;
+  padding: 0.3rem 0.25rem 0.6rem;
 }
 
+// A hairline and a little air, instead of each group being a block of boxes.
 .group + .group {
-  margin-top: 0.6rem;
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid rgb(255 255 255 / 8%);
 }
 
+// Quiet: it names the group for a screen reader and for the eye scanning past, and never competes
+// with the tool that is on.
 .group-heading {
-  margin: 0 0 0.3rem;
-  font-size: 0.66rem;
+  margin: 0 0 0.25rem 0.2rem;
+  font-size: 0.58rem;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--composer-text-secondary, #bdc3c7);
+  opacity: 0.55;
 }
 
 .buttons {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(2.3rem, 1fr));
-  gap: 0.25rem;
+  grid-template-columns: repeat(auto-fill, minmax(2.05rem, 1fr));
+  gap: 0.1rem;
 }
 
 .tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
-  height: 2.3rem;
+  height: 2.05rem;
   padding: 0;
   overflow: hidden;
-  background-color: var(--composer-nav-secondary, #34495e);
-  border: 1px solid var(--composer-border, #465666);
-  border-radius: 4px;
+  background-color: transparent;
+  border: 0;
+  border-radius: 3px;
   color: var(--composer-text, #ecf0f1);
   cursor: pointer;
   font-size: 0.7rem;
   line-height: 1;
   white-space: nowrap;
+  transition: background-color 90ms ease-out;
 
   &.smufl {
     // Bravura's glyphs sit on the baseline with a tall ascent, so they are drawn larger and nudged
-    // down to sit in the middle of the button.
+    // down to sit on the row's middle.
     font-family: 'Bravura', serif;
     font-size: 1.35rem;
-    padding-top: 0.55rem;
+    padding-top: 0.5rem;
   }
 
-  &:hover:not([aria-disabled='true']) {
-    background-color: var(--composer-accent, #3498db);
+  // A wash, not a colour: hovering says "this is a target", being on says "this is the value".
+  &:hover:not([aria-disabled='true']):not(.on) {
+    background-color: rgb(255 255 255 / 10%);
+  }
+
+  &:active:not([aria-disabled='true']) {
+    background-color: rgb(255 255 255 / 16%);
   }
 
   &.on {
     background-color: var(--composer-accent, #3498db);
-    border-color: var(--composer-accent-hover, #2980b9);
+    color: #fff;
   }
 
+  // Some of a range has it: the accent underlines rather than fills, so mixed reads as neither on nor off.
   &.mixed {
-    box-shadow: inset 0 -3px 0 var(--composer-accent, #3498db);
+    box-shadow: inset 0 -2px 0 var(--composer-accent, #3498db);
   }
 
+  // Refusing tools keep their place, their reason and enough contrast to read: dimmed, not hidden.
   &[aria-disabled='true'] {
-    opacity: 0.45;
+    opacity: 0.42;
     cursor: not-allowed;
   }
 
   &:focus-visible {
     outline: 2px solid var(--composer-text, #ecf0f1);
-    outline-offset: 1px;
+    outline-offset: -2px;
   }
 }
