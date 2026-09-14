@@ -1,0 +1,121 @@
+/**
+ * Key bindings for the composer's tools: what a binding is, whether a key press matches one, and how one
+ * is written in a tooltip and on the shortcut sheet.
+ *
+ * The rules are the design's, under "Shortcuts": modifiers exactly, with Cmd read as Ctrl; a Ctrl or Alt
+ * combination by physical key, because macOS Option rewrites `key`; a letter in either case with Shift
+ * exactly; a digit or symbol whatever Shift says, because which symbols need Shift depends on the layout;
+ * a named key with Shift exactly. And one the design did not state: a symbol typed through AltGr or
+ * Option (`bindingMatchesTyped`), asked only after every exact binding has failed.
+ */
+
+/** One key press a tool answers to. Exactly one of `key` and `code`. */
+export interface KeyBinding {
+  /** `KeyboardEvent.key`: a lower-case letter, a digit, a symbol, or a named key such as `ArrowLeft` or `' '`. */
+  key?: string;
+  /** `KeyboardEvent.code`, for a combination held with Ctrl or Alt. */
+  code?: string;
+  /** Ctrl, or Cmd on a Mac. */
+  ctrl?: boolean;
+  alt?: boolean;
+  shift?: boolean;
+}
+
+/** The parts of a `KeyboardEvent` a binding is matched against. */
+export type KeyPress = Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>;
+
+const isLetter = (key: string): boolean => /^[a-z]$/i.test(key);
+const isDigit = (key: string): boolean => /^[0-9]$/.test(key);
+/** A printable key whose Shift depends on the layout: one character, not a letter and not a space. */
+const isShiftFree = (key: string): boolean => key.length === 1 && !isLetter(key) && key !== ' ';
+
+/** Whether `press` is exactly `binding`. */
+export function bindingMatches(binding: KeyBinding, press: KeyPress): boolean {
+  if ((press.ctrlKey || press.metaKey) !== !!binding.ctrl || press.altKey !== !!binding.alt) return false;
+  if (binding.code !== undefined) return press.code === binding.code && press.shiftKey === !!binding.shift;
+
+  const key = binding.key ?? '';
+  if (isLetter(key)) return press.key.toLowerCase() === key.toLowerCase() && press.shiftKey === !!binding.shift;
+  if (isShiftFree(key)) return press.key === key;
+  return press.key === key && press.shiftKey === !!binding.shift;
+}
+
+/**
+ * Whether `press` typed `binding`'s symbol through AltGr (Windows reports it as Ctrl+Alt) or Option
+ * (Alt alone): the only way to type `}` on a German keyboard or `[` on a German Mac. Symbols only - never
+ * a digit, so no Alt or AltGr press writes a fret - and never with Cmd or Ctrl alone. Ask it only after
+ * every exact binding has failed, so Alt+/ is still the tuplet tool and not the triplet's `/`.
+ */
+export function bindingMatchesTyped(binding: KeyBinding, press: KeyPress): boolean {
+  const key = binding.key;
+  if (key === undefined || binding.ctrl || binding.alt || !isShiftFree(key) || isDigit(key)) return false;
+  if (press.metaKey || !press.altKey) return false;
+  return press.key === key;
+}
+
+/** Named keys as a tooltip prints them. */
+const KEY_LABELS: Readonly<Record<string, string>> = {
+  ' ': 'Space',
+  ArrowLeft: '←',
+  ArrowRight: '→',
+  ArrowUp: '↑',
+  ArrowDown: '↓',
+  Escape: 'Esc'
+};
+
+/** Physical keys that are not letters or digits, as a tooltip prints them. */
+const CODE_LABELS: Readonly<Record<string, string>> = {
+  Minus: '-',
+  Equal: '=',
+  Period: '.',
+  Comma: ',',
+  Slash: '/',
+  Space: 'Space'
+};
+
+/** How `binding` is written in a tooltip and on the shortcut sheet: `Ctrl+Shift+Z`, `Alt+-`, `?`. */
+export function bindingLabelOf(binding: KeyBinding): string {
+  const modifiers = [binding.ctrl ? 'Ctrl' : '', binding.alt ? 'Alt' : '', binding.shift ? 'Shift' : ''].filter(Boolean);
+  let key: string;
+  if (binding.code !== undefined) {
+    const code = binding.code;
+    key = /^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit[0-9]$/.test(code) ? code.slice(5) : CODE_LABELS[code] ?? code;
+  } else {
+    const raw = binding.key ?? '';
+    key = KEY_LABELS[raw] ?? (isLetter(raw) ? raw.toUpperCase() : raw);
+  }
+  return [...modifiers, key].join('+');
+}
+
+/**
+ * One string per distinct press, for finding two bindings that would answer the same one: modifiers,
+ * then the physical key. A letter or digit bound by `key` is written as its `code`, so `{ key: 'n' }`
+ * and `{ code: 'KeyN' }` are the same key; a shift-free symbol writes `*` for Shift, since it matches
+ * either way.
+ */
+export function bindingSignatureOf(binding: KeyBinding): string {
+  const key = binding.key ?? '';
+  const physical =
+    binding.code ?? (isLetter(key) ? `Key${key.toUpperCase()}` : isDigit(key) ? `Digit${key}` : `key:${key}`);
+  const shift = binding.code === undefined && isShiftFree(key) ? '*' : binding.shift ? 'S' : '-';
+  return `${binding.ctrl ? 'C' : '-'}${binding.alt ? 'A' : '-'}${shift} ${physical}`;
+}
+
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+/**
+ * What the browser keeps, from the design's rule 1: Ctrl+N, Ctrl+T, Ctrl+W and their Shift forms,
+ * Ctrl+Tab, Ctrl+1 to 9 (tab switching), Alt+letter (Firefox menus), F5, F11, F12 and Ctrl+Shift+Delete.
+ * The tool table's spec checks no tool is bound to any of them.
+ */
+export const BROWSER_RESERVED: readonly KeyBinding[] = [
+  ...['KeyN', 'KeyT', 'KeyW'].flatMap(code => [{ code, ctrl: true }, { code, ctrl: true, shift: true }]),
+  { key: 'Tab', ctrl: true },
+  { key: 'Tab', ctrl: true, shift: true },
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(digit => ({ code: `Digit${digit}`, ctrl: true })),
+  ...LETTERS.map(letter => ({ code: `Key${letter}`, alt: true })),
+  { key: 'F5' },
+  { key: 'F11' },
+  { key: 'F12' },
+  { key: 'Delete', ctrl: true, shift: true }
+];
