@@ -154,6 +154,10 @@ that owns the control that reaches them. Each is in the same "Found while design
   mapper's list rather than in it.*
 - **Seven files still cite a "500-line guideline"** in their headers; `CLAUDE.md` raised
   it to 1000 on 2026-09-09. One was fixed in passing; the rest want a sweep.
+- **`progression.component.ts` is 1,012 lines**, over `CLAUDE.md`'s 1000-line cap. Found while
+  reviewing M2 of the composer editor, which touches only its shared editable-target helper. A
+  small refactor of its own, not M2's: lift a cohesive block out, as `composer.service.ts` shed
+  its bar and track commands.
 - **`((x % 12) + 12) % 12` is written about seven more times** across
   `progression-harmony.ts`, `progression-parse.ts`, `progression-generate.ts`,
   `progression-voicing.ts`, `piano-roll-view.ts`, `note-naming.ts` and

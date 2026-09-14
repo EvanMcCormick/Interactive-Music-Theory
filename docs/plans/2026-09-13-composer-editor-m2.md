@@ -79,8 +79,9 @@ lifting note entry and the caret arithmetic out); `composer-track-strip.componen
 **Not proven by the suite:** Task 4.3's wiring of the score, which has no spec (its decisions are Task
 4.1's pure functions); anything visual or keyboard-hardware - Bravura rendering, narrow widths, Firefox,
 non-US layouts, macOS - which Task 5.2 checks by hand; the shapes of the twelve SMuFL code points that
-alphaTab's own enum does not name (they are in the font; Task 5.2 looks at them); and the order of the
-shell's and the composer's Escape listeners in the running app, which each side's spec pins separately.
+alphaTab's own enum does not name (they are in the font; Task 5.2 looks at them). The order of the
+shell's and the composer's Escape listeners, left to the running app here, is pinned since the
+corrections by a spec that dispatches a real key press with both listening.
 
 ### Facts this plan rests on, all verified on 2026-09-13
 
@@ -112,8 +113,10 @@ shell's and the composer's Escape listeners in the running app, which each side'
 - **The defaults survive a save**: the full bend's two points, the medium fermata, each offered tuplet,
   and a whole-step trill on a fretted note and on a pitched note on a staff with no tuning -
   `composer-tool-defaults.spec.ts` (Task 1.9) sends each through alphaTex.
-- **The shell's Escape listener runs before the composer's**: it is registered at bootstrap and the
-  composer's when its route activates, and listeners on one target run in registration order.
+- **The shell's Escape listener runs before the composer's** because it listens in the capture phase, which
+  runs before every bubbling listener on the document. Registration order - bootstrap before a route -
+  was the first reason given, and it is not one a page can rely on (see "Corrections during
+  implementation", Task 2.7).
 - `composer.service.ts` was 953 lines; `composer.component.ts` 801, holding the keyboard `switch`, the fret
   buffer, the duration buttons and the Tracks panel.
 
@@ -166,7 +169,9 @@ Numbered as in the design's "M2 decisions", where each is argued.
    only for notes, `{ family: 'note'; key: 'notes' }`, also serves respell and the pitch and string moves.
 5. **Escape uses the shell's claim, not a shared drawer flag** (decision 5 suggested a service). A flag
    would read closed by the time the composer asked, because the shell's listener runs first and closes
-   the drawer; a claim is read correctly in either order. Task 2.7 explains.
+   the drawer. A claim is read correctly only if the shell does run first, so the shell listens in the
+   capture phase, which makes that hold whatever order the listeners were added in. Task 2.7 explains,
+   as corrected under "Corrections during implementation".
 6. **A symbol typed through AltGr or Option still matches** after every exact binding fails (decision 6
    said exactly). Without it `}`, `|`, `[`, `]`, `$` and `<` are out of reach on German and French layouts
    and on a German Mac. Digits and letters are never relaxed, so the decision's cases hold.
@@ -202,8 +207,82 @@ Numbered as in the design's "M2 decisions", where each is argued.
 
 ### Corrections during implementation
 
-None yet. If review changes code after it is written to a task below, list the change here and say that
-the committed code supersedes that task's blocks, as the M1 plan does.
+Four reviews of Phases 1 and 2 as committed (through `1613dd0`) found faults, fixed in four commits:
+`419fc46` (bar and beat edits), `79db533` (note edits, moves, respell and refusals), `b50c369` (selection,
+cursor, clipboard and structure) and `9147bd5` (the keyboard layer). **The committed code supersedes the
+blocks of every task named below.** Those blocks stay as they were proven, so the proof table above still
+describes them; Phases 3 and 4 were written against the old blocks and will be re-proven against the
+committed code before they are applied. Whole suite after the four commits: **2,922 SUCCESS**.
+
+- **Task 1.1.** A 6:4 beat frees a third of its value, so three carried remainders spelled a rest and it
+  went in mid-group, which ends alphaTab's `TupletGroup` there. `settleRange` now carries room, without
+  trying to place it, while the beat's group - as alphaTab groups a voice (`tupletGroupContinuesAfter`) -
+  is still open and the next beat is in the run. Six sixteenths made 6:4 are six tuplet sixteenths then
+  an eighth rest; six eighths made 3:2 keep a rest after each closed group.
+- **Task 1.2.** A track move with no track to go to returns the caret unchanged, not moved to beat 0
+  (`composer-cursor.spec.ts`: `'1:2.0'` became `'1:2.3'`).
+- **Task 1.6.** `retypeNote` amends the last commit only for a fretted pitch on the same beat and string.
+  Delete at the caret clears through `clearToRests`, as a range does.
+- **Task 1.8.** Vibrato on a range skips tied continuations (`noteEffectTargets`) and is refused only on
+  tied notes alone. A clear writes `off` to the notes read and to notes holding exactly the value pressed,
+  never to a note holding another value: Shift slide over a phrase ending in a slide out keeps the slide
+  out. A tie with nothing to tie from is refused (`tieRefusal`, `tieTargetsOf`, `tieCandidateOf` in
+  `note-landing.ts`), and a range ties the notes that can be. A tap, slap or pop can be cleared from a
+  pitched staff (`beatEffectRefusal`). Every reader in `toolStates` asks the same functions.
+- **Task 1.9.** A trill press that would aim past MIDI 127 is refused (`trillRefusal`).
+- **Task 1.10.** A grace at a fermata's position is one of its beats: alphaTab hands it the fermata and it
+  spread back after a clear. `fermataPositionsOf` returns graces at the tick, written and cleared with the
+  beat; the toggle and its reader read the non-grace beats; a selection of graces alone is refused
+  (`fermataRefusal`), where it used to commit an empty undo step.
+- **Task 1.11.** On a transposed staff respell sets the accidental and drops the letter
+  (`respelledNote`'s new `transposed` argument), and a letter is read against the stored pitch.
+- **Task 1.12.** A move takes each note's whole tie chain (`tieChainOf`), since `Note.finish` copies a tie
+  origin's fret and pitch onward. A forced accidental survives a semitone move only where respell would
+  offer it (`note-moves.spec.ts`: B flat moved up, pinned as `'flat'` - C flat - is now `'auto'`). A loaded
+  fret or pitch past an edge may move back toward it. A move that takes a trill out of 0 to 127 is
+  refused. A string move is refused when a hammer-on or slide - the moved note's own, or another's onto
+  it - would stop landing, when a tie's origin would change, and when a natural harmonic would land on a
+  fret alphaTab names no node for.
+- **Task 1.13.** `clearToRests` resets every beat effect but the dynamic and the fermata, and removes a
+  grace rather than leave a grace rest. `insertBeatAt` inserts in front of a grace run and returns where;
+  `insertBeat` keeps the caret on the new rest and a range on its beats. `deleteBeats` publishes once.
+- **Task 1.14.** `CopiedBeats` holds one run (`beats`, not `bars`). Paste writes it from the selection's
+  first beat, crossing bar lines and splitting a beat across one as Fix bar does (`splitAtBarLine`, now
+  exported from `bar-fill.ts`, refusing a tuplet or an off-grid split), gives a pasted fermata to every
+  track at its position (decision 2), and drops the range; `pasteBeats` returns `at`. Copy with nothing
+  selected says "Nothing is selected." `beat-clipboard.spec.ts`: `copiedBeatsOf` pinned `bars` of `[1, 1]`,
+  now a run of two; `pasteBeats` pinned `{ appendedBars }`, now `{ appendedBars, at }`; "leaves a bar over
+  when the copied beats are longer than its room" pasted a half at beat 3, which now splits, and became
+  "leaves a bar that was already over still over".
+- **Task 1.15.** `deleteSelectedBars` drops the range, leaving the caret on the bar that took their place.
+  `removeTrack` on the last track refuses with a reason.
+- **Tasks 1.3-1.15, the service seam.** `ComposerCommandHost.commitFollowing` takes an optional `place`,
+  so a command sets the selection in the commit that edits; `ComposerEntryHost.select` is gone and
+  `setInputDuration` added; `ComposerService.applyDotsAtCursor` is new.
+- **Task 2.1.** `isEditableTarget` counts only inputs that are typed into (text, search, url, email, tel,
+  password, number). The circle-of-fifths wedges claim Space and Enter, so a document listener leaves them.
+- **Task 2.2.** A `Key[A-Z]` binding with Ctrl and no Alt matches the letter typed (`key`), falling back to
+  `code` only for a non-Latin letter; an unmodified letter binding falls back to `code` the same way. By
+  `code`, German Ctrl+Z redid and French Ctrl+A did nothing. The design's Matching paragraph is corrected.
+- **Task 2.3.** `toolStates(doc, anchor, cursor, entryMode)` takes the entry mode, is memoized on the four
+  arguments' identity, and reads the selection's notes once for every tool (an optional `notes` argument on
+  `editRefusal`, `noteEffectTargets`, `noteEffectRefusal`, `tieTargetsOf`, `tieRefusal`, `trillRefusal`
+  and `respellRefusal`). Select and Pen have readers, so the tool-table spec's "every palette button but
+  Select and Pen has a state" is now every palette button. `ToolState` says what `pressed` means per kind.
+- **Task 2.4.** Every tool has a `kind` - `toggle`, `radio`, `popover`, or `action` for commands that are
+  none of those (Fix bar, Insert bar, Respell, Natural, Rest, every key-only tool) - so Phase 3 puts
+  `aria-pressed` only on toggles and radios; and `repeatable`, `inTextFields` and `yieldsToTextSelection`
+  where they apply. Key signature's face is text, since U+E262 is Sharp's. One `pressedNowOf`. Dot dots
+  the selected beats' own values (`setBeatDots`), and `+` and `-` step from the value the selection shares.
+- **Task 2.5.** A second digit continues the number only while the document is the one the first digit
+  left, and never after a lone 0.
+- **Task 2.6.** An auto-repeat runs a tool only if it is `repeatable`; otherwise it is claimed and dropped.
+  Ctrl+C and Ctrl+X yield to a text selection outside the score (a third constructor argument names the
+  score element); Ctrl+S runs from a text field.
+- **Task 2.7.** The shell listens for Escape in the capture phase, so it claims the key before any bubbling
+  document listener whatever order they were added in. The task's "either order" was wrong: had the
+  composer's listener run first it would have seen Escape unclaimed and gone back to Select as well.
+  `app.component.spec.ts` now dispatches a real key press with the composer's handler listening first.
 
 ---
 
@@ -6660,8 +6739,10 @@ A shared "is the drawer open" flag on a service would not do it: the shell's lis
 bootstrap, before any routed page's, and listeners on one target run in registration order - so by the
 time the composer asked, the shell would already have closed the drawer and the flag would read closed.
 Instead the shell claims the key with `preventDefault` only when it closed something, and the composer's
-handler ignores a press already claimed (Task 2.6). That works in either order: had the composer run
-first, the drawer would still be open, and nothing would close it but the shell.
+handler ignores a press already claimed (Task 2.6). That needs the shell to run first. Registration order
+does not promise it - had the composer's listener been added first, it would have seen Escape unclaimed and
+gone back to Select while the shell closed the drawer - so, as corrected under "Corrections during
+implementation", the committed shell listens in the capture phase.
 
 **Files:**
 - Modify: `client/src/app/app.component.ts`

@@ -141,7 +141,10 @@ departs from the design".
 2. **A fermata belongs to a bar position across all tracks**, as in alphaTab and Guitar Pro. A
    press sets it on every staff's voice-1 beat that starts at that tick in that bar, on every track
    but a generated one, and a second press clears them all; the button reads all of them. M1's
-   pinned spread specs now pin the rule.
+   pinned spread specs now pin the rule. A grace at the position is one of its beats - alphaTab plays it
+   at that tick and hands it the fermata - so it is written and cleared with the beat it leads into, and
+   the toggle reads the beats that are not graces. A grace alone has no position, and a press on one is
+   refused.
 3. **M2 brings a minimal track strip forward**: a row per track with its name, remove, and the
    progression badge, status, Update and Flatten; add track with an instrument; and "Add
    progression track", keeping every selector and label the M4 specs pin, which move with the
@@ -153,7 +156,8 @@ departs from the design".
    with the drawer closed, Escape is back to Select and clear the range. The shell claims the key
    (`preventDefault`) only when it closes the drawer, and the composer ignores a claimed press. A
    shared "drawer open" flag would not work: the shell's listener runs first, so the flag would read
-   closed by the time the composer asked.
+   closed by the time the composer asked. The shell listens in the capture phase, so it does run first
+   whatever order the listeners were added in.
 6. **Modifiers match exactly.** Ctrl, Alt or Cmd with a digit writes no fret and is left to the
    browser; Ctrl or Shift with an arrow does its own table meaning; undo rejects Alt (AltGr on
    Windows); `r` and `R` both rest; form fields include `contentEditable`, through one helper shared
@@ -175,7 +179,9 @@ departs from the design".
     natural harmonic; a range respells what it can.
 12. **Palm mute and let ring are note-level tools.**
 13. **Vibrato is note-level.** Its button reads a tied note's vibrato from the note it is tied from,
-    and a press on a tied note is refused: "Vibrato on a tied note belongs to the note it is tied from."
+    and a press on tied notes alone is refused: "Vibrato on a tied note belongs to the note it is tied
+    from." A range skips its tied continuations, as a hammer-on skips notes that cannot land, so a phrase
+    with a tie in it takes vibrato; a clear there also takes a continuation's own stale vibrato.
 14. **A duration press on nothing but grace beats is refused**, since alphaTab sets a grace's value;
     a range with some graces keeps skipping them.
 15. **A press that clears a fretted-only technique is allowed on a pitched staff**; only turning one
@@ -214,6 +220,18 @@ departs from the design".
     and every binding - macOS alternates included - for uniqueness and against the browser's keys.
     The note values and the Select and Pen buttons have no key of their own, as the design's table
     gives them none; the spec names them.
+26. **Paste writes one continuous run from the start of the selection** - its first beat in time,
+    whichever end moved - keeping the spacing between the copied beats across bar lines. A beat that
+    would cross a bar line is split there as Fix bar splits one, tied into the next bar, and the paste is
+    refused where Fix bar refuses. A pasted fermata goes on every track at its position (decision 2).
+    The range is dropped after the paste. Settled when review found paste wrote bar by bar, at the
+    moving end.
+27. **A tie with nothing to tie from is refused**, with a reason, as a hammer-on with nothing to land on
+    is: alphaTab looks three bars back on the string, or for the pitch, and clears a tie that finds
+    nothing. A range ties the notes that can be tied.
+28. **Tie chains move whole.** A semitone or string move takes every note tied to or from a note it
+    moves, since alphaTab copies a tie origin's fret and pitch onto the notes tied from it. A string move
+    that would break a landing, change a tie's origin or put a natural harmonic off a node is refused.
 
 ---
 
@@ -481,13 +499,32 @@ The rules, in order:
 5. **Shift+arrows extend the selection**, as in every text editor, which moves
    TuxGuitar's string and pitch moves onto Alt.
 
-Matching: unmodified symbols match on `KeyboardEvent.key`; combinations with Alt or
-Ctrl match on `KeyboardEvent.code`, because macOS Option rewrites `key` (Option+- is
-an en dash). Keys marked † produce a symbol through Shift and need the non-US layout
-hand check. M2's plan settles the rest: modifiers match exactly, with Cmd read as Ctrl; a
-letter matches in either case, with Shift exactly as bound; a digit or symbol matches whatever
-Shift says; and a symbol typed through AltGr or Option still matches once every exact binding
-has failed, since `}` is AltGr+0 on a German keyboard.
+Matching: unmodified symbols match on `KeyboardEvent.key`. A Ctrl letter matches on `key`
+too: held with Ctrl a letter still reports itself there, while `code` names the key a US
+keyboard has in that place, so by `code` a German Ctrl+Z (typed on the key US calls Y)
+would redo and a French Ctrl+A would do nothing. It falls back to `code` only when `key` is
+not a Latin letter, as on a Cyrillic layout, and an unmodified letter falls back the same
+way. Alt combinations, and Ctrl combinations that are not letters, match on
+`KeyboardEvent.code`, because macOS Option rewrites `key` (Option+- is an en dash). Keys
+marked † produce a symbol through Shift and need the non-US layout hand check. M2's plan
+settles the rest: modifiers match exactly, with Cmd read as Ctrl; a letter matches in either
+case, with Shift exactly as bound; a digit or symbol matches whatever Shift says; and a symbol
+typed through AltGr or Option still matches once every exact binding has failed, since `}` is
+AltGr+0 on a German keyboard.
+
+**AZERTY's digit row**, for the hand check: unshifted it types `& é " ' ( - è _ ç à`, and the
+digits need Shift. Fret digits match what was typed, so Shift+5 (or the numpad) writes fret 5,
+while an unshifted 5, 6 or 8 presses left-hand tap, Shorter or Tenuto. Check whether that is
+bearable for a French player, or whether an unmodified digit-row key should also write its digit.
+
+**Held keys** repeat only moves - every navigation and extend move, semitone and string moves - undo
+and redo, and `+` and `-`, where holding the key means doing it again. Every other tool runs once per
+press, its auto-repeat claimed and dropped: held, a toggle would flicker on and off, Ctrl+S would save
+over and over, a digit would write a run of notes, and Delete would stack undo steps that change nothing.
+
+**Clipboard and save in text.** Ctrl+C and Ctrl+X are left to the browser while text outside the
+score is selected, so copying words on the page works. Ctrl+S is the composer's even from a text
+field, so the browser's own Save dialog never opens on the composer.
 
 **macOS**, settled in M2's plan without a Mac to hand - nobody has checked these on one. Mac
 keyboards have no Insert key, so each Insert binding also gets the Enter key with the same
