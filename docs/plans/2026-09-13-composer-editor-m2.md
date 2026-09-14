@@ -170,7 +170,8 @@ imports `tupletRefusal`, and 949 after the third, which imports `graceRefusal`);
 **Phases 3 and 4 are implemented.** Every block of both phases is committed code, the score's interaction merged from
 `feature/composer-editor-m2-score` in `1f0672b`, and corrected since (see "Corrections during implementation"). The
 committed code supersedes their blocks, as it does those of Phases 1 and 2. Whole suite on `a6f7ba0`: **3,294 SUCCESS**, both
-type checks clean. Phase 5 - the documentation and the hand check - is left.
+type checks clean. No client code changed after `a6f7ba0`, so the corrections below are complete for it. Task 5.1
+records M2 in the design doc, `docs/TODO.md` and `docs/ROADMAP.md`; Task 5.2, the hand check, records its own results.
 
 **Not proven by the suite:** Task 4.3's wiring of the score, which has no spec (its decisions are Task
 4.1's pure functions); anything visual or keyboard-hardware - Bravura rendering, narrow widths, Firefox,

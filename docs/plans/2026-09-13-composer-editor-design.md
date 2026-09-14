@@ -1,7 +1,7 @@
 # Composer Editor Redesign
 
 **Date:** 2026-09-13
-**Status:** M1 implemented, to [2026-09-13-composer-editor-m1.md](2026-09-13-composer-editor-m1.md); M2 planned, to [2026-09-13-composer-editor-m2.md](2026-09-13-composer-editor-m2.md), with its decisions under "M2 decisions" below
+**Status:** M1 and M2 implemented, to [the M1 plan](2026-09-13-composer-editor-m1.md) and [the M2 plan](2026-09-13-composer-editor-m2.md), with M2's decisions, as corrected in implementation, under "M2 decisions" below
 **Replaces:** the "Still outstanding" list in
 [2026-09-04-sheet-music-composer-design.md](2026-09-04-sheet-music-composer-design.md)
 
@@ -12,6 +12,21 @@ that hammer-on survived a library save, a page reload and a load; and the BPM fi
 the tempo of the loaded score. Range selection, Fix bar and the bar and track commands have
 no control until M2, so they were not checked by hand and rest on their specs. The details
 are under Task D6 in the plan.
+
+**M2, implemented through `a6f7ba0`: 3,294 specs, both type checks clean.** M2 is the editor: a palette of
+Bravura-glyph tools in seven groups, with popovers for the seven tools that take a value (decisions 17 and 24); the
+Select / Pen toggle, with drag selection, click-to-seek, Pen's hover notehead and a caret drawn from state, resolved per
+system and on slash and numbered staves as well as notation and tablature (22); one tool table, `COMPOSER_TOOLS`, behind
+every button, tooltip, the modal shortcut sheet and every key in the Shortcuts table below (25, 31); refusals and
+outcomes, the library's included, in one polite live region in the status line (8, 20); and a page grid of a top bar
+with Library and Export menus and the saved list in a drawer, the palette, the score, a status line, and a minimal
+track strip under a separator (3, 20, 23). Beneath them, implementation settled more than the plan foresaw, and each
+decision below carries it: a fermata held at the tick a beat plays at, settled through every edit that moves beats and
+going with its note only where that reaches no other beat (2); no edit may leave a tuplet group open (9); and which
+composition is open kept apart from whether it is saved, with a fresh history for each, one prompt before any path
+discards unsaved work, and saves pressed mid-write queued for the composition they were pressed for (20). What changed
+from the plan, task by task, is under "Corrections during implementation" in the M2 plan; what M2 recorded and did not
+do is in `docs/TODO.md`.
 
 The composer at `/composer` enters notes, durations, a single dot and rests, and very
 little else. This design turns it into an editor in the manner of Guitar Pro and
@@ -39,6 +54,8 @@ views and the mixer are fields on `ScoreDoc` that nothing writes.
 tie, grace, dynamics, tuplet, time and key signature, clef, the repeat, double bar and free-time
 flags, repeat count, endings, triplet feel, section, tuning, capo, transpose, staff views,
 playback and rename - and nothing in the page calls them yet. M2 and M3 give them controls.
+*After M2:* the beat, note and bar commands have palette buttons and keys; the track setup commands - tuning, capo,
+transpose, staff views, playback and rename - still have no control, and wait for M3's inspector and mixer.
 
 **The mapper loses data.** Saving stores alphaTex made from the mapper's output, so
 a mapper gap is permanent loss:
@@ -130,7 +147,7 @@ tool**, following Guitar Pro's bindings where they are unambiguous.
 Settled on 2026-09-13 while planning M2. The first three were put to the user; the rest were
 decided in planning. Where the code or alphaTab disagreed with a decision as first written, the
 decision below is the corrected one, and the M2 plan says what changed under "Where this plan
-departs from the design".
+departs from the design" and, once built, under "Corrections during implementation".
 
 1. **A hammer-on, or a shift or legato slide, with nothing to land on is refused**, with a reason,
    where alphaTab would drop it. A range puts it on the notes that can land and skips the rest,
@@ -139,7 +156,7 @@ departs from the design".
    `Note.nextNoteOnSameLine` is written, because a later bar's beats are not yet chained when a
    note finishes. A pitched note never lands, since alphaTab files only stringed notes by string.
 2. **A fermata belongs to a bar position across all tracks**, as in alphaTab and Guitar Pro. A
-   press sets it on every staff's voice-1 beat that starts at that tick in that bar, on every track
+   press sets it on every beat that starts at that tick in that bar, in every voice of every staff, on every track
    but a generated one, and a second press clears them all; the button reads all of them. M1's
    pinned spread specs now pin the rule. A grace at the position is one of its beats - alphaTab plays it
    at that tick and hands it the fermata - so it is written and cleared with the beat it leads into, and
@@ -163,7 +180,12 @@ departs from the design".
    commit says so in the status line - "1 fermata removed: its note moved where it would reach other tracks." A new
    track takes every position's fermata where its rests start, and a removed track takes a fermata only it held away
    with it. *Settled in review of the committed M2 code:* a position where a note holding the fermata still plays keeps
-   it, though another of its notes in the same voice moved: the fermata does not go with the one that moved.
+   it, though another of its notes in the same voice moved: the fermata does not go with the one that moved. The notes
+   holding a position's fermata carry it together, and only when they all land on one tick; otherwise it stays where a
+   beat still plays, or is removed and the status line says why - "the notes holding it moved apart", or its note
+   "became a grace note, which cannot hold a fermata of its own." Every voice counts, since alphaTab files and hands on
+   a fermata by tick in all of them, so a fermata only a second voice holds is its position's. A delete, clear or cut
+   that removes a grace settles fermatas as a length change does.
 3. **M2 brings a minimal track strip forward**: a row per track with its name, remove, and the
    progression badge, status, Update and Flatten; add track with an instrument; and "Add
    progression track", keeping every selector and label the M4 specs pin, which move with the
@@ -178,7 +200,9 @@ departs from the design".
    (`preventDefault`) only when it closes the drawer, and the composer ignores a claimed press. A
    shared "drawer open" flag would not work: the shell's listener runs first, so the flag would read
    closed by the time the composer asked. The shell listens in the capture phase, so it does run first
-   whatever order the listeners were added in.
+   whatever order the listeners were added in. *Settled in building the page:* an open popover, the shortcut sheet, or
+   a Library or Export menu or the saved list takes Escape first, closes, and does nothing else (decisions 17, 20 and
+   31).
 6. **Modifiers match exactly.** Ctrl, Alt or Cmd with a digit writes no fret and is left to the
    browser; Ctrl or Shift with an arrow does its own table meaning; undo rejects Alt (AltGr on
    Windows); `r` and `R` both rest; form fields include `contentEditable`, through one helper shared
@@ -197,7 +221,9 @@ departs from the design".
    and the status line counts the bars over their time signature on a plain line outside the region, so
    ordinary duration edits are not announced. The alphaTex panel's message goes when the panel closes. *Settled in review:* each refusal or notice published is a
    new message (`ComposerState.messageId`), so the same words said twice are read out twice; and a typed fret or rest
-   that removes a fermata says so, since entry moves the caret on in the commit that writes.
+   that removes a fermata says so, since entry moves the caret on in the commit that writes. *Settled after the
+   merge:* the library's reports go through the same region (decision 20), and a report leaves a refusal still showing
+   as it is; only a failure replaces it.
 9. **A whole tuplet group's freed room goes after the group**, fixed before the tuplet tool:
    `n8 n8 n8 n8 n2` with its first three beats made a triplet keeps the fourth eighth at 1440. Room is held
    until alphaTab would close the group, even past the pressed beats, so no rest splits one. *Settled in
@@ -207,7 +233,8 @@ departs from the design".
    room an open group's beats free is off the 64th grid, so the bar would stay short with nothing to say why.
    The Triplet button shows the refusal before it is pressed. *Settled in a third review:* **no edit may leave a
    tuplet group open** that its voice did not already hold open: a tuplet press or clear, a note value, dots,
-   grace before or on the beat, note or rest entry, insert beat, delete beats and paste. Each is refused before
+   grace before or on the beat, note or rest entry, insert beat, delete beats, paste, and a delete, clear or cut that
+   removes a grace. Each is refused before
    anything changes, with a reason - "That would break a tuplet group; select the whole group." for most, and
    for a tuplet press one that names the unfinished group it would join or the closed one it would split. The
    whole voice is read, since an edit can break a group beside the beats it names, and the note value, dot,
@@ -275,7 +302,9 @@ departs from the design".
     like `composer-service-structure.ts`, and pure edit functions - keeping `composer.service.ts`
     under the cap: rest over a range, insert and delete beats, semitone and string moves, cut, copy
     and paste, every navigation move and its Shift form, play from start, repeat close as a toggle,
-    and inserting and deleting the selected bars.
+    and inserting and deleting the selected bars. *Settled after the merge:* commits, undo and redo, `replaceDocument`,
+    `markSaved`, `refuse` and `announce` moved to `ComposerHistory` (`composer-history.ts`), taking the service from 983
+    lines to 830 and leaving room for M3.
 19. **Ctrl+S reaches the library panel's own save** through a small request service, so a keyboard
     save refuses, announces and returns focus exactly as a click does.
 20. **The library's menus and drawer are hidden with CSS**, never `*ngIf`, and its announced regions
@@ -335,7 +364,8 @@ departs from the design".
     interaction is mouse only: a tap or stylus press acts as a click, a touch drag scrolls, and there is no touch hover.
     *Settled in review of the score fixes:* a press reads its beat on the system of the staff under it, not the system
     under the pointer, and waits until a render's bounds have arrived. Slash and numbered staves, which a loaded file or
-    an applied draft can show, take the caret and nothing else.
+    an applied draft can show, take the caret and nothing else. A press, a drag or Pen's hover does nothing between a
+    render and its bounds arriving, and a refused Pen note or fret digit sounds nothing.
 23. **The page grid** is sized to the viewport minus the app header, whose height the shell
     publishes as `--app-header-height`: a top bar, the palette, the score, a status line, and the
     track strip under a draggable separator. There is no inspector column until M3. Composer colours
@@ -344,14 +374,18 @@ departs from the design".
     its top bar resizes; the separator announces that range and takes Home and End. The shell's header wraps rather
     than widen the body, and publishes its height to the fraction of a pixel. *Settled after the merge:* the score's floor is its computed
     `min-height`, so it follows the root font size; the open alphaTex panel counts as a fixed row; the status line is
-    watched as it wraps; and the score's column clips rather than let the panel spill over the status line.
+    watched as it wraps; and the score's column clips rather than let the panel spill over the status line. The status
+    line reads the caret's bar against the score's count ("Bar 3 of 4"). The old page's delete button and entry hints
+    are gone on purpose: Delete clears a beat, and the shortcut sheet lists every key.
 24. **Palette buttons are Bravura glyphs** by SMuFL code point, from `/font/Bravura.woff2`, with text
     where SMuFL has no symbol. Each has an `aria-label`, a tooltip with its shortcut, `aria-pressed`
     with `mixed`, and `aria-disabled` with the reason when refusing.
 25. **The tool table's spec** checks every tool for a command, a glyph or text, a label and a group,
     and every binding - macOS alternates included - for uniqueness and against the browser's keys.
     The note values and the Select and Pen buttons have no key of their own, as the design's table
-    gives them none; the spec names them.
+    gives them none; the spec names them. *Settled in a review of the page:* the old page's Add bar returns as a Bar
+    tool, **Add bar at the end**, on Ctrl+Alt+Insert and Ctrl+Alt+Enter (Cmd+Option+Return on a Mac), each matching
+    Add bar alone on the four layouts the spec presses.
 26. **Paste writes one continuous run from the start of the selection** - its first beat in time,
     whichever end moved - keeping the spacing between the copied beats across bar lines. A beat that
     would cross a bar line is split there as Fix bar splits one, tied into the next bar, and the paste is
@@ -435,8 +469,9 @@ under it, so each layer is proven before the next leans on it.
 | **M3** | Inspector, and the track strip's mixer and bar grid: tuning presets (a real bass tuning), capo, transpose, staff views, mixer | Track setup |
 | **M4** | Tools that need their own editor: bend curve, custom tuplet, trill speed | The long tail |
 
-M2 can ship its palette with bend, tuplet and trill applying fixed defaults (a full
-bend, a triplet, a 16th trill); M4 replaces the defaults with editors.
+M2 ships its palette with bend and trill applying fixed defaults (a full bend, a trill a whole
+step up at sixteenths) and tuplets chosen from 3:2, 5:4, 6:4 and 7:4 (decision 16); M4 replaces the
+defaults with editors.
 
 ### After M2: the GP Viewer becomes the composer
 
@@ -561,14 +596,14 @@ scroll vertically with `overflow-x: hidden`. The track strip has a draggable hei
 |---|---|
 | Tools | Select, Pen |
 | Duration | Whole to 64th, dot, double dot, triplet, tuplet, tie, rest |
-| Bar | Time signature, key signature, clef, repeat open, repeat close, alternate ending, section, double bar, triplet feel, free time, Fix bar, insert bar, delete bar |
+| Bar | Time signature, key signature, clef, repeat open, repeat close, alternate ending, section, double bar, triplet feel, free time, Fix bar, insert bar, delete bar, add bar at the end |
 | Accidentals | Double flat, flat, natural, sharp, double sharp, respell |
 | Dynamics | ppp, pp, p, mp, mf, f, ff, fff, crescendo, diminuendo |
 | Articulation | Accent, heavy accent, staccato, tenuto, fermata |
 | Techniques | Hammer-on / pull-off, legato slide, shift slide, bend, vibrato, wide vibrato, palm mute, let ring, natural harmonic, artificial harmonic, ghost, dead, trill, tap, left-hand tap, slap, pop, grace before, grace on beat, pick stroke down, pick stroke up, fade in |
 
 Tools that take a value - time and key signature, clef, section name, alternate
-ending, tuplet - open a small popover beside their button, not a modal. *M2:* drawn in the top
+ending, tuplet, and in M2 triplet feel - open a small popover beside their button, not a modal. *M2:* drawn in the top
 layer, since the palette scrolls and would clip it, and reachable by keyboard (decision 17).
 
 Buttons are Bravura glyphs, from the font alphaTab already serves at `/font`, with an
@@ -586,7 +621,9 @@ views, colour.
 **Track strip** (`composer-track-strip`). A row per track - name, mute, solo, volume,
 pan - carrying the progression badge, status, Update and Flatten from today's
 sidebar with the labels the M4 specs pin. Beside the rows, a bar grid: a cell per bar,
-red when over, highlighted when selected; clicking a cell selects the bar.
+red when over, highlighted when selected; clicking a cell selects the bar. *M2* built the rows
+without the mixer - name, remove, the progression badge, status, Update and Flatten - and add
+track; mute, solo, volume, pan and the bar grid are M3's (decision 3).
 
 **Top bar.** Transport as today. Library and Export become menus; the saved list opens
 in a drawer.
@@ -608,7 +645,9 @@ by another route - the M4 rule that the gate is a refusal, not a disabled button
 Cases: a selection touching a generated track; a note tool on a rest; fretted-only
 techniques (bend, slide, tap, harmonics - and slap and pop, which M1 refuses with tap) on a
 pitched staff; until multiple voices are designed, any edit that reaches a second voice. Refusals, Fix bar
-outcomes and paste results share one polite live region.
+outcomes and paste results share one polite live region. *M2:* so do the library's reports - saved,
+loaded, deleted, exported, or why one failed - and the alphaTex panel's message; the save refusal
+beside it is an alert, since it is a question with its remedy inside (decisions 8, 20 and 30).
 
 **Popover values** are validated before anything commits: time signature numerator 1
 to 32 and denominator a power of two up to 32; key signature -7 to +7, major or minor;
@@ -622,7 +661,9 @@ line's count of bars over, on a plain line outside the live region, so it is rea
 but not announced on every duration edit (decision 8).
 
 **Paste** writes from the caret for the copied length and then fills gaps, each where it
-opens, as a duration change does. Overflow is flagged, never pushed on.
+opens, as a duration change does. Overflow is flagged, never pushed on. *M2:* paste writes one run
+from the selection's first beat, splitting a beat at a bar line as Fix bar does, and is refused
+where Fix bar would be or where it would split a tuplet group (decision 26).
 
 **Older saves need nothing.** The library stores alphaTex, not a serialised `ScoreDoc` -
 `composer-library.service.ts` says so, for exactly this reason - and every load goes
@@ -703,16 +744,19 @@ over and over, a digit would write a run of notes, and Delete would stack undo s
 **Clipboard and save in text.** Ctrl+C and Ctrl+X are left to the browser while text outside the
 score is selected, so copying words on the page works. Ctrl+S is the composer's even from a text
 field, so the browser's own Save dialog never opens on the composer - and refuses while the
-alphaTex panel holds a draft that is not applied, saying why (decision 30).
+alphaTex panel holds a draft that has been typed into and not applied, saying why (decision 30).
 
-**Focused buttons.** Space and Enter on a focused button, link, checkbox or radio, without Ctrl,
-Alt or Cmd, press it: the composer's keyboard is not asked, so Space plays only when no button has
-the focus, and Shift+Enter on a focused button presses the button rather than opening Section
-(decision 29).
+**Focused buttons.** Without Ctrl, Alt or Cmd, a control focused from the keyboard (`:focus-visible`)
+takes the keys the browser presses it with - Space or Enter on a button, Enter on a link, Space on a
+checkbox or radio - and the composer's keyboard is not asked. So Space plays only when no such control
+has the focus, a button clicked with the mouse does not take Space again, and Shift+Enter on a focused
+button presses the button rather than opening Section. A held Enter presses it once, unless it is a
+palette button whose tool repeats (decision 29).
 
 **macOS**, settled in M2's plan without a Mac to hand - nobody has checked these on one. Mac
 keyboards have no Insert key, so each Insert binding also gets the Enter key with the same
-modifiers: section Shift+Enter, insert bar Ctrl+Enter (Cmd+Return), add track Ctrl+Shift+Enter.
+modifiers: section Shift+Enter, insert bar Ctrl+Enter (Cmd+Return), add bar at the end Ctrl+Alt+Enter
+(Cmd+Option+Return), add track Ctrl+Shift+Enter.
 Insert beat, whose Insert is unmodified, gets Alt+Enter (Option+Return), because plain Enter must
 still press a focused button. Enter is in no other binding of the table, and the browser's only
 use of it on a page is activating the focused control. Play from start keeps Ctrl+Space and gains
@@ -726,7 +770,7 @@ Guitar Pro's trill.
 | Group | Action | Key | From |
 |---|---|---|---|
 | Tools | Toggle Select / Pen | Q | new |
-| | Back to Select, clear range | Esc | new |
+| | Close the open popover, sheet or menu; with none open, back to Select and clear the range | Esc | new |
 | | Shortcut sheet | ? † | new |
 | Edit | Undo | Ctrl+Z | today |
 | | Redo | Ctrl+Shift+Z, Ctrl+Y | today, Tux |
@@ -743,7 +787,6 @@ Guitar Pro's trill.
 | Playback | Play / pause | Space | today |
 | | Play from start | Ctrl+Space, Shift+Space | GP, new (macOS) |
 | Beats | Fret | 0-9 | today |
-| | Rest | R, Shift+R | today, GP |
 | | Clear beat to rest | Delete, Backspace | today |
 | | Insert beat | Insert, Alt+Enter | GP, new (macOS) |
 | | Delete beats | Shift+Delete | GP |
@@ -753,6 +796,7 @@ Guitar Pro's trill.
 | | Triplet | / | GP, Tux |
 | | Tuplet… | Alt+/ | new |
 | | Tie | L | GP, Tux |
+| | Rest | R, Shift+R | today, GP |
 | Bar | Time signature… | Shift+T | new (GP's Ctrl+T is the browser's) |
 | | Key signature… | Ctrl+K | GP |
 | | Clef… | K | GP |
@@ -825,15 +869,15 @@ Not rejected - not yet placed. Each needs its own design pass:
   coalesce the edits, or skip a commit that changes nothing, as `flattenTrack` already
   does by returning before it commits.
 - **`KEY_SIGNATURES` in the mapper** lists major keys only and omits ±7. The key
-  signature popover needs all fifteen, major and minor. *Planned in M2 (Task 3.2):
+  signature popover needs all fifteen, major and minor. *Built in M2 (Task 3.2):
   `composer-bar-choices.ts` lists all thirty, and the mapper's list is left as it was.*
 - **Sidebar clipping.** A user saw headings lose their first letter ("RACKS", "ARS",
   "IBRARY") at about 1870px. Not reproduced on an empty score; consistent with the
-  panel scrolled sideways, which its styles permit. The M2 grid removes the panel.
-  *Planned in M2 (Tasks 3.7 and 3.10).*
+  panel scrolled sideways, which its styles permit. The M2 grid removed the panel.
+  *Done in M2 (Tasks 3.7 and 3.10).*
 - **Before the first click, the caret box is not drawn** - it needs a click to learn
   which staff it is on - so arrow keys move an invisible caret. The selection
-  highlight in M2 draws from state rather than from the last click. *Planned in M2 (Task
+  highlight in M2 draws from state rather than from the last click. *Built in M2 (Task
   4.3): the caret is drawn from state as well, before any click.*
 - **A hammer-on or a shift or legato slide with nothing to land on does not save.**
   alphaTab's `Note.finish` clears `isHammerPullOrigin` when no note follows on the same
@@ -851,7 +895,7 @@ Not rejected - not yet placed. Each needs its own design pass:
 - **Four slide types have no name in the model.** In from above, out down, and pick
   slides down and up read back as no slide, so alphaTex applied from the source panel
   loses them. Nothing the composer writes can produce them; widening
-  `NoteEffectsDoc.slide` belongs with M2's slide tools. *Still open after M2's plan: its slide
+  `NoteEffectsDoc.slide` belongs with M2's slide tools. *Still open after M2: its slide
   tools are the legato and shift slides the model already names, so nothing yet needs the other
   four. The GP Viewer milestone's conversion prompt will list them.*
 - **Bends are stored in Guitar Pro's shapes, not as drawn.** alphaTab's `Note.finish`
@@ -885,7 +929,7 @@ Not rejected - not yet placed. Each needs its own design pass:
   commands move every trill on the staff by how far its string moved, so M3's controls get
   that for free; a transposition moves none, because alphaTex saves a trill relative to the
   string and capo, not the transposition. M2's pitch tools must still move it with the note.
-  *Planned in M2 (Task 1.12): a semitone move moves the trill with the note, and a string move
+  *Built in M2 (Task 1.12): a semitone move moves the trill with the note, and a string move
   keeps the note's pitch and so the trill's.*
   The same review made the capo command refuse a pitched staff, and the staff views command
   refuse only turning tablature *on* for one, so a loaded file that shows tablature on a
@@ -942,7 +986,7 @@ Not rejected - not yet placed. Each needs its own design pass:
 - **A pitched note imported as a natural harmonic cannot be cleared with the harmonic tool.**
   The harmonic is fretted-only, so the refusal meets the press that would turn it off as well as
   one that would turn it on. An alphaTex import can produce such a note. M2's harmonic tool
-  should let a press that clears the harmonic through. *Planned in M2 (Task 1.8), for every
+  should let a press that clears the harmonic through. *Built in M2 (Task 1.8), for every
   fretted-only note technique.*
 - **Fix bar into a bar that was already short puts the fill after the carried beats.** The
   carry's spare room opens right after what it carried, and Fix bar fills the bar's whole
@@ -957,12 +1001,12 @@ Not rejected - not yet placed. Each needs its own design pass:
   the gap opened, and the rests already in the bar keep their places, so two rests that could be
   written as one stay two: `n8 n2 r4 r8` with its first two beats set to quarters is
   `n4 n4 r8 r4 r8`, not `n4 n4 r4. r8`. The beats after the edit keep their ticks, which is what
-  the rule is for. M2 may merge them. *M2's plan does not.*
+  the rule is for. M2 may merge them. *M2 does not.*
 - **Redo does not restore a followed selection.** An edit that commits through
   `commitFollowing` moves the selection's ends onto the beats they named, but undo and redo only
   clamp whatever selection is current into the document they restore. So after undo then redo,
   a range made shorter no longer covers its notes, as it did straight after the edit. Recorded,
-  not changed in M1, nor in M2's plan.
+  not changed in M1, nor in M2.
 - **With `player.enableUserInteraction` on, alphaTab's own mouse-up sets the playback range**
   (`_onBeatMouseUp` calls `applyPlaybackRangeFromHighlight`, `alphaTab.core.mjs` ~53124 in 1.8), so
   a drag across the score changed what the transport played. M2's plan turns alphaTab's interaction
