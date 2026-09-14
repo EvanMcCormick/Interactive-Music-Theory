@@ -49,6 +49,7 @@ import { setAccidental, toggleNoteEffect, toggleTie, toggleTrill } from './note-
 import { moveNotesToString, shiftSemitone } from './note-moves';
 import { respellNotes, respellRefusal } from './note-respell';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
+import { deleteBars } from './bar-edits';
 import { insertBarInto } from './score-structure';
 
 /**
@@ -634,6 +635,21 @@ export class ComposerService {
     this.structure.fixBar();
   }
 
+  /** Repeat close over the selected bars, by the toggle rule. */
+  toggleRepeatClose(): void {
+    this.structure.toggleRepeatClose();
+  }
+
+  /** Inserts as many bars as are selected, in front of the first. */
+  insertBarsBeforeSelection(): void {
+    this.structure.insertBarsBeforeSelection();
+  }
+
+  /** Removes the selected bars from every track, keeping the meter after them. */
+  deleteSelectedBars(): void {
+    this.structure.deleteSelectedBars();
+  }
+
 
   // -------------------------------------------------------------------------
   // Structure: bars and tracks
@@ -651,16 +667,12 @@ export class ComposerService {
     this.insertBar(this.doc.masterBars.length);
   }
 
+  /** Removes bar `index` from every track, keeping the meter after it. See `deleteBars`. */
   removeBar(index: number): void {
     if (this.doc.masterBars.length <= 1) return;
     this.commit(draft => {
       const at = Math.max(0, Math.min(index, draft.masterBars.length - 1));
-      draft.masterBars.splice(at, 1);
-      for (const track of draft.tracks) {
-        for (const staff of track.staves) {
-          staff.bars.splice(at, 1);
-        }
-      }
+      deleteBars(draft, { first: at, last: at });
       this.markDiverged(draft);
     });
   }

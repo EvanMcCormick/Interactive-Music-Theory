@@ -5,7 +5,10 @@ import {
   setKeySignature,
   setTimeSignature,
   timeSignatureFault,
-  toggleMasterBarFlag
+  toggleMasterBarFlag,
+  deleteBars,
+  insertBarsBefore,
+  toggleRepeatClose
 } from './bar-edits';
 import { scoreBarFills } from './bar-fill';
 import { createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
@@ -183,5 +186,62 @@ describe('toggleMasterBarFlag', () => {
     expect(doc.masterBars[1].isFreeTime).toBeTrue();
     expect(doc.tracks[0].staves[0].bars[1].voices[0].beats.map(beat => beat.duration)).toEqual([4]);
     expect(scoreBarFills(doc)[0][0][1]).toEqual({ kind: 'full' });
+  });
+});
+
+describe('toggleRepeatClose, insertBarsBefore and deleteBars', () => {
+  const threeFour = THREE_FOUR;
+
+  it('closes a repeat played twice, and opens it again when every bar closes one', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.masterBars[1].repeatCount = 3;
+
+    toggleRepeatClose(doc, { first: 0, last: 1 });
+    expect(doc.masterBars.slice(0, 2).map(bar => bar.repeatCount)).toEqual([2, 3]);
+
+    toggleRepeatClose(doc, { first: 0, last: 1 });
+    expect(doc.masterBars.slice(0, 2).map(bar => bar.repeatCount)).toEqual([0, 0]);
+  });
+
+  it('inserts bars in front of a bar, on every staff', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    insertBarsBefore(doc, 1, 2);
+
+    expect(doc.masterBars.length).toBe(6);
+    expect(doc.tracks[0].staves[0].bars.length).toBe(6);
+  });
+
+  it('refuses to delete every bar', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(deleteBars(doc, { first: 0, last: 3 })).toMatch(/at least one bar/i);
+    expect(doc.masterBars.length).toBe(4);
+  });
+
+  it('keeps the meter the deleted first bar declared', () => {
+    const doc = ComposerService.createEmptyScore();
+    setTimeSignature(doc, 0, threeFour);
+
+    expect(deleteBars(doc, { first: 0, last: 0 })).toBeNull();
+
+    expect(doc.masterBars.length).toBe(3);
+    expect(doc.masterBars[0].timeSignature).toEqual(threeFour);
+  });
+
+  it('moves a later declaration to the bar that follows the deleted ones, and drops one that repeats', () => {
+    const doc = ComposerService.createEmptyScore();
+    setTimeSignature(doc, 2, threeFour);
+
+    deleteBars(doc, { first: 1, last: 2 });
+    expect(doc.masterBars[1].timeSignature).toEqual(threeFour);
+
+    // Bar 3 repeats bar 1's 3/4 - a shape a loaded file can have. With bar 2 gone it follows bar 1
+    // directly, so its declaration repeats the meter in force and is dropped.
+    const same = ComposerService.createEmptyScore();
+    setTimeSignature(same, 1, threeFour);
+    same.masterBars[3].timeSignature = { ...threeFour };
+    deleteBars(same, { first: 2, last: 2 });
+    expect(same.masterBars.map(bar => bar.timeSignature?.numerator ?? null)).toEqual([4, 3, null]);
   });
 });

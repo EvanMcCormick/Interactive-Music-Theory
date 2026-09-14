@@ -10,7 +10,10 @@ import {
   TimeSignature
 } from '../models/composer.model';
 import {
+  deleteBars,
+  insertBarsBefore,
   keySignatureFault,
+  toggleRepeatClose,
   setClef,
   setKeySignature,
   setMasterBarValue,
@@ -144,6 +147,28 @@ export class ComposerStructureCommands {
 
       if (!fixed) return 'No selected bar is over its time signature.';
       if (appended > 0) this.host.markDiverged(draft);
+      return null;
+    });
+  }
+
+  /** Repeat close over the selected bars, by the toggle rule. See `toggleRepeatClose`. */
+  toggleRepeatClose(): void {
+    this.applyBarEdit((draft, bars) => toggleRepeatClose(draft, bars));
+  }
+
+  /** Inserts as many bars as are selected, in front of the first. The selection follows its beats. */
+  insertBarsBeforeSelection(): void {
+    this.applyBarEdit((draft, bars) => insertBarsBefore(draft, bars.first, bars.last - bars.first + 1));
+  }
+
+  /** Removes the selected bars from every track. See `deleteBars`. */
+  deleteSelectedBars(): void {
+    const state = this.host.state();
+    const bars = selectedBars(state.anchor, state.cursor);
+    this.host.commitFollowing(draft => {
+      const refusal = deleteBars(draft, bars);
+      if (refusal) return refusal;
+      this.host.markDiverged(draft);
       return null;
     });
   }

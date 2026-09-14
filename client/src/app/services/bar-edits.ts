@@ -9,6 +9,7 @@ import {
 } from '../models/composer.model';
 import { barMeterAt, fitBarToMeter } from './bar-fill';
 import { toggledValue } from './beat-edits';
+import { insertBarInto } from './score-structure';
 
 /** Edits that act on bars. They change the document they are given. */
 
@@ -153,4 +154,46 @@ export function setMasterBarValue<K extends 'repeatCount' | 'alternateEndings' |
   for (const bar of doc.masterBars.slice(bars.first, bars.last + 1)) {
     bar[key] = structuredClone(value);
   }
+}
+
+/**
+ * Presses Repeat close over bars `first` to `last`, by the toggle rule: each bar closes a repeat played
+ * twice - or keeps the count it already has - unless every one already closes a repeat, and then none
+ * does. `repeatCount` is how many times the section plays, so two is a plain repeat.
+ */
+export function toggleRepeatClose(doc: ScoreDoc, bars: { first: number; last: number }): void {
+  const targets = doc.masterBars.slice(bars.first, bars.last + 1);
+  const closing = !targets.every(bar => bar.repeatCount > 0);
+  for (const bar of targets) bar.repeatCount = closing ? Math.max(bar.repeatCount, 2) : 0;
+}
+
+/** Inserts `count` bars in front of bar `first`, across every track. See `insertBarInto`. */
+export function insertBarsBefore(doc: ScoreDoc, first: number, count: number): void {
+  for (let inserted = 0; inserted < count; inserted++) insertBarInto(doc, first);
+}
+
+/**
+ * Removes bars `first` to `last` from every track, or returns why not: a score keeps at least one bar.
+ *
+ * The meter in force after the removed bars is kept. The bar that now follows them declares it, unless
+ * it is already the meter in force before them - the declare-on-change shape the mapper reads a file
+ * into, and the rule `insertBarInto` keeps for bar 1. Without this, removing a 3/4 score's first bar
+ * would leave a bar 1 that declares nothing, which reads as 4/4.
+ */
+export function deleteBars(doc: ScoreDoc, bars: { first: number; last: number }): string | null {
+  const count = bars.last - bars.first + 1;
+  if (count >= doc.masterBars.length) return 'A score needs at least one bar.';
+
+  const hasFollowing = bars.last + 1 < doc.masterBars.length;
+  const following = effectiveTimeSignature(doc.masterBars, bars.last + 1);
+  doc.masterBars.splice(bars.first, count);
+  for (const track of doc.tracks) {
+    for (const staff of track.staves) staff.bars.splice(bars.first, count);
+  }
+
+  if (hasFollowing) {
+    const inForce = bars.first > 0 ? effectiveTimeSignature(doc.masterBars, bars.first - 1) : null;
+    doc.masterBars[bars.first].timeSignature = sameMeter(inForce, following) ? null : { ...following };
+  }
+  return null;
 }

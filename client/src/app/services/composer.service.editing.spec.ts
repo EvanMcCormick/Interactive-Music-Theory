@@ -392,3 +392,50 @@ describe('ComposerService cut, copy and paste', () => {
     expect(beatsIn(service)[0].notes[0].pitch).toEqual({ kind: 'fretted', string: 1, fret: 5 });
   });
 });
+
+describe('ComposerService bars over the selection', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('closes a repeat over the selected bars and opens it again', () => {
+    service.setCursor({ barIndex: 1 });
+    service.extendSelectionTo({ barIndex: 2 });
+
+    service.toggleRepeatClose();
+    expect(service.doc.masterBars.map(bar => bar.repeatCount)).toEqual([0, 2, 2, 0]);
+
+    service.toggleRepeatClose();
+    expect(service.doc.masterBars.map(bar => bar.repeatCount)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('inserts as many bars as are selected, and the selection follows its beats', () => {
+    service.setCursor({ barIndex: 1 });
+    service.extendSelectionTo({ barIndex: 2 });
+
+    service.insertBarsBeforeSelection();
+
+    expect(service.doc.masterBars.length).toBe(6);
+    expect(stateOf(service).anchor?.barIndex).toBe(3);
+  });
+
+  it('refuses to delete every bar, saying why', () => {
+    service.selectAllInTrack();
+
+    service.deleteSelectedBars();
+
+    expect(service.doc.masterBars.length).toBe(4);
+    expect(stateOf(service).refusal).toMatch(/at least one bar/i);
+  });
+
+  it('keeps a 3/4 score in 3/4 when its first bar is removed', () => {
+    service.setTimeSignature({ numerator: 3, denominator: 4, isCommon: false });
+
+    service.removeBar(0);
+
+    expect(service.scoreMeter.numerator).toBe(3);
+  });
+});
