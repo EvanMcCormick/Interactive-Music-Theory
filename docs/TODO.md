@@ -120,6 +120,17 @@ alphaTab upgrade that changes one turns a spec red rather than going unnoticed.
 - **Fix bar's button does not show its tuplet refusals** before it is pressed. The command refuses a tuplet across
   the bar line and a line inside a tuplet group, but `toolStates` reads only a generated track and whether a selected
   bar is over; showing the rest would run the carry on a copy for every selection.
+- **A second voice of rests is not kept as written on save.** The mapper draws such a voice as nothing (`isEmpty`), so
+  the alphaTex exporter writes none of its beats: a staff with no note in its second voice saves without one, and a
+  bar whose second voice is all rests, beside bars that have notes there, comes back holding one quarter rest. It saves
+  again unchanged and says nothing musically, but a fermata only such a rest holds, at a tick the first voice has no
+  beat at, would be lost. Pinned in `composer.service.voices.spec.ts`.
+- **A key pressed with Ctrl, Alt or Cmd inside a popover still reaches the page's shortcuts**, on purpose, so Ctrl+S
+  saves and Ctrl+Z undoes from a popover as from any control. A symbol typed through AltGr on a popover's checkbox or
+  button can therefore run a symbol tool - German AltGr+0, `}`, opens Alternate ending in place of the popover open.
+- **A document marked saved is compared by identity.** A queued save now compares the alphaTex it would write, but
+  `markSaved` still marks the document clean only if it is the very one written, so Save, then an edit and its undo,
+  leaves the unsaved marker showing for a document the library already holds.
 
 ## Bugs, recorded and not yet fixed
 
@@ -194,7 +205,8 @@ that owns the control that reaches them. Each is in the same "Found while design
 - **Rests that could merge are left as two.** A duration change puts a gap's rests where the gap
   opened and leaves the bar's other rests in place, so `n8 n2 r4 r8` with its first two beats
   set to quarters is `n4 n4 r8 r4 r8`. The beats after it keep their ticks, which is the point;
-  M2 may merge them.
+  M2 may merge them. The same shape: a whole 6:4 group of sixteenths made grace notes leaves `r8 r8` where `r4`
+  would do, since each grace frees its own room and the rest-spelling code spells each run where it opened.
 
 - **`isEditableTarget` no longer counts checkboxes, radios and range sliders as typing**, so Space and
   arrows on them reach composer shortcuts. M3's mixer adds such controls and must let them keep their keys

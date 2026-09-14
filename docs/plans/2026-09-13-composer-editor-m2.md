@@ -139,6 +139,25 @@ Line counts after it, largest first: `composer.service.ts` 966; `composer.servic
 `composer-library-panel.component.ts` 614; `composer-library-panel.component.spec.ts` 610; `composer-score.component.ts` 530;
 `composer.component.ts` 373.
 
+After the review of the committed M2 code - voices, fermatas, saving, popovers, the drawer and the strip - and its three
+fix commits (see "Corrections during implementation", the last entry), the blocks still to apply - Tasks 3.9 to 3.12 and
+4.1 to 4.4 - were applied again, in task order, on top of `44389da` (whole suite there: 3,151 SUCCESS). No find text had
+stopped matching and no spec failed. Task 3.10's blocks were corrected for the fixes first: a popover's button toggles it,
+opening the sheet or a Library menu closes it, and the stub panel declares `menuOpened`, with three specs. The Task 3.10
+specs added after the last re-proof ran here for the first time - the page and backdrop inert to a pointer through
+`elementFromPoint`, the Library panel told `modalOpen`, Undo's and Redo's titles, the alphaTex refusal said twice, and the
+sheet placed first in the template - and each passed as written, needing no change.
+
+| Through | Type checks | Whole suite |
+|---|---|---|
+| Phase 3 (Task 3.12) | both clean | **3,176 SUCCESS** |
+| Phase 4 (Task 4.4) | both clean | **3,193 SUCCESS** |
+
+Line counts after it, largest first: `composer.service.ts` 970; `composer-library-panel.component.ts` 752;
+`composer-library-panel.component.spec.ts` 727; `composer.service.spec.ts` 674; `composer-track-strip.component.spec.ts` 667;
+`composer-score.component.ts` 530; `alpha-tab.service.ts` 522; `composer-track-strip.component.ts` 470. The client code was
+reverted afterwards.
+
 Each task's Step 2 red was captured the same way - the plan applied through that task's Step 1, then the
 spec type check - and its text updated to what was seen. The client code was then reverted.
 
@@ -203,7 +222,7 @@ Numbered as in the design's "M2 decisions", where each is argued.
 |---|---|---|
 | 1 | Hammer-on and shift/legato slide refuse where nothing follows, mirroring alphaTab's rule | 1.7, 1.8 |
 | 2 | A fermata belongs to a bar position across all tracks | 1.10 |
-| 3 | A minimal track strip; Library and Export as top-bar menus with the saved list in a drawer | 3.7, 3.8 |
+| 3 | A minimal track strip, whose last Remove refuses rather than disabling; Library and Export as top-bar menus with the saved list in a drawer | 3.7, 3.8 |
 | 4 | `+`/`=` longer, `-` shorter | 2.4 |
 | 5 | Escape: the drawer first, then back to Select and clear the range | 2.6, 2.7 |
 | 6 | Modifiers checked exactly; one shared editable-target helper | 2.1, 2.2, 2.6 |
@@ -216,10 +235,10 @@ Numbered as in the design's "M2 decisions", where each is argued.
 | 14 | A duration press on nothing but graces is refused | 1.4 |
 | 15 | A clearing press passes on a pitched staff | 1.8 |
 | 16 | Defaults for bend, trill, tuplet and fermata | 1.9 |
-| 17 | Popovers with inline validation, in the top layer beside their button, reachable by keyboard | 3.2, 3.5, 3.6 |
+| 17 | Popovers with inline validation, in the top layer beside their button, reachable by keyboard; closed by an outside press, following their button, keeping their keys, and reading the first selected bar with mixed values | 3.2, 3.5, 3.6, 3.10 |
 | 18 | New commands in new modules; the service under the cap | 1.2-1.15 |
 | 19 | Ctrl+S through a save-request channel | 3.1 |
-| 20 | Menus and drawer hidden with CSS, closed by Escape, an outside click and a modal opening; one save per trigger, and the saves pressed mid-write queued for the composition they were pressed for | 3.1, 3.8, 3.10 |
+| 20 | Menus and drawer hidden with CSS, closed by Escape, an outside click and a modal opening; one save per trigger, and the saves pressed mid-write queued for the composition they were pressed for; disclosure buttons, not ARIA menus; New forgets the saved entry | 3.1, 3.8, 3.10 |
 | 21 | macOS alternates | 2.4 |
 | 22 | Score interaction, click-to-seek, drags that end anywhere, engraving only a new document | 4.1-4.3 |
 | 23 | The page grid | 3.9, 3.10 |
@@ -231,6 +250,7 @@ Numbered as in the design's "M2 decisions", where each is argued.
 | 29 | Space and Enter press a focused button | 3.11 |
 | 30 | A save is refused while an alphaTex draft is unapplied | 3.1, 3.10 |
 | 31 | The shortcut sheet is modal: the focus goes in and back, Tab stays inside, no key but its own and Escape reaches the score, a backdrop takes clicks over an inert page, and Ctrl keys behind it are dropped | 3.4, 3.10 |
+| 32 | A bar a command adds carries every voice the bars beside it hold | 1.13-1.15 |
 
 ### Where this plan departs from the design
 
@@ -763,6 +783,78 @@ were corrected for the fixes, as each entry below says. The blocks still to appl
   specs a second Ctrl+S replacing the node.
 - **`docs/TODO.md`**: undo does not restore the caret, since undo entries do not store the cursor; Guitar Pro restores the
   selection.
+
+**A review of the committed M2 code - voices, fermatas, saving, popovers, the library drawer and the track strip** found
+faults in each, fixed in three commits: `6a5721d`, `9a55f1e` and `44389da`. Whole suite after them: **3,151 SUCCESS**
+(3,127 and 3,142 after the first two). Task 3.10's blocks were corrected, as each entry below says, and the blocks still
+to apply were re-proven on top (see "The re-proof of Phases 3 and 4").
+
+- **Tasks 1.13 to 1.15, a new bar beside a second voice.** `insertBarInto` gave a new bar one voice, so a loaded staff
+  with a second voice threw out of alphaTab's `Voice._chain` (`reading 'beats'`) on every save and render after Append
+  bar, Insert bar, a Fix bar that appended or a paste that did. A new bar now takes as many voices as the bars either
+  side hold, each past the first a whole-bar rest. `deleteBeats` filters every voice by identity and fills the first
+  alone, and `deleteBars` removes whole bars from every staff, so neither changes a voice count. A second voice of rests
+  is written as nothing by alphaTex - dropped when no bar of the staff has a note in it, one quarter rest in a bar beside
+  bars that do - and that is kept as it is (design decision 32, `docs/TODO.md`). `composer.service.voices.spec.ts` pins
+  the four commands through `toScore`, the rest-only voice through alphaTex, and a fermata only a second voice holds:
+  it reads mixed, the first press sets it on every beat at the position, the second clears them all.
+- **Task 1.10, a fermata held by a note that stayed.** Settling's check (a) set aside the whole voice of a moved holder,
+  so in `n4 o n32F n16F n8 n2` with the 32nd made a 16th the 16th that moved to 1200 took the fermata and the note still
+  at 1080 lost it. A position where some holder is still at its old bar and tick now keeps it (`stayed`).
+- **Task 1.13, `clearRefusal`** returns null once `editRefusal` passes when its beats hold no grace: a clear keeps every
+  value, so only a grace it removes can open a group, and the Rest reader over a range drafts nothing. Its spec gives a
+  bar a function a draft cannot copy.
+- **Task 3.1, New overwrote the last entry.** The page's New called `reset()` and the panel kept `currentId`, so Save
+  wrote a blank score over the composition last saved or loaded, and a Save queued before New ran over it once the
+  write under way landed. `ComposerState.documentId` moves on in `reset` and in `replaceDocument(_, true)`, a load, and
+  the panel forgets its entry when it changes (`forgetEntry`): no entry named, the queue dropped, `loadGeneration`
+  moved on. A page-to-panel channel was tried first and replaced by the service's identity, which needs no wiring in
+  the page and covers any later path that replaces the document. Deleting the entry being edited forgets it too, and
+  the delete waits for a write under way to it, which would put it back. Flatten and save pressed mid-write was dropped;
+  it flattens and is queued as Save is. A queued save compared document identity, and undo gives back a copy, so Save as
+  copy, an edit, Save as copy and Undo made two copies; it compares the alphaTex the write held. The Flatten and save
+  spec's score gains a tempo, since a link alone writes nothing different. `composer-library-panel.save-queue.spec.ts`.
+- **`composer.service.editing.spec.ts`** (979 lines) is split by topic into `composer.service.editing.spec.ts` (460),
+  `composer.service.beats.spec.ts` (349) and `composer.service.outcomes.spec.ts` (165), sharing
+  `composer.service.spec-helper.ts`; all 61 `it`s keep their titles.
+- **Task 3.5, keys inside a popover.** A digit on the Tuplet popover's 3:2 wrote a fret, an arrow moved the caret, R
+  rested and Space on a checkbox played. The page listens on the document in the bubbling phase, so the panel's own
+  `(keydown)` stops the press - but for Tab, Escape (claimed by `onEscape`, which now leaves a press something earlier
+  claimed) and presses with Ctrl, Alt or Cmd, which go on so Ctrl+S saves rather than open the browser's Save dialog.
+  `?` inside a popover stays in it.
+- **Task 3.5, the bar a popover reads.** It read the head's bar and the commands write the first selected bar, so a
+  range selected rightwards onto a 3/4 bar showed 3/4 and Apply made the earlier bars 3/4. `popoverValuesOf`
+  (`composer-popover-values.ts`) reads the first bar, and says `MIXED` for a key, clef, ottava, section, endings or
+  triplet feel the selected bars do not share; the popover shows Mixed, and Apply leaves a field still mixed as each
+  bar has it (a mixed clef or ottava is written as the first bar's, which the bars Clef writes already hold). A key the
+  list does not offer starts from C major, not the previous key.
+- **Task 3.5, closing and placement.** A capture-phase `pointerdown` on the injected `DOCUMENT` closes the popover on a
+  press outside it and its trigger; the focus goes back to the trigger only when it was inside the popover, read in
+  `ngOnChanges` before the closing view takes the focused field out. While open it is placed again in the next frame on
+  `resize`, a capture-phase `scroll` and a `ResizeObserver` on the panel, after `scrollIntoView({ block: 'nearest' })` on
+  opening; `popoverPlacementOf` caps `maxHeight` at the room below `top` (its first spec's 588 is 494), and the panel has
+  `max-width: calc(100vw - 12px)`. The Tuplet popover says `Now:` and the ratio, none or mixed, with `aria-pressed` on
+  the current choice, and every popover stays open on a refusal the service publishes - read by a new `messageId` -
+  with the reason inline as well as in the status line.
+- **Task 3.10, popovers.** `openPopover` closes the kind already open, so a popover's button toggles it. Opening the
+  shortcut sheet closes an open popover, which the top layer kept above the sheet, inside the inert palette. Opening a
+  Library or Export menu, or the saved list, closes one too: the panel's `menuOpened`, bound to `closePopover`, and the
+  stub panel declares it. Three specs added.
+- **Task 3.8, the drawer and the menus.** The drawer's close button takes the focus when it opens; ×, Escape and a load
+  give it to Library; an export gives it to Export. Each saved row loads through a `<button class="composition-load">`.
+  A refusal closes the menus, since it drops where they open, and the focus goes to Library, not into the menu: the two
+  specs that pinned focus returning to Save inside the reopened menu now pin Library. The menus stay disclosure buttons
+  (design decision 20). The panel's key listener uses the injected `DOCUMENT`, and `report`'s timer is cleared on destroy.
+- **Task 3.7, the last track's Remove** was `[disabled]`, hiding its reason. It is `aria-disabled` with the reason in its
+  name and tooltip (`LAST_TRACK_REFUSAL`, in `composer-text.ts`, which the service uses too), and its press reaches the
+  service, which refuses.
+- **Task 3.4, keys behind the sheet.** Ctrl+A, Ctrl+Home, Ctrl+End, Ctrl+Insert and Option+↑ and ↓ are the browser's own
+  keys over the sheet's text and are left to it (`TOOLS_LEFT_TO_A_MODAL`); Ctrl+S and Ctrl+K stay claimed.
+  `composer-key-handler.spec.ts` pinned Ctrl+Home as claimed. The sheet's spec gains a backdrop press after the focus
+  went to the body, and its inert-page spec no longer says "whatever order the page binds in".
+- **Task 3.6's spec** re-sets `state` and checks the OnPush palette updates `aria-pressed` and `aria-disabled`.
+- **Task 3.10 replaces the page's `.ts`, `.html` and `.scss` whole** (`create`), so the old Tracks panel, the duration
+  buttons and the generated-track methods go with them; the re-proof's clean type checks confirm nothing reaches them.
 
 ---
 
@@ -11724,6 +11816,12 @@ Seven things the page owns were corrected before this task was applied:
   Ctrl+X would be left to the browser while the score's own text was selected.
 - **Escape closes an open popover and does nothing else**, whoever has the focus: the popover claims the
   key when it has the focus (Task 3.5), and the page's `escape` closes the popover alone when it does not.
+- **A popover's button toggles it**: `openPopover` closes the kind already open, by its button or its key. **Opening the
+  shortcut sheet closes an open popover**, which is in the top layer and would otherwise stay above the sheet, inside the
+  inert palette, taking the first Escape and none of the backdrop's clicks. A key pressed inside a popover - `?` included -
+  stays in it, but for Tab, Escape and Ctrl, Alt or Cmd presses (Task 3.5, as committed). Opening a Library or Export
+  menu, or the saved list, closes an open popover too: the panel says so through `menuOpened`, which the page binds to
+  `closePopover`. The menus are disclosure buttons, not ARIA menus (design decision 20).
 - **Save refuses while the alphaTex draft is not applied.** Ctrl+S runs from a text field, the draft's
   textarea included, and a save writes the document, not the draft. So while the alphaTex panel is open
   with a draft that differs from the document's alphaTex, a save - Ctrl+S, or Save in the Library menu,
@@ -11765,7 +11863,7 @@ the page itself is answerable for.
 
 <!-- apply: create client/src/app/components/composer/composer.component.spec.ts -->
 ```typescript
-import { Component, Input } from '@angular/core';
+import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 
@@ -11795,6 +11893,7 @@ class StubScoreComponent {}
 @Component({ selector: 'app-composer-library-panel', standalone: true, template: '' })
 class StubLibraryPanelComponent {
   @Input() modalOpen = false;
+  @Output() readonly menuOpened = new EventEmitter<void>();
 }
 
 describe('ComposerComponent', () => {
@@ -11915,6 +12014,34 @@ describe('ComposerComponent', () => {
     expect(document.activeElement).toBe(fixture.nativeElement.querySelector('[data-tool="clef"]'));
   });
 
+  it('closes an open popover when its button is pressed again, and opens it on the next press', () => {
+    press({ key: 'k', code: 'KeyK' });
+    const clef: HTMLButtonElement = fixture.nativeElement.querySelector('[data-tool="clef"]');
+
+    clef.click();
+    fixture.detectChanges();
+    expect(component.popover).toBeNull();
+
+    clef.click();
+    fixture.detectChanges();
+    expect(component.popover).toBe('clef');
+  });
+
+  it('keeps ? pressed inside a popover in the popover, and closes an open popover when the sheet opens', () => {
+    press({ key: '/', code: 'Slash', altKey: true });
+    expect(component.popover).toBe('tuplet');
+
+    // Inside the popover, ? is the popover's: no sheet opens under a popover in the top layer.
+    press({ key: '?', code: 'Slash', shiftKey: true }, document.activeElement ?? document);
+    expect(component.sheetOpen).toBeFalse();
+    expect(component.popover).toBe('tuplet');
+
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(component.sheetOpen).toBeTrue();
+    expect(component.popover).toBeNull();
+    expect(document.querySelector(':popover-open')).toBeNull();
+  });
+
   it('says what Fix bar did in the live region, and how many bars are over outside it', () => {
     for (const beatIndex of [0, 1]) {
       composer.setCursor({ beatIndex, stringIndex: 0 });
@@ -12011,6 +12138,18 @@ describe('ComposerComponent', () => {
     press({ key: 'Escape' });
     expect(component.sheetOpen).toBeFalse();
     expect(panel.modalOpen).toBeFalse();
+  });
+
+  it('closes an open popover when a Library or Export menu, or the saved list, opens', () => {
+    press({ key: 'k', code: 'KeyK' });
+    expect(component.popover).toBe('clef');
+    const panel = fixture.debugElement.query(By.directive(StubLibraryPanelComponent)).componentInstance as StubLibraryPanelComponent;
+
+    panel.menuOpened.emit();
+    fixture.detectChanges();
+
+    expect(component.popover).toBeNull();
+    expect(document.querySelector(':popover-open')).toBeNull();
   });
 
   it('writes the shortcuts of Undo and Redo with the modifiers of the platform keyboard', () => {
@@ -12183,8 +12322,9 @@ export class ComposerComponent implements OnInit, OnDestroy {
     );
     this.host = {
       composer,
-      openPopover: kind => this.present(() => (this.popover = kind)),
-      toggleShortcutSheet: () => this.present(() => (this.sheetOpen = !this.sheetOpen)),
+      // A popover's own button, or its key, closes it when it is the one open, as a disclosure button does.
+      openPopover: kind => this.present(() => (this.popover = this.popover === kind ? null : kind)),
+      toggleShortcutSheet: () => this.present(() => this.toggleShortcutSheet()),
       escape: () =>
         this.present(() => {
           // An open popover takes Escape alone - as the popover itself does when it has the focus - and so does the
@@ -12267,8 +12407,13 @@ export class ComposerComponent implements OnInit, OnDestroy {
     this.popover = null;
   }
 
+  /**
+   * Opens or closes the shortcut sheet. Opening it closes an open popover: the popover is in the top layer, so it would
+   * stay above the sheet, inside a palette gone inert, and take the first Escape and none of the backdrop's clicks.
+   */
   toggleShortcutSheet(): void {
     this.sheetOpen = !this.sheetOpen;
+    if (this.sheetOpen) this.popover = null;
   }
 
   closeShortcutSheet(): void {
@@ -12486,7 +12631,7 @@ Replace `composer.component.html`:
       <button class="text-btn" type="button" [class.active]="showTexPanel" [attr.aria-pressed]="showTexPanel" (click)="toggleTexPanel()">
         alphaTex
       </button>
-      <app-composer-library-panel [modalOpen]="sheetOpen"></app-composer-library-panel>
+      <app-composer-library-panel [modalOpen]="sheetOpen" (menuOpened)="closePopover()"></app-composer-library-panel>
       <button
         class="text-btn shortcuts-toggle"
         type="button"
@@ -14402,9 +14547,11 @@ fermata at that position. Press F on the piano's beat 3: both clear.
 drawer closes and the status line still says Pen. Press Esc again: Select.
 
 **Step 13: Save from the keyboard.** Add a progression track (from the progression page's Send), then
-Ctrl+S: the refusal appears under the top bar, and after "Keep the link" focus is on Save inside the open
-Library menu. Flatten the track, Ctrl+S: "Saved". Library, Saved compositions…: the drawer opens and a
-click loads. Open the alphaTex panel, type a space into the draft, and press Ctrl+S with the focus in the
+Ctrl+S: the refusal appears under the top bar; press Save in the Library menu instead and the menu closes as
+the refusal shows, with the focus on the Library button; after "Keep the link" the focus is on the Library button.
+Flatten the track, Ctrl+S: "Saved". Library, Saved compositions…: the drawer opens with the focus on its close
+button; Tab to a saved row and press Enter: it loads, the drawer closes and the focus is on Library. Export,
+alphaTex: the focus is on Export. New, then Save: a new entry, and the composition loaded before is unchanged. Open the alphaTex panel, type a space into the draft, and press Ctrl+S with the focus in the
 textarea: nothing is saved, and the status line says "Apply or revert the alphaTex draft before saving."
 Do the same with Save in the Library menu. Revert, Ctrl+S: "Saved". Click Save twice quickly: one entry.
 
@@ -14453,7 +14600,9 @@ available, record this step as not performed.
 **Step 23: A popover at the palette's edge.** Scroll the palette so Triplet feel is its last visible button,
 at the bottom of the palette and near the bottom of the window. Click it: the popover is whole - beside its
 button, not clipped by the palette, not off the bottom of the window. Narrow the window until the palette is
-at its narrowest and open Clef: the popover still sits beside the palette, in the window.
+at its narrowest and open Clef: the popover still sits beside the palette, in the window. With it open, scroll the
+palette, and resize the window: the popover follows its button each time. Open Alternate ending and tick a box
+until the popover grows: it stays inside the window and scrolls within itself.
 
 **Step 24: A short window.** Make the window about 500px tall. Open Key signature and Alternate ending: each
 popover stays inside the window and scrolls within itself if taller; the page grid keeps its minimum height
@@ -14465,7 +14614,14 @@ Enter: applied, and the focus is back on the Clef button. Press Q for Pen, Shift
 popover opens with the focus in it; Escape closes it, the status line still says Pen, the range is still
 highlighted, and the focus is on the Clef button. Tab to the Library button, Enter, Escape: the menu closes,
 the mode is still Pen and the focus is on Library. Click the Export menu open, then click the score: it
-closes. Tab to a track row's Update and press Space: it presses Update.
+closes. Tab to a track row's Update and press Space: it presses Update. Open Clef and click the Clef button: it
+closes; open it and click the score: it closes, and the focus stays where the click put it. Open Tuplet, Tab to 3:2,
+and press 5, R, → and Space: the score does not change and nothing plays; press `?`: no sheet opens. Open a popover,
+then the Library menu: the popover closes. Select bars 2 to 4 with a key change at bar 3 and open Key signature: it
+says Mixed, and Apply leaves both keys. With one track, Tab to its Remove: it is announced as unavailable, with the
+reason; Space: the status line says "A score needs at least one track." Open the shortcut sheet and click its
+backdrop: the sheet closes and the focus is back where it was; open it, press Ctrl+A and Ctrl+End: the sheet's text
+is selected and scrolled, and the score is unchanged.
 
 **Step 26: Drag performance on a long score.** Build a score of about 64 bars (Ctrl+Enter repeatedly, or
 alphaTex). In DevTools, Performance, record a drag across a system of beats: no re-engraving per beat

@@ -162,12 +162,15 @@ departs from the design".
    holds no fermata. Otherwise it stays at its position, as above, and where it can do neither it is removed and the
    commit says so in the status line - "1 fermata removed: its note moved where it would reach other tracks." A new
    track takes every position's fermata where its rests start, and a removed track takes a fermata only it held away
-   with it.
+   with it. *Settled in review of the committed M2 code:* a position where a note holding the fermata still plays keeps
+   it, though another of its notes in the same voice moved: the fermata does not go with the one that moved.
 3. **M2 brings a minimal track strip forward**: a row per track with its name, remove, and the
    progression badge, status, Update and Flatten; add track with an instrument; and "Add
    progression track", keeping every selector and label the M4 specs pin, which move with the
    markup. Library and Export move into top-bar menus, with the saved list in a drawer. Mixer, bar
-   grid and inspector stay M3.
+   grid and inspector stay M3. *Settled in review of the committed M2 code:* **Remove on the last track refuses rather
+   than disabling** - `aria-disabled`, with the reason in its name and tooltip - so it stays focusable, and its press
+   reaches the service, which says why in the status line.
 4. **`+` and `=` are longer, `-` shorter** - today's direction. The shortcut table below had them
    the other way round and is corrected.
 5. **Escape.** With the circle-of-fifths drawer open, Escape closes it and the composer ignores it;
@@ -220,7 +223,8 @@ departs from the design".
    open-group rule then judges what is left. A grace carrying a tuplet starts a group alphaTab never closes on a
    written value, and a bar's leading one is joined to the group the bar before ends in, which a one-bar reading
    cannot see. So a whole group made graces goes through with no group left, and part of a group is refused as
-   breaking it. Only a loaded file gives a grace a tuplet.
+   breaking it. Only a loaded file gives a grace a tuplet. Turning those graces back into ordinary beats does not give
+   the tuplet back; only undo does.
 10. **Natural clears a forced accidental** (`auto`), because alphaTab 1.8 draws `ForceNatural` as
     `Default`, and its label says so.
 11. **Respell** cycles a pitched note's letter through every spelling `forcedLetterOf` allows for its
@@ -246,7 +250,16 @@ departs from the design".
     button in window coordinates: the palette scrolls, and a popover positioned inside it was clipped.
     Opening one, by button or by key, focuses its first control; closing gives focus back to the button;
     the fields are read from the selection only when the popover's kind changes; and Escape closes the
-    popover alone, claimed so the composer's Escape does not also go back to Select.
+    popover alone, claimed so the composer's Escape does not also go back to Select. *Settled in review of the committed
+    M2 code:* **a popover closes on a press outside it and its button, and follows its button** - placed again when the
+    window resizes, a box scrolls or its content grows, and never taller than the room below its top - and gives the
+    focus back only when the focus was inside it. Its button, or its key, closes it when it is the one open, and opening
+    the shortcut sheet or a Library or Export menu closes it. A key pressed inside it stays there, but for Tab, Escape
+    and presses with Ctrl, Alt or Cmd, so a digit writes no fret behind it and `?` opens no sheet under it. **A range's
+    popover reads the first selected bar**, where every bar command writes, not the head, and shows a value the selected
+    bars do not share - key, clef, section, endings, triplet feel - as mixed; Apply leaves a field still mixed as each
+    bar has it. The Tuplet popover says the selection's ratio, or mixed, and a press the service refuses keeps a popover
+    open with the reason inline, as well as in the status line.
 18. **Commands with no service method go in new modules** - `composer-entry-commands.ts`, delegated
     like `composer-service-structure.ts`, and pure edit functions - keeping `composer.service.ts`
     under the cap: rest over a range, insert and delete beats, semitone and string moves, cut, copy
@@ -265,7 +278,17 @@ departs from the design".
     document moved on, and a copy is skipped after a copy of the same document, so a double click on Save as copy
     makes one copy, and Save then Save as copy puts the edit in the original and then copies it. A load drops them,
     and a write that lands after a load leaves the loaded composition current, so the next Save never writes it over
-    another entry. Destroying the panel drops them too, since the page's guards are gone.
+    another entry. Destroying the panel drops them too, since the page's guards are gone. *Settled in a second review of
+    the committed M2 code:* **the menus are disclosure buttons, not ARIA menus**, on purpose: a button with
+    `aria-expanded` over a group of ordinary buttons, reached by Tab. A `role="menu"` promises arrow keys and typeahead
+    that three items do not need, and a screen reader switches mode for it. Opening the saved list puts the focus on its
+    close button; closing it, by ×, Escape or a load, gives the focus to Library; an export gives it to Export. Each saved
+    row loads through a button. A refusal closes the menus, since it drops where they open, and the focus goes to Library
+    rather than into a menu the refusal would cover. **New, like a load, forgets the entry**: `ComposerState.documentId`
+    moves on for both, and the panel drops the queued saves and names no entry, so Save writes a new one. Deleting the
+    entry being edited forgets it too, and the delete waits for a write under way to it, which would put it back. Flatten
+    and save pressed mid-write is queued as Save is, and a queued save compares the alphaTex it would write with what the
+    write before held, since undo gives back a copy of the document.
 21. **macOS**: see "macOS" under Shortcuts. Nobody has checked the bindings on a Mac. Tooltips and the shortcut sheet
     write Ctrl as ⌘ and Alt as ⌥ on a Mac, and Ctrl and Alt elsewhere, from the browser's platform, read once.
 22. **Score interaction.** In Select a notation click moves the caret and never writes; in Pen it
@@ -323,7 +346,16 @@ departs from the design".
     neither a click nor the focus reaches it; the sheet gives the focus back once the page is no longer inert. Behind
     it every Ctrl, Alt or Cmd binding but Ctrl+C and Ctrl+X is claimed and dropped, so Ctrl+K does not reach the
     browser's search box, while keys with no modifier still scroll the sheet. Opening it closes the Library panel's
-    menus and drawer, so Escape reaches the sheet.
+    menus and drawer, so Escape reaches the sheet. *Settled in review of the committed M2 code:* behind it, the Ctrl, Alt
+    and Cmd bindings that are the browser's own keys over its text are left to the browser - Ctrl+A, Ctrl+Home, Ctrl+End,
+    Ctrl+Insert, Option+↑ and Option+↓ - and Ctrl+S and Ctrl+K stay claimed. Opening it closes an open popover, which the
+    top layer would otherwise keep above it.
+32. **A bar a command adds carries every voice the bars beside it hold**, each past the first a whole-bar rest - append,
+    insert, Fix bar and paste. alphaTab's `Voice._chain` reads the next bar's voice unchecked, so a loaded second voice
+    beside a new bar without one made every save and render throw. Settled in review of the committed M2 code. A second
+    voice of rests is written as nothing by alphaTex: no bar keeps it when no bar of its staff has a note in it, and a bar
+    beside bars that do comes back holding alphaTab's placeholder, one rest, which saves again unchanged. That is kept as
+    it is, and recorded in `docs/TODO.md`.
 
 ---
 
