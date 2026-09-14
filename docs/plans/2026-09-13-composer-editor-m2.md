@@ -167,6 +167,11 @@ imports `tupletRefusal`, and 949 after the third, which imports `graceRefusal`);
 `composer-score.component.ts` 530; `alpha-tab.service.ts` 522; `composer-track-strip.component.ts` 459;
 `composer-tools.ts` 380; `composer.component.ts` 358.
 
+**Phases 3 and 4 are implemented.** Every block of both phases is committed code, the score's interaction merged from
+`feature/composer-editor-m2-score` in `1f0672b`, and corrected since (see "Corrections during implementation"). The
+committed code supersedes their blocks, as it does those of Phases 1 and 2. Whole suite on `a6f7ba0`: **3,294 SUCCESS**, both
+type checks clean. Phase 5 - the documentation and the hand check - is left.
+
 **Not proven by the suite:** Task 4.3's wiring of the score, which has no spec (its decisions are Task
 4.1's pure functions); anything visual or keyboard-hardware - Bravura rendering, narrow widths, Firefox,
 non-US layouts, macOS - which Task 5.2 checks by hand; the shapes of the twelve SMuFL code points that
@@ -931,6 +936,112 @@ faults in composition identity and deleting, one in Flatten and save and three i
   selection inside the score copies, which proves `#score` reaches the key handler.
 - **`deep-frozen.ts`** is `deep-frozen.spec-helper.ts`, which `tsconfig.app.json` excludes, so the production build no
   longer compiles it. `edit-refusals.spec.ts`'s `toThrow()` case is titled for what it pins: that clearing notes makes no draft.
+
+`bebbb9c` is committed as "fix: page". The message is that short, and the commit holds every item of the page review
+listed in the entry above.
+
+**The score-interaction fixes** - `6a8ae66`, `4555492` and `4f813d6`, on `feature/composer-editor-m2-score`, merged in
+`1f0672b` beside the page fixes. Whole suite after the merge: **3,259 SUCCESS**.
+
+- **Staves by system (Tasks 4.1, 4.3).** Page layout engraves one SVG per system, and lazy loading attaches only the
+  systems near the viewport, so a staff's index on the page is not its slot. `composer-score-systems.ts` resolves a
+  measured staff to a system by y (`staffSystems[].realBounds`), then to its slot by its band within that system. The
+  caret uses the system of `findBeat(beat)`. A `MutationObserver` under `.at-surface` drops the measure when a system is
+  attached or detached. Track and staff are read from a bar's first beat, since `BoundsLookup.fromJson` never sets
+  `BarBounds.bar`.
+- **Highlight after a render (Tasks 4.2, 4.3).** With workers, `renderFinished` fires before the bounds lookup is
+  replaced. The highlight and caret are redrawn on `postRenderFinished` (`AlphaTabService.onPostRenderFinished`), and
+  `highlightBeatsOf` clears instead of drawing when the lookup doesn't know both ends.
+- **Beats on the target track (Tasks 4.1, 4.3).** `MasterBarBounds.findBeatAtPos` searches every track. `targetTrackBeat`
+  resolves the beat on the staff under the pointer, and `dragTargetOf` keeps a drag on the caret's staff between staves.
+- **Zone (Tasks 4.2, 4.3).** `onBeatMouseMove` runs outside Angular's zone. A drag enters the zone only to extend to a
+  different caret (`sameCaret`), and Pen hover redraws with `detectChanges`.
+- **Minors.**
+  - A refused Pen note is silent (`writeSounds`).
+  - Hover follows the hovered bar's clef and clears on a mode or document change (`hoverSurvives`).
+  - Seek goes to the caret's beat.
+  - `caretHalfStepsOf` is clamped at 0.
+  - The score has a focus ring.
+
+**`composer.service.ts` made room for M3** in `3ffb294`. It was 983 lines. Commits, undo and redo, `replaceDocument`,
+`markSaved`, `refuse` and `announce` moved to `ComposerHistory` (`composer-history.ts`), which holds the undo and redo
+stacks and reaches the state only through `ComposerHistoryHost`, as the structure and entry commands reach theirs. The
+constructor and `reset` share `initialState`. The service was 830 lines after it, and no spec changed. No block still to
+apply names a moved member. Whole suite: **3,259 SUCCESS**.
+
+**Follow-ups after the merge**, in `fffdb22`. Whole suite after it: **3,279 SUCCESS**.
+
+- **Task 2.5, a refused fret digit sounded.** `FretDigitEntry.type` auditions a digit only when its write changed the
+  document (`writeSounds`), in both branches, as a refused Pen note was already silent.
+- **Tasks 3.5 and 4.3, the press that closes a popover only closes it** (design decision 17). A press outside an open
+  popover closed it, and the same press reached the score, which moved the caret, sought, and in Pen wrote a note. The
+  popover hears the press as a capture-phase `pointerdown`, but alphaTab hears the `mousedown` and `mouseup` after it, in
+  the capture phase on `.at-surface`, and the score its own capture listener on an ancestor, so stopping the
+  `pointerdown` stops neither. So the popover emits `pressedOutside` before `closed`; the palette passes it on
+  (`popoverPressedOutside`); and the page calls `ComposerScoreComponent.ignoreNextPress()`, while that press is still
+  being dispatched. `pressGuardAfter` arms the guard; the score's `mousedown` turns it to `ignoring`, and a beat press is
+  then dropped; a `mouseup` anywhere ends it. The document's `mouseup` listener is in the capture phase now, so a control
+  that stops a release cannot leave the guard on. A closing press released without reaching the score leaves the next
+  press on the score acting.
+- **Task 3.1, every new composition asks before discarding unsaved work** (design decision 20). Only a load asked. New,
+  and a transcription's Open in Composer, replaced the document and its history without a word.
+  `ComposerService.confirmDiscard(action)` asks "Discard unsaved changes and `action`?" when the document is dirty or
+  unsaved work is held elsewhere (`holdUnsavedWork`), and answers yes otherwise. The library's load, the page's New and
+  Open in Composer each ask it first; told no, each leaves the document, its history and the route as they were. The
+  load's words are unchanged.
+- **Task 3.10, an edited alphaTex draft outlived its composition.** Type into A's draft, load C, Apply: A's alphaTex was an
+  edit of C, and Save wrote it over C's entry. The page holds an edited draft as unsaved work, records the `documentId` it
+  was seeded for, and throws it away and seeds it again when another composition opens.
+- **Task 3.10, Apply asked before it parsed.** A draft that does not parse now says so and asks nothing; a draft that does
+  is asked about when it is out of date.
+- **Task 3.3, an announcement wiped a refusal still showing.** `announce` leaves the refusal as it is; only a failure
+  replaces it.
+
+**A review of the score fixes** found one critical fault, one important and three minor, fixed in `19a136f`. Whole suite
+after it: **3,288 SUCCESS**.
+
+- **Tasks 4.1 and 4.3, a press's staff and beat on different systems (critical).** `staffUnderPointer` found the system
+  from the staff's middle line, and `beatUnderPointerOn` found it again from the pointer. `staffIndexAt` reaches three
+  line spacings past a staff, and every system after the first has its band start about 14 pixels above its first
+  staff's top line. So a Pen click on a ledger line above system 2's treble staff took system 2's staff and system 1's
+  bar, and wrote under that bar's clef; a click in the gap between two bands did nothing; and hover did the same.
+  `pressSystemIndexOf` reads the beat on the system of the staff under the pointer, and on the pointer's own only off
+  every staff, and `systemIndexAt` falls back to the nearest band. `composer-score-systems.spec.ts` engraves 20 bars and
+  presses two spacings above systems 2 and 3, where the band has not begun.
+- **Tasks 4.1 and 4.3, slash and numbered staves broke the slot ranking.** An applied draft or a load carries `showSlash`
+  and `showNumbered`, and alphaTab's default profile draws slash, notation, numbered and tablature, one bounds band each
+  (~75665). `staffSlotsOf` listed notation and tablature only, so with `slash score tabs` a click on notation mapped to the
+  tablature slot and one on tablature to none. It lists all four in that order. Both only take the caret: no Pen write,
+  no string, no hover notehead, and a Pen drag from one extends, since nothing was written. `StaffHitTestService` paired a
+  slash staff's one line with notation's top line, measuring notation as four lines; a line that is last on its surface,
+  or followed by a run of three or more lines at another gap, is now a staff of its own, with the spacing of the staff
+  beside it. A numbered staff draws no lines and is not measured; its band still counts in the ranking. A caret with no
+  string prefers a staff that draws lines. Specced on a real engraving of all four.
+- **Task 4.3, presses read stale bands.** From `renderFinished` to `postRenderFinished` a press, a drag and Pen's hover do
+  nothing (`scoreTakesPress`).
+- **Task 4.3, caret updates were not coalesced.** Each state emission and each `MutationObserver` report scheduled its own
+  pair of frames and `detectChanges`; one is pending at a time now.
+- **`color-mix`** needs Firefox 113, and the build's baseline allows 112. Each declaration has an `rgba` fallback before it.
+
+**A review of composition identity, range writes and the page fixes** found, beside the items in `fffdb22`, faults fixed in
+`a6f7ba0`. Whole suite after it: **3,294 SUCCESS**.
+
+- **Task 3.10, the score's floor as rendered** (design decision 23). The strip was clamped against 160px, while the score's
+  minimum is `10rem`, wrong at any other root font size; the open alphaTex panel was not counted, and the column had no
+  `overflow`, so the panel spilled over the status line; and a status line wrapping onto two lines left the clamp stale.
+  `fitStrip` reads the score's computed `min-height`, counts the open panel as a fixed row, and the page observes the
+  status line and the panel as well as the page and the top bar. `.score-column` has `overflow: hidden`.
+  `stripHeightRangeOf` takes the score's minimum, and its spec a case for a 20px root.
+- **Spec titles.** The page's and the Library panel's say "one polite live region". The save refusal's `role="alert"` is
+  assertive on purpose (design decision 30).
+- **Add bar's keys** are pressed on the four layouts and on a Mac, Cmd+Option+Enter, and each matches Add bar alone.
+  Task 5.2 Step 32 checks them on a real Mac and AltGr+Enter on Windows.
+- **Task 3.11, a held Enter** is dropped on every control focused from the keyboard - a menu item, a saved row, a track
+  row, the `?` button - and let through only on a palette button whose tool's key repeats. The code was right: a held
+  Enter on Save, a saved row or Remove would press it again on every repeat. Design decision 29 and the page's comment
+  said palette buttons only, and are corrected; a spec pins the `?` button.
+- **`progression-track.ts`** said the library panel and the page replace the document with a `.gp` file. Neither does: a
+  saved composition, an applied alphaTex draft and a transcription's derived score do.
 
 ---
 
@@ -14573,7 +14684,8 @@ those tasks' blocks.
 The suite is headless: it cannot see a glyph, a layout or a real keyboard. Perform each step, and record
 each result - including every step that could not be performed and why - in the design doc's "M2 hand
 check" paragraph. **A step that cannot be performed is recorded as not performed, with the reason; it is
-never dropped.** Steps 18 to 28 were added when Phases 3 and 4 were corrected before they were applied.
+never dropped.** Steps 18 to 28 were added when Phases 3 and 4 were corrected before they were applied, and Steps 30 to 33
+after the score's branch merged and was reviewed.
 
 **Step 1: Start the app.** From `client/`, `npm start`, and open `http://localhost:4200/composer` in
 Chrome at about 1920×1080.
@@ -14593,12 +14705,18 @@ Ctrl+Z once: beat 1 is a rest again. Type `3` then `5`: two notes, 3 and 5.
 **Step 5: Select and Pen.** In Select, click the standard notation staff: the caret moves, nothing is
 written. Press Q: the status line says Pen, and moving over the notation staff shows the hover notehead
 snapping to lines and spaces and following the pointer. Click: the pitch is written and heard. Press
-Esc: back to Select.
+Esc: back to Select. Add a Piano track and bars until the score has at least four systems, scroll to the third, and
+repeat on it: the caret lands on the staff clicked, in the bar clicked, and the hover notehead sits under the pointer. In
+Pen, click a ledger line just above that system's first staff: the note is written in that system's bar, under its clef,
+not in the bar above it. Click between two systems: the caret moves.
 
 **Step 6: Ranges and the transport.** Drag across four beats in Select: they highlight while dragging and
 stay highlighted after the score re-renders. Press Space: playback starts from the start of the score (or
 where it was paused), not from the highlighted range, and does not loop it. Shift+click extends the
-range; `→` alone drops it.
+range; `→` alone drops it. Select a range, then click a beat outside it and type a fret there with Shift+click back: the
+range is highlighted on the new engraving after the re-render, not cleared and not left where the beats were. On the
+two-track score, drag along the Piano's notation from bar 1 to bar 2 with the pointer drifting into the gap above it: the
+range stays on the Piano, and does not jump to the guitar's beats. Do the same on the third system.
 
 **Step 7: Every palette group.** With a range of notes selected, press one tool from each group and see
 its mark appear and `aria-pressed` change (Elements panel): Quarter, Dot, Triplet, Tie; Repeat open,
@@ -14634,7 +14752,8 @@ Do the same with Save in the Library menu. Revert, Ctrl+S: "Saved". Click Save t
 untouched, type a fret into the score: the draft shows the fret, and Ctrl+S saves. Type into the draft, then type a fret
 into the score: the panel says the draft was written against an earlier score, Ctrl+S says so in the status line, and
 Apply asks before it replaces the fret. Save, type a fret, and load another composition: Undo is unavailable, and Save
-writes the composition loaded. Open a transcription in the composer (Transcribe, then Open in Composer) and Save: a new
+writes the composition loaded. Open a transcription in the composer (Transcribe, then Open in Composer) - with an edit unsaved it asks first, and Cancel
+stays on the transcription - and Save: a new
 entry, and the composition open before is unchanged. Delete the open composition from the saved list, then Save: a new
 entry.
 
@@ -14642,7 +14761,10 @@ entry.
 vertically with no horizontal scrollbar; the shell's navigation and the top bar wrap; the page never scrolls sideways; the
 track strip's separator drags with the mouse and moves with ↑ and ↓ when focused, and Home and End take it to its
 shortest and tallest. Drag the strip tall, then make the window shorter: the strip shrinks with it, and the score keeps
-about 160px. Open the alphaTex panel on a short window: the panel scrolls within itself, and the score keeps its room.
+about 160px. Open the alphaTex panel on a short window: the panel scrolls within itself, and the score keeps its room. With the
+panel open, drag the strip to its tallest: nothing covers the status line. Set Chrome's font size to Very large and drag
+the strip to its tallest again: the score keeps its larger minimum. Make the window narrow enough that a refusal wraps the
+status line onto two lines: the strip shrinks to leave the score its room.
 
 **Step 15: Firefox.** Repeat Steps 2, 4, 5, 6 and 12 in Firefox, then press each symbol key - `?` `}` `|`
 `:` `!` `_` `)` `(` `$` `%` `<` `[` `]` `;` `/` `.` `+` `=` `-` - and Alt+-, Alt+=, Alt+0, Alt+/, Ctrl+/,
@@ -14700,7 +14822,9 @@ popover opens with the focus in it; Escape closes it, the status line still says
 highlighted, and the focus is on the Clef button. Tab to the Library button, Enter, Escape: the menu closes,
 the mode is still Pen and the focus is on Library. Click the Export menu open, then click the score: it
 closes. Tab to a track row's Update and press Space: it presses Update. Open Clef and click the Clef button: it
-closes; open it and click the score: it closes, and the focus stays where the click put it. Open Tuplet, Tab to 3:2,
+closes; open it and click the score: it closes, the focus stays where the click put it, and that click does nothing else - no
+caret move, no seek, and in Pen no note written or heard. Click the score again: that click moves the caret. Open Clef,
+press on the palette, drag onto the score and release there, then click the score: the click acts. Open Tuplet, Tab to 3:2,
 and press 5, R and →: the score does not change and nothing plays; press `?`: no sheet opens. Press Space: it presses
 the focused 3:2, as Space presses any focused button - applied, or refused with the reason inline - and nothing plays.
 Open a popover, then the Library menu: the popover closes. Open Clef and press Ctrl+Z: the popover closes, and the undo
@@ -14733,7 +14857,28 @@ no Mac is available, record this step as not performed.
 installed; record what differs. This is the design's standing per-milestone check, and `docs/TODO.md`
 lists it as unperformed.
 
-**Step 30: Commit** the results with Task 5.1's documentation, or separately:
+**Step 30: Slash and numbered staves.** Open the alphaTex panel, change the guitar's `\staff` to `{slash score tabs}` and
+Apply. Click each staff on the first and second systems: the caret goes to the staff clicked. In Pen, a click on notation
+writes; a click on the slash staff moves the caret and writes nothing; a digit writes on tablature. Apply `{numbered tabs}`
+and click the tablature: the caret goes there, on the string clicked. Record where the caret box is drawn on each.
+
+**Step 31: Escape from a popover, then Space.** In Chrome, Firefox and Safari, open Clef by clicking its button and press
+Escape, then Space: playback starts. Tab to Clef, press Space to open it, Escape, then Space: the Clef button is pressed
+and the popover opens again, and nothing plays. Record each browser.
+
+**Step 32: Add bar on a Mac, and AltGr+Enter.** On a Mac, in Safari and Chrome, Cmd+Option+Enter adds a bar at the end, and
+neither browser nor macOS takes the key. On Windows with the German and French layouts, press AltGr+Enter, which the
+browser reports as Ctrl+Alt+Enter: record whether it adds a bar, and whether that is a key a player would press by
+accident. If no Mac is available, record that half as not performed.
+
+**Step 33: Unsaved work.** Type a fret, then press New: it asks "Discard unsaved changes and start a new score?"; Cancel,
+and the fret is there and Undo takes it away. Type a fret again, then load a saved composition and Cancel, and Open in
+Composer from Transcribe and Cancel: the score, Undo and the page are as they were. Save; open the alphaTex panel and type
+into the draft, then load another composition: it asks; go ahead, then Apply: the loaded composition is unchanged and the
+draft shows its alphaTex. Put an unparsable line in a draft written before an edit and press Apply: it says the draft
+could not be parsed, and asks nothing.
+
+**Step 34: Commit** the results with Task 5.1's documentation, or separately:
 `docs: Record the M2 hand check`.
 
 ### Task 5.3: The M2 checkpoint

@@ -131,6 +131,18 @@ alphaTab upgrade that changes one turns a spec red rather than going unnoticed.
 - **A document marked saved is compared by identity.** A queued save now compares the alphaTex it would write, but
   `markSaved` still marks the document clean only if it is the very one written, so Save, then an edit and its undo,
   leaves the unsaved marker showing for a document the library already holds.
+- **The score takes the mouse only.** alphaTab and the score listen for mouse events, so a tap or a stylus press acts as a
+  click, but a touch or stylus drag scrolls rather than selecting, and there is no touch hover. Pointer events would give
+  both; recorded as a follow-up, not built.
+- **alphaTab's `_isBeatMouseDown` stays set after a mouse-up outside the score.** The composer's drag ignores it
+  (`dragContinues` reads the buttons), but alphaTab skips playback auto-scroll until the next mouse-up on the score, and
+  there is no public API to clear it.
+- **A press that closes a popover is ignored until a mouse-up reaches the page.** A release the page never hears - the
+  button let go over another window - leaves the guard on, and the next press on the score is ignored as well, once.
+- **A slash staff is measured as one line, and a two-line staff next to another staff can be read as lone lines.** The
+  hit test tells a staff's lines by their even gaps, so a single line followed by a run of three or more lines at another
+  gap is a staff of its own. A numbered staff draws no lines and is never under the pointer: a press over it goes to the
+  staff nearest it.
 
 ## Bugs, recorded and not yet fixed
 
@@ -226,8 +238,8 @@ command, and the control is still to come.
 
 **Next up is M2**: the palette, the Select / Pen toggle, the tool table and a shortcut for
 every tool, which put M1's commands within reach, with the new page grid and a minimal track
-strip. Phases 1 and 2 are implemented and reviewed; Phases 3 to 5 were corrected after that review
-and re-proven against the reviewed code. It is planned in
+strip. Phases 1 to 4 are implemented and reviewed, with the score's interaction merged in `1f0672b` and
+its review's fixes committed after it; Phase 5, the documentation and the hand check, is left. It is planned in
 `docs/plans/2026-09-13-composer-editor-m2.md`; its decisions are under "M2 decisions" in the
 design doc.
 

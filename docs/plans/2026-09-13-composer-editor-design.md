@@ -266,7 +266,11 @@ departs from the design".
     from the first bar only until a bar differed, so bars in g2 and f4 with the ottava changed became g2/8va and
     f4/regular. Key signature reads mixed over every staff, since it writes every staff. **A popover closes when the
     score changes under it** by anything but its own Apply - Ctrl+Z pressed from one of its buttons, which reaches the
-    page - and applies nothing, since its fields were read from the score as it was.
+    page - and applies nothing, since its fields were read from the score as it was. *Settled after the score's branch
+    merged:* **the press that closes a popover only closes it.** On the score it moves no caret, seeks nothing and writes
+    nothing, and the next press acts. The popover says it closed from a press outside it, and the score ignores that
+    press from its mouse-down to its release: alphaTab and the score hear the mouse events that follow the
+    `pointerdown`, in the capture phase on their own elements, so stopping the `pointerdown` would stop neither.
 18. **Commands with no service method go in new modules** - `composer-entry-commands.ts`, delegated
     like `composer-service-structure.ts`, and pure edit functions - keeping `composer.service.ts`
     under the cap: rest over a range, insert and delete beats, semitone and string moves, cut, copy
@@ -309,6 +313,11 @@ departs from the design".
     its own write does. *Settled in a review of the page:* **what the library did is said in the status line**
     (`ComposerService.announce`), the page's one polite live region (Part 4) - saved, loaded, deleted, exported, or why
     one failed. The save refusal stays an alert beside it, since it is a question with its remedy inside, not a report.
+    *Settled after the merge:* **every path that starts a new composition asks before unsaved work goes** - a load, New
+    and a transcription's Open in Composer - with "Discard unsaved changes and ...?" (`ComposerService.confirmDiscard`);
+    told no, the document, its history and the route stay as they were. An alphaTex draft that has been typed into counts
+    as unsaved work, and when another composition opens it is thrown away with the one it was written for, so it can
+    never be applied to the next.
 21. **macOS**: see "macOS" under Shortcuts. Nobody has checked the bindings on a Mac. Tooltips and the shortcut sheet
     write Ctrl as ⌘ and Alt as ⌥ on a Mac, and Ctrl and Alt elsewhere, from the browser's platform, read once.
 22. **Score interaction.** In Select a notation click moves the caret and never writes; in Pen it
@@ -322,14 +331,20 @@ departs from the design".
     anywhere on the page, since alphaTab hears mouse-up only on its own surface. The score is engraved
     again only when the document changes - a selection or caret change redraws the highlight and caret
     alone - and Pen's hover runs outside Angular's change detection, entering it only when what it draws
-    changes.
+    changes. Clicks, drags and the caret resolve staves per system, and the beat on the track under the pointer. Score
+    interaction is mouse only: a tap or stylus press acts as a click, a touch drag scrolls, and there is no touch hover.
+    *Settled in review of the score fixes:* a press reads its beat on the system of the staff under it, not the system
+    under the pointer, and waits until a render's bounds have arrived. Slash and numbered staves, which a loaded file or
+    an applied draft can show, take the caret and nothing else.
 23. **The page grid** is sized to the viewport minus the app header, whose height the shell
     publishes as `--app-header-height`: a top bar, the palette, the score, a status line, and the
     track strip under a draggable separator. There is no inspector column until M3. Composer colours
     are CSS custom properties on the page host. *Settled in a review of the page:* the strip's height is clamped
     against the page, not the window - from one row up to what leaves the score 160px - and again whenever the page or
     its top bar resizes; the separator announces that range and takes Home and End. The shell's header wraps rather
-    than widen the body, and publishes its height to the fraction of a pixel.
+    than widen the body, and publishes its height to the fraction of a pixel. *Settled after the merge:* the score's floor is its computed
+    `min-height`, so it follows the root font size; the open alphaTex panel counts as a fixed row; the status line is
+    watched as it wraps; and the score's column clips rather than let the panel spill over the status line.
 24. **Palette buttons are Bravura glyphs** by SMuFL code point, from `/font/Bravura.woff2`, with text
     where SMuFL has no symbol. Each has an `aria-label`, a tooltip with its shortcut, `aria-pressed`
     with `mixed`, and `aria-disabled` with the reason when refusing.
@@ -359,8 +374,9 @@ departs from the design".
     `role="button"`; Enter alone on a link or `role="link"`; Space alone on a checkbox, a radio, or a `role` of
     checkbox, radio or switch. The composer's keyboard is not asked for those. A key the browser does nothing with on
     the control - Space on a link, Enter on a checkbox - stays the composer's, and so does Space after a mouse click
-    left the focus on a button: it plays, rather than pressing that button again. A held Enter presses a palette button
-    once, unless its tool's key repeats. Settled when review found the keyboard would claim them; narrowed in a review
+    left the focus on a button: it plays, rather than pressing that button again. A held Enter presses a control focused from
+    the keyboard once - a palette button, a menu item, a saved row, a track row - unless it is a palette button whose
+    tool's key repeats: a held Enter on Save, a saved row or Remove would press it again on every repeat. Settled when review found the keyboard would claim them; narrowed in a review
     of the page, which found Space swallowed on a clicked nav link and a clicked Delete bar deleting again on Space.
 30. **A save is refused while the alphaTex panel holds a draft that is not applied**, from Ctrl+S - which
     runs in the textarea - or the Library menu's Save, and the status line says "Apply or revert the
@@ -368,7 +384,9 @@ departs from the design".
     review of the page:* **only a draft that has been typed into refuses.** An untouched draft follows the score as it
     changes, so it never stands in the way of a save; an edited draft that the score has since moved past says "The
     alphaTex draft was written against an earlier score; revert it, or apply it to replace the changes made since." in
-    the status line and the panel, and Apply asks before replacing those changes.
+    the status line and the panel, and Apply asks before replacing those changes - once the draft parses, since a draft that cannot be applied has nothing
+    to ask. The refusal is `role="alert"`, assertive, on purpose, beside the page's one polite live region: it is a
+    question with its remedy inside, not a report of something done.
 31. **The shortcut sheet is modal.** Opening it moves the focus into it, Tab stays inside it, and closing it - its close
     button or Escape - gives the focus back, or to the score when what had it is gone. While it is open no key but its
     own and Escape reaches the score behind it, and Escape closes the sheet alone, as it closes a popover. Its note says
