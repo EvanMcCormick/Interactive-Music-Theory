@@ -183,4 +183,43 @@ describe('ComposerKeyHandler', () => {
     handler.handle(press({ key: ' ', shiftKey: true }));
     expect(host.playFromStart).toHaveBeenCalledTimes(2);
   });
+
+  it('lets only the sheet\'s own key and Escape through while a modal is open, so no key edits the score behind it', () => {
+    let modalOpen = true;
+    const behind = new ComposerKeyHandler(host, undefined, () => null, () => modalOpen);
+    composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
+    composer.copy();
+    const doc = composer.doc;
+
+    for (const init of [
+      { key: 'Delete' },
+      { key: 'r', code: 'KeyR' },
+      { key: '5', code: 'Digit5' },
+      { key: 'v', code: 'KeyV', ctrlKey: true },
+      { key: 'ArrowRight' }
+    ]) {
+      const event = press(init);
+      expect(behind.handle(event)).withContext(init.key).toBeFalse();
+      expect(event.preventDefault).withContext(init.key).not.toHaveBeenCalled();
+    }
+    expect(composer.doc).toBe(doc);
+    expect(composer.state.cursor.beatIndex).toBe(0);
+    expect(host.typeFretDigit).not.toHaveBeenCalled();
+
+    // Ctrl+S runs from a text field so that the browser's Save dialog never opens; behind a modal it saves nothing, and
+    // is still claimed for the same reason.
+    const save = press({ key: 's', code: 'KeyS', ctrlKey: true });
+    expect(behind.handle(save)).toBeTrue();
+    expect(save.preventDefault).toHaveBeenCalled();
+    expect(host.requestSave).not.toHaveBeenCalled();
+
+    behind.handle(press({ key: '?', code: 'Slash', shiftKey: true }));
+    behind.handle(press({ key: 'Escape' }));
+    expect(host.toggleShortcutSheet).toHaveBeenCalled();
+    expect(host.escape).toHaveBeenCalled();
+
+    modalOpen = false;
+    behind.handle(press({ key: 'Delete' }));
+    expect(composer.doc).not.toBe(doc);
+  });
 });

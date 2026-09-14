@@ -2,6 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { ComposerPaletteComponent, PaletteButton, paletteGroupsOf } from './composer-palette.component';
 import { ComposerService } from '../../../../services/composer.service';
+import { KEY_PLATFORM, KeyPlatform } from '../../../../services/composer-key-platform';
 import { COMPOSER_TOOLS, ComposerTool } from '../../../../services/composer-tools';
 
 describe('paletteGroupsOf', () => {
@@ -63,6 +64,29 @@ describe('paletteGroupsOf', () => {
     expect(buttonFor('quarter').face).toBe(String.fromCodePoint(0xe1d5));
     expect(buttonFor('quarter').smufl).toBeTrue();
     expect(buttonFor('hammerOn').face).toBe('H');
+  });
+
+  it('writes the shortcut in a tooltip with the platform\'s modifiers', () => {
+    const flatTooltip = (platform: KeyPlatform): string =>
+      paletteGroupsOf(composer.state, COMPOSER_TOOLS, platform).flatMap(group => group.buttons).find(button => button.tool.id === 'flat')?.tooltip ?? '';
+
+    expect(flatTooltip('mac')).toContain('(⌥+-)');
+    expect(flatTooltip('other')).toContain('(Alt+-)');
+  });
+});
+
+describe('ComposerPaletteComponent on a Mac', () => {
+  it('writes its tooltips with the platform it was given', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ComposerPaletteComponent],
+      providers: [{ provide: KEY_PLATFORM, useValue: 'mac' }]
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ComposerPaletteComponent);
+    fixture.componentRef.setInput('state', TestBed.inject(ComposerService).state);
+    fixture.detectChanges();
+
+    const flat: HTMLButtonElement = fixture.nativeElement.querySelector('[data-tool="flat"]');
+    expect(flat.title).toContain('(⌥+-)');
   });
 });
 

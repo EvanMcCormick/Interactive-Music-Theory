@@ -14,6 +14,7 @@ import { CommonModule } from '@angular/common';
 import { ComposerToolPopoverComponent } from '../composer-tool-popover/composer-tool-popover.component';
 import { ComposerState } from '../../../../models/composer.model';
 import { bindingLabelOf } from '../../../../services/composer-key-bindings';
+import { KEY_PLATFORM, KeyPlatform } from '../../../../services/composer-key-platform';
 import { IDLE_TOOL, ToolState, toolStates } from '../../../../services/composer-tool-states';
 import { COMPOSER_TOOLS, ComposerTool, PALETTE_GROUPS, PopoverKind, ToolGroup } from '../../../../services/composer-tools';
 
@@ -42,11 +43,11 @@ export interface PaletteGroup {
   buttons: PaletteButton[];
 }
 
-function buttonOf(tool: ComposerTool, states: ReadonlyMap<string, ToolState>): PaletteButton {
+function buttonOf(tool: ComposerTool, states: ReadonlyMap<string, ToolState>, platform: KeyPlatform): PaletteButton {
   const toolState = states.get(tool.id) ?? IDLE_TOOL;
   // Select and Pen have no key of their own; the key that reaches them is Q.
   const isMode = tool.id === 'select' || tool.id === 'pen';
-  const shortcut = isMode ? 'Q toggles Select and Pen' : tool.keys.map(bindingLabelOf).join(' or ');
+  const shortcut = isMode ? 'Q toggles Select and Pen' : tool.keys.map(binding => bindingLabelOf(binding, platform)).join(' or ');
   const pressable = tool.kind === 'toggle' || tool.kind === 'radio';
   const pressed = toolState.pressed === 'mixed' ? 'mixed' : toolState.pressed ? 'true' : 'false';
 
@@ -63,12 +64,16 @@ function buttonOf(tool: ComposerTool, states: ReadonlyMap<string, ToolState>): P
   };
 }
 
-/** The palette's groups and buttons for `state`, from the tool table and `toolStates`. */
-export function paletteGroupsOf(state: ComposerState, tools: readonly ComposerTool[] = COMPOSER_TOOLS): PaletteGroup[] {
+/** The palette's groups and buttons for `state`, from the tool table and `toolStates`, with shortcuts written for `platform`. */
+export function paletteGroupsOf(
+  state: ComposerState,
+  tools: readonly ComposerTool[] = COMPOSER_TOOLS,
+  platform: KeyPlatform = 'other'
+): PaletteGroup[] {
   const states = toolStates(state.doc, state.anchor, state.cursor, state.entryMode);
   return PALETTE_GROUPS.map(group => ({
     group,
-    buttons: tools.filter(tool => tool.inPalette && tool.group === group).map(tool => buttonOf(tool, states))
+    buttons: tools.filter(tool => tool.inPalette && tool.group === group).map(tool => buttonOf(tool, states, platform))
   }));
 }
 
@@ -97,11 +102,13 @@ export class ComposerPaletteComponent implements OnChanges {
 
   /** This palette's element, where the popover looks for the button that opened it. */
   readonly element: HTMLElement = inject(ElementRef<HTMLElement>).nativeElement;
+  /** Whose modifier names the tooltips use. */
+  private readonly platform: KeyPlatform = inject(KEY_PLATFORM);
 
   groups: PaletteGroup[] = [];
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['state']) this.groups = this.state ? paletteGroupsOf(this.state) : [];
+    if (changes['state']) this.groups = this.state ? paletteGroupsOf(this.state, COMPOSER_TOOLS, this.platform) : [];
   }
 
   press(button: PaletteButton): void {

@@ -28,6 +28,11 @@
   h2 {
     margin: 0;
     font-size: 1rem;
+
+    // Focused by the sheet on opening, never by Tab: no ring for a focus the user did not move.
+    &:focus {
+      outline: none;
+    }
   }
 }
 
@@ -56,6 +61,11 @@
   padding: 0.5rem 1rem 1rem;
   columns: 18rem;
   column-gap: 1.5rem;
+
+  &:focus-visible {
+    outline: 2px solid var(--composer-accent, #3498db);
+    outline-offset: -2px;
+  }
 }
 
 .section {

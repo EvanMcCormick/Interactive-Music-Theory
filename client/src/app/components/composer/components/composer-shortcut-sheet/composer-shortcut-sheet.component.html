@@ -1,15 +1,25 @@
-<section class="sheet" [class.open]="open" role="dialog" aria-label="Keyboard shortcuts" [attr.aria-hidden]="!open">
+<section
+  #sheet
+  class="sheet"
+  [class.open]="open"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="composer-shortcut-sheet-heading"
+  [attr.aria-hidden]="!open"
+  (keydown)="trapTab($event)"
+>
   <header class="sheet-header">
-    <h2>Keyboard shortcuts</h2>
+    <h2 #heading id="composer-shortcut-sheet-heading" tabindex="-1">Keyboard shortcuts</h2>
     <button type="button" class="sheet-close" aria-label="Close keyboard shortcuts" (click)="closed.emit()">×</button>
   </header>
 
   <p class="sheet-note">
-    Ctrl is Cmd on a Mac. A key written as a symbol - <kbd>?</kbd>, <kbd>&#125;</kbd> - is pressed however your keyboard
-    layout types that symbol. Keys are ignored while you type in a field.
+    A key written as a symbol - <kbd>?</kbd>, <kbd>&#125;</kbd> - is pressed however your keyboard layout types that
+    symbol. Keys are ignored while you type in a field<ng-container *ngIf="textFieldKeys">, except <kbd>{{ textFieldKeys }}</kbd></ng-container>.
   </p>
 
-  <div class="sections">
+  <!-- Focusable, so the keyboard can scroll the list. -->
+  <div class="sections" tabindex="0" role="region" aria-label="Shortcuts by group">
     <section class="section" *ngFor="let section of sections; trackBy: trackByGroup">
       <h3>{{ section.group }}</h3>
       <dl>

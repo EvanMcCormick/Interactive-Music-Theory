@@ -1,12 +1,13 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
-import { ComposerShortcutSheetComponent, shortcutSectionsOf } from './composer-shortcut-sheet.component';
+import { ComposerShortcutSheetComponent, shortcutSectionsOf, textFieldKeysOf } from './composer-shortcut-sheet.component';
+import { KEY_PLATFORM, KeyPlatform } from '../../../../services/composer-key-platform';
 import { COMPOSER_TOOLS } from '../../../../services/composer-tools';
 
 describe('shortcutSectionsOf', () => {
   const sections = shortcutSectionsOf(COMPOSER_TOOLS);
-  const keysOf = (label: string): string | undefined =>
-    sections.flatMap(section => section.rows).find(row => row.label === label)?.keys;
+  const keysOf = (label: string, from = sections): string | undefined =>
+    from.flatMap(section => section.rows).find(row => row.label === label)?.keys;
 
   it('groups the tools in the design table\'s order', () => {
     expect(sections.map(section => section.group)).toEqual([
@@ -24,33 +25,135 @@ describe('shortcutSectionsOf', () => {
   it('leaves out the tools with no key', () => {
     expect(keysOf('Quarter note')).toBeUndefined();
   });
+
+  it('lists every tool that has a key, so a group left out of the sheet\'s order cannot take its tools with it unseen', () => {
+    expect(sections.flatMap(section => section.rows).length).toBe(COMPOSER_TOOLS.filter(tool => tool.keys.length > 0).length);
+  });
+
+  it('writes Ctrl as ⌘ and Alt as ⌥ on a Mac, and as Ctrl and Alt elsewhere', () => {
+    const mac = shortcutSectionsOf(COMPOSER_TOOLS, 'mac');
+
+    expect(keysOf('Undo', mac)).toBe('⌘+Z');
+    expect(keysOf('Flat', mac)).toBe('⌥+-');
+    expect(keysOf('Undo')).toBe('Ctrl+Z');
+    expect(keysOf('Flat')).toBe('Alt+-');
+  });
+});
+
+describe('textFieldKeysOf', () => {
+  it('names the keys that still run while typing in a field, from the tool table, as the platform writes them', () => {
+    expect(textFieldKeysOf(COMPOSER_TOOLS)).toBe('Ctrl+S');
+    expect(textFieldKeysOf(COMPOSER_TOOLS, 'mac')).toBe('⌘+S');
+    expect(textFieldKeysOf(COMPOSER_TOOLS.filter(tool => !tool.inTextFields))).toBeNull();
+  });
 });
 
 describe('ComposerShortcutSheetComponent', () => {
   let fixture: ComponentFixture<ComposerShortcutSheetComponent>;
+  const attached: HTMLElement[] = [];
 
-  beforeEach(async () => {
-    await TestBed.configureTestingModule({ imports: [ComposerShortcutSheetComponent] }).compileComponents();
+  async function create(platform: KeyPlatform = 'other'): Promise<void> {
+    await TestBed.configureTestingModule({
+      imports: [ComposerShortcutSheetComponent],
+      providers: [{ provide: KEY_PLATFORM, useValue: platform }]
+    }).compileComponents();
     fixture = TestBed.createComponent(ComposerShortcutSheetComponent);
     fixture.detectChanges();
+  }
+
+  afterEach(() => attached.splice(0).forEach(node => node.remove()));
+
+  function attach<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
+    const element = document.createElement(tag);
+    document.body.appendChild(element);
+    attached.push(element);
+    return element;
+  }
+
+  function setOpen(open: boolean): void {
+    fixture.componentRef.setInput('open', open);
+    fixture.detectChanges();
+  }
+
+  const sheet = (): HTMLElement => fixture.nativeElement.querySelector('[role="dialog"]');
+
+  it('is in the page while closed, hidden rather than removed', async () => {
+    await create();
+
+    expect(sheet()).not.toBeNull();
+    expect(sheet().getAttribute('aria-hidden')).toBe('true');
   });
 
-  it('is in the page while closed, hidden rather than removed', () => {
-    const sheet: HTMLElement = fixture.nativeElement.querySelector('[role="dialog"]');
-
-    expect(sheet).not.toBeNull();
-    expect(sheet.getAttribute('aria-hidden')).toBe('true');
-  });
-
-  it('says it is open, and asks to close from its close button', () => {
+  it('says it is open, and asks to close from its close button', async () => {
+    await create();
     let closed = false;
     fixture.componentInstance.closed.subscribe(() => (closed = true));
-    fixture.componentRef.setInput('open', true);
-    fixture.detectChanges();
+    setOpen(true);
 
-    const sheet: HTMLElement = fixture.nativeElement.querySelector('[role="dialog"]');
-    expect(sheet.getAttribute('aria-hidden')).toBe('false');
+    expect(sheet().getAttribute('aria-hidden')).toBe('false');
     (fixture.nativeElement.querySelector('.sheet-close') as HTMLButtonElement).click();
     expect(closed).toBeTrue();
+  });
+
+  it('is a modal dialog, named by its heading', async () => {
+    await create();
+
+    expect(sheet().getAttribute('aria-modal')).toBe('true');
+    const heading = document.getElementById(sheet().getAttribute('aria-labelledby') ?? '');
+    expect(heading?.tagName).toBe('H2');
+    expect(heading?.textContent).toContain('Keyboard shortcuts');
+  });
+
+  it('says keys are ignored while typing in a field, except those that run from one, written for the platform', async () => {
+    await create('mac');
+    const note: string = fixture.nativeElement.querySelector('.sheet-note').textContent;
+
+    expect(note).toContain('ignored while you type in a field, except ⌘+S');
+    expect(note).not.toContain('Cmd on a Mac');
+  });
+
+  it('takes the focus when it opens, and gives it back to what had it when it closes', async () => {
+    await create();
+    const opener = attach('button');
+    opener.focus();
+
+    setOpen(true);
+    expect(sheet().contains(document.activeElement)).toBeTrue();
+
+    setOpen(false);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('gives the focus to the score when what had it is gone', async () => {
+    await create();
+    const opener = attach('button');
+    const score = attach('div');
+    score.tabIndex = -1;
+    fixture.componentRef.setInput('fallbackFocus', score);
+    opener.focus();
+
+    setOpen(true);
+    opener.remove();
+    setOpen(false);
+
+    expect(document.activeElement).toBe(score);
+  });
+
+  it('keeps Tab inside while it is open, going round from the last control to the first and back', async () => {
+    await create();
+    setOpen(true);
+    const close: HTMLElement = fixture.nativeElement.querySelector('.sheet-close');
+    const list: HTMLElement = fixture.nativeElement.querySelector('.sections');
+    const tab = (from: HTMLElement, shiftKey = false): KeyboardEvent => {
+      const event = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true });
+      from.focus();
+      from.dispatchEvent(event);
+      return event;
+    };
+
+    expect(tab(list).defaultPrevented).toBeTrue();
+    expect(document.activeElement).toBe(close);
+    expect(tab(close, true).defaultPrevented).toBeTrue();
+    expect(document.activeElement).toBe(list);
   });
 });

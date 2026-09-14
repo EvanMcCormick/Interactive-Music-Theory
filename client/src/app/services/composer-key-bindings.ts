@@ -13,6 +13,8 @@
  * binding has failed.
  */
 
+import type { KeyPlatform } from './composer-key-platform';
+
 /** One key press a tool answers to. Exactly one of `key` and `code`. */
 export interface KeyBinding {
   /** `KeyboardEvent.key`: a lower-case letter, a digit, a symbol, or a named key such as `ArrowLeft` or `' '`. */
@@ -137,9 +139,20 @@ const CODE_LABELS: Readonly<Record<string, string>> = {
   Space: 'Space'
 };
 
-/** How `binding` is written in a tooltip and on the shortcut sheet: `Ctrl+Shift+Z`, `Alt+-`, `?`. */
-export function bindingLabelOf(binding: KeyBinding): string {
-  const modifiers = [binding.ctrl ? 'Ctrl' : '', binding.alt ? 'Alt' : '', binding.shift ? 'Shift' : ''].filter(Boolean);
+/**
+ * Ctrl and Alt as each platform names them. A Ctrl binding is Cmd on a Mac (`bindingMatches` reads Cmd as Ctrl), and
+ * Alt is Option, so a Mac label writes their symbols. Shift keeps its name: ⇧ is less often recognised, and the
+ * sheet's `+` joins stay as they are on every platform.
+ */
+const MODIFIER_NAMES: Readonly<Record<KeyPlatform, { ctrl: string; alt: string }>> = {
+  mac: { ctrl: '⌘', alt: '⌥' },
+  other: { ctrl: 'Ctrl', alt: 'Alt' }
+};
+
+/** How `binding` is written in a tooltip and on the shortcut sheet: `Ctrl+Shift+Z`, `Alt+-`, `?` - or `⌘+Shift+Z` and `⌥+-` on a Mac. */
+export function bindingLabelOf(binding: KeyBinding, platform: KeyPlatform = 'other'): string {
+  const names = MODIFIER_NAMES[platform];
+  const modifiers = [binding.ctrl ? names.ctrl : '', binding.alt ? names.alt : '', binding.shift ? 'Shift' : ''].filter(Boolean);
   let key: string;
   if (binding.code !== undefined) {
     const code = binding.code;

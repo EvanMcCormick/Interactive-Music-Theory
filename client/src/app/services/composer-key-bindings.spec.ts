@@ -110,6 +110,14 @@ describe('bindingLabelOf', () => {
     expect(bindingLabelOf({ code: 'Digit3', ctrl: true, shift: true })).toBe('Ctrl+Shift+3');
     expect(bindingLabelOf({ key: '?' })).toBe('?');
   });
+
+  it('writes Ctrl as ⌘ and Alt as ⌥ on a Mac, leaving Shift and the key as they are', () => {
+    expect(bindingLabelOf({ code: 'KeyZ', ctrl: true, shift: true }, 'mac')).toBe('⌘+Shift+Z');
+    expect(bindingLabelOf({ code: 'Minus', alt: true }, 'mac')).toBe('⌥+-');
+    expect(bindingLabelOf({ key: 'ArrowUp', ctrl: true, alt: true }, 'mac')).toBe('⌘+⌥+↑');
+    expect(bindingLabelOf({ key: 's', shift: true }, 'mac')).toBe('Shift+S');
+    expect(bindingLabelOf({ key: 'ArrowUp', ctrl: true, alt: true }, 'other')).toBe('Ctrl+Alt+↑');
+  });
 });
 
 describe('bindingSignatureOf and BROWSER_RESERVED', () => {
