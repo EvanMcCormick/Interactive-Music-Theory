@@ -1,15 +1,12 @@
-import { Component } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
-import { ComposerComponent } from './composer.component';
-import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
-import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
-import { ComposerService } from '../../services/composer.service';
-import { ProgressionService } from '../../services/progression.service';
-import { TrackDoc } from '../../models/composer.model';
+import { ComposerTrackStripComponent } from './composer-track-strip.component';
+import { ComposerService } from '../../../../services/composer.service';
+import { ProgressionService } from '../../../../services/progression.service';
+import { TrackDoc } from '../../../../models/composer.model';
 
 /**
- * The Tracks panel, and the four controls a generated track adds to it.
+ * The track strip, and the four controls a generated track adds to a row.
  *
  * `composer.service.generated.spec.ts` has already pinned what the three
  * commands do to a document, and `progression-track.spec.ts` what the merge,
@@ -43,41 +40,29 @@ import { TrackDoc } from '../../models/composer.model';
  *    "click Update" and matching nothing (WCAG 2.1 SC 2.5.3). The labels are
  *    asserted; the styling is not.
  *
- * ## The two children are stubbed
+ * ## Where these came from
  *
- * `ComposerScoreComponent` owns the alphaTab instance and engraves on
- * `AfterViewInit`; `ComposerLibraryPanelComponent` reads IndexedDB. Neither is
- * involved in a track row, and building either for real would make every test
- * in this file depend on a renderer and a database. `overrideComponent` swaps
- * both for empty standalone components wearing the same selectors, so the
- * template still compiles against known elements rather than a loosened schema.
+ * These were `composer.component.spec.ts` until M2 moved the Tracks panel out of
+ * the page and into this strip. They moved with the markup unchanged, so every
+ * selector, status string and label pattern M4 pinned is still pinned; only the
+ * fixture changed. The strip has no alphaTab or IndexedDB child, so nothing is
+ * stubbed.
  */
-@Component({ selector: 'app-composer-score', standalone: true, template: '' })
-class StubScoreComponent {}
-
-@Component({ selector: 'app-composer-library-panel', standalone: true, template: '' })
-class StubLibraryPanelComponent {}
-
-describe('ComposerComponent tracks panel', () => {
-  let fixture: ComponentFixture<ComposerComponent>;
-  let component: ComposerComponent;
+describe('ComposerTrackStripComponent', () => {
+  let fixture: ComponentFixture<ComposerTrackStripComponent>;
+  let component: ComposerTrackStripComponent;
   let composer: ComposerService;
   let progression: ProgressionService;
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [ComposerComponent]
-    })
-      .overrideComponent(ComposerComponent, {
-        remove: { imports: [ComposerScoreComponent, ComposerLibraryPanelComponent] },
-        add: { imports: [StubScoreComponent, StubLibraryPanelComponent] }
-      })
-      .compileComponents();
+      imports: [ComposerTrackStripComponent]
+    }).compileComponents();
 
     composer = TestBed.inject(ComposerService);
     progression = TestBed.inject(ProgressionService);
 
-    fixture = TestBed.createComponent(ComposerComponent);
+    fixture = TestBed.createComponent(ComposerTrackStripComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
   });
