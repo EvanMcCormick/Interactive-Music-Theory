@@ -540,6 +540,26 @@ describe('ComposerTrackStripComponent', () => {
   });
 
   /**
+   * A disabled Remove would hide why from focus and from its tooltip, as the section comment in the component says of
+   * Update. So the last track's Remove stays focusable, says why it refuses, and the press reaches the service, whose
+   * refusal the status line shows.
+   */
+  it('keeps the last track\'s Remove focusable, says why it refuses, and leaves the score as it was when pressed', () => {
+    expect(rows().length).toBe(1);
+    const remove = button(row(0), '.track-remove');
+    expect(remove.disabled).toBeFalse();
+    expect(remove.getAttribute('aria-disabled')).toBe('true');
+    expect(remove.getAttribute('aria-label')).toContain('A score needs at least one track.');
+    const doc = composer.doc;
+
+    remove.click();
+    fixture.detectChanges();
+
+    expect(composer.doc).toBe(doc);
+    expect(composer.state.refusal).toBe('A score needs at least one track.');
+  });
+
+  /**
    * The caret can rest on a generated track. Only note- and beat-level edits
    * are refused, and that refusal lives in the service; a row the caret could
    * not reach would leave the user unable to read the track through the cursor

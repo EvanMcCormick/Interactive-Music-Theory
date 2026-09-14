@@ -19,3 +19,6 @@ export function fixBarNoticeOf(fixed: number, appended: number): string {
 export function pasteNoticeOf(beats: number, appended: number): string {
   return `Pasted ${countOf(beats, 'beat')}${appended > 0 ? `, adding ${countOf(appended, 'bar')} at the end` : ''}.`;
 }
+
+/** Why the last track cannot be removed: said by the service, and on the track strip's Remove before it is pressed. */
+export const LAST_TRACK_REFUSAL = 'A score needs at least one track.';

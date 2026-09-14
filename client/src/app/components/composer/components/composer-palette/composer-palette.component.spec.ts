@@ -129,6 +129,19 @@ describe('ComposerPaletteComponent', () => {
     expect(pressed.map(tool => tool.id)).toEqual(['rest', 'ghost']);
   });
 
+  it('draws each new state it is given, as an OnPush view: what is pressed and what refuses follow it', () => {
+    expect(button('ghost').getAttribute('aria-disabled')).toBe('true');
+    expect(button('ghost').getAttribute('aria-pressed')).toBe('false');
+
+    composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
+    composer.toggleNoteEffect('isGhost', true, false);
+    fixture.componentRef.setInput('state', composer.state);
+    fixture.detectChanges();
+
+    expect(button('ghost').getAttribute('aria-disabled')).toBeNull();
+    expect(button('ghost').getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('opens the popover of its kind in the top layer, says so on its button, and focuses it', () => {
     fixture.componentRef.setInput('popover', 'clef');
     fixture.detectChanges();

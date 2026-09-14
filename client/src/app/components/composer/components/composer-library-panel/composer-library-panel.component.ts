@@ -3,15 +3,18 @@ import {
   ChangeDetectorRef,
   Component,
   ElementRef,
+  EventEmitter,
   OnDestroy,
   HostListener,
   Input,
   OnChanges,
   OnInit,
+  Output,
   SimpleChanges,
-  ViewChild
+  ViewChild,
+  inject
 } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { CommonModule, DOCUMENT } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subject, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
@@ -108,6 +111,9 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
    */
   @Input() modalOpen = false;
 
+  /** Emits when a menu or the drawer opens. */
+  @Output() readonly menuOpened = new EventEmitter<void>();
+
   /**
    * Whether a write to the library is under way. A trigger while it is - Ctrl+S just after a click, a double
    * click, Ctrl+S after an edit made mid-write - does not start a second write at once: the first write's id is
@@ -153,17 +159,19 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   }
 
   /**
-   * The Save button, so dismissing the offer can hand focus back to it.
-   *
-   * Both buttons in the announced region destroy the region they live in, so
-   * without this the browser drops focus to `<body>` and a keyboard user
-   * restarts tabbing from the top of the page.
+   * The Library and Export menu buttons, which take the focus back when Escape closes their menu, and when a refusal,
+   * the saved list or an export takes away what held it. Both buttons in the announced region destroy the region they
+   * live in, so without one the browser drops the focus to `<body>` and a keyboard user restarts tabbing from the top.
    */
-  @ViewChild('saveButton') private saveButton?: ElementRef<HTMLButtonElement>;
-
-  /** The Library and Export menu buttons, which take focus back when Escape closes their menu. */
   @ViewChild('libraryToggle') private libraryToggle?: ElementRef<HTMLButtonElement>;
   @ViewChild('exportToggle') private exportToggle?: ElementRef<HTMLButtonElement>;
+  /** The saved list, and its close button, which takes the focus when the list opens. */
+  @ViewChild('drawer') private drawer?: ElementRef<HTMLElement>;
+  @ViewChild('drawerClose') private drawerClose?: ElementRef<HTMLButtonElement>;
+
+  private readonly document = inject(DOCUMENT);
+  /** The timer that takes `statusMessage` down, cleared on destroy so it does not run against a panel that has gone. */
+  private statusTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly composer: ComposerService,
@@ -220,7 +228,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
         this.cdr.markForCheck();
       });
 
-    document.addEventListener('keydown', this.escapeListener, true);
+    this.document.addEventListener('keydown', this.escapeListener, true);
 
     // Ctrl+S. The same `save()` as the button, so a keyboard save is refused, announced and followed by
     // focus exactly as a click is.
@@ -236,7 +244,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   ngOnDestroy(): void {
     this.destroyed = true;
     this.queuedSaves = [];
-    document.removeEventListener('keydown', this.escapeListener, true);
+    if (this.statusTimer !== null) clearTimeout(this.statusTimer);
+    this.document.removeEventListener('keydown', this.escapeListener, true);
     this.destroy$.next();
     this.destroy$.complete();
   }
@@ -248,21 +257,41 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   toggleLibraryMenu(): void {
     this.libraryMenuOpen = !this.libraryMenuOpen;
     this.exportMenuOpen = false;
+    if (this.libraryMenuOpen) this.menuOpened.emit();
   }
 
   toggleExportMenu(): void {
     this.exportMenuOpen = !this.exportMenuOpen;
     this.libraryMenuOpen = false;
+    if (this.exportMenuOpen) this.menuOpened.emit();
   }
 
-  /** Opens the saved list, closing the menu it was opened from. */
+  /**
+   * Opens the saved list, closing the menu it was opened from, and puts the focus on its close button: the menu item
+   * that opened it is hidden now, and a hidden element drops the focus to the page.
+   */
   openDrawer(): void {
     this.drawerOpen = true;
     this.libraryMenuOpen = false;
+    this.menuOpened.emit();
+    this.cdr.detectChanges();
+    this.drawerClose?.nativeElement.focus();
   }
 
+  /** Closes the saved list, giving the focus to the Library button when it was in the list - on its ×, or a row that loaded. */
   closeDrawer(): void {
+    const focusWasInside = !!this.drawer?.nativeElement.contains(this.document.activeElement);
     this.drawerOpen = false;
+    this.cdr.detectChanges();
+    if (focusWasInside) this.libraryToggle?.nativeElement.focus();
+  }
+
+  /** Closes the Export menu on a choice, giving the focus to its button: the item chosen is hidden with the menu. */
+  private closeExportMenu(): void {
+    const focusWasInside = this.host.nativeElement.contains(this.document.activeElement);
+    this.exportMenuOpen = false;
+    this.cdr.detectChanges();
+    if (focusWasInside) this.exportToggle?.nativeElement.focus();
   }
 
   /** A click anywhere outside the panel closes its menus and its drawer, as a menu is expected to. */
@@ -297,7 +326,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   private readonly escapeListener = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape' || event.defaultPrevented || this.modalOpen || !this.anyOpen) return;
     event.preventDefault();
-    const focusWasInside = this.host.nativeElement.contains(document.activeElement);
+    const focusWasInside = this.host.nativeElement.contains(this.document.activeElement);
     const toggle = this.exportMenuOpen && !this.libraryMenuOpen ? this.exportToggle : this.libraryToggle;
     this.closeMenus();
     if (focusWasInside) toggle?.nativeElement.focus();
@@ -380,7 +409,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     // is (`queuedSaves`) - the entry that write makes is not known until it lands.
     if (this.saving) {
       this.queueSave(asNew);
-      this.returnFocusToSave();
+      this.returnFocusToLibrary();
       return;
     }
 
@@ -396,13 +425,13 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
       this.errorMessage = null;
     }
 
-    this.returnFocusToSave();
+    this.returnFocusToLibrary();
   }
 
   /** Declines the offer, leaving the link and the composition unsaved. */
   dismissSaveBlock(): void {
     this.pendingSave = null;
-    this.returnFocusToSave();
+    this.returnFocusToLibrary();
   }
 
   /** Remembers a save pressed while a write is under way, once for each kind (`queuedSaves`). */
@@ -412,26 +441,31 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   }
 
   private refuseToSave(asNew: boolean): void {
+    // The refusal drops below the top bar, where the menus open, so it closes them rather than cover Save; a focus in
+    // the Library menu goes to its button, since a hidden Save drops it to the page.
+    const focusWasInMenu = this.libraryMenuOpen && this.host.nativeElement.contains(this.document.activeElement);
+    this.libraryMenuOpen = false;
+    this.exportMenuOpen = false;
     this.pendingSave = { reason: this.describeRefusal(), asNew, flattened: false };
     this.statusMessage = null;
     // A failure from an earlier press sits directly under the refusal, where it
     // reads as part of it.
     this.errorMessage = null;
     this.cdr.markForCheck();
+    if (focusWasInMenu) this.returnFocusToLibrary();
   }
 
   /**
-   * Puts focus back on Save after the announced region is torn down.
+   * Puts the focus on the Library button after the announced region is torn down, or a refusal closed the menu.
    *
    * Change detection has to run first: the region is still in the DOM at the
    * moment the handler returns, and moving focus before it goes would be undone
    * by the browser when it does.
    */
-  private returnFocusToSave(): void {
-    // Save lives in the Library menu, and a button in a hidden menu cannot take focus.
-    this.libraryMenuOpen = true;
+  private returnFocusToLibrary(): void {
+    // Not Save: it is in the Library menu, which, opened, would sit under a refusal still showing.
     this.cdr.detectChanges();
-    this.saveButton?.nativeElement.focus();
+    this.libraryToggle?.nativeElement.focus();
   }
 
   private describeRefusal(): string {
@@ -586,7 +620,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
       // as the state arrives - dropping the saves queued for it - and then names the loaded entry.
       this.composer.replaceDocument(this.mapper.toDoc(parsed.score), true);
       this.currentId = id;
-      this.drawerOpen = false;
+      this.closeDrawer();
       this.report(`Loaded "${entry.title}"`);
     } catch (error) {
       this.reportError(error);
@@ -627,7 +661,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   // -------------------------------------------------------------------------
 
   exportGuitarPro(): void {
-    this.exportMenuOpen = false;
+    this.closeExportMenu();
     if (!this.state) return;
     try {
       const settings = new alphaTab.Settings();
@@ -644,7 +678,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   }
 
   exportAlphaTex(): void {
-    this.exportMenuOpen = false;
+    this.closeExportMenu();
     if (!this.state) return;
     try {
       this.exporter.downloadAlphaTex(
@@ -658,7 +692,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   }
 
   exportMidi(): void {
-    this.exportMenuOpen = false;
+    this.closeExportMenu();
     if (!this.state) return;
     try {
       // Same three steps as the Guitar Pro export: build the score, hand it to
@@ -698,7 +732,9 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     this.statusMessage = message;
     this.errorMessage = null;
     this.cdr.markForCheck();
-    setTimeout(() => {
+    if (this.statusTimer !== null) clearTimeout(this.statusTimer);
+    this.statusTimer = setTimeout(() => {
+      this.statusTimer = null;
       this.statusMessage = null;
       this.cdr.markForCheck();
     }, 2500);

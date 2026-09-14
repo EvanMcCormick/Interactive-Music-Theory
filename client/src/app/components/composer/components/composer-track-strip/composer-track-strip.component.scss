@@ -110,11 +110,12 @@
   line-height: 1;
   padding: 0 0.2rem;
 
-  &:hover:not(:disabled) {
+  &:hover:not(:disabled):not([aria-disabled='true']) {
     color: var(--composer-error, #e74c3c);
   }
 
-  &:disabled {
+  &:disabled,
+  &[aria-disabled='true'] {
     opacity: 0.3;
     cursor: not-allowed;
   }

@@ -6,6 +6,7 @@ import { Subject, takeUntil } from 'rxjs';
 import { ComposerState, TrackDoc } from '../../../../models/composer.model';
 import { ProgressionState } from '../../../../models/progression.model';
 import { ComposerService } from '../../../../services/composer.service';
+import { LAST_TRACK_REFUSAL } from '../../../../services/composer-text';
 import { ProgressionService } from '../../../../services/progression.service';
 import {
   GeneratedTrackState,
@@ -127,8 +128,18 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
     this.composer.addTrack(instrument.name, instrument.program, instrument.fretted);
   }
 
+  /** Removes a track. The last one is refused by the service, which says why; its button says so before the press. */
   removeTrack(index: number): void {
     this.composer.removeTrack(index);
+  }
+
+  /** Remove's accessible name: the track's, and why it refuses while it is the only track. */
+  removeLabel(track: TrackDoc, trackCount: number): string {
+    return trackCount <= 1 ? `Remove ${track.name}, unavailable: ${LAST_TRACK_REFUSAL}` : `Remove ${track.name}`;
+  }
+
+  removeTitle(trackCount: number): string {
+    return trackCount <= 1 ? `Remove track - unavailable: ${LAST_TRACK_REFUSAL}` : 'Remove track';
   }
 
   selectTrack(index: number): void {

@@ -56,12 +56,18 @@
         </span>
       </ng-container>
 
+      <!--
+        `aria-disabled` rather than `disabled` on the last track, for the reason Update above uses it: a disabled button
+        hides why from focus and from its tooltip. The press still reaches the service, which refuses and says why in
+        the status line.
+      -->
       <button
+        type="button"
         class="track-remove"
         (click)="removeTrack(i); $event.stopPropagation()"
-        [disabled]="s.doc.tracks.length <= 1"
-        [attr.aria-label]="'Remove ' + track.name"
-        title="Remove track"
+        [attr.aria-disabled]="s.doc.tracks.length <= 1 ? 'true' : null"
+        [attr.aria-label]="removeLabel(track, s.doc.tracks.length)"
+        [title]="removeTitle(s.doc.tracks.length)"
       >×</button>
     </li>
   </ul>

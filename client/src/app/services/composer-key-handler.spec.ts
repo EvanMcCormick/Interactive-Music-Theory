@@ -208,11 +208,27 @@ describe('ComposerKeyHandler', () => {
       expect(event.preventDefault).withContext(init.key).not.toHaveBeenCalled();
     }
 
+    // Some bindings with a modifier are the browser's own keys over a sheet of text, and are left to it: Ctrl+A selects
+    // the text for Ctrl+C, Ctrl+Home and Ctrl+End scroll to either end, Ctrl+Insert copies on Windows, and Option+↑ and
+    // Option+↓ scroll on a Mac.
+    for (const init of [
+      { key: 'a', code: 'KeyA', ctrlKey: true },
+      { key: 'Home', ctrlKey: true },
+      { key: 'End', ctrlKey: true },
+      { key: 'Insert', ctrlKey: true },
+      { key: 'ArrowUp', altKey: true },
+      { key: 'ArrowDown', altKey: true }
+    ]) {
+      const event = press(init);
+      const name = `${init.ctrlKey ? 'Ctrl+' : 'Alt+'}${init.key}`;
+      expect(behind.handle(event)).withContext(name).toBeFalse();
+      expect(event.preventDefault).withContext(name).not.toHaveBeenCalled();
+    }
+
     // A binding with Ctrl, Alt or Cmd is claimed and dropped. Left to the browser, Ctrl+K would focus its search box and
     // Ctrl+S open its Save dialog, over the sheet, and neither is the sheet's.
     for (const init of [
       { key: 'k', code: 'KeyK', ctrlKey: true },
-      { key: 'Home', ctrlKey: true },
       { key: 'v', code: 'KeyV', ctrlKey: true },
       { key: 's', code: 'KeyS', ctrlKey: true },
       { key: '-', code: 'Minus', altKey: true },

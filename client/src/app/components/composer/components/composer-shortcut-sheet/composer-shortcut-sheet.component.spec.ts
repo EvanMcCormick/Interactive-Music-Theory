@@ -168,6 +168,22 @@ describe('ComposerShortcutSheetComponent', () => {
       expect(fixture.componentInstance.open).toBeFalse();
       expect(document.activeElement).toBe(opener);
     });
+
+    it('gives the focus back after a pointer\'s press on it has left the focus on the page', async () => {
+      await create();
+      const opener = attach('button');
+      opener.focus();
+      fixture.componentInstance.closed.subscribe(() => setOpen(false));
+      setOpen(true);
+
+      // A pointer pressed on the backdrop, which takes no focus, moves the focus to the body before the click arrives.
+      // A script's `click()` moves none, so the press is made by hand.
+      (document.activeElement as HTMLElement | null)?.blur();
+      expect(document.activeElement).toBe(document.body);
+      backdrop().click();
+
+      expect(document.activeElement).toBe(opener);
+    });
   });
 
   it('sends Shift+Tab from its heading, where opening put the focus, round to its last control', async () => {
@@ -231,7 +247,7 @@ describe('ComposerShortcutSheetComponent over an inert page', () => {
     fixture.detectChanges();
   });
 
-  it('gives the focus back to what had it once the page is no longer inert, whatever order the page binds in', () => {
+  it('gives the focus back to what had it once the page is no longer inert, after every binding of the page is applied', () => {
     const opener: HTMLButtonElement = fixture.nativeElement.querySelector('.opener');
     opener.focus();
 

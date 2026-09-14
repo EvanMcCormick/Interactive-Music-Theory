@@ -62,6 +62,7 @@ import { moveNotesToString, shiftSemitone } from './note-moves';
 import { respellNotes, respellRefusal } from './note-respell';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 import { deleteBars } from './bar-edits';
+import { LAST_TRACK_REFUSAL } from './composer-text';
 import { insertBarInto } from './score-structure';
 
 /**
@@ -752,7 +753,7 @@ export class ComposerService {
   }
 
   removeTrack(index: number): void {
-    if (this.doc.tracks.length <= 1) return this.refuse('A score needs at least one track.');
+    if (this.doc.tracks.length <= 1) return this.refuse(LAST_TRACK_REFUSAL);
     this.commit(draft => {
       draft.tracks.splice(index, 1);
     });
