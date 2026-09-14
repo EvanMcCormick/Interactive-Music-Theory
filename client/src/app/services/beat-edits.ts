@@ -7,7 +7,8 @@ import {
   FermataDoc,
   ScoreDoc,
   Tuplet,
-  VoiceDoc
+  VoiceDoc,
+  createRestBeat
 } from '../models/composer.model';
 import {
   BarMeter,
@@ -302,4 +303,43 @@ function settleRange(
   }
 
   fillBarGaps(bar, meter);
+}
+
+/** Clears every beat in `refs` to a rest, keeping each beat's value, so no bar's fill changes. */
+export function clearToRests(doc: ScoreDoc, refs: readonly BeatRef[]): void {
+  for (const beat of beatsAt(doc, refs)) {
+    beat.notes = [];
+    beat.isRest = true;
+  }
+}
+
+/**
+ * Inserts a rest of `duration` and `dots` in front of the beat `ref` names. The bar grows, and whatever
+ * it holds beyond its meter is left as overflow for Fix bar: an insertion moves beats later, and taking
+ * rests from the end of the bar to make room would be a second edit the user did not ask for.
+ */
+export function insertBeatAt(doc: ScoreDoc, ref: BeatRef, duration: DurationValue, dots: number): void {
+  const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
+  if (!voice) return;
+  voice.beats.splice(Math.min(ref.beatIndex, voice.beats.length), 0, { ...createRestBeat(duration), dots });
+}
+
+/**
+ * Removes the beats `refs` name, so the beats after them move earlier, and fills each bar left short at
+ * its end (`fillBarGaps`) - unlike a clear, which keeps every later beat where it was. A voice left
+ * with no beats at all, in a free-time bar that nothing fills, gets a quarter rest, since alphaTab
+ * cannot chain a voice with none.
+ */
+export function deleteBeats(doc: ScoreDoc, refs: readonly BeatRef[]): void {
+  const removing = new Set(beatsAt(doc, refs));
+  const bars = new Map<BarDoc, number>();
+  for (const ref of refs) {
+    const bar = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex];
+    if (bar) bars.set(bar, ref.barIndex);
+  }
+  for (const [bar, barIndex] of bars) {
+    for (const voice of bar.voices) voice.beats = voice.beats.filter(beat => !removing.has(beat));
+    fillBarGaps(bar, barMeterAt(doc, barIndex));
+    for (const voice of bar.voices) if (voice.beats.length === 0) voice.beats.push(createRestBeat(4));
+  }
 }

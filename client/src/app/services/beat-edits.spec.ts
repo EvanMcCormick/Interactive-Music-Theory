@@ -1,6 +1,16 @@
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { setBeatDurations, setGrace, setTuplet, toggleBeatEffect, toggleFermata, toggledValue } from './beat-edits';
+import {
+  clearToRests,
+  deleteBeats,
+  insertBeatAt,
+  setBeatDurations,
+  setGrace,
+  setTuplet,
+  toggleBeatEffect,
+  toggleFermata,
+  toggledValue
+} from './beat-edits';
 import { scoreBarFills } from './bar-fill';
 import { DurationValue, ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
 
@@ -413,5 +423,45 @@ describe('toggleFermata', () => {
     toggleFermata(doc, [ref(0, 0)], medium);
 
     expect(fermatas(doc, 1)).toEqual([null, null, null, null]);
+  });
+});
+
+describe('clearToRests, insertBeatAt and deleteBeats', () => {
+  it('clears notes to rests and keeps each beat\'s value', () => {
+    const doc = ComposerService.createEmptyScore();
+    setBeatDurations(doc, [ref(0, 0)], 8, 0);
+    withNote(doc, 0, 0);
+    withNote(doc, 0, 2);
+
+    clearToRests(doc, [ref(0, 0), ref(0, 1), ref(0, 2)]);
+
+    expect(shape(doc)).toEqual(['r8', 'r8', 'r4', 'r4', 'r4']);
+  });
+
+  it('inserts a rest in front of a beat and leaves the bar over', () => {
+    const doc = ComposerService.createEmptyScore();
+    withNote(doc, 0, 0);
+
+    insertBeatAt(doc, ref(0, 0), 8, 1);
+
+    expect(shape(doc)).toEqual(['r8.', 'n4', 'r4', 'r4', 'r4']);
+    expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'over', ticks: 720 });
+  });
+
+  it('deletes beats, moves the later ones earlier, and fills the bar at its end', () => {
+    const doc = ComposerService.createEmptyScore();
+    withNote(doc, 0, 2);
+
+    deleteBeats(doc, [ref(0, 0), ref(0, 1)]);
+
+    expect(shape(doc)).toEqual(['n4', 'r4', 'r2']);
+  });
+
+  it('fills a bar whose every beat was deleted', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    deleteBeats(doc, [0, 1, 2, 3].map(index => ref(0, index)));
+
+    expect(shape(doc)).toEqual(['r1']);
   });
 });

@@ -285,3 +285,66 @@ describe('ComposerService pitch and string moves', () => {
     expect(beatsIn(service)[0].notes[0].pitch).toEqual({ kind: 'fretted', string: 1, fret: 5 });
   });
 });
+
+describe('ComposerService beats over the selection', () => {
+  let service: ComposerService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ComposerService);
+  });
+
+  it('rests every beat of a range as one undo step', () => {
+    writeFret(service, 0, 0, 5);
+    writeFret(service, 0, 1, 7);
+    service.setCursor({ beatIndex: 0 });
+    service.extendSelectionTo({ beatIndex: 1 });
+
+    service.clearSelectionToRests();
+    expect(beatsIn(service).slice(0, 2).every(beat => beat.isRest)).toBeTrue();
+
+    service.undo();
+    expect(beatsIn(service).slice(0, 2).every(beat => !beat.isRest)).toBeTrue();
+  });
+
+  it('inserts a rest at the input duration in front of the caret, and leaves the caret on it', () => {
+    writeFret(service, 0, 1, 5);
+    service.setInputDuration(8, 0);
+
+    service.insertBeat();
+
+    expect(beatsIn(service)[1].isRest).toBeTrue();
+    expect(beatsIn(service)[1].duration).toBe(8);
+    expect(beatsIn(service)[2].isRest).toBeFalse();
+    expect(stateOf(service).cursor.beatIndex).toBe(1);
+  });
+
+  it('deletes a range and puts the caret where it began, with no range', () => {
+    writeFret(service, 0, 3, 5);
+    service.setCursor({ beatIndex: 1 });
+    service.extendSelectionTo({ beatIndex: 2 });
+
+    service.deleteBeats();
+
+    expect(beatsIn(service)[1].isRest).toBeFalse();
+    expect(stateOf(service).cursor.beatIndex).toBe(1);
+    expect(stateOf(service).anchor).toBeNull();
+  });
+
+  it('refuses to insert into a generated track', () => {
+    service.addTrack('Piano', 0, false);
+    service.replaceDocument({
+      ...service.doc,
+      tracks: service.doc.tracks.map((track, index) =>
+        index === 1 ? { ...track, generated: { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision' as const, revision: 1 } } } : track
+      )
+    });
+    service.setCursor({ trackIndex: 1 });
+    const before = JSON.stringify(service.doc);
+
+    service.insertBeat();
+
+    expect(JSON.stringify(service.doc)).toBe(before);
+    expect(stateOf(service).refusal).toMatch(/progression/i);
+  });
+});

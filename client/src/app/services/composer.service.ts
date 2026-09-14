@@ -92,7 +92,8 @@ export class ComposerService {
     commitFollowing: edit => this.commitFollowing(edit),
     refuse: reason => this.refuse(reason),
     markDiverged: draft => this.markDiverged(draft),
-    moveCursor: move => this.moveCursor(move)
+    moveCursor: move => this.moveCursor(move),
+    select: cursor => this.setCursor(cursor)
   };
   private readonly structure = new ComposerStructureCommands(this.host);
   private readonly entry = new ComposerEntryCommands(this.host);
@@ -404,6 +405,21 @@ export class ComposerService {
   /** Clears the beat at the caret back to a rest, keeping its slot. */
   deleteAtCursor(): void {
     this.entry.deleteAtCursor();
+  }
+
+  /** Clears every beat in the selection to a rest, keeping their values. */
+  clearSelectionToRests(): void {
+    this.entry.clearSelectionToRests();
+  }
+
+  /** Inserts a rest at the input duration in front of the caret, leaving the caret on it. */
+  insertBeat(): void {
+    this.entry.insertBeat();
+  }
+
+  /** Removes the selected beats; the beats after them move earlier. */
+  deleteBeats(): void {
+    this.entry.deleteBeats();
   }
 
   setInputDuration(duration: DurationValue, dots = 0): void {

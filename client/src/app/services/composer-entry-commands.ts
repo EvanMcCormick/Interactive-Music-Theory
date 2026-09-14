@@ -1,7 +1,7 @@
 import { DurationValue, EditCursor, NoteDoc, NotePitch, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
-import { setBeatDurations } from './beat-edits';
+import { clearToRests, deleteBeats, insertBeatAt, setBeatDurations } from './beat-edits';
 import { CursorMove } from './composer-cursor';
-import { beatAt } from './composer-selection';
+import { beatAt, selectionTargets } from './composer-selection';
 import { ComposerCommandHost } from './composer-service-structure';
 import { editRefusal } from './edit-refusals';
 
@@ -24,6 +24,8 @@ export interface ComposerEntryHost extends ComposerCommandHost {
   commit(edit: (draft: ScoreDoc) => string | null | void, amend?: boolean): void;
   /** Moves the caret, dropping any range. */
   moveCursor(move: CursorMove): void;
+  /** Puts the caret at `cursor`, clamped, dropping any range. */
+  select(cursor: Partial<EditCursor>): void;
 }
 
 /** Note entry and the selection commands M2 adds, run through a `ComposerEntryHost`. */
@@ -101,6 +103,32 @@ export class ComposerEntryCommands {
       beat.notes = [];
       beat.isRest = true;
     });
+  }
+
+  /** Clears every beat in the selection to a rest, keeping their values: R and Delete over a range. */
+  clearSelectionToRests(): void {
+    const state = this.host.state();
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const refusal = editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null);
+    if (refusal) return this.host.refuse(refusal);
+    this.host.commitFollowing(draft => clearToRests(draft, refs));
+  }
+
+  /** Inserts a rest at the input duration in front of the caret's beat, leaving the caret on it. See `insertBeatAt`. */
+  insertBeat(): void {
+    const state = this.host.state();
+    if (this.refusesEntryAt(state.doc, state.cursor)) return;
+    this.host.commit(draft => insertBeatAt(draft, state.cursor, state.inputDuration, state.inputDots));
+  }
+
+  /** Removes the selected beats, and puts the caret where the range began. See `deleteBeats`. */
+  deleteBeats(): void {
+    const state = this.host.state();
+    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    const refusal = editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null);
+    if (refusal) return this.host.refuse(refusal);
+    this.host.commit(draft => deleteBeats(draft, refs));
+    this.host.select(refs[0]);
   }
 
   /**
