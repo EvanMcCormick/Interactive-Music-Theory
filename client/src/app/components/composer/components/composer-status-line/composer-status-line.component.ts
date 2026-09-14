@@ -16,9 +16,10 @@ export function overBarCountOf(doc: ScoreDoc): number {
  *
  * Holds the page's one polite live region. Refusals from every route - a palette button, a key, a click
  * on the score - arrive as `ComposerState.refusal`, Fix bar's and paste's outcomes as
- * `ComposerState.notice`, and the region reads them out; a failed alphaTex apply joins them. The caret
- * readout and the count of bars over sit outside the region: both change with ordinary editing, and
- * announcing them would bury what the region is for.
+ * `ComposerState.notice`, and the region reads them out; a failed alphaTex apply joins them, and so does what the
+ * library panel did - a save, a load, an export, or why one failed - which it says through `ComposerService.announce`.
+ * The caret readout, the score's bar count and the count of bars over sit outside the region: they change with
+ * ordinary editing, and announcing them would bury what the region is for.
  */
 @Component({
   selector: 'app-composer-status-line',
@@ -46,9 +47,12 @@ export class ComposerStatusLineComponent implements OnChanges {
 
   /** "2 bars over their time signatures", or null when none is. Measured when the document changes, not per check. */
   overBarsLabel: string | null = null;
+  /** How many bars the score has, shown beside the caret's bar; 0 before there is a document. */
+  barCount = 0;
 
   ngOnChanges(changes: SimpleChanges): void {
     if (!changes['doc']) return;
+    this.barCount = this.doc?.masterBars.length ?? 0;
     const over = this.doc ? overBarCountOf(this.doc) : 0;
     this.overBarsLabel = over === 0 ? null : `${countOf(over, 'bar')} over ${over === 1 ? 'its time signature' : 'their time signatures'}`;
   }

@@ -109,10 +109,11 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
    * A page that fills the viewport under the header - the composer's grid - reads it, because the
    * header's height is not a constant: its navigation wraps on a narrow window. A CSS custom property is
    * the contract between the shell and such a page, so this is the one place a component sets a style
-   * on the document. Re-published whenever the header resizes.
+   * on the document. Re-published whenever the header resizes, to the fraction of a pixel the layout gives it:
+   * `offsetHeight` rounds, and a page sized to a rounded-down header ends half a pixel past the viewport.
    */
   publishHeaderHeight(): void {
-    const height = this.header?.nativeElement.offsetHeight;
+    const height = this.header?.nativeElement.getBoundingClientRect().height;
     if (height !== undefined) this.document.documentElement.style.setProperty('--app-header-height', `${height}px`);
   }
 

@@ -97,6 +97,14 @@ describe('ComposerStatusLineComponent', () => {
     expect(region().contains(readout)).toBeFalse();
   });
 
+  it('says how many bars the score has beside the caret\'s bar', () => {
+    fixture.componentRef.setInput('cursor', { ...createDefaultCursor(), barIndex: 2, beatIndex: 1 });
+    fixture.componentRef.setInput('doc', ComposerService.createEmptyScore());
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.readout').textContent).toContain('Bar 3 of 4');
+  });
+
   it('says how many bars are over their time signature on a plain line, outside the live region', () => {
     fixture.componentRef.setInput('doc', ComposerService.createEmptyScore());
     fixture.detectChanges();

@@ -2,11 +2,13 @@ import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 
-import { ComposerComponent, clampedStripHeight } from './composer.component';
+import { ComposerComponent, clampedStripHeight, stripHeightRangeOf } from './composer.component';
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
 import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
+import { ComposerExportService } from '../../services/composer-export.service';
+import { ComposerLibraryService } from '../../services/composer-library.service';
 import { ComposerService } from '../../services/composer.service';
 import { KEY_PLATFORM } from '../../services/composer-key-platform';
 import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
@@ -51,12 +53,26 @@ describe('ComposerComponent', () => {
     fixture.detectChanges();
   });
 
-  const region = (): HTMLElement => fixture.nativeElement.querySelector('[aria-live="polite"]');
+  const region = (): HTMLElement => fixture.nativeElement.querySelector('app-composer-status-line .messages');
 
   /** Dispatches a key press on `target`, bubbling to the document as a real one does. */
-  function press(init: KeyboardEventInit, target: EventTarget = document): void {
-    target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
+  function press(init: KeyboardEventInit, target: EventTarget = document): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+    target.dispatchEvent(event);
     fixture.detectChanges();
+    return event;
+  }
+
+  /**
+   * The palette button for `id`, focused from the keyboard: it matches `:focus-visible`, or, with `visible` false, it
+   * does not, as a button the mouse left the focus on. Faked, since a headless browser decides `:focus-visible` from how
+   * the focus arrived, which a script's `focus()` does not reliably set.
+   */
+  function focusedTool(id: string, visible = true): HTMLButtonElement {
+    const button: HTMLButtonElement = fixture.nativeElement.querySelector(`[data-tool="${id}"]`);
+    button.focus();
+    spyOn(button, 'matches').and.callFake((selector: string) => visible && selector === ':focus-visible');
+    return button;
   }
 
   it('says why a press did nothing in the page\'s polite live region', () => {
@@ -302,10 +318,10 @@ describe('ComposerComponent', () => {
     expect(composer.doc.tracks.length).toBe(2);
     expect(composer.doc.tracks[1].name).toBe('Piano');
   });
-  it('leaves Space on a focused button to press it, and plays on Space anywhere else', () => {
+
+  it('leaves Space to a button focused from the keyboard, and plays on Space anywhere else', () => {
     const playPause = spyOn(TestBed.inject(AlphaTabService), 'playPause');
-    const rest: HTMLButtonElement = fixture.nativeElement.querySelector('[data-tool="rest"]');
-    rest.focus();
+    const rest = focusedTool('rest');
 
     press({ key: ' ', code: 'Space' }, rest);
     expect(playPause).not.toHaveBeenCalled();
@@ -313,12 +329,155 @@ describe('ComposerComponent', () => {
     press({ key: ' ', code: 'Space' });
     expect(playPause).toHaveBeenCalledTimes(1);
   });
+
+  it('plays on Space when a mouse click left the focus on a button, rather than pressing that button again', () => {
+    const playPause = spyOn(TestBed.inject(AlphaTabService), 'playPause');
+    const deleteBar = focusedTool('deleteBar', false);
+
+    const space = press({ key: ' ', code: 'Space' }, deleteBar);
+
+    expect(playPause).toHaveBeenCalledTimes(1);
+    expect(space.defaultPrevented).withContext('claimed, so the browser does not press the button too').toBeTrue();
+  });
+
+  it('opens Section once for Shift+Enter on its focused button: the browser presses the button, and the shortcut stands aside', () => {
+    const section = focusedTool('section');
+
+    press({ key: 'Enter', code: 'Enter', shiftKey: true }, section);
+    section.click();
+    fixture.detectChanges();
+
+    expect(component.popover).toBe('section');
+  });
+
+  it('presses a focused palette button once for a held Enter, as a held key runs a tool that does not repeat once', () => {
+    const fixBar = focusedTool('fixBar');
+
+    const first = press({ key: 'Enter', code: 'Enter' }, fixBar);
+    const held = press({ key: 'Enter', code: 'Enter', repeat: true }, fixBar);
+
+    expect(first.defaultPrevented).toBeFalse();
+    expect(held.defaultPrevented).toBeTrue();
+  });
+
+  it('adds a bar at the end from the palette\'s Add bar, and from its key', () => {
+    const bars = composer.doc.masterBars.length;
+
+    (fixture.nativeElement.querySelector('[data-tool="appendBar"]') as HTMLButtonElement).click();
+    press({ key: 'Insert', code: 'Insert', ctrlKey: true, altKey: true });
+
+    expect(composer.doc.masterBars.length).toBe(bars + 2);
+    expect(composer.state.cursor.barIndex).withContext('added at the end, not before the caret').toBe(0);
+  });
+
+  it('lets a save through with the alphaTex panel open on an untouched draft, which follows the score as it changes', () => {
+    const requested = spyOn(TestBed.inject(ComposerSaveRequests), 'request');
+    component.toggleTexPanel();
+    const seeded = component.texDraft;
+
+    composer.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false);
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+
+    expect(requested).toHaveBeenCalledTimes(1);
+    expect(component.texDraft).not.toBe(seeded);
+  });
+
+  it('says an edited alphaTex draft is out of date once the score moves on, and asks before Apply replaces that change', () => {
+    const requested = spyOn(TestBed.inject(ComposerSaveRequests), 'request');
+    component.toggleTexPanel();
+    component.texDraft = `${component.texDraft} `;
+
+    composer.setTempo(140);
+    press({ key: 's', code: 'KeyS', ctrlKey: true });
+
+    expect(requested).not.toHaveBeenCalled();
+    expect(region().textContent).toContain('written against an earlier score');
+    expect(fixture.nativeElement.querySelector('.tex-stale')?.textContent).toContain('written against an earlier score');
+
+    const asked = spyOn(window, 'confirm').and.returnValue(false);
+    component.applyTex();
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(composer.doc.tempo).toBe(140);
+  });
+
+  it('takes its save guard off when it is destroyed', () => {
+    const requests = TestBed.inject(ComposerSaveRequests);
+    component.toggleTexPanel();
+    component.texDraft = `${component.texDraft} `;
+    expect(requests.refused()).toBeTrue();
+
+    fixture.destroy();
+
+    expect(requests.refused()).toBeFalse();
+  });
+
+  it('copies beats on Ctrl+C while the text selected is inside the score, which the key handler knows by the score\'s element', () => {
+    const copy = spyOn(composer, 'copy');
+    const score: HTMLElement = fixture.nativeElement.querySelector('app-composer-score');
+    score.textContent = 'engraved text';
+    const selection = document.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(score);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    press({ key: 'c', code: 'KeyC', ctrlKey: true });
+    selection?.removeAllRanges();
+
+    expect(copy).toHaveBeenCalledTimes(1);
+  });
+
+  it('resizes the strip from its separator\'s keys within the range it announces, without moving the caret', () => {
+    composer.setCursor({ beatIndex: 1, stringIndex: 2 });
+    const cursor = composer.state.cursor;
+    const separator: HTMLElement = fixture.nativeElement.querySelector('.strip-resize');
+
+    press({ key: 'Home' }, separator);
+    expect(component.stripHeight).toBe(component.stripRange.min);
+    press({ key: 'End' }, separator);
+    expect(component.stripHeight).toBe(component.stripRange.max);
+    press({ key: 'ArrowDown' }, separator);
+    expect(component.stripHeight).toBe(clampedStripHeight(component.stripRange.max - 16, component.stripRange));
+    press({ key: 'ArrowUp' }, separator);
+    expect(component.stripHeight).toBe(component.stripRange.max);
+
+    expect(composer.state.cursor).toEqual(cursor);
+    expect(separator.getAttribute('aria-valuemin')).toBe(`${component.stripRange.min}`);
+    expect(separator.getAttribute('aria-valuemax')).toBe(`${component.stripRange.max}`);
+    expect(separator.getAttribute('aria-valuenow')).toBe(`${component.stripHeight}`);
+  });
 });
 
-describe('clampedStripHeight', () => {
-  it('keeps the strip between one row and most of the window', () => {
-    expect(clampedStripHeight(10, 1000)).toBe(72);
-    expect(clampedStripHeight(300, 1000)).toBe(300);
-    expect(clampedStripHeight(900, 1000)).toBe(600);
+describe('ComposerComponent with its Library panel', () => {
+  it('has one live region: the library says what it did in the status line', async () => {
+    await TestBed.configureTestingModule({ imports: [ComposerComponent] })
+      .overrideComponent(ComposerComponent, { remove: { imports: [ComposerScoreComponent] }, add: { imports: [StubScoreComponent] } })
+      .compileComponents();
+    spyOn(TestBed.inject(ComposerLibraryService), 'refresh').and.resolveTo([]);
+    spyOn(TestBed.inject(ComposerExportService), 'downloadMidiFile');
+    const fixture = TestBed.createComponent(ComposerComponent);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelectorAll('[aria-live]').length).toBe(1);
+
+    (fixture.debugElement.query(By.directive(ComposerLibraryPanelComponent)).componentInstance as ComposerLibraryPanelComponent).exportMidi();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[aria-live]').textContent).toContain('Exported MIDI file');
+  });
+});
+
+describe('stripHeightRangeOf and clampedStripHeight', () => {
+  it('lets the strip grow until the score keeps its minimum height, and never shrink below one row', () => {
+    // A page 700 tall whose top bar, status line and separator take 140: the score keeps 160, so the strip may take 400.
+    const range = stripHeightRangeOf(700, 140);
+
+    expect(range).toEqual({ min: 72, max: 400 });
+    expect(clampedStripHeight(10, range)).toBe(72);
+    expect(clampedStripHeight(300, range)).toBe(300);
+    expect(clampedStripHeight(900, range)).toBe(400);
+  });
+
+  it('keeps one row on a page too short for both the score\'s minimum and a strip', () => {
+    expect(stripHeightRangeOf(300, 140)).toEqual({ min: 72, max: 72 });
   });
 });

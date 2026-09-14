@@ -25,9 +25,13 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 const TYPED_INPUTS: ReadonlySet<string> = new Set(['text', 'search', 'url', 'email', 'tel', 'password', 'number']);
 
 /**
- * Whether a key press is Space or Enter on a control the browser presses with that key: a button, a link, a
- * checkbox or radio, a `<summary>`, or an element with a pressable ARIA role. Shift does not change that;
- * Ctrl, Alt or Cmd does, and the press is the page's shortcut again.
+ * Whether a key press is one the browser presses the focused control with: Space or Enter on a button, a button
+ * input, a `<summary>` or a `role="button"`; Enter alone on a link or a `role="link"`; Space alone on a checkbox, a
+ * radio, or a `role` of checkbox, radio or switch. Shift does not change that; Ctrl, Alt or Cmd does, and the press is
+ * the page's shortcut again. A key the browser does nothing with on that control - Space on a link - stays the page's.
+ *
+ * Only for a control focused from the keyboard, one that matches `:focus-visible`. A mouse click leaves the focus on
+ * the button it pressed, and a Space pressed next is meant for the page - play - not for pressing that button again.
  *
  * Asked before a page's document-wide shortcuts, which bind Space (play) and Shift+Enter (Section): a
  * focused button must still be pressed by the keys that press buttons, or a keyboard user cannot use it.
@@ -35,17 +39,28 @@ const TYPED_INPUTS: ReadonlySet<string> = new Set(['text', 'search', 'url', 'ema
 export function pressesFocusedControl(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'altKey' | 'metaKey' | 'target'>): boolean {
   if ((event.key !== ' ' && event.key !== 'Enter') || event.ctrlKey || event.altKey || event.metaKey) return false;
   const target = event.target;
-  if (!(target instanceof HTMLElement)) return false;
-  if (target instanceof HTMLButtonElement || target.tagName === 'SUMMARY') return true;
-  if (target instanceof HTMLAnchorElement) return target.hasAttribute('href');
-  if (target instanceof HTMLInputElement) return PRESSED_INPUTS.has(target.type);
-  return PRESSED_ROLES.has(target.getAttribute('role') ?? '');
+  if (!(target instanceof HTMLElement) || !target.matches(':focus-visible')) return false;
+  const pressedBy = keysPressingOf(target);
+  return event.key === ' ' ? pressedBy.space : pressedBy.enter;
 }
 
-/** The input types Space or Enter presses. */
-const PRESSED_INPUTS: ReadonlySet<string> = new Set(['button', 'submit', 'reset', 'image', 'checkbox', 'radio']);
+/** Which of Space and Enter the browser presses `target` with. */
+function keysPressingOf(target: HTMLElement): { space: boolean; enter: boolean } {
+  if (target instanceof HTMLButtonElement || target.tagName === 'SUMMARY') return { space: true, enter: true };
+  if (target instanceof HTMLAnchorElement) return { space: false, enter: target.hasAttribute('href') };
+  if (target instanceof HTMLInputElement) {
+    return BUTTON_INPUTS.has(target.type) ? { space: true, enter: true } : { space: CHECKED_INPUTS.has(target.type), enter: false };
+  }
+  const role = target.getAttribute('role') ?? '';
+  if (role === 'button') return { space: true, enter: true };
+  return { space: CHECKED_ROLES.has(role), enter: role === 'link' };
+}
 
-/** The ARIA roles of controls that Space or Enter presses. */
-const PRESSED_ROLES: ReadonlySet<string> = new Set([
-  'button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'option', 'menuitem', 'menuitemcheckbox', 'menuitemradio'
-]);
+/** The input types Space and Enter both press. */
+const BUTTON_INPUTS: ReadonlySet<string> = new Set(['button', 'submit', 'reset', 'image']);
+
+/** The input types only Space presses. */
+const CHECKED_INPUTS: ReadonlySet<string> = new Set(['checkbox', 'radio']);
+
+/** The ARIA roles only Space presses. */
+const CHECKED_ROLES: ReadonlySet<string> = new Set(['checkbox', 'radio', 'switch']);

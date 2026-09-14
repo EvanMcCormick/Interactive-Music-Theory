@@ -641,6 +641,15 @@ export class ComposerService {
     this.stateSubject.next({ ...state, refusal: reason, notice: null, messageId: state.messageId + 1 });
   }
 
+  /**
+   * Says what happened outside the document's commands - a save, a load, an export - in the status line's one live region,
+   * as a notice; or, when `failed`, why it did not, as a refusal. Commits nothing.
+   */
+  announce(message: string, failed = false): void {
+    const state = this.stateSubject.getValue();
+    this.stateSubject.next({ ...state, refusal: failed ? message : null, notice: failed ? null : message, messageId: state.messageId + 1 });
+  }
+
   // -------------------------------------------------------------------------
   // Bar and track edits, and Fix bar: see composer-service-structure.ts
   // -------------------------------------------------------------------------

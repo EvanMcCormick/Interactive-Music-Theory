@@ -292,6 +292,10 @@ export const COMPOSER_TOOLS: readonly ComposerTool[] = [
     composer.insertBarsBeforeSelection(), 'action'
   ),
   button('deleteBar', 'Delete bar', 'Bar', text('−bar'), [key('Delete', { ctrl: true })], composer => composer.deleteSelectedBars(), 'action'),
+  // After the last bar, wherever the caret is. Insert and Enter, as Insert bar's are, with Ctrl and Alt: both are free.
+  button('appendBar', 'Add bar at the end', 'Bar', text('+end'), [key('Insert', { ctrl: true, alt: true }), key('Enter', { ctrl: true, alt: true })], composer =>
+    composer.appendBar(), 'action'
+  ),
 
   // Tracks
   keyTool('addTrack', 'Add track', 'Tracks', [key('Insert', { ctrl: true, shift: true }), key('Enter', { ctrl: true, shift: true })], host => host.addTrack()),

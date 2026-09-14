@@ -16,6 +16,7 @@
   --composer-warning: #f39c12;
   --composer-success: #27ae60;
   --composer-surface: #1a252f;
+  --composer-editor-surface: #11181f;
 
   display: block;
 }
@@ -174,8 +175,10 @@
   min-width: 0;
   min-height: 0;
 
+  // The score keeps 10rem, the `SCORE_MIN_HEIGHT` the strip is clamped against, however tall the alphaTex panel below it.
   app-composer-score {
-    min-height: 0;
+    flex: 1 1 auto;
+    min-height: 10rem;
   }
 }
 
@@ -208,9 +211,12 @@
 // alphaTex panel
 // ---------------------------------------------------------------------------
 
+// Scrolls within itself when its editor and diagnostics are taller than the room it has.
 .tex-panel {
   flex-shrink: 0;
   max-height: 45%;
+  min-height: 0;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   padding: 0.6rem 1rem 0.8rem;
@@ -239,12 +245,18 @@
   gap: 0.4rem;
 }
 
+.tex-stale {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  color: var(--composer-warning);
+}
+
 .tex-editor {
   width: 100%;
   min-height: 7rem;
   resize: vertical;
   box-sizing: border-box;
-  background-color: #11181f;
+  background-color: var(--composer-editor-surface);
   border: 1px solid var(--composer-border);
   border-radius: 4px;
   color: var(--composer-text);

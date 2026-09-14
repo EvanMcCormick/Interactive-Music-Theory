@@ -80,7 +80,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   entries: CompositionSummary[] = [];
   state: ComposerState | null = null;
   currentId: string | null = null;
-  statusMessage: string | null = null;
+  /** The last failure's words, for the report of a flatten nothing saved. Said in the status line (`reportError`). */
   errorMessage: string | null = null;
 
   /**
@@ -189,8 +189,6 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   @ViewChild('drawerClose') private drawerClose?: ElementRef<HTMLButtonElement>;
 
   private readonly document = inject(DOCUMENT);
-  /** The timer that takes `statusMessage` down, cleared on destroy so it does not run against a panel that has gone. */
-  private statusTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly composer: ComposerService,
@@ -263,7 +261,6 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   ngOnDestroy(): void {
     this.destroyed = true;
     this.queuedSaves = [];
-    if (this.statusTimer !== null) clearTimeout(this.statusTimer);
     this.document.removeEventListener('keydown', this.escapeListener, true);
     this.destroy$.next();
     this.destroy$.complete();
@@ -461,8 +458,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     this.queuedSaves = [];
     if (unsaved === 0 || this.destroyed) return;
     this.pendingSave = { reason: this.describeFlattenedButUnsaved(unsaved), asNew, flattened: true };
-    // The message has moved into the announced region, so the unannounced paragraph at the foot of the panel would only
-    // be saying it a second time - and it is the copy a screen reader would not read out.
+    // The failure is said here, in the alert, and not in the status line as well (`writeToLibrary`).
     this.errorMessage = null;
     this.cdr.markForCheck();
   }
@@ -474,7 +470,6 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     this.libraryMenuOpen = false;
     this.exportMenuOpen = false;
     this.pendingSave = { reason: this.describeRefusal(), asNew, flattened: false };
-    this.statusMessage = null;
     // A failure from an earlier press sits directly under the refusal, where it
     // reads as part of it.
     this.errorMessage = null;
@@ -603,7 +598,9 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
       this.report(`Saved "${doc.title || 'Untitled'}"`);
       landed = true;
     } catch (error) {
-      this.reportError(error);
+      // A flatten this write was to save, or a queued save was, is reported with the failure in the alert instead.
+      const flattenReported = !this.destroyed && (flattened > 0 || this.queuedSaves.some(queued => queued.flattened > 0));
+      this.reportError(error, !flattenReported);
     } finally {
       this.saving = false;
     }
@@ -783,22 +780,32 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     }
   }
 
+  /**
+   * Says what the panel did in the page's status line, whose live region is the page's one (design Part 4), through the
+   * service. It stays until the next edit or caret move, as a Fix bar notice does.
+   */
   private report(message: string): void {
-    this.statusMessage = message;
     this.errorMessage = null;
+    this.composer.announce(message);
     this.cdr.markForCheck();
-    if (this.statusTimer !== null) clearTimeout(this.statusTimer);
-    this.statusTimer = setTimeout(() => {
-      this.statusTimer = null;
-      this.statusMessage = null;
-      this.cdr.markForCheck();
-    }, 2500);
   }
 
-  private reportError(error: unknown): void {
+  /** Keeps a failure's words, and says them in the status line unless a report in the alert will (`announce` false). */
+  private reportError(error: unknown, announce = true): void {
     this.errorMessage = error instanceof Error ? error.message : String(error);
-    this.statusMessage = null;
+    if (announce) this.composer.announce(this.errorMessage, true);
     this.cdr.markForCheck();
+  }
+
+  /**
+   * Keeps a key pressed in the saved list from the page's shortcuts, which listen on the document as it bubbles: an arrow
+   * would move the caret and R rest a beat in the score the list covers. Tab, Escape - claimed in the capture phase, where
+   * it closes the list - and presses with Ctrl, Alt or Cmd go on, as they do from a popover. Space and Enter still press
+   * the list's buttons: stopping a press's propagation leaves its default action.
+   */
+  onDrawerKey(event: KeyboardEvent): void {
+    if (event.key === 'Tab' || event.key === 'Escape' || event.ctrlKey || event.altKey || event.metaKey) return;
+    event.stopPropagation();
   }
 
   trackById(_index: number, entry: CompositionSummary): string {

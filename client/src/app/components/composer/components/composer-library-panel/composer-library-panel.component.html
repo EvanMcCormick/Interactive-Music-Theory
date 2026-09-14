@@ -61,6 +61,11 @@
     It sits outside both menus and the drawer for the same reason: they are
     hidden with `display: none` while closed, which would take it out of the
     tree with them.
+
+    It stays an alert beside the page's one polite region, the status line,
+    because it is a question with its remedy inside it rather than a report of
+    what happened. What the panel did - saved, loaded, exported, or why that
+    failed - goes to the status line (`ComposerService.announce`).
   -->
   <div class="save-blocked" role="alert" [class.showing]="pendingSave">
     <ng-container *ngIf="pendingSave as pending">
@@ -80,17 +85,14 @@
     </ng-container>
   </div>
 
-  <!--
-    Announced for the same reason the refusal is, and always present for the
-    same reason its region is. Without this a keyboard user hears the objection
-    to the press and then nothing at all when the retry works.
-  -->
-  <div class="status-region" aria-live="polite">
-    <p class="status" *ngIf="statusMessage">{{ statusMessage }}</p>
-    <p class="status error" *ngIf="errorMessage">{{ errorMessage }}</p>
-  </div>
-
-  <aside #drawer class="library-drawer" [class.open]="drawerOpen" [attr.aria-hidden]="!drawerOpen" aria-label="Saved compositions">
+  <aside
+    #drawer
+    class="library-drawer"
+    [class.open]="drawerOpen"
+    [attr.aria-hidden]="!drawerOpen"
+    aria-label="Saved compositions"
+    (keydown)="onDrawerKey($event)"
+  >
     <header class="drawer-header">
       <h2 class="panel-heading">Saved compositions</h2>
       <button #drawerClose type="button" class="drawer-close" aria-label="Close saved compositions" (click)="closeDrawer()">×</button>

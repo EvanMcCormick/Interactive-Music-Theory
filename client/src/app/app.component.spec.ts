@@ -65,11 +65,52 @@ describe('AppComponent', () => {
   });
 
   describe('the header\'s height', () => {
+    const published = (): string => document.documentElement.style.getPropertyValue('--app-header-height');
+
+    afterEach(() => document.documentElement.style.removeProperty('--app-header-height'));
+
     it('is published for a page that fills the rest of the viewport', () => {
       component.publishHeaderHeight();
 
       const header: HTMLElement = fixture.nativeElement.querySelector('header');
-      expect(document.documentElement.style.getPropertyValue('--app-header-height')).toBe(`${header.offsetHeight}px`);
+      expect(published()).toBe(`${header.getBoundingClientRect().height}px`);
+    });
+
+    it('is published again, to the fraction of a pixel, whenever the header resizes, and no longer watched once the shell goes', () => {
+      let resized: ResizeObserverCallback = () => undefined;
+      const watched: Element[] = [];
+      let disconnected = false;
+      class FakeResizeObserver {
+        constructor(callback: ResizeObserverCallback) {
+          resized = callback;
+        }
+        observe(target: Element): void {
+          watched.push(target);
+        }
+        unobserve(): void {}
+        disconnect(): void {
+          disconnected = true;
+        }
+      }
+      const original = window.ResizeObserver;
+      window.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+      try {
+        const shell = TestBed.createComponent(AppComponent);
+        shell.detectChanges();
+        const header: HTMLElement = shell.nativeElement.querySelector('header');
+        expect(watched).toEqual([header]);
+
+        // A wrapped navigation, as a narrow window gives it: a height a whole pixel count would round.
+        header.style.height = '100.5px';
+        resized([], new FakeResizeObserver(() => undefined) as unknown as ResizeObserver);
+        expect(published()).toBe(`${header.getBoundingClientRect().height}px`);
+        expect(header.getBoundingClientRect().height % 1).withContext('the case offsetHeight would round').not.toBe(0);
+
+        shell.destroy();
+        expect(disconnected).toBeTrue();
+      } finally {
+        window.ResizeObserver = original;
+      }
     });
   });
 

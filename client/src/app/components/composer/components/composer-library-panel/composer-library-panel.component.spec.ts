@@ -1,4 +1,4 @@
-import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 
 import { ComposerLibraryPanelComponent } from './composer-library-panel.component';
@@ -216,12 +216,27 @@ describe('ComposerLibraryPanelComponent', () => {
       expect(drawer.getAttribute('aria-hidden')).toBe('true');
     });
 
-    it('keeps the announced regions outside the menus and the drawer', () => {
+    it('keeps its alert outside the menus and the drawer, and holds no live region of its own', () => {
       const alert: HTMLElement = fixture.nativeElement.querySelector('[role="alert"]');
-      const polite: HTMLElement = fixture.nativeElement.querySelector('[aria-live="polite"]');
 
       expect(alert.closest('.menu-panel, .library-drawer')).toBeNull();
-      expect(polite.closest('.menu-panel, .library-drawer')).toBeNull();
+      expect(fixture.nativeElement.querySelector('[aria-live]')).withContext('the page\'s status line is its one live region').toBeNull();
+    });
+
+    it('keeps a plain key pressed in the saved list from the score behind it, and lets Tab and Ctrl through', () => {
+      panel.openDrawer();
+      fixture.detectChanges();
+      const heard: string[] = [];
+      const page = (event: KeyboardEvent): void => void heard.push(event.key);
+      document.addEventListener('keydown', page);
+
+      const close: HTMLElement = fixture.nativeElement.querySelector('.drawer-close');
+      for (const init of [{ key: 'ArrowRight' }, { key: 'r' }, { key: '5' }, { key: ' ' }, { key: 'Tab' }, { key: 's', ctrlKey: true }]) {
+        close.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
+      }
+      document.removeEventListener('keydown', page);
+
+      expect(heard).toEqual(['Tab', 's']);
     });
 
     it('opens a menu from its button, and the saved list in a drawer', () => {
@@ -326,15 +341,15 @@ describe('ComposerLibraryPanelComponent', () => {
       expect(opened).toBe(3);
     });
 
-    it('stops the timer that takes its status message down when it is destroyed', fakeAsync(() => {
+    it('says what it did, and why it failed, in the page\'s status line through the service', () => {
       panel.exportMidi();
-      expect(panel.statusMessage).toContain('Exported');
+      expect(composer.state.notice).toBe('Exported MIDI file');
 
-      fixture.destroy();
-      tick(3000);
-
-      expect(panel.statusMessage).withContext('the timer ran on a destroyed panel').toContain('Exported');
-    }));
+      (exporter.downloadMidiFile as jasmine.Spy).and.throwError('No MIDI device');
+      panel.exportMidi();
+      expect(composer.state.refusal).toBe('No MIDI device');
+      expect(composer.state.notice).toBeNull();
+    });
 
     it('draws each saved composition as a button, which loads it and gives the focus to Library as the drawer closes', async () => {
       const doc = { ...ComposerService.createEmptyScore(), title: 'C' };
@@ -601,9 +616,8 @@ describe('ComposerLibraryPanelComponent', () => {
         await panel.save();
         fixture.detectChanges();
 
-        const polite = fixture.debugElement.query(By.css('[aria-live="polite"]'));
-        expect(polite).not.toBeNull();
-        expect(polite.nativeElement.textContent).toContain('Saved');
+        // In the page's status line, which reads out `ComposerState.notice`.
+        expect(composer.state.notice).toContain('Saved');
       });
 
       /**

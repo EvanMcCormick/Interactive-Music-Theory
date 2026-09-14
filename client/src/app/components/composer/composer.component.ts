@@ -1,4 +1,5 @@
 import {
+  AfterViewInit,
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
@@ -21,7 +22,7 @@ import { ComposerShortcutSheetComponent } from './components/composer-shortcut-s
 import { ComposerStatusLineComponent } from './components/composer-status-line/composer-status-line.component';
 import { ComposerTrackStripComponent } from './components/composer-track-strip/composer-track-strip.component';
 import { AlphaTabState } from '../../models/alpha-tab.model';
-import { ComposerState, TexDiagnostic } from '../../models/composer.model';
+import { ComposerState, ScoreDoc, TexDiagnostic } from '../../models/composer.model';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerService } from '../../services/composer.service';
@@ -33,22 +34,40 @@ import { pressesFocusedControl } from '../../services/editable-target';
 import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, PopoverKind, shortcutTitleOf } from '../../services/composer-tools';
 import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
 
-/** What the status line says when a save meets an alphaTex draft that is not applied. */
+/** What the status line says when a save meets an alphaTex draft that has been edited and not applied. */
 const TEX_DRAFT_UNSAVED = 'Apply or revert the alphaTex draft before saving.';
+
+/** What the status line and the panel say when that draft was written against a score that has changed since. */
+const TEX_DRAFT_OUT_OF_DATE =
+  'The alphaTex draft was written against an earlier score; revert it, or apply it to replace the changes made since.';
 
 /** The shortest the track strip can be dragged, in pixels: about one row and the add-track controls. */
 const STRIP_MIN_HEIGHT = 72;
 
-/** The tallest the track strip can be dragged, as a share of the window. */
-const STRIP_MAX_SHARE = 0.6;
+/** The least height the strip leaves the score, in pixels, as the page's styles give the score (`10rem`). */
+const SCORE_MIN_HEIGHT = 160;
 
 /** How far one arrow key moves the strip's separator, in pixels. */
 const STRIP_KEY_STEP = 16;
 
-/** `height` clamped between the strip's minimum and its share of a window `viewportHeight` tall. */
-export function clampedStripHeight(height: number, viewportHeight: number): number {
-  const max = Math.max(STRIP_MIN_HEIGHT, Math.round(viewportHeight * STRIP_MAX_SHARE));
-  return Math.max(STRIP_MIN_HEIGHT, Math.min(max, Math.round(height)));
+/** The heights the track strip may take, which its separator announces as its range. */
+export interface StripHeightRange {
+  min: number;
+  max: number;
+}
+
+/**
+ * The heights the strip may take in a page `pageHeight` tall whose other fixed rows - the top bar, the status line and
+ * the separator - take `fixedRowsHeight`: from one row up to what leaves the score its minimum, and never less than one
+ * row, however short the page.
+ */
+export function stripHeightRangeOf(pageHeight: number, fixedRowsHeight: number): StripHeightRange {
+  return { min: STRIP_MIN_HEIGHT, max: Math.max(STRIP_MIN_HEIGHT, Math.floor(pageHeight - fixedRowsHeight - SCORE_MIN_HEIGHT)) };
+}
+
+/** `height` clamped to `range`, in whole pixels. */
+export function clampedStripHeight(height: number, range: StripHeightRange): number {
+  return Math.max(range.min, Math.min(range.max, Math.round(height)));
 }
 
 /**
@@ -77,10 +96,15 @@ export function clampedStripHeight(height: number, viewportHeight: number): numb
   styleUrls: ['./composer.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class ComposerComponent implements OnInit, OnDestroy {
+export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild(ComposerTrackStripComponent) private strip?: ComposerTrackStripComponent;
   /** The score's element, where a text selection is the score's own rather than the page's. */
   @ViewChild('score', { read: ElementRef }) private scoreElement?: ElementRef<HTMLElement>;
+  /** The page grid, and the rows the strip's range is measured against (`fitStrip`). */
+  @ViewChild('page') private page?: ElementRef<HTMLElement>;
+  @ViewChild('topBar') private topBar?: ElementRef<HTMLElement>;
+  @ViewChild('statusLine', { read: ElementRef }) private statusLine?: ElementRef<HTMLElement>;
+  @ViewChild('stripSeparator') private stripSeparator?: ElementRef<HTMLElement>;
 
   private readonly destroy$ = new Subject<void>();
 
@@ -90,6 +114,15 @@ export class ComposerComponent implements OnInit, OnDestroy {
   texDraft = '';
   texDiagnostics: TexDiagnostic[] = [];
   showTexPanel = false;
+  /** What the panel says while an edited draft is out of date (`texDraftOutOfDate`). */
+  readonly texOutOfDate = TEX_DRAFT_OUT_OF_DATE;
+  /**
+   * The alphaTex the draft was seeded from, or last applied as: a draft still equal to it has not been typed into, so it
+   * follows the score as the score changes, and never stands in the way of a save.
+   */
+  private texDraftBase = '';
+  /** The document the draft was written against: once the score is another, an edited draft is out of date. */
+  private texDraftDoc: ScoreDoc | null = null;
   /**
    * Why the alphaTex draft is in the way, for the status line: an apply that could not parse, or a save
    * refused while the draft is not applied. Cleared by a good apply, a revert, and closing the panel.
@@ -108,6 +141,10 @@ export class ComposerComponent implements OnInit, OnDestroy {
   popover: PopoverKind | null = null;
   sheetOpen = false;
   stripHeight = 180;
+  /** The heights the strip may take, measured from the page as laid out (`fitStrip`); the window's until it is. */
+  stripRange: StripHeightRange = stripHeightRangeOf(window.innerHeight, 0);
+  /** Measures the strip's range again when the page or its top bar changes size, and clamps the strip to it. */
+  private pageObserver: ResizeObserver | null = null;
 
   /** Undo's and Redo's tooltips, with the keys the platform's keyboard writes: Ctrl+Z, or ⌘+Z on a Mac. */
   readonly undoTitle: string = shortcutTitleOf('undo', inject(KEY_PLATFORM));
@@ -183,7 +220,11 @@ export class ComposerComponent implements OnInit, OnDestroy {
       .getState()
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
+        const docChanged = this.state !== null && state.doc !== this.state.doc;
         this.state = state;
+        // An untouched draft follows the score - an edit, a load, New - so it never refuses a save. One typed into is left
+        // as typed, and is out of date from here (`texDraftOutOfDate`).
+        if (docChanged && this.showTexPanel && !this.texDraftEdited) this.seedTexDraft();
         this.cdr.markForCheck();
       });
 
@@ -200,7 +241,24 @@ export class ComposerComponent implements OnInit, OnDestroy {
     this.removeSaveGuard = this.saveRequests.guard(() => this.refusesSaveForDraft());
   }
 
+  /**
+   * Watches the page and its top bar, which wraps on a narrow window, and fits the strip to the room they leave. The
+   * observer's first report comes after layout, outside any template pass, so the bound height and range change there.
+   */
+  ngAfterViewInit(): void {
+    const page = this.page?.nativeElement;
+    if (!page || typeof ResizeObserver === 'undefined') return;
+    this.pageObserver = new ResizeObserver(() => {
+      const before = `${this.stripHeight}:${this.stripRange.max}`;
+      this.fitStrip();
+      if (`${this.stripHeight}:${this.stripRange.max}` !== before) this.cdr.detectChanges();
+    });
+    this.pageObserver.observe(page);
+    if (this.topBar) this.pageObserver.observe(this.topBar.nativeElement);
+  }
+
   ngOnDestroy(): void {
+    this.pageObserver?.disconnect();
     this.removeSaveGuard();
     this.destroy$.next();
     this.destroy$.complete();
@@ -208,13 +266,23 @@ export class ComposerComponent implements OnInit, OnDestroy {
 
   /**
    * The page's one keyboard listener. See `ComposerKeyHandler` for what it takes and what it leaves. Space
-   * and Enter on a focused button - a palette tool, a menu item, a track row's Update - press that button,
-   * so the handler is not asked (`pressesFocusedControl`).
+   * and Enter on a button focused from the keyboard - a palette tool, a menu item, a track row's Update - press
+   * that button, so the handler is not asked (`pressesFocusedControl`). A held Enter presses it again on every
+   * repeat, so a repeat is dropped unless the button is a tool whose key repeats (`ComposerTool.repeatable`).
    */
   @HostListener('document:keydown', ['$event'])
   onKeyDown(event: KeyboardEvent): void {
-    if (pressesFocusedControl(event)) return;
+    if (pressesFocusedControl(event)) {
+      if (event.key === 'Enter' && event.repeat && !this.repeatableToolAt(event.target)) event.preventDefault();
+      return;
+    }
     this.keyHandler.handle(event);
+  }
+
+  /** Whether `target` is a palette button whose tool a held key runs again. */
+  private repeatableToolAt(target: EventTarget | null): boolean {
+    const id = target instanceof HTMLElement ? target.closest<HTMLElement>('[data-tool]')?.dataset['tool'] : undefined;
+    return COMPOSER_TOOLS.some(tool => tool.id === id && tool.repeatable === true);
   }
 
   /** A palette press runs the same tool, against the same host, as its key. */
@@ -298,6 +366,7 @@ export class ComposerComponent implements OnInit, OnDestroy {
   // -------------------------------------------------------------------------
 
   onStripResizeStart(event: PointerEvent): void {
+    this.fitStrip();
     this.stripDrag = { startY: event.clientY, startHeight: this.stripHeight };
     // Captured, so the drag keeps its pointer when it leaves the thin separator.
     if (event.target instanceof Element) event.target.setPointerCapture(event.pointerId);
@@ -305,7 +374,7 @@ export class ComposerComponent implements OnInit, OnDestroy {
 
   onStripResize(event: PointerEvent): void {
     if (!this.stripDrag) return;
-    this.stripHeight = clampedStripHeight(this.stripDrag.startHeight + this.stripDrag.startY - event.clientY, window.innerHeight);
+    this.stripHeight = clampedStripHeight(this.stripDrag.startHeight + this.stripDrag.startY - event.clientY, this.stripRange);
   }
 
   onStripResizeEnd(): void {
@@ -313,15 +382,34 @@ export class ComposerComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * The separator's arrow keys. Stopped here, so the page's keyboard listener does not also move the
-   * caret's string with the same press.
+   * The separator's keys, as a separator's are: ↑ and ↓ a step, Home the shortest and End the tallest. Stopped here, so
+   * the page's keyboard listener does not also move the caret with the same press.
    */
   onStripResizeKey(event: KeyboardEvent): void {
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    const heightFor: Readonly<Record<string, (range: StripHeightRange) => number>> = {
+      ArrowUp: () => this.stripHeight + STRIP_KEY_STEP,
+      ArrowDown: () => this.stripHeight - STRIP_KEY_STEP,
+      Home: range => range.min,
+      End: range => range.max
+    };
+    const next = heightFor[event.key];
+    if (!next) return;
     event.preventDefault();
     event.stopPropagation();
-    const step = event.key === 'ArrowUp' ? STRIP_KEY_STEP : -STRIP_KEY_STEP;
-    this.stripHeight = clampedStripHeight(this.stripHeight + step, window.innerHeight);
+    this.fitStrip();
+    this.stripHeight = clampedStripHeight(next(this.stripRange), this.stripRange);
+  }
+
+  /**
+   * Measures the strip's range from the page as it is laid out - its height, less the top bar, the status line and the
+   * separator (`stripHeightRangeOf`) - and clamps the strip to it.
+   */
+  private fitStrip(): void {
+    const page = this.page?.nativeElement;
+    if (!page) return;
+    const fixedRows = [this.topBar, this.statusLine, this.stripSeparator].reduce((sum, row) => sum + (row?.nativeElement.offsetHeight ?? 0), 0);
+    this.stripRange = stripHeightRangeOf(page.clientHeight, fixedRows);
+    this.stripHeight = clampedStripHeight(this.stripHeight, this.stripRange);
   }
 
   // -------------------------------------------------------------------------
@@ -333,10 +421,26 @@ export class ComposerComponent implements OnInit, OnDestroy {
     this.showTexPanel = !this.showTexPanel;
     this.texApplyError = null;
     if (this.showTexPanel) {
-      this.texDraft = this.currentTex();
+      this.seedTexDraft();
       this.texDiagnostics = [];
     }
     this.cdr.markForCheck();
+  }
+
+  /** Whether the draft has been typed into since it was seeded, reverted or applied. */
+  get texDraftEdited(): boolean {
+    return this.texDraft !== this.texDraftBase;
+  }
+
+  /** Whether the open panel's draft has been typed into and the score has changed since it was written. */
+  get texDraftOutOfDate(): boolean {
+    return this.showTexPanel && this.texDraftEdited && this.state?.doc !== this.texDraftDoc;
+  }
+
+  /** Seeds the draft from the score as it is now. */
+  private seedTexDraft(): void {
+    this.texDraft = this.texDraftBase = this.currentTex();
+    this.texDraftDoc = this.state?.doc ?? null;
   }
 
   /** Canonical alphaTex for the current document, generated on demand. */
@@ -351,19 +455,28 @@ export class ComposerComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Refuses a save while the alphaTex panel is open on a draft that is not the document's alphaTex, saying
-   * why in the status line. A save writes the document, not the draft, so saving then would leave what is in
-   * the text box unsaved without a word - and Ctrl+S runs from the textarea itself (`inTextFields`).
+   * Refuses a save while the alphaTex panel is open on a draft that has been typed into, saying why in the status
+   * line. A save writes the document, not the draft, so saving then would leave what is in the text box unsaved
+   * without a word - and Ctrl+S runs from the textarea itself (`inTextFields`). A draft written against an earlier
+   * score says so, since applying it would replace what changed since. An untouched draft follows the score and
+   * refuses nothing, and no alphaTex is built to ask.
    */
   private refusesSaveForDraft(): boolean {
-    if (!this.showTexPanel || this.texDraft === this.currentTex()) return false;
-    this.texApplyError = TEX_DRAFT_UNSAVED;
+    if (!this.showTexPanel || !this.texDraftEdited) return false;
+    this.texApplyError = this.texDraftOutOfDate ? TEX_DRAFT_OUT_OF_DATE : TEX_DRAFT_UNSAVED;
     this.texErrorId++;
     this.cdr.markForCheck();
     return true;
   }
 
+  /**
+   * Applies the draft as an edit of this composition, on the undo stack (`replaceDocument`). A draft out of date would
+   * replace the changes made since it was written, so that is asked first.
+   */
   applyTex(): void {
+    if (this.texDraftOutOfDate && !confirm('The alphaTex draft was written against an earlier score. Apply it anyway, replacing the changes made since?')) {
+      return;
+    }
     const result = this.texService.parse(this.texDraft);
     this.texDiagnostics = result.diagnostics;
 
@@ -377,11 +490,14 @@ export class ComposerComponent implements OnInit, OnDestroy {
 
     this.texApplyError = null;
     this.composer.replaceDocument(this.mapper.toDoc(result.score));
+    // The score is now what the draft says: the draft counts as untouched from here, and follows the next change.
+    this.texDraftBase = this.texDraft;
+    this.texDraftDoc = this.composer.doc;
     this.cdr.markForCheck();
   }
 
   revertTex(): void {
-    this.texDraft = this.currentTex();
+    this.seedTexDraft();
     this.texDiagnostics = [];
     this.texApplyError = null;
   }

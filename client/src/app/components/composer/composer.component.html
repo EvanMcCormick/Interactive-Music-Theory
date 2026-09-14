@@ -1,11 +1,11 @@
-<div class="composer-page" *ngIf="state as s">
+<div #page class="composer-page" *ngIf="state as s">
   <!--
     First, so it hears it is opening before the parts below go inert. Its backdrop covers the window, and while it is
     open every part of the page is inert: no click and no focus reaches the page behind it.
   -->
   <app-composer-shortcut-sheet [open]="sheetOpen" [fallbackFocus]="scoreHost" (closed)="closeShortcutSheet()"></app-composer-shortcut-sheet>
 
-  <header class="top-bar" [attr.inert]="sheetOpen ? '' : null">
+  <header #topBar class="top-bar" [attr.inert]="sheetOpen ? '' : null">
     <div class="score-info">
       <input
         class="title-input"
@@ -84,6 +84,8 @@
         </div>
       </div>
 
+      <p class="tex-stale" *ngIf="texDraftOutOfDate">{{ texOutOfDate }}</p>
+
       <textarea class="tex-editor" [(ngModel)]="texDraft" spellcheck="false" aria-label="alphaTex source"></textarea>
 
       <ul class="diagnostics" *ngIf="texDiagnostics.length > 0">
@@ -101,6 +103,7 @@
   </div>
 
   <app-composer-status-line
+    #statusLine
     class="status"
     [attr.inert]="sheetOpen ? '' : null"
     [refusal]="s.refusal"
@@ -113,14 +116,17 @@
     [doc]="s.doc"
   ></app-composer-status-line>
 
+  <!-- Its range is the one the strip is clamped to (`stripRange`), measured from the page as it is laid out. -->
   <div
+    #stripSeparator
     class="strip-resize"
     [attr.inert]="sheetOpen ? '' : null"
     role="separator"
     tabindex="0"
     aria-orientation="horizontal"
     aria-label="Track strip height"
-    aria-valuemin="72"
+    [attr.aria-valuemin]="stripRange.min"
+    [attr.aria-valuemax]="stripRange.max"
     [attr.aria-valuenow]="stripHeight"
     (pointerdown)="onStripResizeStart($event)"
     (pointermove)="onStripResize($event)"

@@ -195,6 +195,7 @@ const READERS: Readonly<Record<string, Reader>> = {
   keySignature: idle,
   clef: idle,
   insertBar: idle,
+  appendBar: idle,
   whole: duration(1),
   half: duration(2),
   quarter: duration(4),

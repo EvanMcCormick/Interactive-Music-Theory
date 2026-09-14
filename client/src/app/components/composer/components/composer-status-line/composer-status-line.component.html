@@ -1,5 +1,5 @@
 <div class="status-line">
-  <span class="readout" *ngIf="cursor">Bar {{ cursor.barIndex + 1 }} · Beat {{ cursor.beatIndex + 1 }}</span>
+  <span class="readout" *ngIf="cursor">Bar {{ cursor.barIndex + 1 }}<ng-container *ngIf="barCount > 0"> of {{ barCount }}</ng-container> · Beat {{ cursor.beatIndex + 1 }}</span>
   <span class="mode" [class.pen]="entryMode === 'pen'">{{ entryMode === 'pen' ? 'Pen' : 'Select' }}</span>
   <!-- Not announced: it changes with ordinary duration edits. Fix bar is the remedy, and says what it did. -->
   <span class="over-bars" *ngIf="overBarsLabel">{{ overBarsLabel }}</span>
