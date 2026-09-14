@@ -36,9 +36,11 @@ import {
   setGrace,
   setTuplet,
   toggleBeatEffect,
+  toggleFermata,
   toggledValue
 } from './beat-edits';
 import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
+import { defaultFermata } from './composer-tool-defaults';
 import { BeatRef, followedEnd, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
 import { ComposerStructureCommands } from './composer-service-structure';
@@ -488,6 +490,11 @@ export class ComposerService {
   /** Presses Trill: each note a whole step above itself at the default speed, or none. See `toggleTrill`. */
   toggleTrill(): void {
     this.applyEdit({ family: 'note', key: 'trill' }, (draft, refs, focus) => toggleTrill(draft, refs, focus));
+  }
+
+  /** Presses Fermata: at the selection's positions, on every track. See `toggleFermata`. */
+  toggleFermata(): void {
+    this.applyEdit({ family: 'beat', key: 'fermata' }, (draft, refs) => toggleFermata(draft, refs, defaultFermata()));
   }
 
   /**

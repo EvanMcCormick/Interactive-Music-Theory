@@ -1,6 +1,6 @@
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { setBeatDurations, setGrace, setTuplet, toggleBeatEffect, toggledValue } from './beat-edits';
+import { setBeatDurations, setGrace, setTuplet, toggleBeatEffect, toggleFermata, toggledValue } from './beat-edits';
 import { scoreBarFills } from './bar-fill';
 import { DurationValue, ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
 
@@ -357,5 +357,61 @@ describe('setTuplet', () => {
 
     expect(shape(doc)).toEqual(['n8', 'n8', 'n8', 'r8', 'n8', 'n2']);
     expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+});
+
+describe('toggleFermata', () => {
+  const medium = { type: 'medium' as const, length: 1 };
+  /** Each beat's fermata type in bar 0 of track `trackIndex`, or null. */
+  const fermatas = (doc: ScoreDoc, trackIndex: number): (string | null)[] =>
+    doc.tracks[trackIndex].staves[0].bars[0].voices[0].beats.map(beat => beat.effects.fermata?.type ?? null);
+  const withPiano = (): ScoreDoc => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    return doc;
+  };
+
+  it('puts a fermata at that position on every track, and a second press clears every one', () => {
+    const doc = withPiano();
+
+    toggleFermata(doc, [ref(0, 2)], medium);
+    expect(fermatas(doc, 0)).toEqual([null, null, 'medium', null]);
+    expect(fermatas(doc, 1)).toEqual([null, null, 'medium', null]);
+
+    toggleFermata(doc, [ref(0, 2)], medium);
+    expect(fermatas(doc, 0)).toEqual([null, null, null, null]);
+    expect(fermatas(doc, 1)).toEqual([null, null, null, null]);
+  });
+
+  it('reads the position on every track, so one on another track alone does not make the press clear', () => {
+    const doc = withPiano();
+    doc.tracks[1].staves[0].bars[0].voices[0].beats[2].effects.fermata = { ...medium };
+
+    toggleFermata(doc, [ref(0, 2)], medium);
+
+    expect(fermatas(doc, 0)[2]).toBe('medium');
+    expect(fermatas(doc, 1)[2]).toBe('medium');
+  });
+
+  it('finds the position by tick, and gives nothing to a staff with no beat starting there', () => {
+    // The piano's bar is two halves: its second beat starts at 1920, the guitar's third beat's tick,
+    // and nothing of the piano's starts at 960, the guitar's second.
+    const doc = withPiano();
+    doc.tracks[1].staves[0].bars[0].voices[0].beats = [createRestBeat(2), createRestBeat(2)];
+
+    toggleFermata(doc, [ref(0, 2)], medium);
+    toggleFermata(doc, [ref(0, 1)], medium);
+
+    expect(fermatas(doc, 0)).toEqual([null, 'medium', 'medium', null]);
+    expect(fermatas(doc, 1)).toEqual([null, 'medium']);
+  });
+
+  it('leaves a generated track alone', () => {
+    const doc = withPiano();
+    doc.tracks[1].generated = { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision', revision: 1 } };
+
+    toggleFermata(doc, [ref(0, 0)], medium);
+
+    expect(fermatas(doc, 1)).toEqual([null, null, null, null]);
   });
 });

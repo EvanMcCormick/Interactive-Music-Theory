@@ -4,6 +4,7 @@ import {
   BeatEffectsDoc,
   DurationValue,
   DynamicValue,
+  FermataDoc,
   ScoreDoc,
   Tuplet,
   VoiceDoc
@@ -15,7 +16,8 @@ import {
   barMeterAt,
   beatTicks,
   fillBarGaps,
-  insertRestsAt
+  insertRestsAt,
+  voiceTicks
 } from './bar-fill';
 import { BeatRef, beatAt } from './composer-selection';
 
@@ -77,6 +79,57 @@ export function toggleBeatEffect<K extends Exclude<keyof BeatEffectsDoc, 'grace'
 /** Marks a dynamic on every beat in `refs`; null removes it. */
 export function setDynamics(doc: ScoreDoc, refs: readonly BeatRef[], dynamics: DynamicValue | null): void {
   for (const beat of beatsAt(doc, refs)) beat.dynamics = dynamics;
+}
+
+/**
+ * Every beat a fermata pressed on `refs` belongs to: for the tick each ref's beat starts at in its bar,
+ * the voice-1 beat that starts there on every staff of every track. A fermata belongs to a bar
+ * position, not to a beat.
+ *
+ * That is alphaTab's model and Guitar Pro's. `Voice.finish` files a beat's fermata on the master bar by
+ * tick (`alphaTab.core.mjs` ~3294), and `MasterBar.getFermata` (~2728) hands it to every beat finished
+ * later at that tick without one - so a fermata written on one track showed on every later track
+ * anyway, and clearing it left the copies. Written on every track, the document says what the page
+ * shows, whichever track the press came from.
+ *
+ * A grace beat names no position: it takes no ticks and starts where the beat it leads into does, so a
+ * ref on one is skipped, and a grace at the tick gets nothing. A staff with no beat starting at the
+ * tick - a half note spans it - gets nothing either. A generated track is left alone, as every edit
+ * leaves one; alphaTab may still draw the position's fermata there, and the track's document stays the
+ * progression's.
+ */
+export function fermataPositionsOf(doc: ScoreDoc, refs: readonly BeatRef[]): BeatDoc[] {
+  const ticksByBar = new Map<number, Set<number>>();
+  for (const ref of refs) {
+    const voice = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.bars[ref.barIndex]?.voices[ref.voiceIndex];
+    const beat = voice?.beats[ref.beatIndex];
+    if (!voice || !beat || beat.effects.grace !== 'none') continue;
+    const ticks = ticksByBar.get(ref.barIndex) ?? new Set<number>();
+    ticks.add(voiceTicks({ beats: voice.beats.slice(0, ref.beatIndex) }));
+    ticksByBar.set(ref.barIndex, ticks);
+  }
+
+  const beats: BeatDoc[] = [];
+  for (const track of doc.tracks) {
+    if (track.generated) continue;
+    for (const staff of track.staves) {
+      for (const [barIndex, ticks] of ticksByBar) {
+        let start = 0;
+        for (const beat of staff.bars[barIndex]?.voices[0]?.beats ?? []) {
+          if (beat.effects.grace === 'none' && ticks.has(start)) beats.push(beat);
+          start += beatTicks(beat);
+        }
+      }
+    }
+  }
+  return beats;
+}
+
+/** Presses Fermata on `refs`, by the toggle rule, reading and writing every beat at those positions. */
+export function toggleFermata(doc: ScoreDoc, refs: readonly BeatRef[], fermata: FermataDoc): void {
+  const beats = fermataPositionsOf(doc, refs);
+  const value = toggledValue(beats.map(beat => beat.effects.fermata), fermata, null);
+  for (const beat of beats) beat.effects.fermata = value ? { ...value } : null;
 }
 
 /**
