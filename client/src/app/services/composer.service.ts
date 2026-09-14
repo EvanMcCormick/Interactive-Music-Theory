@@ -50,6 +50,7 @@ import {
   durationRefusal,
   editRefusal,
   fermataRefusal,
+  graceRefusal,
   noteEffectRefusal,
   tieRefusal,
   trillRefusal,
@@ -479,7 +480,7 @@ export class ComposerService {
   applyDurationAtCursor(duration: DurationValue, dots: number): void {
     const state = this.stateSubject.getValue();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
-    const refusal = durationRefusal(state.doc, refs);
+    const refusal = durationRefusal(state.doc, refs, duration, dots);
 
     if (refusal) this.refuse(refusal);
     else this.commitFollowing(draft => setBeatDurations(draft, refs, duration, dots));
@@ -537,7 +538,7 @@ export class ComposerService {
    * it makes takes only the rests after it, so the rests in front stay. Undo takes it back.
    */
   toggleGrace(grace: Exclude<BeatEffectsDoc['grace'], 'none'>): void {
-    this.applyEdit({ family: 'beat', key: 'grace' }, (draft, refs) =>
+    this.applyEdit((doc, refs) => graceRefusal(doc, refs, grace), (draft, refs) =>
       setGrace(draft, refs, toggledValue(beatsAt(draft, refs).map(beat => beat.effects.grace), grace, 'none'))
     );
   }

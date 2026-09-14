@@ -1,5 +1,30 @@
-import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, NotePitch, ScoreDoc, StaffDoc, Tuplet } from '../models/composer.model';
-import { beatsAt, fermataPositionsOf, toggledValue, tupletGroupsCompleteWith } from './beat-edits';
+import {
+  AccidentalMode,
+  BeatDoc,
+  BeatEffectsDoc,
+  DurationValue,
+  NoteEffectsDoc,
+  NotePitch,
+  ScoreDoc,
+  StaffDoc,
+  Tuplet
+} from '../models/composer.model';
+import { hasTuplet } from './bar-fill';
+import {
+  OpenTupletGroup,
+  beatsAt,
+  deleteBeats,
+  fermataPositionsOf,
+  insertBeatAt,
+  newOpenTupletGroup,
+  openTupletGroupsOf,
+  setBeatDots,
+  setBeatDurations,
+  setGrace,
+  setTuplet,
+  toggledValue,
+  tupletGroupsOf
+} from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
 import { NoteTarget, noteEffectTargets, noteTargetsAt, tieTargetsOf, trillTargetOf } from './note-edits';
 import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieOriginOf } from './note-landing';
@@ -200,21 +225,150 @@ export function tieRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: numbe
 
 const COUNT_WORDS: readonly string[] = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 
+const BREAKS_A_GROUP = 'That would break a tuplet group; select the whole group.';
+
+const INSERT_BREAKS_A_GROUP = 'That would break a tuplet group; insert before or after the whole group.';
+
+const NOTE_BREAKS_A_GROUP = "A note of that value would break a tuplet group; write the group's own value, or change the whole group.";
+
+const GRACE_TUPLET = 'A grace note takes no room in its bar, so it cannot be under a tuplet.';
+
+/** A tuplet group an edit, made on a copy, would leave open (`tupletGroupOpenedBy`). */
+interface OpenedGroup {
+  group: OpenTupletGroup;
+  /** The voice it is in, once the edit is made. */
+  after: readonly BeatDoc[];
+  /** The groups that voice already held open. */
+  before: readonly OpenTupletGroup[];
+  /** The copy's beats that `refs` named. */
+  named: ReadonlySet<BeatDoc>;
+}
+
 /**
- * Why putting `refs` under `tuplet` - or out of any tuplet, with null - cannot apply, or null: any beat
- * edit's refusal, or, when the press sets a tuplet, a tuplet group it would leave open.
+ * The first tuplet group `edit` would leave open, in voice 1 of a bar `refs` name, that the voice did not already hold
+ * open (`newOpenTupletGroup`) - or null. The rule every beat edit is held to: a group alphaTab never closes is drawn as
+ * a broken bracket, and the room its beats free is off the 64th grid, so the bar is left short with nothing to say
+ * why. The whole voice is read, not only the beats `refs` name, since an edit can break a group beside them.
  *
- * alphaTab closes a group of equal values at as many beats as the tuplet's numerator, and a mixed one when
- * its values add up to a whole group (`tupletGroupsCompleteWith`). A group left open is drawn broken, and
- * the room its beats free is off the 64th grid, so the bar would be left short with nothing to say why.
- * Taking beats out of a tuplet is never refused for it.
+ * `edit` runs on a copy of those bars, on every track - an edit settles fermatas across tracks - so `doc`, frozen or
+ * published, is left as it was. No edit but one that `writesTuplets` can open a group in a voice with no beat under a
+ * tuplet, so for any other edit the copy is skipped when there is none.
+ */
+function tupletGroupOpenedBy(
+  doc: ScoreDoc,
+  refs: readonly BeatRef[],
+  edit: (draft: ScoreDoc) => void,
+  writesTuplets: boolean
+): OpenedGroup | null {
+  const voices = new Map<string, BeatRef>();
+  for (const ref of refs) if (ref.voiceIndex === 0) voices.set(`${ref.trackIndex}:${ref.staffIndex}:${ref.barIndex}`, ref);
+  const beatsOf = (score: ScoreDoc, at: BeatRef): BeatDoc[] =>
+    score.tracks[at.trackIndex]?.staves[at.staffIndex]?.bars[at.barIndex]?.voices[0]?.beats ?? [];
+  if (!writesTuplets && ![...voices.values()].some(at => beatsOf(doc, at).some(hasTuplet))) return null;
+
+  const bars = new Set([...voices.values()].map(at => at.barIndex));
+  const draft: ScoreDoc = {
+    ...doc,
+    tracks: doc.tracks.map(track => ({
+      ...track,
+      staves: track.staves.map(staff => ({ ...staff, bars: staff.bars.map((bar, index) => (bars.has(index) ? structuredClone(bar) : bar)) }))
+    }))
+  };
+  const named = new Set(beatsAt(draft, refs));
+  const before = [...voices.values()].map(at => ({ at, open: openTupletGroupsOf(beatsOf(draft, at)) }));
+  edit(draft);
+  for (const { at, open } of before) {
+    const after = beatsOf(draft, at);
+    const group = newOpenTupletGroup(open, after);
+    if (group) return { group, after, before: open, named };
+  }
+  return null;
+}
+
+/**
+ * Why a tuplet press leaves the group `opened` open, in the words that tell the user what to do: it joins an
+ * unfinished group beside the selection; it splits a group beside the selection, which holds none of its beats;
+ * an on-beat grace shortens a mixed group's first beat (`tupletGroupsOf`); or the selection is too few beats.
+ */
+function openedByTupletPress({ group, after, before, named }: OpenedGroup, tuplet: Tuplet): string {
+  const groups = tupletGroupsOf(after);
+  const groupOf = (beat: BeatDoc): unknown => groups[after.indexOf(beat)] ?? null;
+  const joined = before.find(old =>
+    old.beats.some(beat => !named.has(beat) && groupOf(beat) !== null && [...named].some(other => groupOf(other) === groupOf(beat)))
+  );
+  if (joined) return `That would join the unfinished ${joined.tuplet} group next to the selection and still leave a group open; select that group's beats too.`;
+  if (!group.beats.some(beat => named.has(beat))) {
+    return `That would split the ${group.tuplet} group next to the selection, leaving part of it unfinished; select the whole group.`;
+  }
+  const first = after.indexOf(group.beats[0]);
+  let graces = first;
+  while (graces > 0 && after[graces - 1].effects.grace !== 'none') graces--;
+  if (graces < first && after[graces].effects.grace === 'onBeat' && groups[first]?.equal === false) {
+    return `An on-beat grace before the group shortens its first beat, so alphaTab never closes a ${group.tuplet} group of mixed values there; use equal values, or make it a grace before the beat.`;
+  }
+  const count = COUNT_WORDS[tuplet.numerator] ?? String(tuplet.numerator);
+  return `A ${tuplet.numerator}:${tuplet.denominator} tuplet needs ${count} beats of the same value, or values that add up to the same length, in one bar.`;
+}
+
+/**
+ * Why putting `refs` under `tuplet` - or out of any tuplet, with null - cannot apply, or null: any beat edit's
+ * refusal; a tuplet set on graces alone, which `setTuplet` leaves out; or a tuplet group the press would leave open,
+ * in the voice as a whole (`tupletGroupOpenedBy`). alphaTab closes a group of equal values at as many beats as the
+ * tuplet's numerator, and a mixed one when its values add up to a whole group. A clear is refused only when it would
+ * break a closed group; a whole group's clear goes through.
  */
 export function tupletRefusal(doc: ScoreDoc, refs: readonly BeatRef[], tuplet: Tuplet | null): string | null {
   const refusal = editRefusal(doc, refs, { family: 'beat', key: 'tuplet' }, null);
-  if (refusal || tuplet === null || (tuplet.numerator === 1 && tuplet.denominator === 1)) return refusal;
-  if (tupletGroupsCompleteWith(doc, refs, tuplet)) return null;
-  const count = COUNT_WORDS[tuplet.numerator] ?? String(tuplet.numerator);
-  return `A ${tuplet.numerator}:${tuplet.denominator} tuplet needs ${count} beats of the same value, or values that add up to the same length, in one bar.`;
+  if (refusal) return refusal;
+  const setting = tuplet !== null && hasTuplet({ tuplet });
+  const targets = beatsAt(doc, refs);
+  if (setting && targets.length > 0 && targets.every(beat => beat.effects.grace !== 'none')) return GRACE_TUPLET;
+  const opened = tupletGroupOpenedBy(doc, refs, draft => setTuplet(draft, refs, tuplet), setting);
+  if (!opened) return null;
+  return setting && tuplet ? openedByTupletPress(opened, tuplet) : BREAKS_A_GROUP;
+}
+
+/**
+ * Why a delete of the beats `refs` name cannot apply, or null: any beat edit's refusal, or a tuplet group it would
+ * leave open (`tupletGroupOpenedBy`). A whole group can go.
+ */
+export function deleteBeatsRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'beat', key: 'duration' }, null);
+  if (refusal) return refusal;
+  return tupletGroupOpenedBy(doc, refs, draft => deleteBeats(draft, refs), false) ? BREAKS_A_GROUP : null;
+}
+
+/**
+ * Why inserting a rest of `duration` and `dots` in front of `at` cannot apply, or null: any beat edit's refusal, or
+ * a tuplet group it would leave open, as one inside a group does (`tupletGroupOpenedBy`).
+ */
+export function insertBeatRefusal(doc: ScoreDoc, at: BeatRef, duration: DurationValue, dots: number): string | null {
+  const refusal = editRefusal(doc, [at], { family: 'beat', key: 'duration' }, null);
+  if (refusal) return refusal;
+  return tupletGroupOpenedBy(doc, [at], draft => void insertBeatAt(draft, at, duration, dots), false) ? INSERT_BREAKS_A_GROUP : null;
+}
+
+/**
+ * Why writing a note or a rest of `duration` and `dots` at `at` cannot apply, or null: any beat edit's refusal, or a
+ * tuplet group the new value would leave open (`tupletGroupOpenedBy`). Note entry sets the beat's value
+ * (`setBeatDurations`), so a quarter written into a triplet eighth breaks its group; the group's own value does not.
+ */
+export function noteEntryRefusal(doc: ScoreDoc, at: BeatRef, duration: DurationValue, dots: number): string | null {
+  const refusal = editRefusal(doc, [at], { family: 'beat', key: 'duration' }, null);
+  if (refusal) return refusal;
+  return tupletGroupOpenedBy(doc, [at], draft => setBeatDurations(draft, [at], duration, dots), false) ? NOTE_BREAKS_A_GROUP : null;
+}
+
+/**
+ * Why pressing Grace before or Grace on beat - `grace`, by the toggle rule - cannot apply to `refs`, or null: any
+ * beat edit's refusal, or a tuplet group it would leave open (`tupletGroupOpenedBy`). A grace takes no room and is
+ * not counted in a group, so a triplet beat made a grace leaves its group a beat short.
+ */
+export function graceRefusal(doc: ScoreDoc, refs: readonly BeatRef[], grace: Exclude<BeatEffectsDoc['grace'], 'none'>): string | null {
+  const refusal = editRefusal(doc, refs, { family: 'beat', key: 'grace' }, null);
+  if (refusal) return refusal;
+  const value = toggledValue(beatsAt(doc, refs).map(beat => beat.effects.grace), grace, 'none');
+  return tupletGroupOpenedBy(doc, refs, draft => setGrace(draft, refs, value), false) ? BREAKS_A_GROUP : null;
 }
 
 /** The highest MIDI note, which `Note.trillValue` must not pass. */
@@ -262,8 +416,8 @@ const GRACE_DURATION =
   "A grace note's written value is set by alphaTab from how many graces are in its group, so it cannot be changed.";
 
 /**
- * Why a duration press cannot apply to `refs`, or null when it can: any beat edit's refusal, or
- * every target a grace beat.
+ * Why a press of `duration` and `dots` cannot apply to `refs`, or null when it can: any beat edit's refusal,
+ * every target a grace beat, or a tuplet group the new values would leave open (`tupletGroupOpenedBy`).
  *
  * `Beat.finish` (`alphaTab.core.mjs` ~7772-7786 in 1.8) rewrites an on-beat or before-beat grace's
  * value by the size of its group - an eighth for one grace, a sixteenth for two, a thirty-second for
@@ -271,11 +425,25 @@ const GRACE_DURATION =
  * skips graces for that reason; a press with nothing else to change is refused rather than skipped,
  * so it says why nothing happened. A range with some graces in it changes the rest.
  */
-export function durationRefusal(doc: ScoreDoc, refs: readonly BeatRef[]): string | null {
+export function durationRefusal(doc: ScoreDoc, refs: readonly BeatRef[], duration: DurationValue, dots: number): string | null {
+  return lengthRefusal(doc, refs, draft => setBeatDurations(draft, refs, duration, dots));
+}
+
+/**
+ * Why dotting `refs` with `dots` at their own values cannot apply, or null: what refuses a duration press
+ * (`durationRefusal`), with `setBeatDots` as the edit a tuplet group is checked against.
+ */
+export function dotsRefusal(doc: ScoreDoc, refs: readonly BeatRef[], dots: number): string | null {
+  return lengthRefusal(doc, refs, draft => setBeatDots(draft, refs, dots));
+}
+
+/** `durationRefusal` and `dotsRefusal`, for the length change `edit` makes. */
+function lengthRefusal(doc: ScoreDoc, refs: readonly BeatRef[], edit: (draft: ScoreDoc) => void): string | null {
   const refusal = editRefusal(doc, refs, { family: 'beat', key: 'duration' }, null);
   if (refusal) return refusal;
   const allGraces = refs.every(ref => (beatAt(doc, ref)?.effects.grace ?? 'none') !== 'none');
-  return allGraces ? GRACE_DURATION : null;
+  if (allGraces) return GRACE_DURATION;
+  return tupletGroupOpenedBy(doc, refs, edit, false) ? BREAKS_A_GROUP : null;
 }
 
 const HAMMER_ON_NOTHING_FOLLOWS =

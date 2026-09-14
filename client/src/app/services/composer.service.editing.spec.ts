@@ -314,6 +314,28 @@ describe('ComposerService tuplets', () => {
     expect(stateOf(service).refusal).toMatch(/3:2 tuplet needs three beats/i);
     expect(stateOf(service).canUndo).toBeFalse();
   });
+
+  it('refuses a delete, an insert, a note of another value or a grace inside a tuplet group, committing nothing', () => {
+    // Three quarters made a triplet; then each press on the group's second beat alone would leave it open.
+    service.setCursor({ barIndex: 0, beatIndex: 0 });
+    service.extendSelectionTo({ barIndex: 0, beatIndex: 2 });
+    service.setTuplet({ numerator: 3, denominator: 2 });
+    service.setCursor({ barIndex: 0, beatIndex: 1 });
+    const before = JSON.stringify(service.doc);
+    const presses: [string, () => void][] = [
+      ['deleteBeats', () => service.deleteBeats()],
+      ['insertBeat', () => service.insertBeat()],
+      ['setNoteAtCursor', () => { service.setInputDuration(8, 0); service.setNoteAtCursor({ kind: 'fretted', string: 1, fret: 3 }, false); }],
+      ['toggleGrace', () => service.toggleGrace('beforeBeat')]
+    ];
+
+    for (const [name, press] of presses) {
+      press();
+
+      expect(stateOf(service).refusal).withContext(name).toMatch(/break a tuplet group/i);
+      expect(JSON.stringify(service.doc)).withContext(name).toBe(before);
+    }
+  });
 });
 
 describe('ComposerService vibrato and ties over a range', () => {

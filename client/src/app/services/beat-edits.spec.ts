@@ -14,8 +14,10 @@ import {
   setTuplet,
   toggleBeatEffect,
   toggleFermata,
-  toggledValue
+  toggledValue,
+  tupletGroupsOf
 } from './beat-edits';
+import { writtenBeats, writtenOf } from './written-beats';
 import { scoreBarFills } from './bar-fill';
 import { fermataRefusal } from './edit-refusals';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
@@ -463,6 +465,76 @@ describe('setTuplet', () => {
 
     expect(tupletShape(doc)).toEqual(['n16t6', 'n16t6', 'n16t6', 'n16t6', 'n16t6', 'n16t6', 'r16', 'n2', 'n8', 'n16']);
     expect(scoreBarFills(doc)[0][0][0]).toEqual({ kind: 'full' });
+  });
+
+  it('leaves a grace in the range out of the tuplet, so the group it leads into closes', () => {
+    // alphaTab counts a grace that carries a tuplet into its group (`tupletGroupsOf`), and a group a grace starts never
+    // closes. Only the three eighths are put under the triplet, and the room they free goes after them.
+    const doc = ComposerService.createEmptyScore();
+    beats(doc).splice(0, beats(doc).length, ...writtenBeats('g n8 n8 n8 n2 r8'));
+
+    setTuplet(doc, [0, 1, 2, 3].map(index => ref(0, index)), { numerator: 3, denominator: 2 });
+
+    expect(writtenOf(beats(doc))).toBe('g n8t3 n8t3 n8t3 r8 n2 r8');
+    expect(tupletGroupsOf(beats(doc)).slice(1, 4).every(group => group?.full)).toBeTrue();
+  });
+});
+
+describe('tupletGroupsOf', () => {
+  /** Each beat's group as its order among the bar's groups, then `F` when alphaTab closed it or `o` when it did not. */
+  function labelled<G>(groups: readonly (G | null)[], full: (group: G) => boolean): (string | null)[] {
+    const ids = new Map<G, number>();
+    return groups.map(group => {
+      if (group === null) return null;
+      if (!ids.has(group)) ids.set(group, ids.size);
+      return `${ids.get(group)}${full(group) ? 'F' : 'o'}`;
+    });
+  }
+  const ours = (written: string): (string | null)[] => labelled(tupletGroupsOf(writtenBeats(written)), group => group.full);
+
+  it('counts a grace that carries a tuplet, as alphaTab does, so a group the grace starts never closes', () => {
+    // alphaTab starts a group with its first beat's playback length (`TupletGroup.check`, ~6765), which for a lone grace
+    // is a 32nd (`Beat.updateDurations`, ~7713). Three triplet eighths after it add up to 1080 ticks, no written value.
+    expect(ours('g8t3 n8t3 n8t3 n8t3 n2')).toEqual(['0o', '0o', '0o', '0o', null]);
+    expect(ours('g n8t3 n8t3 n8t3 n2')).toEqual([null, '0F', '0F', '0F', null]);
+  });
+
+  it('shortens a mixed group\'s first beat by the on-beat graces before it, as alphaTab does', () => {
+    // An on-beat grace takes its playback length from the beat it leads into before that beat's group is checked
+    // (`Voice.finish`, ~3240), so a triplet quarter and eighth add up to 840. Equal values are counted, not added.
+    expect(ours('o n4t3 n8t3 n2')).toEqual([null, '0o', '0o', null]);
+    expect(ours('g n4t3 n8t3 n2')).toEqual([null, '0F', '0F', null]);
+    expect(ours('o n8t3 n8t3 n8t3 n2')).toEqual([null, '0F', '0F', '0F', null]);
+  });
+
+  it('reads a -1:-1 tuplet, alphaTab\'s default, as none', () => {
+    const minusOne = writtenBeats('n8 n8 n8');
+    minusOne.forEach(beat => (beat.tuplet = { numerator: -1, denominator: -1 }));
+
+    expect(tupletGroupsOf(minusOne)).toEqual([null, null, null]);
+  });
+
+  it('groups random bars, graces among them, as alphaTab groups them', () => {
+    TestBed.configureTestingModule({});
+    const mapper = TestBed.inject(ScoreDocMapperService);
+    const tokens = ['n4', 'n8', 'n16', 'n2', 'n8t3', 'n4t3', 'n16t3', 'r8t3', 'n8t6', 'n16t6', 'n4t6', 'n16t5', 'n16t7', 'g', 'o', 'g8t3', 'o8t3', 'g8t6'];
+    let seed = 7;
+    const random = (below: number): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed % below;
+    };
+    const mismatches: string[] = [];
+
+    for (let run = 0; run < 400; run++) {
+      const doc = ComposerService.createEmptyScore();
+      const written = Array.from({ length: 1 + random(10) }, () => tokens[random(tokens.length)]).join(' ');
+      beats(doc).splice(0, beats(doc).length, ...writtenBeats(written));
+      const alpha = mapper.toScore(doc, new alphaTab.Settings()).tracks[0].staves[0].bars[0].voices[0].beats;
+      const theirs = labelled(alpha.map(beat => beat.tupletGroup), group => group.isFull);
+      if (JSON.stringify(theirs) !== JSON.stringify(ours(written))) mismatches.push(written);
+    }
+
+    expect(mismatches).toEqual([]);
   });
 });
 

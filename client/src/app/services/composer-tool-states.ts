@@ -16,9 +16,11 @@ import { BeatRef, selectedBars, selectionTargets } from './composer-selection';
 import { defaultFermata, fullBendPoints } from './composer-tool-defaults';
 import {
   beatEffectRefusal,
+  dotsRefusal,
   durationRefusal,
   editRefusal,
   fermataRefusal,
+  graceRefusal,
   noteEffectRefusal,
   tieRefusal,
   trillRefusal,
@@ -90,18 +92,20 @@ const beats = (reading: Reading): BeatDoc[] => beatsAt(reading.doc, reading.refs
 const ungraced = (reading: Reading): BeatDoc[] => beats(reading).filter(beat => beat.effects.grace === 'none');
 const masterBars = (reading: Reading): MasterBarDoc[] => reading.doc.masterBars.slice(reading.bars.first, reading.bars.last + 1);
 
+/** A note value's button, which presses that value with no dots (`durationTool`). */
 function duration(value: DurationValue): Reader {
   return reading => ({
     pressed: share(ungraced(reading).map(beat => beat.duration === value)),
-    refusal: durationRefusal(reading.doc, reading.refs)
+    refusal: durationRefusal(reading.doc, reading.refs, value, 0)
   });
 }
 
+/** A dot button, which dots the selection or, when every beat already has `count`, takes the dots off (`dotTool`). */
 function dots(count: number): Reader {
-  return reading => ({
-    pressed: share(ungraced(reading).map(beat => beat.dots === count)),
-    refusal: durationRefusal(reading.doc, reading.refs)
-  });
+  return reading => {
+    const pressed = share(ungraced(reading).map(beat => beat.dots === count));
+    return { pressed, refusal: dotsRefusal(reading.doc, reading.refs, pressed === true ? 0 : count) };
+  };
 }
 
 function beatEffect<K extends Exclude<keyof BeatEffectsDoc, 'grace'>>(key: K, on: BeatEffectsDoc[K], off: BeatEffectsDoc[K]): Reader {
@@ -114,7 +118,7 @@ function beatEffect<K extends Exclude<keyof BeatEffectsDoc, 'grace'>>(key: K, on
 function grace(kind: Exclude<BeatEffectsDoc['grace'], 'none'>): Reader {
   return reading => ({
     pressed: share(beats(reading).map(beat => beat.effects.grace === kind)),
-    refusal: editRefusal(reading.doc, reading.refs, { family: 'beat', key: 'grace' }, null)
+    refusal: graceRefusal(reading.doc, reading.refs, kind)
   });
 }
 
@@ -197,7 +201,7 @@ const READERS: Readonly<Record<string, Reader>> = {
   sixtyFourth: duration(64),
   dot: dots(1),
   doubleDot: dots(2),
-  // A press clears when every beat is a triplet, and a clear is never refused for an open group.
+  // A press clears when every beat is a triplet; like a set, a clear is refused when it would leave a group open.
   triplet: reading => {
     const pressed = share(beats(reading).map(beat => beat.tuplet !== null && sameValue(beat.tuplet, TRIPLET)));
     return { pressed, refusal: tupletRefusal(reading.doc, reading.refs, pressed === true ? null : TRIPLET) };

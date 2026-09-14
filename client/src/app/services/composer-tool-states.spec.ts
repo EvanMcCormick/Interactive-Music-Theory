@@ -1,6 +1,7 @@
 import { ComposerService } from './composer.service';
 import * as tools from './composer-tool-states';
 import { deepFrozen } from './deep-frozen';
+import { writtenBeats } from './written-beats';
 import { EditCursor, EntryMode, NoteDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
 
 /**
@@ -114,6 +115,17 @@ describe('toolStates', () => {
 
     doc.tracks[0].staves[0].bars[0].voices[0].beats.slice(0, 2).forEach(beat => (beat.tuplet = { numerator: 3, denominator: 2 }));
     expect(toolStateOf(doc, at(0, 0), at(0, 1), 'triplet')).toEqual({ pressed: true, refusal: null });
+  });
+
+  it('says before a press why a triplet, a value, a dot or a grace would leave a tuplet group open', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks[0].staves[0].bars[0].voices[0].beats = writtenBeats('n8 n8 n8t3 n8t3 n8t3 n2');
+
+    expect(toolStateOf(doc, at(0, 0), at(0, 1), 'triplet').refusal).toMatch(/split the 3:2 group/i);
+    for (const tool of ['quarter', 'dot', 'graceBefore', 'triplet']) {
+      expect(toolStateOf(doc, null, at(0, 3), tool).refusal).withContext(tool).toMatch(/break a tuplet group/i);
+    }
+    expect(toolStateOf(doc, null, at(0, 5), 'quarter').refusal).toBeNull();
   });
 
   it('refuses a fermata on a grace alone, which has no bar position', () => {

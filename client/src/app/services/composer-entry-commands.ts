@@ -4,7 +4,7 @@ import { clearToRests, deleteBeats, insertBeatAt, setBeatDots, setBeatDurations 
 import { CursorMove } from './composer-cursor';
 import { BeatRef, beatAt, selectionTargets } from './composer-selection';
 import { ComposerCommandHost } from './composer-service-structure';
-import { durationRefusal, editRefusal } from './edit-refusals';
+import { deleteBeatsRefusal, dotsRefusal, editRefusal, insertBeatRefusal, noteEntryRefusal } from './edit-refusals';
 
 /**
  * The composer's entry commands: writing a note, a rest or a delete at the caret, and the commands
@@ -47,7 +47,7 @@ export class ComposerEntryCommands {
   setNoteAtCursor(pitch: NotePitch, advance: boolean): void {
     const state = this.host.state();
     const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor)) return;
+    if (this.refusesEntryAt(state.doc, cursor, true)) return;
 
     this.host.commit(draft => writeNote(draft, cursor, pitch, state.inputDuration, state.inputDots));
     this.lastEntry = { at: cursor, doc: this.host.state().doc };
@@ -65,7 +65,7 @@ export class ComposerEntryCommands {
    */
   retypeNote(target: EditCursor, pitch: NotePitch): void {
     const state = this.host.state();
-    if (this.refusesEntryAt(state.doc, target)) return;
+    if (this.refusesEntryAt(state.doc, target, true)) return;
 
     // Only a fret is built from digits. A pitched note written twice is two notes of a chord, and a note
     // on another string is another note, so neither replaces the last commit.
@@ -79,7 +79,7 @@ export class ComposerEntryCommands {
   setRestAtCursor(advance: boolean): void {
     const state = this.host.state();
     const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor)) return;
+    if (this.refusesEntryAt(state.doc, cursor, true)) return;
 
     this.host.commit(draft => {
       const beat = beatAt(draft, cursor);
@@ -108,13 +108,13 @@ export class ComposerEntryCommands {
 
   /**
    * Dots every beat in the selection at its own value (`setBeatDots`), and remembers `dots` for the next
-   * note beside the input duration. Refused as a duration press is (`durationRefusal`), and like one it
+   * note beside the input duration. Refused as a duration press is (`dotsRefusal`), and like one it
    * still remembers the choice when refused.
    */
   applyDotsAtCursor(dots: number): void {
     const state = this.host.state();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
-    const refusal = durationRefusal(state.doc, refs);
+    const refusal = dotsRefusal(state.doc, refs, dots);
     if (refusal) this.host.refuse(refusal);
     else this.host.commitFollowing(draft => setBeatDots(draft, refs, dots));
     this.host.setInputDuration(this.host.state().inputDuration, dots);
@@ -136,7 +136,8 @@ export class ComposerEntryCommands {
   insertBeat(): void {
     const state = this.host.state();
     const cursor = state.cursor;
-    if (this.refusesEntryAt(state.doc, cursor)) return;
+    const refusal = insertBeatRefusal(state.doc, cursor, state.inputDuration, state.inputDots);
+    if (refusal) return this.host.refuse(refusal);
     let inserted: number | null = null;
     this.host.commitFollowing(
       draft => void (inserted = insertBeatAt(draft, cursor, state.inputDuration, state.inputDots)),
@@ -148,7 +149,7 @@ export class ComposerEntryCommands {
   deleteBeats(): void {
     const state = this.host.state();
     const refs = selectionTargets(state.doc, state.anchor, state.cursor);
-    const refusal = editRefusal(state.doc, refs, { family: 'beat', key: 'duration' }, null);
+    const refusal = deleteBeatsRefusal(state.doc, refs);
     if (refusal) return this.host.refuse(refusal);
     this.host.commitFollowing(
       draft => deleteBeats(draft, refs),
@@ -208,10 +209,14 @@ export class ComposerEntryCommands {
    * a second voice, which a click can reach in a loaded bar and bar filling cannot measure. Publishes
    * the reason and commits nothing, so a refusal costs no undo step and the caret does not advance. A
    * beat scope, not a note one: a delete on a rest clears nothing, and a note scope would refuse it as
-   * a note tool on a rest.
+   * a note tool on a rest. A press that `writesValue` - a note or a rest at the input duration - is also
+   * refused where that value would break a tuplet group (`noteEntryRefusal`).
    */
-  private refusesEntryAt(doc: ScoreDoc, at: BeatRef): boolean {
-    const refusal = editRefusal(doc, [at], { family: 'beat', key: 'duration' }, null);
+  private refusesEntryAt(doc: ScoreDoc, at: BeatRef, writesValue = false): boolean {
+    const state = this.host.state();
+    const refusal = writesValue
+      ? noteEntryRefusal(doc, at, state.inputDuration, state.inputDots)
+      : editRefusal(doc, [at], { family: 'beat', key: 'duration' }, null);
     if (refusal) this.host.refuse(refusal);
     return refusal !== null;
   }

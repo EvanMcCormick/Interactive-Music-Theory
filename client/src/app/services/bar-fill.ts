@@ -423,10 +423,11 @@ export function fixBarOverflow(
 type LineCut = { kind: 'cut'; carried: BeatDoc[] } | { kind: 'refused'; reason: string };
 
 /**
- * Whether alphaTab draws `beat` as a tuplet: `Beat.hasTuplet` (`alphaTab.core.mjs` ~7370), any
- * ratio but -1:-1, its default, and 1:1. The mapper writes a model tuplet's ratio as it is.
+ * Whether alphaTab reads `beat` as under a tuplet: `Beat.hasTuplet` (`alphaTab.core.mjs` ~7370), any
+ * ratio but -1:-1, its default, and 1:1. The mapper writes a model tuplet's ratio as it is. What draws a
+ * bracket, and what `Beat.finishTuplet` groups (`tupletGroupsOf`).
  */
-function hasTuplet(beat: BeatDoc): boolean {
+export function hasTuplet(beat: Pick<BeatDoc, 'tuplet'>): boolean {
   const tuplet = beat.tuplet;
   return (
     tuplet !== null &&

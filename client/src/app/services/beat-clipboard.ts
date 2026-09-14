@@ -1,6 +1,6 @@
 import { BeatDoc, FermataDoc, ScoreDoc } from '../models/composer.model';
 import { barCapacityTicks, barFillOf, barMeterAt, beatTicks, fillBarGaps, graceRunStart, insertRestsAt, splitAtBarLine } from './bar-fill';
-import { fermataSnapshotOf, settleFermatas, tupletGroupsOf } from './beat-edits';
+import { fermataSnapshotOf, newOpenTupletGroup, openTupletGroupsOf, settleFermatas, tupletGroupsOf } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
 import { insertBarInto } from './score-structure';
 
@@ -36,6 +36,9 @@ const PART_OF_A_GROUP = 'The copy holds part of a tuplet group. Copy the whole g
 
 const PAST_THE_LINE = 'That beat is past the bar line; Fix bar first.';
 
+const SPLITS_A_GROUP =
+  'The paste would split a tuplet group, leaving part of it unfinished. Paste over the whole group, or where the copy fits in one bar.';
+
 /**
  * Pastes `copied` from `at`, or returns why not.
  *
@@ -60,7 +63,9 @@ const PAST_THE_LINE = 'That beat is past the bar line; Fix bar first.';
  *
  * Refused before anything changes: a copy holding part of a tuplet group (`tupletGroupsOf`), which would
  * start a group alphaTab never closes and leave room off the 64th grid; and a paste at a beat that starts at
- * or past the line of a bar already over, which would land in the next bar while the caret stayed put.
+ * or past the line of a bar already over, which would land in the next bar while the caret stayed put. Refused
+ * once laid down: a paste that leaves a bar holding a tuplet group open that it did not already hold open
+ * (`newOpenTupletGroup`) - over part of a group, or a whole group cut by a bar line.
  *
  * **May leave `doc` partly changed when it refuses**, like every edit that returns a reason - call it on a draft.
  */
@@ -121,6 +126,9 @@ export function pasteBeats(doc: ScoreDoc, at: BeatRef, copied: CopiedBeats): { a
     }
   }
 
+  const openBefore = new Map(
+    segments.map(segment => [segment.barIndex, openTupletGroupsOf(staff.bars[segment.barIndex]?.voices[at.voiceIndex]?.beats ?? [])])
+  );
   const fermatas = fermataSnapshotOf(doc, segments.map(segment => segment.barIndex));
   const pasted = new Map<BeatDoc, FermataDoc>();
   for (const segment of segments) {
@@ -143,6 +151,11 @@ export function pasteBeats(doc: ScoreDoc, at: BeatRef, copied: CopiedBeats): { a
     voice.beats.splice(start, 0, ...segment.beats);
     if (covered > span) insertRestsAt(voice, start + segment.beats.length, covered - span, meter);
     fillBarGaps(bar, meter);
+  }
+
+  for (const segment of segments) {
+    const after = staff.bars[segment.barIndex]?.voices[at.voiceIndex]?.beats ?? [];
+    if (newOpenTupletGroup(openBefore.get(segment.barIndex) ?? [], after)) return SPLITS_A_GROUP;
   }
 
   settleFermatas(doc, fermatas, pasted);

@@ -3,7 +3,17 @@ import { BeatRef } from './composer-selection';
 import { deepFrozen } from './deep-frozen';
 import * as refusals from './edit-refusals';
 import { EditScope } from './edit-refusals';
-import { AccidentalMode, BeatEffectsDoc, NoteEffectsDoc, ScoreDoc, Tuplet, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
+import { writtenBeats } from './written-beats';
+import {
+  AccidentalMode,
+  BeatEffectsDoc,
+  DurationValue,
+  NoteEffectsDoc,
+  ScoreDoc,
+  Tuplet,
+  createDefaultNoteEffects,
+  createRestBeat
+} from '../models/composer.model';
 
 /**
  * Every refusal here reads a deep-frozen copy of the document it is given, so one that changed a
@@ -14,7 +24,16 @@ const frozen = (score: ScoreDoc): ScoreDoc => deepFrozen(structuredClone(score))
 type NoteTargets = Parameters<typeof refusals.editRefusal>[4];
 const editRefusal = (score: ScoreDoc, refs: readonly BeatRef[], scope: EditScope, focus: number | null, notes?: NoteTargets): string | null =>
   refusals.editRefusal(frozen(score), refs, scope, focus, notes);
-const durationRefusal = (score: ScoreDoc, refs: readonly BeatRef[]): string | null => refusals.durationRefusal(frozen(score), refs);
+const durationRefusal = (score: ScoreDoc, refs: readonly BeatRef[], duration: DurationValue = 4, dots = 0): string | null =>
+  refusals.durationRefusal(frozen(score), refs, duration, dots);
+const dotsRefusal = (score: ScoreDoc, refs: readonly BeatRef[], dots: number): string | null => refusals.dotsRefusal(frozen(score), refs, dots);
+const graceRefusal = (score: ScoreDoc, refs: readonly BeatRef[], grace: 'beforeBeat' | 'onBeat'): string | null =>
+  refusals.graceRefusal(frozen(score), refs, grace);
+const insertBeatRefusal = (score: ScoreDoc, at: BeatRef, duration: DurationValue, dots: number): string | null =>
+  refusals.insertBeatRefusal(frozen(score), at, duration, dots);
+const deleteBeatsRefusal = (score: ScoreDoc, refs: readonly BeatRef[]): string | null => refusals.deleteBeatsRefusal(frozen(score), refs);
+const noteEntryRefusal = (score: ScoreDoc, at: BeatRef, duration: DurationValue, dots: number): string | null =>
+  refusals.noteEntryRefusal(frozen(score), at, duration, dots);
 const tieRefusal = (score: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null =>
   refusals.tieRefusal(frozen(score), refs, focus);
 const trillRefusal = (score: ScoreDoc, refs: readonly BeatRef[], focus: number | null): string | null =>
@@ -267,7 +286,7 @@ describe('tupletRefusal', () => {
     expect(tupletRefusal(eighths(8), firstBeats(3), { numerator: 3, denominator: 2 })).toBeNull();
   });
 
-  it('accepts beats that complete a group already begun, and never refuses taking beats out of one', () => {
+  it('accepts beats that complete a group already begun, and a clear of a beat in no group', () => {
     const score = eighths(8);
     score.tracks[0].staves[0].bars[0].voices[0].beats.slice(3, 6).forEach(beat => (beat.tuplet = { numerator: 6, denominator: 4 }));
 
@@ -280,6 +299,84 @@ describe('tupletRefusal', () => {
     score.tracks[0].generated = { progressionId: 'p', progressionName: 'Verse', source: { kind: 'revision', revision: 1 } };
 
     expect(tupletRefusal(score, firstBeats(3), { numerator: 3, denominator: 2 })).toMatch(/progression/i);
+  });
+});
+
+describe('an edit that would leave a tuplet group open', () => {
+  // alphaTab draws a group it never closes as a broken bracket, and the room its beats free is off the 64th grid, so
+  // the bar is left short with nothing to say why. So no edit may leave a voice holding an open group it did not
+  // already hold (`tupletGroupsOf`, which replays alphaTab's grouping).
+
+  /** The guitar's bar 0 as `written` (`writtenBeats`). */
+  const barOf = (written: string): ScoreDoc => {
+    const score = ComposerService.createEmptyScore();
+    score.tracks[0].staves[0].bars[0].voices[0].beats = writtenBeats(written);
+    return score;
+  };
+  const beatsAt = (...indices: number[]): BeatRef[] => indices.map(index => ref(0, index));
+  const triplet: Tuplet = { numerator: 3, denominator: 2 };
+  const group = 'n8t3 n8t3 n8t3 n4 n2';
+
+  describe('a tuplet press', () => {
+    it('refuses one that would split a closed group beside the selection', () => {
+      // Two eighths made 3:2 take the group's first triplet as their third, and leave its other two open.
+      expect(tupletRefusal(barOf('n8 n8 n8t3 n8t3 n8t3 n2'), beatsAt(0, 1), triplet)).toMatch(/split the 3:2 group next to the selection/i);
+    });
+
+    it('names the unfinished group beside the selection, which the selection would join', () => {
+      const refusal = tupletRefusal(barOf('n8t3 n8t3 n8 n8 n8 n2'), beatsAt(2, 3, 4), triplet);
+
+      expect(refusal).toMatch(/unfinished 3:2 group next to the selection/i);
+      expect(refusal).not.toMatch(/needs three beats/i);
+    });
+
+    it('says why a mixed group after an on-beat grace would stay open', () => {
+      expect(tupletRefusal(barOf('o n4 n8 n4 n2'), beatsAt(1, 2), triplet)).toMatch(/on-beat grace/i);
+    });
+
+    it('refuses taking one beat out of a closed group, and lets the whole group out', () => {
+      expect(tupletRefusal(barOf(group), beatsAt(1), null)).toMatch(/break a tuplet group; select the whole group/i);
+      expect(tupletRefusal(barOf(group), beatsAt(0, 1, 2), null)).toBeNull();
+    });
+
+    it('accepts a press that leaves every group closed', () => {
+      expect(tupletRefusal(barOf('n8t3 n8t3 n8t3 n8 n8 n8 n8t3 n8t3 n8t3 n4'), beatsAt(3, 4, 5), triplet)).toBeNull();
+      expect(tupletRefusal(barOf(group), beatsAt(1), triplet)).toBeNull();
+      expect(tupletRefusal(barOf('n4 n8 n4 n2'), beatsAt(0, 1), triplet)).toBeNull();
+      expect(tupletRefusal(barOf('g n8 n8 n8 n2 r8'), beatsAt(0, 1, 2, 3), triplet)).toBeNull();
+    });
+  });
+
+  describe('a length, a grace, an insert, a delete or a note', () => {
+    it('refuses a duration or dots on one beat of a group, and not on the whole group or outside it', () => {
+      expect(durationRefusal(barOf(group), beatsAt(1), 4, 0)).toMatch(/break a tuplet group; select the whole group/i);
+      expect(dotsRefusal(barOf(group), beatsAt(0), 1)).toMatch(/break a tuplet group; select the whole group/i);
+      expect(durationRefusal(barOf(group), beatsAt(0, 1, 2), 4, 0)).toBeNull();
+      expect(durationRefusal(barOf(group), beatsAt(3), 8, 0)).toBeNull();
+      expect(dotsRefusal(barOf(group), beatsAt(3), 1)).toBeNull();
+    });
+
+    it('refuses making one beat of a group a grace, and not a beat outside it', () => {
+      expect(graceRefusal(barOf(group), beatsAt(1), 'beforeBeat')).toMatch(/break a tuplet group; select the whole group/i);
+      expect(graceRefusal(barOf(group), beatsAt(3), 'onBeat')).toBeNull();
+    });
+
+    it('refuses an insert inside a group, and not one in front of it or after it', () => {
+      expect(insertBeatRefusal(barOf(group), ref(0, 1), 8, 0)).toMatch(/break a tuplet group; insert before or after the whole group/i);
+      expect(insertBeatRefusal(barOf(group), ref(0, 0), 8, 0)).toBeNull();
+      expect(insertBeatRefusal(barOf(group), ref(0, 3), 8, 0)).toBeNull();
+    });
+
+    it('refuses deleting part of a group, and not the whole group', () => {
+      expect(deleteBeatsRefusal(barOf(group), beatsAt(1))).toMatch(/break a tuplet group; select the whole group/i);
+      expect(deleteBeatsRefusal(barOf(group), beatsAt(0, 1, 2))).toBeNull();
+    });
+
+    it('refuses a note of another value written into a group, and not one of the group\'s own value', () => {
+      expect(noteEntryRefusal(barOf(group), ref(0, 1), 4, 0)).toMatch(/break a tuplet group/i);
+      expect(noteEntryRefusal(barOf(group), ref(0, 1), 8, 0)).toBeNull();
+      expect(noteEntryRefusal(barOf(group), ref(0, 4), 4, 0)).toBeNull();
+    });
   });
 });
 

@@ -6,6 +6,7 @@ import { barMeterAt, fillBarGaps, scoreBarFills } from './bar-fill';
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
+import { writtenBeats } from './written-beats';
 import { BeatDoc, FermataDoc, ScoreDoc, createDefaultNoteEffects, createRestBeat } from '../models/composer.model';
 
 const ref = (barIndex: number, beatIndex: number, trackIndex = 0): BeatRef =>
@@ -160,6 +161,24 @@ describe('pasteBeats', () => {
     expect(pasteBeats(doc, ref(1, 0), copiedBeatsOf(doc, [ref(0, 0)])!)).toMatch(/part of a tuplet group/i);
     expect(shape(doc, 1)).toEqual(['r4', 'r4', 'r4', 'r4']);
     expect(pasteBeats(doc, ref(1, 0), copiedBeatsOf(doc, [ref(0, 0), ref(0, 1), ref(0, 2)])!)).toEqual({ appendedBars: 0, at: ref(1, 0) });
+  });
+
+  it('refuses a paste that would split a tuplet group, and pastes a whole group over a whole group', () => {
+    // A quarter pasted over the group's second triplet takes the second and third, leaving the first open.
+    const doc = ComposerService.createEmptyScore();
+    beats(doc, 0).splice(0, 4, ...writtenBeats('n8t3 n8t3 n8t3 n4 n2'));
+    const group = copiedBeatsOf(doc, [ref(0, 0), ref(0, 1), ref(0, 2)])!;
+
+    expect(pasteBeats(structuredClone(doc), ref(0, 1), { fretted: true, beats: writtenBeats('n4') })).toMatch(/paste would split a tuplet group/i);
+    expect(pasteBeats(structuredClone(doc), ref(0, 0), group)).toEqual({ appendedBars: 0, at: ref(0, 0) });
+  });
+
+  it('refuses a paste that would carry part of a tuplet group into the next bar', () => {
+    // A whole group pasted at the last of twelve triplets puts one in bar 1 and two in bar 2.
+    const doc = ComposerService.createEmptyScore();
+    beats(doc, 0).splice(0, 4, ...writtenBeats(Array.from({ length: 12 }, () => 'n8t3').join(' ')));
+
+    expect(pasteBeats(doc, ref(0, 11), { fretted: true, beats: writtenBeats('n8t3 n8t3 n8t3') })).toMatch(/paste would split a tuplet group/i);
   });
 
   it('refuses a paste at a beat past the bar line of a bar already over, and not one before the line', () => {
