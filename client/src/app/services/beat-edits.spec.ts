@@ -637,6 +637,38 @@ describe('toggleFermata', () => {
     expect(fermatas(doc, 1)).toEqual([null, null, null, null]);
   });
 
+  describe('in a bar with a second voice', () => {
+    // A loaded bar can have a second voice. alphaTab files a fermata by tick and hands it to every beat finished later
+    // at that tick without one, in every voice (`Voice.finish` ~3294, `MasterBar.getFermata` ~2728): written on voice 1
+    // alone, the second voice's beat at the position took it on save, and a clear left that copy.
+    let mapper: ScoreDocMapperService;
+
+    beforeEach(() => {
+      TestBed.configureTestingModule({});
+      mapper = TestBed.inject(ScoreDocMapperService);
+    });
+
+    /** Each beat's fermata type in bar 0 of the guitar's voice `voiceIndex`, or null. */
+    const voiceFermatas = (doc: ScoreDoc, voiceIndex: number): (string | null)[] =>
+      doc.tracks[0].staves[0].bars[0].voices[voiceIndex].beats.map(beat => beat.effects.fermata?.type ?? null);
+
+    it('writes and clears the second voice\'s beat at the position, so a save neither adds one nor leaves one', () => {
+      const doc = ComposerService.createEmptyScore();
+      doc.tracks[0].staves[0].bars.forEach((bar, barIndex) => bar.voices.push({ beats: writtenBeats(barIndex === 0 ? 'n2 n2' : 'r1') }));
+      withNote(doc, 0, 2);
+
+      toggleFermata(doc, [ref(0, 2)], medium);
+      expect([voiceFermatas(doc, 0), voiceFermatas(doc, 1)]).toEqual([[null, null, 'medium', null], [null, 'medium']]);
+      const saved = mapper.toDoc(mapper.toScore(doc, new alphaTab.Settings()));
+      expect([voiceFermatas(saved, 0), voiceFermatas(saved, 1)]).toEqual([voiceFermatas(doc, 0), voiceFermatas(doc, 1)]);
+
+      toggleFermata(saved, [ref(0, 2)], medium);
+      expect([voiceFermatas(saved, 0), voiceFermatas(saved, 1)]).toEqual([[null, null, null, null], [null, null]]);
+      const cleared = mapper.toDoc(mapper.toScore(saved, new alphaTab.Settings()));
+      expect([voiceFermatas(cleared, 0), voiceFermatas(cleared, 1)]).toEqual([[null, null, null, null], [null, null]]);
+    });
+  });
+
   describe('with a grace at the position', () => {
     // alphaTab files a fermata by the tick a beat plays at and hands it to every later beat there without
     // one (`Voice.finish` ~3294, `MasterBar.getFermata` ~2728). A grace in front of the beat at the

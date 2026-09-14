@@ -103,11 +103,14 @@ alphaTab upgrade that changes one turns a spec red rather than going unnoticed.
 - **Four slide types have no name in the model.** In from above, out down, and pick slides
   down and up read back as no slide, so alphaTex applied from the source panel loses them.
   Nothing the composer writes can produce them.
-- **A grace that carries a tuplet in a loaded file is read one bar at a time.** alphaTab joins a bar's leading grace
-  to the group the bar before ends in, and a grace after a beat in no group starts a group that never closes. The
-  editor's open-group refusals read a bar on its own, so such a bar can be misread. Stripping the tuplet on load was
-  measured and not done: it changes alphaTab's grouping - `n4 g8t3 n8t3 n8t3 n8t3 n2` is one open group of four as
-  loaded and a closed triplet stripped - so it is not a normalisation. The editor never gives a grace a tuplet.
+- **A grace that carries a tuplet is read one bar at a time.** alphaTab joins a bar's leading grace to the group the
+  bar before ends in, and a grace after a beat in no group starts a group that never closes. The editor's open-group
+  refusals read a bar on its own, so such a bar can be misread: `o ot3 ot3 ot3 o n2 n2` after a bar that ends in a
+  closed triplet is read as holding an open group, where alphaTab joins the graces to that triplet. Stripping the
+  tuplet on load was measured and not done: it changes alphaTab's grouping - `n4 g8t3 n8t3 n8t3 n8t3 n2` is one open
+  group of four as loaded and a closed triplet stripped - so it is not a normalisation. A loaded file is not the only
+  source: `setGrace` keeps a beat's tuplet, so the grace tool gives a grace one wherever that leaves no group open. A
+  save changes none of it: alphaTex keeps a grace's tuplet, a grace-only run's included.
 - **Deleting, or writing over, the note that holds a fermata leaves the fermata at its tick.** A fermata goes with its
   note only when the note moves; a note that is gone carries nothing, so on one track the beat that moves onto its
   tick takes the fermata. Guitar Pro removes a fermata with its beat. A paste that leaves nothing at the tick removes

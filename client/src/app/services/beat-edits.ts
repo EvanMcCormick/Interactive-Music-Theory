@@ -88,8 +88,9 @@ export function setDynamics(doc: ScoreDoc, refs: readonly BeatRef[], dynamics: D
 }
 
 /**
- * Every beat a fermata pressed on `refs` belongs to: for the tick each ref's beat plays at in its bar, the voice-1 beat
- * that plays there on every staff of every track. A fermata belongs to a bar position, not to a beat.
+ * Every beat a fermata pressed on `refs` belongs to: for the tick each ref's beat plays at in its bar, the beat that
+ * plays there in every voice of every staff of every track. A fermata belongs to a bar position, not to a beat, and
+ * alphaTab hands one to a loaded second voice's beat at that tick as it does to any other.
  *
  * That is alphaTab's model and Guitar Pro's. `Voice.finish` files a beat's fermata on the master bar by the tick it
  * plays at (`alphaTab.core.mjs` ~3294), and `MasterBar.getFermata` (~2728) hands it to every beat finished later at
@@ -123,11 +124,12 @@ export function fermataPositionsOf(doc: ScoreDoc, refs: readonly BeatRef[]): Bea
     if (track.generated) continue;
     for (const staff of track.staves) {
       for (const [barIndex, ticks] of ticksByBar) {
-        const voice = staff.bars[barIndex]?.voices[0]?.beats ?? [];
-        const starts = playbackStartsOf(voice);
-        voice.forEach((beat, index) => {
-          if (ticks.has(starts[index])) beats.push(beat);
-        });
+        for (const voice of staff.bars[barIndex]?.voices ?? []) {
+          const starts = playbackStartsOf(voice.beats);
+          voice.beats.forEach((beat, index) => {
+            if (ticks.has(starts[index])) beats.push(beat);
+          });
+        }
       }
     }
   }

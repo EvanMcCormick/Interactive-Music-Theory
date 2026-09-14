@@ -442,7 +442,32 @@ export function graceRefusal(doc: ScoreDoc, refs: readonly BeatRef[], grace: Exc
   if (refusal) return refusal;
   const value = toggledValue(beatsAt(doc, refs).map(beat => beat.effects.grace), grace, 'none');
   const opened = tupletGroupOpenedBy(doc, refs, (draft, drafted) => setGrace(draft, drafted, value), null);
-  return opened ? shortenedByOnBeatGrace(opened.group, opened.after) ?? BREAKS_A_GROUP : null;
+  if (!opened) return null;
+  return shortenedByOnBeatGrace(opened.group, opened.after) ?? (namesWholeGroups(doc, refs) ? GRACE_GROUP : BREAKS_A_GROUP);
+}
+
+const GRACE_GROUP = 'A grace note takes no room in its bar, so a tuplet group cannot be made of grace notes.';
+
+/**
+ * Whether the beats `refs` name touch a tuplet group, and name every beat each group they touch counts, as alphaTab
+ * groups each voice (`tupletGroupsOf`). A grace press refused there has nothing more to select, so it says why instead.
+ */
+function namesWholeGroups(doc: ScoreDoc, refs: readonly BeatRef[]): boolean {
+  const named = new Set(beatsAt(doc, refs));
+  const touched = new Set<object>();
+  const partial = new Set<object>();
+  const voices = new Map(refs.map(ref => [`${ref.trackIndex}:${ref.staffIndex}:${ref.barIndex}:${ref.voiceIndex}`, ref]));
+  for (const at of voices.values()) {
+    const beats = doc.tracks[at.trackIndex]?.staves[at.staffIndex]?.bars[at.barIndex]?.voices[at.voiceIndex]?.beats ?? [];
+    const groups = tupletGroupsOf(beats);
+    beats.forEach((beat, index) => {
+      const group = groups[index];
+      if (!group || beat.effects.grace !== 'none') return;
+      if (named.has(beat)) touched.add(group);
+      else partial.add(group);
+    });
+  }
+  return touched.size > 0 && [...touched].every(group => !partial.has(group));
 }
 
 /** The highest MIDI note, which `Note.trillValue` must not pass. */

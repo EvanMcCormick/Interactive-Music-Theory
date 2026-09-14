@@ -3,7 +3,7 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerService } from './composer.service';
 import { BeatRef } from './composer-selection';
-import { clearToRests, deleteBeats, insertBeatAt, setBeatDurations, setGrace } from './beat-edits';
+import { clearToRests, deleteBeats, insertBeatAt, setBeatDots, setBeatDurations, setGrace } from './beat-edits';
 import { playbackStartsOf } from './bar-fill';
 import { fermataNoticeOf } from './fermata-settling';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
@@ -142,6 +142,23 @@ describe('fermata positions and carrying', () => {
       "1 fermata removed: its note moved onto another fermata's place. 1 fermata removed: no note starts at its place any more."
     );
     expect(fermataNoticeOf(['otherVoices'])).toBe('1 fermata removed: its note moved where it would reach another staff or voice of its track.');
+    expect(fermataNoticeOf(['becameGrace'])).toBe('1 fermata removed: its note became a grace note, which cannot hold a fermata of its own.');
+    expect(fermataNoticeOf(['becameGrace', 'becameGrace'])).toBe(
+      '2 fermatas removed: their notes became grace notes, which cannot hold fermatas of their own.'
+    );
+    expect(fermataNoticeOf(['notesApart'])).toBe('1 fermata removed: the notes holding it moved apart.');
+    expect(fermataNoticeOf(['notesApart', 'notesApart'])).toBe('2 fermatas removed: the notes holding them moved apart.');
+  });
+
+  it('says a fermata went because its note became a grace note, when nothing else plays at its place', () => {
+    // The bar is over, so the sixteenth's room fills with no rest. Only the new grace plays at 2640, and a grace cannot
+    // hold a fermata alone.
+    const doc = scoreOf('n4. n4 n16 n16F n8 n8 n8');
+
+    expect(setGrace(doc, [ref(3)], 'onBeat')).toEqual(['becameGrace']);
+
+    expect(shapesOf(doc)).toEqual(['n4. n4 n16 o n8 n8 n8']);
+    expect(shapesOf(saved(doc))).toEqual(shapesOf(doc));
   });
 
   it('takes the fermata with its note when the beat before it is deleted on a single track', () => {
@@ -171,6 +188,46 @@ describe('fermata positions and carrying', () => {
 
     expect(shapesOf(doc)).toEqual(['n4 n4F n4 n8 r8', 'n4 n4F n4 n4']);
     expect(shapesOf(saved(doc))).toEqual(shapesOf(doc));
+  });
+
+  it('carries a fermata held on two tracks when both notes holding it move to the same tick', () => {
+    // Each note holding it is the other's beat at its new tick, and it is the same fermata.
+    const lengthened = scoreOf('n4 n4F n4 n4', 'n4 n4F n4 n4');
+    expect(setBeatDurations(lengthened, [ref(0), ref(0, 1)], 2, 0)).toEqual([]);
+    expect(shapesOf(lengthened)).toEqual(['n2 n4F n4 n4', 'n2 n4F n4 n4']);
+    expect(shapesOf(saved(lengthened))).toEqual(shapesOf(lengthened));
+
+    // The beats that moved onto the old place, on the same two staves, do not keep it there, as on a single track.
+    const deleted = scoreOf('n4 n4F n4 n4', 'n4 n4F n4 n4');
+    expect(deleteBeats(deleted, [ref(0), ref(0, 1)])).toEqual([]);
+    expect(shapesOf(deleted)).toEqual(['n4F n4 n4 r4', 'n4F n4 n4 r4']);
+    expect(shapesOf(saved(deleted))).toEqual(shapesOf(deleted));
+  });
+
+  it('removes a fermata whose notes on two tracks move to different ticks, rather than make it two, and says so', () => {
+    // Both halves hold the fermata at 1920. Dotted, the first guitar's plays at 2160 and the second's at 2880.
+    const doc = scoreOf('n4. n8 n2F', 'n2 n2F');
+
+    expect(setBeatDots(doc, [ref(0), ref(1), ref(2), ref(0, 1), ref(1, 1)], 1)).toEqual(['notesApart']);
+
+    expect(shapesOf(doc)).toEqual(['n4. n8. n2.', 'n2. n2.']);
+    expect(shapesOf(saved(doc))).toEqual(shapesOf(doc));
+  });
+
+  it('reads a fermata only a second voice holds as its position\'s, so a beat that moves onto that tick takes it', () => {
+    // A loaded bar: the first guitar's second voice holds a fermata at 1440, where its first voice has no beat. alphaTab
+    // files it there and hands it to the second guitar's quarter the dot moves onto 1440.
+    const doc = scoreOf('n4 n4 n2', 'n4 n4 n2');
+    const second = writtenBeats('n4. n8 n2');
+    second[1].effects.fermata = { type: 'medium', length: 1 };
+    doc.tracks[0].staves[0].bars.forEach((bar, barIndex) => bar.voices.push({ beats: barIndex === 0 ? second : writtenBeats('r1') }));
+
+    expect(setBeatDots(doc, [ref(0, 1)], 1)).toEqual([]);
+
+    expect(shapesOf(doc)).toEqual(['n4 n4 n2', 'n4. n4F n2']);
+    const kept = saved(doc);
+    expect(shapesOf(kept)).toEqual(shapesOf(doc));
+    expect(kept.tracks[0].staves[0].bars[0].voices[1].beats.map(beat => beat.effects.fermata !== null)).toEqual([false, true, false]);
   });
 
   describe('when a clear removes a grace', () => {

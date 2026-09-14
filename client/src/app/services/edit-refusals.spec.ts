@@ -362,6 +362,18 @@ describe('an edit that would leave a tuplet group open', () => {
       expect(graceRefusal(barOf(group), beatsAt(3), 'onBeat')).toBeNull();
     });
 
+    it('says a whole group cannot be made of graces, since selecting the group would not help', () => {
+      for (const kind of ['beforeBeat', 'onBeat'] as const) {
+        const refusal = graceRefusal(barOf('n4t3 n4t3 n4t3 n2'), beatsAt(0, 1, 2), kind);
+
+        expect(refusal).withContext(kind).toMatch(/tuplet group cannot be made of grace notes/i);
+        expect(refusal).withContext(kind).not.toMatch(/select the whole group/i);
+      }
+      // Part of the group, and the whole group with a beat of another group, still say to select the whole group.
+      expect(graceRefusal(barOf('n4t3 n4t3 n4t3 n2'), beatsAt(0, 1), 'beforeBeat')).toMatch(/select the whole group/i);
+      expect(graceRefusal(barOf('n8t3 n8t3 n8t3 n8t3 n8t3 n8t3 n2'), beatsAt(0, 1, 2, 3), 'beforeBeat')).toMatch(/select the whole group/i);
+    });
+
     it('says an on-beat grace in front of a mixed group shortens it, since selecting the group would not help', () => {
       // The grace takes its 32nd from the group's first beat, so 640 and 320 no longer add up to a whole group.
       const refusal = graceRefusal(barOf('n4 n4t3 n8t3 n2'), beatsAt(0), 'onBeat');

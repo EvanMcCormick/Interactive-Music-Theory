@@ -214,6 +214,26 @@ const DVORAK: Layout = {
   Comma: ['w', 'W'], Period: ['v', 'V'], Slash: ['z', 'Z']
 };
 
+/**
+ * The symbols a layout types through AltGr on Windows, which the browser reports with Ctrl and Alt held, and through
+ * Option on a Mac, which it reports with Alt: on each physical key where one of them is a symbol some binding names, or
+ * could be mistaken for one.
+ */
+const ALTGR: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  QWERTZ: {
+    KeyQ: '@', KeyE: '€', KeyM: 'µ', Digit2: '²', Digit3: '³', Digit7: '{', Digit8: '[', Digit9: ']', Digit0: '}',
+    Minus: '\\', BracketRight: '~', IntlBackslash: '|'
+  },
+  AZERTY: {
+    Digit2: '~', Digit3: '#', Digit4: '{', Digit5: '[', Digit6: '|', Digit7: '`', Digit8: '\\', Digit9: '^', Digit0: '@',
+    Minus: ']', Equal: '}', BracketRight: '¤', KeyE: '€'
+  }
+};
+const OPTION: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  'German Mac': { Digit1: '¡', Digit5: '[', Digit6: ']', Digit7: '|', Digit8: '{', Digit9: '}', KeyE: '€', KeyL: '@', KeyN: '~' },
+  'French Mac': { Digit5: '{', Digit6: '[', Digit7: '¶', Digit8: '!', Minus: '}', KeyL: '|' }
+};
+
 describe('toolForPress on four layouts', () => {
   // `toolForPress` asks three questions in turn, over the whole table: a binding's own key, then a Ctrl symbol typed
   // on another key, then a symbol typed through AltGr or Option. Whichever first finds a binding decides, so that
@@ -237,6 +257,30 @@ describe('toolForPress on four layouts', () => {
     }
 
     expect(doubles).toEqual([]);
+  });
+
+  it('never lets one press match two bindings, through AltGr on QWERTZ or AZERTY, or Option on a German or French Mac', () => {
+    const presses = [
+      ...Object.entries(ALTGR).flatMap(([name, keys]) =>
+        Object.entries(keys).map(([code, key]) => ({ name: `${name} AltGr`, typed: press({ code, key, ctrlKey: true, altKey: true }) }))
+      ),
+      ...Object.entries(OPTION).flatMap(([name, keys]) =>
+        Object.entries(keys).map(([code, key]) => ({ name: `${name} Option`, typed: press({ code, key, altKey: true }) }))
+      )
+    ];
+    const doubles: string[] = [];
+    for (const { name, typed } of presses) {
+      for (const matches of questions) {
+        const found = COMPOSER_TOOLS.flatMap(entry => entry.keys.filter(binding => matches(binding, typed)).map(() => entry.id));
+        if (found.length > 1) doubles.push(`${name} ${typed.code} (${typed.key}): ${found.join(', ')}`);
+        if (found.length > 0) break;
+      }
+    }
+
+    expect(doubles).toEqual([]);
+    // A symbol typed through AltGr or Option still reaches the tool that names it.
+    expect(toolForPress(press({ code: 'Digit8', key: '[', ctrlKey: true, altKey: true }))?.id).toBe('repeatOpen');
+    expect(toolForPress(press({ code: 'Digit6', key: ']', altKey: true }))?.id).toBe('repeatClose');
   });
 });
 
