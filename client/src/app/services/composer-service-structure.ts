@@ -177,16 +177,21 @@ export class ComposerStructureCommands {
         const staffBars = (): BarDoc[] => draft.tracks[trackIndex]?.staves[staffIndex]?.bars.slice(bars.first) ?? [];
         const fermatas = fermataSnapshotOf(draft, staffBars().map((_, offset) => bars.first + offset));
         const openBefore = staffBars().flatMap(bar => openTupletGroupsOf(bar.voices[0]?.beats ?? []));
+        const isOver = (index: number): boolean => barFillAt(draft, trackIndex, staffIndex, index)?.kind === 'over';
+
+        // Counted before anything is carried: carrying one bar's overflow can mend a later selected bar on the way,
+        // and the loop below then finds that bar no longer over and skips it, though Fix bar mended it.
+        const overBefore = Array.from({ length: bars.last - bars.first + 1 }, (_, offset) => bars.first + offset).filter(isOver);
+        if (overBefore.length === 0) return 'No selected bar is over its time signature.';
 
         for (let index = bars.first; index <= bars.last; index++) {
-          if (barFillAt(draft, trackIndex, staffIndex, index)?.kind !== 'over') continue;
+          if (!isOver(index)) continue;
           const result = fixBarOverflow(draft, trackIndex, staffIndex, index);
           if (result.kind === 'refused') return result.reason;
-          fixed++;
           appended += result.appendedBars;
         }
+        fixed = overBefore.length;
 
-        if (fixed === 0) return 'No selected bar is over its time signature.';
         if (staffBars().some(bar => newOpenTupletGroup(openBefore, bar.voices[0]?.beats ?? []))) return SPLITS_A_GROUP;
         if (appended > 0) this.host.markDiverged(draft);
         return settleFermatas(draft, fermatas);

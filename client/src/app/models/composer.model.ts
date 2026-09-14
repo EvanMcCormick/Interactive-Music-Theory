@@ -436,6 +436,13 @@ export interface ComposerState {
    * wherever `refusal` is - the next edit, a selection change, undo, redo - and by a refusal.
    */
   notice: string | null;
+  /**
+   * Which refusal or notice is showing. Bumped each time one is published, so the same words published twice - two
+   * Fix bar refusals, the same paste twice - are two messages, and the live region replaces its node and says them
+   * again. Unchanged by anything that publishes neither, and by the second digit of a fret, which keeps the first
+   * digit's notice rather than saying it again.
+   */
+  messageId: number;
   /** Select or Pen. See `EntryMode`. */
   entryMode: EntryMode;
   /** Duration applied to the next entered note. */

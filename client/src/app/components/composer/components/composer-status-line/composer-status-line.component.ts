@@ -33,6 +33,8 @@ export class ComposerStatusLineComponent implements OnChanges {
   @Input() refusal: string | null = null;
   /** What the last command did, from `ComposerState.notice`. */
   @Input() notice: string | null = null;
+  /** Which refusal or notice that is, from `ComposerState.messageId`. */
+  @Input() messageId = 0;
   /** Why an alphaTex apply left the score unchanged. */
   @Input() texError: string | null = null;
   @Input() cursor: EditCursor | null = null;
@@ -49,8 +51,27 @@ export class ComposerStatusLineComponent implements OnChanges {
     this.overBarsLabel = over === 0 ? null : `${countOf(over, 'bar')} over ${over === 1 ? 'its time signature' : 'their time signatures'}`;
   }
 
-  /** What the live region says: the alphaTex error, the refusal, then the outcome. */
-  get messages(): string[] {
-    return [this.texError, this.refusal, this.notice].filter((message): message is string => !!message);
+  /**
+   * What the live region says: the alphaTex error, the refusal, then the outcome, each keyed by what it is. A refusal
+   * and a notice are keyed by `messageId`, so the same words published again replace their node and are read out
+   * again; the alphaTex error, which the page holds rather than the service, by its words.
+   */
+  get messages(): StatusMessage[] {
+    const keyed: Array<StatusMessage | null> = [
+      this.texError ? { key: `tex:${this.texError}`, text: this.texError } : null,
+      this.refusal ? { key: `refusal:${this.messageId}`, text: this.refusal } : null,
+      this.notice ? { key: `notice:${this.messageId}`, text: this.notice } : null
+    ];
+    return keyed.filter((message): message is StatusMessage => message !== null);
   }
+
+  trackByKey(_index: number, message: StatusMessage): string {
+    return message.key;
+  }
+}
+
+/** One message in the live region, and what identifies it there. */
+export interface StatusMessage {
+  key: string;
+  text: string;
 }

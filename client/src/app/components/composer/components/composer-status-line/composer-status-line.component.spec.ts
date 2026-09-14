@@ -51,6 +51,24 @@ describe('ComposerStatusLineComponent', () => {
     expect(region().textContent).toContain('Fixed 1 bar');
   });
 
+  it('replaces the message in the region when the same words are published again, so a screen reader says them again', () => {
+    fixture.componentRef.setInput('refusal', 'No selected bar is over its time signature.');
+    fixture.componentRef.setInput('messageId', 1);
+    fixture.detectChanges();
+    const first = region().querySelector('.message');
+
+    fixture.componentRef.setInput('cursor', createDefaultCursor());
+    fixture.detectChanges();
+    expect(region().querySelector('.message')).withContext('nothing new was published').toBe(first);
+
+    fixture.componentRef.setInput('messageId', 2);
+    fixture.detectChanges();
+    const second = region().querySelector('.message');
+
+    expect(second?.textContent ?? '').toBe(first?.textContent ?? '');
+    expect(second).not.toBe(first);
+  });
+
   it('shows the caret\'s bar and beat, counting from one, outside the live region', () => {
     fixture.componentRef.setInput('cursor', { ...createDefaultCursor(), barIndex: 2, beatIndex: 1 });
     fixture.detectChanges();

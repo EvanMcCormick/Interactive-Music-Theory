@@ -118,6 +118,7 @@ export class ComposerService {
       anchor: null,
       refusal: null,
       notice: null,
+      messageId: 0,
       entryMode: 'select',
       inputDuration: 4,
       inputDots: 0,
@@ -225,10 +226,13 @@ export class ComposerService {
    * adding an undo step: the second digit of a two-digit fret (`retypeNote`).
    */
   private commit(edit: (draft: ScoreDoc) => EditOutcome, amend = false): void {
-    const draft = structuredClone(this.stateSubject.getValue().doc);
+    const state = this.stateSubject.getValue();
+    const draft = structuredClone(state.doc);
     const reason = edit(draft);
     if (typeof reason === 'string') return this.refuse(reason);
-    this.commitDocument(draft, undefined, amend, noticeOfOutcome(null, reason));
+    // An amend replaces the commit before it, whose notice - a fermata the first digit's note removed - still holds.
+    const notice = noticeOfOutcome(null, reason);
+    this.commitDocument(draft, undefined, amend, amend ? notice ?? state.notice : notice);
   }
 
   /**
@@ -291,6 +295,8 @@ export class ComposerService {
       anchor: anchor ? clampedCursor(anchor, next) : null,
       refusal: null,
       notice,
+      // A new message, unless an amend kept the one already showing (`commit`).
+      messageId: notice !== null && !(amend && notice === state.notice) ? state.messageId + 1 : state.messageId,
       isDirty: true,
       canUndo: true,
       canRedo: false
@@ -354,8 +360,13 @@ export class ComposerService {
     });
   }
 
-  markSaved(): void {
+  /**
+   * Marks the document clean, if `saved` - the document that was written - is still it. A save is written
+   * asynchronously, and an edit made while it was being written is not in it, so it stays unsaved.
+   */
+  markSaved(saved: ScoreDoc): void {
     const state = this.stateSubject.getValue();
+    if (state.doc !== saved) return;
     this.stateSubject.next({ ...state, isDirty: false });
   }
 
@@ -619,7 +630,8 @@ export class ComposerService {
 
   /** Publishes why a command did nothing. Commits nothing, so it costs no undo step. */
   private refuse(reason: string): void {
-    this.stateSubject.next({ ...this.stateSubject.getValue(), refusal: reason, notice: null });
+    const state = this.stateSubject.getValue();
+    this.stateSubject.next({ ...state, refusal: reason, notice: null, messageId: state.messageId + 1 });
   }
 
   // -------------------------------------------------------------------------
@@ -942,6 +954,7 @@ export class ComposerService {
       anchor: null,
       refusal: null,
       notice: null,
+      messageId: 0,
       entryMode: 'select',
       inputDuration: 4,
       inputDots: 0,

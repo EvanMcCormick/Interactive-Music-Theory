@@ -100,10 +100,19 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
 
   /**
    * Whether a write to the library is under way. A second trigger while it is - Ctrl+S just after a click,
-   * a double click - is dropped: the first write's id is not known until it lands, so letting the second
-   * through would create a second entry rather than overwrite the first.
+   * a double click, Ctrl+S after an edit made mid-write - does not start a second write: the first write's
+   * id is not known until it lands, so letting the second through would create a second entry rather than
+   * overwrite the first. It is remembered instead, in `saveAfterWrite`.
    */
   private saving = false;
+
+  /**
+   * A save asked for while a write was under way, however many times, run once after that write lands - by the
+   * id it returned, so over the same entry. Run only if it still has something to write: the document changed
+   * since the write began, or it was Save as copy. Dropped if the write failed, which has been reported and
+   * would only fail again; the user can press Save once they have read why.
+   */
+  private saveAfterWrite: { asNew: boolean } | null = null;
 
   /**
    * Why the last press of Save was refused, or `null` if it was not.
@@ -291,6 +300,11 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
     // A guard that refuses has said why where its own state is shown - the alphaTex draft, in the status line.
     if (!this.state || this.saveRequests.refused()) return;
 
+    if (this.saving) {
+      this.saveAfterWrite = { asNew: (this.saveAfterWrite?.asNew ?? false) || asNew };
+      return;
+    }
+
     if (this.linkedProgressions.length > 0) {
       this.refuseToSave(asNew);
       return;
@@ -439,8 +453,11 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
     if (!this.state || this.saving) return false;
 
     this.saving = true;
+    // The document this write holds. Only it is marked saved, and a request that arrived mid-write runs after it
+    // only when the document has moved on from it.
+    const doc = this.state.doc;
+    let landed = false;
     try {
-      const doc = this.state.doc;
       const score = this.buildScore();
 
       const id = await this.library.save(
@@ -456,16 +473,20 @@ export class ComposerLibraryPanelComponent implements OnInit, OnDestroy {
       );
 
       this.currentId = id;
-      this.composer.markSaved();
+      this.composer.markSaved(doc);
       this.pendingSave = null;
       this.report(`Saved "${doc.title || 'Untitled'}"`);
-      return true;
+      landed = true;
     } catch (error) {
       this.reportError(error);
-      return false;
     } finally {
       this.saving = false;
     }
+
+    const after = this.saveAfterWrite;
+    this.saveAfterWrite = null;
+    if (landed && after && (after.asNew || this.state?.doc !== doc)) void this.save(after.asNew);
+    return landed;
   }
 
   async load(id: string): Promise<void> {

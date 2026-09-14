@@ -122,6 +122,67 @@ describe('ComposerLibraryPanelComponent', () => {
       expect(library.save).toHaveBeenCalledTimes(1);
     });
 
+    describe('when Save is asked for again while a write is under way', () => {
+      /** Resolves each write the library was asked for, in order. */
+      let writes: Array<(id: string) => void>;
+      /** Lets every pending promise callback run. */
+      const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve));
+
+      beforeEach(() => {
+        writes = [];
+        (library.save as jasmine.Spy).and.callFake(() => new Promise<string>(resolve => writes.push(resolve)));
+      });
+
+      it('leaves an edit made mid-write unsaved until one more write, over the same entry, lands', async () => {
+        const first = panel.save();
+        composer.setTempo(140);
+        TestBed.inject(ComposerSaveRequests).request();
+
+        writes[0]('saved-id');
+        await first;
+        await settle();
+        expect(composer.state.isDirty).withContext('the first write held the tempo before the edit').toBeTrue();
+        expect(library.save).toHaveBeenCalledTimes(2);
+        expect((library.save as jasmine.Spy).calls.argsFor(1)[1]).toBe('saved-id');
+
+        writes[1]('saved-id');
+        await settle();
+        expect(composer.state.isDirty).toBeFalse();
+        expect(library.save).toHaveBeenCalledTimes(2);
+      });
+
+      it('writes one entry for a click and Ctrl+S, the second write updating the entry the first made', async () => {
+        const click = panel.save();
+        composer.setTempo(140);
+        TestBed.inject(ComposerSaveRequests).request();
+        writes[0]('saved-id');
+        await click;
+        await settle();
+        writes[1]('saved-id');
+        await settle();
+
+        const ids = (library.save as jasmine.Spy).calls.allArgs().map(args => args[1]);
+        expect(ids).toEqual([undefined, 'saved-id']);
+      });
+
+      it('runs one follow-up for three triggers', async () => {
+        const first = panel.save();
+        composer.setTempo(140);
+        TestBed.inject(ComposerSaveRequests).request();
+        void panel.save();
+        TestBed.inject(ComposerSaveRequests).request();
+
+        writes[0]('saved-id');
+        await first;
+        await settle();
+        writes[1]('saved-id');
+        await settle();
+
+        expect(library.save).toHaveBeenCalledTimes(2);
+        expect(composer.state.isDirty).toBeFalse();
+      });
+    });
+
     it('does not save while something on the page stands in the way, however Save is pressed', async () => {
       const requests = TestBed.inject(ComposerSaveRequests);
       const removeGuard = requests.guard(() => true);

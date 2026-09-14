@@ -54,7 +54,8 @@ const SPLITS_A_GROUP =
  * reached past it the spare fills with rests right after the pasted beats (`insertRestsAt`), and a bar
  * left short fills at its end. A bar the pasted beats overfill - one already over - stays over, for Fix
  * bar. A free-time bar takes the rest of the run, since no meter says where it ends. Bars are appended
- * when the run runs off the end, and how many is returned, so the caller can stamp generated tracks
+ * when the run runs off the end, and how many is returned - with how many beats were written, graces aside and a
+ * split beat as its pieces, for paste's notice - so the caller can stamp generated tracks
  * diverged, with where the run starts, for the caret.
  *
  * A fermata belongs to a bar position on every track (the design's M2 decision 2). So each pasted beat
@@ -80,7 +81,7 @@ export function pasteBeats(
   doc: ScoreDoc,
   at: BeatRef,
   copied: CopiedBeats
-): { appendedBars: number; at: BeatRef; droppedFermatas: FermataDrops } | string {
+): { appendedBars: number; at: BeatRef; droppedFermatas: FermataDrops; beatsWritten: number } | string {
   const staff = doc.tracks[at.trackIndex]?.staves[at.staffIndex];
   if (!staff) return 'There is no staff there.';
   if ((staff.tuning.length > 0) !== copied.fretted) {
@@ -171,5 +172,8 @@ export function pasteBeats(
 
   const droppedFermatas = settleFermatas(doc, fermatas, pasted);
 
-  return { appendedBars, at: { ...at, beatIndex: startIndex }, droppedFermatas };
+  // What paste's notice counts: the beats laid down, graces aside, and a beat split at a line as the pieces it became.
+  const beatsWritten = segments.reduce((count, segment) => count + segment.beats.filter(beat => beat.effects.grace === 'none').length, 0);
+
+  return { appendedBars, at: { ...at, beatIndex: startIndex }, droppedFermatas, beatsWritten };
 }

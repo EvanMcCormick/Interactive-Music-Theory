@@ -1,7 +1,7 @@
 import { DurationValue, EditCursor, NoteDoc, NotePitch, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
 import { CopiedBeats, copiedBeatsOf, pasteBeats } from './beat-clipboard';
 import { clearToRests, deleteBeats, insertBeatAt, setBeatDots, setBeatDurations } from './beat-edits';
-import { CursorMove } from './composer-cursor';
+import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { BeatRef, beatAt, selectionTargets } from './composer-selection';
 import { ComposerCommandHost, EditOutcome, countOf } from './composer-service-structure';
 import { deleteBeatsRefusal, dotsRefusal, editRefusal, entryValueOf, insertBeatRefusal, noteEntryRefusal } from './edit-refusals';
@@ -55,10 +55,8 @@ export class ComposerEntryCommands {
     const value = entryValueOf(state.doc, cursor, state.inputDuration, state.inputDots);
     if (this.refusesEntryAt(state.doc, cursor, value)) return;
 
-    this.host.commit(draft => writeNote(draft, cursor, pitch, value.duration, value.dots));
+    this.commitEntry(draft => writeNote(draft, cursor, pitch, value.duration, value.dots), cursor, advance);
     this.lastEntry = { at: cursor, doc: this.host.state().doc };
-
-    if (advance) this.host.moveCursor({ kind: 'beat', delta: 1 });
   }
 
   /**
@@ -89,15 +87,30 @@ export class ComposerEntryCommands {
     const value = entryValueOf(state.doc, cursor, state.inputDuration, state.inputDots);
     if (this.refusesEntryAt(state.doc, cursor, value)) return;
 
-    this.host.commit(draft => {
-      const beat = beatAt(draft, cursor);
-      if (!beat) return;
-      beat.notes = [];
-      beat.isRest = true;
-      return setBeatDurations(draft, [cursor], value.duration, value.dots);
-    });
+    this.commitEntry(
+      draft => {
+        const beat = beatAt(draft, cursor);
+        if (!beat) return;
+        beat.notes = [];
+        beat.isRest = true;
+        return setBeatDurations(draft, [cursor], value.duration, value.dots);
+      },
+      cursor,
+      advance
+    );
+  }
 
-    if (advance) this.host.moveCursor({ kind: 'beat', delta: 1 });
+  /**
+   * Commits a note or rest written at `cursor`, and with `advance` moves the caret to the next beat and drops any range
+   * in that same commit. A separate caret move would publish again and clear what the commit said - a fermata the
+   * entry removed (`ComposerState.notice`) - and would advance past an entry the edit itself refused.
+   */
+  private commitEntry(edit: (draft: ScoreDoc) => EditOutcome, cursor: EditCursor, advance: boolean): void {
+    if (!advance) return this.host.commit(edit);
+    this.host.commitFollowing(edit, draft => ({
+      cursor: movedCursor(draft, clampedCursor(cursor, draft), { kind: 'beat', delta: 1 }),
+      anchor: null
+    }));
   }
 
   /**
@@ -205,17 +218,19 @@ export class ComposerEntryCommands {
     if (this.refusesEntryAt(state.doc, start)) return;
     let pastedAt: BeatRef = start;
     let appended = 0;
+    let written = 0;
     this.host.commitFollowing(
       draft => {
         const result = pasteBeats(draft, start, clipboard);
         if (typeof result === 'string') return result;
         pastedAt = result.at;
         appended = result.appendedBars;
+        written = result.beatsWritten;
         if (result.appendedBars > 0) this.host.markDiverged(draft);
         return result.droppedFermatas;
       },
       () => ({ cursor: { ...state.cursor, ...pastedAt }, anchor: null }),
-      () => pasteNoticeOf(clipboard.beats.length, appended)
+      () => pasteNoticeOf(written, appended)
     );
   }
 

@@ -47,7 +47,7 @@ describe('pasteBeats', () => {
     withNote(doc, 0, 1);
     const copied = copiedBeatsOf(doc, [ref(0, 0), ref(0, 1)]);
 
-    expect(pasteBeats(doc, ref(1, 1), copied!)).toEqual({ appendedBars: 0, at: ref(1, 1), droppedFermatas: [] });
+    expect(pasteBeats(doc, ref(1, 1), copied!)).toEqual({ appendedBars: 0, at: ref(1, 1), droppedFermatas: [], beatsWritten: 2 });
 
     expect(shape(doc, 1)).toEqual(['r4', 'n4', 'n4', 'r4']);
   });
@@ -60,7 +60,7 @@ describe('pasteBeats', () => {
     withNote(doc, 1, 0);
     const copied = copiedBeatsOf(doc, [ref(0, 3), ref(1, 0)]);
 
-    expect(pasteBeats(doc, ref(3, 0), copied!)).toEqual({ appendedBars: 0, at: ref(3, 0), droppedFermatas: [] });
+    expect(pasteBeats(doc, ref(3, 0), copied!)).toEqual({ appendedBars: 0, at: ref(3, 0), droppedFermatas: [], beatsWritten: 2 });
 
     expect(shape(doc, 3)).toEqual(['n4', 'n4', 'r4', 'r4']);
     expect(doc.masterBars.length).toBe(4);
@@ -72,7 +72,7 @@ describe('pasteBeats', () => {
     withNote(doc, 0, 0);
     const copied = copiedBeatsOf(doc, [ref(0, 0)]);
 
-    expect(pasteBeats(doc, ref(2, 3), copied!)).toEqual({ appendedBars: 0, at: ref(2, 3), droppedFermatas: [] });
+    expect(pasteBeats(doc, ref(2, 3), copied!)).toEqual({ appendedBars: 0, at: ref(2, 3), droppedFermatas: [], beatsWritten: 2 });
 
     expect(shape(doc, 2)).toEqual(['r4', 'r4', 'r4', 'n4']);
     expect(shape(doc, 3)).toEqual(['n4', 'r4', 'r4', 'r4']);
@@ -135,7 +135,7 @@ describe('pasteBeats', () => {
     withNote(doc, 1, 0);
     const copied = copiedBeatsOf(doc, [ref(0, 3), ref(1, 0)]);
 
-    expect(pasteBeats(doc, ref(3, 3), copied!)).toEqual({ appendedBars: 1, at: ref(3, 3), droppedFermatas: [] });
+    expect(pasteBeats(doc, ref(3, 3), copied!)).toEqual({ appendedBars: 1, at: ref(3, 3), droppedFermatas: [], beatsWritten: 2 });
 
     expect(shape(doc, 3)).toEqual(['r4', 'r4', 'r4', 'n4']);
     expect(shape(doc, 4)[0]).toBe('n4');
@@ -160,7 +160,7 @@ describe('pasteBeats', () => {
 
     expect(pasteBeats(doc, ref(1, 0), copiedBeatsOf(doc, [ref(0, 0)])!)).toMatch(/part of a tuplet group/i);
     expect(shape(doc, 1)).toEqual(['r4', 'r4', 'r4', 'r4']);
-    expect(pasteBeats(doc, ref(1, 0), copiedBeatsOf(doc, [ref(0, 0), ref(0, 1), ref(0, 2)])!)).toEqual({ appendedBars: 0, at: ref(1, 0), droppedFermatas: [] });
+    expect(pasteBeats(doc, ref(1, 0), copiedBeatsOf(doc, [ref(0, 0), ref(0, 1), ref(0, 2)])!)).toEqual({ appendedBars: 0, at: ref(1, 0), droppedFermatas: [], beatsWritten: 3 });
   });
 
   it('refuses a paste that would split a tuplet group, and pastes a whole group over a whole group', () => {
@@ -170,7 +170,7 @@ describe('pasteBeats', () => {
     const group = copiedBeatsOf(doc, [ref(0, 0), ref(0, 1), ref(0, 2)])!;
 
     expect(pasteBeats(structuredClone(doc), ref(0, 1), { fretted: true, beats: writtenBeats('n4') })).toMatch(/paste would split a tuplet group/i);
-    expect(pasteBeats(structuredClone(doc), ref(0, 0), group)).toEqual({ appendedBars: 0, at: ref(0, 0), droppedFermatas: [] });
+    expect(pasteBeats(structuredClone(doc), ref(0, 0), group)).toEqual({ appendedBars: 0, at: ref(0, 0), droppedFermatas: [], beatsWritten: 3 });
   });
 
   it('refuses a paste that would carry part of a tuplet group into the next bar', () => {
@@ -191,7 +191,7 @@ describe('pasteBeats', () => {
 
     expect(pasteBeats(doc, ref(1, 3), copied!)).toMatch(/past the bar line.*Fix bar/i);
     expect(shape(doc, 2)).toEqual(['r4', 'r4', 'r4', 'r4']);
-    expect(pasteBeats(doc, ref(1, 2), copied!)).toEqual({ appendedBars: 0, at: ref(1, 2), droppedFermatas: [] });
+    expect(pasteBeats(doc, ref(1, 2), copied!)).toEqual({ appendedBars: 0, at: ref(1, 2), droppedFermatas: [], beatsWritten: 1 });
   });
 
   it('refuses a paste at a grace that ends a full bar, which would land in the next bar while the caret stayed put', () => {
