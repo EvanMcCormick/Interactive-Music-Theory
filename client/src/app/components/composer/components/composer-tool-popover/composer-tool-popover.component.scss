@@ -1,0 +1,104 @@
+// A valued tool's popover: in the top layer, placed beside its palette button in window coordinates.
+
+.popover {
+  // The `popover` attribute's own styles centre it in the window with a margin; it is placed by
+  // `popoverPlacementOf` instead, which writes `left`, `top` and `max-height`.
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  width: 15rem;
+  overflow-y: auto;
+  padding: 0.6rem;
+  background-color: var(--composer-nav, #2c3e50);
+  color: var(--composer-text, #ecf0f1);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.popover-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+}
+
+form,
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.fields {
+  flex-direction: row;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--composer-text-secondary, #bdc3c7);
+}
+
+label.check {
+  flex-direction: row;
+  align-items: center;
+}
+
+input[type='number'],
+input[type='text'],
+select {
+  min-width: 0;
+  padding: 0.25rem 0.35rem;
+  background-color: var(--composer-nav-secondary, #34495e);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+  color: var(--composer-text, #ecf0f1);
+}
+
+.endings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.6rem;
+  margin: 0;
+  padding: 0.3rem;
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+
+  legend {
+    font-size: 0.72rem;
+    color: var(--composer-text-secondary, #bdc3c7);
+  }
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.2rem;
+}
+
+.text-btn {
+  background-color: var(--composer-nav-secondary, #34495e);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+  color: var(--composer-text, #ecf0f1);
+  cursor: pointer;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.75rem;
+
+  &:hover {
+    background-color: var(--composer-accent, #3498db);
+  }
+}
+
+.fault {
+  margin: 0.4rem 0 0;
+  font-size: 0.72rem;
+  color: var(--composer-warning, #f39c12);
+
+  &:empty {
+    margin: 0;
+  }
+}
