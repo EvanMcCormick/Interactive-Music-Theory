@@ -1,0 +1,37 @@
+<nav class="palette" aria-label="Notation tools">
+  <section class="group" *ngFor="let group of groups; trackBy: trackByGroup">
+    <h2 class="group-heading">{{ group.group }}</h2>
+    <div class="buttons">
+      <!--
+        `aria-disabled` rather than `disabled`: a refusing tool keeps its focus and its tooltip, and a
+        press still runs the command, which refuses and says why in the status line. `aria-pressed` only
+        where the tool's kind has a pressed state; `aria-haspopup` and `aria-expanded` only where it opens
+        a popover.
+      -->
+      <button
+        *ngFor="let button of group.buttons; trackBy: trackByTool"
+        type="button"
+        class="tool"
+        [class.smufl]="button.smufl"
+        [class.on]="button.pressed === 'true' || button.hasValue"
+        [class.mixed]="button.pressed === 'mixed'"
+        [attr.data-tool]="button.tool.id"
+        [attr.aria-label]="button.label"
+        [title]="button.tooltip"
+        [attr.aria-pressed]="button.pressed"
+        [attr.aria-disabled]="button.refusal ? 'true' : null"
+        [attr.aria-haspopup]="button.opensPopover ? 'dialog' : null"
+        [attr.aria-expanded]="button.opensPopover ? popover === button.tool.id : null"
+        (click)="press(button)"
+      >{{ button.face }}</button>
+    </div>
+  </section>
+
+  <!-- One popover for every valued tool, in the top layer when open. See ComposerToolPopoverComponent. -->
+  <app-composer-tool-popover
+    [kind]="popover"
+    [state]="state"
+    [triggers]="element"
+    (closed)="popoverClosed.emit()"
+  ></app-composer-tool-popover>
+</nav>
