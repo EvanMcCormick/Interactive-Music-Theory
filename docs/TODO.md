@@ -32,6 +32,35 @@ by what they would cost us to be wrong about.
       alphaTex, which is what the library stores — not through the `.gp` exporter, which is
       a different writer. The editor design lists this as a hand check for every milestone.
 
+- [ ] **Finish M2's hand check in a real browser.** It was run on 2026-09-14 in the Claude desktop app's Browser pane,
+      which cannot drag, cannot press a focused button with Enter or Space, has no zoom, and has no other browser,
+      operating system, keyboard layout, screen reader or DevTools. Its results are under "M2 hand check" in
+      `docs/plans/2026-09-13-composer-editor-design.md`. Owed, as numbered in Task 5.2 of
+      `docs/plans/2026-09-13-composer-editor-m2.md`:
+      - Step 2, the palette's glyphs at 200% zoom.
+      - Step 5 on four systems with a Piano track: the caret, the hover notehead, a ledger line above a later system,
+        and a click between systems.
+      - Step 6: a drag, Shift+click, Space playing from the start without looping, the range across a re-render, and a
+        drag drifting between tracks.
+      - Step 7, every palette group; Step 10, a hammer-on through save and reload.
+      - Step 8: Alt+/ for 5:4, and Enter on a Section with its name cleared.
+      - Step 9 with Narrator or NVDA.
+      - Step 13 beyond Ctrl+S, the drawer and a load by mouse: Enter on a saved row, the progression track's refusal
+        and Flatten, Export's focus, New then Save, the alphaTex draft's refusals, a double Save, a draft written against
+        an earlier score, Open in Composer, and deleting the open composition.
+      - Step 14: the strip's separator by drag, ↑, ↓, Home and End; a shorter window; the alphaTex panel on a short
+        window; Very large font size; a refusal wrapping the status line.
+      - Steps 15 to 19, 22, 27, 28 and 32: Firefox, German and French layouts, macOS, operating system hotkeys and a Mac
+        keyboard.
+      - Step 20, a drag released outside the score; Step 21, click-to-seek.
+      - Step 23, a popover at the palette's edge; Step 24's Alternate ending in a 500px window.
+      - Steps 25 and 31: popovers and menus by keyboard alone, and Escape then Space.
+      - Step 26, drag and hover performance in DevTools.
+      - Step 30 on the second system, and `{numbered tabs}` by hand.
+      - Step 33, the prompts before unsaved work is discarded.
+
+      Step 29, Guitar Pro, is the item above.
+
 - [ ] **Send a progression into a score loaded from a `.gp` file** — one with a bass
       staff, so its bars carry `f4` and a real key signature. `padStaff` carries clef,
       ottava and key signature forward from the staff's last bar; that is specced, but

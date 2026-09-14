@@ -1067,6 +1067,35 @@ stringed staff, so alphaTab never gets a pitched note it cannot tab` (design dec
   started: the two `InvalidStateError`s. Not Tone.js, which the composer does not use. `auditionAfterRender`
   (`AuditionQueue`) sounds the note once that render's MIDI has loaded.
 
+**The rest of the M2 hand check** found three faults fixed in commits of their own, each re-run in the pane: alphaTab's
+range highlight and playback cursors had no style (`1b7a58e`); an added track took C major where the score's bars had
+other keys (`1a93873`); and the common-time box stayed ticked after Top changed, so Apply was refused, and Enter in a
+popover's field did not apply (`fe1775f`). Then two more, each its own commit:
+
+- **Tasks 1.6 and 1.12 and the hand check's Pen fix: Pen's string, and one fret limit (`e14e479`).** With the caret left
+  on string 4 by a tablature click, Pen wrote D5 at fret 24 there, since the caret's string came first whenever it
+  reached the pitch. `frettedPlacementOf` takes the lowest fret over the strings free on the beat, a tie going to the
+  caret's string and then the higher string, and prefers the caret's string only when it reaches the pitch within 4
+  frets of that lowest fret - chosen to be predictable, as Guitar Pro's is. So the caret on the low E string and a click
+  at the high E string's open pitch writes string 1, fret 0, not string 6, fret 24. The load-time and mapper conversions
+  (`frettedDocOf`) use the same rule. Pen allowed 24 frets less the capo, while typed digits and string and semitone moves
+  allowed fret 24 whatever the capo: `maxFretOf` in `pitch-on-strings.ts` is now the one limit for all of them. A typed
+  number on the neck but past it - "2" then "0" with the capo at 5 - is refused through `staffEntryOf` with "With the capo
+  at 5, a fret runs from 0 to 19.", and the note keeps its first digit's fret; a number past the neck's 24 still starts
+  a new note, as before. A string move that would need fret 21 there is refused. Whole suite after it: **3,332 SUCCESS**.
+- **Tasks 4.1, 4.3 and 3.3: the caret on a slash or numbered staff, and a narrow status line (`7a20ace`).** The hand
+  check saw a Select click on a slash staff move the caret and draw its box on notation. It did not reproduce: on the
+  committed code a scripted press at the slash line's measured position, at 1280 and 770px wide, took the slash slot and
+  drew the box on that line, so the pane's scaled coordinates most likely missed the staff. What was left open is settled
+  (design decision 22). `caretSlotIndexOf` keeps a clicked slash or numbered staff only while the caret is where that
+  click, or the drag from it, left it, so a key that moves the caret takes it back to notation or tablature. A numbered
+  staff draws no lines, so it was never under the pointer and a press over it went to the nearest lined staff; it is
+  now found by its band (`numberedSlotAt`), and its caret is drawn in the middle of that band (`staveBandOfSlot`,
+  `StaffHitTestService.bandCaretRect`). At 375px the status line clipped a load's message at the right edge: it wraps now
+  (`flex-wrap`, the messages at `flex: 1 1 12rem` with `min-width: 0`, and `overflow-wrap: anywhere` on each message),
+  and an empty live region claims no line. Checked in the pane at 375px with a short, a long and an unbroken message: no
+  sideways scroll. Whole suite after it: **3,336 SUCCESS**.
+
 ---
 
 
@@ -14709,7 +14738,9 @@ The suite is headless: it cannot see a glyph, a layout or a real keyboard. Perfo
 each result - including every step that could not be performed and why - in the design doc's "M2 hand
 check" paragraph. **A step that cannot be performed is recorded as not performed, with the reason; it is
 never dropped.** Steps 18 to 28 were added when Phases 3 and 4 were corrected before they were applied, and Steps 30 to 33
-after the score's branch merged and was reviewed.
+after the score's branch merged and was reviewed. **Performed on 2026-09-14**, in the Claude desktop app's Browser pane: the
+results are in the design doc's "M2 hand check" paragraph, the faults found under "Corrections during implementation", and
+the steps still owed in a real browser in `docs/TODO.md`, under "Checks nobody has performed".
 
 **Step 1: Start the app.** From `client/`, `npm start`, and open `http://localhost:4200/composer` in
 Chrome at about 1920×1080.

@@ -28,6 +28,66 @@ discards unsaved work, and saves pressed mid-write queued for the composition th
 from the plan, task by task, is under "Corrections during implementation" in the M2 plan; what M2 recorded and did not
 do is in `docs/TODO.md`.
 
+**M2 hand check, 2026-09-14: performed in part.** Run in the Claude desktop app's Browser pane - Chromium at 1280×720,
+against a dev server on port 4201 - not in Chrome at 1920×1080. The pane's synthetic drag sends no intermediate mouse
+moves, its injected Enter and Space press no button, and its Return sends an empty key name; it has no browser zoom, no
+Firefox, Safari or Mac, no other keyboard layout, no screen reader, no DevTools Performance panel and no Guitar Pro. The
+steps that leaves are owed in a real browser, and listed in `docs/TODO.md`. By step, as numbered in the plan's Task 5.2:
+
+- **Passed.**
+  - Step 2 at 100%: every palette glyph renders from Bravura, and `/font/Bravura.woff2` loads with 200 - requested 16
+    times on load, worth a look.
+  - Steps 3 and 4. alphaTab draws the default `f` dynamic under the first note.
+  - Step 5 on one system: a Select click moves the caret and writes nothing, Q shows Pen and the hover notehead, Esc goes
+    back to Select.
+  - Step 8: Time signature refuses Top 43 inline and stays open. Key signature lists C♭ major to C♯ major and A♭ minor
+    to A♯ minor, and A♯ minor engraves seven sharps. K sets bass clef. Section's Apply engraves "Chorus". The focus goes
+    back to each tool's button.
+  - Step 9's display and clearing: H on a rest, and on the last beat's note, says why in the polite live region, and →
+    clears it.
+  - Steps 11 and 12.
+  - Step 13 in part: Ctrl+S says "Saved"; the saved-list drawer opens with the focus on its close button; a load by mouse
+    closes it and leaves the focus on Library.
+  - Step 14's widths: at 1000, 768, 480 and 375px the page never scrolls sideways, the navigation and top bar wrap, the
+    palette has no horizontal scroll, and the score keeps 313, 275, 198 and 160px.
+  - Step 24 at 1280×500: Key signature's popover stays in the window, the status line and strip stay reachable, and the
+    score keeps 251px.
+  - Step 30 on the first system: in Pen, a click on the slash staff moves the caret and writes nothing, and one on
+    notation writes; a click on tablature takes the caret to the string clicked, drawn there.
+- **Found and fixed**, each passing when re-run:
+  - Step 5: Pen on a guitar's notation wrote a pitched note alphaTab cannot tab, and blanked the score - `08115c2`
+    (decision 33).
+  - Step 6: the range highlight and alphaTab's playback cursors had no style and could not be seen - `1b7a58e`. A range
+    made with Shift+→ is now highlighted.
+  - Step 11: an added track took C major where the score's bars had another key - `1a93873`.
+  - Step 8: the common-time box stayed ticked when Top changed, so Apply was refused; and Enter in a popover's field
+    did not apply - `fe1775f`. Enter was checked by that fix with a real key press, since the pane's Return has no key name.
+  - Step 30: with the caret left on string 4 by a tablature click, Pen wrote D5 at fret 24 there - `e14e479`. Pen takes
+    the lowest fret, and the caret's string only within 4 frets of it (decision 33); every fret path shares one limit.
+  - Step 30: a Select click on the slash staff drew the caret box on notation. It did not reproduce on the committed
+    code - a scripted press at the slash line's measured position, at 1280 and 770px wide, drew the box on that line - so
+    the pane's scaled coordinates most likely missed the staff. `7a20ace` settles where the caret goes (decision 22):
+    on the slash or numbered staff clicked, a numbered staff's in its band, until a key moves it.
+  - Step 14: at 375px the status line clipped "Loaded "Hand check"" at the right edge - `7a20ace` lets it wrap.
+- **Not performed.**
+  - Step 1 as written: the pane, at 1280×720, on port 4201.
+  - Step 2 at 200%: the pane has no browser zoom.
+  - Not reached in the session: Step 5 on four systems with a Piano track, Step 6's Space and loop check, Steps 7 and
+    10, Step 8's Alt+/ and a Section with its name cleared, Step 13's remainder, Steps 21 and 23, and Step 14's short
+    window with the alphaTex panel.
+  - The pane's drag sends no intermediate moves: Step 6's drags, Shift+click and the range across a re-render and
+    between tracks, Step 14's separator and its keys, a shorter window and a status line wrapped by a refusal, Step 20,
+    and Step 23's drags. Step 14's Very large font size: the pane cannot change Chrome's settings.
+  - The pane's Enter and Space press no button: Step 13's Enter on a saved row, Step 25, and Step 31.
+  - Step 9 with a screen reader: none in the pane.
+  - Steps 15 to 19, 22, 27, 28 and 32: no Firefox, Safari or Mac, no other keyboard layout, and no operating system
+    hotkeys to meet.
+  - Step 24's Alternate ending: inconclusive, since in the emulated, scaled viewport a click on its button opened nothing.
+  - Step 26: no DevTools Performance panel. Step 29: Guitar Pro is not installed.
+  - Step 30 on the second system, and `{numbered tabs}` by hand: the pane's coordinates on a scrolled score. The
+    numbered staff's caret was checked with a scripted press for `7a20ace`.
+  - Step 33: the pane's `window.confirm` dialogs; left until the fixes landed, and not run.
+
 The composer at `/composer` enters notes, durations, a single dot and rests, and very
 little else. This design turns it into an editor in the manner of Guitar Pro and
 TuxGuitar: every notation tool in a side palette, a keyboard shortcut for each, a
