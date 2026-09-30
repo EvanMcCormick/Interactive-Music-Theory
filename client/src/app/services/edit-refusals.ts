@@ -502,15 +502,18 @@ const TRILL_OUT_OF_RANGE =
   'A trill a whole step above a note in the selection would pass the top of the MIDI range, and alphaTab would drop it.';
 
 /**
- * Why a trill press cannot apply to `refs`, or null: any trill edit's refusal, or - when the press would
- * set trills - one aimed past MIDI 127 (`trillTargetOf`), which alphaTab does not keep. A clear is never
- * refused for it.
+ * Why a trill press cannot apply to `refs`, or null. A clear - every note the press means already trilled, by
+ * `toggleTrill`'s own rule - is refused only where any note edit is (the `notes` scope), as `noteEffectRefusal`
+ * clears: a drum hit has no pitch to trill to, but an imported file can carry a trill on one, and it must come off.
+ * A set is refused as a trill edit is, and when one would be aimed past MIDI 127 (`trillTargetOf`), which alphaTab
+ * does not keep.
  */
 export function trillRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null, notes?: readonly NoteTarget[]): string | null {
-  const refusal = editRefusal(doc, refs, { family: 'note', key: 'trill' }, focus, notes);
-  if (refusal) return refusal;
   const targets = notes ?? noteTargetsAt(doc, refs, focus);
-  if (targets.every(target => target.note.effects.trill !== null)) return null;
+  // `toggleTrill`'s test for a clear, empty targets included: with no note, the set's scope says so as before.
+  const clears = targets.length > 0 && targets.every(target => target.note.effects.trill !== null);
+  const refusal = editRefusal(doc, refs, { family: 'note', key: clears ? 'notes' : 'trill' }, focus, targets);
+  if (refusal || clears) return refusal;
   const tooHigh = targets.some(({ ref, note }) => {
     const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
     const target = staff === undefined ? null : trillTargetOf(staff, note);

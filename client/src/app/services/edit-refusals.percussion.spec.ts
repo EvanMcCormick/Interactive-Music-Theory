@@ -4,13 +4,13 @@ import * as alphaTab from '@coderline/alphatab';
 import { copiedBeatsOf, pasteBeats } from './beat-clipboard';
 import { ComposerService } from './composer.service';
 import { FretDigitEntry } from './composer-fret-entry';
-import { dragExtends, scorePressOf, staffSlotsOf, staffSlotsOfScore } from './composer-score-interaction';
+import { caretSlotIndexOf, dragExtends, scorePressOf, staffSlotsOf, staffSlotsOfScore } from './composer-score-interaction';
 import { toolStates } from './composer-tool-states';
 import { COMPOSER_TOOLS } from './composer-tools';
 import { deepFrozen } from './deep-frozen.spec-helper';
 import { PERCUSSION } from './pitch-on-strings';
 import { setStaffNumber, setStaffTuning } from './track-edits';
-import { EditCursor, NoteDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
+import { ArticulationDoc, EditCursor, NoteDoc, ScoreDoc, createDefaultNoteEffects } from '../models/composer.model';
 
 /**
  * What a percussion staff refuses, and what it lets through.
@@ -18,7 +18,7 @@ import { EditCursor, NoteDoc, ScoreDoc, createDefaultNoteEffects } from '../mode
  * One predicate, in `editRefusal`, which every press already asks: a drum hit has no string and no pitch, so every
  * fretted-only technique, every accidental, respelling, semitone and string moves, a hammer-on and a trill say so; what
  * reads no pitch - duration, dots, rest, dynamics, accents, staccato, ghost, tie, fermata - goes through. Asserted over
- * `COMPOSER_TOOLS` through `toolStates`, so a tool added later cannot arrive without an answer.
+ * every tool `toolStates` answers for, so a tool added later cannot arrive without an answer.
  */
 describe('a percussion staff', () => {
   /** A drum hit of `articulation`, with no effects. */
@@ -66,18 +66,29 @@ describe('a percussion staff', () => {
     'trill'
   ];
 
-  /** Tools the design names as going through on a drum hit. */
+  /** Tools that read no pitch, so they go through on a drum hit: every length and dynamic, and what the design names. */
   const ALLOWED = [
     'whole',
+    'half',
     'quarter',
     'eighth',
+    'sixteenth',
+    'thirtySecond',
+    'sixtyFourth',
     'dot',
     'doubleDot',
+    'tuplet',
     'rest',
     'ppp',
+    'pp',
+    'p',
+    'mp',
+    'mf',
     'f',
+    'ff',
     'fff',
     'crescendo',
+    'decrescendo',
     'accent',
     'heavyAccent',
     'tenuto',
@@ -97,6 +108,32 @@ describe('a percussion staff', () => {
     'graceOnBeat'
   ];
 
+  /**
+   * Tools that ask nothing of a note's pitch or string, so a drum hit is not what decides them: the entry modes, and
+   * tools that act on bars and the timeline or open a popover that asks for itself. Each may still be refused on the
+   * drum caret for a reason of its own - Triplet with no three beats of one value to group, Fix bar on a bar with
+   * nothing to fix - but never with the percussion message.
+   */
+  const NOT_ASKED = [
+    'select',
+    'pen',
+    'triplet',
+    'timeSignature',
+    'keySignature',
+    'clef',
+    'tripletFeel',
+    'freeTime',
+    'repeatOpen',
+    'repeatClose',
+    'alternateEnding',
+    'section',
+    'doubleBar',
+    'fixBar',
+    'insertBar',
+    'appendBar',
+    'deleteBar'
+  ];
+
   describe('through the tool table', () => {
     // Beat 1: it has a snare before it to tie from, so Tie's own rule is met and only the staff is being asked about.
     const states = (): ReadonlyMap<string, { refusal: string | null }> => toolStates(deepFrozen(kit()), null, onDrums(1), 'select');
@@ -111,13 +148,20 @@ describe('a percussion staff', () => {
       for (const id of ALLOWED) expect(read.get(id)?.refusal).withContext(id).toBeNull();
     });
 
-    it('answers for every tool in the table, so a new one cannot arrive unasked', () => {
+    // Both ways: an unlisted tool fails here whether it refuses or not, so a new one that reads a pitch cannot slip
+    // through as allowed - it has to be put in a list, and the list it goes in is asserted above or below.
+    it('answers for every tool the table reads, so a new one cannot arrive unasked', () => {
       const read = states();
-      const answered = new Set([...REFUSED, ...ALLOWED]);
-      for (const tool of COMPOSER_TOOLS) {
-        const refusal = read.get(tool.id)?.refusal ?? null;
-        if (refusal === PERCUSSION) expect(answered.has(tool.id)).withContext(`${tool.id} is refused but not listed`).toBeTrue();
-      }
+      const answered = new Set([...REFUSED, ...ALLOWED, ...NOT_ASKED]);
+      for (const id of read.keys()) expect(answered.has(id)).withContext(`${id} is not listed`).toBeTrue();
+      // Every listed id is a tool the palette has, so a renamed one cannot leave a stale name behind.
+      const tools = new Set(COMPOSER_TOOLS.map(tool => tool.id));
+      for (const id of answered) expect(tools.has(id)).withContext(`${id} is not a tool`).toBeTrue();
+    });
+
+    it('never refuses a tool that asks nothing of a pitch with the percussion message', () => {
+      const read = states();
+      for (const id of NOT_ASKED) expect(read.get(id)?.refusal).withContext(id).not.toBe(PERCUSSION);
     });
 
     it('refuses a range reaching a percussion staff whole, as any mixed range is refused', () => {
@@ -172,6 +216,22 @@ describe('a percussion staff', () => {
       expect(beat.dynamics).toBe('pp');
       expect(beat.notes[0].effects.accent).toBe('normal');
     });
+
+    it('takes off a trill a drum hit already carries, as every other technique comes off', () => {
+      // An imported file can carry one; only setting a trill reads a pitch.
+      const doc = kit();
+      doc.tracks[1].staves[0].bars[0].voices[0].beats[0].notes[0].effects.trill = { value: 40, speed: 16 };
+      composer.replaceDocument(doc, { markClean: true });
+      composer.setCursor(onDrums(0));
+
+      const trill = toolStates(composer.doc, null, onDrums(0), 'select').get('trill');
+      expect(trill?.pressed).toBeTrue();
+      expect(trill?.refusal).toBeNull();
+
+      composer.toggleTrill();
+      expect(composer.state.refusal).toBeNull();
+      expect(composer.doc.tracks[1].staves[0].bars[0].voices[0].beats[0].notes[0].effects.trill).toBeNull();
+    });
   });
 
   describe('tuning and capo', () => {
@@ -201,6 +261,15 @@ describe('a percussion staff', () => {
       expect(staffSlotsOfScore(score).map(slot => slot.kind)).toEqual(['percussion']);
     });
 
+    it('draws a caret with no string on the drum band, not a slash staff drawn above it', () => {
+      const doc = kit();
+      doc.tracks[1].staves[0].showSlash = true;
+      const slots = staffSlotsOf(doc);
+
+      expect(slots.map(slot => slot.kind)).toEqual(['notation', 'tab', 'slash', 'percussion']);
+      expect(caretSlotIndexOf(slots, onDrums(0), null)).toBe(3);
+    });
+
     it('takes a Pen press as a caret move, and a drag from it as a range', () => {
       expect(scorePressOf('pen', 'percussion', false)).toBe('caret');
       expect(dragExtends('pen', 'percussion')).toBeTrue();
@@ -223,6 +292,73 @@ describe('a percussion staff', () => {
 
       expect(pasteBeats(structuredClone(doc), at(2), drums)).toMatch(/copied from a percussion staff/);
       expect(pasteBeats(structuredClone(doc), at(1), piano)).toMatch(/copied from a pitched staff.*percussion staff/);
+    });
+
+    it('refuses fretted beats onto drums, and drums onto a fretted staff', () => {
+      const doc = kit();
+      const guitar = copiedBeatsOf(doc, [at(0)]);
+      const drums = copiedBeatsOf(doc, [at(1)]);
+      if (!guitar || !drums) throw new Error('nothing copied');
+
+      expect(pasteBeats(structuredClone(doc), at(1), guitar)).toBe(
+        'Those beats were copied from a fretted staff, and a percussion staff has no strings and no pitch.'
+      );
+      expect(pasteBeats(structuredClone(doc), at(0), drums)).toBe(
+        'Those beats were copied from a percussion staff, and its drums have no pitch to write on this staff.'
+      );
+    });
+
+    /** A kit entry for `id`, with every other number `seed`. */
+    const entry = (id: number, seed = 0): ArticulationDoc => ({
+      id,
+      elementType: 'Snare',
+      staffLine: seed,
+      noteHeadDefault: seed,
+      noteHeadHalf: seed,
+      noteHeadWhole: seed,
+      techniqueSymbol: seed,
+      techniqueSymbolPlacement: seed,
+      outputMidiNumber: id
+    });
+
+    /** `kit()` with `from` as track 1's kit, and a second drum track, track 2, whose kit is `onto`. */
+    function twoKits(from: ArticulationDoc[], onto: ArticulationDoc[]): ScoreDoc {
+      const doc = kit();
+      doc.tracks[1].percussionArticulations = from;
+      const other = ComposerService.createTrack('Drums 2', 'dr2', 0, false, doc.masterBars);
+      other.staves[0].isPercussion = true;
+      other.percussionArticulations = onto;
+      doc.tracks.push(other);
+      return doc;
+    }
+
+    it('refuses drums copied from another kit, whose numbers would name other drums here', () => {
+      const from = [entry(38), entry(36)];
+      // No kit, the same entries in another order, and one field changed.
+      for (const onto of [[], [entry(36), entry(38)], [entry(38), entry(36, 1)]]) {
+        const doc = twoKits(from, onto);
+        const drums = copiedBeatsOf(doc, [at(1)]);
+        if (!drums) throw new Error('nothing copied');
+
+        expect(pasteBeats(doc, at(2), drums))
+          .withContext(JSON.stringify(onto))
+          .toBe('Those beats were copied from a drum track with another kit, so their drums would change here.');
+      }
+    });
+
+    it('pastes drums between tracks whose kits are the same, field for field', () => {
+      const kits: [ArticulationDoc[], ArticulationDoc[]][] = [
+        [[entry(38), entry(36)], [entry(38), entry(36)]],
+        [[], []]
+      ];
+      for (const [from, onto] of kits) {
+        const doc = twoKits(from, onto);
+        const drums = copiedBeatsOf(doc, [at(1)]);
+        if (!drums) throw new Error('nothing copied');
+
+        expect(typeof pasteBeats(doc, at(2), drums)).withContext(JSON.stringify(from)).toBe('object');
+        expect(doc.tracks[2].staves[0].bars[0].voices[0].beats[0].notes).withContext(JSON.stringify(from)).toEqual([hit(38)]);
+      }
     });
 
     it('pastes drums onto drums', () => {

@@ -163,7 +163,7 @@ export function scoreRedrawOf(lastRenderedDoc: ScoreDoc | null, doc: ScoreDoc): 
  * The staff last clicked (`clicked`), while it is still the caret's - a slash or numbered staff only while the caret
  * is where that click, or the drag from it, left it (`clickedAt`), so it is drawn on the staff clicked but a key that
  * moves the caret takes it back to the staves notes are entered on. Otherwise the caret's tablature when the caret has
- * a string, and its notation when it has not - which is what draws the caret before the first click, when nothing has
+ * a string, and its notation - a drum staff's percussion band - when it has not - which is what draws the caret before the first click, when nothing has
  * been clicked to learn a staff from.
  */
 export function caretSlotIndexOf(slots: readonly StaffSlot[], cursor: EditCursor, clicked: number | null, clickedAt: EditCursor | null = null): number | null {
@@ -174,9 +174,11 @@ export function caretSlotIndexOf(slots: readonly StaffSlot[], cursor: EditCursor
   if (clicked !== null && isCaretStaff(clickedSlot) && (!caretOnly || (clickedAt !== null && sameCaret(clickedAt, cursor)))) return clicked;
 
   const own = slots.map((slot, index) => ({ slot, index })).filter(({ slot }) => isCaretStaff(slot));
-  const wanted: StaffKind = cursor.stringIndex !== null ? 'tab' : 'notation';
+  // With no string, the standard-notation band - which a drum staff draws as 'percussion', so a caret there is not
+  // left to fall back to a slash staff drawn above it.
+  const wanted: readonly StaffKind[] = cursor.stringIndex !== null ? ['tab'] : ['notation', 'percussion'];
   // A numbered staff draws no lines to measure a caret against, so any other kind comes before it.
-  const found = own.find(({ slot }) => slot.kind === wanted) ?? own.find(({ slot }) => slot.kind !== 'numbered') ?? own[0];
+  const found = own.find(({ slot }) => wanted.includes(slot.kind)) ?? own.find(({ slot }) => slot.kind !== 'numbered') ?? own[0];
   return found ? found.index : null;
 }
 

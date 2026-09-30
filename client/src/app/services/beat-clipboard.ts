@@ -1,4 +1,4 @@
-import { BeatDoc, FermataDoc, ScoreDoc, StaffDoc } from '../models/composer.model';
+import { ArticulationDoc, BeatDoc, FermataDoc, ScoreDoc, StaffDoc } from '../models/composer.model';
 import { barCapacityTicks, barFillOf, barMeterAt, beatTicks, fillBarGaps, graceRunStart, insertRestsAt, splitAtBarLine } from './bar-fill';
 import { newOpenTupletGroup, openTupletGroupsOf, tupletGroupsOf } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
@@ -29,18 +29,51 @@ export interface CopiedBeats {
   notes: StaffNotes;
   /** The copied beats in timeline order, as one run: bar lines between them are not kept. */
   beats: BeatDoc[];
+  /**
+   * The kit of the drum track they came from (`TrackDoc.percussionArticulations`), when `notes` is `'percussion'`.
+   *
+   * A drum hit's `articulation` is an index into its track's kit while it is below the kit's length, so the same number
+   * is another drum on a track with another kit - and a paste there would change every hit's drum without a word.
+   * `pasteBeats` compares it with the destination's. Left out of a pitched or fretted copy, which names no drum; a
+   * percussion copy without one is taken as from a track with no kit, whose hits name alphaTab's own table.
+   */
+  kit?: ArticulationDoc[];
 }
 
 /** The beats `refs` name, copied as one run - or null when they are on more than one staff, or name none. */
 export function copiedBeatsOf(doc: ScoreDoc, refs: readonly BeatRef[]): CopiedBeats | null {
   const first = refs[0];
   if (!first || refs.some(ref => ref.trackIndex !== first.trackIndex || ref.staffIndex !== first.staffIndex)) return null;
-  const staff = doc.tracks[first.trackIndex]?.staves[first.staffIndex];
-  if (!staff) return null;
+  const track = doc.tracks[first.trackIndex];
+  const staff = track?.staves[first.staffIndex];
+  if (!track || !staff) return null;
 
   const beats = refs.map(ref => beatAt(doc, ref)).filter((beat): beat is BeatDoc => beat !== null);
-  return beats.length > 0 ? { notes: staffNotesOf(staff), beats: beats.map(beat => structuredClone(beat)) } : null;
+  if (beats.length === 0) return null;
+  const notes = staffNotesOf(staff);
+  const copied: CopiedBeats = { notes, beats: beats.map(beat => structuredClone(beat)) };
+  // Cloned, as the beats are: the clipboard outlives the document it was copied from, which later edits replace.
+  if (notes === 'percussion') copied.kit = structuredClone(track.percussionArticulations);
+  return copied;
 }
+
+/**
+ * Whether two kits are the same drums in the same slots: equal field for field, entry by entry, in order - the order is
+ * the data, since a hit's `articulation` indexes it. Every field is compared, not only `id`: two entries of one id can
+ * sit on other staff lines or strike other MIDI keys, and a hit would then draw or sound as another drum.
+ */
+function sameKit(copied: readonly ArticulationDoc[], onto: readonly ArticulationDoc[]): boolean {
+  return (
+    copied.length === onto.length &&
+    copied.every((entry, index) => {
+      const other = onto[index];
+      const fields = Object.keys(entry) as (keyof ArticulationDoc)[];
+      return other !== undefined && fields.length === Object.keys(other).length && fields.every(field => entry[field] === other[field]);
+    })
+  );
+}
+
+const ANOTHER_KIT = 'Those beats were copied from a drum track with another kit, so their drums would change here.';
 
 const NO_ROOM = 'A time signature there leaves no room in a bar, so there is nowhere to paste.';
 
@@ -86,7 +119,8 @@ const SPLITS_A_GROUP =
  * since alphaTab files a grace's fermata there and a copied one would spread to every track on save. What it
  * returns says why each fermata it could keep nowhere went: one on a note it wrote over, for one.
  *
- * Refused before anything changes: a copy holding part of a tuplet group (`tupletGroupsOf`), which would
+ * Refused before anything changes: drums copied from a track whose kit is not this track's (`sameKit`), whose
+ * numbers would name other drums here; a copy holding part of a tuplet group (`tupletGroupsOf`), which would
  * start a group alphaTab never closes and leave room off the 64th grid; and a paste at a beat that starts at
  * or past its bar's line, which would land in the next bar while the caret stayed put. In a bar already over
  * that is a beat past the line, for Fix bar; in a full bar it can only be a grace that ends the bar, leading
@@ -102,10 +136,12 @@ export function pasteBeats(
   at: BeatRef,
   copied: CopiedBeats
 ): { appendedBars: number; at: BeatRef; droppedFermatas: FermataDrops; beatsWritten: number } | string {
-  const staff = doc.tracks[at.trackIndex]?.staves[at.staffIndex];
-  if (!staff) return 'There is no staff there.';
+  const track = doc.tracks[at.trackIndex];
+  const staff = track?.staves[at.staffIndex];
+  if (!track || !staff) return 'There is no staff there.';
   const onto = staffNotesOf(staff);
   if (onto !== copied.notes) return crossKindRefusalOf(copied.notes, onto);
+  if (onto === 'percussion' && !sameKit(copied.kit ?? [], track.percussionArticulations)) return ANOTHER_KIT;
   const strings = copied.beats.flatMap(beat => beat.notes.map(note => (note.pitch.kind === 'fretted' ? note.pitch.string : 0)));
   const highest = Math.max(0, ...strings);
   if (highest > staff.tuning.length) return `Those beats use ${highest} strings, and this staff has ${staff.tuning.length}.`;
