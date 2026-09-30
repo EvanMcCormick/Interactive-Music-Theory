@@ -68,20 +68,29 @@
         (click)="toggleLoop()"
       >Loop</button>
 
+      <!--
+        The readouts sit beside their labels, not in them, so a slider's name is its label alone, and are aria-hidden
+        spans rather than <output>s, which are live regions: the seek readout would be read out every second while
+        playing. A screen reader has each value from the slider's own aria-valuetext.
+      -->
       <!-- A playback multiplier, labelled apart from the BPM: the viewer called it "Tempo", and it is not the score's tempo. -->
-      <label class="slider-field">
-        <span>Speed</span>
-        <input
-          type="range"
-          [min]="speedRange.min"
-          [max]="speedRange.max"
-          [step]="speedRange.step"
-          [value]="speedPercent"
-          [attr.aria-valuetext]="speedPercent + '%'"
-          (input)="onSpeedInput($any($event.target).value)"
-        />
-        <output>{{ speedPercent }}%</output>
-      </label>
+      <div class="slider-group">
+        <label class="slider-field">
+          <span>Speed</span>
+          <input
+            type="range"
+            [min]="speedRange.min"
+            [max]="speedRange.max"
+            [step]="speedRange.step"
+            [value]="speedPercent"
+            [attr.aria-valuetext]="speedPercent + '%'"
+            [disabled]="!playerState?.isReadyForPlayback"
+            (input)="onSpeedInput($any($event.target).value)"
+            (change)="onSpeedChange($any($event.target).value)"
+          />
+        </label>
+        <span class="slider-readout speed-readout" aria-hidden="true">{{ speedPercent }}%</span>
+      </div>
       <label class="slider-field">
         <span>Volume</span>
         <input
@@ -90,22 +99,31 @@
           max="100"
           [value]="volumePercent"
           [attr.aria-valuetext]="volumePercent + '%'"
+          [disabled]="!playerState?.isReadyForPlayback"
           (input)="onVolumeInput($any($event.target).value)"
         />
       </label>
-      <!-- A range, not the viewer's clickable div: the keyboard reaches it and a screen reader names it. -->
-      <label class="slider-field seek-field">
-        <span class="visually-hidden">Position</span>
-        <input
-          type="range"
-          min="0"
-          [max]="playerState?.totalDuration ?? 0"
-          [value]="playerState?.timePosition ?? 0"
-          [attr.aria-valuetext]="timeReadout"
-          (input)="onSeekInput($any($event.target).value)"
-        />
-        <output class="time-readout">{{ timeReadout }}</output>
-      </label>
+      <!--
+        A range, not the viewer's clickable div: the keyboard reaches it and a screen reader names it. An arrow moves it a
+        second. A drag moves only the thumb and the readout (`seekDraft`), and the player seeks when it lets go.
+      -->
+      <div class="slider-group seek-field">
+        <label class="slider-field">
+          <span class="visually-hidden">Position</span>
+          <input
+            type="range"
+            min="0"
+            [max]="playerState?.totalDuration ?? 0"
+            step="1000"
+            [value]="seekDraft ?? playerState?.timePosition ?? 0"
+            [attr.aria-valuetext]="timeReadout"
+            [disabled]="!(playerState?.totalDuration)"
+            (input)="onSeekInput($any($event.target).value)"
+            (change)="onSeekChange($any($event.target).value)"
+          />
+        </label>
+        <span class="slider-readout time-readout" aria-hidden="true">{{ timeReadout }}</span>
+      </div>
     </div>
 
     <div class="header-actions">

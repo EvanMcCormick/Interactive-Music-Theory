@@ -353,8 +353,10 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
         this.playerState = state;
-        // alphaTab events originate outside Angular's zone.
-        this.cdr.detectChanges();
+        this.timeReadout = this.timeReadoutOf(this.seekDraft ?? state.timePosition);
+        // Marked, not detected: `AlphaTabService` brings alphaTab's events back into the zone, whose tick checks the
+        // page. A position event arrives many times a second while playing, and each ran a second pass of its own.
+        this.cdr.markForCheck();
       });
 
     this.gp
@@ -582,12 +584,37 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     this.alphaTabService.setLooping(!(this.playerState?.isLooping ?? false));
   }
 
+  /**
+   * The speed a drag of the speed slider is at, as a percentage, until it lets go; null when no drag is under way. The
+   * player is set once, on `change`: each of a drag's `input` steps setting it would retime playback a dozen times.
+   */
+  speedDraft: number | null = null;
+
+  /**
+   * Where a drag of the seek bar is, in milliseconds, until it lets go; null when no drag is under way. The thumb and the
+   * readout follow it rather than the player, whose position events would otherwise snap the thumb back under the hand
+   * while it plays, and the player seeks once, on `change`, rather than at every step of the drag.
+   */
+  seekDraft: number | null = null;
+
+  /**
+   * Where playback is - or a drag of the seek bar, while one is under way - and how long the score plays, as
+   * `1:05 / 3:20`. A field set when either changes, not a getter: the template reads it twice a pass, and a position
+   * event arrives many times a second.
+   */
+  timeReadout = this.timeReadoutOf(0);
+
   /** Speed, as a percentage of the score's own tempo: a playback multiplier, never the BPM, which is the score's. */
   get speedPercent(): number {
-    return Math.round((this.playerState?.tempoMultiplier ?? 1) * 100);
+    return this.speedDraft ?? Math.round((this.playerState?.tempoMultiplier ?? 1) * 100);
   }
 
   onSpeedInput(value: string): void {
+    this.speedDraft = Number(value);
+  }
+
+  onSpeedChange(value: string): void {
+    this.speedDraft = null;
     this.alphaTabService.setPlaybackSpeed(Number(value) / 100);
   }
 
@@ -600,12 +627,19 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   onSeekInput(value: string): void {
-    this.alphaTabService.seekToTime(Number(value));
+    this.seekDraft = Number(value);
+    this.timeReadout = this.timeReadoutOf(this.seekDraft);
   }
 
-  /** Where playback is and how long the score plays, as `1:05 / 3:20`. */
-  get timeReadout(): string {
-    return `${clockTimeOf(this.playerState?.timePosition ?? 0)} / ${clockTimeOf(this.playerState?.totalDuration ?? 0)}`;
+  onSeekChange(value: string): void {
+    this.seekDraft = null;
+    this.alphaTabService.seekToTime(Number(value));
+    this.timeReadout = this.timeReadoutOf(this.playerState?.timePosition ?? 0);
+  }
+
+  /** `position` and the score's length, as the transport's readout writes them. */
+  private timeReadoutOf(position: number): string {
+    return `${clockTimeOf(position)} / ${clockTimeOf(this.playerState?.totalDuration ?? 0)}`;
   }
 
   toggleMetronome(): void {

@@ -8,6 +8,7 @@ import { ComposerComponent, clampedStripHeight, stripHeightRangeOf } from './com
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
 import { ComposerPaletteComponent } from './components/composer-palette/composer-palette.component';
 import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
+import { AlphaTabState } from '../../models/alpha-tab.model';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerExportService } from '../../services/composer-export.service';
@@ -350,34 +351,150 @@ describe('ComposerComponent', () => {
     expect(noteBounds.calls.allArgs()).toEqual([[true]]);
   });
 
-  it("runs the viewer's transport through the player: loop, speed as a percentage, volume and the seek bar", () => {
-    const player = TestBed.inject(AlphaTabService);
-    const looping = spyOn(player, 'setLooping');
-    const speed = spyOn(player, 'setPlaybackSpeed');
-    const volume = spyOn(player, 'setVolume');
-    const seek = spyOn(player, 'seekToTime');
-    const host = fixture.nativeElement as HTMLElement;
-    const sliders = Array.from(host.querySelectorAll<HTMLInputElement>('.transport input[type="range"]'));
-    const set = (input: HTMLInputElement, value: string): void => {
+  describe('transport', () => {
+    let player: AlphaTabService;
+    let host: HTMLElement;
+
+    beforeEach(() => {
+      player = TestBed.inject(AlphaTabService);
+      host = fixture.nativeElement as HTMLElement;
+    });
+
+    /** The speed, volume and seek sliders, in that order. */
+    const sliders = (): HTMLInputElement[] => Array.from(host.querySelectorAll<HTMLInputElement>('.transport input[type="range"]'));
+
+    /** The player's state, `changes` over it, as an alphaTab event would move it. */
+    function playerMoves(changes: Partial<AlphaTabState>): void {
+      player.getState().next({ ...player.getState().getValue(), ...changes });
+      fixture.detectChanges();
+    }
+
+    /** A drag's step: the thumb moves to `value`, and the browser fires `input`. */
+    function drag(input: HTMLInputElement, value: string): void {
       input.value = value;
       input.dispatchEvent(new Event('input'));
-    };
+      fixture.detectChanges();
+    }
 
-    Array.from(host.querySelectorAll<HTMLButtonElement>('.transport .toggle-btn')).find(button => button.textContent?.trim() === 'Loop')!.click();
-    set(sliders[0], '150');
-    set(sliders[1], '40');
+    /** The drag let go: the browser fires `change` once, with the value it settled on. */
+    function release(input: HTMLInputElement): void {
+      input.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+    }
 
-    expect(looping).toHaveBeenCalledWith(true);
-    expect(speed).toHaveBeenCalledWith(1.5);
-    expect(volume).toHaveBeenCalledWith(0.4);
-    expect(sliders[0].min).toBe('25');
-    expect(sliders[0].max).toBe('200');
+    it("runs the viewer's transport through the player: loop, speed as a percentage, volume and the seek bar", () => {
+      const looping = spyOn(player, 'setLooping');
+      const speed = spyOn(player, 'setPlaybackSpeed');
+      const volume = spyOn(player, 'setVolume');
+      const seek = spyOn(player, 'seekToTime');
+      playerMoves({ isReadyForPlayback: true, timePosition: 65_000, totalDuration: 200_000 });
+      const [speedSlider, volumeSlider, seekBar] = sliders();
 
-    player.getState().next({ ...player.getState().getValue(), timePosition: 65_000, totalDuration: 200_000 });
-    fixture.detectChanges();
-    set(sliders[2], '30000');
-    expect(seek).toHaveBeenCalledWith(30000);
-    expect(host.querySelector('.time-readout')?.textContent?.trim()).toBe('1:05 / 3:20');
+      Array.from(host.querySelectorAll<HTMLButtonElement>('.transport .toggle-btn')).find(button => button.textContent?.trim() === 'Loop')!.click();
+      drag(speedSlider, '150');
+      release(speedSlider);
+      drag(volumeSlider, '40');
+      drag(seekBar, '30000');
+      release(seekBar);
+
+      expect(looping).toHaveBeenCalledWith(true);
+      expect(speed).toHaveBeenCalledWith(1.5);
+      expect(volume).toHaveBeenCalledWith(0.4);
+      expect(seek).toHaveBeenCalledWith(30000);
+      expect(speedSlider.min).toBe('25');
+      expect(speedSlider.max).toBe('200');
+    });
+
+    it("seeks by the second, over the player's duration, from where the player is", () => {
+      playerMoves({ isReadyForPlayback: true, timePosition: 65_000, totalDuration: 200_000 });
+      const seekBar = sliders()[2];
+
+      expect(seekBar.step).toBe('1000');
+      expect(seekBar.max).toBe('200000');
+      expect(seekBar.value).toBe('65000');
+      expect(host.querySelector('.time-readout')?.textContent?.trim()).toBe('1:05 / 3:20');
+
+      playerMoves({ timePosition: 66_000 });
+      expect(seekBar.value).toBe('66000');
+      expect(seekBar.getAttribute('aria-valuetext')).toBe('1:06 / 3:20');
+    });
+
+    it('keeps a drag where the hand has it while the player plays on, and seeks once, when the drag lets go', () => {
+      const seek = spyOn(player, 'seekToTime');
+      playerMoves({ isReadyForPlayback: true, isPlaying: true, timePosition: 65_000, totalDuration: 200_000 });
+      const seekBar = sliders()[2];
+
+      drag(seekBar, '30000');
+      drag(seekBar, '31000');
+      playerMoves({ timePosition: 66_000 });
+
+      expect(seek).not.toHaveBeenCalled();
+      expect(seekBar.value).toBe('31000');
+      expect(host.querySelector('.time-readout')?.textContent?.trim()).toBe('0:31 / 3:20');
+      expect(seekBar.getAttribute('aria-valuetext')).toBe('0:31 / 3:20');
+
+      release(seekBar);
+      expect(seek.calls.allArgs()).toEqual([[31000]]);
+
+      playerMoves({ timePosition: 32_000 });
+      expect(seekBar.value).toBe('32000');
+      expect(host.querySelector('.time-readout')?.textContent?.trim()).toBe('0:32 / 3:20');
+    });
+
+    it('sets the speed once, when the drag lets go, with the label following the drag until then', () => {
+      const speed = spyOn(player, 'setPlaybackSpeed');
+      playerMoves({ isReadyForPlayback: true });
+      const speedSlider = sliders()[0];
+      const readout = (): string | undefined => host.querySelector('.speed-readout')?.textContent?.trim();
+
+      drag(speedSlider, '120');
+      drag(speedSlider, '150');
+
+      expect(speed).not.toHaveBeenCalled();
+      expect(readout()).toBe('150%');
+      expect(speedSlider.getAttribute('aria-valuetext')).toBe('150%');
+
+      release(speedSlider);
+      expect(speed.calls.allArgs()).toEqual([[1.5]]);
+    });
+
+    it("reads the speed and the volume back from the player's state, as percentages", () => {
+      playerMoves({ tempoMultiplier: 0.5, volume: 0.25 });
+
+      expect(component.speedPercent).toBe(50);
+      expect(component.volumePercent).toBe(25);
+      expect(host.querySelector('.speed-readout')?.textContent?.trim()).toBe('50%');
+      expect(sliders()[0].value).toBe('50');
+      expect(sliders()[1].value).toBe('25');
+    });
+
+    it('names each slider by its label alone, with no numbers in the name', () => {
+      const names = sliders().map(slider => Array.from(slider.labels ?? []).map(label => label.textContent?.trim()));
+
+      expect(names).toEqual([['Speed'], ['Volume'], ['Position']]);
+      for (const slider of sliders()) {
+        expect(slider.hasAttribute('aria-label')).withContext('aria-label').toBeFalse();
+        expect(slider.hasAttribute('aria-labelledby')).withContext('aria-labelledby').toBeFalse();
+      }
+    });
+
+    it("keeps the readouts out of a screen reader's hearing: the sliders' valuetext already says them", () => {
+      expect(host.querySelectorAll('.transport output').length).toBe(0);
+      for (const readout of Array.from(host.querySelectorAll('.speed-readout, .time-readout'))) {
+        expect(readout.getAttribute('aria-hidden')).withContext(readout.className).toBe('true');
+      }
+    });
+
+    it('disables speed and volume until the player is ready, and the seek bar until there is something to seek over', () => {
+      const disabled = (): boolean[] => sliders().map(slider => slider.disabled);
+      expect(disabled()).toEqual([true, true, true]);
+
+      playerMoves({ isReadyForPlayback: true });
+      expect(disabled()).toEqual([false, false, true]);
+
+      playerMoves({ totalDuration: 200_000 });
+      expect(disabled()).toEqual([false, false, false]);
+    });
   });
 
   it('closes an open popover when the Scales menu opens, and closes the menu when the shortcut sheet opens', () => {
