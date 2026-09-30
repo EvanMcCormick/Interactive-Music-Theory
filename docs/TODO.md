@@ -326,7 +326,8 @@ stood here and the "After M2" section of the editor design. Seventeen decisions,
 eleven steps, and percussion joining the model — because a drum track did not convert short, it
 converted wrong: alphaTab leaves `tone` and `octave` at -1 on a percussion note, so `fromNote`
 produced `{ kind: 'pitched', noteValue: -1, octave: -2 }` for every drum hit in the file. The
-design is merged at `2e875be`; the implementation plan is being written on `feature/gp-composer`.
+design is merged at `2e875be`, and planned in `docs/plans/2026-09-30-gp-composer.md`, whose "Corrections to the design" list
+what building it changed; steps 1 and 2 are built on `feature/gp-composer`.
 
 M3 (inspector, and the track strip's mixer and bar grid) and M4 (bend curve, custom tuplet and
 trill speed editors) follow it.

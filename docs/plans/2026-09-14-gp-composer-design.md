@@ -1,7 +1,9 @@
 # The GP Viewer becomes the composer
 
 **Date:** 2026-09-14
-**Status:** Designed, not planned. The milestone after M2 of
+**Status:** Designed and planned, not yet implemented: [the implementation plan](2026-09-30-gp-composer.md) builds steps 3 to 11
+of Part 8, proven against the code, and lists sixteen corrections building it made to this design. Steps 1 and 2 are
+built on `feature/gp-composer`. The milestone after M2 of
 [the composer editor redesign](2026-09-13-composer-editor-design.md) and before its M3.
 **Supersedes:** "After M2: the GP Viewer becomes the composer" in that document (Part 1), and
 the paragraph of the same name under "Next milestone, when there is one" in `docs/TODO.md`.
