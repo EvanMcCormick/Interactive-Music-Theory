@@ -81,7 +81,7 @@ function respelledNote(
   const options = respellingsOf(pitchClass, note.pitch.kind === 'fretted');
   if (options.length === 0) return null;
   const next = options[(options.indexOf(spellingOf(note, pitchClass, fifths)) + 1) % options.length];
-  if (note.pitch.kind === 'fretted') return { pitch: note.pitch, accidental: next };
+  if (note.pitch.kind !== 'pitched') return { pitch: note.pitch, accidental: next };
   if (transposed) return { pitch: { kind: 'pitched', noteValue: note.pitch.noteValue, octave: note.pitch.octave }, accidental: next };
 
   const letter = next === 'auto' ? LETTERS[STEP_SEMITONES.indexOf(reduceToOctave(pitchClass))] : forcedLetterOf(next, pitchClass);
@@ -94,8 +94,11 @@ function respellingOf(doc: ScoreDoc, target: NoteTarget): Pick<NoteDoc, 'pitch' 
   const bar = staff?.bars[target.ref.barIndex];
   if (!staff || !bar) return null;
   if (target.note.pitch.kind === 'fretted' && target.note.effects.harmonic === 'natural') return null;
+  // A drum hit has no pitch class, so no spelling to move to.
+  const pitchClass = drawnPitchClassOf(staff, target.note.pitch);
+  if (pitchClass === null) return null;
   const transposed = reduceToOctave(staff.transpose + staff.displayTranspose) !== 0;
-  return respelledNote(target.note, drawnPitchClassOf(staff, target.note.pitch), bar.keySignature.fifths, transposed);
+  return respelledNote(target.note, pitchClass, bar.keySignature.fifths, transposed);
 }
 
 /**

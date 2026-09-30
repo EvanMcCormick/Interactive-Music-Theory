@@ -315,7 +315,7 @@ function writeNote(draft: ScoreDoc, cursor: EditCursor, entry: StaffEntry, durat
       beat.notes[existing] = note;
       return dropped;
     }
-  } else {
+  } else if (pitch.kind === 'pitched') {
     const existing = beat.notes.findIndex(
       n => n.pitch.kind === 'pitched' && n.pitch.noteValue === pitch.noteValue && n.pitch.octave === pitch.octave
     );

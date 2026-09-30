@@ -613,6 +613,8 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
     showTablature: true,
     showSlash: false,
     showNumbered: false,
+    isPercussion: false,
+    lineCount: 5,
     bars
   };
 
@@ -626,7 +628,8 @@ export function deriveScore(session: TranscriptionSession): DerivedScore {
     // Null despite this track being generated, from audio, by the code around
     // it: the field means "generated from a progression" and nothing broader.
     // It is a link back to a `ProgressionDoc`, and a transcription has none.
-    generated: null
+    generated: null,
+    percussionArticulations: []
   };
 
   return {

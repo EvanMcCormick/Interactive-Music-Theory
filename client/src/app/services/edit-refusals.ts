@@ -30,7 +30,7 @@ import { BeatRef, beatAt } from './composer-selection';
 import { NoteTarget, noteEffectTargets, noteTargetsAt, tieTargetsOf, trillTargetOf } from './note-edits';
 import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieOriginOf } from './note-landing';
 import { forcedLetterOf, reduceToOctave } from './note-spelling';
-import { soundingMidiOf } from './pitch-on-strings';
+import { SoundingPitch, soundingMidiOf } from './pitch-on-strings';
 
 /**
  * What kind of edit is being asked about.
@@ -101,10 +101,15 @@ const NATURAL_HARMONIC = "A natural harmonic's accidental cannot be forced yet."
  * forced accidental on a fretted natural harmonic before it asks. Both of those alphaTab
  * branches test `isStringed`, so a pitched note marked natural is drawn at its own pitch
  * and is read correctly here.
+ *
+ * Null for a drum hit, which is drawn at its articulation's staff line and has no pitch class at all.
  */
-export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
+export function drawnPitchClassOf(staff: StaffDoc, pitch: SoundingPitch): number;
+export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number | null;
+export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number | null {
+  const midi = soundingMidiOf(staff, pitch);
   // A pitched note's octave adds whole octaves, which the reduction takes off again.
-  return reduceToOctave(soundingMidiOf(staff, pitch) - staff.transpose - staff.displayTranspose);
+  return midi === null ? null : reduceToOctave(midi - staff.transpose - staff.displayTranspose);
 }
 
 /**
@@ -114,7 +119,8 @@ export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
 function anyNoteUnspellable(doc: ScoreDoc, targets: readonly NoteTarget[], accidental: AccidentalMode): boolean {
   return targets.some(({ ref, note }) => {
     const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
-    return staff !== undefined && forcedLetterOf(accidental, drawnPitchClassOf(staff, note.pitch)) === undefined;
+    const pitchClass = staff === undefined ? null : drawnPitchClassOf(staff, note.pitch);
+    return pitchClass !== null && forcedLetterOf(accidental, pitchClass) === undefined;
   });
 }
 
@@ -491,7 +497,8 @@ export function trillRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: num
   if (targets.every(target => target.note.effects.trill !== null)) return null;
   const tooHigh = targets.some(({ ref, note }) => {
     const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
-    return staff !== undefined && trillTargetOf(staff, note) > MIDI_TOP;
+    const target = staff === undefined ? null : trillTargetOf(staff, note);
+    return target !== null && target > MIDI_TOP;
   });
   return tooHigh ? TRILL_OUT_OF_RANGE : null;
 }

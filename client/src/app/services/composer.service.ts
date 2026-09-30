@@ -209,6 +209,8 @@ export class ComposerService {
       showTablature: fretted,
       showSlash: false,
       showNumbered: false,
+      isPercussion: false,
+      lineCount: 5,
       bars: masterBars.map((_, index) =>
         createDefaultBar(fretted, effectiveTimeSignature(masterBars, index))
       )
@@ -221,7 +223,8 @@ export class ComposerService {
       color: fretted ? '#e74c3c' : '#3498db',
       playback: createDefaultPlaybackInfo(program),
       staves: [staff],
-      generated: null
+      generated: null,
+      percussionArticulations: []
     };
   }
 

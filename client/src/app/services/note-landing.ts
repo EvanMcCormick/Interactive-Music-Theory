@@ -133,11 +133,18 @@ export function tieCandidateOf(doc: ScoreDoc, ref: BeatRef, note: NoteDoc): Note
   return null;
 }
 
-/** The note on `beat` alphaTab would take for `note`'s line: the same string, or pitched, the same pitch. */
+/**
+ * The note on `beat` alphaTab would take for `note`'s line: the same string; pitched, the same pitch; a drum hit, the
+ * same articulation. `Beat.chain` keys its lookup by `realValue`, which on a percussion note is the articulation number
+ * (`alphaTab.core.mjs` ~6067, ~8086), so a tie between two hits of one drum resolves.
+ */
 function sameLineNote(beat: BeatDoc, note: NoteDoc): NoteDoc | null {
   const pitch = note.pitch;
   if (pitch.kind === 'fretted') return noteOnString(beat, pitch.string);
   if (beat.isRest) return null;
+  if (pitch.kind === 'percussion') {
+    return beat.notes.find(other => other.pitch.kind === 'percussion' && other.pitch.articulation === pitch.articulation) ?? null;
+  }
   return (
     beat.notes.find(
       other => other.pitch.kind === 'pitched' && other.pitch.noteValue === pitch.noteValue && other.pitch.octave === pitch.octave

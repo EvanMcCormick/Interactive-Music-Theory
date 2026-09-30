@@ -209,6 +209,41 @@ export interface TrackDoc {
    * rather than writing it out.
    */
   generated: GeneratedOrigin | null;
+  /**
+   * The track's own drum kit, in the order alphaTab keeps it - `Track.percussionArticulations`. Empty on a pitched
+   * track, and on a drum track whose notes name alphaTab's own table by id rather than an index into this list, which
+   * is what a gp3-gp5 file gives.
+   *
+   * A percussion note's `articulation` below this list's length is an index into it, so the order is the data: the
+   * mapper copies it field by field and rebuilds it in the same order, and nothing may sort or filter it.
+   */
+  percussionArticulations: ArticulationDoc[];
+}
+
+/**
+ * One entry of a track's own kit, in alphaTab's own fields so the mapper copies rather than converts
+ * (`alphaTab.model.InstrumentArticulation`).
+ *
+ * Carried whole because alphaTab's table of 95 standard articulations (`PercussionMapper`) is internal to the bundle
+ * and cannot be asked to look one up: the model has to hold what a note's index points at. See "Percussion in the
+ * model" in the GP-composer design doc.
+ */
+export interface ArticulationDoc {
+  id: number;
+  /** The instrument element, e.g. "Snare". With `id` it makes alphaTab's `uniqueId`, `Snare.38`. */
+  elementType: string;
+  /** Steps - lines and spaces - down from the top line. 1 is the top line; negative is above the staff. */
+  staffLine: number;
+  /** `MusicFontSymbol` values. */
+  noteHeadDefault: number;
+  noteHeadHalf: number;
+  noteHeadWhole: number;
+  /** A `MusicFontSymbol` drawn beside the notehead, or `MusicFontSymbol.None`. */
+  techniqueSymbol: number;
+  /** A `TechniqueSymbolPlacement`: above, below, inside or outside the staff. */
+  techniqueSymbolPlacement: number;
+  /** The MIDI key playback strikes on channel 9. */
+  outputMidiNumber: number;
 }
 
 export interface StaffDoc {
@@ -224,6 +259,14 @@ export interface StaffDoc {
   showTablature: boolean;
   showSlash: boolean;
   showNumbered: boolean;
+  /**
+   * A drum staff: its notes are `percussion` pitches, it has no tuning and no tablature, and alphaTab plays it on MIDI
+   * channel 9. alphaTab keeps the flag per staff and says in its own comment that it belongs on the track; the model
+   * copies where alphaTab keeps it.
+   */
+  isPercussion: boolean;
+  /** Lines in the standard-notation staff: `Staff.standardNotationLineCount`, 5 unless a part says otherwise. */
+  lineCount: number;
   /** Parallel to ScoreDoc.masterBars: same length, same order. */
   bars: BarDoc[];
 }
@@ -307,8 +350,14 @@ export interface BeatEffectsDoc {
 export type NoteLetter = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
 
 /**
- * alphaTex has exactly two note syntaxes - `3.3` (fret.string) and `C#4` -
- * so a discriminated union maps 1:1 onto them.
+ * alphaTex has three note syntaxes - `3.3` (fret.string), `C#4`, and a drum
+ * articulation's name in quotes - so a discriminated union maps 1:1 onto them.
+ *
+ * `percussion` is not a pitch that happens to be unpitched: a drum hit has no
+ * `noteValue` and no `octave`, and alphaTab leaves both at -1 on one. Its one
+ * number is `Note.percussionArticulation`, verbatim - an index into the track's
+ * `percussionArticulations` when it is below that list's length, and otherwise
+ * an id in alphaTab's own table. The mapper does not care which.
  */
 export type NotePitch =
   | { kind: 'fretted'; string: number; fret: number }
@@ -328,7 +377,8 @@ export type NotePitch =
        * a stale letter overrules the accidental.
        */
       letter?: NoteLetter;
-    };
+    }
+  | { kind: 'percussion'; articulation: number };
 
 export interface NoteDoc {
   pitch: NotePitch;

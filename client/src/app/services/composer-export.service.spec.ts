@@ -57,6 +57,7 @@ function twoTrackDoc(): ScoreDoc {
         shortName: 'Pno',
         color: '#3498db',
         playback: createDefaultPlaybackInfo(0),
+        percussionArticulations: [],
         staves: [
           {
             tuning: [],
@@ -68,6 +69,8 @@ function twoTrackDoc(): ScoreDoc {
             showTablature: false,
             showSlash: false,
             showNumbered: false,
+            isPercussion: false,
+            lineCount: 5,
             bars: [
               bar([quarterNote(0, 4), quarterNote(4, 4), quarterNote(7, 4), quarterNote(0, 5)])
             ]
@@ -81,6 +84,7 @@ function twoTrackDoc(): ScoreDoc {
         shortName: 'Gtr',
         color: '#e74c3c',
         playback: createDefaultPlaybackInfo(25),
+        percussionArticulations: [],
         staves: [
           {
             tuning: STANDARD_GUITAR_TUNING.slice(),
@@ -92,6 +96,8 @@ function twoTrackDoc(): ScoreDoc {
             showTablature: true,
             showSlash: false,
             showNumbered: false,
+            isPercussion: false,
+            lineCount: 5,
             bars: [
               bar([quarterNote(0, 3), quarterNote(3, 3), quarterNote(7, 3), quarterNote(0, 4)])
             ]

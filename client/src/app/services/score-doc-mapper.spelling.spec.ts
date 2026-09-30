@@ -122,6 +122,7 @@ function buildDoc(pitch: NotePitch, keySignature: KeySignature): ScoreDoc {
         shortName: 'Pno',
         color: '#2c3e50',
         playback: createDefaultPlaybackInfo(0),
+        percussionArticulations: [],
         generated: null,
         staves: [
           {
@@ -135,6 +136,8 @@ function buildDoc(pitch: NotePitch, keySignature: KeySignature): ScoreDoc {
             showTablature: false,
             showSlash: false,
             showNumbered: false,
+            isPercussion: false,
+            lineCount: 5,
             bars: [
               {
                 clef: 'g2',

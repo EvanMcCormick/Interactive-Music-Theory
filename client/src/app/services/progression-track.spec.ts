@@ -98,6 +98,7 @@ function plainTrack(name: string, bars = 0, meter: TimeSignature = FOUR_FOUR): T
     shortName: name.slice(0, 3),
     color: '#3498db',
     playback: createDefaultPlaybackInfo(0),
+    percussionArticulations: [],
     staves: [
       {
         tuning: [],
@@ -109,6 +110,8 @@ function plainTrack(name: string, bars = 0, meter: TimeSignature = FOUR_FOUR): T
         showTablature: false,
         showSlash: false,
         showNumbered: false,
+        isPercussion: false,
+        lineCount: 5,
         bars: Array.from({ length: bars }, () => createDefaultBar(false, meter))
       }
     ],

@@ -89,6 +89,7 @@ describe('ScoreDocMapperService effects round trip', () => {
           shortName: 'gtr',
           color: '#e74c3c',
           playback: createDefaultPlaybackInfo(25),
+          percussionArticulations: [],
           staves: [
             {
               tuning: STANDARD_GUITAR_TUNING.slice(),
@@ -100,6 +101,8 @@ describe('ScoreDocMapperService effects round trip', () => {
               showTablature: true,
               showSlash: false,
               showNumbered: false,
+              isPercussion: false,
+              lineCount: 5,
               bars: [
                 {
                   clef: 'g2',

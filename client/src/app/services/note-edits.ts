@@ -168,10 +168,12 @@ export function toggleTie(doc: ScoreDoc, refs: readonly BeatRef[], focus: number
  * The pitch a default trill on `note` alternates with, as `TrillDoc.value` stores it - alphaTab's
  * `Note.trillValue`, a MIDI number: a whole step above the note as it sounds. On a string that is the
  * open string plus the capo plus the fret, since alphaTex saves a trill as a fret relative to the
- * string with the capo included (`trillFret`); on a pitched staff, the note's own pitch.
+ * string with the capo included (`trillFret`); on a pitched staff, the note's own pitch. Null for a drum hit, which has
+ * no pitch to trill from - and alphaTab plays no trill on a percussion staff in any case.
  */
-export function trillTargetOf(staff: StaffDoc, note: NoteDoc): number {
-  return soundingMidiOf(staff, note.pitch) + TRILL_INTERVAL;
+export function trillTargetOf(staff: StaffDoc, note: NoteDoc): number | null {
+  const midi = soundingMidiOf(staff, note.pitch);
+  return midi === null ? null : midi + TRILL_INTERVAL;
 }
 
 /**
@@ -185,6 +187,7 @@ export function toggleTrill(doc: ScoreDoc, refs: readonly BeatRef[], focus: numb
   const allOn = targets.length > 0 && targets.every(target => target.note.effects.trill !== null);
   for (const { ref, note } of targets) {
     const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
-    note.effects.trill = allOn || !staff ? null : { value: trillTargetOf(staff, note), speed: DEFAULT_TRILL_SPEED };
+    const value = allOn || !staff ? null : trillTargetOf(staff, note);
+    note.effects.trill = value === null ? null : { value, speed: DEFAULT_TRILL_SPEED };
   }
 }
