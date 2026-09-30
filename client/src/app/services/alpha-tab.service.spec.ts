@@ -16,6 +16,14 @@ describe('AlphaTabService before an api exists', () => {
       service.highlightRange(beat, beat);
       service.clearHighlight();
       service.seekToBeat(beat);
+      service.renderTracks([0, 1]);
     }).not.toThrow();
+  });
+
+  it('refuses to load bytes before an api exists, naming the reason', () => {
+    TestBed.configureTestingModule({});
+    const service = TestBed.inject(AlphaTabService);
+
+    expect(() => service.loadBytes(new ArrayBuffer(8), [0, 1])).toThrowError('alphaTab API not initialized');
   });
 });

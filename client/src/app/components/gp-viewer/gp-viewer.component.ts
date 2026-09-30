@@ -12,7 +12,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
-import { AlphaTabService } from '../../services/alpha-tab.service';
+import { ALL_TRACKS, AlphaTabService } from '../../services/alpha-tab.service';
 import { GpLibraryService } from '../../services/gp-library.service';
 import { AlphaTabState, GpScoreInfo, GpTrackInfo, HighlightConfig } from '../../models/alpha-tab.model';
 import { GpScaleHighlighterComponent } from './components/gp-scale-highlighter/gp-scale-highlighter.component';
@@ -163,7 +163,8 @@ export class GpViewerComponent implements OnInit, OnDestroy, AfterViewInit {
       this.currentFile = file;
       this.currentLibraryId = null;
       this.isInLibrary = false;
-      await this.alphaTabService.loadFile(file);
+      // Every track, not the first alone: the sidebar below lists them all and mutes them all.
+      this.alphaTabService.loadBytes(await file.arrayBuffer(), ALL_TRACKS);
     } catch (error) {
       console.error('Failed to load file:', error);
     }
@@ -178,11 +179,9 @@ export class GpViewerComponent implements OnInit, OnDestroy, AfterViewInit {
       if (entry && entry.fileData) {
         this.currentLibraryId = id;
         this.isInLibrary = true;
-        // Create a blob from the stored data
-        const blob = new Blob([entry.fileData]);
-        const file = new File([blob], entry.fileName);
-        this.currentFile = file;
-        await this.alphaTabService.loadFile(file);
+        // The entry already holds an ArrayBuffer; the Blob and File round trip only got the same buffer back.
+        this.currentFile = new File([entry.fileData], entry.fileName);
+        this.alphaTabService.loadBytes(entry.fileData, ALL_TRACKS);
       }
     } catch (error) {
       console.error('Failed to load from library:', error);

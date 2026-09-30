@@ -11,6 +11,16 @@ import * as alphaTab from '@coderline/alphatab';
 import { AuditionQueue } from './audition-queue';
 
 /**
+ * alphaTab's own sentinel for "draw every track": a one-element list holding -1
+ * (`AlphaTabApi.renderScore`, `alphaTab.core.mjs` ~51181 in 1.8).
+ *
+ * Needed because `load` takes the track indices before the bytes have been parsed, so the caller cannot know how
+ * many tracks the file has. Passing explicit indices there would also meet alphaTab's own off-by-one - it accepts
+ * `index <= tracks.length` and pushes `undefined` for the last - which this sentinel steps around.
+ */
+export const ALL_TRACKS: readonly number[] = [-1];
+
+/**
  * Service for managing alphaTab API interactions
  * Provides state management via BehaviorSubject following MusicTheoryService pattern
  */
@@ -171,24 +181,34 @@ export class AlphaTabService {
   }
 
   /**
-   * Load a Guitar Pro file from a File object
+   * Loads Guitar Pro bytes and draws `trackIndices`.
+   *
+   * Replaces `loadFile(file)`, which read a `File` and then hard-coded `[0]`, so a four-piece file drew one staff
+   * while the page listed four tracks beside it. Bytes rather than a `File` because every caller now has an
+   * `ArrayBuffer` already - a `gp-library` entry's `fileData` - and the viewer used to wrap one in a Blob and a File
+   * to get the same buffer back out.
+   *
+   * Parse failures do not arrive here: `api.load` hands the bytes to a worker, and a file alphaTab cannot read
+   * reaches the `error` event, which sets `loadingState: 'error'` (`setupEventListeners`).
    */
-  async loadFile(file: File): Promise<void> {
+  loadBytes(bytes: ArrayBuffer, trackIndices: readonly number[]): void {
     if (!this.api) {
       throw new Error('alphaTab API not initialized');
     }
 
     this.updateState({ loadingState: 'loading', errorMessage: null });
+    this.api.load(new Uint8Array(bytes), trackIndices.slice());
+  }
 
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-      this.api.load(uint8Array, [0]); // Load first track by default
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to load file';
-      this.updateState({ loadingState: 'error', errorMessage: message });
-      throw error;
-    }
+  /**
+   * Draws `trackIndices` of the score alphaTab already holds - the track strip's show/hide in the Original state,
+   * where there is no document to re-render from. Indices the score does not have are left out, and an empty list
+   * draws nothing, so a caller that refuses to hide the last track does so for itself (`renderedTracksOf`).
+   */
+  renderTracks(trackIndices: readonly number[]): void {
+    const score = this.api?.score;
+    if (!this.api || !score) return;
+    this.api.renderTracks(trackIndices.map(index => score.tracks[index]).filter(track => track !== undefined));
   }
 
 
