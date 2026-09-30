@@ -36,12 +36,25 @@ describe('ComposerStatusLineComponent', () => {
 
   it("counts the file's bars in Original, not the empty document's, and measures none against a time signature", () => {
     fixture.componentRef.setInput('cursor', createDefaultCursor());
-    fixture.componentRef.setInput('doc', ComposerService.createEmptyScore());
+    fixture.componentRef.setInput('doc', scoreWithBarOver(1));
     fixture.componentRef.setInput('fileBarCount', 12);
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('.readout')?.textContent?.trim()).toBe('Bar 1 of 12 · Beat 1');
     expect(fixture.nativeElement.querySelector('.over-bars')).toBeNull();
+  });
+
+  it('counts and measures the document again once the page leaves Original', () => {
+    fixture.componentRef.setInput('cursor', createDefaultCursor());
+    fixture.componentRef.setInput('doc', scoreWithBarOver(1));
+    fixture.componentRef.setInput('fileBarCount', 12);
+    fixture.detectChanges();
+
+    fixture.componentRef.setInput('fileBarCount', null);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.readout')?.textContent?.trim()).toBe('Bar 1 of 4 · Beat 1');
+    expect(fixture.nativeElement.querySelector('.over-bars')?.textContent?.trim()).toBe('1 bar over its time signature');
   });
 
   it('says it is showing the original file, beside the caret readout and outside the live region', () => {

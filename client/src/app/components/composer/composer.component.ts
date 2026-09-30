@@ -199,6 +199,11 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     return this.state?.doc.tempo ?? 120;
   }
 
+  /** In Original, how many bars the file has, for the status line's readout; null in Composition. */
+  get fileBarCount(): number | null {
+    return this.original?.score.masterBars.length ?? null;
+  }
+
   /** Undo's and Redo's tooltips, with the keys the platform's keyboard writes: Ctrl+Z, or ⌘+Z on a Mac. */
   readonly undoTitle: string = shortcutTitleOf('undo', inject(KEY_PLATFORM));
   readonly redoTitle: string = shortcutTitleOf('redo', inject(KEY_PLATFORM));

@@ -737,6 +737,12 @@ describe('ComposerComponent in the Original state', () => {
     expect(textButton('Redo').disabled).toBe(true);
   });
 
+  it("counts the file's bars in the status line, not the empty composition's", async () => {
+    await openFile('Band', 132);
+
+    expect(fixture.nativeElement.querySelector('.readout')?.textContent).toContain('of 1');
+  });
+
   it('gives the title and the BPM back once the file is gone', async () => {
     await openFile('Band', 132);
     gp.clear();
