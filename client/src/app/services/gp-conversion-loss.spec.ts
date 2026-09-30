@@ -80,7 +80,7 @@ describe('conversionLossOf', () => {
     { id: 'tempoChanges', set: score => score.masterBars[1].tempoAutomations.push(model.Automation.buildTempoAutomation(false, 0.5, 100, 0)) },
     {
       // A tempo marking's text: the model keeps the BPM and draws no words.
-      id: 'tempoChanges',
+      id: 'tempoText',
       set: score => {
         const slow = model.Automation.buildTempoAutomation(false, 0, 90, 0);
         slow.text = 'Slow';
@@ -106,16 +106,14 @@ describe('conversionLossOf', () => {
       }
     },
     { id: 'layout', set: score => (score.stylesheet.hideDynamics = true), firstBar: 0 },
-    { id: 'layout', set: score => (score.masterBars[1].displayWidth = 300) },
     { id: 'layout', set: score => score.tracks[0].addLineBreaks(1), firstBar: 0 },
     { id: 'layout', set: score => (score.stylesheet.perTrackDisplayTuning = new Map([[0, false]])), firstBar: 0 },
     {
-      // A title the file hides: after conversion alphaTab's default draws it.
+      // A tabber line the file shows, in words of its own: after conversion alphaTab's default hides it.
       id: 'layout',
       set: score => {
-        score.title = 'Song';
         score.style = new model.ScoreStyle();
-        score.style.headerAndFooter.set(model.ScoreSubElement.Title, new model.HeaderFooterStyle('%TITLE%', false));
+        score.style.headerAndFooter.set(model.ScoreSubElement.Transcriber, new model.HeaderFooterStyle('Tabbed by Me', true));
       },
       firstBar: 0
     },
@@ -143,6 +141,15 @@ describe('conversionLossOf', () => {
       set: score => {
         noteOf(score).harmonicType = model.HarmonicType.Artificial;
         noteOf(score).harmonicValue = 12;
+      }
+    },
+    {
+      // Heard the same and drawn differently: the tab writes a natural harmonic's value, <11.5>, where conversion writes <12>.
+      id: 'harmonicPitch',
+      set: score => {
+        noteOf(score).fret = 12;
+        noteOf(score).harmonicType = model.HarmonicType.Natural;
+        noteOf(score).harmonicValue = 11.5;
       }
     },
     {
@@ -305,7 +312,7 @@ describe('conversionLossOf', () => {
 
     const loss = lossOf(score);
     expect(loss.map(item => item.id)).toEqual(['restVoices']);
-    expect(loss[0]).toEqual(jasmine.objectContaining({ group: 'first save', count: 1, firstBar: 2 }));
+    expect(loss[0]).toEqual(jasmine.objectContaining({ group: 'conversion', count: 1, firstBar: 2 }));
   });
 
   it('reports only the credits of a bare score', () => {
@@ -314,6 +321,20 @@ describe('conversionLossOf', () => {
     score.copyright = '2026';
 
     expect(lossOf(score).map(item => item.id)).toEqual(['credits']);
+  });
+
+  it('reports the credits on conversion and a double bar on the first save of a bare score', () => {
+    const score = new model.Score();
+    score.copyright = '2026';
+    const masterBar = new model.MasterBar();
+    masterBar.isDoubleBar = true;
+    score.addMasterBar(masterBar);
+
+    const loss = lossOf(score);
+    expect(loss.map(item => [item.id, item.group])).toEqual([
+      ['credits', 'conversion'],
+      ['doubleBars', 'first save']
+    ]);
   });
 
   it('says a rest-only second voice stops being drawn at conversion', () => {
@@ -368,10 +389,27 @@ describe('conversionLossOf', () => {
 
     it('does not report the right bar line both importers set on a double bar, which the double bar draws', () => {
       const score = guitar();
+      score.masterBars[0].isDoubleBar = true;
+      staffOf(score).bars[0].barLineRight = model.BarLineStyle.LightLight;
+
+      expect(lossOf(score).map(item => item.id)).toEqual(['doubleBars']);
+    });
+
+    it('does report that bar line on the last bar, which a double bar left automatic draws as a final bar line', () => {
+      const score = guitar();
       score.masterBars[1].isDoubleBar = true;
       staffOf(score).bars[1].barLineRight = model.BarLineStyle.LightLight;
 
-      expect(lossOf(score).map(item => item.id)).toEqual(['doubleBars']);
+      expect(lossOf(score).map(item => item.id)).toEqual(jasmine.arrayWithExactContents(['doubleBars', 'barLines']));
+    });
+
+    it('does report that bar line on a repeat end, which a double bar left automatic draws as a repeat', () => {
+      const score = guitar();
+      score.masterBars[0].isDoubleBar = true;
+      score.masterBars[0].repeatCount = 2;
+      staffOf(score).bars[0].barLineRight = model.BarLineStyle.LightLight;
+
+      expect(lossOf(score).map(item => item.id)).toEqual(jasmine.arrayWithExactContents(['doubleBars', 'barLines']));
     });
 
     it('does not report the initial tempo GP3-5 puts on bar 1 twice', () => {
@@ -388,6 +426,20 @@ describe('conversionLossOf', () => {
       score.masterBars[1].tempoAutomations.push(model.Automation.buildTempoAutomation(true, 0, 90, 0));
 
       expect(lossOf(score)).toEqual([]);
+    });
+
+    it("reports only the words of GP5's initial tempo, which it puts on bar 1 twice", () => {
+      const score = guitar();
+      const initial = score.masterBars[0].tempoAutomations[0];
+      initial.text = 'Moderate';
+      initial.isVisible = true;
+      const again = model.Automation.buildTempoAutomation(false, 0, score.tempo, 2);
+      again.text = score.tempoLabel;
+      score.masterBars[0].tempoAutomations.push(again);
+
+      const loss = lossOf(score);
+      expect(loss.map(item => item.id)).toEqual(['tempoText']);
+      expect(loss[0]).toEqual(jasmine.objectContaining({ group: 'conversion', count: 1, firstBar: 1 }));
     });
 
     it('does not report GP5 lyrics, sized to five lines with only the first filled', () => {
@@ -430,11 +482,56 @@ describe('conversionLossOf', () => {
       expect(lossOf(score)).toEqual([]);
     });
 
-    it('does not report a systems layout, which the app never renders from', () => {
+    it('does not report a systems layout or bar sizes, which the page layout the app renders never reads', () => {
       const score = guitar();
       score.defaultSystemsLayout = 4;
       score.systemsLayout = [2, 3];
       score.tracks[0].systemsLayout = [2];
+      score.masterBars[1].displayWidth = 300;
+      score.masterBars[1].displayScale = 2;
+      staffOf(score).bars[1].displayWidth = 300;
+      staffOf(score).bars[1].displayScale = 2;
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it('does not report a header line the file hides, which alphaTab draws by the notation settings instead', () => {
+      const score = guitar();
+      score.title = 'Song';
+      score.artist = 'Someone';
+      score.style = new model.ScoreStyle();
+      for (const [element, template] of [
+        [model.ScoreSubElement.Title, '%TITLE%'],
+        [model.ScoreSubElement.Artist, '%ARTIST%']
+      ] as const) {
+        const align = model.ScoreStyle.defaultHeaderAndFooter.get(element)?.textAlign;
+        score.style.headerAndFooter.set(element, new model.HeaderFooterStyle(template, false, align));
+      }
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it('does not report a tabber line the file hides, as alphaTab does by default', () => {
+      const score = guitar();
+      score.style = new model.ScoreStyle();
+      score.style.headerAndFooter.set(model.ScoreSubElement.Transcriber, new model.HeaderFooterStyle('Tabbed by Me', false));
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it('does not report hiding the tuning of a track that draws none', () => {
+      const score = guitar();
+      staffOf(score).showTablature = false;
+      score.stylesheet.perTrackDisplayTuning = new Map([[0, false]]);
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it('does not report the chord-diagram settings, which have no diagrams to draw after conversion', () => {
+      const score = guitar();
+      score.stylesheet.globalDisplayChordDiagramsOnTop = false;
+      score.stylesheet.globalDisplayChordDiagramsInScore = true;
+      score.stylesheet.perTrackChordDiagramsOnTop = new Map([[0, false]]);
 
       expect(lossOf(score)).toEqual([]);
     });

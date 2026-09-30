@@ -2985,26 +2985,34 @@ Corrected in review: the code blocks below are the first cut, and a review of fi
 (`Gp3To5Importer`, `GpifParser`) found rows firing for what conversion keeps or nobody sees. The shipped checker, with
 `alphaTab.core.mjs` line numbers in its comments, differs as follows; its spec adds a GP7 round trip
 (`Gp7Exporter` then `ScoreLoader.loadScoreFromBytes`) and a GP5-shaped case for each importer habit.
-- `tempoChanges` counts two automations at one place with one value once (GP3-5 puts bar 1's tempo there twice), no
-  longer treats `isLinear` as a reshaping (GP5 sets it on every mix-table change; alphaTab plays a step), and counts the
-  text of every visible tempo marking, which the model drops.
-- `credits` no longer includes `tempoLabel`; that text is `tempoChanges`' now.
+- `tempoChanges` counts two automations at one place with one value once (GP3-5 puts bar 1's tempo there twice), and
+  no longer treats `isLinear` as a reshaping (GP5 sets it on every mix-table change; alphaTab plays a step).
+- A new row, `tempoText` ("Tempo markings' words", conversion), counts the words of every visible tempo marking, which
+  the model drops while keeping the BPM - bar 1's included, so a GP5 file's "Moderate" is reported once.
+- `credits` no longer includes `tempoLabel`; that text is `tempoText`'s now.
 - `midiChannels` no longer compares `port` (nothing plays from it) and reports only the audible case: a track that is
   not a one-staff kit but that the file put on channel 9, which plays as drums until conversion. Relabelled to say so.
 - `customStyles` counts a style only when it holds a colour, or on a note a notehead; the header and footer are
-  compared with `ScoreStyle.defaultHeaderAndFooter` line by line, as drawn on what conversion keeps, under `layout`.
-- `layout` compares a per-track stylesheet entry with its global flag (an entry that hides nothing is no change), and
-  no longer counts a systems layout, which the app's Page and Horizontal layouts never read (`lineBreaks` still count).
-- `barLines` ignores the `LightLight` right bar line both importers set on a double bar, which `isDoubleBar` draws.
+  compared with `ScoreStyle.defaultHeaderAndFooter` line by line, as drawn on what conversion keeps, under `layout`. A
+  line's hide flag counts only for the tabber and the second copyright line: the renderer shows or hides the other
+  eight by the notation settings, which the app leaves on.
+- `layout` counts a per-track tuning entry only when it hides a tuning that would be drawn (global on, the track's
+  staff stringed, tuned, not percussion, showing tablature), and leaves out the three chord-diagram settings, since the
+  model drops chords and `chordDiagrams` says so. It no longer counts a systems layout, or a bar's or master bar's
+  `displayScale` and `displayWidth`: the app renders the Page layout only and never sets `systemsLayoutMode`, so none
+  is read (`lineBreaks` still count).
+- `barLines` ignores the `LightLight` right bar line both importers set on a double bar, only where an automatic bar
+  line draws the same: a double bar that is not a repeat end, not the last bar and not in free time.
 - `lyricLines` counts a beat only when a line past the first has text: GP files pad every beat to five lines of `''`.
 - `bendStyle` no longer counts `isContinuedBend`, which `Note.finish` recomputes from the tie and bend the mapper keeps.
 - `unsavableKit` ignores a technique symbol's placement when there is no symbol, and `roundTripKeeps` finishes and
   exports inside its `try`.
-- The mapper gives a natural harmonic the `harmonicValue` alphaTex's `nh` does (`naturalHarmonicValueOf`, a copy of
-  `ModelUtils.deltaFretToHarmonicValue`); before, a converted natural harmonic sounded the open string.
-  `harmonicPitch` now reports only a harmonic whose sounding pitch conversion changes.
+- The mapper gives a natural harmonic the `harmonicValue` alphaTex's `nh` does (`naturalHarmonicValueOf` in its own
+  pure module, `services/natural-harmonics.ts`, a copy of `ModelUtils.deltaFretToHarmonicValue`); before, a converted
+  natural harmonic sounded the open string. `harmonicPitch` now reports an artificial, pinch, tap or semi harmonic
+  whose pitch conversion drops, and a natural one whose value differs from its fret's - heard, or drawn in the tab.
 - `keptAutomation` also keeps a first-beat volume, balance or bank automation equal to the track's own (correction 7).
-- `restVoices` says the rests stop being drawn at conversion.
+- `restVoices` moves to the conversion group: its rests stop being drawn when the file converts, not at the save.
 
 **Files** (under `client/src/app/` unless given in full):
 - Create: `services/gp-conversion-loss.spec.ts`, `services/gp-conversion-loss.ts`

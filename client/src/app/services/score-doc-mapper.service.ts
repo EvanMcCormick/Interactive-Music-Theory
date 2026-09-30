@@ -55,6 +55,7 @@ import {
   trillSpeedOf,
   vibratoOf
 } from './alpha-tab-enum.bridge';
+import { naturalHarmonicValueOf } from './natural-harmonics';
 import { ALTER_BY_ACCIDENTAL, alterFor, forcedLetterOf } from './note-spelling';
 
 /** Step index of each letter, C through B, as `SpelledNote.letter` numbers them. */
@@ -149,48 +150,6 @@ function accidentalModeFor(
 ): alphaTab.model.NoteAccidentalMode {
   const alter = alterFor(pitchClass, LETTER_STEP[letter]);
   return MODE_BY_ALTER.get(alter) ?? alphaTab.model.NoteAccidentalMode.Default;
-}
-
-/**
- * The `harmonicValue` alphaTab gives a natural harmonic touched at `fret`: the fret itself where the node sits on it,
- * the node's true position where it sits between frets, and 12 for a fret with no node.
- *
- * A copy of `ModelUtils.deltaFretToHarmonicValue` (`alphaTab.core.mjs` ~4123-4150 in 1.8), which alphaTex's `nh`
- * (~14688-14690) and both GP importers (~20167, ~20789) call and which is not exported - `ModelUtils` is internal. The
- * model keeps a harmonic's type and not its value, so this is how a natural harmonic gets its value back: alphaTab
- * sounds one at `harmonicPitch + stringTuning` (~6058), and `harmonicPitch` reads nothing but `harmonicValue` (~6078),
- * so a natural harmonic left at alphaTab's default of 0 sounded the open string. Exported for the conversion's loss
- * checker, which asks what pitch conversion gives a file's harmonic.
- */
-export function naturalHarmonicValueOf(fret: number): number {
-  switch (fret) {
-    case 2:
-      return 2.4;
-    case 3:
-      return 3.2;
-    case 4:
-    case 5:
-    case 7:
-    case 9:
-    case 12:
-    case 16:
-    case 17:
-    case 19:
-    case 24:
-      return fret;
-    case 8:
-      return 8.2;
-    case 10:
-      return 9.6;
-    case 14:
-    case 15:
-      return 14.7;
-    case 21:
-    case 22:
-      return 21.7;
-    default:
-      return 12;
-  }
 }
 
 /**

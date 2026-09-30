@@ -3,8 +3,8 @@ import * as alphaTab from '@coderline/alphatab';
 import { ScoreDoc } from '../models/composer.model';
 import { fromDynamicValue } from './alpha-tab-enum.bridge';
 import { PERCUSSION_CHANNEL, midiChannelsOf } from './midi-channels';
+import { naturalHarmonicValueOf } from './natural-harmonics';
 import { frettedDocOf } from './pitch-on-strings';
-import { naturalHarmonicValueOf } from './score-doc-mapper.service';
 
 /**
  * What converting a `.gp` file into a composition would change, read from the file itself.
@@ -42,6 +42,7 @@ export type LossId =
   | 'wah'
   | 'lyricLines'
   | 'tempoChanges'
+  | 'tempoText'
   | 'unnamedSlides'
   | 'directions'
   | 'syncPoints'
@@ -96,6 +97,7 @@ const ITEMS: Readonly<Record<LossId, { label: string; one: string; many: string;
   wah: { label: 'Wah', one: 'beat', many: 'beats', group: 'conversion' },
   lyricLines: { label: 'Lyric lines past the first', one: 'beat', many: 'beats', group: 'conversion' },
   tempoChanges: { label: 'Tempo changes within a bar', one: 'change', many: 'changes', group: 'conversion' },
+  tempoText: { label: "Tempo markings' words", one: 'marking', many: 'markings', group: 'conversion', note: 'the BPM stays' },
   unnamedSlides: { label: 'Slides out downwards, pick slides and slides in from above', one: 'note', many: 'notes', group: 'conversion' },
   directions: { label: 'Directions: D.C., D.S., Coda, Fine', one: 'marking', many: 'markings', group: 'conversion' },
   syncPoints: { label: 'Backing-track sync points', one: 'sync point', many: 'sync points', group: 'conversion' },
@@ -137,8 +139,10 @@ const ITEMS: Readonly<Record<LossId, { label: string; one: string; many: string;
     label: 'A second voice of rests alone',
     one: 'bar',
     many: 'bars',
-    group: 'first save',
-    note: 'its rests are not drawn after conversion, and saving writes only voices with notes'
+    // A conversion item: the rests go from the page as soon as it converts (`toVoice` marks them empty), before any
+    // save - which then drops them too, since alphaTex writes only voices with notes.
+    group: 'conversion',
+    note: 'its rests are not drawn after conversion, nor saved'
   },
   unsavableKit: {
     label: 'Drums alphaTex cannot name',
@@ -232,45 +236,56 @@ function styled(style: alphaTab.model.ElementStyle<number> | null | undefined): 
 }
 
 function scoreLossInto(tally: Tally, score: alphaTab.model.Score, converted: ScoreDoc): void {
-  // Not `tempoLabel`: that is bar 1's tempo automation's text, and `masterBarLossInto` counts every tempo's text.
+  // Not `tempoLabel`: that is bar 1's tempo automation's text, and `masterBarLossInto` counts every tempo's words.
   const credits = [score.copyright, score.music, score.words, score.tab, score.notices, score.instructions];
   tally.add('credits', null, credits.filter(field => (field ?? '') !== '').length);
   if (styled(score.style)) tally.add('customStyles', null);
   if (score.backingTrack) tally.add('syncPoints', null);
 
-  // The systems layout - `defaultSystemsLayout` and `systemsLayout`, on the score and on each track - is not compared.
-  // alphaTab reads it only in `ModelUtils.getSystemLayout` (~4675), which only the Parchment layout calls, or the Page
-  // layout when `display.systemsLayoutMode` is `UseModelLayout` (~67289, ~67309). The app renders Page or Horizontal
-  // (`AlphaTabService.initializeApi`) and never sets `systemsLayoutMode`, so a file's systems layout is not drawn before
-  // conversion or after. GP6-8 files carry one (`GpifParser` ~21767, ~22053), so counting it reported every one of them.
-  tally.add('layout', null, stylesheetChangesOf(score.stylesheet) + headerFooterChangesOf(score, converted));
+  // Not compared: the systems layout - `defaultSystemsLayout` and `systemsLayout`, on the score and on each track - and
+  // each bar's and master bar's `displayScale` and `displayWidth`. alphaTab reads the systems layout only in
+  // `ModelUtils.getSystemLayout` (~4675), which only the Parchment layout calls, or the Page layout when
+  // `display.systemsLayoutMode` is `UseModelLayout` (~67289, ~67309). It reads a bar's scale only through
+  // `StaffSystem.getBarDisplayScale` (~65774), in `_scaleToWidth` under `shouldApplyBarScale` (~67173-67192) - true for
+  // Parchment, and for Page only under `UseModelLayout` (~67294, ~67311) - and a bar's width only in
+  // `HorizontalScreenLayout._scaleBars` (~66844-66848). Every caller of `AlphaTabService.initializeApi` asks for the Page
+  // layout, and none sets `systemsLayoutMode`, so none of these is drawn before conversion or after. GP6-8 files carry a
+  // systems layout (`GpifParser` ~21767, ~22053) and can carry bar scales (~23299, ~23315), so counting them reported
+  // files that convert whole.
+  tally.add('layout', null, stylesheetChangesOf(score) + headerFooterChangesOf(score, converted));
 }
 
 /**
- * How many of a stylesheet's settings draw something other than alphaTab's defaults.
- *
- * The per-track settings are maps from a track index to a flag, which narrow a global one, and GP5 writes one entry for
- * every track (`perTrackDisplayTuning` ~19911-19914, `perTrackChordDiagramsOnTop` ~19947-19950). An entry changes what
- * is drawn only when it hides what its global flag shows: the tuning and the chord diagrams are drawn when the global is
- * on and the track's entry is not `false` (`ScoreLayout._createScoreInfoGlyphs` ~66508-66510, ~66544-66547). An entry
- * equal to the global is no change, and one under a global that is off changes nothing the global's own row does not
- * already count. `perTrackMultiBarRest` is a set of the tracks that draw multi-bar rests on their own (~4168-4169);
- * every entry in it is a change from the default of none.
+ * The stylesheet settings about chord diagrams, left out of `layout`: the model has no chords, so a converted score has
+ * no diagram for them to place, and the `chordDiagrams` row already names the diagrams themselves. The in-score setting
+ * draws a beat's chord (~58493), the other two the list above the score (~66544-66547).
  */
-function stylesheetChangesOf(sheet: alphaTab.model.RenderStylesheet): number {
-  const perTrack = new Set<string>(['perTrackDisplayTuning', 'perTrackChordDiagramsOnTop', 'perTrackMultiBarRest']);
+const CHORD_DIAGRAM_SETTINGS = new Set<string>(['globalDisplayChordDiagramsOnTop', 'perTrackChordDiagramsOnTop', 'globalDisplayChordDiagramsInScore']);
+
+/**
+ * How many of a score's stylesheet settings draw something other than alphaTab's defaults.
+ *
+ * `perTrackDisplayTuning` maps a track index to a flag that narrows `globalDisplayTuning`, and GP5 writes one entry for
+ * every track (~19911-19914). The tuning is drawn for a track when the global is on, the track's entry is not `false`,
+ * and one of its staves draws a tuning at all - not percussion, stringed, tuned, showing tablature
+ * (`ScoreLayout._createScoreInfoGlyphs` ~66505-66513). So an entry is a change only when it hides a tuning that would be
+ * drawn: an entry equal to the global, one under a global that is off (the global's own row), or one on a track with no
+ * tuning to draw changes nothing. `perTrackMultiBarRest` is a set of the tracks that draw multi-bar rests on their own
+ * (~4168-4169); every entry in it is a change from the default of none.
+ */
+function stylesheetChangesOf(score: alphaTab.model.Score): number {
+  const sheet = score.stylesheet;
+  const perTrack = new Set<string>(['perTrackDisplayTuning', 'perTrackMultiBarRest', ...CHORD_DIAGRAM_SETTINGS]);
   const own = sheet as unknown as Record<string, unknown>;
   const defaults = DEFAULTS.stylesheet as unknown as Record<string, unknown>;
   const changed = Object.keys(defaults).filter(key => !perTrack.has(key) && own[key] !== defaults[key]).length;
 
-  const hiding = (entries: Map<number, boolean> | null, global: boolean): number =>
-    global ? [...(entries ?? new Map<number, boolean>()).values()].filter(shown => !shown).length : 0;
-  return (
-    changed +
-    hiding(sheet.perTrackDisplayTuning, sheet.globalDisplayTuning) +
-    hiding(sheet.perTrackChordDiagramsOnTop, sheet.globalDisplayChordDiagramsOnTop) +
-    (sheet.perTrackMultiBarRest?.size ?? 0)
-  );
+  const drawsTuning = (index: number): boolean =>
+    score.tracks[index]?.staves.some(staff => !staff.isPercussion && staff.isStringed && staff.tuning.length > 0 && staff.showTablature) ?? false;
+  const hiddenTunings = sheet.globalDisplayTuning
+    ? [...(sheet.perTrackDisplayTuning ?? new Map<number, boolean>())].filter(([index, shown]) => !shown && drawsTuning(index)).length
+    : 0;
+  return changed + hiddenTunings + (sheet.perTrackMultiBarRest?.size ?? 0);
 }
 
 /**
@@ -278,7 +293,7 @@ function stylesheetChangesOf(sheet: alphaTab.model.RenderStylesheet): number {
  *
  * A converted score has no `score.style`, so alphaTab draws each line from `ScoreStyle.defaultHeaderAndFooter`. The
  * file's own entries are compared with those line by line, as `ScoreLayout._createHeaderFooterGlyph` draws them
- * (`alphaTab.core.mjs` ~66430-66475): hidden, or the template's text with its placeholders filled, and the alignment of
+ * (`alphaTab.core.mjs` ~66438-66475): hidden, or the template's text with its placeholders filled, and the alignment of
  * a line that draws. The placeholders are filled from the converted document, not the file: the credits it drops
  * (copyright, words, music, tabber) are the `credits` row's, and a template about them draws nothing after conversion
  * whatever it says. Without that, GP5's own defaults - "Copyright %COPYRIGHT%", "Words & Music by %WORDSMUSIC%", which
@@ -310,11 +325,18 @@ function headerLineOf(
   score: alphaTab.model.Score
 ): string {
   const style = styles.get(element) ?? alphaTab.model.ScoreStyle.defaultHeaderAndFooter.get(element);
-  // `isVisible` left undefined means shown (~66465).
-  if (!style || style.isVisible === false) return '';
+  if (!style) return '';
+  // A style's hide flag is honoured only for the lines that have no notation element of their own - the tabber and the
+  // second copyright line. The other eight (`ScoreLayout.headerElements`, `footerElements` ~66424-66437) are shown or
+  // hidden by `settings.notation.isNotationElementVisible`, which replaces the flag outright (~66465-66468) and is on for
+  // all of them unless the app says otherwise (`NotationSettings.defaultElements` ~1449-1451); the app sets no notation
+  // elements. So a file that hides its title still draws it, before conversion and after. `isVisible` left undefined
+  // means shown.
+  const { Transcriber, Words, Music, WordsAndMusic, Copyright, CopyrightSecondLine } = alphaTab.model.ScoreSubElement;
+  const flagged = element === Transcriber || element === CopyrightSecondLine;
+  if (flagged && style.isVisible === false) return '';
   // The renderer's special cases (~66440-66458): words and music on one line when they are the same person, on two when
   // not; and the second copyright line only under a first.
-  const { Words, Music, WordsAndMusic, Copyright, CopyrightSecondLine } = alphaTab.model.ScoreSubElement;
   const samePerson = score.words === score.music;
   if (((element === Words || element === Music) && samePerson) || (element === WordsAndMusic && !samePerson)) return '';
   if (element === CopyrightSecondLine && headerLineOf(styles, Copyright, score) === '') return '';
@@ -326,7 +348,6 @@ function masterBarLossInto(tally: Tally, masterBar: alphaTab.model.MasterBar, in
   tally.add('syncPoints', index, masterBar.syncPoints?.length ?? 0);
   if (masterBar.isAnacrusis) tally.add('pickupBars', index);
   if (masterBar.beamingRules) tally.add('beaming', index);
-  if (masterBar.displayScale !== 1 || masterBar.displayWidth !== -1) tally.add('layout', index);
   if (masterBar.isDoubleBar) tally.add('doubleBars', index);
 
   // The model keeps one BPM per bar, at its start: `toDoc` reads the first automation of every bar after the first, and
@@ -337,8 +358,9 @@ function masterBarLossInto(tally: Tally, masterBar: alphaTab.model.MasterBar, in
   // (`readScore` ~19628-19633). `isLinear` is not a reshaping: GP5 sets it on every mix-table tempo change (~20551), and
   // nothing reads it but JSON serialisation and the GP7 exporter (~36994, ~78107) - alphaTab plays it as a step.
   //
-  // A tempo marking's text is drawn before its BPM (`BarTempoGlyph` ~64126-64131, visible automations only, ~64169)
-  // and the model has no text for a tempo, so each visible one with text is a change of its own.
+  // A tempo marking's words are drawn before its BPM (`BarTempoGlyph` ~64126-64131, visible automations only, ~64169),
+  // and the model has no words for a tempo - `toMasterBar` rebuilds each automation without them - so each visible one
+  // with words is `tempoText`'s: the BPM stays, which is why it is not a tempo change.
   const automations = masterBar.tempoAutomations;
   const sameTempo = (a: alphaTab.model.Automation, b: alphaTab.model.Automation): boolean =>
     a.ratioPosition === b.ratioPosition && a.value === b.value;
@@ -348,7 +370,8 @@ function masterBarLossInto(tally: Tally, masterBar: alphaTab.model.MasterBar, in
   const worded = distinct.filter(tempo =>
     automations.some(automation => sameTempo(tempo, automation) && automation.isVisible && (automation.text ?? '') !== '')
   ).length;
-  tally.add('tempoChanges', index, Math.max(0, distinct.length - 1) + reshaped + worded);
+  tally.add('tempoChanges', index, Math.max(0, distinct.length - 1) + reshaped);
+  tally.add('tempoText', index, worded);
 }
 
 function staffLossInto(tally: Tally, staff: alphaTab.model.Staff): void {
@@ -365,12 +388,15 @@ function barLossInto(tally: Tally, bar: alphaTab.model.Bar): void {
   tally.add('sustainPedals', at, bar.sustainPedals.length);
   if (bar.simileMark !== alphaTab.model.SimileMark.None) tally.add('simile', at);
   // Both importers set a double bar's right bar line to `LightLight` explicitly (`Gp3To5Importer.readBar` ~20039-20040,
-  // `GpifParser` ~24003-24004), which is what `Bar.getActualBarLineStyle` draws for a double bar left `Automatic`
-  // (~2230-2231). The mapper keeps `isDoubleBar`, so that bar line is drawn the same after conversion.
+  // `GpifParser` ~24003-24004). The mapper keeps `isDoubleBar` and leaves the bar line `Automatic`, which
+  // `Bar._automaticToActualType` (~2218-2234) draws as `LightLight` only for a double bar that is not a repeat end, not
+  // the last bar and not in free time - each of those it draws as its own line first. There, and only there, the
+  // explicit `LightLight` is drawn the same after conversion.
   const style = alphaTab.model.BarLineStyle;
-  const doubleBarLine = bar.masterBar.isDoubleBar && bar.barLineRight === style.LightLight;
+  const master = bar.masterBar;
+  const automaticDouble = master.isDoubleBar && !master.isRepeatEnd && master.nextMasterBar !== null && !master.isFreeTime;
+  const doubleBarLine = automaticDouble && bar.barLineRight === style.LightLight;
   if (bar.barLineLeft !== style.Automatic || (bar.barLineRight !== style.Automatic && !doubleBarLine)) tally.add('barLines', at);
-  if (bar.displayScale !== 1 || bar.displayWidth !== -1) tally.add('layout', at);
   if (styled(bar.style)) tally.add('customStyles', at);
 
   bar.voices.forEach((voice, index) => {
@@ -426,30 +452,24 @@ function noteLossInto(tally: Tally, note: alphaTab.model.Note, at: number): void
   if (note.isPercussion && !alphaTexKeeps(note)) tally.add('unsavableKit', at);
 }
 
-/** A stringed note with a natural harmonic, whose `harmonicPitch` is read with another `harmonicValue` put in it. */
-const HARMONIC_PROBE = new alphaTab.model.Note();
-HARMONIC_PROBE.string = 1;
-HARMONIC_PROBE.harmonicType = alphaTab.model.HarmonicType.Natural;
-
 /**
- * Whether conversion changes the pitch `note`'s harmonic sounds and engraves at.
+ * Whether conversion changes the pitch `note`'s harmonic sounds at, or the number its tab draws.
  *
  * alphaTab adds `harmonicPitch` to a stringed note's pitch, or for a natural harmonic sounds `harmonicPitch` above the
  * open string (`Note.calculateRealValue` ~6056-6063), and `harmonicPitch` is read from `harmonicValue` alone (~6078).
  * The model keeps the harmonic's type and not its value, so what conversion gives the note is what the mapper derives:
  * a natural harmonic the value of its fret, as alphaTex's `nh` does (`naturalHarmonicValueOf`), and any other harmonic
- * none - no pitch of its own. Comparing the pitch rather than the value counts only what is heard: a GP5 natural
- * harmonic, valued from its fret by the importer (~20789), converts whole; an artificial one an octave up does not.
- * A pitched note has no `harmonicPitch` (it needs a string), so it has nothing to change.
+ * none - no pitch of its own. For the other harmonics the pitch is compared, not the value: an artificial one with a
+ * value that adds nothing converts whole. A natural harmonic's value is also drawn - the tab writes `<value>` in place
+ * of the fret (`NoteNumberGlyph.doLayout` ~74040-74056) - so its value is compared too: `<11.5>` becomes `<12>`, though
+ * both sound the octave. A GP5 natural harmonic, valued from its fret by the importer (~20789), converts whole. A
+ * pitched note has no `harmonicPitch` (it needs a string), so it has nothing to change.
  */
 function harmonicPitchChanges(note: alphaTab.model.Note): boolean {
   if (note.harmonicType === alphaTab.model.HarmonicType.None || !note.isStringed) return false;
-  let converted = 0;
-  if (note.harmonicType === alphaTab.model.HarmonicType.Natural) {
-    HARMONIC_PROBE.harmonicValue = naturalHarmonicValueOf(note.fret);
-    converted = HARMONIC_PROBE.harmonicPitch;
-  }
-  return note.harmonicPitch !== converted;
+  if (note.harmonicType !== alphaTab.model.HarmonicType.Natural) return note.harmonicPitch !== 0;
+  // The value decides the pitch, so comparing the value covers both.
+  return note.harmonicValue !== naturalHarmonicValueOf(note.fret);
 }
 
 /**

@@ -410,7 +410,8 @@ describe('ScoreDocMapperService effects round trip', () => {
   describe('natural harmonics', () => {
     // alphaTab sounds a natural harmonic at `harmonicPitch + stringTuning` (`alphaTab.core.mjs` ~6058), and
     // `harmonicPitch` reads `harmonicValue`: a note with the type and no value sounds the open string.
-    for (const fret of [12, 7, 5]) {
+    // 3 and 10 are rows where the value is not the fret: 3.2 and 9.6.
+    for (const fret of [12, 7, 5, 3, 10]) {
       it(`keeps the sounding pitch of a natural harmonic at fret ${fret} from a file`, () => {
         const parsed = tex.parse(['\\track "Guitar"', `${fret}.3{nh}.1 |`].join('\n')).score;
         if (!parsed) throw new Error('the harmonic did not parse');
