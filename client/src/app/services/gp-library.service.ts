@@ -1,13 +1,16 @@
 import { Injectable, InjectionToken, NgZone, inject } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import { GpLibraryEntry, GpLibraryFilter } from '../models/alpha-tab.model';
+import { committed } from './indexed-db';
 
 const DB_VERSION = 1;
 const STORE_NAME = 'files';
 
 /**
  * The IndexedDB database the library keeps its files in: `gp-library`. A token so each spec can open a database of its
- * own and delete it after, rather than share - or wipe - the one a developer's browser holds.
+ * own and delete it after, rather than share - or wipe - the one a developer's browser holds. A spec that injects the
+ * real `GpLibraryService` must override it: the constructor opens the database at once, so merely injecting the service
+ * opens `gp-library`.
  */
 export const GP_LIBRARY_DB = new InjectionToken<string>('GP_LIBRARY_DB', { providedIn: 'root', factory: () => 'gp-library' });
 
@@ -42,14 +45,29 @@ export class GpLibraryService {
     return this.entriesSubject.asObservable();
   }
 
-  /** Opens the database once; later calls await the same promise. */
+  /**
+   * Opens the database once; later calls await the same promise - until the open fails, or the connection is let go, and
+   * the next call opens it again. A failed open kept would fail every call after it for as long as the page is open.
+   */
   private ensureDb(): Promise<IDBDatabase> {
     if (this.readyPromise) return this.readyPromise;
-    this.readyPromise = new Promise<IDBDatabase>((resolve, reject) => {
+    const opening = new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(this.dbName, DB_VERSION);
 
-      request.onerror = () => reject(request.error ?? new Error('Failed to open the GP library'));
-      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => {
+        if (this.readyPromise === opening) this.readyPromise = null;
+        reject(request.error ?? new Error('Failed to open the GP library'));
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        // A delete of the database, or an upgrade to a later version from another tab, waits until every connection to it
+        // closes. Held open, this one would hold them up for as long as the page is open.
+        db.onversionchange = () => {
+          db.close();
+          if (this.readyPromise === opening) this.readyPromise = null;
+        };
+        resolve(db);
+      };
       request.onupgradeneeded = () => {
         const db = request.result;
 
@@ -65,16 +83,25 @@ export class GpLibraryService {
         }
       };
     });
-    return this.readyPromise;
+    this.readyPromise = opening;
+    return opening;
   }
 
-  /** Runs `body` against the store in one transaction and resolves with what its request returns. */
+  /**
+   * Runs `body` against the store in one transaction and resolves with what its request returns: a read once the
+   * request has, a write once the transaction has committed (`committed`).
+   */
   private async inStore<T>(mode: IDBTransactionMode, body: (store: IDBObjectStore) => IDBRequest): Promise<T> {
     const db = await this.ensureDb();
+    const transaction = db.transaction(STORE_NAME, mode);
+    const request = body(transaction.objectStore(STORE_NAME));
+    if (mode !== 'readonly') {
+      await committed(transaction, 'The GP library could not be written');
+      return request.result as T;
+    }
     return new Promise<T>((resolve, reject) => {
-      const request = body(db.transaction(STORE_NAME, mode).objectStore(STORE_NAME));
       request.onsuccess = () => resolve(request.result as T);
-      request.onerror = () => reject(request.error ?? new Error('The GP library could not be read or written'));
+      request.onerror = () => reject(request.error ?? new Error('The GP library could not be read'));
     });
   }
 
@@ -121,17 +148,29 @@ export class GpLibraryService {
   }
 
   /**
-   * Update an existing entry's metadata
+   * Updates an existing entry's metadata, or rejects with 'Entry not found'. Read and written in one transaction: in
+   * two, a delete could land between them, and the write would put the deleted entry back.
    */
   async updateEntry(id: string, updates: Partial<GpLibraryEntry>): Promise<void> {
-    const entry = await this.getEntry(id);
-    if (!entry) throw new Error('Entry not found');
-    await this.inStore('readwrite', store => store.put({ ...entry, ...updates, id }));
+    const db = await this.ensureDb();
+    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    let found = false;
+    const read = store.get(id);
+    read.onsuccess = () => {
+      const entry = read.result as GpLibraryEntry | undefined;
+      if (!entry) return;
+      found = true;
+      store.put({ ...entry, ...updates, id });
+    };
+    await committed(transaction, 'The GP library entry could not be updated');
+    if (!found) throw new Error('Entry not found');
     await this.loadAllEntries();
   }
 
   /**
-   * Delete an entry from the library
+   * Deletes an entry from the library, resolving once the delete has committed. Deleting an id that is not there
+   * resolves too - IndexedDB counts it a success - which Convert relies on: deleting a file's entry twice is harmless.
    */
   async deleteEntry(id: string): Promise<void> {
     await this.inStore('readwrite', store => store.delete(id));
