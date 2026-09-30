@@ -1,20 +1,38 @@
-import { Injectable, NgZone } from '@angular/core';
+import { Injectable, InjectionToken, NgZone, inject } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import { GpLibraryEntry, GpLibraryFilter } from '../models/alpha-tab.model';
 
-const DB_NAME = 'gp-library';
 const DB_VERSION = 1;
 const STORE_NAME = 'files';
 
+/**
+ * The IndexedDB database the library keeps its files in: `gp-library`. A token so each spec can open a database of its
+ * own and delete it after, rather than share - or wipe - the one a developer's browser holds.
+ */
+export const GP_LIBRARY_DB = new InjectionToken<string>('GP_LIBRARY_DB', { providedIn: 'root', factory: () => 'gp-library' });
+
+/** What a caller can say about a file it adds; everything else is filled in (`addBytes`). */
+export type GpFileMetadata = Partial<Omit<GpLibraryEntry, 'id' | 'fileName' | 'fileSize' | 'fileData' | 'dateAdded'>>;
+
+/**
+ * The library of `.gp` files: IndexedDB, the gallery's source, and where the composer's Original state reads a file from.
+ *
+ * **One database promise** (`ensureDb`), as `ComposerLibraryService` keeps. The service used to start opening the
+ * database from its constructor and keep no hold on the promise, so a write arriving before it opened either opened it a
+ * second time or - `updateEntry`, `deleteEntry`, `clearLibrary` - resolved having done nothing. The conversion deletes
+ * a file's entry once its composition is written, and a delete that did nothing would say it had.
+ */
 @Injectable({
   providedIn: 'root'
 })
 export class GpLibraryService {
-  private db: IDBDatabase | null = null;
+  private readyPromise: Promise<IDBDatabase> | null = null;
   private entriesSubject = new BehaviorSubject<GpLibraryEntry[]>([]);
+  private readonly dbName: string = inject(GP_LIBRARY_DB);
 
   constructor(private ngZone: NgZone) {
-    this.initDatabase();
+    // The gallery lists the library as soon as it is shown.
+    void this.loadAllEntries().catch(error => console.error('Failed to open the GP library:', error));
   }
 
   /**
@@ -24,26 +42,16 @@ export class GpLibraryService {
     return this.entriesSubject.asObservable();
   }
 
-  /**
-   * Initialize IndexedDB database
-   */
-  private initDatabase(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+  /** Opens the database once; later calls await the same promise. */
+  private ensureDb(): Promise<IDBDatabase> {
+    if (this.readyPromise) return this.readyPromise;
+    this.readyPromise = new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, DB_VERSION);
 
-      request.onerror = () => {
-        console.error('Failed to open IndexedDB:', request.error);
-        reject(request.error);
-      };
-
-      request.onsuccess = () => {
-        this.db = request.result;
-        this.loadAllEntries();
-        resolve();
-      };
-
-      request.onupgradeneeded = (event) => {
-        const db = (event.target as IDBOpenDBRequest).result;
+      request.onerror = () => reject(request.error ?? new Error('Failed to open the GP library'));
+      request.onsuccess = () => resolve(request.result);
+      request.onupgradeneeded = () => {
+        const db = request.result;
 
         // Create object store for GP files
         if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -57,159 +65,84 @@ export class GpLibraryService {
         }
       };
     });
+    return this.readyPromise;
+  }
+
+  /** Runs `body` against the store in one transaction and resolves with what its request returns. */
+  private async inStore<T>(mode: IDBTransactionMode, body: (store: IDBObjectStore) => IDBRequest): Promise<T> {
+    const db = await this.ensureDb();
+    return new Promise<T>((resolve, reject) => {
+      const request = body(db.transaction(STORE_NAME, mode).objectStore(STORE_NAME));
+      request.onsuccess = () => resolve(request.result as T);
+      request.onerror = () => reject(request.error ?? new Error('The GP library could not be read or written'));
+    });
   }
 
   /**
    * Load all entries from IndexedDB
    */
-  private loadAllEntries(): void {
-    if (!this.db) return;
-
-    const transaction = this.db.transaction(STORE_NAME, 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.getAll();
-
-    request.onsuccess = () => {
-      this.ngZone.run(() => {
-        this.entriesSubject.next(request.result || []);
-      });
-    };
-
-    request.onerror = () => {
-      console.error('Failed to load entries:', request.error);
-    };
+  private async loadAllEntries(): Promise<void> {
+    const entries = await this.inStore<GpLibraryEntry[]>('readonly', store => store.getAll());
+    // IndexedDB callbacks run outside Angular's zone.
+    this.ngZone.run(() => this.entriesSubject.next(entries ?? []));
   }
 
   /**
    * Add a GP file to the library
    */
-  async addFile(file: File, metadata: Partial<GpLibraryEntry>): Promise<GpLibraryEntry> {
-    if (!this.db) {
-      await this.initDatabase();
-    }
+  async addFile(file: File, metadata: GpFileMetadata): Promise<GpLibraryEntry> {
+    return this.addBytes(await file.arrayBuffer(), file.name, metadata);
+  }
 
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-
-      reader.onload = () => {
-        const entry: GpLibraryEntry = {
-          id: this.generateId(),
-          fileName: file.name,
-          fileSize: file.size,
-          fileData: reader.result as ArrayBuffer,
-          title: metadata.title || this.extractTitleFromFileName(file.name),
-          artist: metadata.artist || '',
-          album: metadata.album || '',
-          dateAdded: new Date(),
-          key: metadata.key,
-          detectedScales: metadata.detectedScales || [],
-          detectedChords: metadata.detectedChords || [],
-          trackCount: metadata.trackCount || 0,
-          tempo: metadata.tempo || 120
-        };
-
-        const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.add(entry);
-
-        request.onsuccess = () => {
-          this.loadAllEntries();
-          resolve(entry);
-        };
-
-        request.onerror = () => {
-          reject(request.error);
-        };
-      };
-
-      reader.onerror = () => {
-        reject(reader.error);
-      };
-
-      reader.readAsArrayBuffer(file);
-    });
+  /**
+   * Adds `bytes` as a file named `fileName`, with what `metadata` says of it, and returns the entry. A title the metadata
+   * does not give is the file name's; a tempo and a track count it does not give are 120 and 0, which is what a file no
+   * one parsed can say.
+   */
+  async addBytes(bytes: ArrayBuffer, fileName: string, metadata: GpFileMetadata): Promise<GpLibraryEntry> {
+    const entry: GpLibraryEntry = {
+      id: this.generateId(),
+      fileName,
+      fileSize: bytes.byteLength,
+      fileData: bytes,
+      title: metadata.title || this.extractTitleFromFileName(fileName),
+      artist: metadata.artist || '',
+      album: metadata.album || '',
+      dateAdded: new Date(),
+      key: metadata.key,
+      detectedScales: metadata.detectedScales || [],
+      detectedChords: metadata.detectedChords || [],
+      trackCount: metadata.trackCount || 0,
+      tempo: metadata.tempo || 120
+    };
+    await this.inStore('readwrite', store => store.add(entry));
+    await this.loadAllEntries();
+    return entry;
   }
 
   /**
    * Update an existing entry's metadata
    */
   async updateEntry(id: string, updates: Partial<GpLibraryEntry>): Promise<void> {
-    if (!this.db) return;
-
-    return new Promise((resolve, reject) => {
-      const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      const getRequest = store.get(id);
-
-      getRequest.onsuccess = () => {
-        const entry = getRequest.result;
-        if (!entry) {
-          reject(new Error('Entry not found'));
-          return;
-        }
-
-        const updatedEntry = { ...entry, ...updates };
-        const putRequest = store.put(updatedEntry);
-
-        putRequest.onsuccess = () => {
-          this.loadAllEntries();
-          resolve();
-        };
-
-        putRequest.onerror = () => {
-          reject(putRequest.error);
-        };
-      };
-
-      getRequest.onerror = () => {
-        reject(getRequest.error);
-      };
-    });
+    const entry = await this.getEntry(id);
+    if (!entry) throw new Error('Entry not found');
+    await this.inStore('readwrite', store => store.put({ ...entry, ...updates, id }));
+    await this.loadAllEntries();
   }
 
   /**
    * Delete an entry from the library
    */
   async deleteEntry(id: string): Promise<void> {
-    if (!this.db) return;
-
-    return new Promise((resolve, reject) => {
-      const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.delete(id);
-
-      request.onsuccess = () => {
-        this.loadAllEntries();
-        resolve();
-      };
-
-      request.onerror = () => {
-        reject(request.error);
-      };
-    });
+    await this.inStore('readwrite', store => store.delete(id));
+    await this.loadAllEntries();
   }
 
   /**
    * Get a single entry by ID
    */
   async getEntry(id: string): Promise<GpLibraryEntry | null> {
-    if (!this.db) {
-      await this.initDatabase();
-    }
-
-    return new Promise((resolve, reject) => {
-      const transaction = this.db!.transaction(STORE_NAME, 'readonly');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.get(id);
-
-      request.onsuccess = () => {
-        resolve(request.result || null);
-      };
-
-      request.onerror = () => {
-        reject(request.error);
-      };
-    });
+    return (await this.inStore<GpLibraryEntry | undefined>('readonly', store => store.get(id))) ?? null;
   }
 
   /**
@@ -313,21 +246,7 @@ export class GpLibraryService {
    * Clear all entries from the library
    */
   async clearLibrary(): Promise<void> {
-    if (!this.db) return;
-
-    return new Promise((resolve, reject) => {
-      const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.clear();
-
-      request.onsuccess = () => {
-        this.entriesSubject.next([]);
-        resolve();
-      };
-
-      request.onerror = () => {
-        reject(request.error);
-      };
-    });
+    await this.inStore('readwrite', store => store.clear());
+    this.ngZone.run(() => this.entriesSubject.next([]));
   }
 }
