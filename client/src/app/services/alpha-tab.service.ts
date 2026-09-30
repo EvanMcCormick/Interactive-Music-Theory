@@ -2,8 +2,6 @@ import { Injectable, NgZone } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import {
   AlphaTabState,
-  GpTrackInfo,
-  GpScoreInfo,
   AlphaTabSettings,
   DEFAULT_ALPHA_TAB_STATE
 } from '../models/alpha-tab.model';
@@ -427,81 +425,6 @@ export class AlphaTabService {
     this.api.changeTrackMute(tracksWhere(state => state.mute), true);
     this.api.changeTrackSolo(tracksWhere(state => !state.solo), false);
     this.api.changeTrackSolo(tracksWhere(state => state.solo), true);
-  }
-
-  /**
-   * Mute/unmute a track
-   */
-  setTrackMute(trackIndex: number, mute: boolean): void {
-    if (this.api && this.api.score) {
-      const track = this.api.score.tracks[trackIndex];
-      if (track) {
-        this.api.changeTrackMute([track], mute);
-      }
-    }
-  }
-
-  /**
-   * Solo/unsolo a track
-   */
-  setTrackSolo(trackIndex: number, solo: boolean): void {
-    if (this.api && this.api.score) {
-      const track = this.api.score.tracks[trackIndex];
-      if (track) {
-        this.api.changeTrackSolo([track], solo);
-      }
-    }
-  }
-
-
-  /**
-   * Get simplified track info for UI
-   */
-  getTrackInfo(): GpTrackInfo[] {
-    const state = this.getCurrentState();
-    if (!state.score) return [];
-
-    return state.score.tracks.map((track: any, index: number) => ({
-      index,
-      name: track.name,
-      shortName: track.shortName,
-      color: this.colorToHex(track.color),
-      isMuted: false, // alphaTab doesn't expose this directly
-      isSolo: false,
-      isPercussion: track.isPercussion,
-      channel: track.playbackInfo.primaryChannel,
-      program: track.playbackInfo.program
-    }));
-  }
-
-  /**
-   * Get simplified score info for UI
-   */
-  getScoreInfo(): GpScoreInfo | null {
-    const state = this.getCurrentState();
-    if (!state.score) return null;
-
-    return {
-      title: state.score.title || 'Untitled',
-      subtitle: state.score.subTitle || '',
-      artist: state.score.artist || 'Unknown Artist',
-      album: state.score.album || '',
-      copyright: state.score.copyright || '',
-      tabAuthor: state.score.tab || '',
-      tempo: state.score.tempo,
-      trackCount: state.score.tracks.length,
-      barCount: state.score.masterBars.length
-    };
-  }
-
-  /**
-   * Convert alphaTab Color to hex string
-   */
-  private colorToHex(color: alphaTab.model.Color): string {
-    const r = color.r.toString(16).padStart(2, '0');
-    const g = color.g.toString(16).padStart(2, '0');
-    const b = color.b.toString(16).padStart(2, '0');
-    return `#${r}${g}${b}`;
   }
 
   /**

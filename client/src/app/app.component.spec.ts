@@ -9,7 +9,7 @@ import { ComposerService } from './services/composer.service';
  * The shell, and specifically the circle drawer it hosts.
  *
  * The drawer sets `selectedKey`, so it is only meaningful where something reads
- * it. On `/gp-viewer` and `/gp-library` it would do nothing; on `/transcribe` it
+ * it. On `/gp-library` it would do nothing; on `/transcribe` it
  * would be worse than nothing, because that page has its own key handling inside
  * `DerivationSettings` and a global key control that did not drive it would look
  * broken. The allow-list is the whole of that decision and is what these pin.
@@ -46,7 +46,6 @@ describe('AppComponent', () => {
     });
 
     it('withholds it where it would do nothing', () => {
-      expect(AppComponent.showsCircle('/gp-viewer')).toBeFalse();
       expect(AppComponent.showsCircle('/gp-library')).toBeFalse();
     });
 

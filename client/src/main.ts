@@ -1,6 +1,6 @@
 import { enableProdMode } from '@angular/core';
 import { bootstrapApplication } from '@angular/platform-browser';
-import { provideRouter } from '@angular/router';
+import { Routes, provideRouter } from '@angular/router';
 import { HttpClient, provideHttpClient, withInterceptors } from '@angular/common/http';
 import { AppComponent } from './app/app.component';
 import { environment } from './environments/environment';
@@ -15,13 +15,15 @@ if (environment.production) {
   enableProdMode();
 }
 
-const routes = [
+const routes: Routes = [
   { path: '', redirectTo: '/fretboard', pathMatch: 'full' as const },
   { path: 'fretboard', component: FretboardComponent },
+  // The GP Viewer is gone: a `.gp` opens in the composer, as the file, until its first edit converts it. An old link to
+  // a file in the viewer opens that file there; one to the viewer alone goes to the gallery.
   {
     path: 'gp-viewer',
-    loadComponent: () => import('./app/components/gp-viewer/gp-viewer.component')
-      .then(m => m.GpViewerComponent)
+    redirectTo: ({ queryParams }) =>
+      queryParams['id'] ? `/composer?gp=${encodeURIComponent(queryParams['id'])}` : '/gp-library'
   },
   {
     path: 'composer',
@@ -35,7 +37,7 @@ const routes = [
   },
   // Lazy, where the plan wrote `component:`. The review panel renders its
   // preview through alphaTab, which lives in a 1.14 MB chunk shared by the
-  // composer and the GP viewer because both of those routes are lazy too. An
+  // composer and the gallery because both of those routes are lazy too. An
   // eager route here would be a value import of that chunk from the entry
   // graph, which pulls the whole engraver into `main` - and the milestone's
   // own acceptance criterion is that `main` stays near 716 kB. The transcriber

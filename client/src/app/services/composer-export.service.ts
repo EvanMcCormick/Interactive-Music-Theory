@@ -9,7 +9,7 @@ import * as alphaTab from '@coderline/alphatab';
  */
 @Injectable({ providedIn: 'root' })
 export class ComposerExportService {
-  /** Guitar Pro 7 bytes, openable in Guitar Pro and by the app's GP viewer. */
+  /** Guitar Pro 7 bytes, openable in Guitar Pro and by the app's composer. */
   toGuitarPro(score: alphaTab.model.Score, settings: alphaTab.Settings): Uint8Array {
     return new alphaTab.exporter.Gp7Exporter().export(score, settings);
   }

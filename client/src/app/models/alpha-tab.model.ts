@@ -38,54 +38,6 @@ export interface AlphaTabState {
 }
 
 /**
- * Simplified track info for UI display
- */
-export interface GpTrackInfo {
-  /** Track index */
-  index: number;
-  /** Track display name */
-  name: string;
-  /** Short name (abbreviation) */
-  shortName: string;
-  /** Track color (hex string) */
-  color: string;
-  /** Whether track is muted */
-  isMuted: boolean;
-  /** Whether track is soloed */
-  isSolo: boolean;
-  /** Whether this is a percussion track */
-  isPercussion: boolean;
-  /** MIDI channel */
-  channel: number;
-  /** MIDI program (instrument) */
-  program: number;
-}
-
-/**
- * Simplified score info for UI display
- */
-export interface GpScoreInfo {
-  /** Song title */
-  title: string;
-  /** Song subtitle */
-  subtitle: string;
-  /** Artist name */
-  artist: string;
-  /** Album name */
-  album: string;
-  /** Copyright info */
-  copyright: string;
-  /** Tab author */
-  tabAuthor: string;
-  /** Initial tempo in BPM */
-  tempo: number;
-  /** Number of tracks */
-  trackCount: number;
-  /** Number of bars */
-  barCount: number;
-}
-
-/**
  * Settings for alphaTab initialization
  */
 export interface AlphaTabSettings {
