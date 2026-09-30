@@ -106,7 +106,7 @@ function respellingOf(doc: ScoreDoc, target: NoteTarget): Pick<NoteDoc, 'pitch' 
  * `notes`, when given, are `noteTargetsAt(doc, refs, focus)` already read.
  */
 export function respellRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null, notes?: readonly NoteTarget[]): string | null {
-  const refusal = editRefusal(doc, refs, { family: 'note', key: 'notes' }, focus, notes);
+  const refusal = editRefusal(doc, refs, { family: 'note', key: 'pitch' }, focus, notes);
   if (refusal) return refusal;
   const targets = notes ?? noteTargetsAt(doc, refs, focus);
   if (targets.some(target => respellingOf(doc, target) !== null)) return null;

@@ -29,7 +29,7 @@ describe('copiedBeatsOf', () => {
     const copied = copiedBeatsOf(doc, [ref(0, 3), ref(1, 0)]);
 
     expect(copied?.beats.map(beat => beat.isRest)).toEqual([false, false]);
-    expect(copied?.fretted).toBeTrue();
+    expect(copied?.notes).toBe('fretted');
   });
 
   it('copies nothing from more than one staff', () => {
@@ -183,7 +183,7 @@ describe('pasteBeats', () => {
     beats(doc, 0).splice(0, 4, ...writtenBeats('n8t3 n8t3 n8t3 n4 n2'));
     const group = copiedBeatsOf(doc, [ref(0, 0), ref(0, 1), ref(0, 2)])!;
 
-    expect(pasteBeats(structuredClone(doc), ref(0, 1), { fretted: true, beats: writtenBeats('n4') })).toMatch(/paste would split a tuplet group/i);
+    expect(pasteBeats(structuredClone(doc), ref(0, 1), { notes: 'fretted', beats: writtenBeats('n4') })).toMatch(/paste would split a tuplet group/i);
     expect(pasteBeats(structuredClone(doc), ref(0, 0), group)).toEqual({ appendedBars: 0, at: ref(0, 0), droppedFermatas: [], beatsWritten: 3 });
   });
 
@@ -192,7 +192,7 @@ describe('pasteBeats', () => {
     const doc = ComposerService.createEmptyScore();
     beats(doc, 0).splice(0, 4, ...writtenBeats(Array.from({ length: 12 }, () => 'n8t3').join(' ')));
 
-    expect(pasteBeats(doc, ref(0, 11), { fretted: true, beats: writtenBeats('n8t3 n8t3 n8t3') })).toMatch(/paste would split a tuplet group/i);
+    expect(pasteBeats(doc, ref(0, 11), { notes: 'fretted', beats: writtenBeats('n8t3 n8t3 n8t3') })).toMatch(/paste would split a tuplet group/i);
   });
 
   it('refuses a paste at a beat past the bar line of a bar already over, and not one before the line', () => {
@@ -213,7 +213,7 @@ describe('pasteBeats', () => {
     const doc = ComposerService.createEmptyScore();
     beats(doc, 0).splice(0, 4, ...writtenBeats('n1 g'));
 
-    expect(pasteBeats(doc, ref(0, 1), { fretted: true, beats: writtenBeats('n4') })).toMatch(/grace.*full bar.*next bar/i);
+    expect(pasteBeats(doc, ref(0, 1), { notes: 'fretted', beats: writtenBeats('n4') })).toMatch(/grace.*full bar.*next bar/i);
     expect(shape(doc, 1)).toEqual(['r4', 'r4', 'r4', 'r4']);
   });
 });
@@ -242,7 +242,7 @@ describe('pasteBeats, a grace and a fermata', () => {
     const grace: BeatDoc = { ...createRestBeat(8), isRest: false };
     grace.notes = [{ pitch: { kind: 'fretted', string: 2, fret: 3 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
     grace.effects = { ...grace.effects, grace: 'beforeBeat', fermata };
-    return { fretted: true, beats: [grace] };
+    return { notes: 'fretted', beats: [grace] };
   };
   const fermatas = (doc: ScoreDoc): (string | null)[][] =>
     doc.tracks.map(track => track.staves[0].bars[0].voices[0].beats.map(beat => beat.effects.fermata?.type ?? null));
@@ -278,7 +278,7 @@ describe('pasteBeats, a grace and a fermata', () => {
     const sixtyFourth: BeatDoc = { ...createRestBeat(64), isRest: false };
     sixtyFourth.notes = [{ pitch: { kind: 'fretted', string: 1, fret: 5 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }];
 
-    pasteBeats(doc, ref(0, 0), { fretted: true, beats: [sixtyFourth] });
+    pasteBeats(doc, ref(0, 0), { notes: 'fretted', beats: [sixtyFourth] });
 
     expect(fermatas(doc).map(list => list.indexOf('medium'))).toEqual([-1, 1, 1]);
     expect(fermatas(saved(doc))).toEqual(fermatas(doc));

@@ -513,7 +513,7 @@ export class ComposerService {
 
   /** Moves the selection's notes a semitone up (+1) or down (-1). See `shiftSemitone`. */
   shiftSemitone(delta: 1 | -1): void {
-    this.applyEdit({ family: 'note', key: 'notes' }, (draft, refs, focus) => shiftSemitone(draft, refs, focus, delta));
+    this.applyEdit({ family: 'note', key: 'pitch' }, (draft, refs, focus) => shiftSemitone(draft, refs, focus, delta));
   }
 
   /**
@@ -522,7 +522,7 @@ export class ComposerService {
    */
   moveNotesToString(delta: 1 | -1): void {
     const before = this.doc;
-    this.applyEdit({ family: 'note', key: 'notes' }, (draft, refs, focus) => moveNotesToString(draft, refs, focus, delta));
+    this.applyEdit({ family: 'note', key: 'string' }, (draft, refs, focus) => moveNotesToString(draft, refs, focus, delta));
     if (this.doc !== before && !this.stateSubject.getValue().anchor) this.moveCursor({ kind: 'string', delta });
   }
 

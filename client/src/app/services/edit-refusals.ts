@@ -30,7 +30,7 @@ import { BeatRef, beatAt } from './composer-selection';
 import { NoteTarget, noteEffectTargets, noteTargetsAt, tieTargetsOf, trillTargetOf } from './note-edits';
 import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieOriginOf } from './note-landing';
 import { forcedLetterOf, reduceToOctave } from './note-spelling';
-import { SoundingPitch, soundingMidiOf } from './pitch-on-strings';
+import { PERCUSSION, SoundingPitch, soundingMidiOf } from './pitch-on-strings';
 
 /**
  * What kind of edit is being asked about.
@@ -52,8 +52,10 @@ export type EditScope =
   | { family: 'note'; key: keyof NoteEffectsDoc | 'tie' }
   // A press that needs only notes to act on - a clear, a respell, a move of pitch or string. Refused
   // where any note edit is, never as a fretted-only technique: clearing one from a pitched note removes
-  // what alphaTab cannot use there, and the moves say for themselves what does not fit.
-  | { family: 'note'; key: 'notes' }
+  // what alphaTab cannot use there, and the moves say for themselves what does not fit. `pitch` - a respell,
+  // a semitone move - and `string` - a move between strings - are refused on a percussion staff as well,
+  // since a drum hit has neither; `notes` is not, so a clear still reaches one.
+  | { family: 'note'; key: 'notes' | 'pitch' | 'string' }
   | { family: 'note'; key: 'accidental'; accidental: AccidentalMode }
   | { family: 'track'; trackIndex: number };
 
@@ -71,6 +73,15 @@ const FRETTED_ONLY_NOTE: ReadonlySet<string> = new Set(['bendPoints', 'slide', '
 const FRETTED_ONLY_BEAT: ReadonlySet<string> = new Set(['tap', 'slap', 'pop']);
 
 const FRETTED = 'Bends, slides, taps, slap, pop and harmonics belong to fretted staves.';
+
+/**
+ * Note edits a percussion staff refuses, beyond the fretted-only ones it refuses too, with `PERCUSSION` rather than
+ * `FRETTED` since it is the truer reason: every accidental and Natural, respelling and semitone moves (`pitch`),
+ * moving between strings, a hammer-on - alphaTab drops one on a percussion staff at playback (`alphaTab.core.mjs`
+ * ~48571) - and a trill, likewise (~48336). What is left - duration, dots, tuplets, rests, dynamics, accents,
+ * staccato, ghost, tie, fermata - reads no pitch, and alphaTab draws each on a percussion notehead.
+ */
+const PERCUSSION_REFUSED_NOTE: ReadonlySet<string> = new Set([...FRETTED_ONLY_NOTE, 'accidental', 'pitch', 'string', 'isHammerPullOrigin', 'trill']);
 
 const GENERATED =
   'That reaches a track generated from a progression. Flatten the track to edit it by hand.';
@@ -165,9 +176,14 @@ export function editRefusal(
   const onPitchedStaff = refs.some(
     ref => (doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.tuning.length ?? 0) === 0
   );
+  // A percussion staff has no tuning, so it is a pitched staff too as far as `onPitchedStaff` goes; asked first so the
+  // refusal gives the truer reason.
+  const onPercussionStaff = refs.some(ref => doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.isPercussion === true);
   if (scope.family === 'beat') {
-    return FRETTED_ONLY_BEAT.has(scope.key) && onPitchedStaff ? FRETTED : null;
+    if (!FRETTED_ONLY_BEAT.has(scope.key)) return null;
+    return onPercussionStaff ? PERCUSSION : onPitchedStaff ? FRETTED : null;
   }
+  if (onPercussionStaff && PERCUSSION_REFUSED_NOTE.has(scope.key)) return PERCUSSION;
   if (FRETTED_ONLY_NOTE.has(scope.key) && onPitchedStaff) return FRETTED;
   const targets = notes ?? noteTargetsAt(doc, refs, focus);
   if (targets.length === 0) return 'There is no note there to change.';

@@ -1,4 +1,4 @@
-import { BeatDoc, FermataDoc, ScoreDoc } from '../models/composer.model';
+import { BeatDoc, FermataDoc, ScoreDoc, StaffDoc } from '../models/composer.model';
 import { barCapacityTicks, barFillOf, barMeterAt, beatTicks, fillBarGaps, graceRunStart, insertRestsAt, splitAtBarLine } from './bar-fill';
 import { newOpenTupletGroup, openTupletGroupsOf, tupletGroupsOf } from './beat-edits';
 import { BeatRef, beatAt } from './composer-selection';
@@ -12,10 +12,21 @@ import { insertBarInto } from './score-structure';
  * fills gaps where they open, and a bar it overfills is flagged for Fix bar rather than pushed on.
  */
 
+/**
+ * What a staff's notes name: strings and frets, pitches, or drums. A paste goes only between staves of one kind - was a
+ * boolean, `fretted`, under which a drum bar and a piano bar were both "not fretted", so a kit pasted onto a piano staff.
+ */
+export type StaffNotes = 'fretted' | 'pitched' | 'percussion';
+
+/** What `staff`'s notes name. */
+export function staffNotesOf(staff: Pick<StaffDoc, 'isPercussion' | 'tuning'>): StaffNotes {
+  return staff.isPercussion ? 'percussion' : staff.tuning.length > 0 ? 'fretted' : 'pitched';
+}
+
 /** Beats copied from one staff. */
 export interface CopiedBeats {
-  /** Whether they came from a fretted staff, whose notes name strings rather than pitches. */
-  fretted: boolean;
+  /** What the staff they came from names its notes by. */
+  notes: StaffNotes;
   /** The copied beats in timeline order, as one run: bar lines between them are not kept. */
   beats: BeatDoc[];
 }
@@ -28,10 +39,19 @@ export function copiedBeatsOf(doc: ScoreDoc, refs: readonly BeatRef[]): CopiedBe
   if (!staff) return null;
 
   const beats = refs.map(ref => beatAt(doc, ref)).filter((beat): beat is BeatDoc => beat !== null);
-  return beats.length > 0 ? { fretted: staff.tuning.length > 0, beats: beats.map(beat => structuredClone(beat)) } : null;
+  return beats.length > 0 ? { notes: staffNotesOf(staff), beats: beats.map(beat => structuredClone(beat)) } : null;
 }
 
 const NO_ROOM = 'A time signature there leaves no room in a bar, so there is nowhere to paste.';
+
+/** Why beats copied from a staff naming `from` do not paste onto one naming `onto`. */
+function crossKindRefusalOf(from: StaffNotes, onto: StaffNotes): string {
+  if (from === 'fretted' && onto === 'pitched') return 'Those beats were copied from a fretted staff, and this staff has no strings.';
+  if (from === 'pitched' && onto === 'fretted') return 'Those beats were copied from a pitched staff, and this staff writes notes by string.';
+  return from === 'percussion'
+    ? 'Those beats were copied from a percussion staff, and its drums have no pitch to write on this staff.'
+    : `Those beats were copied from a ${from} staff, and a percussion staff has no strings and no pitch.`;
+}
 
 const PART_OF_A_GROUP = 'The copy holds part of a tuplet group. Copy the whole group to paste it.';
 
@@ -84,11 +104,8 @@ export function pasteBeats(
 ): { appendedBars: number; at: BeatRef; droppedFermatas: FermataDrops; beatsWritten: number } | string {
   const staff = doc.tracks[at.trackIndex]?.staves[at.staffIndex];
   if (!staff) return 'There is no staff there.';
-  if ((staff.tuning.length > 0) !== copied.fretted) {
-    return copied.fretted
-      ? 'Those beats were copied from a fretted staff, and this staff has no strings.'
-      : 'Those beats were copied from a pitched staff, and this staff writes notes by string.';
-  }
+  const onto = staffNotesOf(staff);
+  if (onto !== copied.notes) return crossKindRefusalOf(copied.notes, onto);
   const strings = copied.beats.flatMap(beat => beat.notes.map(note => (note.pitch.kind === 'fretted' ? note.pitch.string : 0)));
   const highest = Math.max(0, ...strings);
   if (highest > staff.tuning.length) return `Those beats use ${highest} strings, and this staff has ${staff.tuning.length}.`;

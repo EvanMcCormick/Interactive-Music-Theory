@@ -17,8 +17,12 @@ import { bottomLineDiatonic } from './staff-pitch';
  * A staff alphaTab draws: standard notation, tablature, and the two views a loaded file or an applied alphaTex draft can
  * turn on - slash notation, one line of rhythm slashes, and numbered notation, which draws no lines. Those two only take
  * the caret: a Pen click writes no pitch there, and they have no string.
+ *
+ * `percussion` is a drum staff's standard-notation band. It is the same one band, so it counts where `notation` would
+ * and `slotIndexAt`'s ranks do not move, but a Pen click on it only moves the caret: a line there is a drum, not a
+ * pitch, and writing a new drum note is out of the GP milestone's scope.
  */
-export type StaffKind = 'slash' | 'notation' | 'numbered' | 'tab';
+export type StaffKind = 'slash' | 'notation' | 'percussion' | 'numbered' | 'tab';
 
 /** One staff as alphaTab draws it, tied back to the track and staff it came from. */
 export interface StaffSlot {
@@ -40,7 +44,7 @@ export function staffSlotsOf(doc: ScoreDoc): StaffSlot[] {
     track.staves.flatMap((staff, staffIndex) => {
       const kinds: StaffKind[] = [
         ...(staff.showSlash ? ['slash' as const] : []),
-        ...(staff.showStandardNotation ? ['notation' as const] : []),
+        ...(staff.showStandardNotation ? [staff.isPercussion ? ('percussion' as const) : ('notation' as const)] : []),
         ...(staff.showNumbered ? ['numbered' as const] : []),
         ...(staff.showTablature && staff.tuning.length > 0 ? ['tab' as const] : [])
       ];
@@ -54,7 +58,7 @@ export function staffSlotsOf(doc: ScoreDoc): StaffSlot[] {
  *
  * `staffSlotsOf`'s sibling, and the whole of what the caret, the selection highlight and Pen's hover need to work
  * over a file that has no `ScoreDoc` behind it: an alphaTab `Staff` carries every field `staffSlotsOf` reads -
- * `showSlash`, `showStandardNotation`, `showNumbered`, `showTablature` and `stringTuning.tunings.length`.
+ * `showSlash`, `showStandardNotation`, `showNumbered`, `showTablature`, `isPercussion` and `stringTuning.tunings.length`.
  *
  * `visibleTrackIndices` are the tracks actually drawn (the strip's show/hide), in the order `api.renderTracks` was
  * given them; omitted, every track. An index the score does not have is left out rather than drawn as a hole, so the
@@ -71,7 +75,7 @@ export function staffSlotsOfScore(
     return track.staves.flatMap((staff, staffIndex) => {
       const kinds: StaffKind[] = [
         ...(staff.showSlash ? ['slash' as const] : []),
-        ...(staff.showStandardNotation ? ['notation' as const] : []),
+        ...(staff.showStandardNotation ? [staff.isPercussion ? ('percussion' as const) : ('notation' as const)] : []),
         ...(staff.showNumbered ? ['numbered' as const] : []),
         ...(staff.showTablature && staff.stringTuning.tunings.length > 0 ? ['tab' as const] : [])
       ];
@@ -85,7 +89,8 @@ export type ScorePress = 'extend' | 'caret' | 'write';
 
 /**
  * What a mouse-down does: Shift extends the range; otherwise the caret moves, and in Pen, on standard
- * notation, the clicked pitch is written too. Tablature writes by digit in both modes, never by click.
+ * notation, the clicked pitch is written too. Tablature writes by digit in both modes, never by click, and a
+ * percussion staff not at all.
  */
 export function scorePressOf(mode: EntryMode, staff: StaffKind | null, shiftKey: boolean): ScorePress {
   if (shiftKey) return 'extend';
@@ -94,7 +99,7 @@ export function scorePressOf(mode: EntryMode, staff: StaffKind | null, shiftKey:
 
 /**
  * Whether moving with the button held extends the range from where the mouse-down put the caret:
- * anywhere in Select, and in Pen on any staff whose press wrote nothing - tablature, slash, numbered. A notation
+ * anywhere in Select, and in Pen on any staff whose press wrote nothing - tablature, slash, numbered, percussion. A notation
  * drag in Pen would extend from the caret a write just advanced, and a Pen press on no staff starts no drag.
  */
 export function dragExtends(mode: EntryMode, staff: StaffKind | null): boolean {
