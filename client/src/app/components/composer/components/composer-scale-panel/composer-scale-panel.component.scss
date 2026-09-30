@@ -1,0 +1,70 @@
+// The scale menu, off the top bar: as the Library and Export menus, hidden with CSS while closed.
+
+.menu {
+  position: relative;
+}
+
+.menu-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  z-index: 60;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 15rem;
+  padding: 0.6rem;
+  background-color: var(--composer-nav, #2c3e50);
+  color: var(--composer-text, #ecf0f1);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+
+  &.open {
+    display: flex;
+  }
+}
+
+.switch,
+.field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.field {
+  justify-content: space-between;
+
+  select {
+    max-width: 10rem;
+    background-color: var(--composer-nav-hover, #34495e);
+    color: var(--composer-text, #ecf0f1);
+    border: 1px solid var(--composer-border, #465666);
+    border-radius: 3px;
+  }
+}
+
+.summary {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--composer-text-secondary, #bdc3c7);
+}
+
+.text-btn {
+  padding: 0.3rem 0.6rem;
+  background: none;
+  border: none;
+  color: var(--composer-text-secondary, #bdc3c7);
+  cursor: pointer;
+
+  &:hover,
+  &.active {
+    color: var(--composer-text, #ecf0f1);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--composer-accent, #3498db);
+    outline-offset: 1px;
+  }
+}

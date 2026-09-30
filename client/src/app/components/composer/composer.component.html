@@ -69,6 +69,7 @@
       <button class="text-btn" type="button" [class.active]="showTexPanel" [attr.aria-pressed]="showTexPanel" (click)="toggleTexPanel()">
         alphaTex
       </button>
+      <app-composer-scale-panel (firstOpened)="onScalePanelOpened()" (highlightChange)="highlight = $event"></app-composer-scale-panel>
       <app-composer-library-panel [modalOpen]="modalOpen" (menuOpened)="closePopover()"></app-composer-library-panel>
       <button
         class="text-btn shortcuts-toggle"
@@ -93,7 +94,7 @@
 
   <div class="score-column" [attr.inert]="modalOpen ? '' : null">
     <!-- Focusable by script only, for the shortcut sheet to give the focus back to. -->
-    <app-composer-score #score tabindex="-1"></app-composer-score>
+    <app-composer-score #score tabindex="-1" [highlight]="highlight"></app-composer-score>
 
     <section #texPanel class="tex-panel" *ngIf="showTexPanel">
       <div class="tex-header">

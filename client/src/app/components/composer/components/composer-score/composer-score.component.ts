@@ -4,6 +4,7 @@ import {
   ChangeDetectorRef,
   Component,
   ElementRef,
+  Input,
   NgZone,
   OnDestroy,
   OnInit,
@@ -16,6 +17,8 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ALL_TRACKS, AlphaTabService } from '../../../../services/alpha-tab.service';
 import { TrackView, renderedTracksOf, trackRowsOf } from '../../../../services/composer-track-rows';
+import { DEFAULT_HIGHLIGHT_CONFIG, HighlightConfig } from '../../../../models/alpha-tab.model';
+import { HighlightKind, noteHighlightsOf } from '../../../../services/scale-highlight';
 import { ComposerTrackViewService } from '../../../../services/composer-track-view.service';
 import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
 import { ComposerGpService, GpOriginal } from '../../../../services/composer-gp.service';
@@ -122,6 +125,16 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
   /** Caret box drawn over the staff, in container-relative pixels. */
   caretRect: Rect | null = null;
+  /**
+   * The scale panel's highlight (`ComposerScalePanelComponent`), and the note heads it marks on the page, drawn over the
+   * engraving as the caret is and redrawn with it after every render.
+   */
+  @Input() set highlight(config: HighlightConfig | null) {
+    this.highlightConfig = config ?? DEFAULT_HIGHLIGHT_CONFIG;
+    this.updateScaleOverlay();
+  }
+  private highlightConfig: HighlightConfig = DEFAULT_HIGHLIGHT_CONFIG;
+  noteMarks: (Rect & { kind: HighlightKind })[] = [];
   /** Pen's hover notehead, in container-relative pixels, or null. */
   hoverRect: Rect | null = null;
 
@@ -437,6 +450,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       this.boundsPending = false;
       this.drawHighlight();
       this.scheduleCaretUpdate();
+      this.updateScaleOverlay();
     });
     this.observeSurface(element);
   }
@@ -803,6 +817,21 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     );
     if (beats) this.alphaTabService.highlightRange(beats.first, beats.last);
     else this.alphaTabService.clearHighlight();
+  }
+
+  /**
+   * Marks the note heads the scale panel's highlight names (`noteHighlightsOf`), from the bounds lookup of what alphaTab
+   * drew - the file's in Original, the document's in Composition - or none while it is off or the lookup is not ready.
+   */
+  private updateScaleOverlay(): void {
+    const element = this.alphaTabContainer?.nativeElement;
+    const lookup = this.alphaTabService.getBoundsLookup();
+    const marks = element && lookup && !this.boundsPending ? noteHighlightsOf(lookup, this.highlightConfig) : [];
+    this.noteMarks = marks.flatMap(mark => {
+      const rect = element ? this.hitTest.lookupRect(element, mark.x, mark.y, mark.w, mark.h) : null;
+      return rect ? [{ ...rect, kind: mark.kind }] : [];
+    });
+    this.cdr.markForCheck();
   }
 
   /**

@@ -380,6 +380,18 @@ export class AlphaTabService {
   }
 
 
+  /**
+   * Turns alphaTab's note bounds on or off and lays the score out again: `BeatBounds.notes` in the bounds lookup, which
+   * the scale panel's highlight reads. Off by default - a rectangle per note, and the beat is the unit of selection - and
+   * turned on by the panel's first opening, for the life of the page.
+   */
+  setNoteBounds(on: boolean): void {
+    if (!this.api || this.api.settings.core.includeNoteBounds === on) return;
+    this.api.settings.core.includeNoteBounds = on;
+    this.api.updateSettings();
+    this.api.render();
+  }
+
   /** The mute and solo each track should play with, by index, kept and applied again after every MIDI load. */
   private trackPlayback: readonly TrackPlayback[] = [];
   /**

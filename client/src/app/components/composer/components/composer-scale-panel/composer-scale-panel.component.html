@@ -1,0 +1,35 @@
+<!-- A menu off the top bar, as Library and Export are: hidden with CSS while closed. -->
+<div class="menu" (keydown)="onKey($event)">
+  <button
+    #toggle
+    type="button"
+    class="text-btn menu-toggle"
+    aria-controls="composer-scale-menu"
+    [attr.aria-expanded]="open"
+    [class.active]="enabled && summary"
+    [title]="summary ? 'Highlighting ' + summary : 'Highlight a scale or chord'"
+    (click)="toggleOpen()"
+  >Scales</button>
+  <div id="composer-scale-menu" class="menu-panel" [class.open]="open" role="group" aria-label="Scale highlighting">
+    <label class="switch">
+      <input type="checkbox" [(ngModel)]="enabled" (ngModelChange)="changed()" />
+      <span>Highlight a scale or chord</span>
+    </label>
+    <label class="field">
+      <span>Root</span>
+      <select [(ngModel)]="rootNote" (ngModelChange)="changed()" [disabled]="!enabled">
+        <option *ngFor="let name of rootNames; let i = index" [ngValue]="i">{{ name }}</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Scale or chord</span>
+      <select [(ngModel)]="scaleId" (ngModelChange)="changed()" [disabled]="!enabled">
+        <option value="">Choose…</option>
+        <optgroup *ngFor="let group of groups" [label]="group.name">
+          <option *ngFor="let option of group.options" [value]="option.id">{{ option.name }}</option>
+        </optgroup>
+      </select>
+    </label>
+    <p class="summary" *ngIf="summary">Highlighting {{ summary }}: the root in red, the rest in blue.</p>
+  </div>
+</div>

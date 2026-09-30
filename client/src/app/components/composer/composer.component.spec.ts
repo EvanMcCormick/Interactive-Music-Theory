@@ -37,6 +37,7 @@ import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
  */
 @Component({ selector: 'app-composer-score', standalone: true, template: '' })
 class StubScoreComponent {
+  @Input() highlight: unknown = null;
   ignoredPresses = 0;
 
   ignoreNextPress(): void {
@@ -324,6 +325,18 @@ describe('ComposerComponent', () => {
 
     expect(component.popover).toBeNull();
     expect(document.querySelector(':popover-open')).toBeNull();
+  });
+
+  it('asks alphaTab for note bounds the first time the scale panel opens, and passes its highlight to the score', () => {
+    const noteBounds = spyOn(TestBed.inject(AlphaTabService), 'setNoteBounds');
+    const toggle = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>('app-composer-scale-panel .menu-toggle'))[0];
+
+    toggle.click();
+    toggle.click();
+    toggle.click();
+    fixture.detectChanges();
+
+    expect(noteBounds.calls.allArgs()).toEqual([[true]]);
   });
 
   it('writes the shortcuts of Undo and Redo with the modifiers of the platform keyboard', () => {

@@ -8,6 +8,17 @@
       [style.width.px]="caretRect.width"
       [style.height.px]="caretRect.height"
     ></div>
+    <!-- The scale panel's highlight: a ring on each note head it names, the root in red and the rest in blue. -->
+    <div
+      *ngFor="let mark of noteMarks"
+      class="scale-mark"
+      aria-hidden="true"
+      [class.root]="mark.kind === 'root'"
+      [style.left.px]="mark.left"
+      [style.top.px]="mark.top"
+      [style.width.px]="mark.width"
+      [style.height.px]="mark.height"
+    ></div>
     <!-- Pen's hover notehead: where a click would write. Rendering only. -->
     <div
       class="pen-hover"

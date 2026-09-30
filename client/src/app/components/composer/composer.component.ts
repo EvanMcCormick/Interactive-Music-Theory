@@ -19,12 +19,13 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerConvertPromptComponent } from './components/composer-convert-prompt/composer-convert-prompt.component';
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
+import { ComposerScalePanelComponent } from './components/composer-scale-panel/composer-scale-panel.component';
 import { ComposerPaletteComponent } from './components/composer-palette/composer-palette.component';
 import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
 import { ComposerShortcutSheetComponent } from './components/composer-shortcut-sheet/composer-shortcut-sheet.component';
 import { ComposerStatusLineComponent } from './components/composer-status-line/composer-status-line.component';
 import { ComposerTrackStripComponent } from './components/composer-track-strip/composer-track-strip.component';
-import { AlphaTabState } from '../../models/alpha-tab.model';
+import { AlphaTabState, DEFAULT_HIGHLIGHT_CONFIG, HighlightConfig } from '../../models/alpha-tab.model';
 import { ComposerState, ScoreDoc, TexDiagnostic } from '../../models/composer.model';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
@@ -99,6 +100,7 @@ export function clampedStripHeight(height: number, range: StripHeightRange): num
     ComposerConvertPromptComponent,
     ComposerLibraryPanelComponent,
     ComposerPaletteComponent,
+    ComposerScalePanelComponent,
     ComposerScoreComponent,
     ComposerShortcutSheetComponent,
     ComposerStatusLineComponent,
@@ -183,6 +185,9 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
    * message's node and a screen reader reads the same words again - as `ComposerState.messageId` does for a refusal.
    */
   texErrorId = 0;
+
+  /** The scale panel's highlight, which the score draws, in either state. */
+  highlight: HighlightConfig = DEFAULT_HIGHLIGHT_CONFIG;
 
   metronomeEnabled = false;
   countInEnabled = false;
@@ -559,6 +564,11 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   stop(): void {
     this.alphaTabService.stop();
+  }
+
+  /** The scale panel opened for the first time: note bounds from here on, for the highlight to read. */
+  onScalePanelOpened(): void {
+    this.alphaTabService.setNoteBounds(true);
   }
 
   toggleMetronome(): void {

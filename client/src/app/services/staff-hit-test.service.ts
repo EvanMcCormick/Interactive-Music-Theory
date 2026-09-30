@@ -204,6 +204,17 @@ export class StaffHitTestService {
     };
   }
 
+  /**
+   * A box given in the bounds lookup's pixels (from the top of `.at-surface`) - a note head's - placed in `container`, as
+   * the caret's is. Null before a surface exists.
+   */
+  lookupRect(container: HTMLElement, x: number, y: number, w: number, h: number): Rect | null {
+    const origin = this.surfaceOriginOf(container);
+    if (!origin) return null;
+    const containerBox = container.getBoundingClientRect();
+    return { left: origin.left - containerBox.left + x, top: origin.top - containerBox.top + y + container.scrollTop, width: w, height: h };
+  }
+
   /** `surface`'s box, measured once per call that holds `boxes`. */
   private boxOf(boxes: Map<SVGSVGElement, DOMRect>, surface: SVGSVGElement): DOMRect {
     let box = boxes.get(surface);
