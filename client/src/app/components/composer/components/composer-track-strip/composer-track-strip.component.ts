@@ -7,6 +7,7 @@ import { ComposerState, TrackDoc } from '../../../../models/composer.model';
 import { ProgressionState } from '../../../../models/progression.model';
 import { ComposerService } from '../../../../services/composer.service';
 import { ComposerGpService } from '../../../../services/composer-gp.service';
+import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
 import { LAST_TRACK_REFUSAL } from '../../../../services/composer-text';
 import { ProgressionService } from '../../../../services/progression.service';
 import {
@@ -264,8 +265,26 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
    * The guard is `canAddProgressionTrack` and not a null check, because
    * `aria-disabled` only says a control is refusing - it does not stop the
    * click, and the handler is where the refusal is actually made.
+   *
+   * In Original the send asks the conversion prompt first, as any edit does:
+   * `sendProgression` commits into the composition that is open, which there
+   * is the empty one under the file, and it does not move `documentId`, so
+   * nothing else would end Original for it. A refused press asks nothing -
+   * there is no edit to ask about.
    */
   addProgressionTrack(): void {
+    if (!this.canAddProgressionTrack()) return;
+
+    this.gp.requestEdit(ASKING_PAGE_COMMANDS.progressionTrack, 'Adding the progression track', () => this.sendProgressionTrack());
+  }
+
+  /**
+   * The send both buttons make, reading the progression, the score and its
+   * meter as it runs - which, held by the conversion prompt, is after Convert
+   * has put the file's own score in place of the empty one, so the refusal is
+   * asked again against the score the track will go into.
+   */
+  private sendProgressionTrack(): void {
     // The refusal is the second half; the first is only how a null field
     // becomes a `ProgressionState` below, since `canAddProgressionTrack`
     // already answers false for it.
@@ -301,6 +320,8 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
    * Almost an alias, and deliberately little more: the button is named for what
    * the user is doing rather than for what the service calls it, and a second
    * method with a body of its own would be a second place for the two to drift.
+   * Both run `sendProgressionTrack`; this one asks the conversion prompt under
+   * its own name, so the prompt says Update when Update was pressed.
    *
    * ## Why it takes no track when everything beside it does
    *
@@ -327,7 +348,7 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
   updateGeneratedTrack(): void {
     if (this.sendState() !== 'stale') return;
 
-    this.addProgressionTrack();
+    this.gp.requestEdit(ASKING_PAGE_COMMANDS.progressionTrack, 'Updating the progression track', () => this.sendProgressionTrack());
   }
 
   /** Hands the track over to the user, keeping the music and dropping the link. */

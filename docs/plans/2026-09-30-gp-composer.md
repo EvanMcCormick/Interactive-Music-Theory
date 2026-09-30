@@ -151,7 +151,10 @@ written to the corrected version, and Task J.1 records them in the design doc.
    an alphaTex apply and Save each go through it. `ASKING_PAGE_COMMANDS` gains `penWrite` (Task C.1).
 10. **Original ends by itself.** Rather than every path that opens a composition remembering to leave Original, the
     service follows `ComposerState.documentId` and clears itself when it moves - which Convert's `replaceDocument`
-    does, so step 5 of Part 4 needs no code (Tasks C.1, D.2).
+    does, so step 5 of Part 4 needs no code (Tasks C.1, D.2). A progression sent over does not move it:
+    `sendProgression` is a plain commit into the empty composition under the file. So its three doors - the strip's
+    Add progression track and Update, and the progression page's Send - are gated instead (`ASKING_PAGE_COMMANDS`
+    gains `progressionTrack`), and Send's request waits for the composer page to show it on arrival.
 11. **The GP library could say it deleted a file it had not.** `updateEntry`, `deleteEntry` and `clearLibrary`
     resolved having done nothing when the database was still opening - a "found while designing" item that Convert's
     one irreversible step would have trusted. Fixed before Convert, with the specs Part 7 asked for (Task D.1).
@@ -3898,9 +3901,10 @@ Build step 5. Three pieces:
 - **The gate.** `ComposerGpService.requestEdit(id, label, run)` runs `run` - or, in Original, when `changesDocument(id)`,
   holds it and publishes it as the `request` the prompt answers. Every writing command on the page goes through it:
   the tool table, wrapped once in the page so the palette and the keys ask alike; a popover's value; Pen's write,
-  which reads the pointer's height now for a write that may run after Convert; the strip's Add track; an alphaTex
-  apply, which keeps the draft as typed, since converting reseeds the panel; and Save, from Ctrl+S and from the
-  Library menu, through the page's save guard. The service also measures the loss as a file opens, and ends Original
+  which reads the pointer's height now for a write that may run after Convert; the strip's Add track, and its Add
+  progression track and Update; the progression page's Send, whose request the composer page shows on arrival; an
+  alphaTex apply, which keeps the draft as typed, since converting reseeds the panel; and Save, from Ctrl+S and from
+  the Library menu, through the page's save guard. The service also measures the loss as a file opens, and ends Original
   by itself when `documentId` moves (correction 10).
 - **The prompt.** `ComposerConvertPromptComponent`, a modal as the shortcut sheet is: what the edit was, that
   converting cannot be undone, what the file and its first save would lose - or that nothing would change - then *Save

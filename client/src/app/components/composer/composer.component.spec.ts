@@ -12,6 +12,7 @@ import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerExportService } from '../../services/composer-export.service';
 import { ComposerLibraryService } from '../../services/composer-library.service';
 import { ComposerGpService } from '../../services/composer-gp.service';
+import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
 import { ComposerService } from '../../services/composer.service';
 import { KEY_PLATFORM } from '../../services/composer-key-platform';
 import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
@@ -737,6 +738,63 @@ describe('ComposerComponent in the Original state', () => {
 
     expect(textButton('Undo').disabled).toBe(true);
     expect(textButton('Redo').disabled).toBe(true);
+  });
+
+  it('drops a command asked on the page when the page goes, so it cannot outlive the prompt that showed it', async () => {
+    await openFile('Band', 132);
+    press({ key: 'h' });
+    expect(gp.request).not.toBeNull();
+
+    fixture.destroy();
+
+    expect(gp.request).toBeNull();
+  });
+
+  it('shows a command asked before the page was there - a progression sent from its own page - as it arrives', async () => {
+    await openFile('Band', 132);
+    fixture.destroy();
+    gp.requestEdit(ASKING_PAGE_COMMANDS.progressionTrack, 'Sending the progression', () => undefined);
+
+    fixture = TestBed.createComponent(ComposerComponent);
+    fixture.detectChanges();
+
+    expect(promptOpen()).toBeTrue();
+    expect(prompt().querySelector('h2')?.textContent?.trim()).toBe('Sending the progression would convert this file.');
+  });
+
+  it('does not open the shortcut sheet over the prompt on ?', async () => {
+    await openFile('Band', 132);
+    press({ key: 'h' });
+
+    press({ key: '?', code: 'Slash', shiftKey: true });
+
+    expect(fixture.componentInstance.sheetOpen).toBeFalse();
+    expect(promptOpen()).toBeTrue();
+  });
+
+  it('closes an open popover when a command asks, so it does not sit in the top layer above the prompt', async () => {
+    await openFile('Band', 132);
+    press({ key: 'k', code: 'KeyK' });
+    expect(fixture.componentInstance.popover).toBe('clef');
+
+    gp.requestEdit('hammerOn', 'Hammer-on', () => undefined);
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.popover).toBeNull();
+    expect(promptOpen()).toBeTrue();
+  });
+
+  it("seeds an untouched alphaTex draft with the file's own when the file opens with the panel already open", async () => {
+    const texService = TestBed.inject(AlphaTexService);
+    fixture.componentInstance.toggleTexPanel();
+    const composition = fixture.componentInstance.texDraft;
+
+    await openFile('Band', 132);
+    expect(fixture.componentInstance.texDraft).toBe(texService.export(gp.original!.score));
+
+    gp.clear();
+    fixture.detectChanges();
+    expect(fixture.componentInstance.texDraft).toBe(composition);
   });
 
   it("counts the file's bars in the status line, not the empty composition's", async () => {

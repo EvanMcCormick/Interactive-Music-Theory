@@ -58,19 +58,22 @@ export class ComposerConvertPromptComponent implements OnChanges, AfterViewCheck
     return this.request !== null && this.original !== null;
   }
 
-  /** What converting loses now. */
-  get conversionLoss(): LossItem[] {
-    return this.original?.loss.filter(item => item.group === 'conversion') ?? [];
-  }
-
+  /**
+   * What converting loses now. Split from `original.loss` as the file arrives rather than on every check: the template
+   * reads both lists several times a pass, and the loss is measured once per file (`ComposerGpService.open`).
+   */
+  conversionLoss: LossItem[] = [];
   /** What the first save after converting loses. */
-  get saveLoss(): LossItem[] {
-    return this.original?.loss.filter(item => item.group === 'first save') ?? [];
-  }
+  saveLoss: LossItem[] = [];
 
   ngOnChanges(changes: SimpleChanges): void {
     const request = changes['request'];
     const original = changes['original'];
+    if (original) {
+      const loss = this.original?.loss ?? [];
+      this.conversionLoss = loss.filter(item => item.group === 'conversion');
+      this.saveLoss = loss.filter(item => item.group === 'first save');
+    }
     if (!request && !original) return;
     const wasOpen = (request ? request.previousValue : this.request) != null && (original ? original.previousValue : this.original) != null;
     this.focus.openChanged(this.open, wasOpen);

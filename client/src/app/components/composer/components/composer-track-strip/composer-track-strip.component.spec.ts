@@ -5,6 +5,7 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerService } from '../../../../services/composer.service';
 import { ComposerGpService } from '../../../../services/composer-gp.service';
+import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
 import { ProgressionService } from '../../../../services/progression.service';
 import { TrackDoc } from '../../../../models/composer.model';
 
@@ -677,5 +678,37 @@ describe('ComposerTrackStripComponent', () => {
 
     expect(composer.doc.tracks.length).toBe(tracks);
     expect(gp.request?.label).toBe('Add track');
+  });
+
+  /**
+   * `sendProgression` is a plain commit that leaves `documentId` where it is, so nothing ends Original for it: ungated,
+   * it would write the empty composition held under the file, where nothing on the page shows it.
+   */
+  it('asks the conversion prompt before adding the progression track to a file not yet converted', () => {
+    const gp = TestBed.inject(ComposerGpService);
+    progression.appendSlot(0);
+    gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score() });
+    const before = composer.doc;
+
+    component.addProgressionTrack();
+
+    expect(composer.doc).toBe(before);
+    expect(gp.request?.id).toBe(ASKING_PAGE_COMMANDS.progressionTrack);
+    expect(gp.request?.label).toBe('Adding the progression track');
+  });
+
+  it('asks the conversion prompt before updating the progression track under a file not yet converted', () => {
+    const gp = TestBed.inject(ComposerGpService);
+    sendAProgression();
+    gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score() });
+    progression.appendSlot(1);
+    fixture.detectChanges();
+    const before = composer.doc;
+
+    component.updateGeneratedTrack();
+
+    expect(composer.doc).toBe(before);
+    expect(gp.request?.id).toBe(ASKING_PAGE_COMMANDS.progressionTrack);
+    expect(gp.request?.label).toBe('Updating the progression track');
   });
 });

@@ -76,7 +76,8 @@ export type LossId =
   | 'customStyles'
   | 'restVoices'
   | 'unsavableKit'
-  | 'doubleBars';
+  | 'doubleBars'
+  | 'unmeasured';
 
 export interface LossItem {
   id: LossId;
@@ -151,7 +152,17 @@ const ITEMS: Readonly<Record<LossId, { label: string; one: string; many: string;
     group: 'first save',
     note: 'the save would not reopen, so converting refuses'
   },
-  doubleBars: { label: 'Double bar lines', one: 'bar', many: 'bars', group: 'first save' }
+  doubleBars: { label: 'Double bar lines', one: 'bar', many: 'bars', group: 'first save' },
+  // Not a row the walk counts: `ComposerGpService.open` says it when the measuring itself threw, so a file alphaTab can
+  // draw still opens, and the prompt says it does not know what converting would lose rather than that it would lose
+  // nothing (`unmeasuredLoss`).
+  unmeasured: {
+    label: 'What converting would lose could not be measured',
+    one: 'file',
+    many: 'files',
+    group: 'conversion',
+    note: 'anything in the file may change; save the original first to keep it'
+  }
 };
 
 /** A running count of each item, and the first bar it was met in. */
@@ -179,6 +190,15 @@ class Tally {
       })
       .sort((a, b) => a.firstBar - b.firstBar || b.count - a.count);
   }
+}
+
+/**
+ * What the prompt lists in place of `conversionLossOf` when measuring threw: one item, saying the loss is not known. Its
+ * detail is the note alone - a count of one file, first in no bar, would say nothing the label does not.
+ */
+export function unmeasuredLoss(): LossItem[] {
+  const text = ITEMS.unmeasured;
+  return [{ id: 'unmeasured', group: text.group, label: text.label, detail: text.note ?? '', count: 1, firstBar: 0 }];
 }
 
 /**

@@ -334,7 +334,13 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       .getState()
       .pipe(takeUntil(this.destroy$))
       .subscribe(original => {
+        const changed = original !== this.original;
         this.original = original;
+        // The alphaTex shown is the file's while there is one and the composition's after, so an untouched draft follows
+        // it as it follows the score. Opening a file does not move `documentId` - the reset before it did - so the
+        // composer's subscription would leave the empty composition's alphaTex in a panel already open. A draft typed
+        // into is left as typed, as it is when the score changes.
+        if (changed && this.showTexPanel && !this.texDraftEdited) this.seedTexDraft();
         this.cdr.markForCheck();
       });
 
@@ -373,6 +379,10 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.destroyed = true;
+    // A command asked here dies with the page: the prompt that named it is going, and one found by the next composer page
+    // would ask about a press the user made on a page they left. One asked from elsewhere - the progression page's Send -
+    // is made while no composer page is alive, and waits for the next to show it.
+    this.gp.cancelEdit();
     this.pageObserver?.disconnect();
     this.removeSaveGuard();
     this.releaseUnsavedDraft();
@@ -611,12 +621,14 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
    * file, which has no document behind it (design Part 1). Applying a draft of it asks, as any edit does.
    */
   private currentTex(): string {
-    if (this.original) return this.texService.export(this.original.score);
-    if (!this.state) return '';
     try {
+      if (this.original) return this.texService.export(this.original.score);
+      if (!this.state) return '';
       const score = this.mapper.toScore(this.state.doc, new alphaTab.Settings());
       return this.texService.export(score);
     } catch {
+      // A file's model the exporter cannot write, as much as a document the mapper cannot, leaves the panel empty rather
+      // than taking the page down.
       return '';
     }
   }

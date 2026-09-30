@@ -12,13 +12,15 @@
 
 /**
  * The page's own commands, which are not in `COMPOSER_TOOLS` because they are not palette tools or key bindings:
- * applying the alphaTex draft, choosing a value in a popover, whose button only opens it, and Pen's click on standard
- * notation, which writes the pitch clicked.
+ * applying the alphaTex draft, choosing a value in a popover, whose button only opens it, Pen's click on standard
+ * notation, which writes the pitch clicked, and the progression's track - added or updated from the strip, or sent from
+ * the progression page - which `sendProgression` commits into whatever composition is open, file shown or not.
  */
 export const ASKING_PAGE_COMMANDS = {
   texApply: 'page:texApply',
   popoverValue: 'page:popoverValue',
-  penWrite: 'page:penWrite'
+  penWrite: 'page:penWrite',
+  progressionTrack: 'page:progressionTrack'
 } as const;
 
 /**

@@ -1,10 +1,10 @@
-import { Injectable } from '@angular/core';
+import { ErrorHandler, Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import type * as alphaTab from '@coderline/alphatab';
 
 import { ComposerService } from './composer.service';
 import { changesDocument } from './composer-edit-intent';
-import { LossItem, conversionLossOf } from './gp-conversion-loss';
+import { LossItem, conversionLossOf, unmeasuredLoss } from './gp-conversion-loss';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
 
 /** A `.gp` file as alphaTab read it: what opening it into the Original state takes. */
@@ -48,9 +48,13 @@ export interface EditRequest {
  * cap and whose history M2 already moved out to make room. `ComposerState` gains nothing either: the empty document
  * it already holds is simply not drawn while an original is current.
  *
- * **Another composition opening ends Original.** A load, New, an opened transcription, a progression sent over and
- * Convert itself each move `ComposerState.documentId` on, and the file on show is no longer what the page is about -
- * so the service follows the composer's state and clears itself, rather than every one of those paths remembering to.
+ * **Another composition opening ends Original.** A load, New, an opened transcription and Convert itself each move
+ * `ComposerState.documentId` on, and the file on show is no longer what the page is about - so the service follows the
+ * composer's state and clears itself, rather than every one of those paths remembering to.
+ *
+ * A progression sent over is not one of them. `sendProgression` is a plain commit into the composition that is open,
+ * which in Original is the empty one no one can see, and `documentId` stays where it is - so it is gated instead, as any
+ * edit is: the strip's Add progression track and Update, and the progression page's Send, each go through `requestEdit`.
  */
 @Injectable({ providedIn: 'root' })
 export class ComposerGpService {
@@ -61,7 +65,8 @@ export class ComposerGpService {
 
   constructor(
     private readonly composer: ComposerService,
-    private readonly mapper: ScoreDocMapperService
+    private readonly mapper: ScoreDocMapperService,
+    private readonly errors: ErrorHandler
   ) {
     this.composer.getState().subscribe(state => {
       if (this.openedOver !== null && state.documentId !== this.openedOver) this.clear();
@@ -96,12 +101,31 @@ export class ComposerGpService {
    * Shows `file`, replacing whatever was shown: opening a second file is not a stack. What converting it would change is
    * measured here, once, off the rendering path (design Risks): `toDoc` is the conversion's first step, and the checker
    * reads it for the notes no string would reach.
+   *
+   * **The caller resets the composer first.** Original ends when `documentId` moves off the composition open now
+   * (`openedOver`), so a reset after this call would end it at once; and the composition under the file is the one a
+   * held command runs against once converted, which should be an empty one, not whatever was being edited.
+   *
+   * A measurement that throws does not stop the file opening: alphaTab has read it and can draw it, and a model the
+   * mapper or the checker has not met is theirs to fix, not a reason to refuse to show the file. The prompt then says
+   * the loss could not be measured (`unmeasuredLoss`), which leaves Save the original first as the answer to it.
    */
   open(file: GpFile): void {
-    const loss = conversionLossOf(file.score, this.mapper.toDoc(file.score));
+    const loss = this.lossOf(file.score);
     this.openedOver = this.composer.state.documentId;
     this.requestSubject.next(null);
     this.subject.next({ ...file, loss });
+  }
+
+  /** `conversionLossOf` the file, or the one item saying it could not be measured. */
+  private lossOf(score: alphaTab.model.Score): LossItem[] {
+    try {
+      return conversionLossOf(score, this.mapper.toDoc(score));
+    } catch (error) {
+      // Still a defect in the mapper or the checker, so it is reported where the app's defects go, not only dropped.
+      this.errors.handleError(error);
+      return unmeasuredLoss();
+    }
   }
 
   /** Back to Composition, dropping the bytes and any command waiting on the prompt. */
@@ -121,6 +145,11 @@ export class ComposerGpService {
       run();
       return;
     }
+    // The first command asked is the one the prompt names. A second can only come from off the composer page, which is
+    // inert behind the prompt - the progression page's Send pressed again before the composer showed the first, say.
+    // Replacing the first would convert for a command the prompt may never have named, and drop the one it did; so the
+    // second is dropped, as a Cancel would drop it.
+    if (this.request !== null) return;
     this.requestSubject.next({ id, label, run });
   }
 

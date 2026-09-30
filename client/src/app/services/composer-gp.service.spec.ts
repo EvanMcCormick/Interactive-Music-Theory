@@ -1,9 +1,11 @@
+import { ErrorHandler } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerGpService, GpFile, GpOriginal } from './composer-gp.service';
 import { ComposerService } from './composer.service';
 import { ASKING_PAGE_COMMANDS } from './composer-edit-intent';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
 
 /**
  * The Original state: the `.gp` file the page is showing as alphaTab read it, and the command waiting on the
@@ -52,6 +54,17 @@ describe('ComposerGpService', () => {
     service.open(credited);
 
     expect(service.original?.loss.map(item => item.id)).toEqual(['credits']);
+  });
+
+  it('still opens a file whose loss it cannot measure, and says that it could not', () => {
+    spyOn(TestBed.inject(ScoreDocMapperService), 'toDoc').and.throwError('a model this mapper has not met');
+    const handled = spyOn(TestBed.inject(ErrorHandler), 'handleError');
+
+    service.open(file('a'));
+
+    expect(service.isOriginal).toBe(true);
+    expect(service.original?.loss.map(item => [item.id, item.group])).toEqual([['unmeasured', 'conversion']]);
+    expect((handled.calls.mostRecent().args[0] as Error).message).toContain('has not met');
   });
 
   it('opening another file replaces the first, rather than stacking', () => {
@@ -114,6 +127,18 @@ describe('ComposerGpService', () => {
 
       expect(ran).toBe(0);
       expect(service.request?.label).toBe('Applying the alphaTex draft');
+    });
+
+    it('keeps the first command while one is waiting, and drops a second', () => {
+      service.open(file('a'));
+      let ran = '';
+      service.requestEdit('hammerOn', 'Hammer-on', () => (ran = 'first'));
+
+      service.requestEdit(ASKING_PAGE_COMMANDS.progressionTrack, 'Sending the progression', () => (ran = 'second'));
+      service.request?.run();
+
+      expect(service.request?.label).toBe('Hammer-on');
+      expect(ran).toBe('first');
     });
 
     it('drops the command on Cancel, and on leaving Original', () => {

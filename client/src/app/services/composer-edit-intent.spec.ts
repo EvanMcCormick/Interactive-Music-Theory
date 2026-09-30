@@ -61,6 +61,10 @@ describe('changesDocument', () => {
     expect(changesDocument(ASKING_PAGE_COMMANDS.penWrite)).toBe(true);
   });
 
+  it('asks for the progression track, sent from the strip or the progression page, which is not a tool either', () => {
+    expect(changesDocument(ASKING_PAGE_COMMANDS.progressionTrack)).toBe(true);
+  });
+
   it('asks for a command it has never heard of, so a new tool cannot slip through', () => {
     expect(changesDocument('someToolAddedLater')).toBe(true);
   });
