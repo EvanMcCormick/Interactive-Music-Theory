@@ -1,5 +1,6 @@
 /**
- * Which MIDI channels each track of a score plays on, as alphaTab's importers assign them.
+ * Which MIDI channels each track of a score plays on, as alphaTab's `ModelUtils.consolidate` assigns them from its
+ * defaults of channel 0.
  *
  * alphaTab assigns channels in `ModelUtils.consolidate` (`alphaTab.core.mjs` ~4315-4335 in 1.8), which every importer
  * runs and `Score.finish` does not - and `ModelUtils` is not exported. So a score the composer built, rather than one

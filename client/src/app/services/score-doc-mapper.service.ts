@@ -300,7 +300,8 @@ export class ScoreDocMapperService {
       track.addStaff(this.toStaff(staffDoc));
     }
     // In order: a percussion note's number below this list's length is an index into it, so the list must come back
-    // exactly as it was read. `score.finish` sets a drum track's program and channel itself.
+    // exactly as it was read. `Track.finish` zeroes a drum track's program, and `toScore` assigns its channel
+    // (`midiChannelsOf`).
     for (const articulation of doc.percussionArticulations) {
       track.percussionArticulations.push(this.toArticulation(articulation));
     }
@@ -309,7 +310,9 @@ export class ScoreDocMapperService {
 
   /**
    * The public constructor, not `InstrumentArticulation.create`: `create` takes the id first and is what alphaTab's own
-   * importers call, but it is not in `alphaTab.d.ts`. The constructor takes the same fields with the id last.
+   * importers call, but it is not in `alphaTab.d.ts`. The constructor takes the same fields with the id last. It also
+   * replaces a `noteHeadHalf` or `noteHeadWhole` of `MusicFontSymbol.None` with `noteHeadDefault`
+   * (`alphaTab.core.mjs` ~5121 in 1.8), so such an entry does not come back field for field.
    */
   private toArticulation(doc: ArticulationDoc): alphaTab.model.InstrumentArticulation {
     return new alphaTab.model.InstrumentArticulation(
@@ -335,7 +338,7 @@ export class ScoreDocMapperService {
     staff.showSlash = doc.showSlash;
     staff.showNumbered = doc.showNumbered;
     // Before the bars, and before `score.finish`, which is what reads the flag: it clears the tuning, turns tablature off
-    // and zeroes the display transposition on a percussion staff, and puts a one-staff drum track on channel 9.
+    // and zeroes the display transposition on a percussion staff.
     staff.isPercussion = doc.isPercussion;
     staff.standardNotationLineCount = doc.lineCount;
 
