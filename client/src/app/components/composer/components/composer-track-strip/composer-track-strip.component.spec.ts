@@ -711,4 +711,65 @@ describe('ComposerTrackStripComponent', () => {
     expect(gp.request?.id).toBe(ASKING_PAGE_COMMANDS.progressionTrack);
     expect(gp.request?.label).toBe('Updating the progression track');
   });
+
+  describe('show / hide, mute and solo', () => {
+    const host = (): HTMLElement => fixture.nativeElement as HTMLElement;
+    const rowButtons = (selector: string): HTMLButtonElement[] => Array.from(host().querySelectorAll<HTMLButtonElement>(selector));
+
+    beforeEach(() => {
+      composer.addTrack('Piano', 0, false);
+      fixture.detectChanges();
+    });
+
+    it('hides a track\'s staves as a page setting, not an edit, and refuses to hide the last one shown', () => {
+      const before = composer.doc;
+      rowButtons('.track-shown')[0].click();
+      fixture.detectChanges();
+
+      expect(rowButtons('.track-shown')[0].getAttribute('aria-pressed')).toBe('false');
+      expect(composer.doc).toBe(before);
+      expect(rowButtons('.track-shown')[1].getAttribute('aria-disabled')).toBe('true');
+      expect(rowButtons('.track-shown')[1].getAttribute('aria-label')).toContain('unavailable');
+
+      rowButtons('.track-shown')[1].click();
+      fixture.detectChanges();
+      expect(composer.state.refusal).toMatch(/At least one track is shown/);
+      expect(rowButtons('.track-shown')[1].getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it("mutes and solos a composition's track in its own mixer, as an edit", () => {
+      rowButtons('.track-mute')[1].click();
+      rowButtons('.track-solo')[0].click();
+      fixture.detectChanges();
+
+      expect(composer.doc.tracks[1].playback.isMute).toBeTrue();
+      expect(composer.doc.tracks[0].playback.isSolo).toBeTrue();
+      expect(rowButtons('.track-mute')[1].getAttribute('aria-pressed')).toBe('true');
+      composer.undo();
+      expect(composer.doc.tracks[0].playback.isSolo).toBeFalse();
+    });
+
+    it("lists a file's tracks in Original, with no Remove, badge or Update, and mutes them in the player only", () => {
+      const score = new alphaTab.model.Score();
+      for (const name of ['Lead', 'Bass', 'Drums']) {
+        const track = new alphaTab.model.Track();
+        track.name = name;
+        score.addTrack(track);
+      }
+      TestBed.inject(ComposerGpService).open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
+      fixture.detectChanges();
+
+      expect(Array.from(host().querySelectorAll('.track-name')).map(name => name.textContent?.trim())).toEqual(['Lead', 'Bass', 'Drums']);
+      expect(host().querySelector('.track-remove')).toBeNull();
+      expect(host().querySelector('.add-progression-track')).toBeNull();
+
+      const before = composer.doc;
+      rowButtons('.track-mute')[2].click();
+      fixture.detectChanges();
+
+      expect(rowButtons('.track-mute')[2].getAttribute('aria-pressed')).toBe('true');
+      expect(composer.doc).toBe(before);
+      expect(score.tracks[2].playbackInfo.isMute).toBeFalse();
+    });
+  });
 });

@@ -410,3 +410,13 @@ describe('slash and numbered staves', () => {
     expect(caretSlotIndexOf(slots, at(0, 0, 0, null), null)).toBe(1);
   });
 });
+
+describe('staffSlotsOf over the tracks drawn', () => {
+  it('lists the staves of the tracks shown, in the order drawn, and those alone', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+
+    expect(staffSlotsOf(doc).map(slot => `${slot.trackIndex}:${slot.kind}`)).toEqual(['0:notation', '0:tab', '1:notation']);
+    expect(staffSlotsOf(doc, [1]).map(slot => `${slot.trackIndex}:${slot.kind}`)).toEqual(['1:notation']);
+  });
+});

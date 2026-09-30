@@ -20,6 +20,12 @@ import { AuditionQueue } from './audition-queue';
  */
 export const ALL_TRACKS: readonly number[] = [-1];
 
+/** How the player sounds one track: muted, soloed, both or neither. */
+export interface TrackPlayback {
+  mute: boolean;
+  solo: boolean;
+}
+
 /**
  * Service for managing alphaTab API interactions
  * Provides state management via BehaviorSubject following MusicTheoryService pattern
@@ -135,8 +141,11 @@ export class AlphaTabService {
       });
     });
 
-    // MIDI loaded: a render's `loadMidiFile` has stopped the player, so a note entry's audition can sound now.
+    // MIDI loaded: a render's `loadMidiFile` has stopped the player, so a note entry's audition can sound now. And the
+    // mixer the page wants goes back on: a score alphaTab is given carries its mutes in `PlaybackInformation`, which the
+    // player never reads - only `changeTrackMute` and `changeTrackSolo` reach it.
     this.api.midiLoaded.on(() => {
+      this.applyTrackPlayback();
       const audition = this.auditions.midiLoaded();
       if (audition) this.auditionNote(audition.midiKey, audition.program);
     });
@@ -370,6 +379,34 @@ export class AlphaTabService {
     }
   }
 
+
+  /** The mute and solo each track should play with, by index, kept and applied again after every MIDI load. */
+  private trackPlayback: readonly TrackPlayback[] = [];
+
+  /**
+   * Plays each track of the score alphaTab holds muted or soloed as `states` say, by index, now and after every render
+   * from here on (`midiLoaded`). The page's one mixer: the track strip's rows, in either state.
+   */
+  setTrackPlayback(states: readonly TrackPlayback[]): void {
+    // Asked on every caret move by the score; the player is told only of a change.
+    const same =
+      states.length === this.trackPlayback.length &&
+      states.every((state, index) => state.mute === this.trackPlayback[index].mute && state.solo === this.trackPlayback[index].solo);
+    if (same) return;
+    this.trackPlayback = states;
+    this.applyTrackPlayback();
+  }
+
+  private applyTrackPlayback(): void {
+    const score = this.api?.score;
+    if (!this.api || !score) return;
+    const tracksWhere = (test: (state: TrackPlayback) => boolean): alphaTab.model.Track[] =>
+      score.tracks.filter((_, index) => test(this.trackPlayback[index] ?? { mute: false, solo: false }));
+    this.api.changeTrackMute(tracksWhere(state => state.mute), true);
+    this.api.changeTrackMute(tracksWhere(state => !state.mute), false);
+    this.api.changeTrackSolo(tracksWhere(state => state.solo), true);
+    this.api.changeTrackSolo(tracksWhere(state => !state.solo), false);
+  }
 
   /**
    * Mute/unmute a track

@@ -15,6 +15,8 @@ import { Subject, debounceTime, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
 import { ALL_TRACKS, AlphaTabService } from '../../../../services/alpha-tab.service';
+import { TrackView, renderedTracksOf, trackRowsOf } from '../../../../services/composer-track-rows';
+import { ComposerTrackViewService } from '../../../../services/composer-track-view.service';
 import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
 import { ComposerGpService, GpOriginal } from '../../../../services/composer-gp.service';
 import { ComposerService } from '../../../../services/composer.service';
@@ -146,7 +148,11 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   /** Drops the measure when lazy loading attaches or detaches a system. See `observeSurface`. */
   private surfaceObserver: MutationObserver | null = null;
   /** The staves the document draws, for the document they were read from. */
-  private slotsRead: { source: unknown; slots: StaffSlot[] } | null = null;
+  private slotsRead: { source: unknown; drawn: string; slots: StaffSlot[] } | null = null;
+  /** The track strip's hidden tracks and, in Original, the player's mutes (`ComposerTrackViewService`). */
+  private trackView: TrackView;
+  /** The tracks last drawn from the file in Original, so a show or hide redraws only when it changes them. */
+  private lastDrawnOriginalTracks = '';
   /** The file whose bytes alphaTab was last given, so the Original state loads once rather than on every redraw. */
   private lastLoadedOriginal: GpOriginal | null = null;
   /** What the hover notehead last drew, by `hoverKeyOf`, or null for none. */
@@ -165,10 +171,13 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     private readonly mapper: ScoreDocMapperService,
     private readonly alphaTabService: AlphaTabService,
     private readonly gp: ComposerGpService,
+    private readonly trackViews: ComposerTrackViewService,
     private readonly hitTest: StaffHitTestService,
     private readonly cdr: ChangeDetectorRef,
     private readonly ngZone: NgZone
-  ) {}
+  ) {
+    this.trackView = trackViews.view;
+  }
 
   ngOnInit(): void {
     // Subscribe to render requests first so the initial document state below is
@@ -193,6 +202,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
         // Original the document is not what is drawn, so nothing it does asks for a render.
         if (!this.gp.isOriginal && scoreRedrawOf(this.lastRenderedDoc, state.doc) === 'render') this.renderRequest$.next();
         else this.drawHighlight();
+        this.applyTrackPlayback();
         this.scheduleCaretUpdate();
         this.cdr.markForCheck();
       });
@@ -205,6 +215,46 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
         this.slotsRead = null;
         this.renderRequest$.next();
       });
+
+    // A track shown or hidden redraws; a mute or solo only plays differently.
+    this.trackViews
+      .getView()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(view => {
+        const hiddenChanged = view.hidden !== this.trackView.hidden;
+        this.trackView = view;
+        if (hiddenChanged) this.redrawShownTracks();
+        this.applyTrackPlayback();
+      });
+  }
+
+  /** The strip's rows for what the page is showing: the file's in Original, the document's in Composition. */
+  private trackRows(): ReturnType<typeof trackRowsOf> {
+    const original = this.gp.original;
+    if (original) return trackRowsOf(original.score, this.trackView);
+    return this.state ? trackRowsOf(this.state.doc, this.trackView) : [];
+  }
+
+  /**
+   * Redraws after a track was shown or hidden. In Composition the document is engraved again with the tracks shown; in
+   * Original alphaTab draws those tracks of the score it holds (`renderTracks`), since there is no document to engrave.
+   */
+  private redrawShownTracks(): void {
+    this.slotsRead = null;
+    if (!this.gp.isOriginal) {
+      this.lastRenderedDoc = null;
+      this.renderRequest$.next();
+      return;
+    }
+    const shown = renderedTracksOf(this.trackRows());
+    if (shown.join(',') === this.lastDrawnOriginalTracks) return;
+    this.lastDrawnOriginalTracks = shown.join(',');
+    this.alphaTabService.renderTracks(shown);
+  }
+
+  /** Plays each track muted and soloed as its row says (`AlphaTabService.setTrackPlayback`). */
+  private applyTrackPlayback(): void {
+    this.alphaTabService.setTrackPlayback(this.trackRows().map(row => ({ mute: row.muted, solo: row.soloed })));
   }
 
   ngAfterViewInit(): void {
@@ -274,6 +324,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       if (this.lastLoadedOriginal !== original) {
         this.lastLoadedOriginal = original;
         this.lastRenderedDoc = null;
+        this.lastDrawnOriginalTracks = '';
         this.alphaTabService.loadBytes(original.bytes, ALL_TRACKS);
       }
       this.renderError = null;
@@ -286,12 +337,9 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
     try {
       const score = this.mapper.toScore(this.state.doc, new alphaTab.Settings());
-      // Render every track: without explicit indices alphaTab shows only the
-      // first, which hides all but one staff on a multi-track score.
-      this.alphaTabService.renderScore(
-        score,
-        score.tracks.map((_, index) => index)
-      );
+      // The tracks the strip shows, explicitly: without indices alphaTab shows only the first, which hides all but one
+      // staff on a multi-track score.
+      this.alphaTabService.renderScore(score, renderedTracksOf(this.trackRows()));
       this.renderError = null;
     } catch (error) {
       this.renderError =
@@ -482,15 +530,17 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   /**
-   * The staves drawn, read once per source: the document's (`staffSlotsOf`), or - in Original, where there is no
-   * document behind what alphaTab drew - the file's (`staffSlotsOfScore`).
+   * The staves drawn, read once per source and per set of tracks shown: the document's (`staffSlotsOf`), or - in
+   * Original, where there is no document behind what alphaTab drew - the file's (`staffSlotsOfScore`).
    */
   private slots(doc: ScoreDoc): StaffSlot[] {
     const original = this.gp.original;
     const source: unknown = original ? original.score : doc;
+    const shown = renderedTracksOf(this.trackRows());
+    const drawn = shown.join(',');
     let read = this.slotsRead;
-    if (!read || read.source !== source) {
-      read = this.slotsRead = { source, slots: original ? staffSlotsOfScore(original.score) : staffSlotsOf(doc) };
+    if (!read || read.source !== source || read.drawn !== drawn) {
+      read = this.slotsRead = { source, drawn, slots: original ? staffSlotsOfScore(original.score, shown) : staffSlotsOf(doc, shown) };
     }
     return read.slots;
   }

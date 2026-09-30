@@ -592,8 +592,9 @@ export class ComposerService {
     this.structure.setStaffViews(views);
   }
 
-  setPlayback(changes: Partial<PlaybackInfoDoc>): void {
-    this.structure.setPlayback(changes);
+  /** Changes the mixer of the track at `trackIndex` - the caret's, unless another is named, as the strip's mute and solo do. */
+  setPlayback(changes: Partial<PlaybackInfoDoc>, trackIndex?: number): void {
+    this.structure.setPlayback(changes, trackIndex);
   }
 
   renameTrack(name: string, shortName: string): void {

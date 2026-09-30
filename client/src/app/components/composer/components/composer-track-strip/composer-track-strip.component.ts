@@ -6,8 +6,10 @@ import { Subject, takeUntil } from 'rxjs';
 import { ComposerState, TrackDoc } from '../../../../models/composer.model';
 import { ProgressionState } from '../../../../models/progression.model';
 import { ComposerService } from '../../../../services/composer.service';
-import { ComposerGpService } from '../../../../services/composer-gp.service';
+import { ComposerGpService, GpOriginal } from '../../../../services/composer-gp.service';
 import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
+import { EMPTY_TRACK_VIEW, TrackRow, TrackView, hideRefusalOf, trackRowsOf } from '../../../../services/composer-track-rows';
+import { ComposerTrackViewService } from '../../../../services/composer-track-view.service';
 import { LAST_TRACK_REFUSAL } from '../../../../services/composer-text';
 import { ProgressionService } from '../../../../services/progression.service';
 import {
@@ -60,6 +62,11 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
   private readonly destroy$ = new Subject<void>();
 
   state: ComposerState | null = null;
+  /** The `.gp` file the page is showing, or null in Composition: its tracks are the rows then, with no document behind them. */
+  original: GpOriginal | null = null;
+  /** The rows the strip draws, in either state (`trackRowsOf`). */
+  rows: TrackRow[] = [];
+  private view: TrackView = EMPTY_TRACK_VIEW;
 
   /**
    * The progression this page can send, or null before the first publish.
@@ -88,6 +95,7 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
     private readonly composer: ComposerService,
     private readonly progression: ProgressionService,
     private readonly gp: ComposerGpService,
+    private readonly trackViews: ComposerTrackViewService,
     private readonly cdr: ChangeDetectorRef
   ) {}
 
@@ -97,6 +105,25 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
         this.state = state;
+        this.readRows();
+        this.cdr.markForCheck();
+      });
+
+    this.gp
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(original => {
+        this.original = original;
+        this.readRows();
+        this.cdr.markForCheck();
+      });
+
+    this.trackViews
+      .getView()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(view => {
+        this.view = view;
+        this.readRows();
         this.cdr.markForCheck();
       });
 
@@ -123,6 +150,53 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
+  }
+
+  /** The rows again, from the file in Original or the document in Composition, as the view shows them. */
+  private readRows(): void {
+    this.rows = this.original ? trackRowsOf(this.original.score, this.view) : this.state ? trackRowsOf(this.state.doc, this.view) : [];
+  }
+
+  /** The document's track behind a row, or null in Original, where the rows are the file's. */
+  trackAt(index: number): TrackDoc | null {
+    return this.original ? null : (this.state?.doc.tracks[index] ?? null);
+  }
+
+  /**
+   * Shows or hides a row's staves: a page setting, never an edit, in either state (design decision 15). Hiding the last
+   * row shown is refused, and says why in the status line as well as in the button's name.
+   */
+  toggleShown(row: TrackRow): void {
+    const refusal = this.trackViews.toggleShown(this.rows, row.index);
+    if (refusal) this.composer.announce(refusal, true);
+  }
+
+  /** Whether hiding `row` is refused: it is the last one shown (`hideRefusalOf`). */
+  hideRefused(row: TrackRow): boolean {
+    return hideRefusalOf(this.rows, row.index) !== null;
+  }
+
+  /** Show / hide's accessible name: the track's, and why it refuses while it is the last shown. */
+  shownLabel(row: TrackRow): string {
+    const refusal = hideRefusalOf(this.rows, row.index);
+    const action = row.shown ? `Hide ${row.name}` : `Show ${row.name}`;
+    return refusal ? `${action}, unavailable: ${refusal}` : action;
+  }
+
+  /** Mutes or unmutes a row: the player's in Original (decision 16), the composition's own mixer in Composition. */
+  toggleMuted(row: TrackRow): void {
+    if (this.original) this.trackViews.toggleMuted(row.key);
+    else this.composer.setPlayback({ isMute: !row.muted }, row.index);
+  }
+
+  /** Solos a row, or takes its solo off, as `toggleMuted` does. */
+  toggleSoloed(row: TrackRow): void {
+    if (this.original) this.trackViews.toggleSoloed(row.key);
+    else this.composer.setPlayback({ isSolo: !row.soloed }, row.index);
+  }
+
+  trackByKey(_index: number, row: TrackRow): string {
+    return row.key;
   }
 
   /**

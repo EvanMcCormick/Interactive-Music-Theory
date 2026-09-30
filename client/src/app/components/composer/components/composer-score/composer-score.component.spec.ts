@@ -23,6 +23,8 @@ describe('ComposerScoreComponent press guard', () => {
     const alphaTabService = jasmine.createSpyObj<AlphaTabService>('AlphaTabService', [
       'initializeApi',
       'renderScore',
+      'renderTracks',
+      'setTrackPlayback',
       'render',
       'auditionAfterRender',
       'getApi',

@@ -32,16 +32,18 @@ export interface StaffSlot {
 }
 
 /**
- * The staves alphaTab draws on one system, in render order, described from the document. alphaTab lays out
+ * The staves alphaTab draws on one system, in render order, described from the document - over the tracks
+ * `visibleTrackIndices` names, in the order `renderScore` was given them, or every track. alphaTab lays out
  * each track's staves in its default stave profile's order - slash, standard notation, numbered, tablature
  * (`Environment._createDefaultStaveProfiles`, ~75665 in 1.8), one bounds band each - and draws all of them again on
  * every system. A view left out here would shift the rank of every band after it (`slotIndexAt`). So this lists one system's staves, not the page's: `StaffHitTestService.allStaves` measures every
  * attached system, and a measured staff is matched to its slot through the system it sits in
  * (`slotIndexAt` in `composer-score-systems.ts`), never by its index on the page.
  */
-export function staffSlotsOf(doc: ScoreDoc): StaffSlot[] {
-  return doc.tracks.flatMap((track, trackIndex) =>
-    track.staves.flatMap((staff, staffIndex) => {
+export function staffSlotsOf(doc: ScoreDoc, visibleTrackIndices?: readonly number[]): StaffSlot[] {
+  const drawn = visibleTrackIndices ?? doc.tracks.map((_, index) => index);
+  return drawn.flatMap(trackIndex =>
+    (doc.tracks[trackIndex]?.staves ?? []).flatMap((staff, staffIndex) => {
       const kinds: StaffKind[] = [
         ...(staff.showSlash ? ['slash' as const] : []),
         ...(staff.showStandardNotation ? [staff.isPercussion ? ('percussion' as const) : ('notation' as const)] : []),

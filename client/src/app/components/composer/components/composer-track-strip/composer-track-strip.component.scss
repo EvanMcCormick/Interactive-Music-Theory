@@ -100,6 +100,57 @@
   gap: 0.3rem;
 }
 
+// Show / hide, mute and solo: flat, as the palette's tools are - no chrome, colour only on what is pressed.
+.track-view {
+  display: inline-flex;
+  gap: 0.1rem;
+  margin-left: 0.5rem;
+}
+
+.track-toggle {
+  min-width: 1.4rem;
+  padding: 0 0.25rem;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--composer-text-secondary, #bdc3c7);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+
+  &:hover:not([aria-disabled='true']) {
+    color: var(--composer-text, #ecf0f1);
+  }
+
+  &[aria-pressed='true'] {
+    color: var(--composer-text, #ecf0f1);
+  }
+
+  &.track-mute[aria-pressed='true'] {
+    background-color: var(--composer-warning, #e67e22);
+  }
+
+  &.track-solo[aria-pressed='true'] {
+    background-color: var(--composer-accent, #3498db);
+  }
+
+  &[aria-disabled='true'] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--composer-accent, #3498db);
+    outline-offset: 1px;
+  }
+}
+
+// A hidden track's row stays listed, dimmed, so it can be shown again.
+.track-item.hidden-track .track-name {
+  opacity: 0.5;
+}
+
 .track-remove {
   margin-left: auto;
   background: none;

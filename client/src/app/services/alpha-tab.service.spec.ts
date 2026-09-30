@@ -17,6 +17,7 @@ describe('AlphaTabService before an api exists', () => {
       service.clearHighlight();
       service.seekToBeat(beat);
       service.renderTracks([0, 1]);
+      service.setTrackPlayback([{ mute: true, solo: false }]);
     }).not.toThrow();
   });
 
