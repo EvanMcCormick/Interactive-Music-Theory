@@ -12,6 +12,8 @@ import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerExportService } from '../../services/composer-export.service';
 import { ComposerLibraryService } from '../../services/composer-library.service';
 import { ComposerGpService } from '../../services/composer-gp.service';
+import { GpConversionService } from '../../services/gp-conversion.service';
+import { GP_LIBRARY_DB, GpLibraryService } from '../../services/gp-library.service';
 import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
 import { ComposerService } from '../../services/composer.service';
 import { KEY_PLATFORM } from '../../services/composer-key-platform';
@@ -670,9 +672,13 @@ describe('ComposerComponent in the Original state', () => {
   let fixture: ComponentFixture<ComposerComponent>;
   let gp: ComposerGpService;
   let composer: ComposerService;
+  // A GP library of its own, so a conversion deletes from nothing a browser already holds.
+  const gpDb = `gp-library-page-spec-${Math.random().toString(36).slice(2)}`;
+
+  afterAll(() => void indexedDB.deleteDatabase(gpDb));
 
   beforeEach(async () => {
-    await TestBed.configureTestingModule({ imports: [ComposerComponent] })
+    await TestBed.configureTestingModule({ imports: [ComposerComponent], providers: [{ provide: GP_LIBRARY_DB, useValue: gpDb }] })
       .overrideComponent(ComposerComponent, {
         remove: { imports: [ComposerScoreComponent, ComposerLibraryPanelComponent] },
         add: { imports: [StubScoreComponent, StubLibraryPanelComponent] }
@@ -912,12 +918,54 @@ describe('ComposerComponent in the Original state', () => {
     expect(promptOpen()).toBeTrue();
   });
 
-  it('offers Convert disabled, saying why, until converting is wired', async () => {
+  /** Resolves once `done` holds, checking every few milliseconds for up to two seconds: IndexedDB answers outside the zone. */
+  async function until(done: () => boolean): Promise<void> {
+    for (let waited = 0; !done() && waited < 2000; waited += 10) await new Promise(resolve => setTimeout(resolve, 10));
+    fixture.detectChanges();
+  }
+
+  it('converts on Convert: the composition saved, the file\'s entry gone, and the edit that asked applied on an empty history', async () => {
+    const save = spyOn(TestBed.inject(ComposerLibraryService), 'save').and.resolveTo('composition-1');
+    const gpLibrary = TestBed.inject(GpLibraryService);
+    const entry = await gpLibrary.addBytes(new Uint8Array([1]).buffer, 'Band.gp', {});
+    const score = new alphaTab.model.Score();
+    score.title = 'Band';
+    score.addMasterBar(new alphaTab.model.MasterBar());
+    const track = new alphaTab.model.Track();
+    track.addStaff(new alphaTab.model.Staff());
+    score.addTrack(track);
+    const bar = new alphaTab.model.Bar();
+    track.staves[0].addBar(bar);
+    bar.addVoice(new alphaTab.model.Voice());
+    score.finish(new alphaTab.Settings());
+    gp.open({ entryId: entry.id, fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
+    fixture.detectChanges();
+    press({ key: 'b', shiftKey: true });
+
+    promptButton('Convert').click();
+    fixture.detectChanges();
+    await until(() => !gp.isOriginal);
+
+    expect(promptOpen()).toBeFalse();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(await gpLibrary.getEntry(entry.id)).toBeNull();
+    expect(composer.doc.masterBars[0].isDoubleBar).toBeTrue();
+    composer.undo();
+    expect(composer.state.canUndo).toBeFalse();
+    expect(fixture.nativeElement.querySelector('.original')).toBeNull();
+  });
+
+  it('closes the prompt on a refused conversion, stays in Original, and says why', async () => {
+    spyOn(TestBed.inject(GpConversionService), 'convert').and.resolveTo({ kind: 'refused', reason: 'The track "Kit" uses drums alphaTex cannot name.' });
     await openFile('Band', 132);
     press({ key: 'h' });
 
-    expect(promptButton('Convert').disabled).toBeTrue();
-    expect(prompt().querySelector('.convert-refusal')?.textContent?.trim()).toBe('Converting is not available yet.');
+    promptButton('Convert').click();
+    await until(() => gp.request === null);
+
+    expect(promptOpen()).toBeFalse();
+    expect(gp.isOriginal).toBeTrue();
+    expect(composer.state.refusal).toBe('The track "Kit" uses drums alphaTex cannot name.');
   });
 
   it("shows the file's own alphaTex, and asks before applying it", async () => {

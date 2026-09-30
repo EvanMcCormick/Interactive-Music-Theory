@@ -29,6 +29,7 @@ import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
 import { ComposerExportService } from '../../services/composer-export.service';
 import { ComposerGpService, EditRequest, GpOriginal } from '../../services/composer-gp.service';
+import { GpConversionService } from '../../services/gp-conversion.service';
 import { ComposerService } from '../../services/composer.service';
 import { FretDigitEntry } from '../../services/composer-fret-entry';
 import { ComposerKeyHandler } from '../../services/composer-key-handler';
@@ -143,8 +144,8 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   original: GpOriginal | null = null;
   /** The command waiting on the conversion prompt, which is open while there is one (`ComposerGpService.requestEdit`). */
   editRequest: EditRequest | null = null;
-  /** Why the prompt's Convert cannot run yet: the conversion itself is the milestone's next step. */
-  readonly convertRefusal: string | null = 'Converting is not available yet.';
+  /** Whether a conversion is under way: the prompt's Convert does not start a second. */
+  converting = false;
 
   texDraft = '';
   texDiagnostics: TexDiagnostic[] = [];
@@ -193,6 +194,11 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   /** Whether the page is showing a `.gp` file as alphaTab read it. */
   get viewingOriginal(): boolean {
     return this.original !== null;
+  }
+
+  /** Why the prompt's Convert cannot run now: one is already under way. */
+  get convertRefusal(): string | null {
+    return this.converting ? 'Converting…' : null;
   }
 
   /**
@@ -247,6 +253,7 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     private readonly texService: AlphaTexService,
     private readonly saveRequests: ComposerSaveRequests,
     private readonly exporter: ComposerExportService,
+    private readonly conversion: GpConversionService,
     private readonly cdr: ChangeDetectorRef
   ) {
     this.fretEntry = new FretDigitEntry(composer, () => Date.now(), midi =>
@@ -428,9 +435,21 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     if (original) this.exporter.downloadOriginal(original.bytes, original.fileName);
   }
 
-  /** The prompt's Convert. Not wired yet: the button is disabled and says so (`convertRefusal`). */
+  /**
+   * The prompt's Convert (`GpConversionService`). Converted, the page is a composition and the edit that asked has run;
+   * refused, the prompt closes, the page stays in Original with nothing applied, and the status line says why.
+   */
   convert(): void {
-    return;
+    if (this.converting) return;
+    this.converting = true;
+    void this.conversion.convert().then(outcome => {
+      this.converting = false;
+      if (outcome.kind === 'refused') {
+        this.gp.cancelEdit();
+        this.composer.announce(outcome.reason, true);
+      }
+      this.cdr.markForCheck();
+    });
   }
 
   closePopover(): void {

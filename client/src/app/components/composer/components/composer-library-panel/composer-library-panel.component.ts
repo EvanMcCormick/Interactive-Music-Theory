@@ -245,6 +245,12 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
         this.cdr.markForCheck();
       });
 
+    // An entry opened elsewhere - a converted `.gp` file - is the one the next Save writes over, as a load's is.
+    this.library.opened$.pipe(takeUntil(this.destroy$)).subscribe(id => {
+      this.currentId = id;
+      this.cdr.markForCheck();
+    });
+
     this.document.addEventListener('keydown', this.escapeListener, true);
 
     // Ctrl+S. The same `save()` as the button, so a keyboard save is refused, announced and followed by

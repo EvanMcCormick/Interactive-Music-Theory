@@ -1,6 +1,6 @@
 import { committed } from './indexed-db';
 import { Injectable, NgZone } from '@angular/core';
-import { BehaviorSubject, Observable } from 'rxjs';
+import { BehaviorSubject, Observable, Subject } from 'rxjs';
 
 const DB_NAME = 'composer-library';
 const DB_VERSION = 1;
@@ -37,12 +37,25 @@ export type CompositionSummary = Omit<CompositionEntry, 'tex'>;
 export class ComposerLibraryService {
   private db: IDBDatabase | null = null;
   private readonly entriesSubject = new BehaviorSubject<CompositionSummary[]>([]);
+  private readonly openedSubject = new Subject<string>();
+
+  /**
+   * The id of an entry opened by something other than the library panel - a converted `.gp` file, written and opened
+   * in one step (`GpConversionService`) - so the panel adopts it, and the next Save writes over it rather than making a
+   * second. Emitted after the document it holds is in place, so the panel has already forgotten the one before.
+   */
+  readonly opened$: Observable<string> = this.openedSubject.asObservable();
   private readyPromise: Promise<void> | null = null;
 
   constructor(private readonly ngZone: NgZone) {}
 
   getEntries(): Observable<CompositionSummary[]> {
     return this.entriesSubject.asObservable();
+  }
+
+  /** Says the entry `id` is the composition now open (`opened$`). */
+  markOpened(id: string): void {
+    this.openedSubject.next(id);
   }
 
   /**
