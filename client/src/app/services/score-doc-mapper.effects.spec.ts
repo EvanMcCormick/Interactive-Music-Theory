@@ -407,6 +407,33 @@ describe('ScoreDocMapperService effects round trip', () => {
     expect(throughTex(doc).masterBars[0].isDoubleBar).toBeFalse();
   });
 
+  describe('natural harmonics', () => {
+    // alphaTab sounds a natural harmonic at `harmonicPitch + stringTuning` (`alphaTab.core.mjs` ~6058), and
+    // `harmonicPitch` reads `harmonicValue`: a note with the type and no value sounds the open string.
+    for (const fret of [12, 7, 5]) {
+      it(`keeps the sounding pitch of a natural harmonic at fret ${fret} from a file`, () => {
+        const parsed = tex.parse(['\\track "Guitar"', `${fret}.3{nh}.1 |`].join('\n')).score;
+        if (!parsed) throw new Error('the harmonic did not parse');
+        const file = parsed.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+        const converted = mapper.toScore(mapper.toDoc(parsed), settings).tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+
+        expect(converted.harmonicValue).toBe(file.harmonicValue);
+        expect(converted.realValue).toBe(file.realValue);
+      });
+    }
+
+    it('sounds a natural harmonic the composer wrote at the harmonic of its fret, not at the fret', () => {
+      const doc = guitarBar(beats => {
+        beats[0].notes[0] = fretted(3, 7);
+        beats[0].notes[0].effects.harmonic = 'natural';
+      });
+      const note = mapper.toScore(doc, settings).tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+
+      // The seventh fret's harmonic is an octave and a fifth above the open string.
+      expect(note.realValue).toBe(note.stringTuning + 19);
+    });
+  });
+
   describe('tempo', () => {
     it('follows the tempo field after a load', () => {
       const loaded = throughTex(guitarBar(() => undefined));

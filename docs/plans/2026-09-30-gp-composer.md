@@ -142,7 +142,8 @@ written to the corrected version, and Task J.1 records them in the design doc.
    a feedback harmonic reads as none. Each is a row (Task B.1).
 7. **The first beat's instrument automation is alphaTab's.** `Beat.finish` puts one on every track's first beat from
    its program (~7765), and on a drum track from the program before `Track.finish` zeroed it. The checker keeps it, or
-   every file would report an instrument change (Task B.1).
+   every file would report an instrument change (Task B.1). Likewise a first-beat volume, balance or bank automation
+   equal to the track's own, which a GP5 mix table on bar 1 puts there (~20525-20540).
 8. **The checker takes the converted document as a second argument.** Its "notes no string reaches" row can only be
    counted by `frettedDocOf` on `toDoc(score)`, which now also returns the first bar it dropped a note from.
 9. **Every writing path in the page asks, not only the tool table.** `changesDocument` answers for a command id; the
@@ -2979,6 +2980,31 @@ first beat's instrument automation is alphaTab's own and is kept (correction 7).
 
 Every row has its own case in the spec, table-driven: a clean two-bar score parsed from alphaTex, the one feature set on
 alphaTab's model after, and the item, its count and its first bar asserted, with no other item reported.
+
+Corrected in review: the code blocks below are the first cut, and a review of files read by alphaTab's real importers
+(`Gp3To5Importer`, `GpifParser`) found rows firing for what conversion keeps or nobody sees. The shipped checker, with
+`alphaTab.core.mjs` line numbers in its comments, differs as follows; its spec adds a GP7 round trip
+(`Gp7Exporter` then `ScoreLoader.loadScoreFromBytes`) and a GP5-shaped case for each importer habit.
+- `tempoChanges` counts two automations at one place with one value once (GP3-5 puts bar 1's tempo there twice), no
+  longer treats `isLinear` as a reshaping (GP5 sets it on every mix-table change; alphaTab plays a step), and counts the
+  text of every visible tempo marking, which the model drops.
+- `credits` no longer includes `tempoLabel`; that text is `tempoChanges`' now.
+- `midiChannels` no longer compares `port` (nothing plays from it) and reports only the audible case: a track that is
+  not a one-staff kit but that the file put on channel 9, which plays as drums until conversion. Relabelled to say so.
+- `customStyles` counts a style only when it holds a colour, or on a note a notehead; the header and footer are
+  compared with `ScoreStyle.defaultHeaderAndFooter` line by line, as drawn on what conversion keeps, under `layout`.
+- `layout` compares a per-track stylesheet entry with its global flag (an entry that hides nothing is no change), and
+  no longer counts a systems layout, which the app's Page and Horizontal layouts never read (`lineBreaks` still count).
+- `barLines` ignores the `LightLight` right bar line both importers set on a double bar, which `isDoubleBar` draws.
+- `lyricLines` counts a beat only when a line past the first has text: GP files pad every beat to five lines of `''`.
+- `bendStyle` no longer counts `isContinuedBend`, which `Note.finish` recomputes from the tie and bend the mapper keeps.
+- `unsavableKit` ignores a technique symbol's placement when there is no symbol, and `roundTripKeeps` finishes and
+  exports inside its `try`.
+- The mapper gives a natural harmonic the `harmonicValue` alphaTex's `nh` does (`naturalHarmonicValueOf`, a copy of
+  `ModelUtils.deltaFretToHarmonicValue`); before, a converted natural harmonic sounded the open string.
+  `harmonicPitch` now reports only a harmonic whose sounding pitch conversion changes.
+- `keptAutomation` also keeps a first-beat volume, balance or bank automation equal to the track's own (correction 7).
+- `restVoices` says the rests stop being drawn at conversion.
 
 **Files** (under `client/src/app/` unless given in full):
 - Create: `services/gp-conversion-loss.spec.ts`, `services/gp-conversion-loss.ts`

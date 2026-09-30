@@ -78,6 +78,15 @@ describe('conversionLossOf', () => {
       }
     },
     { id: 'tempoChanges', set: score => score.masterBars[1].tempoAutomations.push(model.Automation.buildTempoAutomation(false, 0.5, 100, 0)) },
+    {
+      // A tempo marking's text: the model keeps the BPM and draws no words.
+      id: 'tempoChanges',
+      set: score => {
+        const slow = model.Automation.buildTempoAutomation(false, 0, 90, 0);
+        slow.text = 'Slow';
+        score.masterBars[1].tempoAutomations.push(slow);
+      }
+    },
     { id: 'unnamedSlides', set: score => (noteOf(score).slideOutType = model.SlideOutType.OutDown) },
     { id: 'unnamedSlides', set: score => (noteOf(score).slideInType = model.SlideInType.IntoFromAbove) },
     {
@@ -98,6 +107,18 @@ describe('conversionLossOf', () => {
     },
     { id: 'layout', set: score => (score.stylesheet.hideDynamics = true), firstBar: 0 },
     { id: 'layout', set: score => (score.masterBars[1].displayWidth = 300) },
+    { id: 'layout', set: score => score.tracks[0].addLineBreaks(1), firstBar: 0 },
+    { id: 'layout', set: score => (score.stylesheet.perTrackDisplayTuning = new Map([[0, false]])), firstBar: 0 },
+    {
+      // A title the file hides: after conversion alphaTab's default draws it.
+      id: 'layout',
+      set: score => {
+        score.title = 'Song';
+        score.style = new model.ScoreStyle();
+        score.style.headerAndFooter.set(model.ScoreSubElement.Title, new model.HeaderFooterStyle('%TITLE%', false));
+      },
+      firstBar: 0
+    },
     { id: 'fades', set: score => (beatOf(score).fade = model.FadeType.FadeOut) },
     { id: 'fades', set: score => (beatOf(score).fade = model.FadeType.VolumeSwell) },
     { id: 'tremoloPicking', set: score => (beatOf(score).tremoloPicking = new model.TremoloPickingEffect()) },
@@ -124,9 +145,17 @@ describe('conversionLossOf', () => {
         noteOf(score).harmonicValue = 12;
       }
     },
+    {
+      // A natural harmonic whose value is not its fret's: the mapper derives the value from the fret, as `nh` does.
+      id: 'harmonicPitch',
+      set: score => {
+        noteOf(score).fret = 12;
+        noteOf(score).harmonicType = model.HarmonicType.Natural;
+        noteOf(score).harmonicValue = 5;
+      }
+    },
     { id: 'feedbackHarmonics', set: score => (noteOf(score).harmonicType = model.HarmonicType.Feedback) },
     { id: 'bendStyle', set: score => (noteOf(score).bendStyle = model.BendStyle.Gradual) },
-    { id: 'bendStyle', set: score => (noteOf(score).isContinuedBend = true) },
     { id: 'slurs', set: score => (beatOf(score).isLegatoOrigin = true) },
     { id: 'slurs', set: score => (noteOf(score).isSlurDestination = true) },
     { id: 'hiddenNotes', set: score => (noteOf(score).isVisible = false) },
@@ -138,6 +167,17 @@ describe('conversionLossOf', () => {
         volume.type = model.AutomationType.Volume;
         beatOf(score).automations.push(volume);
       }
+    },
+    {
+      // On the first beat, but not the track's own volume: a change the model has no place for.
+      id: 'beatAutomations',
+      set: score => {
+        const volume = new model.Automation();
+        volume.type = model.AutomationType.Volume;
+        volume.value = score.tracks[0].playbackInfo.volume - 3;
+        beatOf(score, 0, 0).automations.push(volume);
+      },
+      firstBar: 1
     },
     { id: 'pickupBars', set: score => (score.masterBars[0].isAnacrusis = true), firstBar: 1 },
     { id: 'barLines', set: score => (staffOf(score).bars[1].barLineRight = model.BarLineStyle.Heavy) },
@@ -171,8 +211,33 @@ describe('conversionLossOf', () => {
       count: 2,
       firstBar: 0
     },
-    { id: 'midiChannels', set: score => (score.tracks[0].playbackInfo.primaryChannel = 5), firstBar: 0 },
-    { id: 'customStyles', set: score => (noteOf(score).style = new model.NoteStyle()) },
+    // A guitar the file put on the drum channel plays as drums until conversion gives it its own.
+    { id: 'midiChannels', set: score => (score.tracks[0].playbackInfo.primaryChannel = 9), firstBar: 0 },
+    { id: 'midiChannels', set: score => (score.tracks[0].playbackInfo.secondaryChannel = 9), firstBar: 0 },
+    {
+      id: 'customStyles',
+      set: score => {
+        const style = new model.NoteStyle();
+        style.colors.set(model.NoteSubElement.StandardNotationNoteHead, model.Color.fromJson('#ff0000'));
+        noteOf(score).style = style;
+      }
+    },
+    {
+      id: 'customStyles',
+      set: score => {
+        const style = new model.NoteStyle();
+        style.noteHead = model.MusicFontSymbol.NoteheadXBlack;
+        noteOf(score).style = style;
+      }
+    },
+    {
+      id: 'customStyles',
+      set: score => {
+        score.style = new model.ScoreStyle();
+        score.style.colors.set(model.ScoreSubElement.Title, model.Color.fromJson('#ff0000'));
+      },
+      firstBar: 0
+    },
     { id: 'doubleBars', set: score => (score.masterBars[1].isDoubleBar = true) }
   ];
 
@@ -243,6 +308,178 @@ describe('conversionLossOf', () => {
     expect(loss[0]).toEqual(jasmine.objectContaining({ group: 'first save', count: 1, firstBar: 2 }));
   });
 
+  it('reports only the credits of a bare score', () => {
+    // What `composer-gp.service.spec.ts` leans on: a score with no bars and no tracks, and a copyright.
+    const score = new model.Score();
+    score.copyright = '2026';
+
+    expect(lossOf(score).map(item => item.id)).toEqual(['credits']);
+  });
+
+  it('says a rest-only second voice stops being drawn at conversion', () => {
+    const score = guitar();
+    for (const bar of staffOf(score).bars) {
+      const voice = new model.Voice();
+      bar.addVoice(voice);
+      const rest = new model.Beat();
+      rest.duration = model.Duration.Whole;
+      voice.addBeat(rest);
+    }
+    score.finish(new alphaTab.Settings());
+
+    expect(itemOf(score, 'restVoices')?.detail).toContain('not drawn');
+  });
+
+  /**
+   * Nothing a conversion keeps, and nothing neither seen nor heard, may be reported. Each case is a habit of one of
+   * alphaTab's own importers, on a file that otherwise converts whole: the first through alphaTab's GP7 exporter and its
+   * GPIF parser, the rest set on the model the way `Gp3To5Importer` leaves it, since nothing here writes a GP5 file.
+   */
+  describe("what alphaTab's importers leave on a clean file", () => {
+    /** `score` as a `.gp` file would bring it: written by alphaTab's GP7 exporter and read back by its GPIF parser. */
+    function throughGp7(score: alphaTab.model.Score): alphaTab.model.Score {
+      const settings = new alphaTab.Settings();
+      const bytes = new alphaTab.exporter.Gp7Exporter().export(score, settings);
+      return alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, settings);
+    }
+
+    it('reports only the double bar of a multi-track .gp file with lyrics and a drum kit', () => {
+      const { score } = tex.parse(
+        [
+          '\\track "Guitar"',
+          '\\lyrics "one two three four"',
+          '3.3.4 3.3.4 3.3.4 3.3.4 | 5.3.4 5.3.4 5.3.4 5.3.4 |',
+          '\\track "Lead"',
+          '5.1.2 7.1.2 | 8.1.1 |',
+          '\\track "Drums" {instrument percussion}',
+          '\\articulation defaults',
+          '"Kick (hit)".4 "Snare (hit)".4 "Kick (hit)".4 "Snare (hit)".4 | "Kick (hit)".2 r.2 |'
+        ].join('\n')
+      );
+      if (!score) throw new Error('the file did not parse');
+      score.masterBars[0].isDoubleBar = true;
+
+      const file = throughGp7(score);
+      expect(file.tracks.length).withContext('the file keeps its three tracks').toBe(3);
+      expect(file.masterBars[0].isDoubleBar).withContext('the file keeps its double bar').toBeTrue();
+      expect(file.tracks[0].staves[0].bars[0].voices[0].beats[0].lyrics).withContext('the file keeps its lyrics').toEqual(['one']);
+      expect(lossOf(file).map(item => item.id)).toEqual(['doubleBars']);
+    });
+
+    it('does not report the right bar line both importers set on a double bar, which the double bar draws', () => {
+      const score = guitar();
+      score.masterBars[1].isDoubleBar = true;
+      staffOf(score).bars[1].barLineRight = model.BarLineStyle.LightLight;
+
+      expect(lossOf(score).map(item => item.id)).toEqual(['doubleBars']);
+    });
+
+    it('does not report the initial tempo GP3-5 puts on bar 1 twice', () => {
+      const score = guitar();
+      const again = model.Automation.buildTempoAutomation(false, 0, score.tempo, 2);
+      again.text = score.tempoLabel;
+      score.masterBars[0].tempoAutomations.push(again);
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it('does not report a GP5 mix-table tempo change, which alphaTab marks linear and plays as a step', () => {
+      const score = guitar();
+      score.masterBars[1].tempoAutomations.push(model.Automation.buildTempoAutomation(true, 0, 90, 0));
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it('does not report GP5 lyrics, sized to five lines with only the first filled', () => {
+      const score = guitar();
+      beatOf(score).lyrics = ['one', '', '', '', ''];
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it("does not report the header and footer GP5 reads, which draw what alphaTab's defaults draw", () => {
+      const score = guitar();
+      score.title = 'Song';
+      const style = new model.ScoreStyle();
+      // Guitar Pro 5's own defaults, every flag on, with the alignment `getOrCreateHeaderFooterStyle` copies.
+      const gp5 = new Map<alphaTab.model.ScoreSubElement, string>([
+        [model.ScoreSubElement.Title, '%TITLE%'],
+        [model.ScoreSubElement.SubTitle, '%SUBTITLE%'],
+        [model.ScoreSubElement.Artist, '%ARTIST%'],
+        [model.ScoreSubElement.Album, '%ALBUM%'],
+        [model.ScoreSubElement.Words, 'Words by %WORDS%'],
+        [model.ScoreSubElement.Music, 'Music by %MUSIC%'],
+        [model.ScoreSubElement.WordsAndMusic, 'Words & Music by %WORDSMUSIC%'],
+        [model.ScoreSubElement.Copyright, 'Copyright %COPYRIGHT%'],
+        [model.ScoreSubElement.CopyrightSecondLine, 'All Rights Reserved - International Copyright Secured']
+      ]);
+      for (const [element, template] of gp5) {
+        const fallback = model.ScoreStyle.defaultHeaderAndFooter.get(element);
+        style.headerAndFooter.set(element, new model.HeaderFooterStyle(template, true, fallback?.textAlign));
+      }
+      score.style = style;
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it('does not report the per-track tuning and chord-diagram flags GP5 sets to what the score shows anyway', () => {
+      const score = guitar();
+      score.stylesheet.perTrackDisplayTuning = new Map([[0, true]]);
+      score.stylesheet.perTrackChordDiagramsOnTop = new Map([[0, true]]);
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it('does not report a systems layout, which the app never renders from', () => {
+      const score = guitar();
+      score.defaultSystemsLayout = 4;
+      score.systemsLayout = [2, 3];
+      score.tracks[0].systemsLayout = [2];
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it('does not report a bend continued over a tie, which Note.finish marks again from the tie', () => {
+      const { score } = tex.parse(['\\track "Guitar"', '5.3{b (0 4)}.2 -.3{b (4 0)}.2 | 5.3.1 |'].join('\n'));
+      if (!score) throw new Error('the bend did not parse');
+      expect(score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0].isContinuedBend).withContext('the premise').toBeTrue();
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it('does not report a port, or channels other than the drum channel, which play the same', () => {
+      const score = guitar();
+      score.tracks[0].playbackInfo.port = 2;
+      score.tracks[0].playbackInfo.primaryChannel = 4;
+      score.tracks[0].playbackInfo.secondaryChannel = 5;
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it("does not report the track's own volume and balance on its first beat, as a GP5 bar-1 mix table puts them", () => {
+      const score = guitar();
+      const playback = score.tracks[0].playbackInfo;
+      for (const [type, value] of [
+        [model.AutomationType.Volume, playback.volume],
+        [model.AutomationType.Balance, playback.balance]
+      ] as const) {
+        const automation = new model.Automation();
+        automation.type = type;
+        automation.value = value;
+        beatOf(score, 0, 0).automations.push(automation);
+      }
+
+      expect(lossOf(score)).toEqual([]);
+    });
+
+    it("does not report a natural harmonic whose value is its fret's, which the mapper derives the same way", () => {
+      const { score } = tex.parse(['\\track "Guitar"', '12.3{nh}.4 7.3{nh}.4 5.3{nh}.4 3.3{nh}.4 |'].join('\n'));
+      if (!score) throw new Error('the harmonics did not parse');
+
+      expect(lossOf(score)).toEqual([]);
+    });
+  });
+
   describe('drums', () => {
     function kit(extra: alphaTab.model.InstrumentArticulation | null = null): alphaTab.model.Score {
       const { score } = tex.parse(['\\track "Drums" {instrument percussion}', '\\articulation defaults', '"Kick (hit)".4 "Snare (hit)".4 r.2 |'].join('\n'));
@@ -264,6 +501,17 @@ describe('conversionLossOf', () => {
 
       expect(loss.map(item => item.id)).toEqual(['unsavableKit']);
       expect(loss[0]).toEqual(jasmine.objectContaining({ group: 'first save', count: 1, firstBar: 1 }));
+    });
+
+    it('does not compare where a drum puts a technique symbol it does not have', () => {
+      const drums = kit().tracks[0];
+      const kick = drums.percussionArticulations[drums.staves[0].bars[0].voices[0].beats[0].notes[0].percussionArticulation];
+      expect(kick.techniqueSymbol).withContext('the premise').toBe(model.MusicFontSymbol.None);
+      const placement =
+        kick.techniqueSymbolPlacement === model.TechniqueSymbolPlacement.Below ? model.TechniqueSymbolPlacement.Above : model.TechniqueSymbolPlacement.Below;
+      const placed = new model.InstrumentArticulation(kick.elementType, kick.staffLine, kick.outputMidiNumber, kick.noteHeadDefault, kick.noteHeadHalf, kick.noteHeadWhole, kick.techniqueSymbol, placement, kick.id);
+
+      expect(lossOf(kit(placed))).toEqual([]);
     });
 
     it('reports a standard drum the file draws or plays differently, which the reload would take from the table', () => {

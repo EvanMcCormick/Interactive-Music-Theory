@@ -152,6 +152,48 @@ function accidentalModeFor(
 }
 
 /**
+ * The `harmonicValue` alphaTab gives a natural harmonic touched at `fret`: the fret itself where the node sits on it,
+ * the node's true position where it sits between frets, and 12 for a fret with no node.
+ *
+ * A copy of `ModelUtils.deltaFretToHarmonicValue` (`alphaTab.core.mjs` ~4123-4150 in 1.8), which alphaTex's `nh`
+ * (~14688-14690) and both GP importers (~20167, ~20789) call and which is not exported - `ModelUtils` is internal. The
+ * model keeps a harmonic's type and not its value, so this is how a natural harmonic gets its value back: alphaTab
+ * sounds one at `harmonicPitch + stringTuning` (~6058), and `harmonicPitch` reads nothing but `harmonicValue` (~6078),
+ * so a natural harmonic left at alphaTab's default of 0 sounded the open string. Exported for the conversion's loss
+ * checker, which asks what pitch conversion gives a file's harmonic.
+ */
+export function naturalHarmonicValueOf(fret: number): number {
+  switch (fret) {
+    case 2:
+      return 2.4;
+    case 3:
+      return 3.2;
+    case 4:
+    case 5:
+    case 7:
+    case 9:
+    case 12:
+    case 16:
+    case 17:
+    case 19:
+    case 24:
+      return fret;
+    case 8:
+      return 8.2;
+    case 10:
+      return 9.6;
+    case 14:
+    case 15:
+      return 14.7;
+    case 21:
+    case 22:
+      return 21.7;
+    default:
+      return 12;
+  }
+}
+
+/**
  * Converts between our editable ScoreDoc and alphaTab's runtime Score.
  *
  * ScoreDoc -> Score feeds `api.renderScore()` for engraving and playback, and
@@ -500,6 +542,11 @@ export class ScoreDocMapperService {
     note.rightHandFinger = toFingers(doc.effects.rightHandFinger);
     note.vibrato = toVibratoType(doc.effects.vibrato);
     note.harmonicType = toHarmonicType(doc.effects.harmonic);
+    // A natural harmonic's pitch is its fret's node, which alphaTab reads from `harmonicValue`, not from the type: set
+    // as alphaTex's `nh` sets it. The other harmonics keep no value, and sound at the fretted pitch.
+    if (doc.pitch.kind === 'fretted' && note.harmonicType === alphaTab.model.HarmonicType.Natural) {
+      note.harmonicValue = naturalHarmonicValueOf(doc.pitch.fret);
+    }
     applySlide(note, doc.effects.slide);
 
     return note;
