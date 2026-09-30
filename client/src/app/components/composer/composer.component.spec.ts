@@ -2,6 +2,7 @@ import { Component, ErrorHandler, EventEmitter, Input, Output } from '@angular/c
 import * as alphaTab from '@coderline/alphatab';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
+import { Router, provideRouter } from '@angular/router';
 
 import { ComposerComponent, clampedStripHeight, stripHeightRangeOf } from './composer.component';
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
@@ -53,7 +54,7 @@ describe('ComposerComponent', () => {
   let composer: ComposerService;
 
   beforeEach(async () => {
-    await TestBed.configureTestingModule({ imports: [ComposerComponent] })
+    await TestBed.configureTestingModule({ imports: [ComposerComponent], providers: [provideRouter([])] })
       .overrideComponent(ComposerComponent, {
         remove: { imports: [ComposerScoreComponent, ComposerLibraryPanelComponent] },
         add: { imports: [StubScoreComponent, StubLibraryPanelComponent] }
@@ -625,7 +626,7 @@ describe('ComposerComponent', () => {
 
 describe('ComposerComponent with its Library panel', () => {
   it('has one polite live region: the library says what it did in the status line', async () => {
-    await TestBed.configureTestingModule({ imports: [ComposerComponent] })
+    await TestBed.configureTestingModule({ imports: [ComposerComponent], providers: [provideRouter([])] })
       .overrideComponent(ComposerComponent, { remove: { imports: [ComposerScoreComponent] }, add: { imports: [StubScoreComponent] } })
       .compileComponents();
     spyOn(TestBed.inject(ComposerLibraryService), 'refresh').and.resolveTo([]);
@@ -679,7 +680,7 @@ describe('ComposerComponent in the Original state', () => {
   afterAll(() => void indexedDB.deleteDatabase(gpDb));
 
   beforeEach(async () => {
-    await TestBed.configureTestingModule({ imports: [ComposerComponent], providers: [{ provide: GP_LIBRARY_DB, useValue: gpDb }] })
+    await TestBed.configureTestingModule({ imports: [ComposerComponent], providers: [provideRouter([]), { provide: GP_LIBRARY_DB, useValue: gpDb }] })
       .overrideComponent(ComposerComponent, {
         remove: { imports: [ComposerScoreComponent, ComposerLibraryPanelComponent] },
         add: { imports: [StubScoreComponent, StubLibraryPanelComponent] }
@@ -1042,6 +1043,60 @@ describe('ComposerComponent in the Original state', () => {
     fixture.componentInstance.applyTex();
     fixture.detectChanges();
     expect(prompt().querySelector('h2')?.textContent?.trim()).toBe('Applying the alphaTex draft would convert this file.');
+  });
+
+  /** A one-track score written as a Guitar Pro 7 file, as a real `.gp` would arrive: there is no fixture in the repo. */
+  function gpBytes(title: string): ArrayBuffer {
+    const { score } = TestBed.inject(AlphaTexService).parse([`\\title "${title}"`, '\\tempo 90', '\\track "Guitar"', '3.3.4 3.3.4 3.3.4 3.3.4 |'].join('\n'));
+    if (!score) throw new Error('the file did not parse');
+    const bytes = new alphaTab.exporter.Gp7Exporter().export(score, new alphaTab.Settings());
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  }
+
+  it('opens /composer?gp=<id> in Original, and takes the query off the address', async () => {
+    const entry = await TestBed.inject(GpLibraryService).addBytes(gpBytes('Riff'), 'riff.gp', {});
+    const router = TestBed.inject(Router);
+    await router.navigateByUrl(`/?gp=${entry.id}`);
+    fixture.destroy();
+    fixture = TestBed.createComponent(ComposerComponent);
+    fixture.detectChanges();
+
+    await until(() => gp.isOriginal);
+
+    expect(gp.original?.entryId).toBe(entry.id);
+    expect(gp.original?.score.title).toBe('Riff');
+    await until(() => !router.url.includes('gp='));
+    expect(router.url).not.toContain('gp=');
+  });
+
+  it('says a file no longer in the library is gone, and stays in Composition', async () => {
+    await TestBed.inject(Router).navigateByUrl('/?gp=missing');
+    fixture.destroy();
+    fixture = TestBed.createComponent(ComposerComponent);
+    fixture.detectChanges();
+
+    await until(() => composer.state.refusal !== null);
+
+    expect(composer.state.refusal).toBe('That file is no longer in the library.');
+    expect(gp.isOriginal).toBeFalse();
+  });
+
+  it('opens a .gp dropped on the page, and says why it ignores anything else', async () => {
+    const drop = (files: File[]): void => {
+      const transfer = new DataTransfer();
+      for (const file of files) transfer.items.add(file);
+      fixture.nativeElement.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    };
+
+    drop([new File(['text'], 'notes.txt')]);
+    await until(() => composer.state.refusal !== null);
+    expect(composer.state.refusal).toBe('"notes.txt" is not a Guitar Pro file.');
+
+    drop([new File([gpBytes('Dropped')], 'dropped.gp'), new File(['text'], 'notes.txt')]);
+    await until(() => gp.isOriginal);
+    expect(gp.original?.score.title).toBe('Dropped');
+    await until(() => composer.state.notice !== null);
+    expect(composer.state.notice).toBe('Opened "dropped.gp". 1 other file was left: one file opens at a time.');
   });
 
   it('gives the title and the BPM back once the file is gone', async () => {

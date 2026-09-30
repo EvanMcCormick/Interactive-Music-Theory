@@ -11,6 +11,8 @@ import { CompositionEntry, ComposerLibraryService } from '../../../../services/c
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { ComposerService } from '../../../../services/composer.service';
 import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
+import { GpFileOpener } from '../../../../services/gp-file-opener.service';
+import { GP_LIBRARY_DB, GpLibraryService } from '../../../../services/gp-library.service';
 
 /**
  * What the Library panel refuses to save, and what it still exports.
@@ -77,7 +79,9 @@ describe('ComposerLibraryPanelComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [ComposerLibraryPanelComponent]
+      imports: [ComposerLibraryPanelComponent],
+      // A GP library of its own: the drawer lists it, and nothing here should read the one a browser holds.
+      providers: [{ provide: GP_LIBRARY_DB, useValue: `gp-library-panel-spec-${Math.random().toString(36).slice(2)}` }]
     }).compileComponents();
 
     library = TestBed.inject(ComposerLibraryService);
@@ -778,6 +782,44 @@ describe('ComposerLibraryPanelComponent', () => {
       await panel.save();
 
       expect(panel.errorMessage).toBeNull();
+    });
+  });
+
+  describe('Guitar Pro files', () => {
+    const host = (): HTMLElement => fixture.nativeElement as HTMLElement;
+
+    it('lists the library\'s .gp files in the drawer beside the compositions, and opens one as the file', async () => {
+      const opened = spyOn(TestBed.inject(GpFileOpener), 'openEntry').and.resolveTo(true);
+      const entry = await TestBed.inject(GpLibraryService).addBytes(new Uint8Array([1]).buffer, 'riff.gp', { title: 'Riff' });
+      fixture.detectChanges();
+
+      const row = host().querySelector<HTMLButtonElement>('.gp-file-list .composition-load');
+      expect(row?.textContent).toContain('Riff');
+      row!.click();
+      await fixture.whenStable();
+
+      expect(opened).toHaveBeenCalledWith(entry.id);
+    });
+
+    it('imports the file Import .gp… picks, and clears the picker so the same file can come again', async () => {
+      const imported = spyOn(TestBed.inject(GpFileOpener), 'importFile').and.resolveTo(true);
+      const picker = host().querySelector<HTMLInputElement>('.gp-picker')!;
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array([1])], 'riff.gp'));
+      picker.files = transfer.files;
+
+      picker.dispatchEvent(new Event('change'));
+      await fixture.whenStable();
+
+      expect(imported).toHaveBeenCalledWith(jasmine.objectContaining({ name: 'riff.gp' }));
+      expect(picker.value).toBe('');
+    });
+
+    it('adopts an entry opened elsewhere - a converted file - so Save writes over it', () => {
+      library.markOpened('converted-id');
+      fixture.detectChanges();
+
+      expect(host().querySelector('.save-actions')?.textContent).toContain('Save as copy');
     });
   });
 });

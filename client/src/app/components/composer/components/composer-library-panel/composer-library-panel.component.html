@@ -19,6 +19,9 @@
         </button>
         <button class="text-btn" (click)="save(true)" *ngIf="currentId">Save as copy</button>
         <button class="text-btn open-drawer" (click)="openDrawer()">Saved compositions…</button>
+        <!-- A button that presses the hidden picker, so Tab reaches it and Enter and Space press it. -->
+        <button class="text-btn import-gp" type="button" (click)="gpPicker.click()">Import .gp…</button>
+        <input #gpPicker class="gp-picker" type="file" accept=".gp,.gp3,.gp4,.gp5,.gpx" tabindex="-1" aria-hidden="true" (change)="importGpFile(gpPicker)" />
       </div>
     </div>
   </div>
@@ -127,5 +130,18 @@
     <ng-template #emptyLibrary>
       <p class="hint">Nothing saved yet.</p>
     </ng-template>
+
+    <!-- Beside the compositions, from the library of `.gp` files: each opens as the file, until its first edit converts it. -->
+    <h3 class="drawer-section" *ngIf="gpFiles.length > 0">Guitar Pro files</h3>
+    <ul class="composition-list gp-file-list" *ngIf="gpFiles.length > 0">
+      <li *ngFor="let file of gpFiles; trackBy: trackByGpId" class="composition-item">
+        <button type="button" class="composition-load" (click)="openGpFile(file.id)" [title]="'Open ' + file.title">
+          <span class="composition-title">{{ file.title }}</span>
+          <span class="composition-meta">
+            {{ file.fileName }}<ng-container *ngIf="file.trackCount"> · {{ file.trackCount }} track{{ file.trackCount === 1 ? '' : 's' }}</ng-container>
+          </span>
+        </button>
+      </li>
+    </ul>
   </aside>
 </div>

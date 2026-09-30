@@ -13,6 +13,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
@@ -31,6 +32,7 @@ import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
 import { ComposerExportService } from '../../services/composer-export.service';
 import { ComposerGpService, EditRequest, GpOriginal } from '../../services/composer-gp.service';
 import { GpConversionService } from '../../services/gp-conversion.service';
+import { GpFileOpener } from '../../services/gp-file-opener.service';
 import { ComposerService } from '../../services/composer.service';
 import { FretDigitEntry } from '../../services/composer-fret-entry';
 import { ComposerKeyHandler } from '../../services/composer-key-handler';
@@ -262,6 +264,9 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     private readonly saveRequests: ComposerSaveRequests,
     private readonly exporter: ComposerExportService,
     private readonly conversion: GpConversionService,
+    private readonly opener: GpFileOpener,
+    private readonly route: ActivatedRoute,
+    private readonly router: Router,
     private readonly cdr: ChangeDetectorRef
   ) {
     this.fretEntry = new FretDigitEntry(composer, () => Date.now(), midi =>
@@ -370,6 +375,15 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
         this.cdr.markForCheck();
       });
 
+    // `/composer?gp=<id>`, the gallery's Open: the file opens in Original. The query is cleared first, so a reload does not
+    // open again a file converted since - the page never used the router before, and this is the one parameter it reads.
+    this.route.queryParamMap.pipe(takeUntil(this.destroy$)).subscribe(params => {
+      const id = params.get('gp');
+      if (!id) return;
+      void this.router.navigate([], { relativeTo: this.route, queryParams: { gp: null }, queryParamsHandling: 'merge', replaceUrl: true });
+      void this.opener.openEntry(id);
+    });
+
     // Save in the Library menu asks the same questions Ctrl+S does (`requestSave`): the draft's, and in Original the
     // conversion prompt's, since the library holds compositions and a file not yet converted has none to write.
     this.removeSaveGuard = this.saveRequests.guard(() => this.refusesSaveForDraft() || this.asksBeforeSaving());
@@ -420,6 +434,21 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     this.keyHandler.handle(event);
+  }
+
+  /** A file dragged over the page may be dropped on it: without this the browser would open the file itself. */
+  @HostListener('dragover', ['$event'])
+  onDragOver(event: DragEvent): void {
+    if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+  }
+
+  /** A `.gp` dropped anywhere on the page opens in Original (`GpFileOpener.importDropped`). */
+  @HostListener('drop', ['$event'])
+  onDrop(event: DragEvent): void {
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void this.opener.importDropped(files);
   }
 
   /** Whether `target` is a palette button whose tool a held key runs again. */

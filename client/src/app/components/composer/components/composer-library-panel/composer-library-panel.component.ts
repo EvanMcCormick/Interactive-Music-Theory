@@ -27,6 +27,9 @@ import {
 } from '../../../../services/composer-library.service';
 import { ComposerService } from '../../../../services/composer.service';
 import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
+import { GpFileOpener } from '../../../../services/gp-file-opener.service';
+import { GpLibraryService } from '../../../../services/gp-library.service';
+import { GpLibraryEntry } from '../../../../models/alpha-tab.model';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { ComposerState } from '../../../../models/composer.model';
 
@@ -97,6 +100,9 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
    * commit. See `ngOnInit`.
    */
   linkedProgressions: string[] = [];
+
+  /** The `.gp` files in the library, listed in the drawer beside the compositions (design decision 2). */
+  gpFiles: GpLibraryEntry[] = [];
 
   /** The offer or report currently occupying the announced region. */
   pendingSave: PendingSave | null = null;
@@ -197,6 +203,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     private readonly mapper: ScoreDocMapperService,
     private readonly tex: AlphaTexService,
     private readonly saveRequests: ComposerSaveRequests,
+    private readonly gpLibrary: GpLibraryService,
+    private readonly opener: GpFileOpener,
     private readonly cdr: ChangeDetectorRef,
     private readonly host: ElementRef<HTMLElement>
   ) {}
@@ -242,6 +250,14 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
       .pipe(takeUntil(this.destroy$))
       .subscribe(entries => {
         this.entries = entries;
+        this.cdr.markForCheck();
+      });
+
+    this.gpLibrary
+      .getEntries()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(files => {
+        this.gpFiles = files;
         this.cdr.markForCheck();
       });
 
@@ -633,6 +649,23 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
       if (!this.saving) this.dropQueuedSaves(queued.flattened, queued.asNew);
       return;
     }
+  }
+
+  /** Opens an imported `.gp` file from the drawer, in the Original state. */
+  async openGpFile(id: string): Promise<void> {
+    if (await this.opener.openEntry(id)) this.closeDrawer();
+  }
+
+  /** Import .gp…: the picker's file, added to the library and opened. The picker is cleared so the same file can come again. */
+  async importGpFile(input: HTMLInputElement): Promise<void> {
+    const file = input.files?.[0];
+    input.value = '';
+    this.closeMenus();
+    if (file) await this.opener.importFile(file);
+  }
+
+  trackByGpId(_index: number, entry: GpLibraryEntry): string {
+    return entry.id;
   }
 
   async load(id: string): Promise<void> {

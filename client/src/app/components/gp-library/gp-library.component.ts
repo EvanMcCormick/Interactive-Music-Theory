@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
+import { isGpFileName } from '../../services/gp-file-opener.service';
 import { GpLibraryService } from '../../services/gp-library.service';
 import { GpLibraryEntry, GpLibraryFilter } from '../../models/alpha-tab.model';
 import { GpFileCardComponent } from './components/gp-file-card/gp-file-card.component';
@@ -82,12 +83,10 @@ export class GpLibraryComponent implements OnInit, OnDestroy {
     this.viewMode = this.viewMode === 'grid' ? 'list' : 'grid';
   }
 
-  /**
-   * Open a file in the GP viewer
-   */
+  /** Opens a file in the composer, in the Original state: `/composer?gp=<id>`. */
   openFile(entry: GpLibraryEntry): void {
-    this.router.navigate(['/gp-viewer'], {
-      queryParams: { id: entry.id }
+    void this.router.navigate(['/composer'], {
+      queryParams: { gp: entry.id }
     });
   }
 
@@ -141,13 +140,8 @@ export class GpLibraryComponent implements OnInit, OnDestroy {
    * Add multiple files to the library
    */
   private async addFiles(files: File[]): Promise<void> {
-    const validExtensions = ['.gp', '.gp3', '.gp4', '.gp5', '.gpx'];
-
     for (const file of files) {
-      const fileName = file.name.toLowerCase();
-      const isValid = validExtensions.some(ext => fileName.endsWith(ext));
-
-      if (isValid) {
+      if (isGpFileName(file.name)) {
         try {
           await this.libraryService.addFile(file, {});
         } catch (error) {
