@@ -1,4 +1,4 @@
-import { EditCursor, ScoreDoc, createDefaultCursor } from '../models/composer.model';
+import { EditCursor, ScoreDoc, TrackDoc, createDefaultCursor } from '../models/composer.model';
 
 /**
  * Where the caret goes, as pure functions of the document.
@@ -47,9 +47,15 @@ export function clampedCursor(cursor: EditCursor, doc: ScoreDoc): EditCursor {
  * move on the same bar's first beat of the other track's first staff: beat indices do not line up
  * across tracks, so keeping one would land on an arbitrary beat. A track move past the first or last
  * track has no track to go to and goes nowhere, like a string move on a pitched staff, which has no
- * strings.
+ * strings. It passes over the tracks `passedOver` names - the track strip's hidden ones, where an edit
+ * would write to a staff no one can see - and with none left that way it goes nowhere too.
  */
-export function movedCursor(doc: ScoreDoc, cursor: EditCursor, move: CursorMove): EditCursor {
+export function movedCursor(
+  doc: ScoreDoc,
+  cursor: EditCursor,
+  move: CursorMove,
+  passedOver: (track: TrackDoc) => boolean = () => false
+): EditCursor {
   const staff = doc.tracks[cursor.trackIndex]?.staves[cursor.staffIndex];
   if (!staff) return clampedCursor(cursor, doc);
   const beatCount = (barIndex: number): number => staff.bars[barIndex]?.voices[cursor.voiceIndex]?.beats.length ?? 1;
@@ -82,9 +88,22 @@ export function movedCursor(doc: ScoreDoc, cursor: EditCursor, move: CursorMove)
         ? clampedCursor({ ...cursor, barIndex: 0, beatIndex: 0 }, doc)
         : clampedCursor({ ...cursor, barIndex: lastBar, beatIndex: beatCount(lastBar) - 1 }, doc);
     case 'track': {
-      const trackIndex = clamp(cursor.trackIndex + move.delta, 0, doc.tracks.length - 1);
+      const trackIndex = trackMovedTo(doc, cursor.trackIndex, move.delta, passedOver);
       if (trackIndex === cursor.trackIndex) return cursor;
       return clampedCursor({ ...cursor, trackIndex, staffIndex: 0, voiceIndex: 0, beatIndex: 0 }, doc);
     }
   }
+}
+
+/** The track `delta` tracks from `from` that `passedOver` does not name, stopping at the last such track before either end. */
+function trackMovedTo(doc: ScoreDoc, from: number, delta: number, passedOver: (track: TrackDoc) => boolean): number {
+  const step = Math.sign(delta);
+  let landing = from;
+  let left = Math.abs(delta);
+  for (let index = from + step; left > 0 && index >= 0 && index < doc.tracks.length; index += step) {
+    if (passedOver(doc.tracks[index])) continue;
+    landing = index;
+    left--;
+  }
+  return landing;
 }

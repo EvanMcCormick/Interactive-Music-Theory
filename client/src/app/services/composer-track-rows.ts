@@ -1,6 +1,7 @@
 import * as alphaTab from '@coderline/alphatab';
 
 import { ScoreDoc } from '../models/composer.model';
+import { LAST_SHOWN_TRACK } from './composer-text';
 
 /**
  * The track strip's rows, from what the page is showing: a composition's document, or - in the Original state - the
@@ -59,7 +60,7 @@ export function trackRowsOf(source: ScoreDoc | alphaTab.model.Score, view: Track
   return source.tracks.map((track, index) => ({
     index,
     key: track.id,
-    name: track.name,
+    name: track.name || `Track ${index + 1}`,
     color: track.color,
     shown: !view.hidden.has(track.id),
     muted: track.playback.isMute,
@@ -67,17 +68,48 @@ export function trackRowsOf(source: ScoreDoc | alphaTab.model.Score, view: Track
   }));
 }
 
-/** The indices of the rows drawn, in order: what `renderScore` and `api.renderTracks` are given. */
+/**
+ * The indices of the rows drawn, in order: what `renderScore` and `api.renderTracks` are given. Never none while there
+ * are rows: given no tracks, alphaTab draws the first with no staff slot known for it, so the caret and the hit test
+ * would find nothing. `ComposerTrackViewService` keeps a hidden set from covering every track (`keptHiddenOf`); this
+ * draws every row should one ever arrive here anyway.
+ */
 export function renderedTracksOf(rows: readonly TrackRow[]): number[] {
-  return rows.filter(row => row.shown).map(row => row.index);
+  const shown = rows.filter(row => row.shown).map(row => row.index);
+  return shown.length > 0 ? shown : rows.map(row => row.index);
 }
-
-/** Why hiding the track at `index` is refused: a score draws at least one track. */
-export const LAST_SHOWN_TRACK = 'At least one track is shown: show another before hiding this one.';
 
 /** Why the row at `index` cannot be hidden, or null: it is the last one shown. Showing is never refused. */
 export function hideRefusalOf(rows: readonly TrackRow[], index: number): string | null {
   const row = rows.find(candidate => candidate.index === index);
   if (!row?.shown) return null;
   return rows.filter(candidate => candidate.shown).length <= 1 ? LAST_SHOWN_TRACK : null;
+}
+
+/**
+ * Where the caret goes off the hidden row at `index`: the next row shown after it, else the one before it; null with no
+ * other row shown. An edit on a hidden track would write to a staff no one can see.
+ */
+export function nearestShownTrackOf(rows: readonly TrackRow[], index: number): number | null {
+  const shown = rows.filter(row => row.shown && row.index !== index).map(row => row.index);
+  return shown.find(candidate => candidate > index) ?? shown.filter(candidate => candidate < index).pop() ?? null;
+}
+
+/**
+ * A composition's hidden tracks, by id, kept to the ones `doc` still has - `hidden` itself when that is all of them - or
+ * none at all when they would hide every track: a Remove, or an Undo of the Add that made the one track shown, would
+ * otherwise leave nothing drawn (`renderedTracksOf`).
+ */
+export function keptHiddenOf(hidden: ReadonlySet<string>, doc: ScoreDoc): ReadonlySet<string> {
+  const kept = doc.tracks.filter(track => hidden.has(track.id)).map(track => track.id);
+  if (kept.length === doc.tracks.length) return hidden.size === 0 ? hidden : new Set<string>();
+  return kept.length === hidden.size ? hidden : new Set(kept);
+}
+
+/**
+ * The Original's hidden tracks, kept by the file's index, as the composition Convert made of that file names them: its
+ * tracks are the file's, in the file's order (`ScoreDocMapperService.toDoc`), so the index names the same track.
+ */
+export function hiddenAfterConvertOf(hidden: ReadonlySet<string>, doc: ScoreDoc): ReadonlySet<string> {
+  return keptHiddenOf(new Set(doc.tracks.flatMap((track, index) => (hidden.has(String(index)) ? [track.id] : []))), doc);
 }

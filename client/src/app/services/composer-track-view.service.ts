@@ -2,28 +2,64 @@ import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import type * as alphaTab from '@coderline/alphatab';
 
+import { ScoreDoc } from '../models/composer.model';
 import { ComposerGpService } from './composer-gp.service';
 import { ComposerService } from './composer.service';
-import { EMPTY_TRACK_VIEW, TrackRow, TrackView, hideRefusalOf } from './composer-track-rows';
+import {
+  EMPTY_TRACK_VIEW,
+  TrackRow,
+  TrackView,
+  hiddenAfterConvertOf,
+  hideRefusalOf,
+  keptHiddenOf,
+  nearestShownTrackOf,
+  trackRowsOf
+} from './composer-track-rows';
 
 /**
  * What the page keeps about its tracks beside the score: which are hidden, and in Original which the player mutes and
  * solos (`TrackView`). The strip changes it and the score draws and plays from it, so it is a root service both read.
  *
  * It starts again whenever what the page shows changes: a file opening takes its mute and solo from what the file
- * itself declares, and another composition - a load, New, Convert - shows every track again.
+ * itself declares; leaving it shows every track; and a document replaced - a load, New, an applied alphaTex draft, which
+ * numbers its tracks afresh from the text - shows every track again. Convert alone keeps what was hidden: the
+ * composition it makes is the file's tracks in the file's order, so the file's hidden tracks are named in it
+ * (`carryThroughConvert`).
+ *
+ * In Composition no track is left hidden that the document no longer has, and never every track (`keptHiddenOf`); the
+ * caret is moved off a track as it is hidden, and a keyboard track move passes over hidden tracks
+ * (`ComposerService.passOverTracks`): an edit there would write to a staff no one can see.
  */
 @Injectable({ providedIn: 'root' })
 export class ComposerTrackViewService {
   private readonly subject = new BehaviorSubject<TrackView>(EMPTY_TRACK_VIEW);
-  private documentId: number | null = null;
+  /** The file's hidden tracks, named as the composition Convert is about to put in place names them, until it is. */
+  private carried: ReadonlySet<string> | null = null;
 
-  constructor(gp: ComposerGpService, composer: ComposerService) {
-    gp.getState().subscribe(original => this.subject.next(original ? viewOfFile(original.score) : EMPTY_TRACK_VIEW));
-    composer.getState().subscribe(state => {
-      if (this.documentId !== null && state.documentId !== this.documentId && !gp.isOriginal) this.subject.next(EMPTY_TRACK_VIEW);
-      this.documentId = state.documentId;
+  constructor(
+    private readonly gp: ComposerGpService,
+    private readonly composer: ComposerService
+  ) {
+    gp.getState().subscribe(original => {
+      if (original) this.subject.next(viewOfFile(original.score));
+      else if (this.view !== EMPTY_TRACK_VIEW) this.subject.next(EMPTY_TRACK_VIEW);
     });
+    // `ComposerGpService` hears the composer first, having been made first, so a Convert or a load has already left
+    // Original here. In Original the document is the empty one under the file, which says nothing about its tracks.
+    composer.getState().subscribe(state => {
+      if (gp.isOriginal) return;
+      const hidden = keptHiddenOf(this.view.hidden, state.doc);
+      if (hidden !== this.view.hidden) this.subject.next({ ...this.view, hidden });
+    });
+    composer.getDocumentReplacements().subscribe(() => {
+      const carried = this.carried;
+      this.carried = null;
+      if (gp.isOriginal) return;
+      const next = carried && carried.size > 0 ? { ...EMPTY_TRACK_VIEW, hidden: carried } : EMPTY_TRACK_VIEW;
+      if (next !== this.view) this.subject.next(next);
+      this.moveCaretOffHidden();
+    });
+    composer.passOverTracks(track => !gp.isOriginal && this.view.hidden.has(track.id));
   }
 
   getView(): Observable<TrackView> {
@@ -34,14 +70,26 @@ export class ComposerTrackViewService {
     return this.subject.getValue();
   }
 
-  /** Shows the row at `index`, or hides it - or returns why not: it is the last one shown (`hideRefusalOf`). */
+  /**
+   * Shows the row at `index`, or hides it - or returns why not: it is the last one shown (`hideRefusalOf`). Hiding the
+   * caret's own track in Composition moves the caret to the nearest track shown.
+   */
   toggleShown(rows: readonly TrackRow[], index: number): string | null {
     const row = rows.find(candidate => candidate.index === index);
     if (!row) return null;
     const refusal = hideRefusalOf(rows, index);
     if (refusal) return refusal;
     this.subject.next({ ...this.view, hidden: toggled(this.view.hidden, row.key) });
+    if (!this.gp.isOriginal) this.moveCaretOffHidden();
     return null;
+  }
+
+  /**
+   * Convert keeps the file's hidden tracks hidden: told by `GpConversionService` with the composition it is about to put
+   * in place (`hiddenAfterConvertOf`), which the replacement that follows shows as this view.
+   */
+  carryThroughConvert(doc: ScoreDoc): void {
+    this.carried = hiddenAfterConvertOf(this.view.hidden, doc);
   }
 
   /** The player's mute on the file's track `key`, in Original. */
@@ -52,6 +100,15 @@ export class ComposerTrackViewService {
   /** The player's solo on the file's track `key`, in Original. */
   toggleSoloed(key: string): void {
     this.subject.next({ ...this.view, soloed: toggled(this.view.soloed, key) });
+  }
+
+  /** Puts the caret on the nearest track shown, when its own is hidden: the same bar, on that track's first beat. */
+  private moveCaretOffHidden(): void {
+    const { doc, cursor } = this.composer.state;
+    const rows = trackRowsOf(doc, this.view);
+    if (rows[cursor.trackIndex]?.shown !== false) return;
+    const trackIndex = nearestShownTrackOf(rows, cursor.trackIndex);
+    if (trackIndex !== null) this.composer.setCursor({ trackIndex, staffIndex: 0, voiceIndex: 0, beatIndex: 0 });
   }
 }
 

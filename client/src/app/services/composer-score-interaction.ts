@@ -1,6 +1,7 @@
 import type * as alphaTab from '@coderline/alphatab';
 
 import { ClefKind, ComposerState, EditCursor, EntryMode, ScoreDoc } from '../models/composer.model';
+import { canonicalJsonOf } from './beat-edits';
 import { BeatRef, selectionTargets } from './composer-selection';
 import { bottomLineDiatonic } from './staff-pitch';
 
@@ -154,9 +155,36 @@ export function seeksOnPress(press: ScorePress, playing: boolean): boolean {
  * engraved, and `'overlay'` - the highlight and the caret, drawn over the engraving - otherwise. By identity,
  * since `ComposerService` replaces the document on every edit and never mutates a published one: a
  * selection, a caret move or an entry mode change keeps the same document.
+ *
+ * And `'overlay'` for a document that differs from the one engraved only in its mixer (`differsOnlyInMixer`): the
+ * engraving is the same, and a render reloads the MIDI, which stops the player and rewinds it to bar 1 - so a mute or a
+ * solo pressed during playback would stop it. The player takes a mute and a solo from `setTrackPlayback` instead.
  */
 export function scoreRedrawOf(lastRenderedDoc: ScoreDoc | null, doc: ScoreDoc): 'render' | 'overlay' {
-  return doc === lastRenderedDoc ? 'overlay' : 'render';
+  return doc === lastRenderedDoc || differsOnlyInMixer(lastRenderedDoc, doc) ? 'overlay' : 'render';
+}
+
+/**
+ * Whether `after` differs from `before` in its tracks' mute and solo (`PlaybackInfoDoc.isMute`, `isSolo`) and in nothing
+ * else: fields alphaTab's player never reads from a score - only `changeTrackMute` and `changeTrackSolo` reach it. By
+ * content, since every commit clones the document. A change with no mute or solo in it is answered before the documents
+ * are compared whole, so an ordinary edit pays for one pass over the tracks.
+ */
+export function differsOnlyInMixer(before: ScoreDoc | null, after: ScoreDoc): boolean {
+  if (!before || before.tracks.length !== after.tracks.length) return false;
+  const mixerMoved = after.tracks.some(
+    (track, index) =>
+      track.playback.isMute !== before.tracks[index].playback.isMute || track.playback.isSolo !== before.tracks[index].playback.isSolo
+  );
+  if (!mixerMoved) return false;
+  const withMixerOfBefore: ScoreDoc = {
+    ...after,
+    tracks: after.tracks.map((track, index) => ({
+      ...track,
+      playback: { ...track.playback, isMute: before.tracks[index].playback.isMute, isSolo: before.tracks[index].playback.isSolo }
+    }))
+  };
+  return canonicalJsonOf(withMixerOfBefore) === canonicalJsonOf(before);
 }
 
 /**

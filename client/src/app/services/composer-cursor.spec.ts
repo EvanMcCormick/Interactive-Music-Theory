@@ -1,6 +1,6 @@
 import { ComposerService } from './composer.service';
 import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
-import { EditCursor, ScoreDoc, createRestBeat } from '../models/composer.model';
+import { EditCursor, ScoreDoc, TrackDoc, createRestBeat } from '../models/composer.model';
 
 const at = (barIndex: number, beatIndex: number, extra: Partial<EditCursor> = {}): EditCursor => ({
   trackIndex: 0, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex, stringIndex: 0, ...extra
@@ -82,5 +82,17 @@ describe('movedCursor', () => {
     expect(moved(doc, at(2, 3, { trackIndex: 1 }), { kind: 'track', delta: 1 })).toBe('1:2.3');
     expect(moved(doc, at(2, 3), { kind: 'track', delta: -1 })).toBe('0:2.3');
     expect(moved(doc, at(2, 3, { trackIndex: 1 }), { kind: 'track', delta: -1 })).toBe('0:2.0');
+  });
+
+  it('passes over the tracks it is told to, and stays put when every track that way is passed over', () => {
+    // The track strip's hidden tracks: an edit on one would write to a staff no one can see.
+    const doc = ComposerService.createEmptyScore();
+    for (const name of ['Piano', 'Bass', 'Flute']) doc.tracks.push(ComposerService.createTrack(name, name, 0, false, doc.masterBars));
+    const hidden = new Set([doc.tracks[1].id, doc.tracks[3].id]);
+    const passedOver = (track: TrackDoc): boolean => hidden.has(track.id);
+
+    expect(where(movedCursor(doc, at(2, 3), { kind: 'track', delta: 1 }, passedOver))).toBe('2:2.0');
+    expect(where(movedCursor(doc, at(2, 3, { trackIndex: 2 }), { kind: 'track', delta: -1 }, passedOver))).toBe('0:2.0');
+    expect(where(movedCursor(doc, at(2, 3, { trackIndex: 2 }), { kind: 'track', delta: 1 }, passedOver))).toBe('2:2.3');
   });
 });

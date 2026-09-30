@@ -382,6 +382,12 @@ export class AlphaTabService {
 
   /** The mute and solo each track should play with, by index, kept and applied again after every MIDI load. */
   private trackPlayback: readonly TrackPlayback[] = [];
+  /**
+   * Whether a page has set `trackPlayback` for the api there is now. Until one has, a MIDI load leaves the player's mixer
+   * alone: an empty one would unmute every track of another page's score. `dispose` forgets both with the api - this is a
+   * root service, and the next page to make an api may not be the one that set them.
+   */
+  private trackPlaybackSet = false;
 
   /**
    * Plays each track of the score alphaTab holds muted or soloed as `states` say, by index, now and after every render
@@ -392,20 +398,23 @@ export class AlphaTabService {
     const same =
       states.length === this.trackPlayback.length &&
       states.every((state, index) => state.mute === this.trackPlayback[index].mute && state.solo === this.trackPlayback[index].solo);
-    if (same) return;
+    if (this.trackPlaybackSet && same) return;
     this.trackPlayback = states;
+    this.trackPlaybackSet = true;
     this.applyTrackPlayback();
   }
 
   private applyTrackPlayback(): void {
     const score = this.api?.score;
-    if (!this.api || !score) return;
+    if (!this.api || !score || !this.trackPlaybackSet) return;
     const tracksWhere = (test: (state: TrackPlayback) => boolean): alphaTab.model.Track[] =>
       score.tracks.filter((_, index) => test(this.trackPlayback[index] ?? { mute: false, solo: false }));
-    this.api.changeTrackMute(tracksWhere(state => state.mute), true);
+    // Off first, then on: the player mutes and solos by MIDI channel, and tracks share them - every single-staff drum
+    // track is on channel 9 - so an unmute sent after a mute would unmute the muted track's channel with it.
     this.api.changeTrackMute(tracksWhere(state => !state.mute), false);
-    this.api.changeTrackSolo(tracksWhere(state => state.solo), true);
+    this.api.changeTrackMute(tracksWhere(state => state.mute), true);
     this.api.changeTrackSolo(tracksWhere(state => !state.solo), false);
+    this.api.changeTrackSolo(tracksWhere(state => state.solo), true);
   }
 
   /**
@@ -598,6 +607,8 @@ export class AlphaTabService {
       this.api.destroy();
       this.api = null;
     }
+    this.trackPlayback = [];
+    this.trackPlaybackSet = false;
     this.stateSubject.next(DEFAULT_ALPHA_TAB_STATE);
   }
 

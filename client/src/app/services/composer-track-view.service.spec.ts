@@ -3,7 +3,8 @@ import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerGpService } from './composer-gp.service';
 import { ComposerService } from './composer.service';
-import { LAST_SHOWN_TRACK, trackRowsOf } from './composer-track-rows';
+import { LAST_SHOWN_TRACK } from './composer-text';
+import { trackRowsOf } from './composer-track-rows';
 import { ComposerTrackViewService } from './composer-track-view.service';
 
 describe('ComposerTrackViewService', () => {
@@ -77,5 +78,94 @@ describe('ComposerTrackViewService', () => {
     gp.clear();
 
     expect(views.view.muted.size).toBe(0);
+  });
+
+  describe('in Composition', () => {
+    /** Opens a composition of the empty score's guitar and a track for each of `names`. */
+    function openComposition(...names: string[]): void {
+      const doc = ComposerService.createEmptyScore();
+      for (const name of names) doc.tracks.push(ComposerService.createTrack(name, name, 0, false, doc.masterBars));
+      composer.replaceDocument(doc, { newComposition: true });
+    }
+
+    const rows = () => trackRowsOf(composer.doc, views.view);
+    const shown = (): boolean[] => rows().map(row => row.shown);
+
+    it('shows every track again when Remove leaves only hidden ones', () => {
+      openComposition('Piano');
+      views.toggleShown(rows(), 0);
+
+      composer.removeTrack(1);
+
+      expect(shown()).toEqual([true]);
+      expect(views.view.hidden.size).toBe(0);
+    });
+
+    it('shows every track again when Undo takes away the track that was the only one shown', () => {
+      openComposition();
+      composer.addTrack('Piano', 0, false);
+      views.toggleShown(rows(), 0);
+      expect(shown()).toEqual([false, true]);
+
+      composer.undo();
+
+      expect(shown()).toEqual([true]);
+      expect(views.view.hidden.size).toBe(0);
+    });
+
+    it('forgets a hidden track the document no longer has, so a later one is not hidden by it', () => {
+      openComposition('Piano', 'Bass');
+      views.toggleShown(rows(), 2);
+
+      composer.removeTrack(2);
+
+      expect(views.view.hidden.size).toBe(0);
+    });
+
+    it('shows every track again when an alphaTex draft is applied: a new document from text, its tracks numbered afresh', () => {
+      openComposition('Piano');
+      views.toggleShown(rows(), 1);
+      // Numbered as `toDoc` numbers them, by position: the ids come back, on whatever tracks the text now puts there.
+      const applied = ComposerService.createEmptyScore();
+      applied.tracks.push(ComposerService.createTrack('Bass', 'bass', 33, true, applied.masterBars));
+      applied.tracks.forEach((track, index) => (track.id = composer.doc.tracks[index].id));
+
+      // What the page's Apply does (`ComposerComponent.applyTexDraft`): an edit of this composition, not a new one.
+      composer.replaceDocument(applied);
+
+      expect(shown()).toEqual([true, true]);
+    });
+
+    it("moves the caret off a track it hides: to the next track shown, else the one before it", () => {
+      openComposition('Piano', 'Bass');
+      composer.setCursor({ trackIndex: 1, barIndex: 2 });
+
+      views.toggleShown(rows(), 1);
+      expect(composer.state.cursor.trackIndex).toBe(2);
+
+      views.toggleShown(rows(), 2);
+      expect(composer.state.cursor.trackIndex).toBe(0);
+    });
+
+    it('leaves the caret where it is when another track is hidden', () => {
+      openComposition('Piano');
+      composer.setCursor({ trackIndex: 1, barIndex: 2 });
+
+      views.toggleShown(rows(), 0);
+
+      expect(composer.state.cursor.trackIndex).toBe(1);
+      expect(composer.state.cursor.barIndex).toBe(2);
+    });
+
+    it('passes over hidden tracks on a keyboard track move', () => {
+      openComposition('Piano', 'Bass');
+      views.toggleShown(rows(), 1);
+
+      composer.moveCursor({ kind: 'track', delta: 1 });
+      expect(composer.state.cursor.trackIndex).toBe(2);
+
+      composer.moveCursor({ kind: 'track', delta: -1 });
+      expect(composer.state.cursor.trackIndex).toBe(0);
+    });
   });
 });

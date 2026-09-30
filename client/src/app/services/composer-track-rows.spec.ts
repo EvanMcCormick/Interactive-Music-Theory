@@ -1,7 +1,17 @@
 import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerService } from './composer.service';
-import { EMPTY_TRACK_VIEW, LAST_SHOWN_TRACK, TrackView, hideRefusalOf, renderedTracksOf, trackRowsOf } from './composer-track-rows';
+import { LAST_SHOWN_TRACK } from './composer-text';
+import {
+  EMPTY_TRACK_VIEW,
+  TrackView,
+  hiddenAfterConvertOf,
+  hideRefusalOf,
+  keptHiddenOf,
+  nearestShownTrackOf,
+  renderedTracksOf,
+  trackRowsOf
+} from './composer-track-rows';
 
 describe('trackRowsOf', () => {
   /** A composition of guitar and piano, the piano muted in its own mixer. */
@@ -51,6 +61,13 @@ describe('trackRowsOf', () => {
 
     expect(trackRowsOf(doc, view).map(row => row.shown)).toEqual([false]);
   });
+
+  it("names an unnamed composition track as an unnamed file track is named, so its buttons never read \"Mute \"", () => {
+    const doc = composition();
+    doc.tracks[1].name = '';
+
+    expect(trackRowsOf(doc, EMPTY_TRACK_VIEW).map(row => row.name)).toEqual([doc.tracks[0].name, 'Track 2']);
+  });
 });
 
 describe('renderedTracksOf', () => {
@@ -58,7 +75,73 @@ describe('renderedTracksOf', () => {
     const rows = trackRowsOf(ComposerService.createEmptyScore(), EMPTY_TRACK_VIEW);
 
     expect(renderedTracksOf(rows)).toEqual([0]);
-    expect(renderedTracksOf(rows.map(row => ({ ...row, shown: false })))).toEqual([]);
+  });
+
+  it('never draws no track: rows all hidden draw every row, as alphaTab would otherwise draw the first with no staves known', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    const rows = trackRowsOf(doc, EMPTY_TRACK_VIEW);
+
+    expect(renderedTracksOf(rows.map(row => ({ ...row, shown: false })))).toEqual([0, 1]);
+    expect(renderedTracksOf([])).toEqual([]);
+  });
+});
+
+describe('nearestShownTrackOf', () => {
+  /** Four rows, with the ones at `hidden` hidden. */
+  function rows(...hidden: number[]) {
+    const doc = ComposerService.createEmptyScore();
+    for (const name of ['B', 'C', 'D']) doc.tracks.push(ComposerService.createTrack(name, name, 0, false, doc.masterBars));
+    return trackRowsOf(doc, { ...EMPTY_TRACK_VIEW, hidden: new Set(hidden.map(index => doc.tracks[index].id)) });
+  }
+
+  it('is the next track shown after it, else the one before it', () => {
+    expect(nearestShownTrackOf(rows(1), 1)).toBe(2);
+    expect(nearestShownTrackOf(rows(1, 2), 1)).toBe(3);
+    expect(nearestShownTrackOf(rows(3), 3)).toBe(2);
+    expect(nearestShownTrackOf(rows(2, 3), 3)).toBe(1);
+  });
+
+  it('is none when no other track is shown', () => {
+    expect(nearestShownTrackOf(rows(0, 1, 2), 3)).toBeNull();
+  });
+});
+
+describe('keptHiddenOf', () => {
+  function doc() {
+    const score = ComposerService.createEmptyScore();
+    score.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, score.masterBars));
+    return score;
+  }
+
+  it('keeps a hidden set whose tracks are all still there, as the same set', () => {
+    const score = doc();
+    const hidden = new Set([score.tracks[1].id]);
+
+    expect(keptHiddenOf(hidden, score)).toBe(hidden);
+  });
+
+  it('drops the tracks the document no longer has', () => {
+    const score = doc();
+
+    expect([...keptHiddenOf(new Set([score.tracks[1].id, 'track-gone']), score)]).toEqual([score.tracks[1].id]);
+  });
+
+  it('shows every track rather than none: a set that would hide them all is dropped', () => {
+    const score = doc();
+    score.tracks.pop();
+
+    expect(keptHiddenOf(new Set([score.tracks[0].id]), score).size).toBe(0);
+  });
+});
+
+describe('hiddenAfterConvertOf', () => {
+  it("names the file's hidden tracks, kept by index, by the ids of the composition made of it", () => {
+    const score = ComposerService.createEmptyScore();
+    score.tracks.push(ComposerService.createTrack('Bass', 'bass', 33, true, score.masterBars));
+    score.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, score.masterBars));
+
+    expect([...hiddenAfterConvertOf(new Set(['1', '7']), score)]).toEqual([score.tracks[1].id]);
   });
 });
 

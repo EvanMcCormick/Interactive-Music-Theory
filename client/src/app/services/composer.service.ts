@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { BehaviorSubject, Observable } from 'rxjs';
+import { BehaviorSubject, Observable, Subject } from 'rxjs';
 import {
   AccidentalMode,
   BarDoc,
@@ -99,6 +99,12 @@ export class ComposerService {
 
   /** Unsaved work outside the document that a new composition would throw away, each asked when one is about to. */
   private readonly unsavedElsewhere = new Set<() => boolean>();
+
+  /** Each whole document put in place of the last one. See `getDocumentReplacements`. */
+  private readonly replacements = new Subject<void>();
+
+  /** The tracks a keyboard track move passes over. See `passOverTracks`. */
+  private passedOver: (track: TrackDoc) => boolean = () => false;
 
   /** Commits, undo and redo, and the refusals and notices beside them. See composer-history.ts. */
   private readonly history = new ComposerHistory({
@@ -252,7 +258,19 @@ export class ComposerService {
   replaceDocument(doc: ScoreDoc, replacement: DocumentReplacement = {}): void {
     const fretted = frettedDocOf(doc);
     this.history.replaceDocument(fretted.doc, fretted.dropped > 0 ? { ...replacement, markClean: false } : replacement);
+    // Before the notice below, which a listener's caret move would otherwise clear.
+    this.replacements.next();
     if (fretted.dropped > 0) this.announce(outOfReachNoticeOf(fretted.dropped));
+  }
+
+  /**
+   * Each time a whole document is put in place of the last, rather than edited: `replaceDocument` - a load, an opened
+   * transcription, Convert, an applied alphaTex draft - and New (`reset`). After the state holding it is published. The
+   * track strip's view starts again from here (`ComposerTrackViewService`): a document replaced numbers its tracks afresh,
+   * so what was hidden by id no longer names the same track, and `documentId` alone does not move for an applied draft.
+   */
+  getDocumentReplacements(): Observable<void> {
+    return this.replacements.asObservable();
   }
 
   /** Marks the document clean, if `saved` - the document that was written - is still it. See `ComposerHistory.markSaved`. */
@@ -289,6 +307,7 @@ export class ComposerService {
   reset(): void {
     this.history.clear();
     this.stateSubject.next(ComposerService.initialState(this.stateSubject.getValue().documentId + 1));
+    this.replacements.next();
   }
 
   // -------------------------------------------------------------------------
@@ -326,7 +345,15 @@ export class ComposerService {
   moveCursor(move: CursorMove, extend = false): void {
     const state = this.stateSubject.getValue();
     const anchor = extend ? state.anchor ?? state.cursor : move.kind === 'string' ? state.anchor : null;
-    this.publishSelection(movedCursor(state.doc, state.cursor, move), anchor);
+    this.publishSelection(movedCursor(state.doc, state.cursor, move, this.passedOver), anchor);
+  }
+
+  /**
+   * Makes a keyboard track move pass over the tracks `test` names (`movedCursor`): the track strip's hidden ones, which
+   * `ComposerTrackViewService` holds and sets here - it reads this service, so this one cannot read it.
+   */
+  passOverTracks(test: (track: TrackDoc) => boolean): void {
+    this.passedOver = test;
   }
 
   moveCursorByBeat(delta: number): void {

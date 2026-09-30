@@ -10,6 +10,7 @@ import {
   dragContinues,
   dragExtends,
   dragTargetOf,
+  differsOnlyInMixer,
   highlightEndsOf,
   hoverKeyOf,
   hoverSurvives,
@@ -151,6 +152,57 @@ describe('scoreRedrawOf', () => {
     expect(scoreRedrawOf(null, doc)).toBe('render');
     expect(scoreRedrawOf(doc, doc)).toBe('overlay');
     expect(scoreRedrawOf(doc, structuredClone(doc))).toBe('render');
+  });
+
+  it("redraws only what sits over the engraving for a mute or solo: the player plays them, and a render would stop it", () => {
+    const doc = ComposerService.createEmptyScore();
+    const muted = structuredClone(doc);
+    muted.tracks[0].playback.isMute = true;
+
+    expect(scoreRedrawOf(doc, muted)).toBe('overlay');
+  });
+});
+
+describe('differsOnlyInMixer', () => {
+  function twoTracks(): ScoreDoc {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    return doc;
+  }
+
+  it("is true when tracks' mute and solo are all that changed", () => {
+    const before = twoTracks();
+    const after = structuredClone(before);
+    after.tracks[0].playback.isSolo = true;
+    after.tracks[1].playback.isMute = true;
+
+    expect(differsOnlyInMixer(before, after)).toBeTrue();
+  });
+
+  it('is false for any other change beside a mute, a volume included, and for no mute or solo change at all', () => {
+    const before = twoTracks();
+    const withVolume = structuredClone(before);
+    withVolume.tracks[1].playback.isMute = true;
+    withVolume.tracks[1].playback.volume = 3;
+    const withNote = structuredClone(before);
+    withNote.tracks[1].playback.isMute = true;
+    withNote.masterBars[0].isDoubleBar = true;
+    const retitled = structuredClone(before);
+    retitled.title = 'Another';
+
+    expect(differsOnlyInMixer(before, withVolume)).toBeFalse();
+    expect(differsOnlyInMixer(before, withNote)).toBeFalse();
+    expect(differsOnlyInMixer(before, retitled)).toBeFalse();
+    expect(differsOnlyInMixer(before, structuredClone(before))).toBeFalse();
+  });
+
+  it('is false against no document, and when a track was added or removed', () => {
+    const before = twoTracks();
+    const fewer = structuredClone(before);
+    fewer.tracks.pop();
+
+    expect(differsOnlyInMixer(null, before)).toBeFalse();
+    expect(differsOnlyInMixer(before, fewer)).toBeFalse();
   });
 });
 

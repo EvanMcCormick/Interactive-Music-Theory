@@ -8,7 +8,7 @@
     <li
       *ngFor="let row of rows; let i = index; trackBy: trackByKey"
       class="track-item"
-      [class.selected]="s.cursor.trackIndex === i"
+      [class.selected]="isSelected(row, s)"
       [class.hidden-track]="!row.shown"
       (click)="selectTrack(i)"
     >
@@ -16,7 +16,10 @@
       <span class="track-name">{{ row.name }}</span>
 
       <span class="track-view">
-        <!-- Pressed while shown. `aria-disabled` on the last row shown, as Remove refuses the last track. -->
+        <!--
+          Pressed while shown, under one name either way ("Show Lead"). `aria-disabled` on the last row shown, as Remove
+          refuses the last track.
+        -->
         <button
           type="button"
           class="track-toggle track-shown"

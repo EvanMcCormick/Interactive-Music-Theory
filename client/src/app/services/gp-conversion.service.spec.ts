@@ -6,6 +6,8 @@ import { AlphaTexService } from './alpha-tex.service';
 import { ComposerGpService } from './composer-gp.service';
 import { ComposerLibraryService } from './composer-library.service';
 import { ComposerService } from './composer.service';
+import { trackRowsOf } from './composer-track-rows';
+import { ComposerTrackViewService } from './composer-track-view.service';
 import { GpConversionService } from './gp-conversion.service';
 import { GP_LIBRARY_DB, GpLibraryService } from './gp-library.service';
 import { deletedDatabase } from './indexed-db.spec-helper';
@@ -205,5 +207,43 @@ describe('GpConversionService', () => {
     expect(composer.state.refusal).toBeNull();
     expect(composer.state.notice).toBe('"Riff" was converted, and the original file is still in the library.');
     expect(composer.doc.masterBars[0].isDoubleBar).toBeTrue();
+  });
+
+  describe("the track strip's hidden tracks", () => {
+    const band = ['\\title "Band"', '\\track "Guitar"', '3.3.4 3.3.4 3.3.4 3.3.4 |', '\\track "Bass"', '3.4.4 3.4.4 3.4.4 3.4.4 |', '\\track "Keys"', '3.3.4 3.3.4 3.3.4 3.3.4 |'].join('\n');
+    let views: ComposerTrackViewService;
+
+    beforeEach(() => (views = TestBed.inject(ComposerTrackViewService)));
+
+    /** Hides the file's track `index` in Original, from the strip's rows. */
+    function hideInOriginal(index: number): void {
+      const original = gp.original;
+      if (!original) throw new Error('no file is open');
+      views.toggleShown(trackRowsOf(original.score, views.view), index);
+    }
+
+    const shown = (): boolean[] => trackRowsOf(composer.doc, views.view).map(row => row.shown);
+
+    it('stay hidden in the composition Convert makes of the file', async () => {
+      openFile(band);
+      hideInOriginal(1);
+      askWithNothing();
+
+      await conversion.convert();
+
+      expect(composer.doc.tracks.map(track => track.name)).toEqual(['Guitar', 'Bass', 'Keys']);
+      expect(shown()).toEqual([true, false, true]);
+    });
+
+    it("move the caret off a hidden track before the edit that asked is written, so it lands on a track shown", async () => {
+      openFile(band);
+      hideInOriginal(0);
+      gp.requestEdit('doubleBar', 'Double bar', () => composer.setRestAtCursor(false));
+
+      await conversion.convert();
+
+      expect(shown()).toEqual([false, true, true]);
+      expect(composer.state.cursor.trackIndex).toBe(1);
+    });
   });
 });

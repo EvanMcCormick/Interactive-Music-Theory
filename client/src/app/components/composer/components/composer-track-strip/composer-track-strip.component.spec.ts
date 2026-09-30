@@ -723,18 +723,35 @@ describe('ComposerTrackStripComponent', () => {
 
     it('hides a track\'s staves as a page setting, not an edit, and refuses to hide the last one shown', () => {
       const before = composer.doc;
+      const guitar = composer.doc.tracks[0].name;
+      // One name in both states, and `aria-pressed` says which: "Hide" while shown would read as a double negative.
+      expect(rowButtons('.track-shown')[0].getAttribute('aria-label')).toBe(`Show ${guitar}`);
       rowButtons('.track-shown')[0].click();
       fixture.detectChanges();
 
       expect(rowButtons('.track-shown')[0].getAttribute('aria-pressed')).toBe('false');
+      expect(rowButtons('.track-shown')[0].getAttribute('aria-label')).toBe(`Show ${guitar}`);
       expect(composer.doc).toBe(before);
       expect(rowButtons('.track-shown')[1].getAttribute('aria-disabled')).toBe('true');
-      expect(rowButtons('.track-shown')[1].getAttribute('aria-label')).toContain('unavailable');
+      expect(rowButtons('.track-shown')[1].getAttribute('aria-label')).toBe('Show Piano, unavailable: At least one track is shown: show another before hiding this one.');
 
       rowButtons('.track-shown')[1].click();
       fixture.detectChanges();
       expect(composer.state.refusal).toMatch(/At least one track is shown/);
       expect(rowButtons('.track-shown')[1].getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('does not put the caret on a hidden track when its row is clicked, and says why', () => {
+      composer.setCursor({ trackIndex: 1 });
+      rowButtons('.track-shown')[0].click();
+      fixture.detectChanges();
+
+      row(0).click();
+      fixture.detectChanges();
+
+      expect(composer.state.cursor.trackIndex).toBe(1);
+      expect(composer.state.refusal).toBe(`Show ${composer.doc.tracks[0].name} to edit it.`);
+      expect(row(0).classList).not.toContain('selected');
     });
 
     it("mutes and solos a composition's track in its own mixer, as an edit", () => {
@@ -770,6 +787,28 @@ describe('ComposerTrackStripComponent', () => {
       expect(rowButtons('.track-mute')[2].getAttribute('aria-pressed')).toBe('true');
       expect(composer.doc).toBe(before);
       expect(score.tracks[2].playbackInfo.isMute).toBeFalse();
+    });
+
+    it("selects no row in Original, where the caret has no track of the file's to go to, and its buttons still work", () => {
+      const score = new alphaTab.model.Score();
+      for (const name of ['Lead', 'Bass']) {
+        const track = new alphaTab.model.Track();
+        track.name = name;
+        score.addTrack(track);
+      }
+      TestBed.inject(ComposerGpService).open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
+      fixture.detectChanges();
+      const before = composer.state;
+
+      row(1).click();
+      fixture.detectChanges();
+
+      expect(composer.state).toBe(before);
+      expect(rows().some(candidate => candidate.classList.contains('selected'))).toBeFalse();
+
+      rowButtons('.track-shown')[1].click();
+      fixture.detectChanges();
+      expect(rowButtons('.track-shown')[1].getAttribute('aria-pressed')).toBe('false');
     });
   });
 });

@@ -22,3 +22,11 @@ export function pasteNoticeOf(beats: number, appended: number): string {
 
 /** Why the last track cannot be removed: said by the service, and on the track strip's Remove before it is pressed. */
 export const LAST_TRACK_REFUSAL = 'A score needs at least one track.';
+
+/** Why the last track shown cannot be hidden: said on the track strip's show / hide before it is pressed, and after. */
+export const LAST_SHOWN_TRACK = 'At least one track is shown: show another before hiding this one.';
+
+/** Why a hidden track's row does not take the caret: an edit there would write to a staff no one can see. */
+export function hiddenTrackRefusalOf(name: string): string {
+  return `Show ${name} to edit it.`;
+}

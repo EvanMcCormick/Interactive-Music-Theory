@@ -10,7 +10,7 @@ import { ComposerGpService, GpOriginal } from '../../../../services/composer-gp.
 import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
 import { EMPTY_TRACK_VIEW, TrackRow, TrackView, hideRefusalOf, trackRowsOf } from '../../../../services/composer-track-rows';
 import { ComposerTrackViewService } from '../../../../services/composer-track-view.service';
-import { LAST_TRACK_REFUSAL } from '../../../../services/composer-text';
+import { LAST_TRACK_REFUSAL, hiddenTrackRefusalOf } from '../../../../services/composer-text';
 import { ProgressionService } from '../../../../services/progression.service';
 import {
   GeneratedTrackState,
@@ -176,11 +176,14 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
     return hideRefusalOf(this.rows, row.index) !== null;
   }
 
-  /** Show / hide's accessible name: the track's, and why it refuses while it is the last shown. */
+  /**
+   * Show / hide's accessible name: "Show" and the track's, in both states, with `aria-pressed` saying whether it is shown
+   * - a name that turned to "Hide" as it was pressed would read "Hide Lead, pressed", a double negative. And why it
+   * refuses while it is the last shown.
+   */
   shownLabel(row: TrackRow): string {
     const refusal = hideRefusalOf(this.rows, row.index);
-    const action = row.shown ? `Hide ${row.name}` : `Show ${row.name}`;
-    return refusal ? `${action}, unavailable: ${refusal}` : action;
+    return refusal ? `Show ${row.name}, unavailable: ${refusal}` : `Show ${row.name}`;
   }
 
   /** Mutes or unmutes a row: the player's in Original (decision 16), the composition's own mixer in Composition. */
@@ -223,8 +226,21 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
     return trackCount <= 1 ? `Remove track - unavailable: ${LAST_TRACK_REFUSAL}` : 'Remove track';
   }
 
+  /**
+   * Puts the caret on the row's track. Not in Original, where the rows are the file's and the caret is the empty
+   * composition's under it, which has no such track; and not on a hidden track, where an edit would write to a staff no
+   * one can see - that says why on the status line instead.
+   */
   selectTrack(index: number): void {
+    const row = this.rows.find(candidate => candidate.index === index);
+    if (this.original || !row) return;
+    if (!row.shown) return this.composer.announce(hiddenTrackRefusalOf(row.name), true);
     this.composer.setCursor({ trackIndex: index, staffIndex: 0 });
+  }
+
+  /** Whether the row is drawn as the caret's: never in Original, where no row can be (`selectTrack`). */
+  isSelected(row: TrackRow, state: ComposerState): boolean {
+    return !this.original && state.cursor.trackIndex === row.index;
   }
 
   // -------------------------------------------------------------------------

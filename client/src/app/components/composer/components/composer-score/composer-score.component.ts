@@ -19,6 +19,7 @@ import { TrackView, renderedTracksOf, trackRowsOf } from '../../../../services/c
 import { ComposerTrackViewService } from '../../../../services/composer-track-view.service';
 import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
 import { ComposerGpService, GpOriginal } from '../../../../services/composer-gp.service';
+import type { TrackRow } from '../../../../services/composer-track-rows';
 import { ComposerService } from '../../../../services/composer.service';
 import {
   StaffSlot,
@@ -201,7 +202,13 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
         // change redraws what sits over the engraving - otherwise a drag re-engraved the score per beat. In
         // Original the document is not what is drawn, so nothing it does asks for a render.
         if (!this.gp.isOriginal && scoreRedrawOf(this.lastRenderedDoc, state.doc) === 'render') this.renderRequest$.next();
-        else this.drawHighlight();
+        else {
+          // A document that differs from the one drawn only in a mute or a solo is drawn as it was (`scoreRedrawOf`):
+          // alphaTab keeps the score it holds, which stands for this document from here, and `applyTrackPlayback` below
+          // plays it - so playback runs on through the press.
+          if (!this.gp.isOriginal && this.lastRenderedDoc !== null) this.lastRenderedDoc = state.doc;
+          this.drawHighlight();
+        }
         this.applyTrackPlayback();
         this.scheduleCaretUpdate();
         this.cdr.markForCheck();
@@ -229,24 +236,27 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   /** The strip's rows for what the page is showing: the file's in Original, the document's in Composition. */
-  private trackRows(): ReturnType<typeof trackRowsOf> {
+  private trackRows(): TrackRow[] {
     const original = this.gp.original;
     if (original) return trackRowsOf(original.score, this.trackView);
     return this.state ? trackRowsOf(this.state.doc, this.trackView) : [];
   }
 
   /**
-   * Redraws after a track was shown or hidden. In Composition the document is engraved again with the tracks shown; in
-   * Original alphaTab draws those tracks of the score it holds (`renderTracks`), since there is no document to engrave.
+   * Redraws after a track was shown or hidden: alphaTab draws the tracks shown of the score it holds (`renderTracks`),
+   * which keeps its MIDI - a render reloads it, and alphaTab's `loadMidiFile` stops the player and rewinds it to bar 1.
+   * In Composition, a document alphaTab does not hold yet is engraved with them instead. In Original, a file whose bytes
+   * are still to load is drawn with them by the load (`renderCurrentDocument`), not against the last file's score.
    */
   private redrawShownTracks(): void {
     this.slotsRead = null;
+    const shown = renderedTracksOf(this.trackRows());
     if (!this.gp.isOriginal) {
-      this.lastRenderedDoc = null;
-      this.renderRequest$.next();
+      if (this.state && this.lastRenderedDoc === this.state.doc && this.renderError === null) this.alphaTabService.renderTracks(shown);
+      else this.renderRequest$.next();
       return;
     }
-    const shown = renderedTracksOf(this.trackRows());
+    if (this.lastLoadedOriginal !== this.gp.original) return;
     if (shown.join(',') === this.lastDrawnOriginalTracks) return;
     this.lastDrawnOriginalTracks = shown.join(',');
     this.alphaTabService.renderTracks(shown);
@@ -276,6 +286,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       })
     );
 
+    // Again, for this api: making one disposes of any other page's, and the mixer with it.
+    this.applyTrackPlayback();
     this.observeContainerWidth();
     this.wireScoreInteraction();
     this.renderRequest$.next();
@@ -315,17 +327,20 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     }
     this.renderPending = false;
 
-    // In Original the file's own bytes are what alphaTab draws, every track, and no document is mapped: the empty
-    // one `ComposerService` holds is not this file. The bytes go in once - a caret move or a selection redraws the
-    // overlay above, as it does in Composition - and the zero-width guard and the ResizeObserver above serve both
-    // states, which the deleted viewer never had.
+    // In Original the file's own bytes are what alphaTab draws, the tracks the strip shows, and no document is mapped:
+    // the empty one `ComposerService` holds is not this file. The bytes go in once - a caret move or a selection redraws
+    // the overlay above, as it does in Composition - and the zero-width guard and the ResizeObserver above serve both
+    // states, which the deleted viewer never had. The indices are explicit, and in range: they are the parsed score's own
+    // (`trackRows`), so alphaTab's off-by-one past the last track (`ALL_TRACKS`) is never met; a file of no tracks, with
+    // none to name, is loaded as every track.
     const original = this.gp.original;
     if (original) {
       if (this.lastLoadedOriginal !== original) {
+        const shown = renderedTracksOf(this.trackRows());
         this.lastLoadedOriginal = original;
         this.lastRenderedDoc = null;
-        this.lastDrawnOriginalTracks = '';
-        this.alphaTabService.loadBytes(original.bytes, ALL_TRACKS);
+        this.lastDrawnOriginalTracks = shown.join(',');
+        this.alphaTabService.loadBytes(original.bytes, shown.length > 0 ? shown : ALL_TRACKS);
       }
       this.renderError = null;
       this.cdr.markForCheck();

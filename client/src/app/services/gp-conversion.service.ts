@@ -6,6 +6,7 @@ import { AlphaTexService } from './alpha-tex.service';
 import { ComposerGpService } from './composer-gp.service';
 import { ComposerLibraryService } from './composer-library.service';
 import { ComposerService } from './composer.service';
+import { ComposerTrackViewService } from './composer-track-view.service';
 import { GpLibraryService } from './gp-library.service';
 import { frettedDocOf } from './pitch-on-strings';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
@@ -45,6 +46,8 @@ const UNKNOWN_ARTICULATION = 209;
 export class GpConversionService {
   /** Where an edit that throws after the conversion is reported (step 5). */
   private readonly errors = inject(ErrorHandler);
+  /** The track strip's view, whose hidden tracks the composition keeps (step 4). */
+  private readonly trackViews = inject(ComposerTrackViewService);
 
   constructor(
     private readonly gp: ComposerGpService,
@@ -109,7 +112,9 @@ export class GpConversionService {
       originalKept = true;
     }
 
-    // 4. The composition, as a new one, clean; the library panel names its entry.
+    // 4. The composition, as a new one, clean; the library panel names its entry. The tracks hidden in Original stay
+    // hidden, and the caret goes to a track shown before the edit that asked is written (`carryThroughConvert`).
+    this.trackViews.carryThroughConvert(doc);
     this.composer.replaceDocument(doc, { newComposition: true, markClean: true });
     this.library.markOpened(compositionId);
 
