@@ -1,4 +1,4 @@
-import { isEditableTarget, pressesFocusedControl } from './editable-target';
+import { isEditableTarget, movesFocusedSlider, pressesFocusedControl } from './editable-target';
 
 describe('isEditableTarget', () => {
   const attached: HTMLElement[] = [];
@@ -129,5 +129,29 @@ describe('pressesFocusedControl', () => {
     expect(pressesFocusedControl(press(' ', document.body))).toBeFalse();
     expect(keysPressing(keyboardFocused('a'))).withContext('a link with no href').toEqual([]);
     expect(keysPressing(keyboardFocused('div', div => div.setAttribute('role', 'tab')))).toEqual([]);
+  });
+});
+
+describe('movesFocusedSlider', () => {
+  const slider = (): HTMLInputElement => Object.assign(document.createElement('input'), { type: 'range' });
+  const on = (target: EventTarget, key: string, modifiers: Partial<Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 'metaKey'>> = {}) =>
+    movesFocusedSlider({ key, ctrlKey: false, altKey: false, metaKey: false, target, ...modifiers });
+
+  it("takes the keys a range slider moves itself with, and only on a range slider", () => {
+    for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']) {
+      expect(on(slider(), key)).withContext(key).toBeTrue();
+    }
+    expect(on(document.createElement('button'), 'ArrowLeft')).toBeFalse();
+    expect(on(Object.assign(document.createElement('input'), { type: 'checkbox' }), 'ArrowLeft')).toBeFalse();
+  });
+
+  it("leaves every other key on a slider to the page: Space plays, and Ctrl+→ moves a bar", () => {
+    expect(on(slider(), ' ')).toBeFalse();
+    expect(on(slider(), 'h')).toBeFalse();
+    expect(on(slider(), 'ArrowRight', { ctrlKey: true })).toBeFalse();
+  });
+
+  it('still counts a range slider as not typed into, so the page keeps its other keys', () => {
+    expect(isEditableTarget(slider())).toBeFalse();
   });
 });

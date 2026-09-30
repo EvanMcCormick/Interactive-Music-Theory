@@ -42,6 +42,7 @@ import { ComposerSaveRequests } from '../../services/composer-save-requests.serv
 import { pressesFocusedControl } from '../../services/editable-target';
 import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, PopoverKind, shortcutTitleOf } from '../../services/composer-tools';
 import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
+import { SPEED_RANGE, clockTimeOf } from '../../services/transport-time';
 
 /** What the status line says when a save meets an alphaTex draft that has been edited and not applied. */
 const TEX_DRAFT_UNSAVED = 'Apply or revert the alphaTex draft before saving.';
@@ -569,6 +570,42 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   /** The scale panel opened for the first time: note bounds from here on, for the highlight to read. */
   onScalePanelOpened(): void {
     this.alphaTabService.setNoteBounds(true);
+  }
+
+  // -------------------------------------------------------------------------
+  // The rest of the transport: loop, speed, volume and the seek bar - the viewer's, in both states (design decision 10)
+  // -------------------------------------------------------------------------
+
+  readonly speedRange = SPEED_RANGE;
+
+  toggleLoop(): void {
+    this.alphaTabService.setLooping(!(this.playerState?.isLooping ?? false));
+  }
+
+  /** Speed, as a percentage of the score's own tempo: a playback multiplier, never the BPM, which is the score's. */
+  get speedPercent(): number {
+    return Math.round((this.playerState?.tempoMultiplier ?? 1) * 100);
+  }
+
+  onSpeedInput(value: string): void {
+    this.alphaTabService.setPlaybackSpeed(Number(value) / 100);
+  }
+
+  get volumePercent(): number {
+    return Math.round((this.playerState?.volume ?? 1) * 100);
+  }
+
+  onVolumeInput(value: string): void {
+    this.alphaTabService.setVolume(Number(value) / 100);
+  }
+
+  onSeekInput(value: string): void {
+    this.alphaTabService.seekToTime(Number(value));
+  }
+
+  /** Where playback is and how long the score plays, as `1:05 / 3:20`. */
+  get timeReadout(): string {
+    return `${clockTimeOf(this.playerState?.timePosition ?? 0)} / ${clockTimeOf(this.playerState?.totalDuration ?? 0)}`;
   }
 
   toggleMetronome(): void {

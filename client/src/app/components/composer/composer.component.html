@@ -60,6 +60,52 @@
       <button class="toggle-btn" type="button" [class.active]="countInEnabled" [attr.aria-pressed]="countInEnabled" (click)="toggleCountIn()">
         Count-in
       </button>
+      <button
+        class="toggle-btn"
+        type="button"
+        [class.active]="playerState?.isLooping"
+        [attr.aria-pressed]="playerState?.isLooping ?? false"
+        (click)="toggleLoop()"
+      >Loop</button>
+
+      <!-- A playback multiplier, labelled apart from the BPM: the viewer called it "Tempo", and it is not the score's tempo. -->
+      <label class="slider-field">
+        <span>Speed</span>
+        <input
+          type="range"
+          [min]="speedRange.min"
+          [max]="speedRange.max"
+          [step]="speedRange.step"
+          [value]="speedPercent"
+          [attr.aria-valuetext]="speedPercent + '%'"
+          (input)="onSpeedInput($any($event.target).value)"
+        />
+        <output>{{ speedPercent }}%</output>
+      </label>
+      <label class="slider-field">
+        <span>Volume</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          [value]="volumePercent"
+          [attr.aria-valuetext]="volumePercent + '%'"
+          (input)="onVolumeInput($any($event.target).value)"
+        />
+      </label>
+      <!-- A range, not the viewer's clickable div: the keyboard reaches it and a screen reader names it. -->
+      <label class="slider-field seek-field">
+        <span class="visually-hidden">Position</span>
+        <input
+          type="range"
+          min="0"
+          [max]="playerState?.totalDuration ?? 0"
+          [value]="playerState?.timePosition ?? 0"
+          [attr.aria-valuetext]="timeReadout"
+          (input)="onSeekInput($any($event.target).value)"
+        />
+        <output class="time-readout">{{ timeReadout }}</output>
+      </label>
     </div>
 
     <div class="header-actions">

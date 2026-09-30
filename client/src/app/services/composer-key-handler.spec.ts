@@ -275,4 +275,15 @@ describe('ComposerKeyHandler', () => {
     behind.handle(press({ key: 'Delete' }));
     expect(composer.doc).not.toBe(doc);
   });
+
+  it("leaves an arrow on a focused slider to the slider, and plays on Space there", () => {
+    const slider = Object.assign(document.createElement('input'), { type: 'range' });
+    const before = composer.state.cursor;
+
+    expect(handler.handle(press({ key: 'ArrowRight', target: slider }))).toBeFalse();
+    expect(composer.state.cursor).toBe(before);
+
+    expect(handler.handle(press({ key: ' ', target: slider }))).toBeTrue();
+    expect(host.playPause).toHaveBeenCalled();
+  });
 });

@@ -350,6 +350,36 @@ describe('ComposerComponent', () => {
     expect(noteBounds.calls.allArgs()).toEqual([[true]]);
   });
 
+  it("runs the viewer's transport through the player: loop, speed as a percentage, volume and the seek bar", () => {
+    const player = TestBed.inject(AlphaTabService);
+    const looping = spyOn(player, 'setLooping');
+    const speed = spyOn(player, 'setPlaybackSpeed');
+    const volume = spyOn(player, 'setVolume');
+    const seek = spyOn(player, 'seekToTime');
+    const host = fixture.nativeElement as HTMLElement;
+    const sliders = Array.from(host.querySelectorAll<HTMLInputElement>('.transport input[type="range"]'));
+    const set = (input: HTMLInputElement, value: string): void => {
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+    };
+
+    Array.from(host.querySelectorAll<HTMLButtonElement>('.transport .toggle-btn')).find(button => button.textContent?.trim() === 'Loop')!.click();
+    set(sliders[0], '150');
+    set(sliders[1], '40');
+
+    expect(looping).toHaveBeenCalledWith(true);
+    expect(speed).toHaveBeenCalledWith(1.5);
+    expect(volume).toHaveBeenCalledWith(0.4);
+    expect(sliders[0].min).toBe('25');
+    expect(sliders[0].max).toBe('200');
+
+    player.getState().next({ ...player.getState().getValue(), timePosition: 65_000, totalDuration: 200_000 });
+    fixture.detectChanges();
+    set(sliders[2], '30000');
+    expect(seek).toHaveBeenCalledWith(30000);
+    expect(host.querySelector('.time-readout')?.textContent?.trim()).toBe('1:05 / 3:20');
+  });
+
   it('closes an open popover when the Scales menu opens, and closes the menu when the shortcut sheet opens', () => {
     press({ key: 'k', code: 'KeyK' });
     expect(component.popover).toBe('clef');

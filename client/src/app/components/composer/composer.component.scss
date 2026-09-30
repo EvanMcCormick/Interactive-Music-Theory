@@ -104,6 +104,41 @@
   gap: 0.4rem;
 }
 
+.slider-field {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--composer-text-secondary);
+
+  input[type='range'] {
+    width: 5.5rem;
+    accent-color: var(--composer-accent, #3498db);
+  }
+
+  output {
+    min-width: 2.6rem;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.seek-field input[type='range'] {
+  width: 9rem;
+}
+
+.time-readout {
+  min-width: 5.5rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .tempo-field {
   display: flex;
   align-items: center;

@@ -1,6 +1,6 @@
 import { KeyPress } from './composer-key-bindings';
 import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, toolForPress } from './composer-tools';
-import { isEditableTarget } from './editable-target';
+import { isEditableTarget, movesFocusedSlider } from './editable-target';
 
 /** The parts of a `KeyboardEvent` the handler reads. */
 export type KeyEventLike = KeyPress & Pick<KeyboardEvent, 'target' | 'defaultPrevented' | 'preventDefault' | 'repeat'>;
@@ -73,7 +73,7 @@ export class ComposerKeyHandler {
       event.preventDefault();
       return true;
     }
-    if (isEditableTarget(event.target) && !tool.inTextFields) return false;
+    if ((isEditableTarget(event.target) || movesFocusedSlider(event)) && !tool.inTextFields) return false;
     if (tool.yieldsToTextSelection && textSelectedOutside(this.scoreElement())) return false;
 
     event.preventDefault();
