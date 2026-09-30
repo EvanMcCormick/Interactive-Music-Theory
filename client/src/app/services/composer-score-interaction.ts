@@ -1,3 +1,5 @@
+import type * as alphaTab from '@coderline/alphatab';
+
 import { ClefKind, ComposerState, EditCursor, EntryMode, ScoreDoc } from '../models/composer.model';
 import { BeatRef, selectionTargets } from './composer-selection';
 import { bottomLineDiatonic } from './staff-pitch';
@@ -45,6 +47,37 @@ export function staffSlotsOf(doc: ScoreDoc): StaffSlot[] {
       return kinds.map(kind => ({ trackIndex, staffIndex, kind }));
     })
   );
+}
+
+/**
+ * The same staves, from the alphaTab `Score` the Original state draws instead of a document.
+ *
+ * `staffSlotsOf`'s sibling, and the whole of what the caret, the selection highlight and Pen's hover need to work
+ * over a file that has no `ScoreDoc` behind it: an alphaTab `Staff` carries every field `staffSlotsOf` reads -
+ * `showSlash`, `showStandardNotation`, `showNumbered`, `showTablature` and `stringTuning.tunings.length`.
+ *
+ * `visibleTrackIndices` are the tracks actually drawn (the strip's show/hide), in the order `api.renderTracks` was
+ * given them; omitted, every track. An index the score does not have is left out rather than drawn as a hole, so the
+ * ranks `slotIndexAt` counts stay in step with what alphaTab laid out.
+ */
+export function staffSlotsOfScore(
+  score: Pick<alphaTab.model.Score, 'tracks'>,
+  visibleTrackIndices?: readonly number[]
+): StaffSlot[] {
+  const drawn = visibleTrackIndices ?? score.tracks.map((_, index) => index);
+  return drawn.flatMap(trackIndex => {
+    const track = score.tracks[trackIndex];
+    if (!track) return [];
+    return track.staves.flatMap((staff, staffIndex) => {
+      const kinds: StaffKind[] = [
+        ...(staff.showSlash ? ['slash' as const] : []),
+        ...(staff.showStandardNotation ? ['notation' as const] : []),
+        ...(staff.showNumbered ? ['numbered' as const] : []),
+        ...(staff.showTablature && staff.stringTuning.tunings.length > 0 ? ['tab' as const] : [])
+      ];
+      return kinds.map(kind => ({ trackIndex, staffIndex, kind }));
+    });
+  });
 }
 
 /** What a mouse-down on the score does. */

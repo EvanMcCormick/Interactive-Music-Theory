@@ -1,4 +1,8 @@
+import { TestBed } from '@angular/core/testing';
+import * as alphaTab from '@coderline/alphatab';
+
 import { ComposerService } from './composer.service';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
 import {
   StaffSlot,
   caretHalfStepsOf,
@@ -18,9 +22,10 @@ import {
   seeksOnPress,
   snappedHoverX,
   staffSlotsOf,
+  staffSlotsOfScore,
   writeSounds
 } from './composer-score-interaction';
-import { EditCursor, StaffDoc } from '../models/composer.model';
+import { EditCursor, ScoreDoc, StaffDoc } from '../models/composer.model';
 
 const at = (trackIndex: number, barIndex: number, beatIndex: number, stringIndex: number | null = 0): EditCursor =>
   ({ trackIndex, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex, stringIndex });
@@ -52,6 +57,34 @@ describe('staffSlotsOf', () => {
     doc.tracks[0].staves[0].tuning = [];
 
     expect(staffSlotsOf(doc)).toEqual([{ trackIndex: 0, staffIndex: 0, kind: 'notation' }]);
+  });
+});
+
+describe('staffSlotsOfScore', () => {
+  /** A score mapped from `doc`, as the Original state gets one - from alphaTab rather than from a document. */
+  function scoreOf(doc: ScoreDoc): alphaTab.model.Score {
+    TestBed.configureTestingModule({});
+    return TestBed.inject(ScoreDocMapperService).toScore(doc, new alphaTab.Settings());
+  }
+
+  it('answers what staffSlotsOf answers, for a document and the score it maps to', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+
+    expect(staffSlotsOfScore(scoreOf(doc))).toEqual(staffSlotsOf(doc));
+  });
+
+  it('lists only the tracks drawn, keeping each slot tied to the track it came from', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+
+    expect(staffSlotsOfScore(scoreOf(doc), [1])).toEqual([{ trackIndex: 1, staffIndex: 0, kind: 'notation' }]);
+  });
+
+  it('leaves out an index the score does not have', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(staffSlotsOfScore(scoreOf(doc), [0, 7])).toEqual(staffSlotsOf(doc));
   });
 });
 

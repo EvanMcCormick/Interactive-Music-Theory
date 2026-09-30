@@ -22,9 +22,15 @@
 
 .readout,
 .mode,
+.original,
 .over-bars {
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+.original {
+  color: var(--composer-text, #ecf0f1);
+  font-style: italic;
 }
 
 .mode.pen {

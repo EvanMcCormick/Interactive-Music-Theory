@@ -44,6 +44,13 @@ export class ComposerStatusLineComponent implements OnChanges {
   @Input() entryMode: EntryMode = 'select';
   /** The document, for the count of bars over. */
   @Input() doc: ScoreDoc | null = null;
+  /**
+   * Whether the page is showing a `.gp` file as alphaTab read it rather than a composition (`ComposerGpService`).
+   *
+   * Said beside the caret readout and outside the live region: it is a standing fact about the page, not something
+   * that just happened, and announcing it on every render would bury what the region is for.
+   */
+  @Input() viewingOriginal = false;
 
   /** "2 bars over their time signatures", or null when none is. Measured when the document changes, not per check. */
   overBarsLabel: string | null = null;

@@ -14,7 +14,8 @@ import { CommonModule, DOCUMENT } from '@angular/common';
 import { Subject, debounceTime, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
-import { AlphaTabService } from '../../../../services/alpha-tab.service';
+import { ALL_TRACKS, AlphaTabService } from '../../../../services/alpha-tab.service';
+import { ComposerGpService, GpOriginal } from '../../../../services/composer-gp.service';
 import { ComposerService } from '../../../../services/composer.service';
 import {
   StaffSlot,
@@ -36,6 +37,7 @@ import {
   seeksOnPress,
   snappedHoverX,
   staffSlotsOf,
+  staffSlotsOfScore,
   writeSounds
 } from '../../../../services/composer-score-interaction';
 import {
@@ -143,7 +145,9 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   /** Drops the measure when lazy loading attaches or detaches a system. See `observeSurface`. */
   private surfaceObserver: MutationObserver | null = null;
   /** The staves the document draws, for the document they were read from. */
-  private slotsRead: { doc: ScoreDoc; slots: StaffSlot[] } | null = null;
+  private slotsRead: { source: unknown; slots: StaffSlot[] } | null = null;
+  /** The file whose bytes alphaTab was last given, so the Original state loads once rather than on every redraw. */
+  private lastLoadedOriginal: GpOriginal | null = null;
   /** What the hover notehead last drew, by `hoverKeyOf`, or null for none. */
   private hoverKey: string | null = null;
   /** Whether the press under way closed a popover, and so does nothing here. See `pressGuardAfter`. */
@@ -159,6 +163,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     private readonly composer: ComposerService,
     private readonly mapper: ScoreDocMapperService,
     private readonly alphaTabService: AlphaTabService,
+    private readonly gp: ComposerGpService,
     private readonly hitTest: StaffHitTestService,
     private readonly cdr: ChangeDetectorRef,
     private readonly ngZone: NgZone
@@ -183,11 +188,21 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
         }
         this.state = state;
         // Engrave only a document alphaTab has not been given. A selection, a caret move or an entry mode
-        // change redraws what sits over the engraving - otherwise a drag re-engraved the score per beat.
-        if (scoreRedrawOf(this.lastRenderedDoc, state.doc) === 'render') this.renderRequest$.next();
+        // change redraws what sits over the engraving - otherwise a drag re-engraved the score per beat. In
+        // Original the document is not what is drawn, so nothing it does asks for a render.
+        if (!this.gp.isOriginal && scoreRedrawOf(this.lastRenderedDoc, state.doc) === 'render') this.renderRequest$.next();
         else this.drawHighlight();
         this.scheduleCaretUpdate();
         this.cdr.markForCheck();
+      });
+
+    // The file the page is showing, or null in Composition. A change either way re-engraves.
+    this.gp
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(() => {
+        this.slotsRead = null;
+        this.renderRequest$.next();
       });
   }
 
@@ -248,6 +263,23 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       return;
     }
     this.renderPending = false;
+
+    // In Original the file's own bytes are what alphaTab draws, every track, and no document is mapped: the empty
+    // one `ComposerService` holds is not this file. The bytes go in once - a caret move or a selection redraws the
+    // overlay above, as it does in Composition - and the zero-width guard and the ResizeObserver above serve both
+    // states, which the deleted viewer never had.
+    const original = this.gp.original;
+    if (original) {
+      if (this.lastLoadedOriginal !== original) {
+        this.lastLoadedOriginal = original;
+        this.lastRenderedDoc = null;
+        this.alphaTabService.loadBytes(original.bytes, ALL_TRACKS);
+      }
+      this.renderError = null;
+      this.cdr.markForCheck();
+      return;
+    }
+    this.lastLoadedOriginal = null;
     // Recorded before the attempt: a document the mapper cannot draw is not tried again on every caret move.
     this.lastRenderedDoc = this.state.doc;
 
@@ -448,10 +480,17 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     return read.systems;
   }
 
-  /** The staves `doc` draws (`staffSlotsOf`), read once per document. */
+  /**
+   * The staves drawn, read once per source: the document's (`staffSlotsOf`), or - in Original, where there is no
+   * document behind what alphaTab drew - the file's (`staffSlotsOfScore`).
+   */
   private slots(doc: ScoreDoc): StaffSlot[] {
+    const original = this.gp.original;
+    const source: unknown = original ? original.score : doc;
     let read = this.slotsRead;
-    if (!read || read.doc !== doc) read = this.slotsRead = { doc, slots: staffSlotsOf(doc) };
+    if (!read || read.source !== source) {
+      read = this.slotsRead = { source, slots: original ? staffSlotsOfScore(original.score) : staffSlotsOf(doc) };
+    }
     return read.slots;
   }
 

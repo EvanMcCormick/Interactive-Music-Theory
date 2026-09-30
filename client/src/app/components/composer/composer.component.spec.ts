@@ -1,4 +1,5 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
+import * as alphaTab from '@coderline/alphatab';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 
@@ -10,6 +11,7 @@ import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerExportService } from '../../services/composer-export.service';
 import { ComposerLibraryService } from '../../services/composer-library.service';
+import { ComposerGpService } from '../../services/composer-gp.service';
 import { ComposerService } from '../../services/composer.service';
 import { KEY_PLATFORM } from '../../services/composer-key-platform';
 import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
@@ -653,5 +655,97 @@ describe('stripHeightRangeOf and clampedStripHeight', () => {
   it('leaves the score the minimum it is given, which follows the root font size', () => {
     // At a 20px root font the score's 10rem is 200.
     expect(stripHeightRangeOf(700, 140, 200)).toEqual({ min: 72, max: 360 });
+  });
+});
+
+/**
+ * The page while it is showing a `.gp` file as alphaTab read it (`ComposerGpService`).
+ *
+ * The palette, the keys and the popovers stay live - the first command that would change the document asks, which is
+ * Phase 4 - and what changes here is what the page can honestly show: there is no document to undo, to set a BPM on,
+ * or to rename.
+ */
+describe('ComposerComponent in the Original state', () => {
+  let fixture: ComponentFixture<ComposerComponent>;
+  let gp: ComposerGpService;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({ imports: [ComposerComponent] })
+      .overrideComponent(ComposerComponent, {
+        remove: { imports: [ComposerScoreComponent, ComposerLibraryPanelComponent] },
+        add: { imports: [StubScoreComponent, StubLibraryPanelComponent] }
+      })
+      .compileComponents();
+
+    gp = TestBed.inject(ComposerGpService);
+    fixture = TestBed.createComponent(ComposerComponent);
+    fixture.detectChanges();
+  });
+
+  /**
+   * Opens a file in the Original state and settles the page.
+   *
+   * `whenStable` because `ngModel` writes its value and its disabled state in a microtask, so the title and the BPM
+   * field are still the composition's immediately after `detectChanges`.
+   */
+  async function openFile(title: string, tempo: number): Promise<void> {
+    const score = new alphaTab.model.Score();
+    score.title = title;
+    const masterBar = new alphaTab.model.MasterBar();
+    masterBar.tempoAutomations.push(alphaTab.model.Automation.buildTempoAutomation(false, 0, tempo, 60));
+    score.addMasterBar(masterBar);
+    gp.open({ entryId: 'entry-1', fileName: `${title}.gp`, bytes: new ArrayBuffer(4), score });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+  }
+
+  const titleInput = (): HTMLInputElement => fixture.nativeElement.querySelector('.title-input');
+  const tempoInput = (): HTMLInputElement => fixture.nativeElement.querySelector('.tempo-field input');
+  const textButton = (label: string): HTMLButtonElement => {
+    const host = fixture.nativeElement as HTMLElement;
+    const buttons = Array.from(host.querySelectorAll<HTMLButtonElement>('.text-btn'));
+    return buttons.find(button => button.textContent?.trim() === label)!;
+  };
+
+  it('says it is viewing the original file', async () => {
+    expect(fixture.nativeElement.querySelector('.original')).toBeNull();
+
+    await openFile('Band', 132);
+
+    expect(fixture.nativeElement.querySelector('.original')?.textContent?.trim()).toBe('Viewing the original file');
+  });
+
+  it("shows the file's title, read only", async () => {
+    await openFile('Band', 132);
+
+    expect(titleInput().value).toBe('Band');
+    expect(titleInput().readOnly).toBe(true);
+  });
+
+  it("shows the file's tempo, in a field that cannot be typed into", async () => {
+    await openFile('Band', 132);
+
+    expect(tempoInput().value).toBe('132');
+    expect(tempoInput().disabled).toBe(true);
+  });
+
+  it('disables Undo and Redo: there is no history until there is a document', async () => {
+    await openFile('Band', 132);
+
+    expect(textButton('Undo').disabled).toBe(true);
+    expect(textButton('Redo').disabled).toBe(true);
+  });
+
+  it('gives the title and the BPM back once the file is gone', async () => {
+    await openFile('Band', 132);
+    gp.clear();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(titleInput().readOnly).toBe(false);
+    expect(tempoInput().disabled).toBe(false);
+    expect(fixture.nativeElement.querySelector('.original')).toBeNull();
   });
 });

@@ -25,6 +25,7 @@ import { AlphaTabState } from '../../models/alpha-tab.model';
 import { ComposerState, ScoreDoc, TexDiagnostic } from '../../models/composer.model';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
+import { ComposerGpService, GpOriginal } from '../../services/composer-gp.service';
 import { ComposerService } from '../../services/composer.service';
 import { FretDigitEntry } from '../../services/composer-fret-entry';
 import { ComposerKeyHandler } from '../../services/composer-key-handler';
@@ -128,6 +129,14 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   state: ComposerState | null = null;
   playerState: AlphaTabState | null = null;
+  /**
+   * The `.gp` file the page is showing, or null in Composition (`ComposerGpService`).
+   *
+   * What it changes about the page is what the page can honestly show: there is no document to undo, to set a BPM
+   * on, or to rename, so those controls read the file and take no input. The palette, the keys and the popovers
+   * stay live - the first command that would change the document asks instead.
+   */
+  original: GpOriginal | null = null;
 
   texDraft = '';
   texDiagnostics: TexDiagnostic[] = [];
@@ -173,6 +182,23 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   /** Set once the page is destroyed, so a fit waiting on a microtask does not draw into a destroyed view. */
   private destroyed = false;
 
+  /** Whether the page is showing a `.gp` file as alphaTab read it. */
+  get viewingOriginal(): boolean {
+    return this.original !== null;
+  }
+
+  /** The title shown: the composition's, or the file's own - its score title, or its file name where it has none. */
+  get titleText(): string {
+    if (this.original) return this.original.score.title || this.original.fileName;
+    return this.state?.doc.title ?? '';
+  }
+
+  /** The BPM shown beside the transport: the composition's, or the file's own. */
+  get tempoValue(): number {
+    if (this.original) return this.original.score.tempo;
+    return this.state?.doc.tempo ?? 120;
+  }
+
   /** Undo's and Redo's tooltips, with the keys the platform's keyboard writes: Ctrl+Z, or ⌘+Z on a Mac. */
   readonly undoTitle: string = shortcutTitleOf('undo', inject(KEY_PLATFORM));
   readonly redoTitle: string = shortcutTitleOf('redo', inject(KEY_PLATFORM));
@@ -191,6 +217,7 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     private readonly composer: ComposerService,
     private readonly mapper: ScoreDocMapperService,
     private readonly alphaTabService: AlphaTabService,
+    private readonly gp: ComposerGpService,
     private readonly texService: AlphaTexService,
     private readonly saveRequests: ComposerSaveRequests,
     private readonly cdr: ChangeDetectorRef
@@ -264,6 +291,14 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
         this.playerState = state;
         // alphaTab events originate outside Angular's zone.
         this.cdr.detectChanges();
+      });
+
+    this.gp
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(original => {
+        this.original = original;
+        this.cdr.markForCheck();
       });
 
     // Save in the Library menu asks the same question Ctrl+S does (`requestSave`).

@@ -10,8 +10,9 @@
       <input
         class="title-input"
         type="text"
-        [ngModel]="s.doc.title"
+        [ngModel]="titleText"
         (ngModelChange)="onTitleChange($event)"
+        [readonly]="viewingOriginal"
         aria-label="Score title"
       />
       <span class="dirty-marker" *ngIf="s.isDirty" title="Unsaved changes">●</span>
@@ -30,9 +31,17 @@
       </button>
       <button class="icon-btn" type="button" (click)="stop()" aria-label="Stop" title="Stop">■</button>
 
+      <!-- In Original it shows the file's tempo and takes no input: the field writes `ScoreDoc.tempo`, and there is no document. -->
       <label class="tempo-field">
         <span>BPM</span>
-        <input type="number" min="20" max="400" [ngModel]="s.doc.tempo" (ngModelChange)="onTempoChange($event)" />
+        <input
+          type="number"
+          min="20"
+          max="400"
+          [ngModel]="tempoValue"
+          (ngModelChange)="onTempoChange($event)"
+          [disabled]="viewingOriginal"
+        />
       </label>
 
       <button class="toggle-btn" type="button" [class.active]="metronomeEnabled" [attr.aria-pressed]="metronomeEnabled" (click)="toggleMetronome()">
@@ -44,8 +53,8 @@
     </div>
 
     <div class="header-actions">
-      <button class="text-btn" type="button" (click)="undo()" [disabled]="!s.canUndo" [title]="undoTitle">Undo</button>
-      <button class="text-btn" type="button" (click)="redo()" [disabled]="!s.canRedo" [title]="redoTitle">Redo</button>
+      <button class="text-btn" type="button" (click)="undo()" [disabled]="!s.canUndo || viewingOriginal" [title]="undoTitle">Undo</button>
+      <button class="text-btn" type="button" (click)="redo()" [disabled]="!s.canRedo || viewingOriginal" [title]="redoTitle">Redo</button>
       <button class="text-btn" type="button" (click)="newScore()" title="Start a new score">New</button>
       <button class="text-btn" type="button" [class.active]="showTexPanel" [attr.aria-pressed]="showTexPanel" (click)="toggleTexPanel()">
         alphaTex
@@ -115,6 +124,7 @@
     [cursor]="s.cursor"
     [entryMode]="s.entryMode"
     [doc]="s.doc"
+    [viewingOriginal]="viewingOriginal"
   ></app-composer-status-line>
 
   <!-- Its range is the one the strip is clamped to (`stripRange`), measured from the page as it is laid out. -->

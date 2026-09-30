@@ -28,6 +28,21 @@ describe('ComposerStatusLineComponent', () => {
     expect(region().textContent?.trim()).toBe('');
   });
 
+  it('says nothing about a file in Composition', () => {
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.original')).toBeNull();
+  });
+
+  it('says it is showing the original file, beside the caret readout and outside the live region', () => {
+    fixture.componentRef.setInput('cursor', createDefaultCursor());
+    fixture.componentRef.setInput('viewingOriginal', true);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.original')?.textContent?.trim()).toBe('Viewing the original file');
+    expect(region().textContent?.trim()).toBe('');
+  });
+
   it('says why the last press did nothing', () => {
     fixture.componentRef.setInput('refusal', 'There is no note there to change.');
     fixture.detectChanges();
