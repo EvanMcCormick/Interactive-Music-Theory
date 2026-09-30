@@ -83,6 +83,14 @@ export class ComposerExportService {
     );
   }
 
+  /**
+   * Hands the bytes of a `.gp` file back as they came, under `fileName`: the conversion prompt's "Save the original file
+   * first", the only copy of them there will be once Convert has dropped them.
+   */
+  downloadOriginal(bytes: ArrayBuffer, fileName: string): void {
+    this.downloadBlob(new Blob([bytes], { type: 'application/octet-stream' }), fileName);
+  }
+
   /** Turns a score title into a safe file name. */
   toFileName(title: string): string {
     const illegal = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*']);

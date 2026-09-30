@@ -1,7 +1,10 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { ComposerTrackStripComponent } from './composer-track-strip.component';
+import * as alphaTab from '@coderline/alphatab';
+
 import { ComposerService } from '../../../../services/composer.service';
+import { ComposerGpService } from '../../../../services/composer-gp.service';
 import { ProgressionService } from '../../../../services/progression.service';
 import { TrackDoc } from '../../../../models/composer.model';
 
@@ -663,5 +666,16 @@ describe('ComposerTrackStripComponent', () => {
     expect(visible).toBe('Add progression track');
     expect(add.getAttribute('aria-label')).toContain(visible);
     expect(add.getAttribute('aria-label')).toMatch(/^Add progression track\b/);
+  });
+
+  it('asks the conversion prompt before adding a track to a file not yet converted', () => {
+    const gp = TestBed.inject(ComposerGpService);
+    gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score() });
+    const tracks = composer.doc.tracks.length;
+
+    component.addTrack();
+
+    expect(composer.doc.tracks.length).toBe(tracks);
+    expect(gp.request?.label).toBe('Add track');
   });
 });

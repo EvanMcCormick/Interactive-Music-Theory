@@ -661,13 +661,14 @@ describe('stripHeightRangeOf and clampedStripHeight', () => {
 /**
  * The page while it is showing a `.gp` file as alphaTab read it (`ComposerGpService`).
  *
- * The palette, the keys and the popovers stay live - the first command that would change the document asks, which is
- * Phase 4 - and what changes here is what the page can honestly show: there is no document to undo, to set a BPM on,
- * or to rename.
+ * The palette, the keys and the popovers stay live, and the first command that would change the document asks - the
+ * conversion prompt - and what changes about the rest is what the page can honestly show: there is no document to undo,
+ * to set a BPM on, or to rename.
  */
 describe('ComposerComponent in the Original state', () => {
   let fixture: ComponentFixture<ComposerComponent>;
   let gp: ComposerGpService;
+  let composer: ComposerService;
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({ imports: [ComposerComponent] })
@@ -678,6 +679,7 @@ describe('ComposerComponent in the Original state', () => {
       .compileComponents();
 
     gp = TestBed.inject(ComposerGpService);
+    composer = TestBed.inject(ComposerService);
     fixture = TestBed.createComponent(ComposerComponent);
     fixture.detectChanges();
   });
@@ -741,6 +743,137 @@ describe('ComposerComponent in the Original state', () => {
     await openFile('Band', 132);
 
     expect(fixture.nativeElement.querySelector('.readout')?.textContent).toContain('of 1');
+  });
+
+  const prompt = (): HTMLElement => fixture.nativeElement.querySelector('app-composer-convert-prompt .prompt');
+  const promptOpen = (): boolean => prompt().classList.contains('open');
+  const promptButton = (label: string): HTMLButtonElement =>
+    Array.from(prompt().querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.trim() === label)!;
+
+  function press(init: KeyboardEventInit): void {
+    document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
+    fixture.detectChanges();
+  }
+
+  it('asks before a palette press that would change the document, naming it, and changes nothing yet', async () => {
+    await openFile('Band', 132);
+    const before = composer.doc;
+
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-tool="hammerOn"]')!.click();
+    fixture.detectChanges();
+
+    expect(promptOpen()).toBeTrue();
+    expect(prompt().querySelector('h2')?.textContent?.trim()).toBe('Hammer-on / pull-off would convert this file.');
+    expect(prompt().textContent).toContain('Converting cannot be undone.');
+    expect(composer.doc).toBe(before);
+    expect(fixture.nativeElement.querySelector('.palette').hasAttribute('inert')).toBeTrue();
+  });
+
+  it('asks before an editing key the same way, and not before a caret move', async () => {
+    await openFile('Band', 132);
+
+    press({ key: 'ArrowRight' });
+    expect(promptOpen()).toBeFalse();
+    expect(composer.state.cursor.beatIndex).toBe(1);
+
+    press({ key: 'Delete' });
+    expect(promptOpen()).toBeTrue();
+  });
+
+  it('changes nothing on Cancel, and says nothing: the prompt was the message', async () => {
+    await openFile('Band', 132);
+    const before = composer.state;
+    press({ key: 'h' });
+
+    promptButton('Cancel').click();
+    fixture.detectChanges();
+
+    expect(promptOpen()).toBeFalse();
+    expect(composer.state).toBe(before);
+    expect(composer.state.refusal).toBeNull();
+    expect(gp.isOriginal).toBeTrue();
+  });
+
+  it('cancels on Escape', async () => {
+    await openFile('Band', 132);
+    press({ key: 'h' });
+
+    press({ key: 'Escape' });
+
+    expect(promptOpen()).toBeFalse();
+    expect(gp.request).toBeNull();
+  });
+
+  it('asks before a save: the library holds compositions, and the file is not one yet', async () => {
+    await openFile('Band', 132);
+    let saves = 0;
+    TestBed.inject(ComposerSaveRequests).requested$.subscribe(() => saves++);
+
+    press({ code: 'KeyS', key: 's', ctrlKey: true });
+
+    expect(promptOpen()).toBeTrue();
+    expect(prompt().querySelector('h2')?.textContent?.trim()).toBe('Save would convert this file.');
+    expect(saves).toBe(0);
+  });
+
+  it('says a file that converts whole would change nothing', async () => {
+    await openFile('Band', 132);
+    press({ key: 'h' });
+
+    expect(prompt().querySelector('.whole')?.textContent?.trim()).toBe('Nothing in this file would change.');
+  });
+
+  it('lists what this file would lose, and what its first save would, under their own headings', async () => {
+    const score = new alphaTab.model.Score();
+    score.copyright = '2026';
+    const masterBar = new alphaTab.model.MasterBar();
+    masterBar.isDoubleBar = true;
+    score.addMasterBar(masterBar);
+    gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
+    fixture.detectChanges();
+    press({ key: 'h' });
+
+    const sections = Array.from(prompt().querySelectorAll<HTMLElement>('.loss'));
+    expect(sections.map(section => section.querySelector('h3')?.textContent?.trim())).toEqual([
+      'What this file would lose',
+      'What the first save would lose'
+    ]);
+    expect(sections[0].textContent).toContain('Credits');
+    expect(sections[1].textContent).toContain('Double bar lines');
+  });
+
+  it('saves the untouched original under its own name, and stays open to convert after', async () => {
+    await openFile('Band', 132);
+    const download = spyOn(TestBed.inject(ComposerExportService), 'downloadOriginal');
+    press({ key: 'h' });
+
+    promptButton('Save the original file first').click();
+    fixture.detectChanges();
+
+    expect(download).toHaveBeenCalledWith(gp.original!.bytes, 'Band.gp');
+    expect(promptOpen()).toBeTrue();
+  });
+
+  it('offers Convert disabled, saying why, until converting is wired', async () => {
+    await openFile('Band', 132);
+    press({ key: 'h' });
+
+    expect(promptButton('Convert').disabled).toBeTrue();
+    expect(prompt().querySelector('.convert-refusal')?.textContent?.trim()).toBe('Converting is not available yet.');
+  });
+
+  it("shows the file's own alphaTex, and asks before applying it", async () => {
+    await openFile('Band', 132);
+    const host = fixture.nativeElement as HTMLElement;
+    const texButton = Array.from(host.querySelectorAll<HTMLButtonElement>('.text-btn')).find(button => button.textContent?.trim() === 'alphaTex')!;
+    texButton.click();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.texDraft).toBe(TestBed.inject(AlphaTexService).export(gp.original!.score));
+
+    fixture.componentInstance.applyTex();
+    fixture.detectChanges();
+    expect(prompt().querySelector('h2')?.textContent?.trim()).toBe('Applying the alphaTex draft would convert this file.');
   });
 
   it('gives the title and the BPM back once the file is gone', async () => {

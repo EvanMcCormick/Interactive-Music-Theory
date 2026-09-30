@@ -15,6 +15,7 @@ import { FormsModule } from '@angular/forms';
 import { Subject, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
+import { ComposerConvertPromptComponent } from './components/composer-convert-prompt/composer-convert-prompt.component';
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
 import { ComposerPaletteComponent } from './components/composer-palette/composer-palette.component';
 import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
@@ -25,7 +26,9 @@ import { AlphaTabState } from '../../models/alpha-tab.model';
 import { ComposerState, ScoreDoc, TexDiagnostic } from '../../models/composer.model';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
-import { ComposerGpService, GpOriginal } from '../../services/composer-gp.service';
+import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
+import { ComposerExportService } from '../../services/composer-export.service';
+import { ComposerGpService, EditRequest, GpOriginal } from '../../services/composer-gp.service';
 import { ComposerService } from '../../services/composer.service';
 import { FretDigitEntry } from '../../services/composer-fret-entry';
 import { ComposerKeyHandler } from '../../services/composer-key-handler';
@@ -89,6 +92,7 @@ export function clampedStripHeight(height: number, range: StripHeightRange): num
   imports: [
     CommonModule,
     FormsModule,
+    ComposerConvertPromptComponent,
     ComposerLibraryPanelComponent,
     ComposerPaletteComponent,
     ComposerScoreComponent,
@@ -137,6 +141,10 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
    * stay live - the first command that would change the document asks instead.
    */
   original: GpOriginal | null = null;
+  /** The command waiting on the conversion prompt, which is open while there is one (`ComposerGpService.requestEdit`). */
+  editRequest: EditRequest | null = null;
+  /** Why the prompt's Convert cannot run yet: the conversion itself is the milestone's next step. */
+  readonly convertRefusal: string | null = 'Converting is not available yet.';
 
   texDraft = '';
   texDiagnostics: TexDiagnostic[] = [];
@@ -187,6 +195,14 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     return this.original !== null;
   }
 
+  /**
+   * Whether a modal is open over the page - the shortcut sheet, or the conversion prompt - so the rest of the page is
+   * `inert` and the keys reach only what a modal takes (`ComposerKeyHandler`).
+   */
+  get modalOpen(): boolean {
+    return this.sheetOpen || this.editRequest !== null;
+  }
+
   /** The title shown: the composition's, or the file's own - its score title, or its file name where it has none. */
   get titleText(): string {
     if (this.original) return this.original.score.title || this.original.fileName;
@@ -210,6 +226,11 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   /** What every tool runs against. */
   readonly host: ComposerToolHost;
+  /**
+   * `COMPOSER_TOOLS`, each asking `ComposerGpService.requestEdit` before it runs, so in Original the first that would change
+   * the document opens the conversion prompt instead - from the palette and the keys alike.
+   */
+  private readonly gatedTools: readonly ComposerTool[];
 
   private readonly keyHandler: ComposerKeyHandler;
   private readonly fretEntry: FretDigitEntry;
@@ -225,6 +246,7 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     private readonly gp: ComposerGpService,
     private readonly texService: AlphaTexService,
     private readonly saveRequests: ComposerSaveRequests,
+    private readonly exporter: ComposerExportService,
     private readonly cdr: ChangeDetectorRef
   ) {
     this.fretEntry = new FretDigitEntry(composer, () => Date.now(), midi =>
@@ -234,11 +256,17 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       composer,
       // A popover's own button, or its key, closes it when it is the one open, as a disclosure button does.
       openPopover: kind => this.present(() => (this.popover = this.popover === kind ? null : kind)),
-      toggleShortcutSheet: () => this.present(() => this.toggleShortcutSheet()),
+      // Not over the conversion prompt: the sheet would open behind a question the page is waiting on.
+      toggleShortcutSheet: () => this.present(() => this.editRequest === null && this.toggleShortcutSheet()),
       escape: () =>
         this.present(() => {
-          // An open popover takes Escape alone - as the popover itself does when it has the focus - and so does the
-          // open shortcut sheet, a modal over the score: the press that closes either does not also drop the range.
+          // The conversion prompt takes Escape as Cancel. An open popover takes Escape alone - as the popover itself does
+          // when it has the focus - and so does the open shortcut sheet, a modal over the score: the press that closes
+          // either does not also drop the range.
+          if (this.editRequest) {
+            this.gp.cancelEdit();
+            return;
+          }
           if (this.popover) {
             this.popover = null;
             return;
@@ -262,15 +290,19 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       addTrack: () => this.strip?.addTrack(),
       typeFretDigit: digit => this.fretEntry.type(digit)
     };
+    this.gatedTools = COMPOSER_TOOLS.map(tool => ({
+      ...tool,
+      run: (host, press) => this.gp.requestEdit(tool.id, tool.label, () => tool.run(host, press))
+    }));
     // The score's element, so a text selection inside the score does not stop Ctrl+C and Ctrl+X copying beats.
-    // And the sheet's state: while it is open, only its own key and Escape reach the tools, so no key edits the score
-    // hidden behind it (`TOOLS_OVER_A_MODAL`), and a Ctrl, Alt or Cmd press is claimed and dropped, so the browser's own
-    // shortcuts do not act behind it either.
+    // And whether a modal is open: while one is, only the sheet's key and Escape reach the tools, so no key edits the
+    // score hidden behind it (`TOOLS_OVER_A_MODAL`), and a Ctrl, Alt or Cmd press is claimed and dropped, so the
+    // browser's own shortcuts do not act behind it either.
     this.keyHandler = new ComposerKeyHandler(
       this.host,
-      COMPOSER_TOOLS,
+      this.gatedTools,
       () => this.scoreElement?.nativeElement ?? null,
-      () => this.sheetOpen
+      () => this.modalOpen
     );
   }
 
@@ -306,8 +338,19 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
         this.cdr.markForCheck();
       });
 
-    // Save in the Library menu asks the same question Ctrl+S does (`requestSave`).
-    this.removeSaveGuard = this.saveRequests.guard(() => this.refusesSaveForDraft());
+    this.gp
+      .getRequest()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(request => {
+        this.editRequest = request;
+        // A popover left open would sit in the top layer above the prompt, inside a palette gone inert.
+        if (request) this.popover = null;
+        this.cdr.markForCheck();
+      });
+
+    // Save in the Library menu asks the same questions Ctrl+S does (`requestSave`): the draft's, and in Original the
+    // conversion prompt's, since the library holds compositions and a file not yet converted has none to write.
+    this.removeSaveGuard = this.saveRequests.guard(() => this.refusesSaveForDraft() || this.asksBeforeSaving());
     // An edited draft is unsaved work that a load, New or an opened transcription would throw away.
     this.releaseUnsavedDraft = this.composer.holdUnsavedWork(() => this.showTexPanel && this.texDraftEdited);
   }
@@ -359,9 +402,25 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     return COMPOSER_TOOLS.some(tool => tool.id === id && tool.repeatable === true);
   }
 
-  /** A palette press runs the same tool, against the same host, as its key. */
+  /** A palette press runs the same tool, against the same host, as its key - asking first in Original, as the key does. */
   runTool(tool: ComposerTool): void {
-    tool.run(this.host, null);
+    this.gp.requestEdit(tool.id, tool.label, () => tool.run(this.host, null));
+  }
+
+  /** The prompt's Cancel, its backdrop, and Escape: the command that asked is dropped, and the page says nothing more. */
+  cancelConvert(): void {
+    this.gp.cancelEdit();
+  }
+
+  /** "Save the original file first": the untouched bytes, under the file's own name. The prompt stays open. */
+  saveOriginal(): void {
+    const original = this.original;
+    if (original) this.exporter.downloadOriginal(original.bytes, original.fileName);
+  }
+
+  /** The prompt's Convert. Not wired yet: the button is disabled and says so (`convertRefusal`). */
+  convert(): void {
+    return;
   }
 
   closePopover(): void {
@@ -547,8 +606,12 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     this.texApplyError = null;
   }
 
-  /** Canonical alphaTex for the current document, generated on demand. */
+  /**
+   * Canonical alphaTex for the current document, generated on demand - or, in Original, alphaTab's own alphaTex for the
+   * file, which has no document behind it (design Part 1). Applying a draft of it asks, as any edit does.
+   */
   private currentTex(): string {
+    if (this.original) return this.texService.export(this.original.score);
     if (!this.state) return '';
     try {
       const score = this.mapper.toScore(this.state.doc, new alphaTab.Settings());
@@ -574,11 +637,33 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   /**
+   * In Original, refuses the save and asks the conversion prompt instead, with the save as the command waiting on it:
+   * once converted, the save runs again and finds a composition to write.
+   */
+  private asksBeforeSaving(): boolean {
+    if (!this.viewingOriginal) return false;
+    this.gp.requestEdit('save', 'Save', () => this.saveRequests.request());
+    return true;
+  }
+
+  /**
+   * Apply: in Original it asks the conversion prompt first, with the draft as typed held for after it. Converting opens a
+   * new composition, which seeds the panel afresh (`discardTexDraft`), so the draft is put back before it is applied.
+   */
+  applyTex(): void {
+    const draft = this.texDraft;
+    this.gp.requestEdit(ASKING_PAGE_COMMANDS.texApply, 'Applying the alphaTex draft', () => {
+      this.texDraft = draft;
+      this.applyTexDraft();
+    });
+  }
+
+  /**
    * Applies the draft as an edit of this composition, on the undo stack (`replaceDocument`). A draft out of date would
    * replace the changes made since it was written, so that is asked - once the draft parses, since a draft that cannot
    * be applied has nothing to ask about.
    */
-  applyTex(): void {
+  private applyTexDraft(): void {
     const result = this.texService.parse(this.texDraft);
     this.texDiagnostics = result.diagnostics;
 

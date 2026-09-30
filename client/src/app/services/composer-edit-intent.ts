@@ -12,11 +12,13 @@
 
 /**
  * The page's own commands, which are not in `COMPOSER_TOOLS` because they are not palette tools or key bindings:
- * applying the alphaTex draft, and choosing a value in a popover, whose button only opens it.
+ * applying the alphaTex draft, choosing a value in a popover, whose button only opens it, and Pen's click on standard
+ * notation, which writes the pitch clicked.
  */
 export const ASKING_PAGE_COMMANDS = {
   texApply: 'page:texApply',
-  popoverValue: 'page:popoverValue'
+  popoverValue: 'page:popoverValue',
+  penWrite: 'page:penWrite'
 } as const;
 
 /**

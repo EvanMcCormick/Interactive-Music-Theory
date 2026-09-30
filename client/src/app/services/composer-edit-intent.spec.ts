@@ -56,8 +56,9 @@ describe('changesDocument', () => {
     for (const id of ['undo', 'redo']) expect(changesDocument(id)).withContext(id).toBe(false);
   });
 
-  it('asks for an applied alphaTex draft, which is not a tool', () => {
+  it('asks for an applied alphaTex draft and a Pen write, which are not tools', () => {
     expect(changesDocument(ASKING_PAGE_COMMANDS.texApply)).toBe(true);
+    expect(changesDocument(ASKING_PAGE_COMMANDS.penWrite)).toBe(true);
   });
 
   it('asks for a command it has never heard of, so a new tool cannot slip through', () => {

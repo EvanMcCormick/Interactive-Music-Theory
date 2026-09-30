@@ -1,0 +1,50 @@
+<!-- Behind the prompt and over the whole window, while it is open: a click beside it cancels, as Escape does. -->
+<div class="prompt-backdrop" [class.open]="open" aria-hidden="true" (click)="cancelled.emit()"></div>
+
+<section
+  #dialog
+  class="prompt"
+  [class.open]="open"
+  role="alertdialog"
+  aria-modal="true"
+  aria-labelledby="composer-convert-prompt-heading"
+  aria-describedby="composer-convert-prompt-undo"
+  [attr.aria-hidden]="!open"
+  (keydown)="trapTab($event)"
+>
+  <h2 #heading id="composer-convert-prompt-heading" tabindex="-1">{{ request?.label }} would convert this file.</h2>
+
+  <p id="composer-convert-prompt-undo" class="undo-note">
+    Converting cannot be undone. The original file is replaced by a composition, and undo starts from there.
+  </p>
+
+  <ng-container *ngIf="conversionLoss.length > 0 || saveLoss.length > 0; else whole">
+    <section class="loss" *ngIf="conversionLoss.length > 0">
+      <h3>What this file would lose</h3>
+      <ul>
+        <li *ngFor="let item of conversionLoss; trackBy: trackById"><span class="label">{{ item.label }}:</span> {{ item.detail }}</li>
+      </ul>
+    </section>
+    <section class="loss" *ngIf="saveLoss.length > 0">
+      <h3>What the first save would lose</h3>
+      <ul>
+        <li *ngFor="let item of saveLoss; trackBy: trackById"><span class="label">{{ item.label }}:</span> {{ item.detail }}</li>
+      </ul>
+    </section>
+  </ng-container>
+  <ng-template #whole><p class="whole">Nothing in this file would change.</p></ng-template>
+
+  <p class="original-note">
+    Save the original file first to keep <strong>{{ original?.fileName }}</strong> as it is: once it is converted, the
+    library holds the composition in its place.
+  </p>
+  <p class="convert-refusal" *ngIf="convertRefusal">{{ convertRefusal }}</p>
+
+  <div class="actions">
+    <button type="button" class="text-btn" (click)="saveOriginal.emit()">Save the original file first</button>
+    <button type="button" class="text-btn primary" [disabled]="convertRefusal !== null" [attr.title]="convertRefusal" (click)="convert.emit()">
+      Convert
+    </button>
+    <button type="button" class="text-btn" (click)="cancelled.emit()">Cancel</button>
+  </div>
+</section>

@@ -15,6 +15,7 @@ import { Subject, debounceTime, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
 import { ALL_TRACKS, AlphaTabService } from '../../../../services/alpha-tab.service';
+import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
 import { ComposerGpService, GpOriginal } from '../../../../services/composer-gp.service';
 import { ComposerService } from '../../../../services/composer.service';
 import {
@@ -639,14 +640,25 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     this.clickedHalfSteps = diatonic !== null && bottom !== null ? diatonic - bottom : null;
   }
 
-  /** Writes the note the pointer landed on, for standard notation staves in Pen. */
+  /**
+   * Writes the note the pointer landed on, for standard notation staves in Pen - asking the conversion prompt first in
+   * Original. The pointer's height is read now, for a write that may run only after the prompt's Convert, by which time
+   * the pointer has moved to press it.
+   */
   private placeClickedPitch(lines: StaffLines): void {
-    if (!this.pointer || !this.state) return;
+    if (!this.pointer) return;
+    const y = this.pointer.y;
+    this.gp.requestEdit(ASKING_PAGE_COMMANDS.penWrite, 'Writing a note with Pen', () => this.writePitchAt(lines, y));
+  }
+
+  /** Writes the pitch at height `y` on `lines`, at the caret. */
+  private writePitchAt(lines: StaffLines, y: number): void {
+    if (!this.state) return;
 
     const bar = this.composer.barAt(this.state.doc, this.state.cursor);
     if (!bar) return;
 
-    const diatonic = this.hitTest.diatonicIn(lines, bar.clef, this.pointer.y);
+    const diatonic = this.hitTest.diatonicIn(lines, bar.clef, y);
     if (diatonic === null) return;
 
     const pitch = diatonicToPitch(diatonic, bar.keySignature, bar.clefOttava);

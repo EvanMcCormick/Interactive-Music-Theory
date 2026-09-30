@@ -1,0 +1,117 @@
+// The conversion prompt: a modal over the page, hidden with CSS while closed, over a backdrop that covers the window.
+// Above the shortcut sheet's layers, since a command can ask while nothing else is open and the two are never open together.
+
+.prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 959;
+  display: none;
+  background-color: rgba(0, 0, 0, 0.45);
+
+  &.open {
+    display: block;
+  }
+}
+
+.prompt {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  z-index: 960;
+  display: none;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: min(34rem, calc(100vw - 2rem));
+  max-height: 76vh;
+  overflow-y: auto;
+  padding: 1rem 1.25rem;
+  transform: translateX(-50%);
+  background-color: var(--composer-nav, #2c3e50);
+  color: var(--composer-text, #ecf0f1);
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+
+  &.open {
+    display: flex;
+  }
+
+  h2 {
+    margin: 0;
+    font-size: 1rem;
+
+    // Focused by the prompt on opening, never by Tab: no ring for a focus the user did not move.
+    &:focus {
+      outline: none;
+    }
+  }
+
+  p {
+    margin: 0;
+    font-size: 0.85rem;
+  }
+}
+
+.undo-note {
+  font-weight: 600;
+}
+
+.loss {
+  h3 {
+    margin: 0 0 0.3rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--composer-text-secondary, #bdc3c7);
+  }
+
+  ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.82rem;
+  }
+
+  .label {
+    font-weight: 600;
+  }
+}
+
+.original-note,
+.convert-refusal {
+  color: var(--composer-text-secondary, #bdc3c7);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.text-btn {
+  padding: 0.35rem 0.75rem;
+  background: none;
+  border: 1px solid var(--composer-border, #465666);
+  border-radius: 4px;
+  color: var(--composer-text, #ecf0f1);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background-color: var(--composer-nav-hover, #34495e);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &.primary {
+    border-color: var(--composer-accent, #3498db);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--composer-accent, #3498db);
+    outline-offset: 1px;
+  }
+}

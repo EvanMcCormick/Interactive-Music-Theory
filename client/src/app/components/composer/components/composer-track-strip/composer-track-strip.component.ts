@@ -6,6 +6,7 @@ import { Subject, takeUntil } from 'rxjs';
 import { ComposerState, TrackDoc } from '../../../../models/composer.model';
 import { ProgressionState } from '../../../../models/progression.model';
 import { ComposerService } from '../../../../services/composer.service';
+import { ComposerGpService } from '../../../../services/composer-gp.service';
 import { LAST_TRACK_REFUSAL } from '../../../../services/composer-text';
 import { ProgressionService } from '../../../../services/progression.service';
 import {
@@ -85,6 +86,7 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
   constructor(
     private readonly composer: ComposerService,
     private readonly progression: ProgressionService,
+    private readonly gp: ComposerGpService,
     private readonly cdr: ChangeDetectorRef
   ) {}
 
@@ -122,10 +124,14 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
     this.destroy$.complete();
   }
 
-  /** Adds a track of the chosen instrument. The keyboard's Ctrl+Shift+Insert comes here too. */
+  /**
+   * Adds a track of the chosen instrument - asking the conversion prompt first in Original, as the `addTrack` tool does.
+   * The keyboard's Ctrl+Shift+Insert comes here too, already past that question, and asking twice is asking once: the
+   * gate runs a command straight through outside Original.
+   */
   addTrack(): void {
     const instrument = this.newTrackInstrument;
-    this.composer.addTrack(instrument.name, instrument.program, instrument.fretted);
+    this.gp.requestEdit('addTrack', 'Add track', () => this.composer.addTrack(instrument.name, instrument.program, instrument.fretted));
   }
 
   /** Removes a track. The last one is refused by the service, which says why; its button says so before the press. */
