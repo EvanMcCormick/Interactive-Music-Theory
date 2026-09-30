@@ -63,6 +63,10 @@ module.exports = function (config) {
       // launcher that existed only to be safe. `--no-sandbox` is already in
       // the launcher above, which is what containers need it for.
     },
+    // The detector specs block the main thread for several seconds under SwiftShader, and karma's 2 s default
+    // ping timeout then calls the browser disconnected mid-run. Raised so a whole-suite run is not a coin toss.
+    pingTimeout: 60000,
+    browserNoActivityTimeout: 120000,
     restartOnFileChange: true
   });
 };
