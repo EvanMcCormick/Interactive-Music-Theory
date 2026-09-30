@@ -26,7 +26,7 @@ import {
   staffSlotsOfScore,
   writeSounds
 } from './composer-score-interaction';
-import { EditCursor, ScoreDoc, StaffDoc } from '../models/composer.model';
+import { EditCursor, ScoreDoc, StaffDoc, createDefaultNoteEffects } from '../models/composer.model';
 
 const at = (trackIndex: number, barIndex: number, beatIndex: number, stringIndex: number | null = 0): EditCursor =>
   ({ trackIndex, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex, stringIndex });
@@ -194,6 +194,18 @@ describe('differsOnlyInMixer', () => {
     expect(differsOnlyInMixer(before, withNote)).toBeFalse();
     expect(differsOnlyInMixer(before, retitled)).toBeFalse();
     expect(differsOnlyInMixer(before, structuredClone(before))).toBeFalse();
+  });
+
+  it('is false for a difference deep inside a note beside a mute: a fret moved', () => {
+    const before = twoTracks();
+    before.tracks[0].staves[0].bars[1].voices[0].beats[0].notes = [
+      { pitch: { kind: 'fretted', string: 2, fret: 3 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }
+    ];
+    const after = structuredClone(before);
+    after.tracks[1].playback.isMute = true;
+    after.tracks[0].staves[0].bars[1].voices[0].beats[0].notes[0].pitch = { kind: 'fretted', string: 2, fret: 5 };
+
+    expect(differsOnlyInMixer(before, after)).toBeFalse();
   });
 
   it('is false against no document, and when a track was added or removed', () => {

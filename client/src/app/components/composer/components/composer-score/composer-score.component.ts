@@ -235,11 +235,14 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       });
   }
 
-  /** The strip's rows for what the page is showing: the file's in Original, the document's in Composition. */
+  /**
+   * The strip's rows for what the page is showing: the file's in Original, the document's in Composition - the document
+   * `ComposerService` holds now, not `state`, which lags it while the track view, which hears the composer first, is
+   * already answering a new one (`keptHiddenOf`).
+   */
   private trackRows(): TrackRow[] {
     const original = this.gp.original;
-    if (original) return trackRowsOf(original.score, this.trackView);
-    return this.state ? trackRowsOf(this.state.doc, this.trackView) : [];
+    return trackRowsOf(original ? original.score : this.composer.state.doc, this.trackView);
   }
 
   /**
@@ -252,7 +255,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     this.slotsRead = null;
     const shown = renderedTracksOf(this.trackRows());
     if (!this.gp.isOriginal) {
-      if (this.state && this.lastRenderedDoc === this.state.doc && this.renderError === null) this.alphaTabService.renderTracks(shown);
+      if (this.lastRenderedDoc === this.composer.state.doc && this.renderError === null) this.alphaTabService.renderTracks(shown);
       else this.renderRequest$.next();
       return;
     }

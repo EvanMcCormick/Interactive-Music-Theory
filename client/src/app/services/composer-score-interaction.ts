@@ -1,7 +1,6 @@
 import type * as alphaTab from '@coderline/alphatab';
 
 import { ClefKind, ComposerState, EditCursor, EntryMode, ScoreDoc } from '../models/composer.model';
-import { canonicalJsonOf } from './beat-edits';
 import { BeatRef, selectionTargets } from './composer-selection';
 import { bottomLineDiatonic } from './staff-pitch';
 
@@ -152,13 +151,14 @@ export function seeksOnPress(press: ScorePress, playing: boolean): boolean {
 
 /**
  * What a state change redraws: `'render'` - engrave the score again - when `doc` is not the document last
- * engraved, and `'overlay'` - the highlight and the caret, drawn over the engraving - otherwise. By identity,
- * since `ComposerService` replaces the document on every edit and never mutates a published one: a
+ * engraved, and `'overlay'` - the highlight and the caret, drawn over the engraving - otherwise. By identity
+ * first, since `ComposerService` replaces the document on every edit and never mutates a published one: a
  * selection, a caret move or an entry mode change keeps the same document.
  *
- * And `'overlay'` for a document that differs from the one engraved only in its mixer (`differsOnlyInMixer`): the
- * engraving is the same, and a render reloads the MIDI, which stops the player and rewinds it to bar 1 - so a mute or a
- * solo pressed during playback would stop it. The player takes a mute and a solo from `setTrackPlayback` instead.
+ * Then by content, for a document that differs from the one engraved only in its mixer (`differsOnlyInMixer`), which is
+ * `'overlay'` too: the engraving is the same, and a render reloads the MIDI, which stops the player and rewinds it to
+ * bar 1 - so a mute or a solo pressed during playback would stop it. The player takes a mute and a solo from
+ * `setTrackPlayback` instead.
  */
 export function scoreRedrawOf(lastRenderedDoc: ScoreDoc | null, doc: ScoreDoc): 'render' | 'overlay' {
   return doc === lastRenderedDoc || differsOnlyInMixer(lastRenderedDoc, doc) ? 'overlay' : 'render';
@@ -168,7 +168,8 @@ export function scoreRedrawOf(lastRenderedDoc: ScoreDoc | null, doc: ScoreDoc): 
  * Whether `after` differs from `before` in its tracks' mute and solo (`PlaybackInfoDoc.isMute`, `isSolo`) and in nothing
  * else: fields alphaTab's player never reads from a score - only `changeTrackMute` and `changeTrackSolo` reach it. By
  * content, since every commit clones the document. A change with no mute or solo in it is answered before the documents
- * are compared whole, so an ordinary edit pays for one pass over the tracks.
+ * are compared, so an ordinary edit pays for one pass over the tracks; the comparison itself walks both documents and
+ * stops at the first difference, rather than copying or serialising either - a press of M on a large score is one walk.
  */
 export function differsOnlyInMixer(before: ScoreDoc | null, after: ScoreDoc): boolean {
   if (!before || before.tracks.length !== after.tracks.length) return false;
@@ -176,15 +177,38 @@ export function differsOnlyInMixer(before: ScoreDoc | null, after: ScoreDoc): bo
     (track, index) =>
       track.playback.isMute !== before.tracks[index].playback.isMute || track.playback.isSolo !== before.tracks[index].playback.isSolo
   );
-  if (!mixerMoved) return false;
-  const withMixerOfBefore: ScoreDoc = {
-    ...after,
-    tracks: after.tracks.map((track, index) => ({
-      ...track,
-      playback: { ...track.playback, isMute: before.tracks[index].playback.isMute, isSolo: before.tracks[index].playback.isSolo }
-    }))
-  };
-  return canonicalJsonOf(withMixerOfBefore) === canonicalJsonOf(before);
+  return (
+    mixerMoved &&
+    sameFieldsBut(before, after, 'tracks') &&
+    before.tracks.every(
+      (track, index) =>
+        sameFieldsBut(track, after.tracks[index], 'playback') && sameFieldsBut(track.playback, after.tracks[index].playback, 'isMute', 'isSolo')
+    )
+  );
+}
+
+/** Whether `a` and `b` hold the same fields with the same data, but for the fields `skipped`. */
+function sameFieldsBut(a: object, b: object, ...skipped: string[]): boolean {
+  const fields = (value: object): string[] => Object.keys(value).filter(key => !skipped.includes(key));
+  const fieldsOfA = fields(a);
+  return fieldsOfA.length === fields(b).length && fieldsOfA.every(key => Object.hasOwn(b, key) && sameData(fieldOf(a, key), fieldOf(b, key)));
+}
+
+/**
+ * Whether two pieces of a document are the same data: primitives equal, arrays alike item by item, objects alike field by
+ * field whatever order the fields were written in. Stops at the first difference.
+ */
+function sameData(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, index) => sameData(item, b[index]));
+  }
+  return sameFieldsBut(a, b);
+}
+
+function fieldOf(value: object, key: string): unknown {
+  return (value as Record<string, unknown>)[key];
 }
 
 /**
@@ -292,7 +316,8 @@ export function sameCaret(a: EditCursor, b: EditCursor): boolean {
 /**
  * Whether a Pen click's note is sounded: only when the write changed the document. A refused write - a full
  * bar, a tuplet it would break - publishes its reason and keeps the document, and a note that was not written
- * must not be heard. By identity, as `scoreRedrawOf` is.
+ * must not be heard. By identity alone, as `scoreRedrawOf` is first: its comparison by content is for a mixer-only
+ * change, which a Pen write never is.
  */
 export function writeSounds(before: ScoreDoc, after: ScoreDoc): boolean {
   return after !== before;

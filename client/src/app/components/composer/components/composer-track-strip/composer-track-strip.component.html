@@ -105,7 +105,7 @@
           class="track-remove"
           (click)="removeTrack(i); $event.stopPropagation()"
           [attr.aria-disabled]="s.doc.tracks.length <= 1 ? 'true' : null"
-          [attr.aria-label]="removeLabel(track, s.doc.tracks.length)"
+          [attr.aria-label]="removeLabel(row, s.doc.tracks.length)"
           [title]="removeTitle(s.doc.tracks.length)"
         >×</button>
       </ng-container>

@@ -244,6 +244,11 @@ describe('GpConversionService', () => {
 
       expect(shown()).toEqual([false, true, true]);
       expect(composer.state.cursor.trackIndex).toBe(1);
+      const firstBeat = (trackIndex: number) => composer.doc.tracks[trackIndex].staves[0].bars[0].voices[0].beats[0];
+      expect(firstBeat(1).isRest).withContext('the edit, on the track shown').toBeTrue();
+      expect(firstBeat(0).isRest).withContext('the hidden track, as the file had it').toBeFalse();
+      composer.undo();
+      expect(firstBeat(1).isRest).withContext('before the edit').toBeFalse();
     });
   });
 });

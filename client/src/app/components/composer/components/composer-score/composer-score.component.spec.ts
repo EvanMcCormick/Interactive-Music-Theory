@@ -248,6 +248,23 @@ describe('ComposerScoreComponent and the track strip', () => {
     settle();
   }));
 
+  it('engraves the document a Remove leaves rather than drawing the old score with its rows', fakeAsync(() => {
+    // A shown, B hidden: removing A leaves B alone, which the view then shows (`keptHiddenOf`) - before this component
+    // has heard of the Remove, since the view service hears the composer first.
+    openComposition('Piano');
+    views.toggleShown(rows(), 1);
+    create();
+    alphaTabService.renderTracks.calls.reset();
+
+    composer.removeTrack(0);
+    tick(200);
+
+    expect(alphaTabService.renderTracks).not.toHaveBeenCalled();
+    expect(alphaTabService.renderScore).toHaveBeenCalledTimes(2);
+    expect(alphaTabService.renderScore.calls.mostRecent().args[1]).toEqual([0]);
+    settle();
+  }));
+
   it("hands the player each row's mute and solo", fakeAsync(() => {
     openComposition('Piano');
     composer.setPlayback({ isSolo: true }, 0);

@@ -217,9 +217,9 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
     this.composer.removeTrack(index);
   }
 
-  /** Remove's accessible name: the track's, and why it refuses while it is the only track. */
-  removeLabel(track: TrackDoc, trackCount: number): string {
-    return trackCount <= 1 ? `Remove ${track.name}, unavailable: ${LAST_TRACK_REFUSAL}` : `Remove ${track.name}`;
+  /** Remove's accessible name: the row's - "Track 2" for an unnamed track, as the row says - and why it refuses while it is the only track. */
+  removeLabel(row: TrackRow, trackCount: number): string {
+    return trackCount <= 1 ? `Remove ${row.name}, unavailable: ${LAST_TRACK_REFUSAL}` : `Remove ${row.name}`;
   }
 
   removeTitle(trackCount: number): string {

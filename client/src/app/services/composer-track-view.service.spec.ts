@@ -157,6 +157,15 @@ describe('ComposerTrackViewService', () => {
       expect(composer.state.cursor.barIndex).toBe(2);
     });
 
+    it('shows every track again on New', () => {
+      openComposition('Piano');
+      views.toggleShown(rows(), 1);
+
+      composer.reset();
+
+      expect(views.view.hidden.size).toBe(0);
+    });
+
     it('passes over hidden tracks on a keyboard track move', () => {
       openComposition('Piano', 'Bass');
       views.toggleShown(rows(), 1);

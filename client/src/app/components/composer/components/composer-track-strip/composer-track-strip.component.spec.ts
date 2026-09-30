@@ -754,6 +754,16 @@ describe('ComposerTrackStripComponent', () => {
       expect(row(0).classList).not.toContain('selected');
     });
 
+    it('names an unnamed track as its row does on every button, Remove included', () => {
+      const doc = structuredClone(composer.doc);
+      doc.tracks[1].name = '';
+      composer.replaceDocument(doc);
+      fixture.detectChanges();
+
+      expect(rowButtons('.track-mute')[1].getAttribute('aria-label')).toBe('Mute Track 2');
+      expect(rowButtons('.track-remove')[1].getAttribute('aria-label')).toBe('Remove Track 2');
+    });
+
     it("mutes and solos a composition's track in its own mixer, as an edit", () => {
       rowButtons('.track-mute')[1].click();
       rowButtons('.track-solo')[0].click();
