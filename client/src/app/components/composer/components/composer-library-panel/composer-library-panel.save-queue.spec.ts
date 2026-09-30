@@ -6,6 +6,8 @@ import { AlphaTexService } from '../../../../services/alpha-tex.service';
 import { CompositionEntry, ComposerLibraryService } from '../../../../services/composer-library.service';
 import { ComposerService } from '../../../../services/composer.service';
 import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
+import { GP_LIBRARY_DB } from '../../../../services/gp-library.service';
+import { deletedDatabase } from '../../../../services/indexed-db.spec-helper';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 
 /**
@@ -30,9 +32,15 @@ describe('ComposerLibraryPanelComponent queued saves', () => {
   const idsWritten = (): Array<string | undefined> => (library.save as jasmine.Spy).calls.allArgs().map(args => args[1]);
   /** The tempo each write held. */
   const temposWritten = (): number[] => (library.save as jasmine.Spy).calls.allArgs().map(args => args[0].tempo);
+  // A GP library of its own: the panel lists one, and nothing here should read the one a browser holds.
+  const gpDb = `gp-library-panel-queue-spec-${Math.random().toString(36).slice(2)}`;
+
+  afterAll(async () => {
+    await deletedDatabase(gpDb);
+  });
 
   beforeEach(async () => {
-    await TestBed.configureTestingModule({ imports: [ComposerLibraryPanelComponent] }).compileComponents();
+    await TestBed.configureTestingModule({ imports: [ComposerLibraryPanelComponent], providers: [{ provide: GP_LIBRARY_DB, useValue: gpDb }] }).compileComponents();
 
     library = TestBed.inject(ComposerLibraryService);
     spyOn(library, 'refresh').and.resolveTo([]);

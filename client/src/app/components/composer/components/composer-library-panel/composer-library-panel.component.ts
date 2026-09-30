@@ -27,7 +27,7 @@ import {
 } from '../../../../services/composer-library.service';
 import { ComposerService } from '../../../../services/composer.service';
 import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
-import { GpFileOpener } from '../../../../services/gp-file-opener.service';
+import { GP_FILE_ACCEPT, GpFileOpener } from '../../../../services/gp-file-opener.service';
 import { GpLibraryService } from '../../../../services/gp-library.service';
 import { GpLibraryEntry } from '../../../../models/alpha-tab.model';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
@@ -103,6 +103,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
 
   /** The `.gp` files in the library, listed in the drawer beside the compositions (design decision 2). */
   gpFiles: GpLibraryEntry[] = [];
+  /** The files Import .gp… offers: the ones the opener takes (`GP_FILE_EXTENSIONS`). */
+  readonly gpFileAccept = GP_FILE_ACCEPT;
 
   /** The offer or report currently occupying the announced region. */
   pendingSave: PendingSave | null = null;
@@ -656,11 +658,18 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     if (await this.opener.openEntry(id)) this.closeDrawer();
   }
 
-  /** Import .gp…: the picker's file, added to the library and opened. The picker is cleared so the same file can come again. */
+  /**
+   * Import .gp…: the picker's file, added to the library and opened. The picker is cleared so the same file can come
+   * again. The menu closes, and the focus - back on Import .gp… once the picker's dialog closes - goes to the Library
+   * button, as `closeExportMenu` gives it to Export: a focused button hidden with its menu drops the focus to the page.
+   */
   async importGpFile(input: HTMLInputElement): Promise<void> {
     const file = input.files?.[0];
     input.value = '';
+    const focusWasInside = this.host.nativeElement.contains(this.document.activeElement);
     this.closeMenus();
+    this.cdr.detectChanges();
+    if (focusWasInside) this.libraryToggle?.nativeElement.focus();
     if (file) await this.opener.importFile(file);
   }
 

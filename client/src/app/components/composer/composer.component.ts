@@ -442,13 +442,29 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
   }
 
-  /** A `.gp` dropped anywhere on the page opens in Original (`GpFileOpener.importDropped`). */
+  /**
+   * A `.gp` dropped anywhere on the page opens in Original (`GpFileOpener.importDropped`) - but not over a modal. `inert`
+   * reaches only the page's children, so a drop still lands here: opened, a file would reset the page under the prompt
+   * and drop the edit it holds, or open under a conversion whose write then clears it. The drop is still claimed, so
+   * the browser does not open the file itself, and refused out loud.
+   */
   @HostListener('drop', ['$event'])
   onDrop(event: DragEvent): void {
     const files = Array.from(event.dataTransfer?.files ?? []);
     if (files.length === 0) return;
     event.preventDefault();
+    if (this.modalOpen) {
+      this.composer.announce(this.dropRefusal(), true);
+      return;
+    }
     void this.opener.importDropped(files);
+  }
+
+  /** Why a file dropped while a modal is open is not opened: what the modal is waiting on (`modalOpen`). */
+  private dropRefusal(): string {
+    if (this.converting) return 'Wait for the conversion to finish before opening another file.';
+    if (this.editRequest) return 'Answer the question about the open file before opening another.';
+    return 'Close the shortcut sheet before opening a file.';
   }
 
   /** Whether `target` is a palette button whose tool a held key runs again. */

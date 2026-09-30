@@ -14,7 +14,9 @@ import { ComposerExportService } from '../../services/composer-export.service';
 import { ComposerLibraryService } from '../../services/composer-library.service';
 import { ComposerGpService } from '../../services/composer-gp.service';
 import { ConversionOutcome, GpConversionService } from '../../services/gp-conversion.service';
+import { GpFileOpener } from '../../services/gp-file-opener.service';
 import { GP_LIBRARY_DB, GpLibraryService } from '../../services/gp-library.service';
+import { deletedDatabase } from '../../services/indexed-db.spec-helper';
 import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
 import { ComposerService } from '../../services/composer.service';
 import { KEY_PLATFORM } from '../../services/composer-key-platform';
@@ -52,9 +54,15 @@ describe('ComposerComponent', () => {
   let fixture: ComponentFixture<ComposerComponent>;
   let component: ComposerComponent;
   let composer: ComposerService;
+  // A GP library of its own: the page opens one (`GpFileOpener`), and nothing here should open the one a browser holds.
+  const gpDb = `gp-library-page-wiring-spec-${Math.random().toString(36).slice(2)}`;
+
+  afterAll(async () => {
+    await deletedDatabase(gpDb);
+  });
 
   beforeEach(async () => {
-    await TestBed.configureTestingModule({ imports: [ComposerComponent], providers: [provideRouter([])] })
+    await TestBed.configureTestingModule({ imports: [ComposerComponent], providers: [provideRouter([]), { provide: GP_LIBRARY_DB, useValue: gpDb }] })
       .overrideComponent(ComposerComponent, {
         remove: { imports: [ComposerScoreComponent, ComposerLibraryPanelComponent] },
         add: { imports: [StubScoreComponent, StubLibraryPanelComponent] }
@@ -625,8 +633,15 @@ describe('ComposerComponent', () => {
 });
 
 describe('ComposerComponent with its Library panel', () => {
+  // A GP library of its own: the panel lists one, and nothing here should read the one a browser holds.
+  const gpDb = `gp-library-page-panel-spec-${Math.random().toString(36).slice(2)}`;
+
+  afterAll(async () => {
+    await deletedDatabase(gpDb);
+  });
+
   it('has one polite live region: the library says what it did in the status line', async () => {
-    await TestBed.configureTestingModule({ imports: [ComposerComponent], providers: [provideRouter([])] })
+    await TestBed.configureTestingModule({ imports: [ComposerComponent], providers: [provideRouter([]), { provide: GP_LIBRARY_DB, useValue: gpDb }] })
       .overrideComponent(ComposerComponent, { remove: { imports: [ComposerScoreComponent] }, add: { imports: [StubScoreComponent] } })
       .compileComponents();
     spyOn(TestBed.inject(ComposerLibraryService), 'refresh').and.resolveTo([]);
@@ -803,6 +818,51 @@ describe('ComposerComponent in the Original state', () => {
     gp.clear();
     fixture.detectChanges();
     expect(fixture.componentInstance.texDraft).toBe(composition);
+  });
+
+  /** Drops `files` on the page, as the browser would, and returns the event: its `defaultPrevented` says the browser kept them. */
+  function dropOnPage(files: File[]): DragEvent {
+    const transfer = new DataTransfer();
+    for (const file of files) transfer.items.add(file);
+    const event = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer });
+    fixture.nativeElement.dispatchEvent(event);
+    fixture.detectChanges();
+    return event;
+  }
+
+  it('refuses a file dropped while the conversion prompt is open, and keeps the file and the edit it holds', async () => {
+    await openFile('Band', 132);
+    press({ key: 'h' });
+    const importDropped = spyOn(TestBed.inject(GpFileOpener), 'importDropped').and.resolveTo();
+
+    const drop = dropOnPage([new File([new Uint8Array([1])], 'other.gp')]);
+
+    expect(drop.defaultPrevented).withContext('the browser would open the file itself').toBeTrue();
+    expect(importDropped).not.toHaveBeenCalled();
+    expect(composer.state.refusal).toBe('Answer the question about the open file before opening another.');
+    expect(promptOpen()).toBeTrue();
+    expect(gp.request).not.toBeNull();
+    expect(gp.original?.score.title).toBe('Band');
+  });
+
+  it('refuses a file dropped while a conversion is under way, and opens nothing for the conversion to clear', async () => {
+    let finish: (outcome: ConversionOutcome) => void = () => undefined;
+    spyOn(TestBed.inject(GpConversionService), 'convert').and.returnValue(new Promise<ConversionOutcome>(resolve => (finish = resolve)));
+    await openFile('Band', 132);
+    press({ key: 'h' });
+    promptButton('Convert').click();
+    fixture.detectChanges();
+    const importDropped = spyOn(TestBed.inject(GpFileOpener), 'importDropped').and.resolveTo();
+
+    const drop = dropOnPage([new File([new Uint8Array([1])], 'other.gp')]);
+
+    expect(drop.defaultPrevented).withContext('the browser would open the file itself').toBeTrue();
+    expect(importDropped).not.toHaveBeenCalled();
+    expect(composer.state.refusal).toBe('Wait for the conversion to finish before opening another file.');
+    expect(gp.original?.score.title).toBe('Band');
+
+    finish({ kind: 'refused', reason: 'Stopped.' });
+    await until(() => !fixture.componentInstance.converting);
   });
 
   it("counts the file's bars in the status line, not the empty composition's", async () => {
@@ -1096,7 +1156,7 @@ describe('ComposerComponent in the Original state', () => {
     await until(() => gp.isOriginal);
     expect(gp.original?.score.title).toBe('Dropped');
     await until(() => composer.state.notice !== null);
-    expect(composer.state.notice).toBe('Opened "dropped.gp". 1 other file was left: one file opens at a time.');
+    expect(composer.state.notice).toBe('Opened "dropped.gp". 1 file was not a Guitar Pro file.');
   });
 
   it('gives the title and the BPM back once the file is gone', async () => {

@@ -18,10 +18,10 @@
           {{ currentId ? 'Save' : 'Save to library' }}
         </button>
         <button class="text-btn" (click)="save(true)" *ngIf="currentId">Save as copy</button>
-        <button class="text-btn open-drawer" (click)="openDrawer()">Saved compositions…</button>
+        <button class="text-btn open-drawer" (click)="openDrawer()">Browse the library…</button>
         <!-- A button that presses the hidden picker, so Tab reaches it and Enter and Space press it. -->
         <button class="text-btn import-gp" type="button" (click)="gpPicker.click()">Import .gp…</button>
-        <input #gpPicker class="gp-picker" type="file" accept=".gp,.gp3,.gp4,.gp5,.gpx" tabindex="-1" aria-hidden="true" (change)="importGpFile(gpPicker)" />
+        <input #gpPicker class="gp-picker" type="file" [accept]="gpFileAccept" tabindex="-1" aria-hidden="true" (change)="importGpFile(gpPicker)" />
       </div>
     </div>
   </div>
@@ -93,15 +93,18 @@
     class="library-drawer"
     [class.open]="drawerOpen"
     [attr.aria-hidden]="!drawerOpen"
-    aria-label="Saved compositions"
+    aria-label="Library"
     (keydown)="onDrawerKey($event)"
   >
+    <!-- The compositions and the Guitar Pro files both: named for the one, the drawer would hide the other. -->
     <header class="drawer-header">
-      <h2 class="panel-heading">Saved compositions</h2>
-      <button #drawerClose type="button" class="drawer-close" aria-label="Close saved compositions" (click)="closeDrawer()">×</button>
+      <h2 class="panel-heading">Library</h2>
+      <button #drawerClose type="button" class="drawer-close" aria-label="Close the library" (click)="closeDrawer()">×</button>
     </header>
 
-    <ul class="composition-list" *ngIf="entries.length > 0; else emptyLibrary">
+    <p class="hint" *ngIf="entries.length === 0 && gpFiles.length === 0">Nothing saved yet.</p>
+
+    <ul class="composition-list" *ngIf="entries.length > 0">
       <!-- Each row loads through a button, so Tab reaches it and Enter and Space press it, beside its own Delete. -->
       <li *ngFor="let entry of entries; trackBy: trackById" class="composition-item" [class.current]="entry.id === currentId">
         <button
@@ -126,10 +129,6 @@
         >×</button>
       </li>
     </ul>
-
-    <ng-template #emptyLibrary>
-      <p class="hint">Nothing saved yet.</p>
-    </ng-template>
 
     <!-- Beside the compositions, from the library of `.gp` files: each opens as the file, until its first edit converts it. -->
     <h3 class="drawer-section" *ngIf="gpFiles.length > 0">Guitar Pro files</h3>

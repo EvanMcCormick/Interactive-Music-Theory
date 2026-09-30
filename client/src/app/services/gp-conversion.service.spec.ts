@@ -7,7 +7,8 @@ import { ComposerGpService } from './composer-gp.service';
 import { ComposerLibraryService } from './composer-library.service';
 import { ComposerService } from './composer.service';
 import { GpConversionService } from './gp-conversion.service';
-import { GpLibraryService } from './gp-library.service';
+import { GP_LIBRARY_DB, GpLibraryService } from './gp-library.service';
+import { deletedDatabase } from './indexed-db.spec-helper';
 import { frettedDocOf } from './pitch-on-strings';
 import { ScoreDocMapperService } from './score-doc-mapper.service';
 
@@ -25,9 +26,15 @@ describe('GpConversionService', () => {
   let save: jasmine.Spy;
   let deleteEntry: jasmine.Spy;
   let markOpened: jasmine.Spy;
+  // Spied, the GP library still opens its database as it is made: one of its own, not the one a browser holds.
+  const gpDb = `gp-library-conversion-spec-${Math.random().toString(36).slice(2)}`;
+
+  afterAll(async () => {
+    await deletedDatabase(gpDb);
+  });
 
   beforeEach(() => {
-    TestBed.configureTestingModule({});
+    TestBed.configureTestingModule({ providers: [{ provide: GP_LIBRARY_DB, useValue: gpDb }] });
     conversion = TestBed.inject(GpConversionService);
     gp = TestBed.inject(ComposerGpService);
     composer = TestBed.inject(ComposerService);
