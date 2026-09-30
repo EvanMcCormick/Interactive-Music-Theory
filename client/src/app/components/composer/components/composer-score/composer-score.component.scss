@@ -113,6 +113,8 @@
 }
 
 // A note head the scale panel names: in-scale in blue, the root in red, drawn over the engraving and never taking a press.
+// The root's ring is doubled as well as red, so it is told apart without its colour (WCAG 1.4.1); the negative margin is
+// each ring's border width, which keeps the ring centred on the head.
 .scale-mark {
   position: absolute;
   z-index: 2;
@@ -123,6 +125,7 @@
   pointer-events: none;
 
   &.root {
-    border-color: var(--composer-root, #e74c3c);
+    margin: -4px 0 0 -4px;
+    border: 4px double var(--composer-root, #e74c3c);
   }
 }

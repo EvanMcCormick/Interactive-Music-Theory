@@ -69,7 +69,12 @@
       <button class="text-btn" type="button" [class.active]="showTexPanel" [attr.aria-pressed]="showTexPanel" (click)="toggleTexPanel()">
         alphaTex
       </button>
-      <app-composer-scale-panel (firstOpened)="onScalePanelOpened()" (highlightChange)="highlight = $event"></app-composer-scale-panel>
+      <app-composer-scale-panel
+        [modalOpen]="modalOpen"
+        (menuOpened)="closePopover()"
+        (firstOpened)="onScalePanelOpened()"
+        (highlightChange)="highlight = $event"
+      ></app-composer-scale-panel>
       <app-composer-library-panel [modalOpen]="modalOpen" (menuOpened)="closePopover()"></app-composer-library-panel>
       <button
         class="text-btn shortcuts-toggle"

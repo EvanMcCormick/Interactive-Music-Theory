@@ -10,7 +10,7 @@
     ></div>
     <!-- The scale panel's highlight: a ring on each note head it names, the root in red and the rest in blue. -->
     <div
-      *ngFor="let mark of noteMarks"
+      *ngFor="let mark of noteMarks; trackBy: trackMark"
       class="scale-mark"
       aria-hidden="true"
       [class.root]="mark.kind === 'root'"

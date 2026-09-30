@@ -18,7 +18,7 @@ import * as alphaTab from '@coderline/alphatab';
 import { ALL_TRACKS, AlphaTabService } from '../../../../services/alpha-tab.service';
 import { TrackView, renderedTracksOf, trackRowsOf } from '../../../../services/composer-track-rows';
 import { DEFAULT_HIGHLIGHT_CONFIG, HighlightConfig } from '../../../../models/alpha-tab.model';
-import { HighlightKind, noteHighlightsOf } from '../../../../services/scale-highlight';
+import { NoteMark, noteHighlightsOf, noteMarksOf, sameMarks } from '../../../../services/scale-highlight';
 import { ComposerTrackViewService } from '../../../../services/composer-track-view.service';
 import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
 import { ComposerGpService, GpOriginal } from '../../../../services/composer-gp.service';
@@ -134,7 +134,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     this.updateScaleOverlay();
   }
   private highlightConfig: HighlightConfig = DEFAULT_HIGHLIGHT_CONFIG;
-  noteMarks: (Rect & { kind: HighlightKind })[] = [];
+  noteMarks: NoteMark[] = [];
   /** Pen's hover notehead, in container-relative pixels, or null. */
   hoverRect: Rect | null = null;
 
@@ -441,9 +441,11 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     // bounds, which with workers are still the last render's at `renderFinished`: they wait for post-render.
     // Presses, drags and hover wait for post-render as well (`scoreTakesPress`): until then they would read the new
     // page's staves against the last render's systems and beats.
+    // The scale highlight's rings go at once as well: they sit over the last engraving's note heads, not the new one's.
     this.alphaTabService.onRenderFinished(() => {
       this.measured = null;
       this.boundsPending = true;
+      this.updateScaleOverlay();
     });
     this.alphaTabService.onPostRenderFinished(() => {
       this.measured = null;
@@ -822,16 +824,22 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   /**
    * Marks the note heads the scale panel's highlight names (`noteHighlightsOf`), from the bounds lookup of what alphaTab
    * drew - the file's in Original, the document's in Composition - or none while it is off or the lookup is not ready.
+   * The page is measured once for every ring (`lookupOffsetOf`), and a redraw that moves no ring leaves the list as it is.
    */
   private updateScaleOverlay(): void {
     const element = this.alphaTabContainer?.nativeElement;
-    const lookup = this.alphaTabService.getBoundsLookup();
-    const marks = element && lookup && !this.boundsPending ? noteHighlightsOf(lookup, this.highlightConfig) : [];
-    this.noteMarks = marks.flatMap(mark => {
-      const rect = element ? this.hitTest.lookupRect(element, mark.x, mark.y, mark.w, mark.h) : null;
-      return rect ? [{ ...rect, kind: mark.kind }] : [];
-    });
+    const lookup = element && !this.boundsPending ? this.alphaTabService.getBoundsLookup() : null;
+    const highlights = lookup ? noteHighlightsOf(lookup, this.highlightConfig) : [];
+    const offset = element && highlights.length > 0 ? this.hitTest.lookupOffsetOf(element) : null;
+    const marks = offset ? noteMarksOf(highlights, offset) : [];
+    if (sameMarks(marks, this.noteMarks)) return;
+    this.noteMarks = marks;
     this.cdr.markForCheck();
+  }
+
+  /** A ring's identity to `ngFor`: its place in the list, so a redraw moves the ring elements it has rather than making new ones. */
+  trackMark(index: number): number {
+    return index;
   }
 
   /**

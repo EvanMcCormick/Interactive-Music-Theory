@@ -335,8 +335,54 @@ describe('ComposerComponent', () => {
     toggle.click();
     toggle.click();
     fixture.detectChanges();
+    const panel = fixture.nativeElement.querySelector('app-composer-scale-panel') as HTMLElement;
+    (panel.querySelector('input[type="checkbox"]') as HTMLInputElement).click();
+    fixture.detectChanges();
+    const select = panel.querySelectorAll('select')[1] as HTMLSelectElement;
+    const first = select.querySelector('optgroup option') as HTMLOptionElement;
+    select.value = first.value;
+    select.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    const score = fixture.debugElement.query(By.directive(StubScoreComponent)).componentInstance as StubScoreComponent;
+    expect(score.highlight).toEqual(jasmine.objectContaining({ enabled: true, rootNote: 0, name: `C ${first.textContent?.trim()}` }));
+    expect(score.highlight).toBe(component.highlight);
 
     expect(noteBounds.calls.allArgs()).toEqual([[true]]);
+  });
+
+  it('closes an open popover when the Scales menu opens, and closes the menu when the shortcut sheet opens', () => {
+    press({ key: 'k', code: 'KeyK' });
+    expect(component.popover).toBe('clef');
+    const toggle = fixture.nativeElement.querySelector('app-composer-scale-panel .menu-toggle') as HTMLButtonElement;
+    const menu = fixture.nativeElement.querySelector('#composer-scale-menu') as HTMLElement;
+
+    toggle.click();
+    fixture.detectChanges();
+
+    expect(component.popover).toBeNull();
+    expect(document.querySelector(':popover-open')).toBeNull();
+    expect(menu.classList.contains('open')).toBeTrue();
+
+    press({ key: '?', code: 'Slash', shiftKey: true });
+    expect(menu.classList.contains('open')).withContext('closed by the sheet opening').toBeFalse();
+  });
+
+  it("closes the Scales menu on an Escape pressed outside it, and keeps that Escape from the page's own", () => {
+    press({ key: 'q', code: 'KeyQ' });
+    expect(composer.state.entryMode).toBe('pen');
+    const toggle = fixture.nativeElement.querySelector('app-composer-scale-panel .menu-toggle') as HTMLButtonElement;
+    const menu = fixture.nativeElement.querySelector('#composer-scale-menu') as HTMLElement;
+    toggle.click();
+    fixture.detectChanges();
+    toggle.blur();
+
+    press({ key: 'Escape' });
+
+    expect(menu.classList.contains('open')).toBeFalse();
+    expect(composer.state.entryMode).withContext('the page did not also go back to Select').toBe('pen');
+
+    press({ key: 'Escape' });
+    expect(composer.state.entryMode).withContext("with the menu closed, Escape is the page's again").toBe('select');
   });
 
   it('writes the shortcuts of Undo and Redo with the modifiers of the platform keyboard', () => {

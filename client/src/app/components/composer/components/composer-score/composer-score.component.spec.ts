@@ -2,12 +2,13 @@ import { ComponentFixture, TestBed, discardPeriodicTasks, fakeAsync, flush, tick
 import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerScoreComponent } from './composer-score.component';
-import { AlphaTabState } from '../../../../models/alpha-tab.model';
+import { AlphaTabState, HighlightConfig } from '../../../../models/alpha-tab.model';
 import { AlphaTabService } from '../../../../services/alpha-tab.service';
 import { ComposerGpService } from '../../../../services/composer-gp.service';
 import { trackRowsOf } from '../../../../services/composer-track-rows';
 import { ComposerTrackViewService } from '../../../../services/composer-track-view.service';
 import { ComposerService } from '../../../../services/composer.service';
+import { NoteBoundsSource } from '../../../../services/scale-highlight';
 
 /**
  * The score's press guard, wired to the page's events (`pressGuardAfter`, design decision 17).
@@ -315,4 +316,147 @@ describe('ComposerScoreComponent and the track strip', () => {
     expect(alphaTabService.loadBytes.calls.mostRecent().args).toEqual([bytes, [0, 1, 2]]);
     settle();
   }));
+});
+
+/**
+ * The scale panel's highlight on the page: rings drawn over the engraving from alphaTab's bounds lookup, once a render's
+ * bounds are in place (`onPostRenderFinished`) and never while they are pending. alphaTab is stubbed, as above, and hands
+ * the component a lookup of three note heads, and a `.at-surface` - the lookup's origin - is placed in the container.
+ */
+describe('ComposerScoreComponent and the scale highlight', () => {
+  let fixture: ComponentFixture<ComposerScoreComponent>;
+  let renderFinished: () => void = () => undefined;
+  let postRenderFinished: () => void = () => undefined;
+  let surface: HTMLElement;
+
+  const cMajor: HighlightConfig = { enabled: true, rootNote: 0, intervals: [0, 4, 7], name: 'C Major', type: 'chord' };
+
+  /** C4, D4 and E4 on one notation staff, their heads 20px apart. */
+  const staff = { showSlash: false, showStandardNotation: true, showNumbered: false };
+  const lookup: NoteBoundsSource & { findBeat(): null } = {
+    staffSystems: [
+      {
+        bars: [
+          {
+            bars: [
+              {
+                beats: [
+                  {
+                    beat: { voice: { bar: { staff } } },
+                    notes: [60, 62, 64].map((realValue, index) => ({
+                      noteHeadBounds: { x: 30 + index * 20, y: 40, w: 10, h: 8 },
+                      note: { realValue, isPercussion: false, isDead: false }
+                    }))
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    findBeat: () => null
+  };
+
+  beforeEach(async () => {
+    const alphaTabService = jasmine.createSpyObj<AlphaTabService>('AlphaTabService', [
+      'initializeApi',
+      'renderScore',
+      'renderTracks',
+      'setTrackPlayback',
+      'render',
+      'getApi',
+      'getBoundsLookup',
+      'getCurrentState',
+      'onBeatMouseDown',
+      'onBeatMouseMove',
+      'onBeatMouseUp',
+      'onRenderFinished',
+      'onPostRenderFinished',
+      'highlightRange',
+      'clearHighlight',
+      'dispose'
+    ]);
+    alphaTabService.getApi.and.returnValue(null);
+    alphaTabService.getBoundsLookup.and.returnValue(lookup as unknown as alphaTab.rendering.BoundsLookup);
+    alphaTabService.getCurrentState.and.returnValue({ isPlaying: false } as AlphaTabState);
+    alphaTabService.onRenderFinished.and.callFake(handler => (renderFinished = handler));
+    alphaTabService.onPostRenderFinished.and.callFake(handler => (postRenderFinished = handler));
+
+    await TestBed.configureTestingModule({
+      imports: [ComposerScoreComponent],
+      providers: [{ provide: AlphaTabService, useValue: alphaTabService }]
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(ComposerScoreComponent);
+    fixture.detectChanges();
+    const container: HTMLElement = fixture.nativeElement.querySelector('.alphatab-container');
+    surface = document.createElement('div');
+    surface.className = 'at-surface';
+    surface.style.cssText = 'position: absolute; left: 12px; top: 24px; width: 400px; height: 200px;';
+    container.appendChild(surface);
+  });
+
+  afterEach(() => fixture.destroy());
+
+  const marks = (): HTMLElement[] => Array.from(fixture.nativeElement.querySelectorAll('.scale-mark'));
+
+  /** Says the highlight to the score, as the page's binding does. */
+  function highlight(config: HighlightConfig): void {
+    fixture.componentRef.setInput('highlight', config);
+    fixture.detectChanges();
+  }
+
+  /** alphaTab's post-render: the bounds of what it drew are in place. */
+  function boundsArrive(): void {
+    postRenderFinished();
+    fixture.detectChanges();
+  }
+
+  it("rings each note head the highlight names once a render's bounds arrive, the root apart, where alphaTab drew it", () => {
+    highlight(cMajor);
+    boundsArrive();
+
+    expect(marks().length).withContext('C and E, not D').toBe(2);
+    expect(marks().map(mark => mark.classList.contains('root'))).toEqual([true, false]);
+    const container: HTMLElement = fixture.nativeElement.querySelector('.alphatab-container');
+    const offset = surface.getBoundingClientRect().left - container.getBoundingClientRect().left;
+    expect(marks().map(mark => parseFloat(mark.style.left))).toEqual([offset + 30, offset + 70]);
+    expect(marks().map(mark => mark.style.width)).toEqual(['10px', '10px']);
+  });
+
+  it('clears its rings when the highlight is turned off', () => {
+    highlight(cMajor);
+    boundsArrive();
+
+    highlight({ ...cMajor, enabled: false });
+
+    expect(marks().length).toBe(0);
+  });
+
+  it("clears the last engraving's rings as a render finishes, and draws none while its bounds are pending", () => {
+    highlight(cMajor);
+    boundsArrive();
+
+    renderFinished();
+    fixture.detectChanges();
+    expect(marks().length).withContext('the new engraving is on the page, its bounds not yet').toBe(0);
+
+    highlight({ ...cMajor, rootNote: 2 });
+    expect(marks().length).withContext('a new highlight while the bounds are pending').toBe(0);
+
+    boundsArrive();
+    expect(marks().length).withContext('D major: D alone of C, D and E').toBe(1);
+  });
+
+  it('keeps its ring elements for a redraw that rings the same heads', () => {
+    highlight(cMajor);
+    boundsArrive();
+    const [first] = marks();
+
+    boundsArrive();
+    highlight({ ...cMajor, name: 'C Major again' });
+
+    expect(marks()[0]).toBe(first);
+  });
 });

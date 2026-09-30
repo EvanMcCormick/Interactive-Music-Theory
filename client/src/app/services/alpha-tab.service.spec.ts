@@ -162,3 +162,31 @@ describe('AlphaTabService mixer', () => {
     expect(next.changeTrackSolo).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Note bounds for the scale panel's highlight (`setNoteBounds`), against a stand-in api: the setting it flips, and the
+ * settings update and layout it asks for - each of which costs a whole render, so a call that changes nothing asks for neither.
+ */
+describe('AlphaTabService note bounds', () => {
+  it('turns note bounds on and off, laying the score out again each time, and asks nothing when they are already as asked', () => {
+    TestBed.configureTestingModule({});
+    const service = TestBed.inject(AlphaTabService);
+    const asked: string[] = [];
+    const api = {
+      settings: { core: { includeNoteBounds: false } },
+      updateSettings: () => asked.push(`updateSettings ${api.settings.core.includeNoteBounds}`),
+      render: () => asked.push('render')
+    };
+    (service as unknown as { api: unknown }).api = api;
+
+    service.setNoteBounds(true);
+    expect(asked).toEqual(['updateSettings true', 'render']);
+
+    service.setNoteBounds(true);
+    expect(asked.length).withContext('already on').toBe(2);
+
+    service.setNoteBounds(false);
+    expect(asked).toEqual(['updateSettings true', 'render', 'updateSettings false', 'render']);
+    expect(api.settings.core.includeNoteBounds).toBeFalse();
+  });
+});

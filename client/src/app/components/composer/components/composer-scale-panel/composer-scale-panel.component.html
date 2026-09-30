@@ -1,5 +1,5 @@
 <!-- A menu off the top bar, as Library and Export are: hidden with CSS while closed. -->
-<div class="menu" (keydown)="onKey($event)">
+<div class="menu">
   <button
     #toggle
     type="button"
@@ -23,10 +23,10 @@
     </label>
     <label class="field">
       <span>Scale or chord</span>
-      <select [(ngModel)]="scaleId" (ngModelChange)="changed()" [disabled]="!enabled">
-        <option value="">Choose…</option>
+      <select [(ngModel)]="chosen" (ngModelChange)="changed()" [disabled]="!enabled">
+        <option [ngValue]="null">Choose…</option>
         <optgroup *ngFor="let group of groups" [label]="group.name">
-          <option *ngFor="let option of group.options" [value]="option.id">{{ option.name }}</option>
+          <option *ngFor="let option of group.options" [ngValue]="option">{{ option.name }}</option>
         </optgroup>
       </select>
     </label>

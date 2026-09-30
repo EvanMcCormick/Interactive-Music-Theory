@@ -205,14 +205,15 @@ export class StaffHitTestService {
   }
 
   /**
-   * A box given in the bounds lookup's pixels (from the top of `.at-surface`) - a note head's - placed in `container`, as
-   * the caret's is. Null before a surface exists.
+   * Where the bounds lookup's origin (the top left of `.at-surface`) sits in `container`, scrolled as the caret's box is:
+   * added to a box given in the lookup's pixels - a note head's - it places that box as the caret is placed. Two boxes
+   * measured once for any number of note heads (`noteMarksOf`). Null before a surface exists.
    */
-  lookupRect(container: HTMLElement, x: number, y: number, w: number, h: number): Rect | null {
+  lookupOffsetOf(container: HTMLElement): { left: number; top: number } | null {
     const origin = this.surfaceOriginOf(container);
     if (!origin) return null;
     const containerBox = container.getBoundingClientRect();
-    return { left: origin.left - containerBox.left + x, top: origin.top - containerBox.top + y + container.scrollTop, width: w, height: h };
+    return { left: origin.left - containerBox.left, top: origin.top - containerBox.top + container.scrollTop };
   }
 
   /** `surface`'s box, measured once per call that holds `boxes`. */
