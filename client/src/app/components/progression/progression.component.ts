@@ -500,6 +500,9 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    * then is for Convert's caller: this page is gone. So is the truncation
    * refusal, which was read in the empty composition's meter - a file in a
    * shorter one could take the projection past the bound where this did not.
+   * So the held send reads it again as it runs, and a truncated projection is
+   * refused there in the same words, in the composer's status line, and sends
+   * nothing - for the reasons above, which hold as well after a conversion.
    */
   send(): void {
     const state = this.latest;
@@ -518,16 +521,7 @@ export class ProgressionComponent implements OnInit, OnDestroy {
       const generated = progressionTrack(state.doc, intervals, this.composer.scoreMeter);
 
       if (generated.truncated) {
-        this.showError(
-          `This progression runs past the ${MAX_PREVIEW_BARS} bars a projection stops at, so `
-          + 'nothing was sent. A track ending at bar '
-          + `${MAX_PREVIEW_BARS} would not be this progression, and nothing it carried into the `
-          + 'composer would say so - a generated track records which revision it came from, not '
-          + 'how much of it arrived, which is also why this cannot say how far over you are. '
-          + `The bars are counted in the score's meter rather than in this progression's, so a `
-          + 'progression short enough to export can still be too long to send. Shorten it and '
-          + 'try again.'
-        );
+        this.showError(SEND_TRUNCATED);
         return;
       }
 
@@ -536,9 +530,11 @@ export class ProgressionComponent implements OnInit, OnDestroy {
       // the two are the same; held, it runs after Convert, into the file's own
       // score, whose meter need not be the empty composition's - and
       // `sendProgression` throws on a track barred in any other.
-      this.gp.requestEdit(ASKING_PAGE_COMMANDS.progressionTrack, 'Sending the progression', () =>
-        this.composer.sendProgression(progressionTrack(state.doc, intervals, this.composer.scoreMeter))
-      );
+      this.gp.requestEdit(ASKING_PAGE_COMMANDS.progressionTrack, 'Sending the progression', () => {
+        const track = progressionTrack(state.doc, intervals, this.composer.scoreMeter);
+        if (track.truncated) this.composer.announce(SEND_TRUNCATED, true);
+        else this.composer.sendProgression(track);
+      });
       this.clearError();
       this.leave();
     } catch (error) {
@@ -1018,6 +1014,20 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     this.sendLabel = held === 'absent' ? 'Send to Composer' : 'Update in Composer';
   }
 }
+
+/**
+ * Why a send whose projection runs past the bound is refused: here, and in the composer when a send held for a `.gp`
+ * file runs after Convert, in the converted score's meter (`send`).
+ */
+const SEND_TRUNCATED =
+  `This progression runs past the ${MAX_PREVIEW_BARS} bars a projection stops at, so `
+  + 'nothing was sent. A track ending at bar '
+  + `${MAX_PREVIEW_BARS} would not be this progression, and nothing it carried into the `
+  + 'composer would say so - a generated track records which revision it came from, not '
+  + 'how much of it arrived, which is also why this cannot say how far over you are. '
+  + `The bars are counted in the score's meter rather than in this progression's, so a `
+  + 'progression short enough to export can still be too long to send. Shorten it and '
+  + 'try again.';
 
 /**
  * What a send that committed but did not navigate has to say.

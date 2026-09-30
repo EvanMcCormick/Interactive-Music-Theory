@@ -174,7 +174,9 @@ export class GpLibraryService {
    */
   async deleteEntry(id: string): Promise<void> {
     await this.inStore('readwrite', store => store.delete(id));
-    await this.loadAllEntries();
+    // Settled on the commit: the list read after it failing is logged, not thrown, since a caller told the delete failed
+    // would say the entry is still there - a conversion saying the original was kept when it is gone.
+    await this.loadAllEntries().catch(error => console.error('Failed to list the GP library after a delete:', error));
   }
 
   /**

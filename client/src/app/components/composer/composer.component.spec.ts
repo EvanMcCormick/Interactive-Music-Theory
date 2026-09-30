@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Component, ErrorHandler, EventEmitter, Input, Output } from '@angular/core';
 import * as alphaTab from '@coderline/alphatab';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
@@ -12,13 +12,14 @@ import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ComposerExportService } from '../../services/composer-export.service';
 import { ComposerLibraryService } from '../../services/composer-library.service';
 import { ComposerGpService } from '../../services/composer-gp.service';
-import { GpConversionService } from '../../services/gp-conversion.service';
+import { ConversionOutcome, GpConversionService } from '../../services/gp-conversion.service';
 import { GP_LIBRARY_DB, GpLibraryService } from '../../services/gp-library.service';
 import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
 import { ComposerService } from '../../services/composer.service';
 import { KEY_PLATFORM } from '../../services/composer-key-platform';
 import { ComposerSaveRequests } from '../../services/composer-save-requests.service';
 import { shortcutTitleOf } from '../../services/composer-tools';
+import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
 
 /**
  * The composer page: what it is answerable for beyond its parts.
@@ -966,6 +967,67 @@ describe('ComposerComponent in the Original state', () => {
     expect(promptOpen()).toBeFalse();
     expect(gp.isOriginal).toBeTrue();
     expect(composer.state.refusal).toBe('The track "Kit" uses drums alphaTex cannot name.');
+  });
+
+  const statusText = (): string => fixture.nativeElement.querySelector('app-composer-status-line .messages')?.textContent ?? '';
+
+  it('never leaves Convert stuck when the file cannot be read: the prompt closes, Convert is enabled again, and the status line says why', async () => {
+    await openFile('Band', 132);
+    press({ key: 'h' });
+    spyOn(TestBed.inject(ScoreDocMapperService), 'toDoc').and.throwError('unreadable');
+
+    promptButton('Convert').click();
+    await until(() => gp.request === null);
+
+    expect(promptOpen()).toBeFalse();
+    expect(fixture.componentInstance.converting).toBeFalse();
+    expect(promptButton('Convert').disabled).toBeFalse();
+    expect(gp.isOriginal).toBeTrue();
+    expect(statusText()).toContain('The file could not be read as a composition, so it was not converted: unreadable');
+  });
+
+  it('reports a conversion that throws, closes the prompt, and says the file could not be converted', async () => {
+    const thrown = new Error('boom');
+    spyOn(TestBed.inject(GpConversionService), 'convert').and.rejectWith(thrown);
+    const handleError = spyOn(TestBed.inject(ErrorHandler), 'handleError');
+    await openFile('Band', 132);
+    press({ key: 'h' });
+
+    promptButton('Convert').click();
+    await until(() => gp.request === null && !fixture.componentInstance.converting);
+
+    expect(handleError).toHaveBeenCalledWith(thrown);
+    expect(promptOpen()).toBeFalse();
+    expect(promptButton('Convert').disabled).toBeFalse();
+    expect(composer.state.refusal).toBe('The file could not be converted.');
+    expect(statusText()).toContain('The file could not be converted.');
+  });
+
+  it('lets nothing cancel a conversion under way: Escape, Cancel and the backdrop do nothing, and the page stays inert', async () => {
+    let finish: (outcome: ConversionOutcome) => void = () => undefined;
+    spyOn(TestBed.inject(GpConversionService), 'convert').and.returnValue(new Promise<ConversionOutcome>(resolve => (finish = resolve)));
+    await openFile('Band', 132);
+    press({ key: 'h' });
+    promptButton('Convert').click();
+    fixture.detectChanges();
+
+    press({ key: 'Escape' });
+    expect(promptOpen()).toBeTrue();
+    expect(gp.request).not.toBeNull();
+
+    expect(promptButton('Cancel').disabled).toBeTrue();
+    fixture.componentInstance.cancelConvert();
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLElement>('.prompt-backdrop')?.click();
+    fixture.detectChanges();
+    expect(gp.request).not.toBeNull();
+
+    gp.cancelEdit();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.palette').hasAttribute('inert')).toBeTrue();
+
+    finish({ kind: 'refused', reason: 'Stopped.' });
+    await until(() => !fixture.componentInstance.converting);
+    expect(fixture.nativeElement.querySelector('.palette').hasAttribute('inert')).toBeFalse();
   });
 
   it("shows the file's own alphaTex, and asks before applying it", async () => {

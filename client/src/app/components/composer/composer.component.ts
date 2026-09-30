@@ -4,6 +4,7 @@ import {
   ChangeDetectorRef,
   Component,
   ElementRef,
+  ErrorHandler,
   HostListener,
   OnDestroy,
   OnInit,
@@ -144,7 +145,11 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   original: GpOriginal | null = null;
   /** The command waiting on the conversion prompt, which is open while there is one (`ComposerGpService.requestEdit`). */
   editRequest: EditRequest | null = null;
-  /** Whether a conversion is under way: the prompt's Convert does not start a second. */
+  /**
+   * Whether a conversion is under way: the prompt's Convert does not start a second, and nothing cancels it - Cancel,
+   * Escape and the backdrop do nothing, and the page stays inert (`modalOpen`) - since closing the prompt would not stop
+   * it: the file would still be converted, and the edit applied, behind a page taking input again.
+   */
   converting = false;
 
   texDraft = '';
@@ -203,10 +208,11 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   /**
    * Whether a modal is open over the page - the shortcut sheet, or the conversion prompt - so the rest of the page is
-   * `inert` and the keys reach only what a modal takes (`ComposerKeyHandler`).
+   * `inert` and the keys reach only what a modal takes (`ComposerKeyHandler`). A conversion under way counts until it
+   * settles: it drops the request that opened the prompt as it converts, before the edit that asked has run.
    */
   get modalOpen(): boolean {
-    return this.sheetOpen || this.editRequest !== null;
+    return this.sheetOpen || this.editRequest !== null || this.converting;
   }
 
   /** The title shown: the composition's, or the file's own - its score title, or its file name where it has none. */
@@ -229,6 +235,8 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   /** Undo's and Redo's tooltips, with the keys the platform's keyboard writes: Ctrl+Z, or ⌘+Z on a Mac. */
   readonly undoTitle: string = shortcutTitleOf('undo', inject(KEY_PLATFORM));
   readonly redoTitle: string = shortcutTitleOf('redo', inject(KEY_PLATFORM));
+  /** Where a conversion that throws is reported (`convert`). */
+  private readonly errors = inject(ErrorHandler);
 
   /** What every tool runs against. */
   readonly host: ComposerToolHost;
@@ -267,9 +275,10 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       toggleShortcutSheet: () => this.present(() => this.editRequest === null && this.toggleShortcutSheet()),
       escape: () =>
         this.present(() => {
-          // The conversion prompt takes Escape as Cancel. An open popover takes Escape alone - as the popover itself does
-          // when it has the focus - and so does the open shortcut sheet, a modal over the score: the press that closes
-          // either does not also drop the range.
+          // The conversion prompt takes Escape as Cancel - and, while a conversion is under way, as nothing (`converting`).
+          // An open popover takes Escape alone - as the popover itself does when it has the focus - and so does the open
+          // shortcut sheet, a modal over the score: the press that closes either does not also drop the range.
+          if (this.converting) return;
           if (this.editRequest) {
             this.gp.cancelEdit();
             return;
@@ -424,8 +433,12 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     this.gp.requestEdit(tool.id, tool.label, () => tool.run(this.host, null));
   }
 
-  /** The prompt's Cancel, its backdrop, and Escape: the command that asked is dropped, and the page says nothing more. */
+  /**
+   * The prompt's Cancel, its backdrop, and Escape: the command that asked is dropped, and the page says nothing more. Not
+   * while a conversion is under way, which closing the prompt would not stop (`converting`).
+   */
   cancelConvert(): void {
+    if (this.converting) return;
     this.gp.cancelEdit();
   }
 
@@ -437,19 +450,30 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   /**
    * The prompt's Convert (`GpConversionService`). Converted, the page is a composition and the edit that asked has run;
-   * refused, the prompt closes, the page stays in Original with nothing applied, and the status line says why.
+   * refused, the prompt closes, the page stays in Original with nothing applied, and the status line says why. A throw
+   * the service did not turn into a refusal is reported and said the same way, and however it ends, Convert is live
+   * again: a conversion left `converting` would leave the prompt's Convert disabled for as long as the page is open.
    */
   convert(): void {
     if (this.converting) return;
     this.converting = true;
-    void this.conversion.convert().then(outcome => {
-      this.converting = false;
-      if (outcome.kind === 'refused') {
+    void this.conversion
+      .convert()
+      .then(outcome => {
+        if (outcome.kind === 'refused') {
+          this.gp.cancelEdit();
+          this.composer.announce(outcome.reason, true);
+        }
+      })
+      .catch((error: unknown) => {
+        this.errors.handleError(error);
         this.gp.cancelEdit();
-        this.composer.announce(outcome.reason, true);
-      }
-      this.cdr.markForCheck();
-    });
+        this.composer.announce('The file could not be converted.', true);
+      })
+      .finally(() => {
+        this.converting = false;
+        this.cdr.markForCheck();
+      });
   }
 
   closePopover(): void {

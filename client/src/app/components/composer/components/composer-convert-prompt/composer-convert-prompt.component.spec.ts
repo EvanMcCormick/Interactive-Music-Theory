@@ -138,4 +138,22 @@ describe('ComposerConvertPromptComponent', () => {
     expect(sections()[0].textContent).toContain('Slurs');
     expect(fixture.componentInstance.saveLoss).toEqual([]);
   });
+
+  it('disables Cancel and Save the original file first while a conversion is under way, and gives them back after', () => {
+    const buttonNamed = (label: string): HTMLButtonElement =>
+      Array.from(dialog().querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.trim() === label)!;
+    set({ request, original: original() });
+    expect(cancel().disabled).toBeFalse();
+    expect(buttonNamed('Save the original file first').disabled).toBeFalse();
+
+    fixture.componentRef.setInput('busy', true);
+    fixture.detectChanges();
+    expect(cancel().disabled).toBeTrue();
+    expect(buttonNamed('Save the original file first').disabled).toBeTrue();
+
+    fixture.componentRef.setInput('busy', false);
+    fixture.detectChanges();
+    expect(cancel().disabled).toBeFalse();
+    expect(buttonNamed('Save the original file first').disabled).toBeFalse();
+  });
 });

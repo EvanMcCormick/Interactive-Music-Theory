@@ -1,3 +1,4 @@
+import { ErrorHandler } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import * as alphaTab from '@coderline/alphatab';
 
@@ -7,6 +8,8 @@ import { ComposerLibraryService } from './composer-library.service';
 import { ComposerService } from './composer.service';
 import { GpConversionService } from './gp-conversion.service';
 import { GpLibraryService } from './gp-library.service';
+import { frettedDocOf } from './pitch-on-strings';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
 
 /**
  * Convert, in the design's order - which is its error handling. The two libraries are spied rather than opened: what is
@@ -18,6 +21,7 @@ describe('GpConversionService', () => {
   let gp: ComposerGpService;
   let composer: ComposerService;
   let tex: AlphaTexService;
+  let mapper: ScoreDocMapperService;
   let save: jasmine.Spy;
   let deleteEntry: jasmine.Spy;
   let markOpened: jasmine.Spy;
@@ -28,16 +32,18 @@ describe('GpConversionService', () => {
     gp = TestBed.inject(ComposerGpService);
     composer = TestBed.inject(ComposerService);
     tex = TestBed.inject(AlphaTexService);
+    mapper = TestBed.inject(ScoreDocMapperService);
     const library = TestBed.inject(ComposerLibraryService);
     save = spyOn(library, 'save').and.resolveTo('composition-1');
     markOpened = spyOn(library, 'markOpened');
     deleteEntry = spyOn(TestBed.inject(GpLibraryService), 'deleteEntry').and.resolveTo();
   });
 
-  /** Opens `source`, parsed as alphaTex, as the file `Band.gp` in entry `entry-1`. */
-  function openFile(source: string): void {
+  /** Opens `source`, parsed as alphaTex and then changed by `change`, as the file `Band.gp` in entry `entry-1`. */
+  function openFile(source: string, change: (score: alphaTab.model.Score) => void = () => undefined): void {
     const { score } = tex.parse(source);
     if (!score) throw new Error('the file did not parse');
+    change(score);
     gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
   }
 
@@ -67,14 +73,76 @@ describe('GpConversionService', () => {
     expect(composer.state.canUndo).toBeFalse();
   });
 
-  it('saves the alphaTex it proved reopens', async () => {
+  /** Holds an edit that changes nothing, so the page is left showing the converted document as it was written. */
+  function askWithNothing(): void {
+    gp.requestEdit('doubleBar', 'Double bar', () => undefined);
+  }
+
+  it('saves the alphaTex it proved reopens, and shows the page what reopening it gives, clean', async () => {
     openFile(guitar);
-    askWithDoubleBar();
+    askWithNothing();
 
     await conversion.convert();
 
     const written = (save.calls.mostRecent().args[0] as { tex: string }).tex;
-    expect(tex.parse(written).score).not.toBeNull();
+    const reread = tex.parse(written).score;
+    expect(reread).not.toBeNull();
+    if (!reread) return;
+    expect(composer.doc).toEqual(frettedDocOf(mapper.toDoc(reread)).doc);
+    expect(composer.state.isDirty).toBeFalse();
+  });
+
+  it('shows the page what the library holds where the first save loses something: a double bar is gone, and the page is clean', async () => {
+    openFile(guitar, score => (score.masterBars[0].isDoubleBar = true));
+    askWithNothing();
+
+    await conversion.convert();
+
+    expect(composer.doc.masterBars[0].isDoubleBar).toBeFalse();
+    expect(composer.state.isDirty).toBeFalse();
+  });
+
+  it('refuses a file it cannot read as a document, and writes and deletes nothing', async () => {
+    openFile(guitar);
+    askWithDoubleBar();
+    spyOn(mapper, 'toDoc').and.throwError('unreadable');
+
+    const outcome = await conversion.convert();
+
+    expect(outcome).toEqual({ kind: 'refused', reason: 'The file could not be read as a composition, so it was not converted: unreadable' });
+    expect(save).not.toHaveBeenCalled();
+    expect(deleteEntry).not.toHaveBeenCalled();
+    expect(gp.isOriginal).toBeTrue();
+  });
+
+  it('converts when the edit that asked throws, reports the throw, and says the edit could not be applied', async () => {
+    const handleError = spyOn(TestBed.inject(ErrorHandler), 'handleError');
+    const thrown = new Error('boom');
+    openFile(guitar);
+    gp.requestEdit('doubleBar', 'Double bar', () => {
+      throw thrown;
+    });
+
+    const outcome = await conversion.convert();
+
+    expect(outcome).toEqual({ kind: 'converted', compositionId: 'composition-1', originalKept: false });
+    expect(handleError).toHaveBeenCalledWith(thrown);
+    expect(gp.isOriginal).toBeFalse();
+    expect(composer.state.isDirty).toBeFalse();
+    expect(composer.state.refusal).toBe('"Riff" was converted. The edit could not be applied.');
+  });
+
+  it('converts when the edit that asked is refused, clean, and says both', async () => {
+    // A hammer-on where the caret has no note: the caret starts on a string the file's one note is not on.
+    openFile(['\\title "Riff"', '\\track "Guitar"', '3.3.1 |'].join('\n'));
+    gp.requestEdit('hammerOn', 'Hammer-on / pull-off', () => composer.toggleNoteEffect('isHammerPullOrigin', true, false));
+
+    const outcome = await conversion.convert();
+
+    expect(outcome.kind).toBe('converted');
+    expect(gp.isOriginal).toBeFalse();
+    expect(composer.state.isDirty).toBeFalse();
+    expect(composer.state.refusal).toBe('"Riff" was converted. There is no note there to change.');
   });
 
   it('names a file with no title after its file name', async () => {
@@ -128,6 +196,7 @@ describe('GpConversionService', () => {
     expect(outcome).toEqual({ kind: 'converted', compositionId: 'composition-1', originalKept: true });
     expect(gp.isOriginal).toBeFalse();
     expect(composer.state.refusal).toBeNull();
+    expect(composer.state.notice).toBe('"Riff" was converted, and the original file is still in the library.');
     expect(composer.doc.masterBars[0].isDoubleBar).toBeTrue();
   });
 });

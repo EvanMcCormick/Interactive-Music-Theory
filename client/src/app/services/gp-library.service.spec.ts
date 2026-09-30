@@ -111,6 +111,18 @@ describe('GpLibraryService', () => {
     expect((await service.getEntry(added.id))?.fileName).toBe('a.gp');
   });
 
+  it('resolves a delete once it has committed, though the list read after it fails', async () => {
+    const added = await service.addBytes(bytes(1), 'a.gp', {});
+    const logged = spyOn(console, 'error');
+    const getAll = spyOn(IDBObjectStore.prototype, 'getAll').and.throwError('read failed');
+
+    await expectAsync(service.deleteEntry(added.id)).toBeResolved();
+
+    getAll.and.callThrough();
+    expect(await service.getEntry(added.id)).toBeNull();
+    expect(logged).toHaveBeenCalled();
+  });
+
   it('refuses an update whose transaction aborts after its write succeeded, and keeps the entry as it was', async () => {
     const added = await service.addBytes(bytes(1), 'a.gp', {});
     abortOnSuccess('put');

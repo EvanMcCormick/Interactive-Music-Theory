@@ -736,6 +736,30 @@ describe('ProgressionComponent exports', () => {
       expect(sentTrack()).not.toBeNull();
     });
 
+    /**
+     * The truncation refusal above was read in the empty composition's meter. A held send runs in the converted file's,
+     * where the same progression can run past the bound: it is refused there in the same words, in the composer's status
+     * line - this page is gone - and nothing is sent.
+     */
+    it('refuses a held send that the meter of the converted score truncates, in the words the page uses, and sends nothing', () => {
+      const gp = TestBed.inject(ComposerGpService);
+      gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score() });
+      progression.appendSlot(0);
+      // 500 bars of 4/4: inside the bound here, and past it in 3/4.
+      progression.setSlotLength(firstSlotId(), 4 * (MAX_PREVIEW_BARS - 12));
+      component.send();
+      const held = gp.request;
+      expect(component.exportError).toBeNull();
+
+      composer.replaceDocument(threeFourScore());
+      held?.run();
+
+      expect(sentTrack()).toBeNull();
+      component.send();
+      expect(component.exportError).toContain(String(MAX_PREVIEW_BARS));
+      expect(composer.state.refusal).toBe(component.exportError);
+    });
+
     /** Flattening in the Composer takes the marker away, so the label comes back. */
     it('says Send again once the composer stops holding one', () => {
       progression.appendSlot(0);

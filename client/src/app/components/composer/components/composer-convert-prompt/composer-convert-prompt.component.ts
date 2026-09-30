@@ -43,6 +43,11 @@ export class ComposerConvertPromptComponent implements OnChanges, AfterViewCheck
   @Input() original: GpOriginal | null = null;
   /** Why Convert cannot run, or null when it can. Convert is disabled and the reason shown beside it. */
   @Input() convertRefusal: string | null = null;
+  /**
+   * Whether a conversion is under way. Cancel and *Save the original file first* are disabled while it is: closing the
+   * prompt would not stop it, and the original is being replaced.
+   */
+  @Input() busy = false;
   /** Where the focus goes on closing when what had it has left the page: the score, asked as the prompt closes. */
   @Input() fallbackFocus: () => HTMLElement | null = () => null;
   @Output() readonly saveOriginal = new EventEmitter<void>();

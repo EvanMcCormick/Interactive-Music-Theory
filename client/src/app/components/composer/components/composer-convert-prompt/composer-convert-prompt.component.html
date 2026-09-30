@@ -41,10 +41,10 @@
   <p class="convert-refusal" *ngIf="convertRefusal">{{ convertRefusal }}</p>
 
   <div class="actions">
-    <button type="button" class="text-btn" (click)="saveOriginal.emit()">Save the original file first</button>
+    <button type="button" class="text-btn" [disabled]="busy" (click)="saveOriginal.emit()">Save the original file first</button>
     <button type="button" class="text-btn primary" [disabled]="convertRefusal !== null" [attr.title]="convertRefusal" (click)="convert.emit()">
       Convert
     </button>
-    <button type="button" class="text-btn" (click)="cancelled.emit()">Cancel</button>
+    <button type="button" class="text-btn" [disabled]="busy" (click)="cancelled.emit()">Cancel</button>
   </div>
 </section>

@@ -48,6 +48,16 @@ describe('ComposerLibraryService', () => {
     expect(await service.refresh()).toEqual([]);
   });
 
+  it('resolves a save once it has committed, though the list read after it fails', async () => {
+    const logged = spyOn(console, 'error');
+    spyOn(service, 'refresh').and.rejectWith(new Error('read failed'));
+
+    const id = await service.save(composition('Landed'));
+
+    expect((await service.get(id))?.title).toBe('Landed');
+    expect(logged).toHaveBeenCalled();
+  });
+
   it('refuses a delete whose transaction aborts after its request succeeded, and keeps the composition', async () => {
     const id = await service.save(composition('Kept'));
     abortOnSuccess('delete');

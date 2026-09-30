@@ -148,7 +148,10 @@ export class ComposerLibraryService {
   /**
    * Creates a composition, or updates it in place when `id` is supplied.
    * Returns the id, so a first save can adopt the generated one - once the
-   * write has committed (`committed`), not merely been asked for.
+   * write has committed (`committed`), not merely been asked for. The list
+   * read after it (`refresh`) failing is logged, not thrown: the write landed,
+   * and a caller told it failed would say so - a conversion refused though its
+   * composition was saved.
    */
   async save(
     entry: Omit<CompositionEntry, 'id' | 'dateCreated' | 'dateModified'>,
@@ -167,7 +170,7 @@ export class ComposerLibraryService {
     transaction.objectStore(STORE_NAME).put(record);
     await committed(transaction, 'Failed to save composition');
 
-    await this.refresh();
+    await this.refresh().catch(error => console.error('Failed to list the composer library after a save:', error));
     return record.id;
   }
 
