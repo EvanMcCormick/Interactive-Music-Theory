@@ -134,25 +134,26 @@ export function outOfReachNoticeOf(dropped: number): string {
 
 /**
  * `doc` with every pitched note on a staff with a tuning fretted, how many it fretted (`converted`), and how many notes no
- * free string reached, which are left out - a beat left with none becomes a rest. The same document when there is nothing
- * to fret; otherwise a copy.
+ * free string reached, which are left out - a beat left with none becomes a rest - with the first bar, 0-based, that
+ * lost one (`firstDroppedBar`, null when none did). The same document when there is nothing to fret; otherwise a copy.
  *
  * Each note takes the lowest free fret (`frettedPlacementOf`), in the beat's order, after the fretted notes already
  * there. For a document that arrives from outside the entry commands: a load, an applied alphaTex draft, a document
  * saved before Pen wrote frets. The mapper asks it too, so nothing pitched reaches alphaTab on a string.
  */
-export function frettedDocOf(doc: ScoreDoc): { doc: ScoreDoc; converted: number; dropped: number } {
+export function frettedDocOf(doc: ScoreDoc): { doc: ScoreDoc; converted: number; dropped: number; firstDroppedBar: number | null } {
   const needsFretting = doc.tracks.some(track =>
     track.staves.some(staff => staff.tuning.length > 0 && staff.bars.some(bar => bar.voices.some(voice => voice.beats.some(beat => beat.notes.some(note => note.pitch.kind === 'pitched')))))
   );
-  if (!needsFretting) return { doc, converted: 0, dropped: 0 };
+  if (!needsFretting) return { doc, converted: 0, dropped: 0, firstDroppedBar: null };
 
   const copy = structuredClone(doc);
   let dropped = 0;
   let converted = 0;
+  let firstDroppedBar: number | null = null;
   for (const staff of copy.tracks.flatMap(track => track.staves)) {
     if (staff.tuning.length === 0) continue;
-    for (const beat of staff.bars.flatMap(bar => bar.voices.flatMap(voice => voice.beats))) {
+    for (const [barIndex, beat] of staff.bars.flatMap((bar, index) => bar.voices.flatMap(voice => voice.beats.map(beat => [index, beat] as const)))) {
       if (!beat.notes.some(note => note.pitch.kind === 'pitched')) continue;
       const taken = stringsTakenOn(beat.notes);
       beat.notes = beat.notes.filter(note => {
@@ -162,6 +163,7 @@ export function frettedDocOf(doc: ScoreDoc): { doc: ScoreDoc; converted: number;
         const placed = frettedPlacementOf(staff, soundingMidiOf(staff, note.pitch), taken, null);
         if (typeof placed === 'string') {
           dropped++;
+          firstDroppedBar = Math.min(firstDroppedBar ?? barIndex, barIndex);
           return false;
         }
         taken.add(placed.string);
@@ -172,5 +174,5 @@ export function frettedDocOf(doc: ScoreDoc): { doc: ScoreDoc; converted: number;
       if (beat.notes.length === 0) beat.isRest = true;
     }
   }
-  return { doc: copy, converted, dropped };
+  return { doc: copy, converted, dropped, firstDroppedBar };
 }
