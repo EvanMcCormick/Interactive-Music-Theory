@@ -29,6 +29,15 @@ describe('AppComponent', () => {
     fixture.detectChanges();
   });
 
+  describe('the nav', () => {
+    it('links to the Songs library at /songs', () => {
+      const links: HTMLAnchorElement[] = Array.from(fixture.nativeElement.querySelectorAll('.main-nav a'));
+      const songs = links.find(link => link.textContent?.trim() === 'Songs');
+
+      expect(songs?.getAttribute('href')).toBe('/songs');
+    });
+  });
+
   describe('where the circle is offered', () => {
     it('offers it on the pages that read the key', () => {
       expect(AppComponent.showsCircle('/fretboard')).toBeTrue();

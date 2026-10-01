@@ -5,6 +5,7 @@ import { HttpClient, provideHttpClient, withInterceptors } from '@angular/common
 import { AppComponent } from './app/app.component';
 import { environment } from './environments/environment';
 import { FretboardComponent } from './app/components/fretboard/fretboard.component';
+import { SONG_ROUTES } from './app/components/songs/songs.routes';
 import { gpViewerRedirect } from './app/gp-viewer-redirect';
 import { authInterceptor } from './app/interceptors/auth.interceptor';
 import { AuthService } from './app/services/auth.service';
@@ -67,7 +68,10 @@ const routes: Routes = [
     path: 'progression',
     loadComponent: () => import('./app/components/progression/progression.component')
       .then(m => m.ProgressionComponent)
-  }
+  },
+  // `/songs` and `/songs/:id`, lazy for the same reason: ProseMirror, and Tone for the sheet's audition, stay in the
+  // songs chunks. Declared beside their pages so their spec resolves these very routes.
+  ...SONG_ROUTES
 ];
 
 bootstrapApplication(AppComponent, {

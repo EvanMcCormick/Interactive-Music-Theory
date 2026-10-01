@@ -1,12 +1,14 @@
+import type { Scale } from '../models/music-theory.model';
 import type { ChordDegree, ProgressionKey } from '../models/progression.model';
 import { SpelledNote, formatNote, reduceToOctave, spellAt } from './note-spelling';
 import { leadSheetChordName, romanNumeral } from './progression-chord-names';
 import { ChordIdentity, effectiveChord } from './progression-harmony';
-import { chordRootSpelling, scaleNoteSpelling } from './progression-spelling';
+import { chordRootSpelling, scaleNoteSpelling, tonicSpelling } from './progression-spelling';
 
 /**
  * How the song sheet writes a chord: a lead-sheet name over the lyric, or a
- * Roman numeral when the sheet's I-IV toggle is on.
+ * Roman numeral when the sheet's I-IV toggle is on. And, beside them, how a
+ * song names its key (`keyNameOf`).
  *
  * Pure, with no Angular, on the `progression-harmony.ts` precedent. Everything
  * that decides *which chord* a degree is comes from where the progression page
@@ -97,4 +99,23 @@ function bassSpelling(
  */
 export function numeralOf(degree: ChordDegree, scaleIntervals: readonly number[]): string {
   return romanNumeral(degree.degree, degree.alter, effectiveChord(scaleIntervals, degree));
+}
+
+/**
+ * A key's name, as the progression page's rail writes it: the tonic, then the scale as the app's catalogue names it -
+ * `C Ionian (Major)`, `A Aeolian (Natural Minor)`, `F# Dorian`. The library's cards print it.
+ *
+ * **That page's words and not "C major"**, though the design sketches the latter, because a song's key is any scale
+ * that builds chords - Dorian, Harmonic Minor, Phrygian Dominant - and "major"/"minor" names two of them. The catalogue
+ * names them all, and the sheet's own key control lists its scales under the same names, so a card says what the
+ * sheet's control will show. The tonic is spelled by the key's own `preferSharps` (`tonicSpelling`), in ASCII as chord
+ * names are - letter for letter what `MusicTheoryService.spellNote` gives the progression page.
+ *
+ * `scale` is the key's scale looked up by the caller (`ProgressionKeyContext.findScale`), or null for an id the app
+ * does not know - a song saved before a scale was renamed - which leaves the tonic on its own, as the progression page
+ * does, rather than printing `C undefined`.
+ */
+export function keyNameOf(key: ProgressionKey, scale: Pick<Scale, 'name'> | null): string {
+  const tonic = formatNote(tonicSpelling(key));
+  return scale === null ? tonic : `${tonic} ${scale.name}`;
 }

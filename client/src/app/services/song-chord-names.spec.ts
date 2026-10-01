@@ -3,7 +3,7 @@ import { MusicTheoryService } from './music-theory.service';
 import { chordName, romanNumeral } from './progression-chord-names';
 import { ChordExtent, effectiveChord, isHeptatonic } from './progression-harmony';
 import { chordRootName } from './progression-spelling';
-import { leadSheetNameOf, numeralOf } from './song-chord-names';
+import { keyNameOf, leadSheetNameOf, numeralOf } from './song-chord-names';
 
 /**
  * The sheet's chord names, checked against how a lead sheet prints them.
@@ -231,5 +231,42 @@ describe('numeralOf', () => {
     // A aeolian's seventh is a G, so its G major triad is VII and not ♭VII.
     expect(numeralOf(chord({ degree: 6 }), AEOLIAN)).toBe('VII');
     expect(numeralOf(chord({ degree: 0 }), AEOLIAN)).toBe('i');
+  });
+});
+
+describe('keyNameOf', () => {
+  const musicTheory = new MusicTheoryService();
+  const ionian = { name: 'Ionian (Major)' };
+  const dorian = { name: 'Dorian' };
+
+  it('names a key as the progression page does: the tonic, then the scale as the catalogue calls it', () => {
+    expect(keyNameOf(C_MAJOR, ionian)).toBe('C Ionian (Major)');
+    expect(keyNameOf(B_FLAT_MAJOR, ionian)).toBe('Bb Ionian (Major)');
+    expect(keyNameOf({ tonic: 6, scaleId: 'dorian', preferSharps: true }, dorian)).toBe('F# Dorian');
+  });
+
+  it("spells the tonic by the key's own preference", () => {
+    expect(keyNameOf({ tonic: 1, scaleId: 'ionian', preferSharps: true }, ionian)).toBe('C# Ionian (Major)');
+    expect(keyNameOf({ tonic: 1, scaleId: 'ionian', preferSharps: false }, ionian)).toBe('Db Ionian (Major)');
+  });
+
+  it('names the tonic alone when the scale is not one the app knows, rather than printing "C undefined"', () => {
+    expect(keyNameOf({ tonic: 0, scaleId: 'gone', preferSharps: true }, null)).toBe('C');
+  });
+
+  it("agrees with the progression page's key line for every tonic, both spellings, and every scale", () => {
+    let checked = 0;
+    for (const category of musicTheory.getScaleCategories()) {
+      for (const scale of category.scales) {
+        for (let tonic = 0; tonic < 12; tonic++) {
+          for (const preferSharps of [true, false]) {
+            const key: ProgressionKey = { tonic, scaleId: scale.id, preferSharps };
+            expect(keyNameOf(key, scale)).toBe(`${musicTheory.spellNote(tonic, preferSharps)} ${scale.name}`);
+            checked++;
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 });

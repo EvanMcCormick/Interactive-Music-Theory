@@ -1,0 +1,46 @@
+// The library page's tokens, so the two song pages read as one place.
+:host {
+  --songs-surface: #1a252f;
+  --songs-bar: #2c3e50;
+  --songs-border: #465666;
+  --songs-text: #ecf0f1;
+  --songs-text-dim: #adbcc8;
+
+  display: block;
+}
+
+.song-editor {
+  height: calc(100vh - var(--app-header-height, 57px));
+  height: calc(100dvh - var(--app-header-height, 57px));
+  background-color: var(--songs-surface);
+  color: var(--songs-text);
+}
+
+.editor-bar {
+  padding: 0.75rem 1.5rem;
+  background-color: var(--songs-bar);
+  border-bottom: 1px solid var(--songs-border);
+}
+
+.back-to-library {
+  color: var(--songs-text);
+  text-decoration: none;
+  border-radius: 3px;
+  padding: 0.25rem 0.5rem;
+  margin-left: -0.5rem;
+
+  &:hover {
+    background-color: rgb(255 255 255 / 10%);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--songs-text);
+    outline-offset: -2px;
+  }
+}
+
+.loading {
+  margin: 0;
+  padding: 1.5rem;
+  color: var(--songs-text-dim);
+}

@@ -1,0 +1,106 @@
+<div class="song-library">
+  <header class="library-header">
+    <!-- Focusable from script only: where the focus goes when a deleted song's card takes its button away. -->
+    <h1 #heading tabindex="-1">Songs</h1>
+
+    <div class="header-actions">
+      <label class="search">
+        <span class="search-label">Search songs</span>
+        <input
+          #searchBox
+          type="search"
+          placeholder="Search title or artist"
+          autocomplete="off"
+          [value]="query"
+          (input)="setQuery(searchBox.value)"
+        />
+      </label>
+      <button type="button" class="tool new-song" (click)="createSong()">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+        New song
+      </button>
+    </div>
+  </header>
+
+  <!--
+    What the page did, or why it could not. Always on the page and only its words change: a region inserted with its
+    message already in it is the case screen readers miss. Two halves that swap, so a repeated message is a change
+    (`SongLibraryPageComponent.messages`). Polite: nothing here interrupts what is being read.
+  -->
+  <p class="library-status" [class.is-error]="messageIsError">
+    <span role="status">{{ messages[0] }}</span><span role="status">{{ messages[1] }}</span>
+  </p>
+
+  <section class="library-body" [attr.aria-busy]="listing === 'reading'">
+    <p class="empty-state" *ngIf="listing === 'read' && visibleCards.length === 0 && query.trim() === ''">
+      No songs yet — <button type="button" class="tool" (click)="createSong()">New song</button>
+    </p>
+    <p class="empty-state" *ngIf="visibleCards.length === 0 && query.trim() !== ''">No songs match "{{ query.trim() }}"</p>
+
+    <ul class="song-grid" *ngIf="visibleCards.length > 0">
+      <li
+        *ngFor="let card of visibleCards; trackBy: trackById"
+        class="song-card"
+        [class.unreadable]="card.unreadable !== null"
+        [class.menu-open]="openMenuId === card.id"
+      >
+        <!-- A song that can be opened: the title is the link, stretched over the card by its ::after. -->
+        <ng-container *ngIf="card.unreadable === null; else unreadableCard">
+          <h2 class="card-title">
+            <a class="card-link" [routerLink]="['/songs', card.id]">{{ card.title }}</a>
+          </h2>
+          <p class="card-artist" *ngIf="card.artist">{{ card.artist }}</p>
+          <p class="card-meta">
+            <span class="card-key">{{ card.keyName }}</span>
+            <span class="card-sections">{{ card.sections }}</span>
+          </p>
+          <p class="card-edited" *ngIf="card.edited">
+            Edited <time [attr.datetime]="card.editedAt" [title]="card.editedOn">{{ card.edited }}</time>
+          </p>
+
+          <div class="card-menu" [class.open]="openMenuId === card.id" (keydown.escape)="closeMenu(toggle, $event)">
+            <button
+              #toggle
+              type="button"
+              class="tool card-menu-toggle"
+              [class.on]="openMenuId === card.id"
+              [attr.aria-label]="'More for ' + card.title"
+              [attr.aria-expanded]="openMenuId === card.id"
+              [attr.aria-controls]="'song-menu-' + card.id"
+              (click)="toggleMenu(card.id)"
+            >
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="5" cy="12" r="2" />
+                <circle cx="12" cy="12" r="2" />
+                <circle cx="19" cy="12" r="2" />
+              </svg>
+            </button>
+            <!-- Hidden with CSS rather than removed, so aria-controls always points at something. -->
+            <div class="menu-panel" role="group" [id]="'song-menu-' + card.id" [attr.aria-label]="card.title">
+              <button type="button" class="tool card-duplicate" (click)="duplicateSong(card, toggle)">Duplicate</button>
+              <button type="button" class="tool card-delete" (click)="deleteSong(card, toggle)">Delete</button>
+            </div>
+          </div>
+        </ng-container>
+
+        <ng-template #unreadableCard>
+          <h2 class="card-title">{{ card.title }}</h2>
+          <p class="card-reason">{{ card.unreadable }}</p>
+          <p class="card-edited" *ngIf="card.edited">
+            Edited <time [attr.datetime]="card.editedAt" [title]="card.editedOn">{{ card.edited }}</time>
+          </p>
+          <button
+            #remove
+            type="button"
+            class="tool card-delete"
+            [attr.aria-label]="'Delete ' + card.title"
+            (click)="deleteSong(card, remove)"
+          >Delete</button>
+        </ng-template>
+      </li>
+    </ul>
+  </section>
+</div>

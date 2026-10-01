@@ -1,0 +1,308 @@
+@use '../../../styles/a11y';
+
+// The app's dark scheme, named once for the page: the GP library's surfaces and card, the progression page's dim
+// grey (#adbcc8, 4.8:1 on the card where the meta line sits) and its error pink (6:1 on these surfaces). The one blue
+// marks the one thing selected - a card whose menu is open - as the flat tool palettes do.
+:host {
+  --songs-surface: #1a252f;
+  --songs-bar: #2c3e50;
+  --songs-card: #34495e;
+  --songs-border: #465666;
+  --songs-text: #ecf0f1;
+  --songs-text-dim: #adbcc8;
+  --songs-accent: #3498db;
+  --songs-error: #f1948a;
+
+  display: block;
+}
+
+// Fills the window under the shell's header and scrolls itself: the shell's `main` hides its overflow, so a page
+// taller than the window would otherwise be cut off. The composer's measure, header height and all.
+.song-library {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--app-header-height, 57px));
+  height: calc(100dvh - var(--app-header-height, 57px));
+  background-color: var(--songs-surface);
+  color: var(--songs-text);
+}
+
+.library-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  background-color: var(--songs-bar);
+  border-bottom: 1px solid var(--songs-border);
+
+  h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+
+    &:focus {
+      outline: none;
+    }
+  }
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.search-label {
+  @extend %sr-only;
+}
+
+.search input {
+  width: 16rem;
+  max-width: 100%;
+  padding: 0.45rem 0.75rem;
+  background-color: var(--songs-surface);
+  border: 1px solid var(--songs-border);
+  border-radius: 4px;
+  color: var(--songs-text);
+  font: inherit;
+  font-size: 0.9rem;
+
+  &::placeholder {
+    color: var(--songs-text-dim);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--songs-text);
+    outline-offset: -1px;
+  }
+}
+
+// The flat tool style (composer palette): no chrome until hovered, colour only on the selected one (`.on`).
+.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--songs-text);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background-color 90ms ease-out;
+
+  &:hover:not(.on) {
+    background-color: rgb(255 255 255 / 10%);
+  }
+
+  &:active {
+    background-color: rgb(255 255 255 / 16%);
+  }
+
+  &.on {
+    background-color: var(--songs-accent);
+    color: #fff;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--songs-text);
+    outline-offset: -2px;
+  }
+}
+
+// Collapses to nothing while it has nothing to say; never removed (see the template).
+.library-status {
+  margin: 0;
+  padding: 0 1.5rem;
+  color: var(--songs-text-dim);
+  font-size: 0.9rem;
+
+  span:not(:empty) {
+    display: block;
+    padding: 0.6rem 0;
+  }
+
+  &.is-error {
+    color: var(--songs-error);
+  }
+}
+
+.library-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.empty-state {
+  margin: 3rem 0 0;
+  text-align: center;
+  color: var(--songs-text-dim);
+  font-size: 1rem;
+
+  .tool {
+    padding: 0.25rem 0.5rem;
+    text-decoration: underline;
+  }
+}
+
+.song-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+// The GP library's card: raised surface, rounded, lifting a little under the pointer.
+.song-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-height: 8rem;
+  padding: 1rem;
+  background-color: var(--songs-card);
+  border-radius: 8px;
+  transition: transform 0.2s, box-shadow 0.2s;
+
+  &:not(.unreadable):hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgb(0 0 0 / 30%);
+  }
+
+  // Above its neighbours while its menu is open, so the menu is not drawn under the next card.
+  &.menu-open {
+    z-index: 2;
+  }
+
+  p {
+    margin: 0;
+  }
+}
+
+.card-title {
+  margin: 0 2.25rem 0 0;
+  font-size: 1rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.card-link {
+  color: inherit;
+  text-decoration: none;
+
+  // Stretched over the whole card, so anywhere on it opens the song while the link's name stays the title.
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 8px;
+  }
+
+  &:focus-visible {
+    outline: none;
+
+    &::after {
+      outline: 2px solid var(--songs-text);
+      outline-offset: 2px;
+    }
+  }
+}
+
+.card-artist {
+  color: var(--songs-text-dim);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+// Pinned to the foot of the card, so the meta lines of a row of cards line up whatever their titles' lengths.
+.song-card .card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.75rem;
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--songs-border);
+  color: var(--songs-text-dim);
+  font-size: 0.8rem;
+}
+
+.card-edited {
+  color: var(--songs-text-dim);
+  font-size: 0.8rem;
+}
+
+.card-reason {
+  color: var(--songs-error);
+  font-size: 0.85rem;
+}
+
+.song-card.unreadable .card-delete {
+  align-self: flex-start;
+  margin-top: auto;
+  margin-left: -0.75rem;
+}
+
+// Above the stretched link, so the button is pressed rather than the card followed.
+.card-menu {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 1;
+}
+
+.card-menu-toggle {
+  padding: 0.35rem;
+}
+
+.menu-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  right: 0;
+  min-width: 9rem;
+  padding: 0.25rem;
+  flex-direction: column;
+  background-color: var(--songs-bar);
+  border: 1px solid var(--songs-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 40%);
+
+  .tool {
+    justify-content: flex-start;
+    width: 100%;
+  }
+}
+
+.card-menu.open .menu-panel {
+  display: flex;
+}
+
+@media (max-width: 768px) {
+  .library-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .header-actions {
+    justify-content: space-between;
+  }
+
+  .search {
+    flex: 1;
+
+    input {
+      width: 100%;
+    }
+  }
+
+  .library-body {
+    padding: 1rem;
+  }
+}
