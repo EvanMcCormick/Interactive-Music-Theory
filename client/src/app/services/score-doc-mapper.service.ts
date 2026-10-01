@@ -2,6 +2,7 @@ import { Injectable, isDevMode } from '@angular/core';
 import * as alphaTab from '@coderline/alphatab';
 import {
   AccidentalMode,
+  ArticulationDoc,
   BarDoc,
   BeatDoc,
   ClefKind,
@@ -21,6 +22,7 @@ import {
   createDefaultBeatEffects,
   createDefaultNoteEffects
 } from '../models/composer.model';
+import { midiChannelsOf } from './midi-channels';
 import { frettedDocOf } from './pitch-on-strings';
 import {
   accentOf,
@@ -53,6 +55,7 @@ import {
   trillSpeedOf,
   vibratoOf
 } from './alpha-tab-enum.bridge';
+import { naturalHarmonicValueOf } from './natural-harmonics';
 import { ALTER_BY_ACCIDENTAL, alterFor, forcedLetterOf } from './note-spelling';
 
 /** Step index of each letter, C through B, as `SpelledNote.letter` numbers them. */
@@ -214,6 +217,11 @@ export class ScoreDocMapperService {
     for (const trackDoc of doc.tracks) {
       score.addTrack(this.toTrack(trackDoc));
     }
+    // As alphaTab's importers would: `score.finish` assigns none, and a score built here kept every track on channel 0.
+    midiChannelsOf(score.tracks).forEach(({ primary, secondary }, index) => {
+      score.tracks[index].playbackInfo.primaryChannel = primary;
+      score.tracks[index].playbackInfo.secondaryChannel = secondary;
+    });
 
     score.finish(settings);
     return score;
@@ -292,7 +300,33 @@ export class ScoreDocMapperService {
     for (const staffDoc of doc.staves) {
       track.addStaff(this.toStaff(staffDoc));
     }
+    // In order: a percussion note's number below this list's length is an index into it, so the list must come back
+    // exactly as it was read. `Track.finish` zeroes a drum track's program, and `toScore` assigns its channel
+    // (`midiChannelsOf`).
+    for (const articulation of doc.percussionArticulations) {
+      track.percussionArticulations.push(this.toArticulation(articulation));
+    }
     return track;
+  }
+
+  /**
+   * The public constructor, not `InstrumentArticulation.create`: `create` takes the id first and is what alphaTab's own
+   * importers call, but it is not in `alphaTab.d.ts`. The constructor takes the same fields with the id last. It also
+   * replaces a `noteHeadHalf` or `noteHeadWhole` of `MusicFontSymbol.None` with `noteHeadDefault`
+   * (`alphaTab.core.mjs` ~5121 in 1.8), so such an entry does not come back field for field.
+   */
+  private toArticulation(doc: ArticulationDoc): alphaTab.model.InstrumentArticulation {
+    return new alphaTab.model.InstrumentArticulation(
+      doc.elementType,
+      doc.staffLine,
+      doc.outputMidiNumber,
+      doc.noteHeadDefault,
+      doc.noteHeadHalf,
+      doc.noteHeadWhole,
+      doc.techniqueSymbol,
+      doc.techniqueSymbolPlacement,
+      doc.id
+    );
   }
 
   private toStaff(doc: StaffDoc): alphaTab.model.Staff {
@@ -304,6 +338,10 @@ export class ScoreDocMapperService {
     staff.showTablature = doc.showTablature;
     staff.showSlash = doc.showSlash;
     staff.showNumbered = doc.showNumbered;
+    // Before the bars, and before `score.finish`, which is what reads the flag: it clears the tuning, turns tablature off
+    // and zeroes the display transposition on a percussion staff.
+    staff.isPercussion = doc.isPercussion;
+    staff.standardNotationLineCount = doc.lineCount;
 
     if (doc.tuning.length > 0) {
       staff.stringTuning = new alphaTab.model.Tuning(
@@ -427,9 +465,13 @@ export class ScoreDocMapperService {
     if (doc.pitch.kind === 'fretted') {
       note.string = this.flipString(doc.pitch.string, stringCount);
       note.fret = doc.pitch.fret;
-    } else {
+    } else if (doc.pitch.kind === 'pitched') {
       note.octave = doc.pitch.octave + ScoreDocMapperService.OCTAVE_OFFSET;
       note.tone = doc.pitch.noteValue;
+    } else {
+      // No string, fret, tone or octave: `Note.isPercussion` is `!isStringed && percussionArticulation >= 0`, and
+      // playback takes the articulation's MIDI number as the key.
+      note.percussionArticulation = doc.pitch.articulation;
     }
 
     note.isTieDestination = doc.isTied;
@@ -459,6 +501,11 @@ export class ScoreDocMapperService {
     note.rightHandFinger = toFingers(doc.effects.rightHandFinger);
     note.vibrato = toVibratoType(doc.effects.vibrato);
     note.harmonicType = toHarmonicType(doc.effects.harmonic);
+    // A natural harmonic's pitch is its fret's node, which alphaTab reads from `harmonicValue`, not from the type: set
+    // as alphaTex's `nh` sets it. The other harmonics keep no value, and sound at the fretted pitch.
+    if (doc.pitch.kind === 'fretted' && note.harmonicType === alphaTab.model.HarmonicType.Natural) {
+      note.harmonicValue = naturalHarmonicValueOf(doc.pitch.fret);
+    }
     applySlide(note, doc.effects.slide);
 
     return note;
@@ -536,7 +583,18 @@ export class ScoreDocMapperService {
       // alphaTab's model has nowhere to carry a marker, so every track read
       // back out of it is an ordinary one. Stated rather than left off: a
       // missing field and an absent marker must not be two different states.
-      generated: null
+      generated: null,
+      percussionArticulations: track.percussionArticulations.map(articulation => ({
+        id: articulation.id,
+        elementType: articulation.elementType,
+        staffLine: articulation.staffLine,
+        noteHeadDefault: articulation.noteHeadDefault,
+        noteHeadHalf: articulation.noteHeadHalf,
+        noteHeadWhole: articulation.noteHeadWhole,
+        techniqueSymbol: articulation.techniqueSymbol,
+        techniqueSymbolPlacement: articulation.techniqueSymbolPlacement,
+        outputMidiNumber: articulation.outputMidiNumber
+      }))
     };
   }
 
@@ -551,6 +609,9 @@ export class ScoreDocMapperService {
       showTablature: staff.showTablature,
       showSlash: staff.showSlash,
       showNumbered: staff.showNumbered,
+      // The tuning above is already empty on a percussion staff: `Staff.finish` cleared it.
+      isPercussion: staff.isPercussion,
+      lineCount: staff.standardNotationLineCount,
       bars: staff.bars.map(b => this.fromBar(b, staff.stringTuning.tunings.length))
     };
   }
@@ -628,18 +689,7 @@ export class ScoreDocMapperService {
     effects.rightHandFinger = fingerOf(note.rightHandFinger);
 
     const accidental = accidentalOf(note.accidentalMode);
-    const pitch: NotePitch = note.isStringed
-      ? {
-          kind: 'fretted',
-          string: this.flipString(note.string, stringCount),
-          fret: note.fret
-        }
-      : {
-          kind: 'pitched',
-          noteValue: note.tone,
-          octave: note.octave - ScoreDocMapperService.OCTAVE_OFFSET,
-          letter: forcedLetterOf(accidental, note.tone)
-        };
+    const pitch = this.pitchOf(note, stringCount, accidental);
 
     return {
       pitch,
@@ -649,6 +699,23 @@ export class ScoreDocMapperService {
     };
   }
 
+  /**
+   * What `note` is: a string and a fret, a pitch, or a drum.
+   *
+   * Percussion is asked first. A drum note is not stringed, so it used to fall to the pitched branch, and alphaTab
+   * leaves `tone` and `octave` at -1 on one - so every hit read back as `{ noteValue: -1, octave: -2 }`, which is not a
+   * wrong pitch but no pitch at all. The articulation is copied verbatim, index or id alike.
+   */
+  private pitchOf(note: alphaTab.model.Note, stringCount: number, accidental: AccidentalMode): NotePitch {
+    if (note.isPercussion) return { kind: 'percussion', articulation: note.percussionArticulation };
+    if (note.isStringed) return { kind: 'fretted', string: this.flipString(note.string, stringCount), fret: note.fret };
+    return {
+      kind: 'pitched',
+      noteValue: note.tone,
+      octave: note.octave - ScoreDocMapperService.OCTAVE_OFFSET,
+      letter: forcedLetterOf(accidental, note.tone)
+    };
+  }
 }
 
 /** Reference key signatures, exposed for UI pickers. */

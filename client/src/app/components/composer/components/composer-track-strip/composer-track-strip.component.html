@@ -1,13 +1,51 @@
 <section class="track-strip" aria-label="Tracks" *ngIf="state as s">
   <ul class="track-list">
+    <!--
+      The rows are the document's tracks in Composition and the file's in Original (`trackRowsOf`). Show / hide, mute and
+      solo are on every row in both; what needs a document - the progression's badge, Update, Flatten and Remove - only
+      on a composition's.
+    -->
     <li
-      *ngFor="let track of s.doc.tracks; let i = index; trackBy: trackByIndex"
+      *ngFor="let row of rows; let i = index; trackBy: trackByKey"
       class="track-item"
-      [class.selected]="s.cursor.trackIndex === i"
+      [class.selected]="isSelected(row, s)"
+      [class.hidden-track]="!row.shown"
       (click)="selectTrack(i)"
     >
-      <span class="track-swatch" [style.background-color]="track.color"></span>
-      <span class="track-name">{{ track.name }}</span>
+      <span class="track-swatch" [style.background-color]="row.color"></span>
+      <span class="track-name">{{ row.name }}</span>
+
+      <span class="track-view">
+        <!--
+          Pressed while shown, under one name either way ("Show Lead"). `aria-disabled` on the last row shown, as Remove
+          refuses the last track.
+        -->
+        <button
+          type="button"
+          class="track-toggle track-shown"
+          [attr.aria-pressed]="row.shown"
+          [attr.aria-disabled]="hideRefused(row) ? 'true' : null"
+          [attr.aria-label]="shownLabel(row)"
+          [title]="shownLabel(row)"
+          (click)="toggleShown(row); $event.stopPropagation()"
+        >{{ row.shown ? '◉' : '○' }}</button>
+        <button
+          type="button"
+          class="track-toggle track-mute"
+          [attr.aria-pressed]="row.muted"
+          [attr.aria-label]="'Mute ' + row.name"
+          title="Mute"
+          (click)="toggleMuted(row); $event.stopPropagation()"
+        >M</button>
+        <button
+          type="button"
+          class="track-toggle track-solo"
+          [attr.aria-pressed]="row.soloed"
+          [attr.aria-label]="'Solo ' + row.name"
+          title="Solo"
+          (click)="toggleSoloed(row); $event.stopPropagation()"
+        >S</button>
+      </span>
 
       <!--
         The badge says the marker's own copy of the name, not the row's.
@@ -21,54 +59,56 @@
         explanation is unreachable by focus and its tooltip is suppressed, so a
         label was the wrong and only place to keep it.
       -->
-      <ng-container *ngIf="track.generated as origin">
-        <span class="track-origin">
-          <span class="track-badge">From {{ origin.progressionName }}</span>
-          <span class="track-status" [class.is-stale]="canUpdate(track)">{{ generatedStatusLabel(track) }}</span>
-        </span>
-        <span class="track-generated">
-          <!--
-            `aria-disabled` and not `disabled`: the button keeps its place in
-            the tab order and keeps its tooltip, so the sentence saying why it
-            is refusing stays reachable. It only *says* it is refusing, so
-            `updateGeneratedTrack` makes the refusal itself.
+      <ng-container *ngIf="trackAt(i) as track">
+        <ng-container *ngIf="track.generated as origin">
+          <span class="track-origin">
+            <span class="track-badge">From {{ origin.progressionName }}</span>
+            <span class="track-status" [class.is-stale]="canUpdate(track)">{{ generatedStatusLabel(track) }}</span>
+          </span>
+          <span class="track-generated">
+            <!--
+              `aria-disabled` and not `disabled`: the button keeps its place in
+              the tab order and keeps its tooltip, so the sentence saying why it
+              is refusing stays reachable. It only *says* it is refusing, so
+              `updateGeneratedTrack` makes the refusal itself.
 
-            `handler(); $event.stopPropagation()` runs the handler first, so a
-            throw would skip the stop and the click would fall through to the
-            row and move the caret. Nothing in either handler throws today -
-            the one guard that does is `sendProgression`'s meter check, and it
-            is handed `this.composer.scoreMeter`, which is the same meter it
-            compares against.
-          -->
-          <button
-            class="text-btn track-update"
-            (click)="updateGeneratedTrack(); $event.stopPropagation()"
-            [attr.aria-disabled]="!canUpdate(track)"
-            [attr.aria-label]="updateLabel(track)"
-            [title]="updateLabel(track)"
-          >Update</button>
-          <button
-            class="text-btn track-flatten"
-            (click)="flattenGeneratedTrack(i); $event.stopPropagation()"
-            [attr.aria-label]="flattenLabel(track)"
-            [title]="flattenLabel(track)"
-          >Flatten</button>
-        </span>
+              `handler(); $event.stopPropagation()` runs the handler first, so a
+              throw would skip the stop and the click would fall through to the
+              row and move the caret. Nothing in either handler throws today -
+              the one guard that does is `sendProgression`'s meter check, and it
+              is handed `this.composer.scoreMeter`, which is the same meter it
+              compares against.
+            -->
+            <button
+              class="text-btn track-update"
+              (click)="updateGeneratedTrack(); $event.stopPropagation()"
+              [attr.aria-disabled]="!canUpdate(track)"
+              [attr.aria-label]="updateLabel(track)"
+              [title]="updateLabel(track)"
+            >Update</button>
+            <button
+              class="text-btn track-flatten"
+              (click)="flattenGeneratedTrack(i); $event.stopPropagation()"
+              [attr.aria-label]="flattenLabel(track)"
+              [title]="flattenLabel(track)"
+            >Flatten</button>
+          </span>
+        </ng-container>
+
+        <!--
+          `aria-disabled` rather than `disabled` on the last track, for the reason Update above uses it: a disabled button
+          hides why from focus and from its tooltip. The press still reaches the service, which refuses and says why in
+          the status line.
+        -->
+        <button
+          type="button"
+          class="track-remove"
+          (click)="removeTrack(i); $event.stopPropagation()"
+          [attr.aria-disabled]="s.doc.tracks.length <= 1 ? 'true' : null"
+          [attr.aria-label]="removeLabel(row, s.doc.tracks.length)"
+          [title]="removeTitle(s.doc.tracks.length)"
+        >×</button>
       </ng-container>
-
-      <!--
-        `aria-disabled` rather than `disabled` on the last track, for the reason Update above uses it: a disabled button
-        hides why from focus and from its tooltip. The press still reaches the service, which refuses and says why in
-        the status line.
-      -->
-      <button
-        type="button"
-        class="track-remove"
-        (click)="removeTrack(i); $event.stopPropagation()"
-        [attr.aria-disabled]="s.doc.tracks.length <= 1 ? 'true' : null"
-        [attr.aria-label]="removeLabel(track, s.doc.tracks.length)"
-        [title]="removeTitle(s.doc.tracks.length)"
-      >×</button>
     </li>
   </ul>
 
@@ -90,6 +130,7 @@
       speech-input user says to press it.
     -->
     <button
+      *ngIf="!original"
       class="text-btn add-progression-track"
       (click)="addProgressionTrack()"
       [attr.aria-disabled]="!canAddProgressionTrack()"

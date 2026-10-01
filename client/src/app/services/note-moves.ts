@@ -5,7 +5,7 @@ import { NoteTarget, noteTargetsAt } from './note-edits';
 import { PlacedNote, hammerDestinationOf, slideTargetOf, tieChainOf, tieOriginOf } from './note-landing';
 import { respellingsOf } from './note-respell';
 import { reduceToOctave } from './note-spelling';
-import { fretRangeOf, maxFretOf } from './pitch-on-strings';
+import { PERCUSSION, fretRangeOf, maxFretOf } from './pitch-on-strings';
 import { STEP_SEMITONES } from './staff-pitch';
 
 /**
@@ -62,6 +62,8 @@ export function shiftSemitone(doc: ScoreDoc, refs: readonly BeatRef[], focus: nu
   const direction = delta > 0 ? 'up' : 'down';
 
   for (const { ref, note } of targets) {
+    // `editRefusal` refuses a percussion staff before this is reached; a drum hit has no pitch to move in any case.
+    if (note.pitch.kind === 'percussion') return PERCUSSION;
     if (note.pitch.kind === 'fretted') {
       const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex] ?? { capo: 0 };
       if (movesOut(note.pitch.fret, note.pitch.fret + delta, 0, maxFretOf(staff))) {
@@ -79,7 +81,7 @@ export function shiftSemitone(doc: ScoreDoc, refs: readonly BeatRef[], focus: nu
 
   for (const { ref, note } of targets) {
     const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
-    if (!staff) continue;
+    if (!staff || note.pitch.kind === 'percussion') continue;
     if (note.pitch.kind === 'fretted') {
       note.pitch = { ...note.pitch, fret: note.pitch.fret + delta };
     } else {

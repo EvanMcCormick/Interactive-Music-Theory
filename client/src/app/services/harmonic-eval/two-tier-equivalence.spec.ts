@@ -291,7 +291,9 @@ describe('two-tier equivalence on the real stem', () => {
             : beat.notes.map(note =>
                 note.pitch.kind === 'fretted'
                   ? `s${note.pitch.string}f${note.pitch.fret}`
-                  : `p${note.pitch.noteValue}o${note.pitch.octave}`
+                  : note.pitch.kind === 'pitched'
+                    ? `p${note.pitch.noteValue}o${note.pitch.octave}`
+                    : `a${note.pitch.articulation}`
               )
         )
       )

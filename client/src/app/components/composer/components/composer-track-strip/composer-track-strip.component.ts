@@ -6,7 +6,11 @@ import { Subject, takeUntil } from 'rxjs';
 import { ComposerState, TrackDoc } from '../../../../models/composer.model';
 import { ProgressionState } from '../../../../models/progression.model';
 import { ComposerService } from '../../../../services/composer.service';
-import { LAST_TRACK_REFUSAL } from '../../../../services/composer-text';
+import { ComposerGpService, GpOriginal } from '../../../../services/composer-gp.service';
+import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
+import { EMPTY_TRACK_VIEW, TrackRow, TrackView, hideRefusalOf, trackRowsOf } from '../../../../services/composer-track-rows';
+import { ComposerTrackViewService } from '../../../../services/composer-track-view.service';
+import { LAST_TRACK_REFUSAL, hiddenTrackRefusalOf } from '../../../../services/composer-text';
 import { ProgressionService } from '../../../../services/progression.service';
 import {
   GeneratedTrackState,
@@ -58,6 +62,13 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
   private readonly destroy$ = new Subject<void>();
 
   state: ComposerState | null = null;
+  /** The `.gp` file the page is showing, or null in Composition: its tracks are the rows then, with no document behind them. */
+  original: GpOriginal | null = null;
+  /** The rows the strip draws, in either state (`trackRowsOf`). */
+  rows: TrackRow[] = [];
+  private view: TrackView = EMPTY_TRACK_VIEW;
+  /** In Original, the track of the file's caret (`ComposerGpService.caret`): the row drawn as selected. */
+  private fileCaretTrack: number | null = null;
 
   /**
    * The progression this page can send, or null before the first publish.
@@ -85,6 +96,8 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
   constructor(
     private readonly composer: ComposerService,
     private readonly progression: ProgressionService,
+    private readonly gp: ComposerGpService,
+    private readonly trackViews: ComposerTrackViewService,
     private readonly cdr: ChangeDetectorRef
   ) {}
 
@@ -94,6 +107,33 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
         this.state = state;
+        this.readRows();
+        this.cdr.markForCheck();
+      });
+
+    this.gp
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(original => {
+        this.original = original;
+        this.readRows();
+        this.cdr.markForCheck();
+      });
+
+    this.gp
+      .getCaret()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(caret => {
+        this.fileCaretTrack = caret?.cursor.trackIndex ?? null;
+        this.cdr.markForCheck();
+      });
+
+    this.trackViews
+      .getView()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(view => {
+        this.view = view;
+        this.readRows();
         this.cdr.markForCheck();
       });
 
@@ -122,10 +162,64 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
     this.destroy$.complete();
   }
 
-  /** Adds a track of the chosen instrument. The keyboard's Ctrl+Shift+Insert comes here too. */
+  /** The rows again, from the file in Original or the document in Composition, as the view shows them. */
+  private readRows(): void {
+    this.rows = this.original ? trackRowsOf(this.original.score, this.view) : this.state ? trackRowsOf(this.state.doc, this.view) : [];
+  }
+
+  /** The document's track behind a row, or null in Original, where the rows are the file's. */
+  trackAt(index: number): TrackDoc | null {
+    return this.original ? null : (this.state?.doc.tracks[index] ?? null);
+  }
+
+  /**
+   * Shows or hides a row's staves: a page setting, never an edit, in either state (design decision 15). Hiding the last
+   * row shown is refused, and says why in the status line as well as in the button's name.
+   */
+  toggleShown(row: TrackRow): void {
+    const refusal = this.trackViews.toggleShown(this.rows, row.index);
+    if (refusal) this.composer.announce(refusal, true);
+  }
+
+  /** Whether hiding `row` is refused: it is the last one shown (`hideRefusalOf`). */
+  hideRefused(row: TrackRow): boolean {
+    return hideRefusalOf(this.rows, row.index) !== null;
+  }
+
+  /**
+   * Show / hide's accessible name: "Show" and the track's, in both states, with `aria-pressed` saying whether it is shown
+   * - a name that turned to "Hide" as it was pressed would read "Hide Lead, pressed", a double negative. And why it
+   * refuses while it is the last shown.
+   */
+  shownLabel(row: TrackRow): string {
+    const refusal = hideRefusalOf(this.rows, row.index);
+    return refusal ? `Show ${row.name}, unavailable: ${refusal}` : `Show ${row.name}`;
+  }
+
+  /** Mutes or unmutes a row: the player's in Original (decision 16), the composition's own mixer in Composition. */
+  toggleMuted(row: TrackRow): void {
+    if (this.original) this.trackViews.toggleMuted(row.key);
+    else this.composer.setPlayback({ isMute: !row.muted }, row.index);
+  }
+
+  /** Solos a row, or takes its solo off, as `toggleMuted` does. */
+  toggleSoloed(row: TrackRow): void {
+    if (this.original) this.trackViews.toggleSoloed(row.key);
+    else this.composer.setPlayback({ isSolo: !row.soloed }, row.index);
+  }
+
+  trackByKey(_index: number, row: TrackRow): string {
+    return row.key;
+  }
+
+  /**
+   * Adds a track of the chosen instrument - asking the conversion prompt first in Original, as the `addTrack` tool does.
+   * The keyboard's Ctrl+Shift+Insert comes here too, already past that question, and asking twice is asking once: the
+   * gate runs a command straight through outside Original.
+   */
   addTrack(): void {
     const instrument = this.newTrackInstrument;
-    this.composer.addTrack(instrument.name, instrument.program, instrument.fretted);
+    this.gp.requestEdit('addTrack', 'Add track', () => this.composer.addTrack(instrument.name, instrument.program, instrument.fretted));
   }
 
   /** Removes a track. The last one is refused by the service, which says why; its button says so before the press. */
@@ -133,17 +227,30 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
     this.composer.removeTrack(index);
   }
 
-  /** Remove's accessible name: the track's, and why it refuses while it is the only track. */
-  removeLabel(track: TrackDoc, trackCount: number): string {
-    return trackCount <= 1 ? `Remove ${track.name}, unavailable: ${LAST_TRACK_REFUSAL}` : `Remove ${track.name}`;
+  /** Remove's accessible name: the row's - "Track 2" for an unnamed track, as the row says - and why it refuses while it is the only track. */
+  removeLabel(row: TrackRow, trackCount: number): string {
+    return trackCount <= 1 ? `Remove ${row.name}, unavailable: ${LAST_TRACK_REFUSAL}` : `Remove ${row.name}`;
   }
 
   removeTitle(trackCount: number): string {
     return trackCount <= 1 ? `Remove track - unavailable: ${LAST_TRACK_REFUSAL}` : 'Remove track';
   }
 
+  /**
+   * Puts the caret on the row's track - in Original the file's caret, which `setCursor` reaches there
+   * (`ComposerService.lendCaret`). Not on a hidden track, where an edit would write to a staff no one can see - that says
+   * why on the status line instead.
+   */
   selectTrack(index: number): void {
+    const row = this.rows.find(candidate => candidate.index === index);
+    if (!row) return;
+    if (!row.shown) return this.composer.announce(hiddenTrackRefusalOf(row.name), true);
     this.composer.setCursor({ trackIndex: index, staffIndex: 0 });
+  }
+
+  /** Whether the row is drawn as the caret's: the file's caret in Original, the composition's otherwise. */
+  isSelected(row: TrackRow, state: ComposerState): boolean {
+    return (this.original ? this.fileCaretTrack : state.cursor.trackIndex) === row.index;
   }
 
   // -------------------------------------------------------------------------
@@ -258,8 +365,26 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
    * The guard is `canAddProgressionTrack` and not a null check, because
    * `aria-disabled` only says a control is refusing - it does not stop the
    * click, and the handler is where the refusal is actually made.
+   *
+   * In Original the send asks the conversion prompt first, as any edit does:
+   * `sendProgression` commits into the composition that is open, which there
+   * is the empty one under the file, and it does not move `documentId`, so
+   * nothing else would end Original for it. A refused press asks nothing -
+   * there is no edit to ask about.
    */
   addProgressionTrack(): void {
+    if (!this.canAddProgressionTrack()) return;
+
+    this.gp.requestEdit(ASKING_PAGE_COMMANDS.progressionTrack, 'Adding the progression track', () => this.sendProgressionTrack());
+  }
+
+  /**
+   * The send both buttons make, reading the progression, the score and its
+   * meter as it runs - which, held by the conversion prompt, is after Convert
+   * has put the file's own score in place of the empty one, so the refusal is
+   * asked again against the score the track will go into.
+   */
+  private sendProgressionTrack(): void {
     // The refusal is the second half; the first is only how a null field
     // becomes a `ProgressionState` below, since `canAddProgressionTrack`
     // already answers false for it.
@@ -295,6 +420,8 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
    * Almost an alias, and deliberately little more: the button is named for what
    * the user is doing rather than for what the service calls it, and a second
    * method with a body of its own would be a second place for the two to drift.
+   * Both run `sendProgressionTrack`; this one asks the conversion prompt under
+   * its own name, so the prompt says Update when Update was pressed.
    *
    * ## Why it takes no track when everything beside it does
    *
@@ -321,7 +448,7 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
   updateGeneratedTrack(): void {
     if (this.sendState() !== 'stale') return;
 
-    this.addProgressionTrack();
+    this.gp.requestEdit(ASKING_PAGE_COMMANDS.progressionTrack, 'Updating the progression track', () => this.sendProgressionTrack());
   }
 
   /** Hands the track over to the user, keeping the music and dropping the link. */

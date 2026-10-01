@@ -1,14 +1,18 @@
 import { Injectable, NgZone } from '@angular/core';
-import { BehaviorSubject, Observable } from 'rxjs';
+import { BehaviorSubject } from 'rxjs';
 import {
   AlphaTabState,
-  GpTrackInfo,
-  GpScoreInfo,
   AlphaTabSettings,
   DEFAULT_ALPHA_TAB_STATE
 } from '../models/alpha-tab.model';
 import * as alphaTab from '@coderline/alphatab';
 import { AuditionQueue } from './audition-queue';
+
+/** How the player sounds one track: muted, soloed, both or neither. */
+export interface TrackPlayback {
+  mute: boolean;
+  solo: boolean;
+}
 
 /**
  * Service for managing alphaTab API interactions
@@ -112,21 +116,23 @@ export class AlphaTabService {
   private setupEventListeners(): void {
     if (!this.api) return;
 
-    // Score loaded
-    this.api.scoreLoaded.on((score) => {
+    // Score loaded. Not the score itself: the page reads the one it gave alphaTab, and a reference kept here held the
+    // last score drawn for as long as the page was open.
+    this.api.scoreLoaded.on(() => {
       this.ngZone.run(() => {
         this.updateState({
           isLoaded: true,
-          score: score,
-          selectedTracks: score.tracks.map((_, i) => i),
           loadingState: 'loaded',
           errorMessage: null
         });
       });
     });
 
-    // MIDI loaded: a render's `loadMidiFile` has stopped the player, so a note entry's audition can sound now.
+    // MIDI loaded: a render's `loadMidiFile` has stopped the player, so a note entry's audition can sound now. And the
+    // mixer the page wants goes back on: a score alphaTab is given carries its mutes in `PlaybackInformation`, which the
+    // player never reads - only `changeTrackMute` and `changeTrackSolo` reach it.
     this.api.midiLoaded.on(() => {
+      this.applyTrackPlayback();
       const audition = this.auditions.midiLoaded();
       if (audition) this.auditionNote(audition.midiKey, audition.program);
     });
@@ -151,7 +157,6 @@ export class AlphaTabService {
     this.api.playerPositionChanged.on((args) => {
       this.ngZone.run(() => {
         this.updateState({
-          tickPosition: args.currentTick,
           timePosition: args.currentTime,
           totalDuration: args.endTime
         });
@@ -171,31 +176,22 @@ export class AlphaTabService {
   }
 
   /**
-   * Load a Guitar Pro file from a File object
+   * Draws `trackIndices` of the score alphaTab already holds - the track strip's show/hide in the Original state,
+   * where there is no document to re-render from. Indices the score does not have are left out, and an empty list
+   * draws nothing, so a caller that refuses to hide the last track does so for itself (`renderedTracksOf`).
    */
-  async loadFile(file: File): Promise<void> {
-    if (!this.api) {
-      throw new Error('alphaTab API not initialized');
-    }
-
-    this.updateState({ loadingState: 'loading', errorMessage: null });
-
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-      this.api.load(uint8Array, [0]); // Load first track by default
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to load file';
-      this.updateState({ loadingState: 'error', errorMessage: message });
-      throw error;
-    }
+  renderTracks(trackIndices: readonly number[]): void {
+    const score = this.api?.score;
+    if (!this.api || !score) return;
+    this.api.renderTracks(trackIndices.map(index => score.tracks[index]).filter(track => track !== undefined));
   }
 
-
-
   /**
-   * Render an in-memory score. Used by the composer, which builds a Score from
-   * its own ScoreDoc rather than loading a file.
+   * Render an in-memory score: the composer's, mapped from its `ScoreDoc`, or in the Original state the one a `.gp` file
+   * was read into as it opened (`GpFileOpener`). A file's bytes are never handed to alphaTab here: `api.load` would
+   * parse them again, synchronously on the main thread - its `BrowserUiFacade.load` calls
+   * `ScoreLoader.loadScoreFromBytes` (`alphaTab.core.mjs` ~56121-56133 in 1.8); only a URL is fetched asynchronously, and
+   * no parse goes to a worker.
    */
   renderScore(score: alphaTab.model.Score, trackIndices?: number[]): void {
     if (!this.api) {
@@ -290,13 +286,6 @@ export class AlphaTabService {
   }
 
   /**
-   * Pause playback
-   */
-  pause(): void {
-    this.api?.pause();
-  }
-
-  /**
    * Toggle play/pause
    */
   playPause(): void {
@@ -309,7 +298,6 @@ export class AlphaTabService {
   stop(): void {
     this.api?.stop();
   }
-
 
   /**
    * Seek to position in milliseconds
@@ -350,80 +338,53 @@ export class AlphaTabService {
     }
   }
 
-
   /**
-   * Mute/unmute a track
+   * Turns alphaTab's note bounds on or off and lays the score out again: `BeatBounds.notes` in the bounds lookup, which
+   * the scale panel's highlight reads. Off by default - a rectangle per note, and the beat is the unit of selection - and
+   * turned on by the panel's first opening, for the life of the page.
    */
-  setTrackMute(trackIndex: number, mute: boolean): void {
-    if (this.api && this.api.score) {
-      const track = this.api.score.tracks[trackIndex];
-      if (track) {
-        this.api.changeTrackMute([track], mute);
-      }
-    }
+  setNoteBounds(on: boolean): void {
+    if (!this.api || this.api.settings.core.includeNoteBounds === on) return;
+    this.api.settings.core.includeNoteBounds = on;
+    this.api.updateSettings();
+    this.api.render();
   }
 
+  /** The mute and solo each track should play with, by index, kept and applied again after every MIDI load. */
+  private trackPlayback: readonly TrackPlayback[] = [];
   /**
-   * Solo/unsolo a track
+   * Whether a page has set `trackPlayback` for the api there is now. Until one has, a MIDI load leaves the player's mixer
+   * alone: an empty one would unmute every track of another page's score. `dispose` forgets both with the api - this is a
+   * root service, and the next page to make an api may not be the one that set them.
    */
-  setTrackSolo(trackIndex: number, solo: boolean): void {
-    if (this.api && this.api.score) {
-      const track = this.api.score.tracks[trackIndex];
-      if (track) {
-        this.api.changeTrackSolo([track], solo);
-      }
-    }
+  private trackPlaybackSet = false;
+
+  /**
+   * Plays each track of the score alphaTab holds muted or soloed as `states` say, by index, now and after every render
+   * from here on (`midiLoaded`). The page's one mixer: the track strip's rows, in either state.
+   */
+  setTrackPlayback(states: readonly TrackPlayback[]): void {
+    // Asked on every caret move by the score; the player is told only of a change.
+    const same =
+      states.length === this.trackPlayback.length &&
+      states.every((state, index) => state.mute === this.trackPlayback[index].mute && state.solo === this.trackPlayback[index].solo);
+    if (this.trackPlaybackSet && same) return;
+    this.trackPlayback = states;
+    this.trackPlaybackSet = true;
+    this.applyTrackPlayback();
   }
 
-
-  /**
-   * Get simplified track info for UI
-   */
-  getTrackInfo(): GpTrackInfo[] {
-    const state = this.getCurrentState();
-    if (!state.score) return [];
-
-    return state.score.tracks.map((track: any, index: number) => ({
-      index,
-      name: track.name,
-      shortName: track.shortName,
-      color: this.colorToHex(track.color),
-      isMuted: false, // alphaTab doesn't expose this directly
-      isSolo: false,
-      isPercussion: track.isPercussion,
-      channel: track.playbackInfo.primaryChannel,
-      program: track.playbackInfo.program
-    }));
-  }
-
-  /**
-   * Get simplified score info for UI
-   */
-  getScoreInfo(): GpScoreInfo | null {
-    const state = this.getCurrentState();
-    if (!state.score) return null;
-
-    return {
-      title: state.score.title || 'Untitled',
-      subtitle: state.score.subTitle || '',
-      artist: state.score.artist || 'Unknown Artist',
-      album: state.score.album || '',
-      copyright: state.score.copyright || '',
-      tabAuthor: state.score.tab || '',
-      tempo: state.score.tempo,
-      trackCount: state.score.tracks.length,
-      barCount: state.score.masterBars.length
-    };
-  }
-
-  /**
-   * Convert alphaTab Color to hex string
-   */
-  private colorToHex(color: alphaTab.model.Color): string {
-    const r = color.r.toString(16).padStart(2, '0');
-    const g = color.g.toString(16).padStart(2, '0');
-    const b = color.b.toString(16).padStart(2, '0');
-    return `#${r}${g}${b}`;
+  private applyTrackPlayback(): void {
+    const score = this.api?.score;
+    if (!this.api || !score || !this.trackPlaybackSet) return;
+    const tracksWhere = (test: (state: TrackPlayback) => boolean): alphaTab.model.Track[] =>
+      score.tracks.filter((_, index) => test(this.trackPlayback[index] ?? { mute: false, solo: false }));
+    // Off first, then on: the player mutes and solos by MIDI channel, and tracks share them - every single-staff drum
+    // track is on channel 9 - so an unmute sent after a mute would unmute the muted track's channel with it.
+    this.api.changeTrackMute(tracksWhere(state => !state.mute), false);
+    this.api.changeTrackMute(tracksWhere(state => state.mute), true);
+    this.api.changeTrackSolo(tracksWhere(state => !state.solo), false);
+    this.api.changeTrackSolo(tracksWhere(state => state.solo), true);
   }
 
   /**
@@ -541,24 +502,8 @@ export class AlphaTabService {
       this.api.destroy();
       this.api = null;
     }
+    this.trackPlayback = [];
+    this.trackPlaybackSet = false;
     this.stateSubject.next(DEFAULT_ALPHA_TAB_STATE);
-  }
-
-  /**
-   * Reset to initial state without disposing
-   */
-  reset(): void {
-    this.stop();
-    this.updateState({
-      isLoaded: false,
-      isPlaying: false,
-      tickPosition: 0,
-      timePosition: 0,
-      totalDuration: 0,
-      score: null,
-      selectedTracks: [],
-      loadingState: 'idle',
-      errorMessage: null
-    });
   }
 }

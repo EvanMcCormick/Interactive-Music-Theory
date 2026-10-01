@@ -14,6 +14,8 @@ import {
 } from '../../models/progression.model';
 import { ComposerExportService } from '../../services/composer-export.service';
 import { ComposerService } from '../../services/composer.service';
+import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
+import { ComposerGpService } from '../../services/composer-gp.service';
 import { ProgressionPlayerService } from '../../services/progression-player.service';
 import { MAX_PREVIEW_BARS } from '../../services/progression-score';
 import { ProgressionService } from '../../services/progression.service';
@@ -697,6 +699,65 @@ describe('ProgressionComponent exports', () => {
         kind: 'revision',
         revision: progression.doc.revision
       });
+    });
+
+    /**
+     * While the composer is showing a `.gp` file not yet converted, the composition under it is an empty one nothing
+     * draws, and `sendProgression` does not move `documentId`, so nothing would end Original for it. The send is held
+     * for the conversion prompt, which the composer page shows on arrival - so the page still goes there.
+     */
+    it('holds the send for the conversion prompt while the composer shows a file, and still goes there', () => {
+      const gp = TestBed.inject(ComposerGpService);
+      gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score() });
+      progression.appendSlot(0);
+
+      component.send();
+
+      expect(sentTrack()).toBeNull();
+      expect(gp.request?.id).toBe(ASKING_PAGE_COMMANDS.progressionTrack);
+      expect(navigate).toHaveBeenCalledWith(['/composer']);
+      expect(component.exportError).toBeNull();
+    });
+
+    /**
+     * A held send runs after Convert, into the converted file, whose meter need not be the empty composition's the
+     * refusals above were measured against - and `sendProgression` throws on a track barred in any other.
+     */
+    it('bars a held send in the meter of the score it finally goes into', () => {
+      const gp = TestBed.inject(ComposerGpService);
+      gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score() });
+      progression.appendSlot(0);
+      component.send();
+      const held = gp.request;
+
+      composer.replaceDocument(threeFourScore());
+      held?.run();
+
+      expect(sentTrack()).not.toBeNull();
+    });
+
+    /**
+     * The truncation refusal above was read in the empty composition's meter. A held send runs in the converted file's,
+     * where the same progression can run past the bound: it is refused there in the same words, in the composer's status
+     * line - this page is gone - and nothing is sent.
+     */
+    it('refuses a held send that the meter of the converted score truncates, in the words the page uses, and sends nothing', () => {
+      const gp = TestBed.inject(ComposerGpService);
+      gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score() });
+      progression.appendSlot(0);
+      // 500 bars of 4/4: inside the bound here, and past it in 3/4.
+      progression.setSlotLength(firstSlotId(), 4 * (MAX_PREVIEW_BARS - 12));
+      component.send();
+      const held = gp.request;
+      expect(component.exportError).toBeNull();
+
+      composer.replaceDocument(threeFourScore());
+      held?.run();
+
+      expect(sentTrack()).toBeNull();
+      component.send();
+      expect(component.exportError).toContain(String(MAX_PREVIEW_BARS));
+      expect(composer.state.refusal).toBe(component.exportError);
     });
 
     /** Flattening in the Composer takes the marker away, so the label comes back. */

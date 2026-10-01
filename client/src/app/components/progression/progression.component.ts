@@ -21,6 +21,8 @@ import { ProgressionState } from '../../models/progression.model';
 import { findChordByIntervals } from '../../services/chord-catalog';
 import { ComposerExportService } from '../../services/composer-export.service';
 import { ComposerService } from '../../services/composer.service';
+import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
+import { ComposerGpService } from '../../services/composer-gp.service';
 import { isEditableTarget } from '../../services/editable-target';
 import { errorOf } from '../../services/error-message';
 import { MusicTheoryService } from '../../services/music-theory.service';
@@ -236,6 +238,7 @@ export class ProgressionComponent implements OnInit, OnDestroy {
   private readonly player = inject(ProgressionPlayerService);
   private readonly exporter = inject(ComposerExportService);
   private readonly composer = inject(ComposerService);
+  private readonly gp = inject(ComposerGpService);
   private readonly mapper = inject(ScoreDocMapperService);
   private readonly router = inject(Router);
   private readonly errors = inject(ErrorHandler);
@@ -484,6 +487,22 @@ export class ProgressionComponent implements OnInit, OnDestroy {
    * throw with an instruction to change a service call, which is a sentence for
    * whoever is holding the code and not for whoever is holding the mouse. See
    * `reportFailure`, which keeps both readers.
+   *
+   * ## Over a `.gp` file, it asks the composer's conversion prompt
+   *
+   * While the composer is showing a file not yet converted, the composition
+   * under it is an empty one nothing draws, and `sendProgression` does not move
+   * `documentId`, so nothing would end Original for it: the track would go
+   * where no one can see it. So the send goes through the same gate as every
+   * edit in the composer (`ComposerGpService.requestEdit`), which holds it, and
+   * the page still navigates - the composer page shows the prompt it finds
+   * waiting, and the send runs if the user converts. What a held send throws
+   * then is for Convert's caller: this page is gone. So is the truncation
+   * refusal, which was read in the empty composition's meter - a file in a
+   * shorter one could take the projection past the bound where this did not.
+   * So the held send reads it again as it runs, and a truncated projection is
+   * refused there in the same words, in the composer's status line, and sends
+   * nothing - for the reasons above, which hold as well after a conversion.
    */
   send(): void {
     const state = this.latest;
@@ -498,27 +517,24 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     }
 
     try {
-      const generated = progressionTrack(
-        state.doc,
-        state.keyScale ? state.keyScale.intervals : [],
-        this.composer.scoreMeter
-      );
+      const intervals = state.keyScale ? state.keyScale.intervals : [];
+      const generated = progressionTrack(state.doc, intervals, this.composer.scoreMeter);
 
       if (generated.truncated) {
-        this.showError(
-          `This progression runs past the ${MAX_PREVIEW_BARS} bars a projection stops at, so `
-          + 'nothing was sent. A track ending at bar '
-          + `${MAX_PREVIEW_BARS} would not be this progression, and nothing it carried into the `
-          + 'composer would say so - a generated track records which revision it came from, not '
-          + 'how much of it arrived, which is also why this cannot say how far over you are. '
-          + `The bars are counted in the score's meter rather than in this progression's, so a `
-          + 'progression short enough to export can still be too long to send. Shorten it and '
-          + 'try again.'
-        );
+        this.showError(SEND_TRUNCATED);
         return;
       }
 
-      this.composer.sendProgression(generated);
+      // The send projects again as it runs, rather than handing over the
+      // projection the refusals above read. Outside Original it runs at once and
+      // the two are the same; held, it runs after Convert, into the file's own
+      // score, whose meter need not be the empty composition's - and
+      // `sendProgression` throws on a track barred in any other.
+      this.gp.requestEdit(ASKING_PAGE_COMMANDS.progressionTrack, 'Sending the progression', () => {
+        const track = progressionTrack(state.doc, intervals, this.composer.scoreMeter);
+        if (track.truncated) this.composer.announce(SEND_TRUNCATED, true);
+        else this.composer.sendProgression(track);
+      });
       this.clearError();
       this.leave();
     } catch (error) {
@@ -998,6 +1014,20 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     this.sendLabel = held === 'absent' ? 'Send to Composer' : 'Update in Composer';
   }
 }
+
+/**
+ * Why a send whose projection runs past the bound is refused: here, and in the composer when a send held for a `.gp`
+ * file runs after Convert, in the converted score's meter (`send`).
+ */
+const SEND_TRUNCATED =
+  `This progression runs past the ${MAX_PREVIEW_BARS} bars a projection stops at, so `
+  + 'nothing was sent. A track ending at bar '
+  + `${MAX_PREVIEW_BARS} would not be this progression, and nothing it carried into the `
+  + 'composer would say so - a generated track records which revision it came from, not '
+  + 'how much of it arrived, which is also why this cannot say how far over you are. '
+  + `The bars are counted in the score's meter rather than in this progression's, so a `
+  + 'progression short enough to export can still be too long to send. Shorten it and '
+  + 'try again.';
 
 /**
  * What a send that committed but did not navigate has to say.

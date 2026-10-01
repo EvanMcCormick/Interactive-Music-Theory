@@ -340,20 +340,21 @@ When creating/modifying a component:
 
 ## Lazy-Loaded Routes
 
-For larger components (like GP viewer), use lazy loading to reduce initial bundle size:
+For larger components (like the composer), use lazy loading to reduce initial bundle size:
 
 ```typescript
-// app-routing.module.ts
+// main.ts
 const routes: Routes = [
   { path: 'fretboard', component: FretboardComponent },  // Eager load core feature
+  { path: 'gp-viewer', redirectTo: gpViewerRedirect },   // Old links: see gp-viewer-redirect.ts
   {
-    path: 'gp-viewer',
-    loadComponent: () => import('./components/gp-viewer/gp-viewer.component')
-      .then(m => m.GpViewerComponent)  // Lazy load
+    path: 'composer',
+    loadComponent: () => import('./app/components/composer/composer.component')
+      .then(m => m.ComposerComponent)  // Lazy load
   },
   {
     path: 'gp-library',
-    loadComponent: () => import('./components/gp-library/gp-library.component')
+    loadComponent: () => import('./app/components/gp-library/gp-library.component')
       .then(m => m.GpLibraryComponent)
   }
 ];
@@ -386,8 +387,9 @@ export class MyComponent implements OnInit, OnDestroy {
 
 Navigate with query params:
 ```typescript
-this.router.navigate(['/gp-viewer'], {
-  queryParams: { id: entry.id }
+// The gallery's Open (gp-library.component.ts): the composer reads `gp`
+this.router.navigate(['/composer'], {
+  queryParams: { gp: entry.id }
 });
 ```
 

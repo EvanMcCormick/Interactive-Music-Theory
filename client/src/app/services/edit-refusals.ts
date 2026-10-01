@@ -30,7 +30,7 @@ import { BeatRef, beatAt } from './composer-selection';
 import { NoteTarget, noteEffectTargets, noteTargetsAt, tieTargetsOf, trillTargetOf } from './note-edits';
 import { hammerDestinationOf, slideTargetOf, tieCandidateOf, tieOriginOf } from './note-landing';
 import { forcedLetterOf, reduceToOctave } from './note-spelling';
-import { soundingMidiOf } from './pitch-on-strings';
+import { PERCUSSION, SoundingPitch, soundingMidiOf } from './pitch-on-strings';
 
 /**
  * What kind of edit is being asked about.
@@ -52,8 +52,10 @@ export type EditScope =
   | { family: 'note'; key: keyof NoteEffectsDoc | 'tie' }
   // A press that needs only notes to act on - a clear, a respell, a move of pitch or string. Refused
   // where any note edit is, never as a fretted-only technique: clearing one from a pitched note removes
-  // what alphaTab cannot use there, and the moves say for themselves what does not fit.
-  | { family: 'note'; key: 'notes' }
+  // what alphaTab cannot use there, and the moves say for themselves what does not fit. `pitch` - a respell,
+  // a semitone move - and `string` - a move between strings - are refused on a percussion staff as well,
+  // since a drum hit has neither; `notes` is not, so a clear still reaches one.
+  | { family: 'note'; key: 'notes' | 'pitch' | 'string' }
   | { family: 'note'; key: 'accidental'; accidental: AccidentalMode }
   | { family: 'track'; trackIndex: number };
 
@@ -71,6 +73,15 @@ const FRETTED_ONLY_NOTE: ReadonlySet<string> = new Set(['bendPoints', 'slide', '
 const FRETTED_ONLY_BEAT: ReadonlySet<string> = new Set(['tap', 'slap', 'pop']);
 
 const FRETTED = 'Bends, slides, taps, slap, pop and harmonics belong to fretted staves.';
+
+/**
+ * Note edits a percussion staff refuses, beyond the fretted-only ones it refuses too, with `PERCUSSION` rather than
+ * `FRETTED` since it is the truer reason: every accidental and Natural, respelling and semitone moves (`pitch`),
+ * moving between strings, a hammer-on - alphaTab drops one on a percussion staff at playback (`alphaTab.core.mjs`
+ * ~48571) - and a trill, likewise (~48336). What is left - duration, dots, tuplets, rests, dynamics, accents,
+ * staccato, ghost, tie, fermata - reads no pitch, and alphaTab draws each on a percussion notehead.
+ */
+const PERCUSSION_REFUSED_NOTE: ReadonlySet<string> = new Set([...FRETTED_ONLY_NOTE, 'accidental', 'pitch', 'string', 'isHammerPullOrigin', 'trill']);
 
 const GENERATED =
   'That reaches a track generated from a progression. Flatten the track to edit it by hand.';
@@ -101,10 +112,15 @@ const NATURAL_HARMONIC = "A natural harmonic's accidental cannot be forced yet."
  * forced accidental on a fretted natural harmonic before it asks. Both of those alphaTab
  * branches test `isStringed`, so a pitched note marked natural is drawn at its own pitch
  * and is read correctly here.
+ *
+ * Null for a drum hit, which is drawn at its articulation's staff line and has no pitch class at all.
  */
-export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
+export function drawnPitchClassOf(staff: StaffDoc, pitch: SoundingPitch): number;
+export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number | null;
+export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number | null {
+  const midi = soundingMidiOf(staff, pitch);
   // A pitched note's octave adds whole octaves, which the reduction takes off again.
-  return reduceToOctave(soundingMidiOf(staff, pitch) - staff.transpose - staff.displayTranspose);
+  return midi === null ? null : reduceToOctave(midi - staff.transpose - staff.displayTranspose);
 }
 
 /**
@@ -114,7 +130,8 @@ export function drawnPitchClassOf(staff: StaffDoc, pitch: NotePitch): number {
 function anyNoteUnspellable(doc: ScoreDoc, targets: readonly NoteTarget[], accidental: AccidentalMode): boolean {
   return targets.some(({ ref, note }) => {
     const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
-    return staff !== undefined && forcedLetterOf(accidental, drawnPitchClassOf(staff, note.pitch)) === undefined;
+    const pitchClass = staff === undefined ? null : drawnPitchClassOf(staff, note.pitch);
+    return pitchClass !== null && forcedLetterOf(accidental, pitchClass) === undefined;
   });
 }
 
@@ -159,9 +176,14 @@ export function editRefusal(
   const onPitchedStaff = refs.some(
     ref => (doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.tuning.length ?? 0) === 0
   );
+  // A percussion staff has no tuning, so it is a pitched staff too as far as `onPitchedStaff` goes; asked first so the
+  // refusal gives the truer reason.
+  const onPercussionStaff = refs.some(ref => doc.tracks[ref.trackIndex]?.staves[ref.staffIndex]?.isPercussion === true);
   if (scope.family === 'beat') {
-    return FRETTED_ONLY_BEAT.has(scope.key) && onPitchedStaff ? FRETTED : null;
+    if (!FRETTED_ONLY_BEAT.has(scope.key)) return null;
+    return onPercussionStaff ? PERCUSSION : onPitchedStaff ? FRETTED : null;
   }
+  if (onPercussionStaff && PERCUSSION_REFUSED_NOTE.has(scope.key)) return PERCUSSION;
   if (FRETTED_ONLY_NOTE.has(scope.key) && onPitchedStaff) return FRETTED;
   const targets = notes ?? noteTargetsAt(doc, refs, focus);
   if (targets.length === 0) return 'There is no note there to change.';
@@ -480,18 +502,22 @@ const TRILL_OUT_OF_RANGE =
   'A trill a whole step above a note in the selection would pass the top of the MIDI range, and alphaTab would drop it.';
 
 /**
- * Why a trill press cannot apply to `refs`, or null: any trill edit's refusal, or - when the press would
- * set trills - one aimed past MIDI 127 (`trillTargetOf`), which alphaTab does not keep. A clear is never
- * refused for it.
+ * Why a trill press cannot apply to `refs`, or null. A clear - every note the press means already trilled, by
+ * `toggleTrill`'s own rule - is refused only where any note edit is (the `notes` scope), as `noteEffectRefusal`
+ * clears: a drum hit has no pitch to trill to, but an imported file can carry a trill on one, and it must come off.
+ * A set is refused as a trill edit is, and when one would be aimed past MIDI 127 (`trillTargetOf`), which alphaTab
+ * does not keep.
  */
 export function trillRefusal(doc: ScoreDoc, refs: readonly BeatRef[], focus: number | null, notes?: readonly NoteTarget[]): string | null {
-  const refusal = editRefusal(doc, refs, { family: 'note', key: 'trill' }, focus, notes);
-  if (refusal) return refusal;
   const targets = notes ?? noteTargetsAt(doc, refs, focus);
-  if (targets.every(target => target.note.effects.trill !== null)) return null;
+  // `toggleTrill`'s test for a clear, empty targets included: with no note, the set's scope says so as before.
+  const clears = targets.length > 0 && targets.every(target => target.note.effects.trill !== null);
+  const refusal = editRefusal(doc, refs, { family: 'note', key: clears ? 'notes' : 'trill' }, focus, targets);
+  if (refusal || clears) return refusal;
   const tooHigh = targets.some(({ ref, note }) => {
     const staff = doc.tracks[ref.trackIndex]?.staves[ref.staffIndex];
-    return staff !== undefined && trillTargetOf(staff, note) > MIDI_TOP;
+    const target = staff === undefined ? null : trillTargetOf(staff, note);
+    return target !== null && target > MIDI_TOP;
   });
   return tooHigh ? TRILL_OUT_OF_RANGE : null;
 }

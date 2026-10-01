@@ -31,6 +31,8 @@ import {
   endingsOf
 } from '../../../../services/composer-bar-choices';
 import { ComposerService } from '../../../../services/composer.service';
+import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
+import { ComposerGpService } from '../../../../services/composer-gp.service';
 import { MIXED, popoverValuesOf } from '../../../../services/composer-popover-values';
 import { TUPLET_CHOICES } from '../../../../services/composer-tool-defaults';
 import { PopoverKind } from '../../../../services/composer-tools';
@@ -187,6 +189,7 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
 
   constructor(
     private readonly composer: ComposerService,
+    private readonly gp: ComposerGpService,
     private readonly cdr: ChangeDetectorRef
   ) {
     this.stateSubscription = this.composer.getState().subscribe(this.closeOnOutsideChange);
@@ -358,8 +361,16 @@ export class ComposerToolPopoverComponent implements OnChanges, AfterViewChecked
   /**
    * Runs a command, then closes - or, when the service refused it, stays open and says why inline. The refusal is the
    * service's own, published in the status line as well, and read by whether the command published a new message.
+   *
+   * In Original the value asks the conversion prompt first (`ComposerGpService.requestEdit`), and the popover closes for
+   * the prompt: the value is set once the file is converted, and a refusal then is said in the status line.
    */
   private commit(command: () => void): void {
+    this.gp.requestEdit(ASKING_PAGE_COMMANDS.popoverValue, `Setting the ${this.title.toLowerCase()}`, () => this.commitNow(command));
+    if (this.gp.request) this.closed.emit();
+  }
+
+  private commitNow(command: () => void): void {
     const before = this.composer.state.messageId;
     this.applying = true;
     try {

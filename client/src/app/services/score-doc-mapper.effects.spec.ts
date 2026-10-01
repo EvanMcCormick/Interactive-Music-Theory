@@ -89,6 +89,7 @@ describe('ScoreDocMapperService effects round trip', () => {
           shortName: 'gtr',
           color: '#e74c3c',
           playback: createDefaultPlaybackInfo(25),
+          percussionArticulations: [],
           staves: [
             {
               tuning: STANDARD_GUITAR_TUNING.slice(),
@@ -100,6 +101,8 @@ describe('ScoreDocMapperService effects round trip', () => {
               showTablature: true,
               showSlash: false,
               showNumbered: false,
+              isPercussion: false,
+              lineCount: 5,
               bars: [
                 {
                   clef: 'g2',
@@ -402,6 +405,34 @@ describe('ScoreDocMapperService effects round trip', () => {
     doc.masterBars[0].isDoubleBar = true;
 
     expect(throughTex(doc).masterBars[0].isDoubleBar).toBeFalse();
+  });
+
+  describe('natural harmonics', () => {
+    // alphaTab sounds a natural harmonic at `harmonicPitch + stringTuning` (`alphaTab.core.mjs` ~6058), and
+    // `harmonicPitch` reads `harmonicValue`: a note with the type and no value sounds the open string.
+    // 3 and 10 are rows where the value is not the fret: 3.2 and 9.6.
+    for (const fret of [12, 7, 5, 3, 10]) {
+      it(`keeps the sounding pitch of a natural harmonic at fret ${fret} from a file`, () => {
+        const parsed = tex.parse(['\\track "Guitar"', `${fret}.3{nh}.1 |`].join('\n')).score;
+        if (!parsed) throw new Error('the harmonic did not parse');
+        const file = parsed.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+        const converted = mapper.toScore(mapper.toDoc(parsed), settings).tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+
+        expect(converted.harmonicValue).toBe(file.harmonicValue);
+        expect(converted.realValue).toBe(file.realValue);
+      });
+    }
+
+    it('sounds a natural harmonic the composer wrote at the harmonic of its fret, not at the fret', () => {
+      const doc = guitarBar(beats => {
+        beats[0].notes[0] = fretted(3, 7);
+        beats[0].notes[0].effects.harmonic = 'natural';
+      });
+      const note = mapper.toScore(doc, settings).tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+
+      // The seventh fret's harmonic is an octave and a fifth above the open string.
+      expect(note.realValue).toBe(note.stringTuning + 19);
+    });
   });
 
   describe('tempo', () => {

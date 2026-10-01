@@ -136,8 +136,8 @@ export class ComposerStructureCommands {
     this.applyTrackEdit(true, (draft, t, s) => setStaffViews(draft, t, s, views));
   }
 
-  setPlayback(changes: Partial<PlaybackInfoDoc>): void {
-    this.applyTrackEdit(false, (draft, t) => setPlayback(draft, t, changes));
+  setPlayback(changes: Partial<PlaybackInfoDoc>, trackIndex?: number): void {
+    this.applyTrackEdit(false, (draft, t) => setPlayback(draft, trackIndex ?? t, changes));
   }
 
   renameTrack(name: string, shortName: string): void {

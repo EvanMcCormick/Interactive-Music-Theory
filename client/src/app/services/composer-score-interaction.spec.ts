@@ -1,4 +1,8 @@
+import { TestBed } from '@angular/core/testing';
+import * as alphaTab from '@coderline/alphatab';
+
 import { ComposerService } from './composer.service';
+import { ScoreDocMapperService } from './score-doc-mapper.service';
 import {
   StaffSlot,
   caretHalfStepsOf,
@@ -6,6 +10,7 @@ import {
   dragContinues,
   dragExtends,
   dragTargetOf,
+  differsOnlyInMixer,
   highlightEndsOf,
   hoverKeyOf,
   hoverSurvives,
@@ -18,9 +23,10 @@ import {
   seeksOnPress,
   snappedHoverX,
   staffSlotsOf,
+  staffSlotsOfScore,
   writeSounds
 } from './composer-score-interaction';
-import { EditCursor, StaffDoc } from '../models/composer.model';
+import { EditCursor, ScoreDoc, StaffDoc, createDefaultNoteEffects } from '../models/composer.model';
 
 const at = (trackIndex: number, barIndex: number, beatIndex: number, stringIndex: number | null = 0): EditCursor =>
   ({ trackIndex, staffIndex: 0, barIndex, voiceIndex: 0, beatIndex, stringIndex });
@@ -52,6 +58,34 @@ describe('staffSlotsOf', () => {
     doc.tracks[0].staves[0].tuning = [];
 
     expect(staffSlotsOf(doc)).toEqual([{ trackIndex: 0, staffIndex: 0, kind: 'notation' }]);
+  });
+});
+
+describe('staffSlotsOfScore', () => {
+  /** A score mapped from `doc`, as the Original state gets one - from alphaTab rather than from a document. */
+  function scoreOf(doc: ScoreDoc): alphaTab.model.Score {
+    TestBed.configureTestingModule({});
+    return TestBed.inject(ScoreDocMapperService).toScore(doc, new alphaTab.Settings());
+  }
+
+  it('answers what staffSlotsOf answers, for a document and the score it maps to', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+
+    expect(staffSlotsOfScore(scoreOf(doc))).toEqual(staffSlotsOf(doc));
+  });
+
+  it('lists only the tracks drawn, keeping each slot tied to the track it came from', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+
+    expect(staffSlotsOfScore(scoreOf(doc), [1])).toEqual([{ trackIndex: 1, staffIndex: 0, kind: 'notation' }]);
+  });
+
+  it('leaves out an index the score does not have', () => {
+    const doc = ComposerService.createEmptyScore();
+
+    expect(staffSlotsOfScore(scoreOf(doc), [0, 7])).toEqual(staffSlotsOf(doc));
   });
 });
 
@@ -118,6 +152,69 @@ describe('scoreRedrawOf', () => {
     expect(scoreRedrawOf(null, doc)).toBe('render');
     expect(scoreRedrawOf(doc, doc)).toBe('overlay');
     expect(scoreRedrawOf(doc, structuredClone(doc))).toBe('render');
+  });
+
+  it("redraws only what sits over the engraving for a mute or solo: the player plays them, and a render would stop it", () => {
+    const doc = ComposerService.createEmptyScore();
+    const muted = structuredClone(doc);
+    muted.tracks[0].playback.isMute = true;
+
+    expect(scoreRedrawOf(doc, muted)).toBe('overlay');
+  });
+});
+
+describe('differsOnlyInMixer', () => {
+  function twoTracks(): ScoreDoc {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    return doc;
+  }
+
+  it("is true when tracks' mute and solo are all that changed", () => {
+    const before = twoTracks();
+    const after = structuredClone(before);
+    after.tracks[0].playback.isSolo = true;
+    after.tracks[1].playback.isMute = true;
+
+    expect(differsOnlyInMixer(before, after)).toBeTrue();
+  });
+
+  it('is false for any other change beside a mute, a volume included, and for no mute or solo change at all', () => {
+    const before = twoTracks();
+    const withVolume = structuredClone(before);
+    withVolume.tracks[1].playback.isMute = true;
+    withVolume.tracks[1].playback.volume = 3;
+    const withNote = structuredClone(before);
+    withNote.tracks[1].playback.isMute = true;
+    withNote.masterBars[0].isDoubleBar = true;
+    const retitled = structuredClone(before);
+    retitled.title = 'Another';
+
+    expect(differsOnlyInMixer(before, withVolume)).toBeFalse();
+    expect(differsOnlyInMixer(before, withNote)).toBeFalse();
+    expect(differsOnlyInMixer(before, retitled)).toBeFalse();
+    expect(differsOnlyInMixer(before, structuredClone(before))).toBeFalse();
+  });
+
+  it('is false for a difference deep inside a note beside a mute: a fret moved', () => {
+    const before = twoTracks();
+    before.tracks[0].staves[0].bars[1].voices[0].beats[0].notes = [
+      { pitch: { kind: 'fretted', string: 2, fret: 3 }, isTied: false, accidental: 'auto', effects: createDefaultNoteEffects() }
+    ];
+    const after = structuredClone(before);
+    after.tracks[1].playback.isMute = true;
+    after.tracks[0].staves[0].bars[1].voices[0].beats[0].notes[0].pitch = { kind: 'fretted', string: 2, fret: 5 };
+
+    expect(differsOnlyInMixer(before, after)).toBeFalse();
+  });
+
+  it('is false against no document, and when a track was added or removed', () => {
+    const before = twoTracks();
+    const fewer = structuredClone(before);
+    fewer.tracks.pop();
+
+    expect(differsOnlyInMixer(null, before)).toBeFalse();
+    expect(differsOnlyInMixer(before, fewer)).toBeFalse();
   });
 });
 
@@ -375,5 +472,15 @@ describe('slash and numbered staves', () => {
     const slots = staffSlotsOf(scoreShowing({ showStandardNotation: false, showNumbered: true }));
 
     expect(caretSlotIndexOf(slots, at(0, 0, 0, null), null)).toBe(1);
+  });
+});
+
+describe('staffSlotsOf over the tracks drawn', () => {
+  it('lists the staves of the tracks shown, in the order drawn, and those alone', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+
+    expect(staffSlotsOf(doc).map(slot => `${slot.trackIndex}:${slot.kind}`)).toEqual(['0:notation', '0:tab', '1:notation']);
+    expect(staffSlotsOf(doc, [1]).map(slot => `${slot.trackIndex}:${slot.kind}`)).toEqual(['1:notation']);
   });
 });

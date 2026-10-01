@@ -1,5 +1,5 @@
 import { PlaybackInfoDoc, ScoreDoc, StaffDoc } from '../models/composer.model';
-import { MAX_FRET } from './pitch-on-strings';
+import { MAX_FRET, PERCUSSION } from './pitch-on-strings';
 
 /**
  * Edits that act on a track or one of its staves.
@@ -48,6 +48,7 @@ export function setStaffTuning(
 ): string | null {
   const staff = doc.tracks[trackIndex]?.staves[staffIndex];
   if (!staff) return NO_STAFF;
+  if (staff.isPercussion) return PERCUSSION;
   if (staff.tuning.length === 0) return 'A pitched staff has no strings to tune.';
   if (tuning.length === 0) return 'A tuning needs at least one string.';
 
@@ -82,6 +83,7 @@ export function setStaffNumber(
 ): string | null {
   const staff = doc.tracks[trackIndex]?.staves[staffIndex];
   if (!staff) return NO_STAFF;
+  if (key === 'capo' && staff.isPercussion) return PERCUSSION;
   if (key === 'capo' && staff.tuning.length === 0) return 'A pitched staff has no strings for a capo.';
   if (!Number.isInteger(value)) return 'That must be a whole number.';
   // At most the last fret but one, so a fret is left in front of the capo to play (`maxFretOf`).

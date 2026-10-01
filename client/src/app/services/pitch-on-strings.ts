@@ -36,11 +36,27 @@ export function fretRangeOf(staff: Pick<StaffDoc, 'capo'>): string {
 /** The fretted half of `NotePitch`. */
 export type FrettedPitch = Extract<NotePitch, { kind: 'fretted' }>;
 
+/** Every `NotePitch` that sounds a pitch: a fretted note or a pitched one. A drum hit has none. */
+export type SoundingPitch = Exclude<NotePitch, { kind: 'percussion' }>;
+
+/**
+ * Why a percussion staff refuses a press that needs strings or a pitch: frets, strings, accidentals, respelling, semitone
+ * moves, hammer-ons, trills and every fretted-only technique. Here rather than in `edit-refusals.ts`, which imports this
+ * module, so `staffEntryOf` can say it too.
+ */
+export const PERCUSSION = 'A percussion staff has no strings and no pitch, so that belongs to a pitched staff.';
+
 /** What a note entry does on a beat: writes a note, or takes out the note at `index` - a click on a notehead. */
 export type StaffEntry = { kind: 'write'; pitch: NotePitch } | { kind: 'remove'; index: number };
 
-/** The MIDI pitch a note sounds, before transposition: its open string, the capo and the fret; or the pitch itself. */
-export function soundingMidiOf(staff: Pick<StaffDoc, 'tuning' | 'capo'>, pitch: NotePitch): number {
+/**
+ * The MIDI pitch a note sounds, before transposition: its open string, the capo and the fret; or the pitch itself. Null
+ * for a drum hit, which has no pitch: its articulation's MIDI number is a key on channel 9, not a note in a scale.
+ */
+export function soundingMidiOf(staff: Pick<StaffDoc, 'tuning' | 'capo'>, pitch: SoundingPitch): number;
+export function soundingMidiOf(staff: Pick<StaffDoc, 'tuning' | 'capo'>, pitch: NotePitch): number | null;
+export function soundingMidiOf(staff: Pick<StaffDoc, 'tuning' | 'capo'>, pitch: NotePitch): number | null {
+  if (pitch.kind === 'percussion') return null;
   return pitch.kind === 'fretted'
     ? (staff.tuning[pitch.string - 1] ?? 0) + staff.capo + pitch.fret
     : (pitch.octave + 1) * 12 + pitch.noteValue;
@@ -84,10 +100,13 @@ export function frettedPlacementOf(
  *
  * On a staff with a tuning a pitched note - Pen's click - is fretted (`frettedPlacementOf`), or, when the beat already
  * sounds that pitch, takes that note out, as the same click does on a staff with no tuning. A fret past `maxFretOf` the
- * staff - a typed number, with a capo on - is refused, and so is a fret on a staff with no strings. Anything else is
- * written as it is.
+ * staff - a typed number, with a capo on - is refused, and so is a fret on a staff with no strings. Nothing is written on
+ * a percussion staff, and no drum hit is written anywhere: writing a new drum note needs an articulation to choose, and
+ * alphaTab's table of them is internal (the GP-composer design's "Percussion in the model"). Anything else is written as
+ * it is.
  */
 export function staffEntryOf(staff: StaffDoc, beat: BeatDoc | null, pitch: NotePitch, caretString: number | null): StaffEntry | string {
+  if (staff.isPercussion || pitch.kind === 'percussion') return PERCUSSION;
   const stringed = staff.tuning.length > 0;
   if (!stringed) return pitch.kind === 'fretted' ? 'A staff with no strings has no fret to write.' : { kind: 'write', pitch };
   if (pitch.kind === 'fretted') return pitch.fret > maxFretOf(staff) ? `${fretRangeOf(staff)}.` : { kind: 'write', pitch };
@@ -115,32 +134,36 @@ export function outOfReachNoticeOf(dropped: number): string {
 
 /**
  * `doc` with every pitched note on a staff with a tuning fretted, how many it fretted (`converted`), and how many notes no
- * free string reached, which are left out - a beat left with none becomes a rest. The same document when there is nothing
- * to fret; otherwise a copy.
+ * free string reached, which are left out - a beat left with none becomes a rest - with the first bar, 0-based, that
+ * lost one (`firstDroppedBar`, null when none did). The same document when there is nothing to fret; otherwise a copy.
  *
  * Each note takes the lowest free fret (`frettedPlacementOf`), in the beat's order, after the fretted notes already
  * there. For a document that arrives from outside the entry commands: a load, an applied alphaTex draft, a document
  * saved before Pen wrote frets. The mapper asks it too, so nothing pitched reaches alphaTab on a string.
  */
-export function frettedDocOf(doc: ScoreDoc): { doc: ScoreDoc; converted: number; dropped: number } {
+export function frettedDocOf(doc: ScoreDoc): { doc: ScoreDoc; converted: number; dropped: number; firstDroppedBar: number | null } {
   const needsFretting = doc.tracks.some(track =>
     track.staves.some(staff => staff.tuning.length > 0 && staff.bars.some(bar => bar.voices.some(voice => voice.beats.some(beat => beat.notes.some(note => note.pitch.kind === 'pitched')))))
   );
-  if (!needsFretting) return { doc, converted: 0, dropped: 0 };
+  if (!needsFretting) return { doc, converted: 0, dropped: 0, firstDroppedBar: null };
 
   const copy = structuredClone(doc);
   let dropped = 0;
   let converted = 0;
+  let firstDroppedBar: number | null = null;
   for (const staff of copy.tracks.flatMap(track => track.staves)) {
     if (staff.tuning.length === 0) continue;
-    for (const beat of staff.bars.flatMap(bar => bar.voices.flatMap(voice => voice.beats))) {
+    for (const [barIndex, beat] of staff.bars.flatMap((bar, index) => bar.voices.flatMap(voice => voice.beats.map(beat => [index, beat] as const)))) {
       if (!beat.notes.some(note => note.pitch.kind === 'pitched')) continue;
       const taken = stringsTakenOn(beat.notes);
       beat.notes = beat.notes.filter(note => {
-        if (note.pitch.kind === 'fretted') return true;
+        // A drum hit is kept as it is: it has no pitch to put on a string. It is not found on a staff with a tuning
+        // unless an alphaTex draft put it there, and alphaTab plays it from its articulation either way.
+        if (note.pitch.kind !== 'pitched') return true;
         const placed = frettedPlacementOf(staff, soundingMidiOf(staff, note.pitch), taken, null);
         if (typeof placed === 'string') {
           dropped++;
+          firstDroppedBar = Math.min(firstDroppedBar ?? barIndex, barIndex);
           return false;
         }
         taken.add(placed.string);
@@ -151,5 +174,5 @@ export function frettedDocOf(doc: ScoreDoc): { doc: ScoreDoc; converted: number;
       if (beat.notes.length === 0) beat.isRest = true;
     }
   }
-  return { doc: copy, converted, dropped };
+  return { doc: copy, converted, dropped, firstDroppedBar };
 }

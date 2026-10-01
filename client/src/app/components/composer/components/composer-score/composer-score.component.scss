@@ -111,3 +111,21 @@
   color: var(--composer-error, #e74c3c);
   font-size: 0.85rem;
 }
+
+// A note head the scale panel names: in-scale in blue, the root in red, drawn over the engraving and never taking a press.
+// The root's ring is doubled as well as red, so it is told apart without its colour (WCAG 1.4.1); the negative margin is
+// each ring's border width, which keeps the ring centred on the head.
+.scale-mark {
+  position: absolute;
+  z-index: 2;
+  box-sizing: content-box;
+  margin: -2px 0 0 -2px;
+  border: 2px solid var(--composer-in-scale, #3498db);
+  border-radius: 50%;
+  pointer-events: none;
+
+  &.root {
+    margin: -4px 0 0 -4px;
+    border: 4px double var(--composer-root, #e74c3c);
+  }
+}

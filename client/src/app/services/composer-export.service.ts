@@ -9,7 +9,7 @@ import * as alphaTab from '@coderline/alphatab';
  */
 @Injectable({ providedIn: 'root' })
 export class ComposerExportService {
-  /** Guitar Pro 7 bytes, openable in Guitar Pro and by the app's GP viewer. */
+  /** Guitar Pro 7 bytes, openable in Guitar Pro and by the app's composer. */
   toGuitarPro(score: alphaTab.model.Score, settings: alphaTab.Settings): Uint8Array {
     return new alphaTab.exporter.Gp7Exporter().export(score, settings);
   }
@@ -81,6 +81,14 @@ export class ComposerExportService {
       new Blob([buffer], { type: 'audio/midi' }),
       this.withExtension(fileName, 'mid')
     );
+  }
+
+  /**
+   * Hands the bytes of a `.gp` file back as they came, under `fileName`: the conversion prompt's "Save the original file
+   * first", the only copy of them there will be once Convert has dropped them.
+   */
+  downloadOriginal(bytes: ArrayBuffer, fileName: string): void {
+    this.downloadBlob(new Blob([bytes], { type: 'application/octet-stream' }), fileName);
   }
 
   /** Turns a score title into a safe file name. */

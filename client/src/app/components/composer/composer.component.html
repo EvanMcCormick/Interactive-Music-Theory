@@ -4,14 +4,25 @@
     open every part of the page is inert: no click and no focus reaches the page behind it.
   -->
   <app-composer-shortcut-sheet [open]="sheetOpen" [fallbackFocus]="scoreHost" (closed)="closeShortcutSheet()"></app-composer-shortcut-sheet>
+  <app-composer-convert-prompt
+    [request]="editRequest"
+    [original]="original"
+    [convertRefusal]="convertRefusal"
+    [busy]="converting"
+    [fallbackFocus]="scoreHost"
+    (saveOriginal)="saveOriginal()"
+    (convert)="convert()"
+    (cancelled)="cancelConvert()"
+  ></app-composer-convert-prompt>
 
-  <header #topBar class="top-bar" [attr.inert]="sheetOpen ? '' : null">
+  <header #topBar class="top-bar" [attr.inert]="modalOpen ? '' : null">
     <div class="score-info">
       <input
         class="title-input"
         type="text"
-        [ngModel]="s.doc.title"
+        [ngModel]="titleText"
         (ngModelChange)="onTitleChange($event)"
+        [readonly]="viewingOriginal"
         aria-label="Score title"
       />
       <span class="dirty-marker" *ngIf="s.isDirty" title="Unsaved changes">●</span>
@@ -30,9 +41,17 @@
       </button>
       <button class="icon-btn" type="button" (click)="stop()" aria-label="Stop" title="Stop">■</button>
 
+      <!-- In Original it shows the file's tempo and takes no input: the field writes `ScoreDoc.tempo`, and there is no document. -->
       <label class="tempo-field">
         <span>BPM</span>
-        <input type="number" min="20" max="400" [ngModel]="s.doc.tempo" (ngModelChange)="onTempoChange($event)" />
+        <input
+          type="number"
+          min="20"
+          max="400"
+          [ngModel]="tempoValue"
+          (ngModelChange)="onTempoChange($event)"
+          [disabled]="viewingOriginal"
+        />
       </label>
 
       <button class="toggle-btn" type="button" [class.active]="metronomeEnabled" [attr.aria-pressed]="metronomeEnabled" (click)="toggleMetronome()">
@@ -41,16 +60,86 @@
       <button class="toggle-btn" type="button" [class.active]="countInEnabled" [attr.aria-pressed]="countInEnabled" (click)="toggleCountIn()">
         Count-in
       </button>
+      <button
+        class="toggle-btn"
+        type="button"
+        [class.active]="playerState?.isLooping"
+        [attr.aria-pressed]="playerState?.isLooping ?? false"
+        (click)="toggleLoop()"
+      >Loop</button>
+
+      <!--
+        The readouts sit beside their labels, not in them, so a slider's name is its label alone, and are aria-hidden
+        spans rather than <output>s, which are live regions: the seek readout would be read out every second while
+        playing. A screen reader has each value from the slider's own aria-valuetext.
+      -->
+      <!-- A playback multiplier, labelled apart from the BPM: the viewer called it "Tempo", and it is not the score's tempo. -->
+      <div class="slider-group">
+        <label class="slider-field">
+          <span>Speed</span>
+          <input
+            type="range"
+            [min]="speedRange.min"
+            [max]="speedRange.max"
+            [step]="speedRange.step"
+            [value]="speedPercent"
+            [attr.aria-valuetext]="speedPercent + '%'"
+            [disabled]="!playerState?.isReadyForPlayback"
+            (input)="onSpeedInput($any($event.target).value)"
+            (change)="onSpeedChange($any($event.target).value)"
+          />
+        </label>
+        <span class="slider-readout speed-readout" aria-hidden="true">{{ speedPercent }}%</span>
+      </div>
+      <label class="slider-field">
+        <span>Volume</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          [value]="volumePercent"
+          [attr.aria-valuetext]="volumePercent + '%'"
+          [disabled]="!playerState?.isReadyForPlayback"
+          (input)="onVolumeInput($any($event.target).value)"
+        />
+      </label>
+      <!--
+        A range, not the viewer's clickable div: the keyboard reaches it and a screen reader names it. An arrow moves it a
+        second. A drag moves only the thumb and the readout (`seekDraft`), and the player seeks when it lets go.
+      -->
+      <div class="slider-group seek-field">
+        <label class="slider-field">
+          <span class="visually-hidden">Position</span>
+          <input
+            type="range"
+            min="0"
+            [max]="playerState?.totalDuration ?? 0"
+            step="1000"
+            [value]="seekDraft ?? playerState?.timePosition ?? 0"
+            [attr.aria-valuetext]="timeReadout"
+            [disabled]="!(playerState?.totalDuration)"
+            (input)="onSeekInput($any($event.target).value)"
+            (change)="onSeekChange($any($event.target).value)"
+          />
+        </label>
+        <span class="slider-readout time-readout" aria-hidden="true">{{ timeReadout }}</span>
+      </div>
     </div>
 
     <div class="header-actions">
-      <button class="text-btn" type="button" (click)="undo()" [disabled]="!s.canUndo" [title]="undoTitle">Undo</button>
-      <button class="text-btn" type="button" (click)="redo()" [disabled]="!s.canRedo" [title]="redoTitle">Redo</button>
+      <button class="text-btn" type="button" (click)="undo()" [disabled]="!s.canUndo || viewingOriginal" [title]="undoTitle">Undo</button>
+      <button class="text-btn" type="button" (click)="redo()" [disabled]="!s.canRedo || viewingOriginal" [title]="redoTitle">Redo</button>
       <button class="text-btn" type="button" (click)="newScore()" title="Start a new score">New</button>
       <button class="text-btn" type="button" [class.active]="showTexPanel" [attr.aria-pressed]="showTexPanel" (click)="toggleTexPanel()">
         alphaTex
       </button>
-      <app-composer-library-panel [modalOpen]="sheetOpen" (menuOpened)="closePopover()"></app-composer-library-panel>
+      <app-composer-scale-panel
+        [modalOpen]="modalOpen"
+        (menuOpened)="closePopover()"
+        (firstOpened)="onScalePanelOpened()"
+        (highlightChange)="highlight = $event"
+      ></app-composer-scale-panel>
+      <app-composer-library-panel [modalOpen]="modalOpen" (menuOpened)="closePopover()"></app-composer-library-panel>
       <button
         class="text-btn shortcuts-toggle"
         type="button"
@@ -64,17 +153,17 @@
 
   <app-composer-palette
     class="palette"
-    [attr.inert]="sheetOpen ? '' : null"
-    [state]="s"
+    [attr.inert]="modalOpen ? '' : null"
+    [state]="paletteState"
     [popover]="popover"
     (toolPressed)="runTool($event)"
     (popoverClosed)="closePopover()"
     (popoverPressedOutside)="score.ignoreNextPress()"
   ></app-composer-palette>
 
-  <div class="score-column" [attr.inert]="sheetOpen ? '' : null">
+  <div class="score-column" [attr.inert]="modalOpen ? '' : null">
     <!-- Focusable by script only, for the shortcut sheet to give the focus back to. -->
-    <app-composer-score #score tabindex="-1"></app-composer-score>
+    <app-composer-score #score tabindex="-1" [highlight]="highlight"></app-composer-score>
 
     <section #texPanel class="tex-panel" *ngIf="showTexPanel">
       <div class="tex-header">
@@ -106,22 +195,24 @@
   <app-composer-status-line
     #statusLine
     class="status"
-    [attr.inert]="sheetOpen ? '' : null"
+    [attr.inert]="modalOpen ? '' : null"
     [refusal]="s.refusal"
     [notice]="s.notice"
     [messageId]="s.messageId"
     [texError]="texApplyError"
     [texErrorId]="texErrorId"
-    [cursor]="s.cursor"
+    [cursor]="fileCaret?.cursor ?? s.cursor"
     [entryMode]="s.entryMode"
     [doc]="s.doc"
+    [viewingOriginal]="viewingOriginal"
+    [fileBarCount]="fileBarCount"
   ></app-composer-status-line>
 
   <!-- Its range is the one the strip is clamped to (`stripRange`), measured from the page as it is laid out. -->
   <div
     #stripSeparator
     class="strip-resize"
-    [attr.inert]="sheetOpen ? '' : null"
+    [attr.inert]="modalOpen ? '' : null"
     role="separator"
     tabindex="0"
     aria-orientation="horizontal"
@@ -136,5 +227,5 @@
     (keydown)="onStripResizeKey($event)"
   ></div>
 
-  <app-composer-track-strip class="strip" [attr.inert]="sheetOpen ? '' : null" [style.height.px]="stripHeight"></app-composer-track-strip>
+  <app-composer-track-strip class="strip" [attr.inert]="modalOpen ? '' : null" [style.height.px]="stripHeight"></app-composer-track-strip>
 </div>

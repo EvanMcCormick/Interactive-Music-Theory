@@ -1,10 +1,11 @@
 import { enableProdMode } from '@angular/core';
 import { bootstrapApplication } from '@angular/platform-browser';
-import { provideRouter } from '@angular/router';
+import { Routes, provideRouter } from '@angular/router';
 import { HttpClient, provideHttpClient, withInterceptors } from '@angular/common/http';
 import { AppComponent } from './app/app.component';
 import { environment } from './environments/environment';
 import { FretboardComponent } from './app/components/fretboard/fretboard.component';
+import { gpViewerRedirect } from './app/gp-viewer-redirect';
 import { authInterceptor } from './app/interceptors/auth.interceptor';
 import { AuthService } from './app/services/auth.service';
 import { TieredDetector } from './app/services/tiered-detector';
@@ -15,14 +16,12 @@ if (environment.production) {
   enableProdMode();
 }
 
-const routes = [
+const routes: Routes = [
   { path: '', redirectTo: '/fretboard', pathMatch: 'full' as const },
   { path: 'fretboard', component: FretboardComponent },
-  {
-    path: 'gp-viewer',
-    loadComponent: () => import('./app/components/gp-viewer/gp-viewer.component')
-      .then(m => m.GpViewerComponent)
-  },
+  // The GP Viewer is gone: a `.gp` opens in the composer, as the file, until its first edit converts it. An old link to
+  // a file in the viewer opens that file there; one to the viewer alone goes to the gallery.
+  { path: 'gp-viewer', redirectTo: gpViewerRedirect },
   {
     path: 'composer',
     loadComponent: () => import('./app/components/composer/composer.component')
@@ -35,7 +34,7 @@ const routes = [
   },
   // Lazy, where the plan wrote `component:`. The review panel renders its
   // preview through alphaTab, which lives in a 1.14 MB chunk shared by the
-  // composer and the GP viewer because both of those routes are lazy too. An
+  // composer and the progression page because those routes are lazy too. An
   // eager route here would be a value import of that chunk from the entry
   // graph, which pulls the whole engraver into `main` - and the milestone's
   // own acceptance criterion is that `main` stays near 716 kB. The transcriber

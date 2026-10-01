@@ -1,7 +1,7 @@
 import type { ComposerService } from './composer.service';
 import { EditCursor, ScoreDoc } from '../models/composer.model';
 import { writeSounds } from './composer-score-interaction';
-import { MAX_FRET, soundingMidiOf } from './pitch-on-strings';
+import { MAX_FRET, PERCUSSION, soundingMidiOf } from './pitch-on-strings';
 
 /**
  * Fret digits typed onto the caret's string, as in Guitar Pro.
@@ -32,10 +32,14 @@ export class FretDigitEntry {
     private readonly audition: (midi: number) => void = () => undefined
   ) {}
 
-  /** Types `digit` at the caret. Nothing happens on a pitched staff, which has no frets. */
+  /**
+   * Types `digit` at the caret. Nothing happens on a pitched staff, which has no frets. A percussion staff says why, since
+   * a drum part looks like it could take a number: M2's rule that a press either acts or explains.
+   */
   type(digit: number): void {
     const state = this.composer.state;
     const staff = this.composer.staffAt(state.doc, state.cursor);
+    if (staff?.isPercussion) return this.composer.announce(PERCUSSION, true);
     if (!staff || staff.tuning.length === 0) return;
 
     const now = this.now();

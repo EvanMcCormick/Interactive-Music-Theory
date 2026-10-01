@@ -235,3 +235,16 @@
     outline-offset: 2px;
   }
 }
+
+// The picker behind Import .gp…, which its button presses.
+.gp-picker {
+  display: none;
+}
+
+.drawer-section {
+  margin: 0.75rem 1rem 0.25rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--composer-text-secondary, #bdc3c7);
+}

@@ -78,6 +78,7 @@ function buildDoc(): ScoreDoc {
         shortName: 'Pno',
         color: '#3498db',
         playback: createDefaultPlaybackInfo(0),
+        percussionArticulations: [],
         staves: [
           {
             tuning: [],
@@ -89,6 +90,8 @@ function buildDoc(): ScoreDoc {
             showTablature: false,
             showSlash: false,
             showNumbered: false,
+            isPercussion: false,
+            lineCount: 5,
             bars: [
               {
                 clef: 'g2',
@@ -113,6 +116,7 @@ function buildDoc(): ScoreDoc {
         shortName: 'Gtr',
         color: '#e74c3c',
         playback: createDefaultPlaybackInfo(25),
+        percussionArticulations: [],
         staves: [
           {
             tuning: STANDARD_GUITAR_TUNING.slice(),
@@ -124,6 +128,8 @@ function buildDoc(): ScoreDoc {
             showTablature: true,
             showSlash: false,
             showNumbered: false,
+            isPercussion: false,
+            lineCount: 5,
             bars: [
               {
                 clef: 'g2',

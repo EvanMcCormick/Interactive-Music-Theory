@@ -275,4 +275,20 @@ describe('ComposerKeyHandler', () => {
     behind.handle(press({ key: 'Delete' }));
     expect(composer.doc).not.toBe(doc);
   });
+
+  it('leaves an arrow on a focused slider to the slider, however it was focused, and plays on Space there', () => {
+    // The mouse's way in: a slider that does not match `:focus-visible`. Faked, since a headless browser decides that from
+    // how the focus arrived; real Chrome turns it on at the key press anyway.
+    const slider = Object.assign(document.createElement('input'), { type: 'range' });
+    spyOn(slider, 'matches').and.returnValue(false);
+    const before = composer.state.cursor;
+    const arrow = press({ key: 'ArrowRight', target: slider });
+
+    expect(handler.handle(arrow)).toBeFalse();
+    expect(arrow.preventDefault).not.toHaveBeenCalled();
+    expect(composer.state.cursor).toBe(before);
+
+    expect(handler.handle(press({ key: ' ', target: slider }))).toBeTrue();
+    expect(host.playPause).toHaveBeenCalled();
+  });
 });

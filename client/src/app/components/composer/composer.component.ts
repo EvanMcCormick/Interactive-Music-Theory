@@ -4,6 +4,7 @@ import {
   ChangeDetectorRef,
   Component,
   ElementRef,
+  ErrorHandler,
   HostListener,
   OnDestroy,
   OnInit,
@@ -12,19 +13,27 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
+import { ComposerConvertPromptComponent } from './components/composer-convert-prompt/composer-convert-prompt.component';
 import { ComposerLibraryPanelComponent } from './components/composer-library-panel/composer-library-panel.component';
+import { ComposerScalePanelComponent } from './components/composer-scale-panel/composer-scale-panel.component';
 import { ComposerPaletteComponent } from './components/composer-palette/composer-palette.component';
 import { ComposerScoreComponent } from './components/composer-score/composer-score.component';
 import { ComposerShortcutSheetComponent } from './components/composer-shortcut-sheet/composer-shortcut-sheet.component';
 import { ComposerStatusLineComponent } from './components/composer-status-line/composer-status-line.component';
 import { ComposerTrackStripComponent } from './components/composer-track-strip/composer-track-strip.component';
-import { AlphaTabState } from '../../models/alpha-tab.model';
-import { ComposerState, ScoreDoc, TexDiagnostic } from '../../models/composer.model';
+import { AlphaTabState, DEFAULT_HIGHLIGHT_CONFIG, HighlightConfig } from '../../models/alpha-tab.model';
+import { CaretSelection, ComposerState, ScoreDoc, TexDiagnostic } from '../../models/composer.model';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
+import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
+import { ComposerExportService } from '../../services/composer-export.service';
+import { ComposerGpService, EditRequest, GpOriginal } from '../../services/composer-gp.service';
+import { GpConversionService } from '../../services/gp-conversion.service';
+import { GpFileOpener } from '../../services/gp-file-opener.service';
 import { ComposerService } from '../../services/composer.service';
 import { FretDigitEntry } from '../../services/composer-fret-entry';
 import { ComposerKeyHandler } from '../../services/composer-key-handler';
@@ -33,6 +42,7 @@ import { ComposerSaveRequests } from '../../services/composer-save-requests.serv
 import { pressesFocusedControl } from '../../services/editable-target';
 import { COMPOSER_TOOLS, ComposerTool, ComposerToolHost, PopoverKind, shortcutTitleOf } from '../../services/composer-tools';
 import { ScoreDocMapperService } from '../../services/score-doc-mapper.service';
+import { SPEED_RANGE, clockTimeOf } from '../../services/transport-time';
 
 /** What the status line says when a save meets an alphaTex draft that has been edited and not applied. */
 const TEX_DRAFT_UNSAVED = 'Apply or revert the alphaTex draft before saving.';
@@ -74,6 +84,17 @@ export function clampedStripHeight(height: number, range: StripHeightRange): num
 }
 
 /**
+ * The state the palette and its popovers read: the composer's, or in Original - where the composition under the page is
+ * the empty one no one sees - the file read as a document and the file's caret, so a button's pressed and unavailable
+ * states and a popover's values describe the note under that caret. The rest - Select or Pen, the input duration - is
+ * the composer's own. A file the mapper could not read has no document to describe, and the composition's state stands.
+ */
+export function paletteStateOf(state: ComposerState, original: Pick<GpOriginal, 'doc'> | null, caret: CaretSelection | null): ComposerState {
+  const doc = original?.doc;
+  return doc && caret ? { ...state, doc, cursor: caret.cursor, anchor: caret.anchor } : state;
+}
+
+/**
  * The composer page: top bar, palette, score, status line and track strip, in one grid.
  *
  * Holds no document state - that is `ComposerService`'s - only what the page presents: which popover
@@ -88,8 +109,10 @@ export function clampedStripHeight(height: number, range: StripHeightRange): num
   imports: [
     CommonModule,
     FormsModule,
+    ComposerConvertPromptComponent,
     ComposerLibraryPanelComponent,
     ComposerPaletteComponent,
+    ComposerScalePanelComponent,
     ComposerScoreComponent,
     ComposerShortcutSheetComponent,
     ComposerStatusLineComponent,
@@ -128,6 +151,26 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   state: ComposerState | null = null;
   playerState: AlphaTabState | null = null;
+  /**
+   * The `.gp` file the page is showing, or null in Composition (`ComposerGpService`).
+   *
+   * What it changes about the page is what the page can honestly show: there is no document to undo, to set a BPM
+   * on, or to rename, so those controls read the file and take no input. The palette, the keys and the popovers
+   * stay live - the first command that would change the document asks instead.
+   */
+  original: GpOriginal | null = null;
+  /** In Original, the file's caret, which the status line reads out (`ComposerGpService.caret`); null in Composition. */
+  fileCaret: CaretSelection | null = null;
+  /** What the palette and its popovers read (`paletteStateOf`): made again when the state, the file or its caret moves. */
+  paletteState: ComposerState | null = null;
+  /** The command waiting on the conversion prompt, which is open while there is one (`ComposerGpService.requestEdit`). */
+  editRequest: EditRequest | null = null;
+  /**
+   * Whether a conversion is under way: the prompt's Convert does not start a second, and nothing cancels it - Cancel,
+   * Escape and the backdrop do nothing, and the page stays inert (`modalOpen`) - since closing the prompt would not stop
+   * it: the file would still be converted, and the edit applied, behind a page taking input again.
+   */
+  converting = false;
 
   texDraft = '';
   texDiagnostics: TexDiagnostic[] = [];
@@ -159,6 +202,9 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
    */
   texErrorId = 0;
 
+  /** The scale panel's highlight, which the score draws, in either state. */
+  highlight: HighlightConfig = DEFAULT_HIGHLIGHT_CONFIG;
+
   metronomeEnabled = false;
   countInEnabled = false;
 
@@ -173,12 +219,55 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   /** Set once the page is destroyed, so a fit waiting on a microtask does not draw into a destroyed view. */
   private destroyed = false;
 
+  /** Whether the page is showing a `.gp` file as alphaTab read it. */
+  get viewingOriginal(): boolean {
+    return this.original !== null;
+  }
+
+  /** Why the prompt's Convert cannot run now: one is already under way. */
+  get convertRefusal(): string | null {
+    return this.converting ? 'Converting…' : null;
+  }
+
+  /**
+   * Whether a modal is open over the page - the shortcut sheet, or the conversion prompt - so the rest of the page is
+   * `inert` and the keys reach only what a modal takes (`ComposerKeyHandler`). A conversion under way counts until it
+   * settles: it drops the request that opened the prompt as it converts, before the edit that asked has run.
+   */
+  get modalOpen(): boolean {
+    return this.sheetOpen || this.editRequest !== null || this.converting;
+  }
+
+  /** The title shown: the composition's, or the file's own - its score title, or its file name where it has none. */
+  get titleText(): string {
+    if (this.original) return this.original.score.title || this.original.fileName;
+    return this.state?.doc.title ?? '';
+  }
+
+  /** The BPM shown beside the transport: the composition's, or the file's own. */
+  get tempoValue(): number {
+    if (this.original) return this.original.score.tempo;
+    return this.state?.doc.tempo ?? 120;
+  }
+
+  /** In Original, how many bars the file has, for the status line's readout; null in Composition. */
+  get fileBarCount(): number | null {
+    return this.original?.score.masterBars.length ?? null;
+  }
+
   /** Undo's and Redo's tooltips, with the keys the platform's keyboard writes: Ctrl+Z, or ⌘+Z on a Mac. */
   readonly undoTitle: string = shortcutTitleOf('undo', inject(KEY_PLATFORM));
   readonly redoTitle: string = shortcutTitleOf('redo', inject(KEY_PLATFORM));
+  /** Where a conversion that throws is reported (`convert`). */
+  private readonly errors = inject(ErrorHandler);
 
   /** What every tool runs against. */
   readonly host: ComposerToolHost;
+  /**
+   * `COMPOSER_TOOLS`, each asking `ComposerGpService.requestEdit` before it runs, so in Original the first that would change
+   * the document opens the conversion prompt instead - from the palette and the keys alike.
+   */
+  private readonly gatedTools: readonly ComposerTool[];
 
   private readonly keyHandler: ComposerKeyHandler;
   private readonly fretEntry: FretDigitEntry;
@@ -191,8 +280,14 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     private readonly composer: ComposerService,
     private readonly mapper: ScoreDocMapperService,
     private readonly alphaTabService: AlphaTabService,
+    private readonly gp: ComposerGpService,
     private readonly texService: AlphaTexService,
     private readonly saveRequests: ComposerSaveRequests,
+    private readonly exporter: ComposerExportService,
+    private readonly conversion: GpConversionService,
+    private readonly opener: GpFileOpener,
+    private readonly route: ActivatedRoute,
+    private readonly router: Router,
     private readonly cdr: ChangeDetectorRef
   ) {
     this.fretEntry = new FretDigitEntry(composer, () => Date.now(), midi =>
@@ -202,11 +297,18 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       composer,
       // A popover's own button, or its key, closes it when it is the one open, as a disclosure button does.
       openPopover: kind => this.present(() => (this.popover = this.popover === kind ? null : kind)),
-      toggleShortcutSheet: () => this.present(() => this.toggleShortcutSheet()),
+      // Not over the conversion prompt: the sheet would open behind a question the page is waiting on.
+      toggleShortcutSheet: () => this.present(() => this.editRequest === null && this.toggleShortcutSheet()),
       escape: () =>
         this.present(() => {
-          // An open popover takes Escape alone - as the popover itself does when it has the focus - and so does the
-          // open shortcut sheet, a modal over the score: the press that closes either does not also drop the range.
+          // The conversion prompt takes Escape as Cancel - and, while a conversion is under way, as nothing (`converting`).
+          // An open popover takes Escape alone - as the popover itself does when it has the focus - and so does the open
+          // shortcut sheet, a modal over the score: the press that closes either does not also drop the range.
+          if (this.converting) return;
+          if (this.editRequest) {
+            this.gp.cancelEdit();
+            return;
+          }
           if (this.popover) {
             this.popover = null;
             return;
@@ -230,16 +332,25 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       addTrack: () => this.strip?.addTrack(),
       typeFretDigit: digit => this.fretEntry.type(digit)
     };
+    this.gatedTools = COMPOSER_TOOLS.map(tool => ({
+      ...tool,
+      run: (host, press) => this.gp.requestEdit(tool.id, tool.label, () => tool.run(host, press))
+    }));
     // The score's element, so a text selection inside the score does not stop Ctrl+C and Ctrl+X copying beats.
-    // And the sheet's state: while it is open, only its own key and Escape reach the tools, so no key edits the score
-    // hidden behind it (`TOOLS_OVER_A_MODAL`), and a Ctrl, Alt or Cmd press is claimed and dropped, so the browser's own
-    // shortcuts do not act behind it either.
+    // And whether a modal is open: while one is, only the sheet's key and Escape reach the tools, so no key edits the
+    // score hidden behind it (`TOOLS_OVER_A_MODAL`), and a Ctrl, Alt or Cmd press is claimed and dropped, so the
+    // browser's own shortcuts do not act behind it either.
     this.keyHandler = new ComposerKeyHandler(
       this.host,
-      COMPOSER_TOOLS,
+      this.gatedTools,
       () => this.scoreElement?.nativeElement ?? null,
-      () => this.sheetOpen
+      () => this.modalOpen
     );
+  }
+
+  /** `paletteStateOf` what the page holds now. A new object only when one of them moved, so the palette's `OnChanges` runs then. */
+  private readPaletteState(): void {
+    this.paletteState = this.state ? paletteStateOf(this.state, this.original, this.fileCaret) : null;
   }
 
   ngOnInit(): void {
@@ -254,6 +365,7 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
         // it first (`confirmDiscard`) and throws it away.
         if (this.showTexPanel && state.documentId !== this.texDraftDocumentId) this.discardTexDraft();
         else if (docChanged && this.showTexPanel && !this.texDraftEdited) this.seedTexDraft();
+        this.readPaletteState();
         this.cdr.markForCheck();
       });
 
@@ -262,12 +374,58 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
         this.playerState = state;
-        // alphaTab events originate outside Angular's zone.
-        this.cdr.detectChanges();
+        this.timeReadout = this.timeReadoutOf(this.seekDraft ?? state.timePosition);
+        // Marked, not detected: `AlphaTabService` brings alphaTab's events back into the zone, whose tick checks the
+        // page. A position event arrives many times a second while playing, and each ran a second pass of its own.
+        this.cdr.markForCheck();
       });
 
-    // Save in the Library menu asks the same question Ctrl+S does (`requestSave`).
-    this.removeSaveGuard = this.saveRequests.guard(() => this.refusesSaveForDraft());
+    this.gp
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(original => {
+        const changed = original !== this.original;
+        this.original = original;
+        // The alphaTex shown is the file's while there is one and the composition's after, so an untouched draft follows
+        // it as it follows the score. Opening a file does not move `documentId` - the reset before it did - so the
+        // composer's subscription would leave the empty composition's alphaTex in a panel already open. A draft typed
+        // into is left as typed, as it is when the score changes.
+        if (changed && this.showTexPanel && !this.texDraftEdited) this.seedTexDraft();
+        this.readPaletteState();
+        this.cdr.markForCheck();
+      });
+
+    this.gp
+      .getCaret()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(caret => {
+        this.fileCaret = caret;
+        this.readPaletteState();
+        this.cdr.markForCheck();
+      });
+
+    this.gp
+      .getRequest()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(request => {
+        this.editRequest = request;
+        // A popover left open would sit in the top layer above the prompt, inside a palette gone inert.
+        if (request) this.popover = null;
+        this.cdr.markForCheck();
+      });
+
+    // `/composer?gp=<id>`, the gallery's Open: the file opens in Original. The query is cleared first, so a reload does not
+    // open again a file converted since - the page never used the router before, and this is the one parameter it reads.
+    this.route.queryParamMap.pipe(takeUntil(this.destroy$)).subscribe(params => {
+      const id = params.get('gp');
+      if (!id) return;
+      void this.router.navigate([], { relativeTo: this.route, queryParams: { gp: null }, queryParamsHandling: 'merge', replaceUrl: true });
+      void this.opener.openEntry(id);
+    });
+
+    // Save in the Library menu asks the same questions Ctrl+S does (`requestSave`): the draft's, and in Original the
+    // conversion prompt's, since the library holds compositions and a file not yet converted has none to write.
+    this.removeSaveGuard = this.saveRequests.guard(() => this.refusesSaveForDraft() || this.asksBeforeSaving());
     // An edited draft is unsaved work that a load, New or an opened transcription would throw away.
     this.releaseUnsavedDraft = this.composer.holdUnsavedWork(() => this.showTexPanel && this.texDraftEdited);
   }
@@ -290,6 +448,10 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.destroyed = true;
+    // A command asked here dies with the page: the prompt that named it is going, and one found by the next composer page
+    // would ask about a press the user made on a page they left. One asked from elsewhere - the progression page's Send -
+    // is made while no composer page is alive, and waits for the next to show it.
+    this.gp.cancelEdit();
     this.pageObserver?.disconnect();
     this.removeSaveGuard();
     this.releaseUnsavedDraft();
@@ -313,15 +475,89 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     this.keyHandler.handle(event);
   }
 
+  /** A file dragged over the page may be dropped on it: without this the browser would open the file itself. */
+  @HostListener('dragover', ['$event'])
+  onDragOver(event: DragEvent): void {
+    if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+  }
+
+  /**
+   * A `.gp` dropped anywhere on the page opens in Original (`GpFileOpener.importDropped`) - but not over a modal. `inert`
+   * reaches only the page's children, so a drop still lands here: opened, a file would reset the page under the prompt
+   * and drop the edit it holds, or open under a conversion whose write then clears it. The drop is still claimed, so
+   * the browser does not open the file itself, and refused out loud.
+   */
+  @HostListener('drop', ['$event'])
+  onDrop(event: DragEvent): void {
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
+    event.preventDefault();
+    if (this.modalOpen) {
+      this.composer.announce(this.dropRefusal(), true);
+      return;
+    }
+    void this.opener.importDropped(files);
+  }
+
+  /** Why a file dropped while a modal is open is not opened: what the modal is waiting on (`modalOpen`). */
+  private dropRefusal(): string {
+    if (this.converting) return 'Wait for the conversion to finish before opening another file.';
+    if (this.editRequest) return 'Answer the question about the open file before opening another.';
+    return 'Close the shortcut sheet before opening a file.';
+  }
+
   /** Whether `target` is a palette button whose tool a held key runs again. */
   private repeatableToolAt(target: EventTarget | null): boolean {
     const id = target instanceof HTMLElement ? target.closest<HTMLElement>('[data-tool]')?.dataset['tool'] : undefined;
     return COMPOSER_TOOLS.some(tool => tool.id === id && tool.repeatable === true);
   }
 
-  /** A palette press runs the same tool, against the same host, as its key. */
+  /** A palette press runs the same tool, against the same host, as its key - asking first in Original, as the key does. */
   runTool(tool: ComposerTool): void {
-    tool.run(this.host, null);
+    this.gp.requestEdit(tool.id, tool.label, () => tool.run(this.host, null));
+  }
+
+  /**
+   * The prompt's Cancel, its backdrop, and Escape: the command that asked is dropped, and the page says nothing more. Not
+   * while a conversion is under way, which closing the prompt would not stop (`converting`).
+   */
+  cancelConvert(): void {
+    if (this.converting) return;
+    this.gp.cancelEdit();
+  }
+
+  /** "Save the original file first": the untouched bytes, under the file's own name. The prompt stays open. */
+  saveOriginal(): void {
+    const original = this.original;
+    if (original) this.exporter.downloadOriginal(original.bytes, original.fileName);
+  }
+
+  /**
+   * The prompt's Convert (`GpConversionService`). Converted, the page is a composition and the edit that asked has run;
+   * refused, the prompt closes, the page stays in Original with nothing applied, and the status line says why. A throw
+   * the service did not turn into a refusal is reported and said the same way, and however it ends, Convert is live
+   * again: a conversion left `converting` would leave the prompt's Convert disabled for as long as the page is open.
+   */
+  convert(): void {
+    if (this.converting) return;
+    this.converting = true;
+    void this.conversion
+      .convert()
+      .then(outcome => {
+        if (outcome.kind === 'refused') {
+          this.gp.cancelEdit();
+          this.composer.announce(outcome.reason, true);
+        }
+      })
+      .catch((error: unknown) => {
+        this.errors.handleError(error);
+        this.gp.cancelEdit();
+        this.composer.announce('The file could not be converted.', true);
+      })
+      .finally(() => {
+        this.converting = false;
+        this.cdr.markForCheck();
+      });
   }
 
   closePopover(): void {
@@ -362,6 +598,79 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   stop(): void {
     this.alphaTabService.stop();
+  }
+
+  /** The scale panel opened for the first time: note bounds from here on, for the highlight to read. */
+  onScalePanelOpened(): void {
+    this.alphaTabService.setNoteBounds(true);
+  }
+
+  // -------------------------------------------------------------------------
+  // The rest of the transport: loop, speed, volume and the seek bar - the viewer's, in both states (design decision 10)
+  // -------------------------------------------------------------------------
+
+  readonly speedRange = SPEED_RANGE;
+
+  toggleLoop(): void {
+    this.alphaTabService.setLooping(!(this.playerState?.isLooping ?? false));
+  }
+
+  /**
+   * The speed a drag of the speed slider is at, as a percentage, until it lets go; null when no drag is under way. The
+   * player is set once, on `change`: each of a drag's `input` steps setting it would retime playback a dozen times.
+   */
+  speedDraft: number | null = null;
+
+  /**
+   * Where a drag of the seek bar is, in milliseconds, until it lets go; null when no drag is under way. The thumb and the
+   * readout follow it rather than the player, whose position events would otherwise snap the thumb back under the hand
+   * while it plays, and the player seeks once, on `change`, rather than at every step of the drag.
+   */
+  seekDraft: number | null = null;
+
+  /**
+   * Where playback is - or a drag of the seek bar, while one is under way - and how long the score plays, as
+   * `1:05 / 3:20`. A field set when either changes, not a getter: the template reads it twice a pass, and a position
+   * event arrives many times a second.
+   */
+  timeReadout = this.timeReadoutOf(0);
+
+  /** Speed, as a percentage of the score's own tempo: a playback multiplier, never the BPM, which is the score's. */
+  get speedPercent(): number {
+    return this.speedDraft ?? Math.round((this.playerState?.tempoMultiplier ?? 1) * 100);
+  }
+
+  onSpeedInput(value: string): void {
+    this.speedDraft = Number(value);
+  }
+
+  onSpeedChange(value: string): void {
+    this.speedDraft = null;
+    this.alphaTabService.setPlaybackSpeed(Number(value) / 100);
+  }
+
+  get volumePercent(): number {
+    return Math.round((this.playerState?.volume ?? 1) * 100);
+  }
+
+  onVolumeInput(value: string): void {
+    this.alphaTabService.setVolume(Number(value) / 100);
+  }
+
+  onSeekInput(value: string): void {
+    this.seekDraft = Number(value);
+    this.timeReadout = this.timeReadoutOf(this.seekDraft);
+  }
+
+  onSeekChange(value: string): void {
+    this.seekDraft = null;
+    this.alphaTabService.seekToTime(Number(value));
+    this.timeReadout = this.timeReadoutOf(this.playerState?.timePosition ?? 0);
+  }
+
+  /** `position` and the score's length, as the transport's readout writes them. */
+  private timeReadoutOf(position: number): string {
+    return `${clockTimeOf(position)} / ${clockTimeOf(this.playerState?.totalDuration ?? 0)}`;
   }
 
   toggleMetronome(): void {
@@ -507,13 +816,19 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     this.texApplyError = null;
   }
 
-  /** Canonical alphaTex for the current document, generated on demand. */
+  /**
+   * Canonical alphaTex for the current document, generated on demand - or, in Original, alphaTab's own alphaTex for the
+   * file, which has no document behind it (design Part 1). Applying a draft of it asks, as any edit does.
+   */
   private currentTex(): string {
-    if (!this.state) return '';
     try {
+      if (this.original) return this.texService.export(this.original.score);
+      if (!this.state) return '';
       const score = this.mapper.toScore(this.state.doc, new alphaTab.Settings());
       return this.texService.export(score);
     } catch {
+      // A file's model the exporter cannot write, as much as a document the mapper cannot, leaves the panel empty rather
+      // than taking the page down.
       return '';
     }
   }
@@ -534,11 +849,33 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   /**
+   * In Original, refuses the save and asks the conversion prompt instead, with the save as the command waiting on it:
+   * once converted, the save runs again and finds a composition to write.
+   */
+  private asksBeforeSaving(): boolean {
+    if (!this.viewingOriginal) return false;
+    this.gp.requestEdit('save', 'Save', () => this.saveRequests.request());
+    return true;
+  }
+
+  /**
+   * Apply: in Original it asks the conversion prompt first, with the draft as typed held for after it. Converting opens a
+   * new composition, which seeds the panel afresh (`discardTexDraft`), so the draft is put back before it is applied.
+   */
+  applyTex(): void {
+    const draft = this.texDraft;
+    this.gp.requestEdit(ASKING_PAGE_COMMANDS.texApply, 'Applying the alphaTex draft', () => {
+      this.texDraft = draft;
+      this.applyTexDraft();
+    });
+  }
+
+  /**
    * Applies the draft as an edit of this composition, on the undo stack (`replaceDocument`). A draft out of date would
    * replace the changes made since it was written, so that is asked - once the draft parses, since a draft that cannot
    * be applied has nothing to ask about.
    */
-  applyTex(): void {
+  private applyTexDraft(): void {
     const result = this.texService.parse(this.texDraft);
     this.texDiagnostics = result.diagnostics;
 

@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { BehaviorSubject, Observable } from 'rxjs';
+import { BehaviorSubject, Observable, Subject } from 'rxjs';
 import {
   AccidentalMode,
   BarDoc,
@@ -40,7 +40,7 @@ import {
   toggleFermata,
   toggledValue
 } from './beat-edits';
-import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
+import { CaretOwner, CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { defaultFermata } from './composer-tool-defaults';
 import { BeatRef, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
@@ -65,7 +65,7 @@ import { moveNotesToString, shiftSemitone } from './note-moves';
 import { respellNotes, respellRefusal } from './note-respell';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 import { deleteBars } from './bar-edits';
-import { LAST_TRACK_REFUSAL } from './composer-text';
+import { LAST_TRACK_REFUSAL, UNREADABLE_FILE_COPY } from './composer-text';
 import { insertBarInto } from './score-structure';
 
 /**
@@ -99,6 +99,15 @@ export class ComposerService {
 
   /** Unsaved work outside the document that a new composition would throw away, each asked when one is about to. */
   private readonly unsavedElsewhere = new Set<() => boolean>();
+
+  /** Each whole document put in place of the last one. See `getDocumentReplacements`. */
+  private readonly replacements = new Subject<void>();
+
+  /** The tracks a keyboard track move passes over. See `passOverTracks`. */
+  private passedOver: (track: TrackDoc) => boolean = () => false;
+
+  /** What takes the caret commands while the composition is not what the page shows. See `lendCaret`. */
+  private caretOwner: CaretOwner | null = null;
 
   /** Commits, undo and redo, and the refusals and notices beside them. See composer-history.ts. */
   private readonly history = new ComposerHistory({
@@ -209,6 +218,8 @@ export class ComposerService {
       showTablature: fretted,
       showSlash: false,
       showNumbered: false,
+      isPercussion: false,
+      lineCount: 5,
       bars: masterBars.map((_, index) =>
         createDefaultBar(fretted, effectiveTimeSignature(masterBars, index))
       )
@@ -221,7 +232,8 @@ export class ComposerService {
       color: fretted ? '#e74c3c' : '#3498db',
       playback: createDefaultPlaybackInfo(program),
       staves: [staff],
-      generated: null
+      generated: null,
+      percussionArticulations: []
     };
   }
 
@@ -249,7 +261,19 @@ export class ComposerService {
   replaceDocument(doc: ScoreDoc, replacement: DocumentReplacement = {}): void {
     const fretted = frettedDocOf(doc);
     this.history.replaceDocument(fretted.doc, fretted.dropped > 0 ? { ...replacement, markClean: false } : replacement);
+    // Before the notice below, which a listener's caret move would otherwise clear.
+    this.replacements.next();
     if (fretted.dropped > 0) this.announce(outOfReachNoticeOf(fretted.dropped));
+  }
+
+  /**
+   * Each time a whole document is put in place of the last, rather than edited: `replaceDocument` - a load, an opened
+   * transcription, Convert, an applied alphaTex draft - and New (`reset`). After the state holding it is published. The
+   * track strip's view starts again from here (`ComposerTrackViewService`): a document replaced numbers its tracks afresh,
+   * so what was hidden by id no longer names the same track, and `documentId` alone does not move for an applied draft.
+   */
+  getDocumentReplacements(): Observable<void> {
+    return this.replacements.asObservable();
   }
 
   /** Marks the document clean, if `saved` - the document that was written - is still it. See `ComposerHistory.markSaved`. */
@@ -286,14 +310,30 @@ export class ComposerService {
   reset(): void {
     this.history.clear();
     this.stateSubject.next(ComposerService.initialState(this.stateSubject.getValue().documentId + 1));
+    this.replacements.next();
   }
 
   // -------------------------------------------------------------------------
   // Cursor
   // -------------------------------------------------------------------------
 
+  /**
+   * Hands the caret commands below - `setCursor`, `extendSelectionTo`, `moveCursor` and `selectAllInTrack` - to `owner`
+   * until it is given back with null: `ComposerGpService`, while a `.gp` file is shown in Original. The composition under
+   * the file then is the empty one no one sees, and a caret held in it was clamped to its bar 1 - so a press seeked
+   * there, and the edit that asked was written there once converted. Lent, rather than each caller asking which state
+   * the page is in: the score's presses, the keys, Escape and the strip all move the caret through here, and this service
+   * cannot read `ComposerGpService`, which reads it (as with `passOverTracks`). The composer's own caret is left where it
+   * is, so nothing that reads it against the document - the palette's states, an edit - reads a caret the document does
+   * not have.
+   */
+  lendCaret(owner: CaretOwner | null): void {
+    this.caretOwner = owner;
+  }
+
   /** Moves the caret, and drops any range: a plain click or arrow key. */
   setCursor(cursor: Partial<EditCursor>): void {
+    if (this.caretOwner) return this.caretOwner.setCursor(cursor);
     const state = this.stateSubject.getValue();
     this.publishSelection(clampedCursor({ ...state.cursor, ...cursor }, state.doc), null);
   }
@@ -303,12 +343,14 @@ export class ComposerService {
    * existed yet: shift-click and shift-arrow.
    */
   extendSelectionTo(cursor: Partial<EditCursor>): void {
+    if (this.caretOwner) return this.caretOwner.extendSelectionTo(cursor);
     const state = this.stateSubject.getValue();
     this.publishSelection(clampedCursor({ ...state.cursor, ...cursor }, state.doc), state.anchor ?? state.cursor);
   }
 
   /** Selects every beat of the caret's staff, first bar to last. */
   selectAllInTrack(): void {
+    if (this.caretOwner) return this.caretOwner.selectAllInTrack();
     const { doc, cursor } = this.stateSubject.getValue();
     this.publishSelection(
       movedCursor(doc, cursor, { kind: 'scoreEdge', edge: 'last' }),
@@ -321,9 +363,18 @@ export class ComposerService {
    * A plain move drops the range, except a change of string, which moves the focus within it.
    */
   moveCursor(move: CursorMove, extend = false): void {
+    if (this.caretOwner) return this.caretOwner.moveCursor(move, extend);
     const state = this.stateSubject.getValue();
     const anchor = extend ? state.anchor ?? state.cursor : move.kind === 'string' ? state.anchor : null;
-    this.publishSelection(movedCursor(state.doc, state.cursor, move), anchor);
+    this.publishSelection(movedCursor(state.doc, state.cursor, move, this.passedOver), anchor);
+  }
+
+  /**
+   * Makes a keyboard track move pass over the tracks `test` names (`movedCursor`): the track strip's hidden ones, which
+   * `ComposerTrackViewService` holds and sets here - it reads this service, so this one cannot read it.
+   */
+  passOverTracks(test: (track: TrackDoc) => boolean): void {
+    this.passedOver = test;
   }
 
   moveCursorByBeat(delta: number): void {
@@ -388,7 +439,12 @@ export class ComposerService {
 
   /** Copies the selection's beats to the composer's clipboard. */
   copy(): void {
-    this.entry.copy();
+    // Ungated, as it writes nothing - so in Original it must read the file's range, or it would copy the empty
+    // composition's rest over the clipboard and a later paste would write that (`lendCaret`).
+    const lent = this.caretOwner?.readSelection();
+    if (!lent) return this.entry.copy();
+    if (!lent.doc) return this.history.refuse(UNREADABLE_FILE_COPY);
+    this.entry.copyFrom(lent.doc, lent.caret.anchor, lent.caret.cursor);
   }
 
   /** Copies the selection's beats and clears them to rests. */
@@ -510,7 +566,7 @@ export class ComposerService {
 
   /** Moves the selection's notes a semitone up (+1) or down (-1). See `shiftSemitone`. */
   shiftSemitone(delta: 1 | -1): void {
-    this.applyEdit({ family: 'note', key: 'notes' }, (draft, refs, focus) => shiftSemitone(draft, refs, focus, delta));
+    this.applyEdit({ family: 'note', key: 'pitch' }, (draft, refs, focus) => shiftSemitone(draft, refs, focus, delta));
   }
 
   /**
@@ -519,7 +575,7 @@ export class ComposerService {
    */
   moveNotesToString(delta: 1 | -1): void {
     const before = this.doc;
-    this.applyEdit({ family: 'note', key: 'notes' }, (draft, refs, focus) => moveNotesToString(draft, refs, focus, delta));
+    this.applyEdit({ family: 'note', key: 'string' }, (draft, refs, focus) => moveNotesToString(draft, refs, focus, delta));
     if (this.doc !== before && !this.stateSubject.getValue().anchor) this.moveCursor({ kind: 'string', delta });
   }
 
@@ -589,8 +645,9 @@ export class ComposerService {
     this.structure.setStaffViews(views);
   }
 
-  setPlayback(changes: Partial<PlaybackInfoDoc>): void {
-    this.structure.setPlayback(changes);
+  /** Changes the mixer of the track at `trackIndex` - the caret's, unless another is named, as the strip's mute and solo do. */
+  setPlayback(changes: Partial<PlaybackInfoDoc>, trackIndex?: number): void {
+    this.structure.setPlayback(changes, trackIndex);
   }
 
   renameTrack(name: string, shortName: string): void {

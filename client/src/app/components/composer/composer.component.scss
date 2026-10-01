@@ -1,3 +1,5 @@
+@use '../../styles/a11y';
+
 // The composer page: a grid of top bar, palette, score, status line and track strip.
 //
 // The composer's colours are custom properties on the page host, so every child component reads one
@@ -102,6 +104,46 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
+}
+
+.slider-field {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--composer-text-secondary);
+
+  input[type='range'] {
+    width: 5.5rem;
+    accent-color: var(--composer-accent, #3498db);
+  }
+}
+
+// A slider and its readout, which sits beside the label rather than in it so it stays out of the slider's name.
+.slider-group {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.slider-readout {
+  min-width: 2.6rem;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--composer-text-secondary);
+}
+
+.seek-field input[type='range'] {
+  width: 9rem;
+}
+
+.time-readout {
+  min-width: 5.5rem;
+}
+
+// The seek bar's label, for a screen reader: the bar and its readout say what it is to the eye. See `%sr-only`.
+.visually-hidden {
+  @extend %sr-only;
 }
 
 .tempo-field {

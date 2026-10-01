@@ -204,6 +204,18 @@ export class StaffHitTestService {
     };
   }
 
+  /**
+   * Where the bounds lookup's origin (the top left of `.at-surface`) sits in `container`, scrolled as the caret's box is:
+   * added to a box given in the lookup's pixels - a note head's - it places that box as the caret is placed. Two boxes
+   * measured once for any number of note heads (`noteMarksOf`). Null before a surface exists.
+   */
+  lookupOffsetOf(container: HTMLElement): { left: number; top: number } | null {
+    const origin = this.surfaceOriginOf(container);
+    if (!origin) return null;
+    const containerBox = container.getBoundingClientRect();
+    return { left: origin.left - containerBox.left, top: origin.top - containerBox.top + container.scrollTop };
+  }
+
   /** `surface`'s box, measured once per call that holds `boxes`. */
   private boxOf(boxes: Map<SVGSVGElement, DOMRect>, surface: SVGSVGElement): DOMRect {
     let box = boxes.get(surface);

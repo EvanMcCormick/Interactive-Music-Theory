@@ -1,4 +1,5 @@
-import { EditCursor, ScoreDoc, createDefaultCursor } from '../models/composer.model';
+import { CaretSelection, EditCursor, ScoreDoc, TrackDoc, createDefaultCursor } from '../models/composer.model';
+import { playbackStartsOf } from './bar-fill';
 
 /**
  * Where the caret goes, as pure functions of the document.
@@ -18,6 +19,22 @@ export type CursorMove =
   | { kind: 'bar'; delta: number }
   | { kind: 'scoreEdge'; edge: 'first' | 'last' }
   | { kind: 'track'; delta: number };
+
+/**
+ * What takes `ComposerService`'s caret commands while the page shows something other than the composition: the `.gp`
+ * file in Original, whose caret `ComposerGpService` keeps (`ComposerService.lendCaret`).
+ */
+export interface CaretOwner {
+  setCursor(cursor: Partial<EditCursor>): void;
+  extendSelectionTo(cursor: Partial<EditCursor>): void;
+  moveCursor(move: CursorMove, extend: boolean): void;
+  selectAllInTrack(): void;
+  /**
+   * What a command that reads the selection without writing reads instead of the composition's: Copy. The caret and its
+   * range, and the document they are in - null where the file could not be read as one.
+   */
+  readSelection(): { doc: ScoreDoc | null; caret: CaretSelection } | null;
+}
 
 const clamp = (value: number, min: number, max: number): number => (max < min ? min : Math.max(min, Math.min(max, value)));
 
@@ -40,6 +57,27 @@ export function clampedCursor(cursor: EditCursor, doc: ScoreDoc): EditCursor {
 }
 
 /**
+ * `cursor`, on `from`, carried into `to`, a document read back from it: Convert's, from the file to the composition saved
+ * of it. Clamped - and, where `to` has lost the voice the cursor was in (the first save drops a voice of rests), on the
+ * beat of the voice it is clamped to that plays where the cursor's beat did, or else the last before it. Clamped alone,
+ * the cursor would keep its beat index in another voice's rhythm: the second half rest of a voice 2 became the second
+ * quarter of voice 1.
+ */
+export function carriedCursorOf(cursor: EditCursor, from: ScoreDoc, to: ScoreDoc): EditCursor {
+  const clamped = clampedCursor(cursor, to);
+  const sameBar =
+    clamped.trackIndex === cursor.trackIndex && clamped.staffIndex === cursor.staffIndex && clamped.barIndex === cursor.barIndex;
+  if (clamped.voiceIndex === cursor.voiceIndex || !sameBar) return clamped;
+  const barIn = (doc: ScoreDoc) => doc.tracks[cursor.trackIndex]?.staves[cursor.staffIndex]?.bars[cursor.barIndex];
+  const was = barIn(from)?.voices[cursor.voiceIndex]?.beats;
+  const now = barIn(to)?.voices[clamped.voiceIndex]?.beats;
+  if (!was || !now) return { ...clamped, beatIndex: 0 };
+  const onset = playbackStartsOf(was)[cursor.beatIndex] ?? 0;
+  const beatIndex = playbackStartsOf(now).reduce((found, start, index) => (start <= onset ? index : found), 0);
+  return { ...clamped, beatIndex };
+}
+
+/**
  * Where `move` takes `cursor`, inside `doc`.
  *
  * A beat step wraps across bar lines by each bar's own beat count and stops at either end of the
@@ -47,9 +85,15 @@ export function clampedCursor(cursor: EditCursor, doc: ScoreDoc): EditCursor {
  * move on the same bar's first beat of the other track's first staff: beat indices do not line up
  * across tracks, so keeping one would land on an arbitrary beat. A track move past the first or last
  * track has no track to go to and goes nowhere, like a string move on a pitched staff, which has no
- * strings.
+ * strings. It passes over the tracks `passedOver` names - the track strip's hidden ones, where an edit
+ * would write to a staff no one can see - and with none left that way it goes nowhere too.
  */
-export function movedCursor(doc: ScoreDoc, cursor: EditCursor, move: CursorMove): EditCursor {
+export function movedCursor(
+  doc: ScoreDoc,
+  cursor: EditCursor,
+  move: CursorMove,
+  passedOver: (track: TrackDoc) => boolean = () => false
+): EditCursor {
   const staff = doc.tracks[cursor.trackIndex]?.staves[cursor.staffIndex];
   if (!staff) return clampedCursor(cursor, doc);
   const beatCount = (barIndex: number): number => staff.bars[barIndex]?.voices[cursor.voiceIndex]?.beats.length ?? 1;
@@ -82,9 +126,22 @@ export function movedCursor(doc: ScoreDoc, cursor: EditCursor, move: CursorMove)
         ? clampedCursor({ ...cursor, barIndex: 0, beatIndex: 0 }, doc)
         : clampedCursor({ ...cursor, barIndex: lastBar, beatIndex: beatCount(lastBar) - 1 }, doc);
     case 'track': {
-      const trackIndex = clamp(cursor.trackIndex + move.delta, 0, doc.tracks.length - 1);
+      const trackIndex = trackMovedTo(doc, cursor.trackIndex, move.delta, passedOver);
       if (trackIndex === cursor.trackIndex) return cursor;
       return clampedCursor({ ...cursor, trackIndex, staffIndex: 0, voiceIndex: 0, beatIndex: 0 }, doc);
     }
   }
+}
+
+/** The track `delta` tracks from `from` that `passedOver` does not name, stopping at the last such track before either end. */
+function trackMovedTo(doc: ScoreDoc, from: number, delta: number, passedOver: (track: TrackDoc) => boolean): number {
+  const step = Math.sign(delta);
+  let landing = from;
+  let left = Math.abs(delta);
+  for (let index = from + step; left > 0 && index >= 0 && index < doc.tracks.length; index += step) {
+    if (passedOver(doc.tracks[index])) continue;
+    landing = index;
+    left--;
+  }
+  return landing;
 }

@@ -11,6 +11,10 @@ import { CompositionEntry, ComposerLibraryService } from '../../../../services/c
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { ComposerService } from '../../../../services/composer.service';
 import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
+import { GP_FILE_ACCEPT } from '../../../../services/gp-file-name';
+import { GpFileOpener } from '../../../../services/gp-file-opener.service';
+import { GP_LIBRARY_DB, GpLibraryService } from '../../../../services/gp-library.service';
+import { deletedDatabase } from '../../../../services/indexed-db.spec-helper';
 
 /**
  * What the Library panel refuses to save, and what it still exports.
@@ -39,6 +43,8 @@ describe('ComposerLibraryPanelComponent', () => {
   let composer: ComposerService;
   let library: ComposerLibraryService;
   let exporter: ComposerExportService;
+  /** This spec's own GP library, deleted after it. */
+  let gpDb: string;
 
   /** The same score with the track at `index` marked as a progression's. */
   function marked(doc: ScoreDoc, index: number, progressionName: string): ScoreDoc {
@@ -76,8 +82,11 @@ describe('ComposerLibraryPanelComponent', () => {
   }
 
   beforeEach(async () => {
+    gpDb = `gp-library-panel-spec-${Math.random().toString(36).slice(2)}`;
     await TestBed.configureTestingModule({
-      imports: [ComposerLibraryPanelComponent]
+      imports: [ComposerLibraryPanelComponent],
+      // A GP library of its own: the drawer lists it, and nothing here should read the one a browser holds.
+      providers: [{ provide: GP_LIBRARY_DB, useValue: gpDb }]
     }).compileComponents();
 
     library = TestBed.inject(ComposerLibraryService);
@@ -95,6 +104,10 @@ describe('ComposerLibraryPanelComponent', () => {
     fixture = TestBed.createComponent(ComposerLibraryPanelComponent);
     panel = fixture.componentInstance;
     fixture.detectChanges();
+  });
+
+  afterEach(async () => {
+    await deletedDatabase(gpDb);
   });
 
   describe('loading over unsaved work', () => {
@@ -778,6 +791,82 @@ describe('ComposerLibraryPanelComponent', () => {
       await panel.save();
 
       expect(panel.errorMessage).toBeNull();
+    });
+  });
+
+  describe('Guitar Pro files', () => {
+    const host = (): HTMLElement => fixture.nativeElement as HTMLElement;
+
+    it('lists the library\'s .gp files in the drawer beside the compositions, and opens one as the file', async () => {
+      const opened = spyOn(TestBed.inject(GpFileOpener), 'openEntry').and.resolveTo(true);
+      const entry = await TestBed.inject(GpLibraryService).addBytes(new Uint8Array([1]).buffer, 'riff.gp', { title: 'Riff' });
+      fixture.detectChanges();
+
+      const row = host().querySelector<HTMLButtonElement>('.gp-file-list .composition-load');
+      expect(row?.textContent).toContain('Riff');
+      row!.click();
+      await fixture.whenStable();
+
+      expect(opened).toHaveBeenCalledWith(entry.id);
+    });
+
+    it('imports the file Import .gp… picks, and clears the picker so the same file can come again', async () => {
+      const imported = spyOn(TestBed.inject(GpFileOpener), 'importFile').and.resolveTo(true);
+      const picker = host().querySelector<HTMLInputElement>('.gp-picker')!;
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array([1])], 'riff.gp'));
+      picker.files = transfer.files;
+
+      picker.dispatchEvent(new Event('change'));
+      await fixture.whenStable();
+
+      expect(imported).toHaveBeenCalledWith(jasmine.objectContaining({ name: 'riff.gp' }));
+      expect(picker.value).toBe('');
+    });
+
+    it('offers the picker the same Guitar Pro files the opener takes', () => {
+      expect(host().querySelector<HTMLInputElement>('.gp-picker')?.accept).toBe(GP_FILE_ACCEPT);
+    });
+
+    it('gives the focus to Library once Import .gp… has picked, since the menu that held the button is hidden', async () => {
+      spyOn(TestBed.inject(GpFileOpener), 'importFile').and.resolveTo(true);
+      const toggle = host().querySelector<HTMLButtonElement>('[aria-controls="composer-library-menu"]');
+      toggle?.click();
+      fixture.detectChanges();
+      const importButton = host().querySelector<HTMLButtonElement>('.import-gp');
+      importButton?.focus();
+      expect(document.activeElement).withContext("where the focus is once the picker's dialog closes").toBe(importButton);
+      const picker = host().querySelector<HTMLInputElement>('.gp-picker')!;
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array([1])], 'riff.gp'));
+      picker.files = transfer.files;
+
+      picker.dispatchEvent(new Event('change'));
+      await fixture.whenStable();
+
+      expect(panel.libraryMenuOpen).toBeFalse();
+      expect(document.activeElement).toBe(toggle);
+    });
+
+    it('names the drawer for both lists, and says it is empty only when neither holds anything', async () => {
+      const drawer = (): HTMLElement => host().querySelector<HTMLElement>('.library-drawer')!;
+      const hint = (): string | undefined => drawer().querySelector('.hint')?.textContent?.trim();
+      expect(drawer().getAttribute('aria-label')).toBe('Library');
+      expect(drawer().querySelector('.panel-heading')?.textContent?.trim()).toBe('Library');
+      expect(hint()).toBe('Nothing saved yet.');
+
+      await TestBed.inject(GpLibraryService).addBytes(new Uint8Array([1]).buffer, 'riff.gp', { title: 'Riff' });
+      fixture.detectChanges();
+
+      expect(host().querySelector('.gp-file-list')).not.toBeNull();
+      expect(hint()).toBeUndefined();
+    });
+
+    it('adopts an entry opened elsewhere - a converted file - so Save writes over it', () => {
+      library.markOpened('converted-id', composer.state.documentId);
+      fixture.detectChanges();
+
+      expect(host().querySelector('.save-actions')?.textContent).toContain('Save as copy');
     });
   });
 });

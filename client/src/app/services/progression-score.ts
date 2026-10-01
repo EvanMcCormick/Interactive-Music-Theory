@@ -850,6 +850,8 @@ export function progressionToScore(
     showTablature: false,
     showSlash: false,
     showNumbered: false,
+    isPercussion: false,
+    lineCount: 5,
     bars
   };
 
@@ -864,7 +866,8 @@ export function progressionToScore(
     staves: [staff],
     // Marked by `progression-track.ts` when a user sends it to the Composer.
     // The projection on its own is just a score.
-    generated: null
+    generated: null,
+    percussionArticulations: []
   };
 
   return {

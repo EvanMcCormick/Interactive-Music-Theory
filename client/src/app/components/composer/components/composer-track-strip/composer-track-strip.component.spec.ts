@@ -1,7 +1,12 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { ComposerTrackStripComponent } from './composer-track-strip.component';
+import * as alphaTab from '@coderline/alphatab';
+
 import { ComposerService } from '../../../../services/composer.service';
+import { AlphaTexService } from '../../../../services/alpha-tex.service';
+import { ComposerGpService } from '../../../../services/composer-gp.service';
+import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
 import { ProgressionService } from '../../../../services/progression.service';
 import { TrackDoc } from '../../../../models/composer.model';
 
@@ -663,5 +668,157 @@ describe('ComposerTrackStripComponent', () => {
     expect(visible).toBe('Add progression track');
     expect(add.getAttribute('aria-label')).toContain(visible);
     expect(add.getAttribute('aria-label')).toMatch(/^Add progression track\b/);
+  });
+
+  it('asks the conversion prompt before adding a track to a file not yet converted', () => {
+    const gp = TestBed.inject(ComposerGpService);
+    gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score() });
+    const tracks = composer.doc.tracks.length;
+
+    component.addTrack();
+
+    expect(composer.doc.tracks.length).toBe(tracks);
+    expect(gp.request?.label).toBe('Add track');
+  });
+
+  /**
+   * `sendProgression` is a plain commit that leaves `documentId` where it is, so nothing ends Original for it: ungated,
+   * it would write the empty composition held under the file, where nothing on the page shows it.
+   */
+  it('asks the conversion prompt before adding the progression track to a file not yet converted', () => {
+    const gp = TestBed.inject(ComposerGpService);
+    progression.appendSlot(0);
+    gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score() });
+    const before = composer.doc;
+
+    component.addProgressionTrack();
+
+    expect(composer.doc).toBe(before);
+    expect(gp.request?.id).toBe(ASKING_PAGE_COMMANDS.progressionTrack);
+    expect(gp.request?.label).toBe('Adding the progression track');
+  });
+
+  it('asks the conversion prompt before updating the progression track under a file not yet converted', () => {
+    const gp = TestBed.inject(ComposerGpService);
+    sendAProgression();
+    gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score() });
+    progression.appendSlot(1);
+    fixture.detectChanges();
+    const before = composer.doc;
+
+    component.updateGeneratedTrack();
+
+    expect(composer.doc).toBe(before);
+    expect(gp.request?.id).toBe(ASKING_PAGE_COMMANDS.progressionTrack);
+    expect(gp.request?.label).toBe('Updating the progression track');
+  });
+
+  describe('show / hide, mute and solo', () => {
+    const host = (): HTMLElement => fixture.nativeElement as HTMLElement;
+    const rowButtons = (selector: string): HTMLButtonElement[] => Array.from(host().querySelectorAll<HTMLButtonElement>(selector));
+
+    beforeEach(() => {
+      composer.addTrack('Piano', 0, false);
+      fixture.detectChanges();
+    });
+
+    it('hides a track\'s staves as a page setting, not an edit, and refuses to hide the last one shown', () => {
+      const before = composer.doc;
+      const guitar = composer.doc.tracks[0].name;
+      // One name in both states, and `aria-pressed` says which: "Hide" while shown would read as a double negative.
+      expect(rowButtons('.track-shown')[0].getAttribute('aria-label')).toBe(`Show ${guitar}`);
+      rowButtons('.track-shown')[0].click();
+      fixture.detectChanges();
+
+      expect(rowButtons('.track-shown')[0].getAttribute('aria-pressed')).toBe('false');
+      expect(rowButtons('.track-shown')[0].getAttribute('aria-label')).toBe(`Show ${guitar}`);
+      expect(composer.doc).toBe(before);
+      expect(rowButtons('.track-shown')[1].getAttribute('aria-disabled')).toBe('true');
+      expect(rowButtons('.track-shown')[1].getAttribute('aria-label')).toBe('Show Piano, unavailable: At least one track is shown: show another before hiding this one.');
+
+      rowButtons('.track-shown')[1].click();
+      fixture.detectChanges();
+      expect(composer.state.refusal).toMatch(/At least one track is shown/);
+      expect(rowButtons('.track-shown')[1].getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('does not put the caret on a hidden track when its row is clicked, and says why', () => {
+      composer.setCursor({ trackIndex: 1 });
+      rowButtons('.track-shown')[0].click();
+      fixture.detectChanges();
+
+      row(0).click();
+      fixture.detectChanges();
+
+      expect(composer.state.cursor.trackIndex).toBe(1);
+      expect(composer.state.refusal).toBe(`Show ${composer.doc.tracks[0].name} to edit it.`);
+      expect(row(0).classList).not.toContain('selected');
+    });
+
+    it('names an unnamed track as its row does on every button, Remove included', () => {
+      const doc = structuredClone(composer.doc);
+      doc.tracks[1].name = '';
+      composer.replaceDocument(doc);
+      fixture.detectChanges();
+
+      expect(rowButtons('.track-mute')[1].getAttribute('aria-label')).toBe('Mute Track 2');
+      expect(rowButtons('.track-remove')[1].getAttribute('aria-label')).toBe('Remove Track 2');
+    });
+
+    it("mutes and solos a composition's track in its own mixer, as an edit", () => {
+      rowButtons('.track-mute')[1].click();
+      rowButtons('.track-solo')[0].click();
+      fixture.detectChanges();
+
+      expect(composer.doc.tracks[1].playback.isMute).toBeTrue();
+      expect(composer.doc.tracks[0].playback.isSolo).toBeTrue();
+      expect(rowButtons('.track-mute')[1].getAttribute('aria-pressed')).toBe('true');
+      composer.undo();
+      expect(composer.doc.tracks[0].playback.isSolo).toBeFalse();
+    });
+
+    it("lists a file's tracks in Original, with no Remove, badge or Update, and mutes them in the player only", () => {
+      const score = new alphaTab.model.Score();
+      for (const name of ['Lead', 'Bass', 'Drums']) {
+        const track = new alphaTab.model.Track();
+        track.name = name;
+        score.addTrack(track);
+      }
+      TestBed.inject(ComposerGpService).open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
+      fixture.detectChanges();
+
+      expect(Array.from(host().querySelectorAll('.track-name')).map(name => name.textContent?.trim())).toEqual(['Lead', 'Bass', 'Drums']);
+      expect(host().querySelector('.track-remove')).toBeNull();
+      expect(host().querySelector('.add-progression-track')).toBeNull();
+
+      const before = composer.doc;
+      rowButtons('.track-mute')[2].click();
+      fixture.detectChanges();
+
+      expect(rowButtons('.track-mute')[2].getAttribute('aria-pressed')).toBe('true');
+      expect(composer.doc).toBe(before);
+      expect(score.tracks[2].playbackInfo.isMute).toBeFalse();
+    });
+
+    it("selects the file's caret's row in Original, a click moving that caret and never the composition's, and its buttons still work", () => {
+      const score = TestBed.inject(AlphaTexService).parse(['\\track "Lead"', '3.3.1 |', '\\track "Bass"', '3.4.1 |'].join('\n')).score;
+      if (!score) throw new Error('the file did not parse');
+      const gp = TestBed.inject(ComposerGpService);
+      gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
+      fixture.detectChanges();
+      const before = composer.state;
+      expect(rows().map(candidate => candidate.classList.contains('selected'))).toEqual([true, false]);
+
+      row(1).click();
+      fixture.detectChanges();
+
+      expect(composer.state).toBe(before);
+      expect(gp.caret?.cursor.trackIndex).toBe(1);
+      expect(rows().map(candidate => candidate.classList.contains('selected'))).toEqual([false, true]);
+
+      rowButtons('.track-shown')[1].click();
+      fixture.detectChanges();
+      expect(rowButtons('.track-shown')[1].getAttribute('aria-pressed')).toBe('false');
+    });
   });
 });

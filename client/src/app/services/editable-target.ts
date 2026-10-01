@@ -24,6 +24,27 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 /** The input types text is typed into. `HTMLInputElement.type` reads `text` for a missing or unknown type. */
 const TYPED_INPUTS: ReadonlySet<string> = new Set(['text', 'search', 'url', 'email', 'tel', 'password', 'number']);
 
+/** The keys a focused range slider moves itself with. */
+const SLIDER_KEYS: ReadonlySet<string> = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+
+/**
+ * Whether a key press moves a focused range slider - the transport's seek bar, speed and volume, and M3's mixer - and so
+ * is the slider's rather than the page's: an arrow, Home, End, Page Up or Page Down with no Ctrl, Alt or Cmd. Every other
+ * key on a slider stays the page's, as `isEditableTarget` leaves it: Space still plays, and Ctrl+→ still moves a bar.
+ *
+ * However the slider was focused, the mouse included: that is the browser's own behaviour, and with the seek bar's
+ * `step` of 1000 an arrow visibly seeks a second. It once asked `:focus-visible`, as `pressesFocusedControl` does, so that
+ * after a click on the seek bar the arrows would go back to the score's caret. Real Chrome makes that test useless here:
+ * a key pressed on a mouse-focused element turns `:focus-visible` on for it before any keydown listener runs. Checked by
+ * hand - click the seek bar (`:focus-visible` false), press → - and the seek bar moved a second, `:focus-visible` read
+ * true, and the caret stayed. So the test cannot tell a click from a Tab at a key press; do not add it back.
+ */
+export function movesFocusedSlider(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'altKey' | 'metaKey' | 'target'>): boolean {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) || target.type !== 'range') return false;
+  return SLIDER_KEYS.has(event.key) && !event.ctrlKey && !event.altKey && !event.metaKey;
+}
+
 /**
  * Whether a key press is one the browser presses the focused control with: Space or Enter on a button, a button
  * input, a `<summary>` or a `role="button"`; Enter alone on a link or a `role="link"`; Space alone on a checkbox, a

@@ -15,16 +15,10 @@ export interface AlphaTabState {
   isPlaying: boolean;
   /** Whether the player is ready for playback */
   isReadyForPlayback: boolean;
-  /** Current playback position in ticks */
-  tickPosition: number;
   /** Current playback position in milliseconds */
   timePosition: number;
   /** Total duration in milliseconds */
   totalDuration: number;
-  /** The loaded score (null if none loaded) - uses alphaTab's Score type */
-  score: any | null;
-  /** Currently selected track indices */
-  selectedTracks: number[];
   /** Current playback tempo multiplier (1.0 = normal) */
   tempoMultiplier: number;
   /** Master volume (0-1) */
@@ -35,54 +29,6 @@ export interface AlphaTabState {
   loadingState: 'idle' | 'loading' | 'loaded' | 'error';
   /** Error message if loadingState is 'error' */
   errorMessage: string | null;
-}
-
-/**
- * Simplified track info for UI display
- */
-export interface GpTrackInfo {
-  /** Track index */
-  index: number;
-  /** Track display name */
-  name: string;
-  /** Short name (abbreviation) */
-  shortName: string;
-  /** Track color (hex string) */
-  color: string;
-  /** Whether track is muted */
-  isMuted: boolean;
-  /** Whether track is soloed */
-  isSolo: boolean;
-  /** Whether this is a percussion track */
-  isPercussion: boolean;
-  /** MIDI channel */
-  channel: number;
-  /** MIDI program (instrument) */
-  program: number;
-}
-
-/**
- * Simplified score info for UI display
- */
-export interface GpScoreInfo {
-  /** Song title */
-  title: string;
-  /** Song subtitle */
-  subtitle: string;
-  /** Artist name */
-  artist: string;
-  /** Album name */
-  album: string;
-  /** Copyright info */
-  copyright: string;
-  /** Tab author */
-  tabAuthor: string;
-  /** Initial tempo in BPM */
-  tempo: number;
-  /** Number of tracks */
-  trackCount: number;
-  /** Number of bars */
-  barCount: number;
 }
 
 /**
@@ -105,8 +51,10 @@ export interface AlphaTabSettings {
      * to know *which note* was clicked - the transcription review, whose whole
      * gesture is overruling one note - has to ask for this.
      *
-     * It costs a rectangle per note in the lookup, which is why it is not on
-     * for the composer, where the beat is the unit of selection.
+     * It costs a rectangle per note in the lookup, which is why the composer,
+     * where the beat is the unit of selection, starts with it off and turns it
+     * on only when its scale panel first opens, for the highlight to read
+     * (`AlphaTabService.setNoteBounds`).
      */
     includeNoteBounds?: boolean;
     /** Log level */
@@ -194,6 +142,13 @@ export interface GpLibraryEntry {
 }
 
 /**
+ * A library entry as the library lists it: everything but the file. A list of every file is read on the first visit to
+ * the gallery or the composer and kept for the session, so it holds no bytes; what needs them - opening a file - reads
+ * that one entry (`GpLibraryService.getEntry`). As `CompositionSummary` is to a saved composition.
+ */
+export type GpLibrarySummary = Omit<GpLibraryEntry, 'fileData'>;
+
+/**
  * Filter options for GP library search
  */
 export interface GpLibraryFilter {
@@ -243,11 +198,8 @@ export const DEFAULT_ALPHA_TAB_STATE: AlphaTabState = {
   isLoaded: false,
   isPlaying: false,
   isReadyForPlayback: false,
-  tickPosition: 0,
   timePosition: 0,
   totalDuration: 0,
-  score: null,
-  selectedTracks: [],
   tempoMultiplier: 1.0,
   volume: 1.0,
   isLooping: false,

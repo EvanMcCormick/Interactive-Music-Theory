@@ -1,7 +1,10 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { ComposerToolPopoverComponent, popoverPlacementOf } from './composer-tool-popover.component';
+import * as alphaTab from '@coderline/alphatab';
+
 import { ComposerService } from '../../../../services/composer.service';
+import { ComposerGpService } from '../../../../services/composer-gp.service';
 import { effectiveTimeSignature } from '../../../../models/composer.model';
 import { KEY_SIGNATURE_CHOICES } from '../../../../services/composer-bar-choices';
 import { PopoverKind } from '../../../../services/composer-tools';
@@ -534,5 +537,19 @@ describe('ComposerToolPopoverComponent', () => {
     expect(closed).toBe(0);
     expect(alert().textContent).toMatch(/tuplet needs/i);
     expect(composer.state.refusal).toMatch(/tuplet needs/i);
+  });
+
+  it('asks the conversion prompt before a value is set on a file not yet converted, and closes for it', () => {
+    const gp = TestBed.inject(ComposerGpService);
+    gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score() });
+    const before = composer.doc;
+    open('timeSignature');
+    popover.numerator = 7;
+
+    popover.applyTimeSignature();
+
+    expect(composer.doc).toBe(before);
+    expect(gp.request?.label).toBe('Setting the time signature');
+    expect(closed).toBe(1);
   });
 });

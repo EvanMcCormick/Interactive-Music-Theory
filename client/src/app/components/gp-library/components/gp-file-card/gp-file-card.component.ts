@@ -1,6 +1,6 @@
 import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { GpLibraryEntry } from '../../../../models/alpha-tab.model';
+import { GpLibrarySummary } from '../../../../models/alpha-tab.model';
 
 @Component({
   selector: 'app-gp-file-card',
@@ -10,7 +10,7 @@ import { GpLibraryEntry } from '../../../../models/alpha-tab.model';
   styleUrls: ['./gp-file-card.component.scss']
 })
 export class GpFileCardComponent {
-  @Input() entry!: GpLibraryEntry;
+  @Input() entry!: GpLibrarySummary;
   @Input() viewMode: 'grid' | 'list' = 'grid';
   @Output() open = new EventEmitter<void>();
   @Output() delete = new EventEmitter<void>();

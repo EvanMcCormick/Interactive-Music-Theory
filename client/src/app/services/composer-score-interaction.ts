@@ -1,3 +1,5 @@
+import type * as alphaTab from '@coderline/alphatab';
+
 import { ClefKind, ComposerState, EditCursor, EntryMode, ScoreDoc } from '../models/composer.model';
 import { BeatRef, selectionTargets } from './composer-selection';
 import { bottomLineDiatonic } from './staff-pitch';
@@ -15,8 +17,12 @@ import { bottomLineDiatonic } from './staff-pitch';
  * A staff alphaTab draws: standard notation, tablature, and the two views a loaded file or an applied alphaTex draft can
  * turn on - slash notation, one line of rhythm slashes, and numbered notation, which draws no lines. Those two only take
  * the caret: a Pen click writes no pitch there, and they have no string.
+ *
+ * `percussion` is a drum staff's standard-notation band. It is the same one band, so it counts where `notation` would
+ * and `slotIndexAt`'s ranks do not move, but a Pen click on it only moves the caret: a line there is a drum, not a
+ * pitch, and writing a new drum note is out of the GP milestone's scope.
  */
-export type StaffKind = 'slash' | 'notation' | 'numbered' | 'tab';
+export type StaffKind = 'slash' | 'notation' | 'percussion' | 'numbered' | 'tab';
 
 /** One staff as alphaTab draws it, tied back to the track and staff it came from. */
 export interface StaffSlot {
@@ -26,19 +32,21 @@ export interface StaffSlot {
 }
 
 /**
- * The staves alphaTab draws on one system, in render order, described from the document. alphaTab lays out
+ * The staves alphaTab draws on one system, in render order, described from the document - over the tracks
+ * `visibleTrackIndices` names, in the order `renderScore` was given them, or every track. alphaTab lays out
  * each track's staves in its default stave profile's order - slash, standard notation, numbered, tablature
  * (`Environment._createDefaultStaveProfiles`, ~75665 in 1.8), one bounds band each - and draws all of them again on
  * every system. A view left out here would shift the rank of every band after it (`slotIndexAt`). So this lists one system's staves, not the page's: `StaffHitTestService.allStaves` measures every
  * attached system, and a measured staff is matched to its slot through the system it sits in
  * (`slotIndexAt` in `composer-score-systems.ts`), never by its index on the page.
  */
-export function staffSlotsOf(doc: ScoreDoc): StaffSlot[] {
-  return doc.tracks.flatMap((track, trackIndex) =>
-    track.staves.flatMap((staff, staffIndex) => {
+export function staffSlotsOf(doc: ScoreDoc, visibleTrackIndices?: readonly number[]): StaffSlot[] {
+  const drawn = visibleTrackIndices ?? doc.tracks.map((_, index) => index);
+  return drawn.flatMap(trackIndex =>
+    (doc.tracks[trackIndex]?.staves ?? []).flatMap((staff, staffIndex) => {
       const kinds: StaffKind[] = [
         ...(staff.showSlash ? ['slash' as const] : []),
-        ...(staff.showStandardNotation ? ['notation' as const] : []),
+        ...(staff.showStandardNotation ? [staff.isPercussion ? ('percussion' as const) : ('notation' as const)] : []),
         ...(staff.showNumbered ? ['numbered' as const] : []),
         ...(staff.showTablature && staff.tuning.length > 0 ? ['tab' as const] : [])
       ];
@@ -47,12 +55,44 @@ export function staffSlotsOf(doc: ScoreDoc): StaffSlot[] {
   );
 }
 
+/**
+ * The same staves, from the alphaTab `Score` the Original state draws instead of a document.
+ *
+ * `staffSlotsOf`'s sibling, and the whole of what the caret, the selection highlight and Pen's hover need to work
+ * over a file that has no `ScoreDoc` behind it: an alphaTab `Staff` carries every field `staffSlotsOf` reads -
+ * `showSlash`, `showStandardNotation`, `showNumbered`, `showTablature`, `isPercussion` and `stringTuning.tunings.length`.
+ *
+ * `visibleTrackIndices` are the tracks actually drawn (the strip's show/hide), in the order `api.renderTracks` was
+ * given them; omitted, every track. An index the score does not have is left out rather than drawn as a hole, so the
+ * ranks `slotIndexAt` counts stay in step with what alphaTab laid out.
+ */
+export function staffSlotsOfScore(
+  score: Pick<alphaTab.model.Score, 'tracks'>,
+  visibleTrackIndices?: readonly number[]
+): StaffSlot[] {
+  const drawn = visibleTrackIndices ?? score.tracks.map((_, index) => index);
+  return drawn.flatMap(trackIndex => {
+    const track = score.tracks[trackIndex];
+    if (!track) return [];
+    return track.staves.flatMap((staff, staffIndex) => {
+      const kinds: StaffKind[] = [
+        ...(staff.showSlash ? ['slash' as const] : []),
+        ...(staff.showStandardNotation ? [staff.isPercussion ? ('percussion' as const) : ('notation' as const)] : []),
+        ...(staff.showNumbered ? ['numbered' as const] : []),
+        ...(staff.showTablature && staff.stringTuning.tunings.length > 0 ? ['tab' as const] : [])
+      ];
+      return kinds.map(kind => ({ trackIndex, staffIndex, kind }));
+    });
+  });
+}
+
 /** What a mouse-down on the score does. */
 export type ScorePress = 'extend' | 'caret' | 'write';
 
 /**
  * What a mouse-down does: Shift extends the range; otherwise the caret moves, and in Pen, on standard
- * notation, the clicked pitch is written too. Tablature writes by digit in both modes, never by click.
+ * notation, the clicked pitch is written too. Tablature writes by digit in both modes, never by click, and a
+ * percussion staff not at all.
  */
 export function scorePressOf(mode: EntryMode, staff: StaffKind | null, shiftKey: boolean): ScorePress {
   if (shiftKey) return 'extend';
@@ -61,7 +101,7 @@ export function scorePressOf(mode: EntryMode, staff: StaffKind | null, shiftKey:
 
 /**
  * Whether moving with the button held extends the range from where the mouse-down put the caret:
- * anywhere in Select, and in Pen on any staff whose press wrote nothing - tablature, slash, numbered. A notation
+ * anywhere in Select, and in Pen on any staff whose press wrote nothing - tablature, slash, numbered, percussion. A notation
  * drag in Pen would extend from the caret a write just advanced, and a Pen press on no staff starts no drag.
  */
 export function dragExtends(mode: EntryMode, staff: StaffKind | null): boolean {
@@ -111,12 +151,64 @@ export function seeksOnPress(press: ScorePress, playing: boolean): boolean {
 
 /**
  * What a state change redraws: `'render'` - engrave the score again - when `doc` is not the document last
- * engraved, and `'overlay'` - the highlight and the caret, drawn over the engraving - otherwise. By identity,
- * since `ComposerService` replaces the document on every edit and never mutates a published one: a
+ * engraved, and `'overlay'` - the highlight and the caret, drawn over the engraving - otherwise. By identity
+ * first, since `ComposerService` replaces the document on every edit and never mutates a published one: a
  * selection, a caret move or an entry mode change keeps the same document.
+ *
+ * Then by content, for a document that differs from the one engraved only in its mixer (`differsOnlyInMixer`), which is
+ * `'overlay'` too: the engraving is the same, and a render reloads the MIDI, which stops the player and rewinds it to
+ * bar 1 - so a mute or a solo pressed during playback would stop it. The player takes a mute and a solo from
+ * `setTrackPlayback` instead.
  */
 export function scoreRedrawOf(lastRenderedDoc: ScoreDoc | null, doc: ScoreDoc): 'render' | 'overlay' {
-  return doc === lastRenderedDoc ? 'overlay' : 'render';
+  return doc === lastRenderedDoc || differsOnlyInMixer(lastRenderedDoc, doc) ? 'overlay' : 'render';
+}
+
+/**
+ * Whether `after` differs from `before` in its tracks' mute and solo (`PlaybackInfoDoc.isMute`, `isSolo`) and in nothing
+ * else: fields alphaTab's player never reads from a score - only `changeTrackMute` and `changeTrackSolo` reach it. By
+ * content, since every commit clones the document. A change with no mute or solo in it is answered before the documents
+ * are compared, so an ordinary edit pays for one pass over the tracks; the comparison itself walks both documents and
+ * stops at the first difference, rather than copying or serialising either - a press of M on a large score is one walk.
+ */
+export function differsOnlyInMixer(before: ScoreDoc | null, after: ScoreDoc): boolean {
+  if (!before || before.tracks.length !== after.tracks.length) return false;
+  const mixerMoved = after.tracks.some(
+    (track, index) =>
+      track.playback.isMute !== before.tracks[index].playback.isMute || track.playback.isSolo !== before.tracks[index].playback.isSolo
+  );
+  return (
+    mixerMoved &&
+    sameFieldsBut(before, after, 'tracks') &&
+    before.tracks.every(
+      (track, index) =>
+        sameFieldsBut(track, after.tracks[index], 'playback') && sameFieldsBut(track.playback, after.tracks[index].playback, 'isMute', 'isSolo')
+    )
+  );
+}
+
+/** Whether `a` and `b` hold the same fields with the same data, but for the fields `skipped`. */
+function sameFieldsBut(a: object, b: object, ...skipped: string[]): boolean {
+  const fields = (value: object): string[] => Object.keys(value).filter(key => !skipped.includes(key));
+  const fieldsOfA = fields(a);
+  return fieldsOfA.length === fields(b).length && fieldsOfA.every(key => Object.hasOwn(b, key) && sameData(fieldOf(a, key), fieldOf(b, key)));
+}
+
+/**
+ * Whether two pieces of a document are the same data: primitives equal, arrays alike item by item, objects alike field by
+ * field whatever order the fields were written in. Stops at the first difference.
+ */
+function sameData(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, index) => sameData(item, b[index]));
+  }
+  return sameFieldsBut(a, b);
+}
+
+function fieldOf(value: object, key: string): unknown {
+  return (value as Record<string, unknown>)[key];
 }
 
 /**
@@ -125,7 +217,7 @@ export function scoreRedrawOf(lastRenderedDoc: ScoreDoc | null, doc: ScoreDoc): 
  * The staff last clicked (`clicked`), while it is still the caret's - a slash or numbered staff only while the caret
  * is where that click, or the drag from it, left it (`clickedAt`), so it is drawn on the staff clicked but a key that
  * moves the caret takes it back to the staves notes are entered on. Otherwise the caret's tablature when the caret has
- * a string, and its notation when it has not - which is what draws the caret before the first click, when nothing has
+ * a string, and its notation - a drum staff's percussion band - when it has not - which is what draws the caret before the first click, when nothing has
  * been clicked to learn a staff from.
  */
 export function caretSlotIndexOf(slots: readonly StaffSlot[], cursor: EditCursor, clicked: number | null, clickedAt: EditCursor | null = null): number | null {
@@ -136,9 +228,11 @@ export function caretSlotIndexOf(slots: readonly StaffSlot[], cursor: EditCursor
   if (clicked !== null && isCaretStaff(clickedSlot) && (!caretOnly || (clickedAt !== null && sameCaret(clickedAt, cursor)))) return clicked;
 
   const own = slots.map((slot, index) => ({ slot, index })).filter(({ slot }) => isCaretStaff(slot));
-  const wanted: StaffKind = cursor.stringIndex !== null ? 'tab' : 'notation';
+  // With no string, the standard-notation band - which a drum staff draws as 'percussion', so a caret there is not
+  // left to fall back to a slash staff drawn above it.
+  const wanted: readonly StaffKind[] = cursor.stringIndex !== null ? ['tab'] : ['notation', 'percussion'];
   // A numbered staff draws no lines to measure a caret against, so any other kind comes before it.
-  const found = own.find(({ slot }) => slot.kind === wanted) ?? own.find(({ slot }) => slot.kind !== 'numbered') ?? own[0];
+  const found = own.find(({ slot }) => wanted.includes(slot.kind)) ?? own.find(({ slot }) => slot.kind !== 'numbered') ?? own[0];
   return found ? found.index : null;
 }
 
@@ -222,7 +316,8 @@ export function sameCaret(a: EditCursor, b: EditCursor): boolean {
 /**
  * Whether a Pen click's note is sounded: only when the write changed the document. A refused write - a full
  * bar, a tuplet it would break - publishes its reason and keeps the document, and a note that was not written
- * must not be heard. By identity, as `scoreRedrawOf` is.
+ * must not be heard. By identity alone, as `scoreRedrawOf` is first: its comparison by content is for a mixer-only
+ * change, which a Pen write never is.
  */
 export function writeSounds(before: ScoreDoc, after: ScoreDoc): boolean {
   return after !== before;

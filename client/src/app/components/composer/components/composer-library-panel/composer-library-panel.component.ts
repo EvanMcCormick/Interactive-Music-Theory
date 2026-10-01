@@ -27,6 +27,10 @@ import {
 } from '../../../../services/composer-library.service';
 import { ComposerService } from '../../../../services/composer.service';
 import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
+import { GP_FILE_ACCEPT } from '../../../../services/gp-file-name';
+import { GpFileOpener } from '../../../../services/gp-file-opener.service';
+import { GpLibraryService } from '../../../../services/gp-library.service';
+import { GpLibrarySummary } from '../../../../models/alpha-tab.model';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { ComposerState } from '../../../../models/composer.model';
 
@@ -79,7 +83,20 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
 
   entries: CompositionSummary[] = [];
   state: ComposerState | null = null;
-  currentId: string | null = null;
+
+  /**
+   * The library entry the open composition is - the one the next Save writes over - or null for a new one. Held by the
+   * service alone, for the composition it is (`ComposerLibraryService.rememberOpen`): this panel is made again each time
+   * the page is, so a field here forgot it on leaving the page, and a save or a delete that landed after the page was
+   * left was never adopted - Save then made a second composition.
+   */
+  get currentId(): string | null {
+    return this.state ? this.library.openEntryOf(this.state.documentId) : null;
+  }
+  set currentId(id: string | null) {
+    if (this.state) this.library.rememberOpen(id, this.state.documentId);
+  }
+
   /** The last failure's words, for the report of a flatten nothing saved. Said in the status line (`reportError`). */
   errorMessage: string | null = null;
 
@@ -97,6 +114,11 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
    * commit. See `ngOnInit`.
    */
   linkedProgressions: string[] = [];
+
+  /** The `.gp` files in the library, listed in the drawer beside the compositions (design decision 2). */
+  gpFiles: GpLibrarySummary[] = [];
+  /** The files Import .gp… offers: the ones the opener takes (`GP_FILE_EXTENSIONS`). */
+  readonly gpFileAccept = GP_FILE_ACCEPT;
 
   /** The offer or report currently occupying the announced region. */
   pendingSave: PendingSave | null = null;
@@ -197,6 +219,8 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     private readonly mapper: ScoreDocMapperService,
     private readonly tex: AlphaTexService,
     private readonly saveRequests: ComposerSaveRequests,
+    private readonly gpLibrary: GpLibraryService,
+    private readonly opener: GpFileOpener,
     private readonly cdr: ChangeDetectorRef,
     private readonly host: ElementRef<HTMLElement>
   ) {}
@@ -244,6 +268,21 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
         this.entries = entries;
         this.cdr.markForCheck();
       });
+
+    this.gpLibrary
+      .getEntries()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(files => {
+        this.gpFiles = files;
+        this.cdr.markForCheck();
+      });
+
+    // The entry held open (`currentId`) moves from outside this panel too: a converted `.gp` file's, and a save or a
+    // delete that lands after the panel the page had before this one was left.
+    this.library
+      .getOpenEntry()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(() => this.cdr.markForCheck());
 
     this.document.addEventListener('keydown', this.escapeListener, true);
 
@@ -627,6 +666,30 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
       if (!this.saving) this.dropQueuedSaves(queued.flattened, queued.asNew);
       return;
     }
+  }
+
+  /** Opens an imported `.gp` file from the drawer, in the Original state. */
+  async openGpFile(id: string): Promise<void> {
+    if (await this.opener.openEntry(id)) this.closeDrawer();
+  }
+
+  /**
+   * Import .gp…: the picker's file, added to the library and opened. The picker is cleared so the same file can come
+   * again. The menu closes, and the focus - back on Import .gp… once the picker's dialog closes - goes to the Library
+   * button, as `closeExportMenu` gives it to Export: a focused button hidden with its menu drops the focus to the page.
+   */
+  async importGpFile(input: HTMLInputElement): Promise<void> {
+    const file = input.files?.[0];
+    input.value = '';
+    const focusWasInside = this.host.nativeElement.contains(this.document.activeElement);
+    this.closeMenus();
+    this.cdr.detectChanges();
+    if (focusWasInside) this.libraryToggle?.nativeElement.focus();
+    if (file) await this.opener.importFile(file);
+  }
+
+  trackByGpId(_index: number, entry: GpLibrarySummary): string {
+    return entry.id;
   }
 
   async load(id: string): Promise<void> {

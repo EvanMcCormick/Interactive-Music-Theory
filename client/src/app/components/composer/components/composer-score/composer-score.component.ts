@@ -4,6 +4,7 @@ import {
   ChangeDetectorRef,
   Component,
   ElementRef,
+  Input,
   NgZone,
   OnDestroy,
   OnInit,
@@ -15,6 +16,13 @@ import { Subject, debounceTime, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
 import { AlphaTabService } from '../../../../services/alpha-tab.service';
+import { TrackView, renderedTracksOf, trackRowsOf } from '../../../../services/composer-track-rows';
+import { DEFAULT_HIGHLIGHT_CONFIG, HighlightConfig } from '../../../../models/alpha-tab.model';
+import { NoteMark, noteHighlightsOf, noteMarksOf, sameMarks } from '../../../../services/scale-highlight';
+import { ComposerTrackViewService } from '../../../../services/composer-track-view.service';
+import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
+import { ComposerGpService, GpOriginal } from '../../../../services/composer-gp.service';
+import type { TrackRow } from '../../../../services/composer-track-rows';
 import { ComposerService } from '../../../../services/composer.service';
 import {
   StaffSlot,
@@ -36,6 +44,7 @@ import {
   seeksOnPress,
   snappedHoverX,
   staffSlotsOf,
+  staffSlotsOfScore,
   writeSounds
 } from '../../../../services/composer-score-interaction';
 import {
@@ -54,7 +63,7 @@ import { BeatRef } from '../../../../services/composer-selection';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { Rect, StaffHitTestService, StaffLines } from '../../../../services/staff-hit-test.service';
 import { bottomLineDiatonic, diatonicToPitch, pitchToMidi } from '../../../../services/staff-pitch';
-import { ComposerState, EditCursor, ScoreDoc } from '../../../../models/composer.model';
+import { CaretSelection, ComposerState, EditCursor, ScoreDoc } from '../../../../models/composer.model';
 
 /** The pointer as the last mouse event over the score left it. */
 interface Pointer {
@@ -116,6 +125,16 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
   /** Caret box drawn over the staff, in container-relative pixels. */
   caretRect: Rect | null = null;
+  /**
+   * The scale panel's highlight (`ComposerScalePanelComponent`), and the note heads it marks on the page, drawn over the
+   * engraving as the caret is and redrawn with it after every render.
+   */
+  @Input() set highlight(config: HighlightConfig | null) {
+    this.highlightConfig = config ?? DEFAULT_HIGHLIGHT_CONFIG;
+    this.updateScaleOverlay();
+  }
+  private highlightConfig: HighlightConfig = DEFAULT_HIGHLIGHT_CONFIG;
+  noteMarks: NoteMark[] = [];
   /** Pen's hover notehead, in container-relative pixels, or null. */
   hoverRect: Rect | null = null;
 
@@ -143,7 +162,13 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   /** Drops the measure when lazy loading attaches or detaches a system. See `observeSurface`. */
   private surfaceObserver: MutationObserver | null = null;
   /** The staves the document draws, for the document they were read from. */
-  private slotsRead: { doc: ScoreDoc; slots: StaffSlot[] } | null = null;
+  private slotsRead: { source: unknown; drawn: string; slots: StaffSlot[] } | null = null;
+  /** The track strip's hidden tracks and, in Original, the player's mutes (`ComposerTrackViewService`). */
+  private trackView: TrackView;
+  /** The tracks last drawn from the file in Original, so a show or hide redraws only when it changes them. */
+  private lastDrawnOriginalTracks = '';
+  /** The file whose score alphaTab was last given, so the Original state draws it once rather than on every redraw. */
+  private lastDrawnOriginal: GpOriginal | null = null;
   /** What the hover notehead last drew, by `hoverKeyOf`, or null for none. */
   private hoverKey: string | null = null;
   /** Whether the press under way closed a popover, and so does nothing here. See `pressGuardAfter`. */
@@ -159,10 +184,14 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     private readonly composer: ComposerService,
     private readonly mapper: ScoreDocMapperService,
     private readonly alphaTabService: AlphaTabService,
+    private readonly gp: ComposerGpService,
+    private readonly trackViews: ComposerTrackViewService,
     private readonly hitTest: StaffHitTestService,
     private readonly cdr: ChangeDetectorRef,
     private readonly ngZone: NgZone
-  ) {}
+  ) {
+    this.trackView = trackViews.view;
+  }
 
   ngOnInit(): void {
     // Subscribe to render requests first so the initial document state below is
@@ -183,12 +212,104 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
         }
         this.state = state;
         // Engrave only a document alphaTab has not been given. A selection, a caret move or an entry mode
-        // change redraws what sits over the engraving - otherwise a drag re-engraved the score per beat.
-        if (scoreRedrawOf(this.lastRenderedDoc, state.doc) === 'render') this.renderRequest$.next();
-        else this.drawHighlight();
+        // change redraws what sits over the engraving - otherwise a drag re-engraved the score per beat. In
+        // Original the document is not what is drawn, so nothing it does asks for a render.
+        if (!this.gp.isOriginal && scoreRedrawOf(this.lastRenderedDoc, state.doc) === 'render') this.renderRequest$.next();
+        else {
+          // A document that differs from the one drawn only in a mute or a solo is drawn as it was (`scoreRedrawOf`):
+          // alphaTab keeps the score it holds, which stands for this document from here, and `applyTrackPlayback` below
+          // plays it - so playback runs on through the press.
+          if (!this.gp.isOriginal && this.lastRenderedDoc !== null) this.lastRenderedDoc = state.doc;
+          this.drawHighlight();
+        }
+        this.applyTrackPlayback();
         this.scheduleCaretUpdate();
         this.cdr.markForCheck();
       });
+
+    // The file the page is showing, or null in Composition. A change either way re-engraves.
+    this.gp
+      .getState()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(() => {
+        this.slotsRead = null;
+        this.renderRequest$.next();
+      });
+
+    // The file's caret, in Original: it moves while the composer's state does not, so it redraws what sits over the
+    // engraving as a caret move in Composition does.
+    this.gp
+      .getCaret()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(caret => {
+        if (!caret) return;
+        this.drawHighlight();
+        this.scheduleCaretUpdate();
+      });
+
+    // A track shown or hidden redraws; a mute or solo only plays differently.
+    this.trackViews
+      .getView()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(view => {
+        const hiddenChanged = view.hidden !== this.trackView.hidden;
+        this.trackView = view;
+        if (hiddenChanged) this.redrawShownTracks();
+        this.applyTrackPlayback();
+      });
+  }
+
+  /**
+   * The strip's rows for what the page is showing: the file's in Original, the document's in Composition - the document
+   * `ComposerService` holds now, not `state`, which lags it while the track view, which hears the composer first, is
+   * already answering a new one (`keptHiddenOf`).
+   */
+  private trackRows(): TrackRow[] {
+    const original = this.gp.original;
+    return trackRowsOf(original ? original.score : this.composer.state.doc, this.trackView);
+  }
+
+  /**
+   * Redraws after a track was shown or hidden: alphaTab draws the tracks shown of the score it holds (`renderTracks`),
+   * which keeps its MIDI - a render reloads it, and alphaTab's `loadMidiFile` stops the player and rewinds it to bar 1.
+   * In Composition, a document alphaTab does not hold yet is engraved with them instead. In Original, a file alphaTab
+   * has not been given yet is drawn with them when it is (`renderCurrentDocument`), not against the last file's score.
+   */
+  private redrawShownTracks(): void {
+    this.slotsRead = null;
+    const shown = renderedTracksOf(this.trackRows());
+    if (!this.gp.isOriginal) {
+      if (this.lastRenderedDoc === this.composer.state.doc && this.renderError === null) this.alphaTabService.renderTracks(shown);
+      else this.renderRequest$.next();
+      return;
+    }
+    if (this.lastDrawnOriginal !== this.gp.original) return;
+    if (shown.join(',') === this.lastDrawnOriginalTracks) return;
+    this.lastDrawnOriginalTracks = shown.join(',');
+    this.alphaTabService.renderTracks(shown);
+  }
+
+  /**
+   * The caret and the range drawn and pressed against: the file's in Original (`ComposerGpService.caret`), the
+   * composition's otherwise. In Original the composition under the page is the empty one no one sees, whose caret is
+   * not on the file.
+   */
+  private caret(): CaretSelection | null {
+    return this.gp.isOriginal ? this.gp.caret : this.state;
+  }
+
+  /**
+   * The document the caret is in: the file read as one in Original (`GpOriginal.doc`) - null when it could not be - or
+   * the composition. A bar's clef and a staff's strings are read from it.
+   */
+  private caretDoc(): ScoreDoc | null {
+    const original = this.gp.original;
+    return original ? original.doc : this.state?.doc ?? null;
+  }
+
+  /** Plays each track muted and soloed as its row says (`AlphaTabService.setTrackPlayback`). */
+  private applyTrackPlayback(): void {
+    this.alphaTabService.setTrackPlayback(this.trackRows().map(row => ({ mute: row.muted, solo: row.soloed })));
   }
 
   ngAfterViewInit(): void {
@@ -210,6 +331,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       })
     );
 
+    // Again, for this api: making one disposes of any other page's, and the mixer with it.
+    this.applyTrackPlayback();
     this.observeContainerWidth();
     this.wireScoreInteraction();
     this.renderRequest$.next();
@@ -248,17 +371,41 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       return;
     }
     this.renderPending = false;
+
+    // In Original alphaTab draws the score the file was read into as it opened (`GpOriginal.score`), the tracks the strip
+    // shows, and no document is mapped: the empty one `ComposerService` holds is not this file. Never the bytes: `api.load`
+    // parses them again, synchronously on this thread (`BrowserUiFacade.load` calls `ScoreLoader.loadScoreFromBytes`,
+    // `alphaTab.core.mjs` ~56121-56133 in 1.8), and holds a second `Score` beside the one the caret, the loss and Convert
+    // read. Drawing the held score is the path `load` ends on anyway (`AlphaTabApi.load` hands its parse to `renderScore`,
+    // ~51125): `_internalRenderTracks` (~51242) calls no `finish` - `loadScoreFromBytes` already has - and mutates only
+    // the staves' transposition pitches the settings name (`applyPitchOffsets`, ~3901, none here); its MIDI generation
+    // writes only `Beat.timer` (`MidiFileGenerator`, ~48135), which the mapper does not read.
+    //
+    // It goes in once - a caret move or a selection redraws the overlay above, as it does in Composition - and the
+    // zero-width guard and the ResizeObserver above serve both states. The indices are explicit and in range, being the
+    // score's own (`trackRows`), so alphaTab's off-by-one past the last track (`renderScore`, ~51188) is never met.
+    const original = this.gp.original;
+    if (original) {
+      if (this.lastDrawnOriginal !== original) {
+        const shown = renderedTracksOf(this.trackRows());
+        this.lastDrawnOriginal = original;
+        this.lastRenderedDoc = null;
+        this.lastDrawnOriginalTracks = shown.join(',');
+        this.alphaTabService.renderScore(original.score, shown);
+      }
+      this.renderError = null;
+      this.cdr.markForCheck();
+      return;
+    }
+    this.lastDrawnOriginal = null;
     // Recorded before the attempt: a document the mapper cannot draw is not tried again on every caret move.
     this.lastRenderedDoc = this.state.doc;
 
     try {
       const score = this.mapper.toScore(this.state.doc, new alphaTab.Settings());
-      // Render every track: without explicit indices alphaTab shows only the
-      // first, which hides all but one staff on a multi-track score.
-      this.alphaTabService.renderScore(
-        score,
-        score.tracks.map((_, index) => index)
-      );
+      // The tracks the strip shows, explicitly: without indices alphaTab shows only the first, which hides all but one
+      // staff on a multi-track score.
+      this.alphaTabService.renderScore(score, renderedTracksOf(this.trackRows()));
       this.renderError = null;
     } catch (error) {
       this.renderError =
@@ -329,15 +476,18 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     // bounds, which with workers are still the last render's at `renderFinished`: they wait for post-render.
     // Presses, drags and hover wait for post-render as well (`scoreTakesPress`): until then they would read the new
     // page's staves against the last render's systems and beats.
+    // The scale highlight's rings go at once as well: they sit over the last engraving's note heads, not the new one's.
     this.alphaTabService.onRenderFinished(() => {
       this.measured = null;
       this.boundsPending = true;
+      this.updateScaleOverlay();
     });
     this.alphaTabService.onPostRenderFinished(() => {
       this.measured = null;
       this.boundsPending = false;
       this.drawHighlight();
       this.scheduleCaretUpdate();
+      this.updateScaleOverlay();
     });
     this.observeSurface(element);
   }
@@ -448,10 +598,19 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     return read.systems;
   }
 
-  /** The staves `doc` draws (`staffSlotsOf`), read once per document. */
+  /**
+   * The staves drawn, read once per source and per set of tracks shown: the document's (`staffSlotsOf`), or - in
+   * Original, where there is no document behind what alphaTab drew - the file's (`staffSlotsOfScore`).
+   */
   private slots(doc: ScoreDoc): StaffSlot[] {
+    const original = this.gp.original;
+    const source: unknown = original ? original.score : doc;
+    const shown = renderedTracksOf(this.trackRows());
+    const drawn = shown.join(',');
     let read = this.slotsRead;
-    if (!read || read.doc !== doc) read = this.slotsRead = { doc, slots: staffSlotsOf(doc) };
+    if (!read || read.source !== source || read.drawn !== drawn) {
+      read = this.slotsRead = { source, drawn, slots: original ? staffSlotsOfScore(original.score, shown) : staffSlotsOf(doc, shown) };
+    }
     return read.slots;
   }
 
@@ -519,13 +678,15 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   /**
    * A mouse-down on a beat. See `scorePressOf` and `seeksOnPress`. On a staff the caret goes to that staff's
    * beat under the pointer (`cursorUnderPointer`); off every staff, to the beat alphaTab hit, on its own track.
+   * In Original the caret moved is the file's: `ComposerService` lends its caret commands there (`lendCaret`).
    */
   private pressBeat(beat: alphaTab.model.Beat): void {
     // A press waits for the render's bounds, and the press that closed a popover only closed it (`scoreTakesPress`).
-    if (!this.state || !scoreTakesPress(this.boundsPending, this.pressGuard)) return;
+    const current = this.caret();
+    if (!this.state || !current || !scoreTakesPress(this.boundsPending, this.pressGuard)) return;
     const under = this.staffUnderPointer();
     const mode = this.state.entryMode;
-    const cursor = under ? this.cursorUnderPointer(under, this.state.cursor) : beatCursorOf(beat);
+    const cursor = under ? this.cursorUnderPointer(under, current.cursor) : beatCursorOf(beat);
     if (!cursor) return;
     const press = scorePressOf(mode, under?.slot.kind ?? null, this.pointer?.shiftKey ?? false);
 
@@ -539,7 +700,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       this.dragging = dragExtends(mode, under?.slot.kind ?? null);
       if (under) {
         this.clickedSlotIndex = under.slotIndex;
-        this.clickedAt = this.composer.state.cursor;
+        this.clickedAt = this.caret()?.cursor ?? null;
       }
       if (under?.slot.kind === 'notation' && under.lines) this.rememberNotationClick(under.lines);
       if (press === 'write' && under?.lines) this.placeClickedPitch(under.lines);
@@ -555,27 +716,28 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
    * to extend to a caret that differs from the current one.
    */
   private dragOverBeat(): void {
-    if (!this.state || this.boundsPending) return;
+    const current = this.caret()?.cursor;
+    if (!this.state || !current || this.boundsPending) return;
     if (!dragContinues(this.dragging, this.pointer?.buttons ?? 0)) {
       this.dragging = false;
       return;
     }
-    const current = this.state.cursor;
     const under = this.staffUnderPointer();
     const cursor = this.cursorUnderPointer(under, current);
     // A move to another string or voice of the same beat is a new caret too.
     if (!cursor || sameCaret(cursor, current)) return;
     this.ngZone.run(() => this.composer.extendSelectionTo(cursor));
     // A drag along the slash or numbered staff it began on keeps the caret drawn there (`caretSlotIndexOf`).
-    if (under?.slotIndex === this.clickedSlotIndex) this.clickedAt = this.composer.state.cursor;
+    if (under?.slotIndex === this.clickedSlotIndex) this.clickedAt = this.caret()?.cursor ?? null;
   }
 
   /**
    * Moves the playback position to the caret's beat, on the caret's own track - not alphaTab's hit beat, which
-   * may be another track's - in the score alphaTab holds now.
+   * may be another track's - in the score alphaTab holds now: the file's own in Original, where the caret is the file's.
    */
   private seekToCaret(): void {
-    const beat = this.engravedBeatOf(this.composer.state.cursor);
+    const cursor = this.caret()?.cursor;
+    const beat = cursor ? this.engravedBeatOf(cursor) : undefined;
     if (beat) this.alphaTabService.seekToBeat(beat);
   }
 
@@ -592,22 +754,36 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
   /** Records where on a notation staff the click landed, so the caret box sits there. */
   private rememberNotationClick(lines: StaffLines): void {
-    if (!this.pointer || !this.state) return;
-    const bar = this.composer.barAt(this.state.doc, this.state.cursor);
+    const doc = this.caretDoc();
+    const cursor = this.caret()?.cursor;
+    if (!this.pointer || !doc || !cursor) return;
+    const bar = this.composer.barAt(doc, cursor);
     if (!bar) return;
     const diatonic = this.hitTest.diatonicIn(lines, bar.clef, this.pointer.y);
     const bottom = bottomLineDiatonic(bar.clef);
     this.clickedHalfSteps = diatonic !== null && bottom !== null ? diatonic - bottom : null;
   }
 
-  /** Writes the note the pointer landed on, for standard notation staves in Pen. */
+  /**
+   * Writes the note the pointer landed on, for standard notation staves in Pen - asking the conversion prompt first in
+   * Original. The pointer's height is read now, for a write that may run only after the prompt's Convert, by which time
+   * the pointer has moved to press it. The bar - and the clef the height is read under - is read when it runs, at the
+   * caret: in Original the press put the file's caret there, and Convert carries it into the composition.
+   */
   private placeClickedPitch(lines: StaffLines): void {
-    if (!this.pointer || !this.state) return;
+    if (!this.pointer) return;
+    const y = this.pointer.y;
+    this.gp.requestEdit(ASKING_PAGE_COMMANDS.penWrite, 'Writing a note with Pen', () => this.writePitchAt(lines, y));
+  }
+
+  /** Writes the pitch at height `y` on `lines`, at the caret. */
+  private writePitchAt(lines: StaffLines, y: number): void {
+    if (!this.state) return;
 
     const bar = this.composer.barAt(this.state.doc, this.state.cursor);
     if (!bar) return;
 
-    const diatonic = this.hitTest.diatonicIn(lines, bar.clef, this.pointer.y);
+    const diatonic = this.hitTest.diatonicIn(lines, bar.clef, y);
     if (diatonic === null) return;
 
     const pitch = diatonicToPitch(diatonic, bar.keySignature, bar.clefOttava);
@@ -652,8 +828,9 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     const index = under?.index;
     if (!under || !lines || index === null || index === undefined) return null;
 
+    // In Original the clef is the file's (`caretDoc`), so the hover reads the pitch a click there would write.
     const hovered = this.beatUnderPointerOn(under.slot.trackIndex, under.slot.staffIndex, under);
-    const bar = hovered ? state.doc.tracks[under.slot.trackIndex]?.staves[under.slot.staffIndex]?.bars[hovered.voice.bar.index] : undefined;
+    const bar = hovered ? this.caretDoc()?.tracks[under.slot.trackIndex]?.staves[under.slot.staffIndex]?.bars[hovered.voice.bar.index] : undefined;
     const diatonic = bar ? this.hitTest.diatonicIn(lines, bar.clef, pointer.y) : null;
     const halfSteps = bar ? penHoverHalfStepsOf(state.entryMode, under.slot.kind, diatonic, bar.clef) : null;
     if (halfSteps === null) return null;
@@ -675,8 +852,9 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
    * (`highlightBeatsOf`); post-render draws it again.
    */
   private drawHighlight(): void {
-    const state = this.state;
-    const ends = state ? highlightEndsOf(state.doc, state.anchor, state.cursor) : null;
+    const caret = this.caret();
+    const doc = this.caretDoc();
+    const ends = caret && doc ? highlightEndsOf(doc, caret.anchor, caret.cursor) : null;
     const beats = highlightBeatsOf(
       ends ? this.engravedBeatOf(ends.first) : undefined,
       ends ? this.engravedBeatOf(ends.last) : undefined,
@@ -684,6 +862,27 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     );
     if (beats) this.alphaTabService.highlightRange(beats.first, beats.last);
     else this.alphaTabService.clearHighlight();
+  }
+
+  /**
+   * Marks the note heads the scale panel's highlight names (`noteHighlightsOf`), from the bounds lookup of what alphaTab
+   * drew - the file's in Original, the document's in Composition - or none while it is off or the lookup is not ready.
+   * The page is measured once for every ring (`lookupOffsetOf`), and a redraw that moves no ring leaves the list as it is.
+   */
+  private updateScaleOverlay(): void {
+    const element = this.alphaTabContainer?.nativeElement;
+    const lookup = element && !this.boundsPending ? this.alphaTabService.getBoundsLookup() : null;
+    const highlights = lookup ? noteHighlightsOf(lookup, this.highlightConfig) : [];
+    const offset = element && highlights.length > 0 ? this.hitTest.lookupOffsetOf(element) : null;
+    const marks = offset ? noteMarksOf(highlights, offset) : [];
+    if (sameMarks(marks, this.noteMarks)) return;
+    this.noteMarks = marks;
+    this.cdr.markForCheck();
+  }
+
+  /** A ring's identity to `ngFor`: its place in the list, so a redraw moves the ring elements it has rather than making new ones. */
+  trackMark(index: number): number {
+    return index;
   }
 
   /**
@@ -696,13 +895,13 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     const api = this.alphaTabService.getApi();
     const lookup = this.alphaTabService.getBoundsLookup();
     const state = this.state;
+    const cursor = this.caret()?.cursor;
 
-    if (!element || !api?.score || !lookup || !state) {
+    if (!element || !api?.score || !lookup || !state || !cursor) {
       this.caretRect = null;
       return;
     }
 
-    const cursor = state.cursor;
     const slots = this.slots(state.doc);
     const slotIndex = caretSlotIndexOf(slots, cursor, this.clickedSlotIndex, this.clickedAt);
     const beat = this.engravedBeatOf(cursor);
@@ -724,7 +923,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     }
 
     const slot = slots[slotIndex];
-    const stringCount = this.composer.staffAt(state.doc, cursor)?.tuning.length ?? 0;
+    const doc = this.caretDoc();
+    const stringCount = (doc ? this.composer.staffAt(doc, cursor)?.tuning.length : undefined) ?? 0;
     const clicked = slotIndex === this.clickedSlotIndex ? this.clickedHalfSteps : null;
     const halfSteps = caretHalfStepsOf(slot.kind, stringCount, cursor.stringIndex, clicked);
 

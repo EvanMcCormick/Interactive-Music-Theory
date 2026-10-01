@@ -85,6 +85,7 @@ function buildDoc(): ScoreDoc {
         shortName: 'Bs',
         color: '#3498db',
         playback: createDefaultPlaybackInfo(33),
+        percussionArticulations: [],
         generated: null,
         staves: [
           {
@@ -97,6 +98,8 @@ function buildDoc(): ScoreDoc {
             showTablature: true,
             showSlash: false,
             showNumbered: false,
+            isPercussion: false,
+            lineCount: 5,
             bars: [
               bar([
                 [frettedBeat(4, 3), createRestBeat(4), createRestBeat(4), createRestBeat(4)],
