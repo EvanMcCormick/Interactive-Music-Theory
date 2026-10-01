@@ -308,6 +308,7 @@ records the decisions and — where implementation disproved one — the correct
 | Audio transcription | `/transcribe` | Shipped. Basic Pitch detection, beat tracking, correctable review |
 | Circle of fifths | drawer | Shipped. Sets the key app-wide |
 | Progression composer | `/progression` | M1–M4 shipped. Sends a track to the composer, MIDI and `.gp` export |
+| Songwriting | `/songs` | Designed 2026-10-01, not yet planned. A lyric sheet with sections, chords over words as scale degrees, inline tab, playback, rhymes and syllables, voice memos, ChordPro import and export; in five milestones, S1-S5 |
 
 **Progression composer milestones:**
 
@@ -373,19 +374,24 @@ older than the milestone: every score the composer built played all its tracks o
 Each task was reviewed after it was committed, and what review changed is at the top of the plan.
 The hand check ran in part, on real files; what it could not do wants Guitar Pro or ears.
 
-**In flight.** Nothing, once `feature/gp-composer` merges into `main`.
+**In flight.** The GP milestone merged into `main` at `dfc5feb`. On 2026-10-01 the songwriting
+tool was designed, in [plans/2026-10-01-songwriting-design.md](plans/2026-10-01-songwriting-design.md),
+and the user put it ahead of M3.
 
 **Pick up next**, in this order:
 
-1. **Design and plan M3**: the inspector, and the track strip's mixer and bar grid. Its scope is
+1. **Plan and build songwriting S1**, the sheet: ProseMirror, the song model, the `/songs` pages,
+   chords over words, key and Transpose, the Chords tab, autosave. S2 to S5 follow it, in the
+   order the design gives.
+2. **Design and plan M3**: the inspector, and the track strip's mixer and bar grid. Its scope is
    Part 1 of [the editor design](plans/2026-09-13-composer-editor-design.md); the strip's rows now
    carry mute and solo for the mixer to land on, and four of the five bugs in [TODO.md](TODO.md)
    wait on its track controls.
-2. **The hand checks owed.** M2's in a real browser - the desktop Browser pane could not drag
+3. **The hand checks owed.** M2's in a real browser - the desktop Browser pane could not drag
    with intermediate moves, press a focused button with Enter or Space, zoom, or offer a second
    browser, operating system, keyboard layout, screen reader or DevTools - and the GP milestone's
    steps that want Guitar Pro or ears. Both are listed, step by step, in [TODO.md](TODO.md).
-3. **`progression.component.ts` is 1,042 lines**, forty-two over the cap, and the refactor
+4. **`progression.component.ts` is 1,042 lines**, forty-two over the cap, and the refactor
    that fixes it is the one `composer.service.ts` has already had done to it twice.
 
 ---
@@ -407,6 +413,7 @@ The hand check ran in part, on real files; what it could not do wants Guitar Pro
 | Composer Editor M2 Plan | [plans/2026-09-13-composer-editor-m2.md](plans/2026-09-13-composer-editor-m2.md) | Implemented, with the corrections review made recorded in it |
 | The GP Viewer becomes the composer | [plans/2026-09-14-gp-composer-design.md](plans/2026-09-14-gp-composer-design.md) | Implemented, with the corrections building it found and the hand check recorded in it |
 | GP Composer Plan | [plans/2026-09-30-gp-composer.md](plans/2026-09-30-gp-composer.md) | Implemented, with the corrections review made recorded in it |
+| Songwriting | [plans/2026-10-01-songwriting-design.md](plans/2026-10-01-songwriting-design.md) | Designed, not yet planned |
 
 Implementation plans, one per milestone, sit beside each design in `plans/`. The
 transcription investigations that produced *negative* results are kept too — the onset
