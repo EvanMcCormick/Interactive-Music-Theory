@@ -114,6 +114,22 @@ the design doc; the fix it led to is the last entry here.
     press, so the H.1 review's exception for a mouse-focused slider never took effect.
   - A backing track is its own loss row, `backingTrack` ("Backing track", "the audio is not kept"), and no longer
     counts as a sync point: a file synced once read "2 sync points" and never said its audio went.
+- **After the final review** (`5a2686b`, `b2d77cc`, `995f1c2`, and the `chore:` commit after them).
+  - The file has its own caret (`ComposerGpService.caret`). In Original, `ComposerService.setCursor` clamped presses to
+    the empty composition under the file, so the caret sat at bar 1: a click seeked there, selection and Pen's hover
+    were inert, and the edit that asked was written over the file's first beat after Convert. `ComposerService` now
+    lends its caret commands to the file while it is shown (`lendCaret`), over `toDoc` of the file; the score draws,
+    seeks and hovers from that caret, the status line and the strip read it, and Convert puts the composition in place
+    with it (`DocumentReplacement.selection`) before the edit that asked runs. The hidden-track step still wins.
+  - Original renders the `Score` the opener read (`renderScore`) instead of handing alphaTab the bytes, which it parsed
+    again synchronously on the main thread; `loadBytes` and `ALL_TRACKS` go.
+  - The GP library publishes `GpLibrarySummary`, an entry without its bytes, read through a cursor; the read cost is in
+    `docs/TODO.md`.
+  - Show / hide is checked against a real engraving (`composer-score-systems.spec.ts`); `AlphaTabState` drops
+    `score`, `selectedTracks` and `tickPosition`, which nothing read; design Part 6 says a missing `?gp=<id>` is
+    refused, as the code does; and the composer library holds the open entry by `documentId`
+    (`ComposerLibraryService.rememberOpen`), so Save after leaving the page and coming back no longer makes a second
+    composition.
 
 ## Before you start
 

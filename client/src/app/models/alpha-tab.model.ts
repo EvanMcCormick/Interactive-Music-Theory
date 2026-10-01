@@ -15,16 +15,10 @@ export interface AlphaTabState {
   isPlaying: boolean;
   /** Whether the player is ready for playback */
   isReadyForPlayback: boolean;
-  /** Current playback position in ticks */
-  tickPosition: number;
   /** Current playback position in milliseconds */
   timePosition: number;
   /** Total duration in milliseconds */
   totalDuration: number;
-  /** The loaded score (null if none loaded) - uses alphaTab's Score type */
-  score: any | null;
-  /** Currently selected track indices */
-  selectedTracks: number[];
   /** Current playback tempo multiplier (1.0 = normal) */
   tempoMultiplier: number;
   /** Master volume (0-1) */
@@ -204,11 +198,8 @@ export const DEFAULT_ALPHA_TAB_STATE: AlphaTabState = {
   isLoaded: false,
   isPlaying: false,
   isReadyForPlayback: false,
-  tickPosition: 0,
   timePosition: 0,
   totalDuration: 0,
-  score: null,
-  selectedTracks: [],
   tempoMultiplier: 1.0,
   volume: 1.0,
   isLooping: false,

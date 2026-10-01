@@ -1,7 +1,7 @@
 import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerService } from './composer.service';
-import { StaffSlot, staffSlotsOf } from './composer-score-interaction';
+import { StaffSlot, staffSlotsOf, staffSlotsOfScore } from './composer-score-interaction';
 import {
   BoundsLookupShape,
   SystemBands,
@@ -245,7 +245,8 @@ describe('staff systems on a real engraving', () => {
   function engrave(
     doc: ReturnType<typeof ComposerService.createEmptyScore>,
     width: number,
-    errors: unknown[] = []
+    errors: unknown[] = [],
+    trackIndices?: number[]
   ): alphaTab.rendering.BoundsLookup | null {
     const settings = new alphaTab.Settings();
     settings.core.engine = 'svg';
@@ -253,6 +254,7 @@ describe('staff systems on a real engraving', () => {
     settings.core.enableLazyLoading = false;
     settings.display.layoutMode = alphaTab.LayoutMode.Page;
     const score = new ScoreDocMapperService().toScore(doc, settings);
+    host?.remove();
 
     host = document.createElement('div');
     host.style.cssText = `position: absolute; left: 0; top: 0; width: ${width}px;`;
@@ -272,9 +274,51 @@ describe('staff systems on a real engraving', () => {
       partial.innerHTML = String(result.renderResult);
       surface.appendChild(partial);
     });
-    renderer.renderScore(score, score.tracks.map((_, index) => index));
+    renderer.renderScore(score, trackIndices ?? score.tracks.map((_, index) => index));
     return renderer.boundsLookup;
   }
+
+  /**
+   * The track strip's show / hide, on a real engraving (the GP-composer design, Part 7): alphaTab draws the tracks shown
+   * and no other, in the order given, and the slots the page reads presses through (`staffSlotsOf`, and
+   * `staffSlotsOfScore` over a file) are the staves it drew, system by system - so a press on a staff below a hidden
+   * track still names its own track.
+   */
+  it('draws only the tracks shown, and its staves are the slots the page reads them as', () => {
+    const doc = ComposerService.createEmptyScore();
+    doc.tracks.push(ComposerService.createTrack('Piano', 'pno', 0, false, doc.masterBars));
+    doc.tracks.push(ComposerService.createTrack('Bass', 'bs', 33, true, doc.masterBars));
+    for (let bar = 0; bar < 12; bar++) insertBarInto(doc, doc.masterBars.length);
+    const hitTest = new StaffHitTestService();
+
+    const everyLookup = engrave(doc, 500);
+    expect(everyLookup).not.toBeNull();
+    if (!everyLookup || !host) return;
+    const every = { bands: systemBandsOf(everyLookup), staves: hitTest.allStaves(host).length };
+
+    const shown = [0, 2];
+    const lookup = engrave(doc, 500, [], shown);
+    expect(lookup).not.toBeNull();
+    if (!lookup || !host) return;
+    const bands = systemBandsOf(lookup);
+    const staves = hitTest.allStaves(host);
+    const centres = hitTest.staffCentresIn(host, staves);
+    const docSlots = staffSlotsOf(doc, shown);
+    const fileSlots = staffSlotsOfScore(new ScoreDocMapperService().toScore(doc, new alphaTab.Settings()), shown);
+
+    // Guitar and bass: notation and tablature each. Every track: the piano's notation too, on every system.
+    expect(docSlots.map(slot => `${slot.trackIndex}:${slot.kind}`)).toEqual(['0:notation', '0:tab', '2:notation', '2:tab']);
+    expect(fileSlots).toEqual(docSlots);
+    expect(bands.every(system => system.staves.every(band => shown.includes(band.trackIndex)))).withContext('no stave of the hidden track').toBeTrue();
+    expect(bands[0].staves.map(band => band.trackIndex)).toEqual([0, 0, 2, 2]);
+    expect(staves.length).toBe(bands.length * docSlots.length);
+    expect(every.bands[0].staves.length).toBe(5);
+    expect(every.staves).toBeGreaterThan(staves.length);
+
+    // Each staff measured on a system reads as its own slot: the bass's tablature on system 2 is slot 3, not the piano's.
+    const read = centres.filter(y => y >= bands[1].top && y < bands[1].bottom).map(y => slotIndexAt(bands[1], y, docSlots));
+    expect(read).toEqual([0, 1, 2, 3]);
+  });
 
   it('resolves a staff on the second system to its own slot, measured and under the pointer', () => {
     const doc = ComposerService.createEmptyScore();

@@ -45,7 +45,7 @@ describe('ComposerLibraryPanelComponent and an entry opened elsewhere', () => {
     composer.replaceDocument(ComposerService.createEmptyScore(), { newComposition: true, markClean: true });
     expect(panel.currentId).toBeNull();
 
-    library.markOpened('x');
+    library.markOpened('x', composer.state.documentId);
     expect(panel.currentId).toBe('x');
 
     composer.setTempo(140);
@@ -53,5 +53,56 @@ describe('ComposerLibraryPanelComponent and an entry opened elsewhere', () => {
 
     expect(library.save).toHaveBeenCalledTimes(1);
     expect((library.save as jasmine.Spy).calls.mostRecent().args[1]).toBe('x');
+  });
+
+  /**
+   * Across a route round trip. The panel is made again when the page comes back, and the entry it had was its own field:
+   * leaving the page after Convert or a load, coming back and pressing Save made a second composition. The service holds
+   * the entry open now, for the composition it is (`documentId`), and a new panel adopts it while that composition is
+   * still open.
+   */
+  describe('across a route round trip', () => {
+    /** Leaves the page and comes back to it: the panel is made again. */
+    function comeBack(): void {
+      fixture.destroy();
+      fixture = TestBed.createComponent(ComposerLibraryPanelComponent);
+      panel = fixture.componentInstance;
+      fixture.detectChanges();
+    }
+    const saveTarget = (): unknown => (library.save as jasmine.Spy).calls.mostRecent().args[1];
+
+    it('keeps the entry a converted file was written to, so Save writes over it rather than making a second', async () => {
+      composer.replaceDocument(ComposerService.createEmptyScore(), { newComposition: true, markClean: true });
+      library.markOpened('converted', composer.state.documentId);
+
+      comeBack();
+      composer.setTempo(140);
+      await panel.save();
+
+      expect(saveTarget()).toBe('converted');
+    });
+
+    it('keeps the entry the last save made', async () => {
+      composer.replaceDocument(ComposerService.createEmptyScore(), { newComposition: true, markClean: true });
+      await panel.save();
+
+      comeBack();
+      composer.setTempo(140);
+      await panel.save();
+
+      expect(saveTarget()).toBe('x');
+    });
+
+    it('forgets it once another composition has opened while the page was away', async () => {
+      composer.replaceDocument(ComposerService.createEmptyScore(), { newComposition: true, markClean: true });
+      library.markOpened('converted', composer.state.documentId);
+      fixture.destroy();
+      composer.reset();
+
+      comeBack();
+      await panel.save();
+
+      expect(saveTarget()).toBeUndefined();
+    });
   });
 });

@@ -116,13 +116,12 @@ export class AlphaTabService {
   private setupEventListeners(): void {
     if (!this.api) return;
 
-    // Score loaded
-    this.api.scoreLoaded.on((score) => {
+    // Score loaded. Not the score itself: the page reads the one it gave alphaTab, and a reference kept here held the
+    // last score drawn for as long as the page was open.
+    this.api.scoreLoaded.on(() => {
       this.ngZone.run(() => {
         this.updateState({
           isLoaded: true,
-          score: score,
-          selectedTracks: score.tracks.map((_, i) => i),
           loadingState: 'loaded',
           errorMessage: null
         });
@@ -158,7 +157,6 @@ export class AlphaTabService {
     this.api.playerPositionChanged.on((args) => {
       this.ngZone.run(() => {
         this.updateState({
-          tickPosition: args.currentTick,
           timePosition: args.currentTime,
           totalDuration: args.endTime
         });
@@ -187,8 +185,6 @@ export class AlphaTabService {
     if (!this.api || !score) return;
     this.api.renderTracks(trackIndices.map(index => score.tracks[index]).filter(track => track !== undefined));
   }
-
-
 
   /**
    * Render an in-memory score: the composer's, mapped from its `ScoreDoc`, or in the Original state the one a `.gp` file
@@ -303,7 +299,6 @@ export class AlphaTabService {
     this.api?.stop();
   }
 
-
   /**
    * Seek to position in milliseconds
    */
@@ -342,7 +337,6 @@ export class AlphaTabService {
       this.updateState({ isLooping: loop });
     }
   }
-
 
   /**
    * Turns alphaTab's note bounds on or off and lays the score out again: `BeatBounds.notes` in the bounds lookup, which

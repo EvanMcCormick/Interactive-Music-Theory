@@ -863,7 +863,7 @@ describe('ComposerLibraryPanelComponent', () => {
     });
 
     it('adopts an entry opened elsewhere - a converted file - so Save writes over it', () => {
-      library.markOpened('converted-id');
+      library.markOpened('converted-id', composer.state.documentId);
       fixture.detectChanges();
 
       expect(host().querySelector('.save-actions')?.textContent).toContain('Save as copy');

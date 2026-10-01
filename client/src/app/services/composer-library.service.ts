@@ -38,6 +38,8 @@ export class ComposerLibraryService {
   private db: IDBDatabase | null = null;
   private readonly entriesSubject = new BehaviorSubject<CompositionSummary[]>([]);
   private readonly openedSubject = new Subject<string>();
+  /** The entry the composition open is, and which composition that is (`rememberOpen`). */
+  private openEntry: { id: string; documentId: number } | null = null;
 
   /**
    * The id of an entry opened by something other than the library panel - a converted `.gp` file, written and opened
@@ -53,9 +55,27 @@ export class ComposerLibraryService {
     return this.entriesSubject.asObservable();
   }
 
-  /** Says the entry `id` is the composition now open (`opened$`). */
-  markOpened(id: string): void {
+  /** Says the entry `id` is the composition now open, `documentId` (`opened$`). */
+  markOpened(id: string, documentId: number): void {
+    this.rememberOpen(id, documentId);
     this.openedSubject.next(id);
+  }
+
+  /**
+   * Holds the entry composition `documentId` is open as - or null, none yet - for a library panel made later
+   * (`openEntryOf`). The panel is made again each time the composer page is, and the entry was its own field: leaving the
+   * page after a Convert, a load or a save and coming back, Save made a second composition.
+   */
+  rememberOpen(id: string | null, documentId: number): void {
+    // `documentId` only moves on. A panel the page has left still has a write landing for the composition it knew, which
+    // is not the one open now and must not displace its entry.
+    if (this.openEntry && documentId < this.openEntry.documentId) return;
+    this.openEntry = id === null ? null : { id, documentId };
+  }
+
+  /** The entry composition `documentId` is open as, or null: one held for another composition is not this one's. */
+  openEntryOf(documentId: number): string | null {
+    return this.openEntry?.documentId === documentId ? this.openEntry.id : null;
   }
 
   /**

@@ -120,7 +120,7 @@ export class GpConversionService {
     // on one goes to the nearest track shown, same bar, before that edit is written (`carryThroughConvert`).
     this.trackViews.carryThroughConvert(doc);
     this.composer.replaceDocument(doc, { newComposition: true, markClean: true, selection: caret ?? undefined });
-    this.library.markOpened(compositionId);
+    this.library.markOpened(compositionId, this.composer.state.documentId);
 
     // 5. The edit that asked, on its own undo step; then what the conversion did, beside what the edit said.
     const converted = originalKept

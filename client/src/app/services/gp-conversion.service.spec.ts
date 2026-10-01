@@ -73,7 +73,7 @@ describe('GpConversionService', () => {
     expect(outcome).toEqual({ kind: 'converted', compositionId: 'composition-1', originalKept: false });
     expect(save).toHaveBeenCalledWith(jasmine.objectContaining({ title: 'Riff', tempo: 96, trackCount: 1, barCount: 2 }));
     expect(deleteEntry).toHaveBeenCalledWith('entry-1');
-    expect(markOpened).toHaveBeenCalledWith('composition-1');
+    expect(markOpened).toHaveBeenCalledWith('composition-1', composer.state.documentId);
     expect(gp.isOriginal).toBeFalse();
     expect(composer.doc.title).toBe('Riff');
     expect(composer.doc.masterBars[0].isDoubleBar).toBeTrue();

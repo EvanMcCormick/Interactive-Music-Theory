@@ -83,7 +83,22 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
 
   entries: CompositionSummary[] = [];
   state: ComposerState | null = null;
-  currentId: string | null = null;
+
+  /**
+   * The library entry the open composition is - the one the next Save writes over - or null for a new one. Held on the
+   * service too, for the composition it is (`ComposerLibraryService.rememberOpen`): this panel is made again each time
+   * the page is, and the panel made when the page comes back adopts it (`ngOnInit`) rather than writing a second
+   * composition on Save.
+   */
+  get currentId(): string | null {
+    return this.openId;
+  }
+  set currentId(id: string | null) {
+    this.openId = id;
+    if (this.state) this.library.rememberOpen(id, this.state.documentId);
+  }
+  private openId: string | null = null;
+
   /** The last failure's words, for the report of a flatten nothing saved. Said in the status line (`reportError`). */
   errorMessage: string | null = null;
 
@@ -213,6 +228,9 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   ) {}
 
   ngOnInit(): void {
+    // The entry the composition still open was, when the page was last here (`currentId`).
+    this.openId = this.library.openEntryOf(this.composer.state.documentId);
+
     this.composer
       .getState()
       .pipe(takeUntil(this.destroy$))

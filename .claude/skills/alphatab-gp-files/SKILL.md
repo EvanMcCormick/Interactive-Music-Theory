@@ -73,18 +73,16 @@ export class AlphaTabService {
       this.api = new alphaTab.AlphaTabApi(element, settings);
 
       // Wrap event handlers with NgZone for change detection
-      this.api.scoreLoaded.on((score: any) => {
+      // Not the score itself: a reference kept in state holds the last score drawn for the life of the page.
+      this.api.scoreLoaded.on(() => {
         this.ngZone.run(() => {
-          this.updateState({ isLoaded: true, score });
+          this.updateState({ isLoaded: true });
         });
       });
 
       this.api.playerPositionChanged.on((args: any) => {
         this.ngZone.run(() => {
-          this.updateState({
-            timePosition: args.currentTime,
-            tickPosition: args.currentTick
-          });
+          this.updateState({ timePosition: args.currentTime });
         });
       });
     });
