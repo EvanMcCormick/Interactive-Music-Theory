@@ -21,11 +21,11 @@ describe('AlphaTabService before an api exists', () => {
     }).not.toThrow();
   });
 
-  it('refuses to load bytes before an api exists, naming the reason', () => {
+  it('refuses to render a score before an api exists, naming the reason', () => {
     TestBed.configureTestingModule({});
     const service = TestBed.inject(AlphaTabService);
 
-    expect(() => service.loadBytes(new ArrayBuffer(8), [0, 1])).toThrowError('alphaTab API not initialized');
+    expect(() => service.renderScore(new alphaTab.model.Score(), [0, 1])).toThrowError('alphaTab API not initialized');
   });
 });
 

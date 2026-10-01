@@ -304,7 +304,7 @@ already holds is simply not drawn while a `GpOriginal` is current.
 
 | Entry | Opens in | Path |
 |---|---|---|
-| `/composer?gp=<id>` - the gallery's Open | Original | `GpLibraryService.getEntry(id)` → `fileData` → `AlphaTabService.loadBytes` |
+| `/composer?gp=<id>` - the gallery's Open | Original | `GpLibraryService.getEntry(id)` → `fileData` → parsed once (`GpFileOpener`) → `AlphaTabService.renderScore` |
 | Library menu → **Import .gp…** | Original | the picker → parse → a `gp-library` entry → as above |
 | A `.gp` dropped on the page | Original | the drop → parse → a `gp-library` entry → as above |
 | Library menu → an imported `.gp` row | Original | its entry, as above |
@@ -321,9 +321,9 @@ parse leaves nothing behind.
 Rendering, per state:
 
 ```
-Original      entry.fileData -> AlphaTabService.loadBytes(bytes, visibleTrackIndices)
-                             -> alphaTab parses -> scoreLoaded -> the Score
+Original      entry.fileData -> ScoreLoader.loadScoreFromBytes, once (GpFileOpener) -> the Score
                              -> conversionLossOf(score), once
+                             -> AlphaTabService.renderScore(score, visibleTrackIndices)
                              -> api.renderTracks(...) on a show/hide change
 
 Composition   ComposerState.doc -> ScoreDocMapperService.toScore(doc, settings)
@@ -337,6 +337,9 @@ about it moves: the debounce (`:171-173`), the zero-width guard (`:246-249`) and
 `ResizeObserver` (`:275-293`) serve both states, and the viewer had none of them.
 
 `AlphaTabService.loadFile` is replaced by `loadBytes(bytes: ArrayBuffer, trackIndices: number[])`.
+*(Corrected after the final review: `loadBytes` went too. `api.load` parses again, synchronously on
+the main thread, a file the opener has already parsed, and holds a second `Score`; Original renders
+the opener's `Score` with `renderScore` instead.)*
 The hard-coded `[0]` at `:186` goes with it, and so does the Blob-and-File round trip the viewer
 used to get an `ArrayBuffer` back out of an `ArrayBuffer`
 (`components/gp-viewer/gp-viewer.component.ts:182-185`).

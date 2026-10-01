@@ -136,7 +136,6 @@ describe('ComposerScoreComponent and the track strip', () => {
       'initializeApi',
       'renderScore',
       'renderTracks',
-      'loadBytes',
       'setTrackPlayback',
       'render',
       'getApi',
@@ -189,17 +188,16 @@ describe('ComposerScoreComponent and the track strip', () => {
     composer.replaceDocument(doc, { newComposition: true });
   }
 
-  /** Opens a file of `names`, and gives its bytes. */
-  function openFile(...names: string[]): ArrayBuffer {
+  /** Opens a file of `names`, and gives the score it was read into. */
+  function openFile(...names: string[]): alphaTab.model.Score {
     const score = new alphaTab.model.Score();
     for (const name of names) {
       const track = new alphaTab.model.Track();
       track.name = name;
       score.addTrack(track);
     }
-    const bytes = new ArrayBuffer(4);
-    gp.open({ entryId: `entry-${names.join('-')}`, fileName: 'Band.gp', bytes, score });
-    return bytes;
+    gp.open({ entryId: `entry-${names.join('-')}`, fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
+    return score;
   }
 
   /** The strip's rows for what the page shows. */
@@ -287,41 +285,52 @@ describe('ComposerScoreComponent and the track strip', () => {
     settle();
   }));
 
-  it('loads a file with every track shown, and hides one in Original by drawing the others of the score it holds', fakeAsync(() => {
-    const bytes = openFile('Lead', 'Bass', 'Drums');
+  it('draws the score the file was read into with every track shown, and hides one in Original by drawing the others', fakeAsync(() => {
+    const score = openFile('Lead', 'Bass', 'Drums');
     create();
-    expect(alphaTabService.loadBytes).toHaveBeenCalledOnceWith(bytes, [0, 1, 2]);
+    expect(alphaTabService.renderScore).toHaveBeenCalledOnceWith(score, [0, 1, 2]);
 
     views.toggleShown(rows(), 1);
 
     expect(alphaTabService.renderTracks).toHaveBeenCalledWith([0, 2]);
-    expect(alphaTabService.loadBytes).toHaveBeenCalledTimes(1);
+    expect(alphaTabService.renderScore).toHaveBeenCalledTimes(1);
     settle();
   }));
 
-  it('loads a file again with only the tracks the strip shows, when the page comes back to it', fakeAsync(() => {
-    const bytes = openFile('Lead', 'Bass', 'Drums');
+  it('does not read the bytes again: the file is parsed once, as it opens', fakeAsync(() => {
+    const parse = spyOn(alphaTab.importer.ScoreLoader, 'loadScoreFromBytes').and.callThrough();
+    openFile('Lead', 'Bass');
+
+    create();
+
+    expect(alphaTabService.renderScore.calls.mostRecent().args[0]).toBe(gp.original?.score as alphaTab.model.Score);
+    expect(parse).not.toHaveBeenCalled();
+    settle();
+  }));
+
+  it('draws the file again with only the tracks the strip shows, when the page comes back to it', fakeAsync(() => {
+    const score = openFile('Lead', 'Bass', 'Drums');
     create();
     views.toggleShown(rows(), 1);
     fixture?.destroy();
 
     create();
 
-    expect(alphaTabService.loadBytes.calls.mostRecent().args).toEqual([bytes, [0, 2]]);
+    expect(alphaTabService.renderScore.calls.mostRecent().args).toEqual([score, [0, 2]]);
     settle();
   }));
 
-  it('draws nothing of the last file when another opens: the new one is loaded with its own tracks', fakeAsync(() => {
+  it('draws nothing of the last file when another opens: the new one is drawn with its own tracks', fakeAsync(() => {
     openFile('Lead', 'Bass');
     create();
     views.toggleShown(rows(), 1);
     alphaTabService.renderTracks.calls.reset();
 
-    const bytes = openFile('Keys', 'Bass', 'Drums');
+    const score = openFile('Keys', 'Bass', 'Drums');
     expect(alphaTabService.renderTracks).not.toHaveBeenCalled();
     tick(200);
 
-    expect(alphaTabService.loadBytes.calls.mostRecent().args).toEqual([bytes, [0, 1, 2]]);
+    expect(alphaTabService.renderScore.calls.mostRecent().args).toEqual([score, [0, 1, 2]]);
     settle();
   }));
 });

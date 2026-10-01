@@ -15,7 +15,7 @@ import { CommonModule, DOCUMENT } from '@angular/common';
 import { Subject, debounceTime, takeUntil } from 'rxjs';
 import * as alphaTab from '@coderline/alphatab';
 
-import { ALL_TRACKS, AlphaTabService } from '../../../../services/alpha-tab.service';
+import { AlphaTabService } from '../../../../services/alpha-tab.service';
 import { TrackView, renderedTracksOf, trackRowsOf } from '../../../../services/composer-track-rows';
 import { DEFAULT_HIGHLIGHT_CONFIG, HighlightConfig } from '../../../../models/alpha-tab.model';
 import { NoteMark, noteHighlightsOf, noteMarksOf, sameMarks } from '../../../../services/scale-highlight';
@@ -167,8 +167,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   private trackView: TrackView;
   /** The tracks last drawn from the file in Original, so a show or hide redraws only when it changes them. */
   private lastDrawnOriginalTracks = '';
-  /** The file whose bytes alphaTab was last given, so the Original state loads once rather than on every redraw. */
-  private lastLoadedOriginal: GpOriginal | null = null;
+  /** The file whose score alphaTab was last given, so the Original state draws it once rather than on every redraw. */
+  private lastDrawnOriginal: GpOriginal | null = null;
   /** What the hover notehead last drew, by `hoverKeyOf`, or null for none. */
   private hoverKey: string | null = null;
   /** Whether the press under way closed a popover, and so does nothing here. See `pressGuardAfter`. */
@@ -272,8 +272,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   /**
    * Redraws after a track was shown or hidden: alphaTab draws the tracks shown of the score it holds (`renderTracks`),
    * which keeps its MIDI - a render reloads it, and alphaTab's `loadMidiFile` stops the player and rewinds it to bar 1.
-   * In Composition, a document alphaTab does not hold yet is engraved with them instead. In Original, a file whose bytes
-   * are still to load is drawn with them by the load (`renderCurrentDocument`), not against the last file's score.
+   * In Composition, a document alphaTab does not hold yet is engraved with them instead. In Original, a file alphaTab
+   * has not been given yet is drawn with them when it is (`renderCurrentDocument`), not against the last file's score.
    */
   private redrawShownTracks(): void {
     this.slotsRead = null;
@@ -283,7 +283,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       else this.renderRequest$.next();
       return;
     }
-    if (this.lastLoadedOriginal !== this.gp.original) return;
+    if (this.lastDrawnOriginal !== this.gp.original) return;
     if (shown.join(',') === this.lastDrawnOriginalTracks) return;
     this.lastDrawnOriginalTracks = shown.join(',');
     this.alphaTabService.renderTracks(shown);
@@ -372,26 +372,32 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     }
     this.renderPending = false;
 
-    // In Original the file's own bytes are what alphaTab draws, the tracks the strip shows, and no document is mapped:
-    // the empty one `ComposerService` holds is not this file. The bytes go in once - a caret move or a selection redraws
-    // the overlay above, as it does in Composition - and the zero-width guard and the ResizeObserver above serve both
-    // states, which the deleted viewer never had. The indices are explicit, and in range: they are the parsed score's own
-    // (`trackRows`), so alphaTab's off-by-one past the last track (`ALL_TRACKS`) is never met; a file of no tracks, with
-    // none to name, is loaded as every track.
+    // In Original alphaTab draws the score the file was read into as it opened (`GpOriginal.score`), the tracks the strip
+    // shows, and no document is mapped: the empty one `ComposerService` holds is not this file. Never the bytes: `api.load`
+    // parses them again, synchronously on this thread (`BrowserUiFacade.load` calls `ScoreLoader.loadScoreFromBytes`,
+    // `alphaTab.core.mjs` ~56121-56133 in 1.8), and holds a second `Score` beside the one the caret, the loss and Convert
+    // read. Drawing the held score is the path `load` ends on anyway (`AlphaTabApi.load` hands its parse to `renderScore`,
+    // ~51125): `_internalRenderTracks` (~51242) calls no `finish` - `loadScoreFromBytes` already has - and mutates only
+    // the staves' transposition pitches the settings name (`applyPitchOffsets`, ~3901, none here); its MIDI generation
+    // writes only `Beat.timer` (`MidiFileGenerator`, ~48135), which the mapper does not read.
+    //
+    // It goes in once - a caret move or a selection redraws the overlay above, as it does in Composition - and the
+    // zero-width guard and the ResizeObserver above serve both states. The indices are explicit and in range, being the
+    // score's own (`trackRows`), so alphaTab's off-by-one past the last track (`renderScore`, ~51188) is never met.
     const original = this.gp.original;
     if (original) {
-      if (this.lastLoadedOriginal !== original) {
+      if (this.lastDrawnOriginal !== original) {
         const shown = renderedTracksOf(this.trackRows());
-        this.lastLoadedOriginal = original;
+        this.lastDrawnOriginal = original;
         this.lastRenderedDoc = null;
         this.lastDrawnOriginalTracks = shown.join(',');
-        this.alphaTabService.loadBytes(original.bytes, shown.length > 0 ? shown : ALL_TRACKS);
+        this.alphaTabService.renderScore(original.score, shown);
       }
       this.renderError = null;
       this.cdr.markForCheck();
       return;
     }
-    this.lastLoadedOriginal = null;
+    this.lastDrawnOriginal = null;
     // Recorded before the attempt: a document the mapper cannot draw is not tried again on every caret move.
     this.lastRenderedDoc = this.state.doc;
 

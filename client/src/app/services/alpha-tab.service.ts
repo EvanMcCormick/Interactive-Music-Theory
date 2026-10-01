@@ -8,16 +8,6 @@ import {
 import * as alphaTab from '@coderline/alphatab';
 import { AuditionQueue } from './audition-queue';
 
-/**
- * alphaTab's own sentinel for "draw every track": a one-element list holding -1
- * (`AlphaTabApi.renderScore`, `alphaTab.core.mjs` ~51181 in 1.8).
- *
- * Needed because `load` takes the track indices before the bytes have been parsed, so the caller cannot know how
- * many tracks the file has. Passing explicit indices there would also meet alphaTab's own off-by-one - it accepts
- * `index <= tracks.length` and pushes `undefined` for the last - which this sentinel steps around.
- */
-export const ALL_TRACKS: readonly number[] = [-1];
-
 /** How the player sounds one track: muted, soloed, both or neither. */
 export interface TrackPlayback {
   mute: boolean;
@@ -188,26 +178,6 @@ export class AlphaTabService {
   }
 
   /**
-   * Loads Guitar Pro bytes and draws `trackIndices`.
-   *
-   * Replaces `loadFile(file)`, which read a `File` and then hard-coded `[0]`, so a four-piece file drew one staff
-   * while the page listed four tracks beside it. Bytes rather than a `File` because every caller now has an
-   * `ArrayBuffer` already - a `gp-library` entry's `fileData` - and the viewer used to wrap one in a Blob and a File
-   * to get the same buffer back out.
-   *
-   * Parse failures do not arrive here: `api.load` hands the bytes to a worker, and a file alphaTab cannot read
-   * reaches the `error` event, which sets `loadingState: 'error'` (`setupEventListeners`).
-   */
-  loadBytes(bytes: ArrayBuffer, trackIndices: readonly number[]): void {
-    if (!this.api) {
-      throw new Error('alphaTab API not initialized');
-    }
-
-    this.updateState({ loadingState: 'loading', errorMessage: null });
-    this.api.load(new Uint8Array(bytes), trackIndices.slice());
-  }
-
-  /**
    * Draws `trackIndices` of the score alphaTab already holds - the track strip's show/hide in the Original state,
    * where there is no document to re-render from. Indices the score does not have are left out, and an empty list
    * draws nothing, so a caller that refuses to hide the last track does so for itself (`renderedTracksOf`).
@@ -221,8 +191,11 @@ export class AlphaTabService {
 
 
   /**
-   * Render an in-memory score. Used by the composer, which builds a Score from
-   * its own ScoreDoc rather than loading a file.
+   * Render an in-memory score: the composer's, mapped from its `ScoreDoc`, or in the Original state the one a `.gp` file
+   * was read into as it opened (`GpFileOpener`). A file's bytes are never handed to alphaTab here: `api.load` would
+   * parse them again, synchronously on the main thread - its `BrowserUiFacade.load` calls
+   * `ScoreLoader.loadScoreFromBytes` (`alphaTab.core.mjs` ~56121-56133 in 1.8); only a URL is fetched asynchronously, and
+   * no parse goes to a worker.
    */
   renderScore(score: alphaTab.model.Score, trackIndices?: number[]): void {
     if (!this.api) {

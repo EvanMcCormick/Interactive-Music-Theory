@@ -173,30 +173,20 @@ this.alphaTabService.initializeApi(element, {
 
 A `.gp` comes into the composer through `GpFileOpener`, never straight into alphaTab. Each route - `?gp=<id>` from the gallery (`openEntry`), a Library drawer row (`openEntry`), Import .gp… (`importFile`), a drop on the page (`importDropped`) - parses the bytes first, asks about unsaved work (`confirmDiscard`), writes or corrects the `gp-library` entry, and then hands the file to `ComposerGpService.open`. One open runs at a time; what went wrong goes to the status line (`composer.announce`).
 
-The score component then draws the file's bytes with `loadBytes`, or a composition with `renderScore`:
+The score component then draws a `Score` with `renderScore` in both states - the one the opener read the file into, or a composition mapped from its document:
 
 ```typescript
 // alpha-tab.service.ts
-loadBytes(bytes: ArrayBuffer, trackIndices: readonly number[]): void {
-  if (!this.api) {
-    throw new Error('alphaTab API not initialized');
-  }
-
-  this.updateState({ loadingState: 'loading', errorMessage: null });
-  this.api.load(new Uint8Array(bytes), trackIndices.slice());
-}
-
-// An in-memory score the composer built from its ScoreDoc
 renderScore(score: alphaTab.model.Score, trackIndices?: number[]): void;
 
-// composer-score.component.ts - Original state: the file's bytes, the tracks the strip shows
-this.alphaTabService.loadBytes(original.bytes, shown.length > 0 ? shown : ALL_TRACKS);
+// composer-score.component.ts - Original state: the score the file was read into, the tracks the strip shows
+this.alphaTabService.renderScore(original.score, shown);
 
 // Composition state: the document, mapped to a Score
 this.alphaTabService.renderScore(score, renderedTracksOf(this.trackRows()));
 ```
 
-Parse failures do not throw from `loadBytes`: alphaTab parses in a worker and reports through its `error` event, which sets `loadingState: 'error'`. Pass explicit track indices - without them alphaTab draws only the first track. `ALL_TRACKS` (`[-1]`) is alphaTab's "every track" sentinel.
+Never hand alphaTab a file's bytes (`api.load`). Its parse is not in a worker: `BrowserUiFacade.load` calls `ScoreLoader.loadScoreFromBytes` synchronously on the main thread (`alphaTab.core.mjs` ~56121-56133 in 1.8), so the opener's parse would be done twice, and a second `Score` held beside the one the caret, the loss checker and Convert read. A file alphaTab cannot read fails in the opener's own `loadScoreFromBytes` call, which says so on the status line. Pass explicit track indices - without them alphaTab draws only the first track - and keep them in range: `renderScore` accepts `index <= tracks.length` and pushes `undefined` for the one past the last (~51188).
 
 ### Drag and Drop
 
