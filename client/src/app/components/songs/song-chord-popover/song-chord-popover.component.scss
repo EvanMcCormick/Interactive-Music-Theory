@@ -1,0 +1,109 @@
+// The song pages' tokens, each with its own value as the fallback so the popover renders the same outside the page.
+// Its panel is the menus' (`.song-section-menu`): the bar colour, a border, a shadow, over everything on the sheet.
+:host {
+  --popover-panel: var(--songs-bar, #2c3e50);
+  --popover-border: var(--songs-border, #465666);
+  --popover-text: var(--songs-text, #ecf0f1);
+  --popover-text-dim: var(--songs-text-dim, #adbcc8);
+  --popover-accent: var(--songs-accent, #3498db);
+  --popover-error: var(--songs-error, #f1948a);
+
+  display: block;
+}
+
+.chord-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 17rem;
+  max-width: calc(100vw - 2rem);
+  box-sizing: border-box;
+  padding: 0.75rem;
+  background-color: var(--popover-panel);
+  border: 1px solid var(--popover-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 40%);
+  color: var(--popover-text);
+  font-family: system-ui, sans-serif;
+  font-size: 0.9rem;
+}
+
+.chord-popover-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.chord-popover-row {
+  display: grid;
+  grid-template-columns: 3.75rem minmax(0, 1fr);
+  align-items: start;
+  gap: 0.25rem 0.5rem;
+}
+
+.row-label {
+  padding-top: 0.35rem;
+  color: var(--popover-text-dim);
+}
+
+.stepper,
+.presets {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+// The presets sit under the stepper, in the value column.
+.presets {
+  grid-column: 2;
+  flex-wrap: wrap;
+}
+
+.length-value {
+  min-width: 4.5rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.chord-popover-actions {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: end;
+}
+
+// The flat tool style: no chrome until hovered, colour only on the preset the chord is now.
+.tool {
+  padding: 0.25rem 0.55rem;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--popover-text);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 90ms ease-out;
+
+  &:hover:not(.on) {
+    background-color: rgb(255 255 255 / 10%);
+  }
+
+  &:active {
+    background-color: rgb(255 255 255 / 16%);
+  }
+
+  &.on {
+    background-color: var(--popover-accent);
+    color: #fff;
+  }
+
+  &[aria-disabled='true'] {
+    opacity: 0.42;
+    cursor: not-allowed;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--popover-text);
+    outline-offset: -2px;
+  }
+}
+
+.delete-chord {
+  color: var(--popover-error);
+}

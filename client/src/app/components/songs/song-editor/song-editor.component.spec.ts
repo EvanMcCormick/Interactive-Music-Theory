@@ -1,17 +1,20 @@
 import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { Node } from 'prosemirror-model';
+import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { createExtensions } from '../../../models/progression-normalize';
 import { ChordDegree, ProgressionKey } from '../../../models/progression.model';
 import { SongDoc } from '../../../models/song.model';
 import { deletedDatabase } from '../../../services/indexed-db.spec-helper';
 import { AutosaveClock } from '../../../services/song-autosave';
-import { chordSlotOf, sectionsOf, songMetaOf } from '../../../services/song-document';
+import { chordSlotOf, chordsOf, sectionsOf, songMetaOf } from '../../../services/song-document';
 import { SONG_LIBRARY_DB, SongLibraryService } from '../../../services/song-library.service';
 import { songSchema } from '../../../services/song-schema';
 import { SONG_PREFERENCES_STORAGE } from '../../../services/song-sheet-preferences.service';
+import { SongSheetComponent } from '../song-sheet/song-sheet.component';
 import { SONG_AUTOSAVE_CLOCK, SongEditorComponent } from './song-editor.component';
 
 const C_MAJOR: ProgressionKey = { tonic: 0, scaleId: 'ionian', preferSharps: true };
@@ -465,6 +468,194 @@ describe('SongEditorComponent', () => {
       expect(unload().defaultPrevented).toBeFalse();
       setTitle('Not yet');
       expect(unload().defaultPrevented).toBeTrue();
+    });
+  });
+
+  describe('chords on the sheet', () => {
+    const sheet = (): SongSheetComponent => {
+      const found = harness.fixture.debugElement.query(By.directive(SongSheetComponent));
+      if (!found) throw new Error('No sheet on the page');
+      return found.componentInstance;
+    };
+    const editorState = (): EditorState => {
+      const state = sheet().editorState();
+      if (!state) throw new Error('No editor');
+      return state;
+    };
+    const editor = (): HTMLElement => element('.ProseMirror');
+    const field = (): HTMLInputElement | null => host().querySelector<HTMLInputElement>('.chord-field-anchor input');
+    /** Lets ProseMirror's DOM observer read a change the browser made, which it does on a mutation callback. */
+    const settled = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 20));
+
+    /** Puts the caret at `pos` in the lyrics and presses `[` there, as the browser types it. */
+    async function bracketAt(pos: number): Promise<void> {
+      sheet().focus();
+      const state = editorState();
+      sheet().run(() => ({ kind: 'edit', tr: state.tr.setSelection(TextSelection.create(state.doc, pos)) }));
+      document.execCommand('insertText', false, '[');
+      await settled();
+      harness.detectChanges();
+    }
+
+    function typeInField(text: string): void {
+      const input = field();
+      if (!input) throw new Error('No chord field');
+      input.value = text;
+      input.dispatchEvent(new InputEvent('input', { data: text.slice(-1), inputType: 'insertText' }));
+      harness.detectChanges();
+    }
+
+    function keyIn(target: HTMLElement, key: string, modifiers: { altKey?: boolean } = {}): void {
+      target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...modifiers }));
+      harness.detectChanges();
+    }
+
+    // "Last Dance": the section opens at 0, its line at 1, C at 2, "Got me " from 3, Am at 10, "thinking" from 11.
+
+    it('opens the chord field at the caret on [, with its hint, and places the chord on Enter as one undo step', async () => {
+      const song = await storeSong();
+      await open(song.id);
+      await bracketAt(7);
+
+      const input = field();
+      expect(input).not.toBeNull();
+      expect(document.activeElement).toBe(input);
+      expect(input?.getAttribute('aria-label')).toBe('Chord name or numeral');
+      expect(editorState().doc.textContent).toBe('Got me thinking');
+
+      typeInField('F');
+      expect(text('.chord-field-anchor .chord-field-hint')).toBe('F · IV');
+      keyIn(field() ?? editor(), 'Enter');
+
+      expect(field()).toBeNull();
+      expect(names()).toEqual(['C', 'F', 'Am']);
+      expect(document.activeElement).toBe(editor());
+      expect(editorState().selection.from).toBe(8);
+
+      sheet().undo();
+      harness.detectChanges();
+      expect(names()).toEqual(['C', 'Am']);
+    });
+
+    it('opens a fresh field for a chord typed straight after one is placed, before the page draws again', async () => {
+      const song = await storeSong();
+      await open(song.id);
+      await bracketAt(7);
+      typeInField('F');
+
+      // Enter, and the next `[` at once: no change detection of the spec's own in between, as fast typing allows none.
+      field()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      await bracketAt(14);
+
+      expect(field()?.value).toBe('');
+      expect(document.activeElement).toBe(field());
+      typeInField('G]');
+      expect(names()).toEqual(['C', 'F', 'Am', 'G']);
+    });
+
+    it('places a chord typed the ChordPro way, [F] in the middle of a line', async () => {
+      const song = await storeSong();
+      await open(song.id);
+      await bracketAt(7);
+
+      typeInField('F]');
+
+      expect(field()).toBeNull();
+      expect(names()).toEqual(['C', 'F', 'Am']);
+      expect(document.activeElement).toBe(editor());
+    });
+
+    it('keeps the field open on a chord it cannot read, and places nothing', async () => {
+      const song = await storeSong();
+      await open(song.id);
+      await bracketAt(7);
+
+      typeInField('Hm');
+      keyIn(field() ?? editor(), 'Enter');
+
+      expect(field()).not.toBeNull();
+      expect(text('.chord-field-anchor .chord-field-hint')).toMatch(/"Hm" is not a note/);
+      expect(names()).toEqual(['C', 'Am']);
+    });
+
+    it('closes the field on Escape, placing nothing, with the focus back in the lyrics at the caret', async () => {
+      const song = await storeSong();
+      await open(song.id);
+      await bracketAt(7);
+
+      typeInField('F');
+      keyIn(field() ?? editor(), 'Escape');
+
+      expect(field()).toBeNull();
+      expect(names()).toEqual(['C', 'Am']);
+      expect(document.activeElement).toBe(editor());
+      expect(editorState().selection.from).toBe(7);
+    });
+
+    it('closes the field, placing nothing, when the focus leaves it', async () => {
+      const song = await storeSong();
+      await open(song.id);
+      await bracketAt(7);
+
+      element<HTMLInputElement>('.song-title').focus();
+      harness.detectChanges();
+
+      expect(field()).toBeNull();
+      expect(names()).toEqual(['C', 'Am']);
+      expect(document.activeElement).toBe(element('.song-title'));
+    });
+
+    it('opens the chord popover on a click on a name, and on Enter with the chord selected', async () => {
+      const song = await storeSong();
+      await open(song.id);
+
+      (host().querySelectorAll<HTMLElement>('.song-chord-name')[1]).click();
+      harness.detectChanges();
+      expect(host().querySelector('.chord-popover-anchor [role="dialog"]')).not.toBeNull();
+      expect(element<HTMLInputElement>('.chord-popover-anchor input').value).toBe('Am');
+
+      keyIn(element('.chord-popover-anchor input'), 'Escape');
+      expect(host().querySelector('.chord-popover-anchor')).toBeNull();
+      expect(document.activeElement).toBe(editor());
+      const selection = editorState().selection;
+      expect(selection instanceof NodeSelection && selection.from).toBe(10);
+
+      keyIn(editor(), 'Enter');
+      expect(host().querySelector('.chord-popover-anchor [role="dialog"]')).not.toBeNull();
+    });
+
+    it('changes the chord and its length from the popover, and deletes it', async () => {
+      const song = await storeSong();
+      await open(song.id);
+      (host().querySelectorAll<HTMLElement>('.song-chord-name')[1]).click();
+      harness.detectChanges();
+
+      const input = element<HTMLInputElement>('.chord-popover-anchor input');
+      input.value = 'Dm';
+      input.dispatchEvent(new InputEvent('input', { data: 'm', inputType: 'insertText' }));
+      keyIn(input, 'Enter');
+      expect(names()).toEqual(['C', 'Dm']);
+
+      press('.chord-popover-anchor .length-longer');
+      const chords = sectionsOf(editorState().doc).flatMap(entry => chordsOf(entry.node, entry.pos));
+      expect(chords.map(entry => entry.attrs.lengthBeats)).toEqual([4, 5]);
+
+      press('.chord-popover-anchor .delete-chord');
+      expect(names()).toEqual(['C']);
+      expect(host().querySelector('.chord-popover-anchor')).toBeNull();
+      expect(document.activeElement).toBe(editor());
+    });
+
+    it('says why Alt+arrow could not move a chord, in the live region', async () => {
+      const song = await storeSong();
+      await open(song.id);
+      host().querySelectorAll<HTMLElement>('.song-chord-name')[0].click();
+      harness.detectChanges();
+      keyIn(element('.chord-popover-anchor input'), 'Escape');
+
+      keyIn(editor(), 'ArrowLeft', { altKey: true });
+
+      expect(messages()).toBe('The chord is already at the start of its line.');
     });
   });
 

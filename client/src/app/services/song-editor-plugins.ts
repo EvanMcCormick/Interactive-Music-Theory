@@ -1,12 +1,14 @@
-import { baseKeymap, splitBlock } from 'prosemirror-commands';
+import { baseKeymap, chainCommands, splitBlock } from 'prosemirror-commands';
 import { closeHistory, history, redo, undo } from 'prosemirror-history';
 import { InputRule, inputRules, undoInputRule } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
 import { Node } from 'prosemirror-model';
 import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { SectionKind } from '../models/song.model';
+import { ChordAtomAttrs, SectionKind } from '../models/song.model';
+import { chordFromText } from './song-chord-parse';
 import {
+  SongKeyRules,
   characterWidthAt,
   commandOf,
   isSongCommand,
@@ -14,7 +16,7 @@ import {
   moveChordBy,
   selectedChordOf
 } from './song-commands';
-import { createSongIdsPlugin } from './song-document';
+import { ChordAt, chordSlotOf, createSongIdsPlugin, songMetaOf } from './song-document';
 import { songSchema } from './song-schema';
 
 /**
@@ -33,14 +35,17 @@ import { songSchema } from './song-schema';
  * - **Enter** splits the lyric line at the caret, inside its section - never
  *   the section itself, which `baseKeymap`'s Enter does on an empty line in
  *   the middle of one (`liftEmptyBlock` splits the parent). With a chord
- *   selected, the line is split just after the chord and the chord is kept:
- *   Enter is not a way to delete a chord.
- * - **Shift-Enter** does exactly what Enter does. A song's line break *is* a
- *   new lyric line - the schema has no soft break inside one, because a line is
- *   the unit the syllable margin counts and a chord sheet prints - and Shift-
- *   Enter is the line break a hand reaches for from chat boxes and word
- *   processors. Making it do nothing, or something else, would punish the
- *   habit.
+ *   selected it **opens the chord** - its popover, through `onChordOpen` -
+ *   which is the keyboard's way to what a click on its name does. Without
+ *   that listener the line is split just after the chord, and the chord is
+ *   kept: Enter is never a way to delete a chord.
+ * - **Shift-Enter** splits the line as Enter does - and with a chord selected
+ *   it still splits just after it rather than opening it. A song's line break
+ *   *is* a new lyric line - the schema has no soft break inside one, because a
+ *   line is the unit the syllable margin counts and a chord sheet prints - and
+ *   Shift-Enter is the line break a hand reaches for from chat boxes and word
+ *   processors, so it stays a line break wherever the caret is, and a line can
+ *   still be ended straight after a selected chord.
  * - **Backspace / Delete** are `baseKeymap`'s: they join two lines of one
  *   section. At a section's edge they stop, because sections are `isolating`
  *   in the schema - and they also *take* the key there, doing nothing, so the
@@ -61,35 +66,68 @@ import { songSchema } from './song-schema';
  *   cannot fire instead and drop the selection. With no chord selected they are
  *   left to the browser.
  *
- * ## `[`: a chord on a line with words, a section heading on an empty line
+ * ## `[`: the chord field on a line with words, a bracket on an empty line
  *
- * Two features want the bracket. Pressing `[` opens the chord field (task 7)
- * where a chord belongs; typing `[Chorus]` on an empty line makes a section.
- * The rule that lets both live is **which line the caret is in**:
+ * Two features want the bracket. Pressing `[` opens the chord field where a
+ * chord belongs; typing `[Chorus]` on an empty line makes a section. The rule
+ * that lets both live is **which line the caret is in**:
  *
  * - on a lyric line with anything on it - words or chords - `[` asks for the
  *   chord field (`onChordFieldRequest`) and is not typed;
- * - on an empty lyric line `[` is typed as a bracket, so the heading rule can
- *   see `[Chorus]` when its `]` arrives.
+ * - on an empty lyric line `[` is typed as a bracket, so the bracket rule can
+ *   read `[Chorus]` - or `[Am]` - when its `]` arrives.
  *
- * The cost is that `[` cannot open the chord field on an empty line; a chord
- * there comes from the Chords panel, or by typing a word first. That is the
- * smaller loss: an empty line is exactly where a heading goes, and a chord
- * with no word under it has nothing to be anchored to yet.
+ * ## `[Am]` typed the ChordPro way
+ *
+ * Many songwriters type chords inline, ChordPro style: `[Am]Wondering [F]where
+ * the`. That habit works on the sheet from the first key to the last, by two
+ * roads that meet:
+ *
+ * - **At the start of an empty line** the bracket is typed, and the bracket
+ *   rule below reads `[Am]` as a chord when `]` arrives.
+ * - **Anywhere else** `[` opens the chord field instead of being typed, and the
+ *   field takes `]` as Enter (`SongChordFieldComponent`): `[F]` typed mid-line
+ *   places F where the `[` was pressed, and the focus comes back to the lyrics
+ *   after the chord, ready for the next word.
+ *
+ * So there is no mid-line rule here, on purpose. With the field listening, a
+ * `[` is never typed into a line that has anything on it, so a rule looking for
+ * `[Am]` there could only ever meet brackets that were pasted in - and a paste
+ * of ChordPro is the import's to read (S5), with its report, not an input
+ * rule's to rewrite behind the user's back.
  *
  * It is a `handleTextInput` hook rather than a keymap entry because it is
  * about the *character*: on many keyboard layouts `[` is AltGr+8 or Option+5,
  * which a keymap would have to list layout by layout, while the text input
  * arrives as `[` whatever produced it.
  *
- * ## The `[Section]` rule
+ * ## The bracket rule: `[Am]` is a chord, `[Chorus]` a section
  *
- * `[Name]` typed on an otherwise empty lyric line - no words, no chords, nothing
- * after the caret - turns that line into the start of a new section called
- * `Name`. Intro, Verse, Pre-Chorus, Chorus, Bridge and Outro, in any case and
- * with an optional number ("Verse 2"), give their kind (`sectionHeadingOf`);
- * any other name is a section of kind `other`. The typed text goes; the line
- * stays, empty, with the caret in it, ready for the section's first words.
+ * `[Text]` typed on an otherwise empty lyric line - no words, no chords,
+ * nothing after the caret - is read one of two ways, and the typed text goes:
+ *
+ * - **A chord, when `chordFromText` reads the text as one in the song's key** -
+ *   a name or a numeral, exactly what the chord field accepts. The chord atom
+ *   goes at the start of the line (`chordSlotOf`: voiced, a bar of the song's
+ *   meter long) with the caret after it, ready for the word it sits over. The
+ *   key and meter are read off the document as the bracket closes; the app's
+ *   scale rules come in through `SongEditorOptions.keys`, and without them
+ *   every bracket is a heading.
+ * - **A section heading otherwise.** `[Name]` turns the line into the start of
+ *   a new section called `Name`. Intro, Verse, Pre-Chorus, Chorus, Bridge and
+ *   Outro, in any case and with an optional number ("Verse 2"), give their
+ *   kind (`sectionHeadingOf`); any other name is a section of kind `other`. The
+ *   line stays, empty, with the caret in it, ready for the section's first
+ *   words.
+ *
+ * **When a word could be both,** the chord wins, because it is asked first -
+ * but none of the section words reads as a chord, and nor does a word that
+ * only starts like one: `chordFromText` reads the whole text or refuses it, so
+ * `[Amen]` is a section (`A`, a minor `m`, then "en", which is no chord
+ * suffix), as are `[Bridge]`, `[Coda]`, `[Intro]` and `[Verse 2]`. What does
+ * read as a chord is a bare letter or numeral: `[A]` is the chord A, not the A
+ * section of an AABA song. ChordPro reads it the same way; a section with such
+ * a name comes from "+ Section" or Rename.
  *
  * "From that line on": the line and every line after it in its section become
  * the new section, and the lines before it stay where they were. On a section's
@@ -104,9 +142,11 @@ import { songSchema } from './song-schema';
  * from the typing on either side of it - `song-commands.ts` closes the step
  * before (`closeHistory`), and the last plugin here closes it after, by
  * appending an empty, closing transaction to any dispatch that carried a
- * command. The heading rule is a command by that measure, so Mod-z after it
- * undoes the section and leaves the typing (`[Chorus`, as the closing bracket
- * was never inserted). The id plugin's repairs join the step they repair.
+ * command. The bracket rule is a command by that measure, so Mod-z after it
+ * undoes the section or the chord and leaves the typing (`[Chorus` or `[Am`,
+ * as the closing bracket was never inserted), and a Backspace straight after
+ * it gives back all of what was typed, bracket included. The id plugin's
+ * repairs join the step they repair.
  */
 
 /** Where the caret is on screen, as the view measures it. */
@@ -129,6 +169,13 @@ export interface SongEditorOptions {
   onChordFieldRequest?: (request: ChordFieldRequest) => void;
   /** Told why a key's command was refused - an Alt+arrow at the edge of a line. */
   onRefuse?: (reason: string) => void;
+  /** Called when Enter is pressed on a selected chord; without it, Enter splits the line after the chord. */
+  onChordOpen?: (chord: ChordAt) => void;
+  /**
+   * The app's scale rules, by which the bracket rule reads `[Am]` in the song's key - the key itself is the
+   * document's. Without them every `[...]` on an empty line is a section heading.
+   */
+  keys?: Pick<SongKeyRules, 'chordScaleFor'>;
 }
 
 /** A heading read from `[...]`: the section's kind and its name as typed. */
@@ -214,7 +261,7 @@ function chordFieldPlugin(options: SongEditorOptions): Plugin {
 }
 
 // ---------------------------------------------------------------------------
-// The [Section] rule
+// The bracket rule
 // ---------------------------------------------------------------------------
 
 /**
@@ -241,18 +288,40 @@ function startSection(tr: Transaction, pos: number, heading: SectionHeading): Tr
   return tr.setSelection(TextSelection.create(tr.doc, linePos + 3));
 }
 
-const sectionHeadingRule = new InputRule(HEADING_RULE, (state, match, start, end) => {
-  const $start = state.doc.resolve(start);
-  const line = $start.parent;
-  // Otherwise empty: the heading is the line's whole text - nothing before it,
-  // nothing after the caret, no chord anywhere in it.
-  if (!isLyricLine(line) || $start.parentOffset !== 0 || end !== $start.end()) return null;
-  if (line.textContent.length !== line.content.size) return null;
+/**
+ * The chord atom `text` names in the song's key - as `[Am]` would place it - or
+ * null when it names none there, or there are no rules to read it by. The key
+ * and the meter are the document's, as the bracket closes.
+ */
+function bracketChordOf(text: string, doc: Node, keys: SongEditorOptions['keys']): ChordAtomAttrs | null {
+  if (keys === undefined) return null;
+  const { key, timeSignature } = songMetaOf(doc);
+  const scaleIntervals = keys.chordScaleFor(key);
+  const reading = chordFromText(text, key, scaleIntervals);
+  return reading.kind === 'chord' ? chordSlotOf(reading.degree, key, scaleIntervals, timeSignature) : null;
+}
 
-  const heading = sectionHeadingOf(match[1]);
-  if (heading === null) return null;
-  return markSongCommand(startSection(state.tr.delete(start, end), start, heading));
-});
+/** `[Am]` or `[Chorus]` typed on an empty line: a chord at its start, or a section from it on. See the header. */
+function bracketRule(keys: SongEditorOptions['keys']): InputRule {
+  return new InputRule(HEADING_RULE, (state, match, start, end) => {
+    const $start = state.doc.resolve(start);
+    const line = $start.parent;
+    // Otherwise empty: the text is the line's whole text - nothing before it,
+    // nothing after the caret, no chord anywhere in it.
+    if (!isLyricLine(line) || $start.parentOffset !== 0 || end !== $start.end()) return null;
+    if (line.textContent.length !== line.content.size) return null;
+
+    const chord = bracketChordOf(match[1], state.doc, keys);
+    if (chord !== null) {
+      const tr = state.tr.delete(start, end).insert(start, songSchema.nodes.chord.create(chord));
+      return markSongCommand(tr.setSelection(TextSelection.create(tr.doc, start + 1)));
+    }
+
+    const heading = sectionHeadingOf(match[1]);
+    if (heading === null) return null;
+    return markSongCommand(startSection(state.tr.delete(start, end), start, heading));
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Keys
@@ -302,6 +371,16 @@ export function stepPastChord(dir: -1 | 1): Command {
   };
 }
 
+/** Enter on a selected chord: asks for it to be opened, changing nothing. False with no chord selected or no listener. */
+function openSelectedChord(onOpen: ((chord: ChordAt) => void) | undefined): Command {
+  return (state, dispatch) => {
+    const chord = selectedChordOf(state);
+    if (chord === null || onOpen === undefined) return false;
+    if (dispatch !== undefined) onOpen(chord);
+    return true;
+  };
+}
+
 /** Alt+arrow: move the selected chord a letter. Taken whenever a chord is selected. */
 function moveSelectedChord(delta: -1 | 1, onRefuse: ((reason: string) => void) | undefined): Command {
   return (state, dispatch) => {
@@ -334,7 +413,7 @@ function songKeymap(options: SongEditorOptions): Record<string, Command> {
     'Mod-z': undo,
     'Mod-y': redo,
     'Mod-Shift-z': redo,
-    Enter: splitLine,
+    Enter: chainCommands(openSelectedChord(options.onChordOpen), splitLine),
     'Shift-Enter': splitLine,
     Backspace: undoInputRule,
     ArrowLeft: stepPastChord(-1),
@@ -383,7 +462,7 @@ function commandStepPlugin(): Plugin {
 export function songEditorPlugins(options: SongEditorOptions = {}): Plugin[] {
   return [
     chordFieldPlugin(options),
-    inputRules({ rules: [sectionHeadingRule] }),
+    inputRules({ rules: [bracketRule(options.keys)] }),
     keymap(songKeymap(options)),
     keymap(baseKeymap),
     keymap(SECTION_EDGE_KEYMAP),

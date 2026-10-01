@@ -13,8 +13,11 @@
 }
 
 // The three lyric sizes `Aa` steps through. Names, headers and the room above each line are all in `em` of this.
+// Positioned, so the drop caret is placed in the sheet's own box and scrolls with the lyrics.
 .song-sheet {
   --lyric-size: 1.1rem;
+
+  position: relative;
 
   &[data-lyric-size='small'] {
     --lyric-size: 0.95rem;
@@ -22,6 +25,19 @@
 
   &[data-lyric-size='large'] {
     --lyric-size: 1.35rem;
+  }
+}
+
+// A thin bar at the letter a dragged chord would land on. Never a target itself, so the drop's hit test sees the line.
+.song-drop-caret {
+  position: absolute;
+  width: 2px;
+  margin-left: -1px;
+  background-color: var(--sheet-accent);
+  pointer-events: none;
+
+  &[hidden] {
+    display: none;
   }
 }
 
@@ -229,8 +245,20 @@
     font-weight: 700;
     line-height: 1.2;
     white-space: nowrap;
-    cursor: pointer;
+    cursor: grab;
     user-select: none;
+    // A finger on a name drags the chord rather than scrolling the sheet.
+    touch-action: none;
+  }
+
+  // The name follows the pointer while it is dragged (its transform is set by `ChordView`), lifted off the sheet.
+  .song-chord.is-dragging .song-chord-name {
+    z-index: 10;
+    cursor: grabbing;
+    background-color: var(--sheet-menu);
+    box-shadow:
+      0 0 0 0.15em var(--sheet-menu),
+      0 4px 12px rgb(0 0 0 / 45%);
   }
 
   .song-chord.ProseMirror-selectednode {

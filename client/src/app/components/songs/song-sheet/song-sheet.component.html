@@ -1,4 +1,6 @@
 <!-- A region named for what it holds; the editor ProseMirror makes inside `mount` is the textbox. -->
 <section class="song-sheet" aria-label="Song sheet" [attr.data-lyric-size]="lyricSize">
   <div #mount class="song-sheet-mount"></div>
+  <!-- Where a dragged chord would land; shown and placed by `showDropCaret`, outside change detection. -->
+  <div #dropCaret class="song-drop-caret" hidden aria-hidden="true"></div>
 </section>

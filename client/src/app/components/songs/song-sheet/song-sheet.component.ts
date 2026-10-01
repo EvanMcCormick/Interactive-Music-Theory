@@ -18,13 +18,20 @@ import { redo, redoDepth, undo, undoDepth } from 'prosemirror-history';
 import { Node } from 'prosemirror-model';
 import { EditorState, Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { SongEdit, SongKeyRules, commandOf } from '../../../services/song-commands';
-import { songMetaOf } from '../../../services/song-document';
-import { ChordFieldRequest, songEditorPlugins } from '../../../services/song-editor-plugins';
+import type { ChordAtomAttrs } from '../../../models/song.model';
+import { SongEdit, SongKeyRules, commandOf, insertChord, moveChordTo } from '../../../services/song-commands';
+import { ChordAt, songMetaOf } from '../../../services/song-document';
+import { CaretCoords, ChordFieldRequest, songEditorPlugins } from '../../../services/song-editor-plugins';
 import { LyricSize } from '../../../services/song-sheet-preferences.service';
-import { ChordNaming, ChordView, chordSpacingPlugin, spaceChordNames } from './chord-view';
+import { ChordNaming, ChordView, ChordViewHost, chordSpacingPlugin, spaceChordNames } from './chord-view';
 import { lyricPlaceholderPlugin } from './lyric-placeholder';
 import { SectionHost, SectionView } from './section-view';
+
+/** A chord to open in its popover: which, and the box of its name on screen, which the popover hangs under. */
+export interface ChordOpening {
+  id: string;
+  anchor: CaretCoords;
+}
 
 /** Whether the song's history has a step to undo and one to redo: what the toolbar's Undo and Redo show. */
 export interface SheetHistory {
@@ -44,6 +51,12 @@ export interface SheetHistory {
  * **Outside Angular's zone.** The view and its DOM listeners are created outside it, so a keystroke, a selection change
  * or a pointer move over the lyrics runs no change detection; the zone is re-entered only to emit. ProseMirror needs
  * nothing from Angular, and the sheet is the busiest surface on the page.
+ *
+ * **Chords are placed, opened and moved here, and edited by the page.** `[` asks for the chord field
+ * (`chordFieldRequested`), and the page places what it reads with `placeChord`; a click on a name or Enter on a selected
+ * chord asks for its popover (`chordOpened`), whose edits come back through `run`; and a chord's name is dragged to
+ * another letter here, outright (`ChordView`), with a thin caret showing where it will land and a refused drop said on
+ * `refused`. The field and the popover are the page's, not the sheet's: the sheet owns the editor and nothing else.
  *
  * **What the page shows it with** - names or numerals, the lyric size, the key rules chord names are worked out by -
  * are inputs, because they are the viewer's or the app's and not the song's (`SongSheetPreferencesService`). A change
@@ -76,12 +89,18 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
   @Output() readonly notice = new EventEmitter<string>();
   @Output() readonly historyChanged = new EventEmitter<SheetHistory>();
   /**
-   * `[` pressed on a line with words: the chord field is wanted at `pos` (task 7). Only while something listens - with
+   * `[` pressed on a line with words: the chord field is wanted at `pos`. Only while something listens - with
    * nothing bound, `[` is typed as itself, so the sheet never swallows a key it has no answer for.
    */
   @Output() readonly chordFieldRequested = new EventEmitter<ChordFieldRequest>();
+  /**
+   * A chord's popover is wanted: its name was clicked, or Enter pressed with it selected. The chord is selected. Enter
+   * asks only while something listens - with nothing bound, Enter on a selected chord splits the line after it.
+   */
+  @Output() readonly chordOpened = new EventEmitter<ChordOpening>();
 
   @ViewChild('mount', { static: true }) private mount?: ElementRef<HTMLElement>;
+  @ViewChild('dropCaret', { static: true }) private dropCaret?: ElementRef<HTMLElement>;
 
   private readonly zone = inject(NgZone);
   private view: EditorView | null = null;
@@ -100,15 +119,17 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
 
     this.naming = this.namingFor(doc);
     this.zone.runOutsideAngular(() => {
-      const listening = this.chordFieldRequested.observed;
       const state = EditorState.create({
         doc,
         plugins: [
           ...songEditorPlugins({
-            onChordFieldRequest: listening
+            onChordFieldRequest: this.chordFieldRequested.observed
               ? request => this.zone.run(() => this.chordFieldRequested.emit(request))
               : undefined,
-            onRefuse: reason => this.zone.run(() => this.refused.emit(reason))
+            onRefuse: reason => this.zone.run(() => this.refused.emit(reason)),
+            onChordOpen: this.chordOpened.observed ? chord => this.openChordAt(chord) : undefined,
+            // Read through on each use, so a new `keys` input reaches the bracket rule without a new editor.
+            keys: { chordScaleFor: key => this.keys?.chordScaleFor(key) ?? null }
           }),
           lyricPlaceholderPlugin(),
           chordSpacingPlugin()
@@ -119,7 +140,7 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
         state,
         dispatchTransaction: tr => this.dispatch(tr),
         nodeViews: {
-          chord: (node, view, getPos) => new ChordView(node, view, getPos, () => this.naming, this.chordViews),
+          chord: (node, view, getPos) => new ChordView(node, view, getPos, this.chordHost(view)),
           section: (node, view) => new SectionView(node, this.sectionHost(view))
         },
         attributes: {
@@ -180,6 +201,17 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
     return view !== null && redo(view.state, tr => this.dispatch(tr));
   }
 
+  /**
+   * Places the chord `attrs` at `pos` - where `[` was pressed, as the chord field recorded it - as one undo step, and
+   * puts the focus back in the lyrics with the caret just after the chord, for the word it sits over. True when it was
+   * placed; a refusal is emitted on `refused`, and the focus comes back either way.
+   */
+  placeChord(pos: number, attrs: ChordAtomAttrs): boolean {
+    const placed = this.run(insertChord(attrs, pos));
+    this.focus();
+    return placed;
+  }
+
   /** Puts the focus in the lyrics, at the caret. */
   focus(): void {
     this.view?.focus();
@@ -235,6 +267,57 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
     if (this.view !== null) spaceChordNames(this.view.dom);
   }
 
+  /** What each chord's view may ask of this sheet. */
+  private chordHost(view: EditorView): ChordViewHost {
+    return {
+      naming: () => this.naming,
+      views: this.chordViews,
+      open: (id, name) =>
+        this.zone.run(() => this.chordOpened.emit({ id, anchor: anchorOf(name.getBoundingClientRect()) })),
+      showDropCaret: pos => this.showDropCaret(view, pos),
+      drop: (id, pos) => {
+        // No position at all - a drop off the sheet - is handed on as one no line can hold, so the refusal and its
+        // words are `moveChordTo`'s, the same as for a drop between sections.
+        this.run(moveChordTo(id, pos ?? Number.NaN));
+        view.focus();
+      }
+    };
+  }
+
+  /** Enter on a selected chord: its popover, hung under its name - or under its place in the line, if no name is drawn. */
+  private openChordAt(chord: ChordAt): void {
+    const view = this.view;
+    if (view === null) return;
+    const dom = view.nodeDOM(chord.pos);
+    const name = dom instanceof HTMLElement ? dom.querySelector('.song-chord-name') : null;
+    const anchor = name === null ? view.coordsAtPos(chord.pos) : name.getBoundingClientRect();
+    this.zone.run(() => this.chordOpened.emit({ id: chord.attrs.id, anchor: anchorOf(anchor) }));
+  }
+
+  /**
+   * Shows the drop caret at `pos` while a chord is dragged, or hides it - and hides it too where the chord could not be
+   * dropped, so the caret appears only where letting go would move the chord.
+   *
+   * Written to the element's style directly rather than bound: this runs on every pointer move, outside Angular's
+   * zone, and a change detection pass per move would be all cost - the same reason the editor itself runs outside it.
+   */
+  private showDropCaret(view: EditorView, pos: number | null): void {
+    const caret = this.dropCaret?.nativeElement;
+    if (caret === undefined) return;
+    const doc = view.state.doc;
+    if (pos === null || pos > doc.content.size || doc.resolve(pos).parent.type.name !== 'lyricLine') {
+      caret.hidden = true;
+      return;
+    }
+    // The caret is positioned in the sheet's own box, which scrolls with the lyrics.
+    const frame = caret.parentElement?.getBoundingClientRect();
+    const at = view.coordsAtPos(pos);
+    caret.style.left = `${at.left - (frame?.left ?? 0)}px`;
+    caret.style.top = `${at.top - (frame?.top ?? 0)}px`;
+    caret.style.height = `${at.bottom - at.top}px`;
+    caret.hidden = false;
+  }
+
   /** What one section's header may do on this sheet. */
   private sectionHost(view: EditorView): SectionHost {
     return {
@@ -248,4 +331,9 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
           ?.focus()
     };
   }
+}
+
+/** A box on screen as the three edges an anchored popup needs. */
+function anchorOf(box: { left: number; top: number; bottom: number }): CaretCoords {
+  return { left: box.left, top: box.top, bottom: box.bottom };
 }

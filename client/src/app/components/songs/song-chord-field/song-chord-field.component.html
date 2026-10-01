@@ -1,0 +1,28 @@
+<div class="chord-field">
+  <input
+    #input
+    type="text"
+    class="chord-field-input"
+    autocomplete="off"
+    autocapitalize="off"
+    spellcheck="false"
+    [attr.aria-label]="label"
+    [attr.aria-describedby]="hintId"
+    [attr.aria-invalid]="invalid"
+    [value]="text"
+    (input)="onInput(input)"
+    (keydown)="onKeydown($event)"
+  />
+  <p
+    class="chord-field-hint"
+    [id]="hintId"
+    [class.is-chord]="hint.kind === 'chord'"
+    [class.is-refused]="hint.kind === 'refused'"
+    [class.is-invalid]="invalid"
+  >
+    {{ hint.text }}
+  </p>
+  <!-- A refusal at Enter, said once (see the class comment); the hint above already shows it. -->
+  <span class="chord-field-alert" role="alert">{{ alerts[0] }}</span
+  ><span class="chord-field-alert" role="alert">{{ alerts[1] }}</span>
+</div>

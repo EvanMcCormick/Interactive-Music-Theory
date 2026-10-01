@@ -17,6 +17,7 @@ import {
   SongEdit,
   SongEditOutcome,
   addSection,
+  changeChord,
   chordWithId,
   commandOf,
   copyLabelOf,
@@ -266,6 +267,22 @@ describe('chord commands', () => {
       expect(reasonOf(stateOf(doc, d => new AllSelection(d)), insertChord(chordAttrs(5)))).toMatch(/line of lyrics/);
     });
 
+    it('puts the chord at a position it is given instead of the caret, with the caret after it', () => {
+      const at = before(doc, 'where');
+      const after = run(stateOf(doc, caret(2)), insertChord(chordAttrs(5), at));
+
+      expect(sheetOf(after.doc)).toEqual(['Wondering [5]where']);
+      expect(after.selection.empty).toBeTrue();
+      expect(after.selection.from).toBe(at + 1);
+    });
+
+    it('refuses a position it is given outside a line of lyrics, or outside the song', () => {
+      const state = stateOf(doc, caret(2));
+      expect(reasonOf(state, insertChord(chordAttrs(5), 0))).toMatch(/line of lyrics/);
+      expect(reasonOf(state, insertChord(chordAttrs(5), doc.content.size + 3))).toMatch(/line of lyrics/);
+      expect(reasonOf(state, insertChord(chordAttrs(5), 2.5))).toMatch(/line of lyrics/);
+    });
+
     it('refuses a chord the schema refuses, saying why', () => {
       const broken = { ...chordAttrs(5), lengthBeats: Number.NaN };
 
@@ -315,6 +332,59 @@ describe('chord commands', () => {
 
     it('is one undo step', () => {
       expectOneUndoStep(stateOf(doc), replaceChord(id, chordAttrs(3)));
+    });
+  });
+
+  describe('changeChord', () => {
+    /** Am, two beats long, holding pitches the user wrote and a rhythm the user wrote. */
+    const owned: ChordAtomAttrs = {
+      ...chordAttrs(5),
+      lengthBeats: 2,
+      notes: [{ midi: 61, startBeat: 0.5, lengthBeats: 1, velocity: 100 }],
+      owned: { pitches: true, timing: true, velocity: false }
+    };
+    const am = songSchema.node('chord', owned);
+    const id = owned.id;
+    const doc = song(section('s1', 'Verse 1', line('Wondering ', am, 'where')));
+    const plain = chord(5);
+    const plainDoc = song(section('s1', 'Verse 1', line(plain, 'Wondering')));
+
+    it('writes the new degree over the chord, keeping its id, its place and its length', () => {
+      const after = run(stateOf(doc), changeChord(keys, id, degreeAt(3)));
+
+      expect(sheetOf(after.doc)).toEqual(['Wondering [3]where']);
+      const changed = onlyChord(after.doc);
+      expect(changed.id).toBe(id);
+      expect(changed.lengthBeats).toBe(2);
+      expect(changed.harmony).toEqual({ kind: 'degree', degree: degreeAt(3) });
+    });
+
+    it('voices the new chord, handing back pitches the slot owned and keeping the rhythm it owned', () => {
+      const changed = onlyChord(run(stateOf(doc), changeChord(keys, id, degreeAt(3))).doc);
+
+      // F major: F, A, C - the user's C# went with the chord they replaced.
+      expect(pitchClassesOf(changed)).toEqual([0, 5, 9]);
+      expect(changed.owned).toEqual({ pitches: false, timing: true, velocity: false });
+      expect(changed.notes.every(note => note.startBeat === 0.5 && note.lengthBeats === 1)).toBeTrue();
+    });
+
+    it('changes nothing when the degree is the one the chord has, owned pitches and all', () => {
+      expect(changeChord(keys, id, degreeAt(5))(stateOf(doc)).kind).toBe('unchanged');
+      expect(changeChord(keys, plain.attrs['id'], degreeAt(5))(stateOf(plainDoc)).kind).toBe('unchanged');
+    });
+
+    it('refuses a chord that is not in the song, and a key that cannot build chords', () => {
+      expect(reasonOf(stateOf(doc), changeChord(keys, 'gone', degreeAt(3)))).toMatch(/no longer in the song/);
+      const pentatonic = songSchema.node('doc', { ...META, key: { ...C_MAJOR, scaleId: 'majorPentatonic' } }, [
+        section('s1', 'Verse 1', line(plain, 'Wondering'))
+      ]);
+      expect(reasonOf(stateOf(pentatonic), changeChord(keys, plain.attrs['id'], degreeAt(3)))).toMatch(
+        /can't build chords/
+      );
+    });
+
+    it('is one undo step', () => {
+      expectOneUndoStep(stateOf(plainDoc), changeChord(keys, plain.attrs['id'], degreeAt(0)));
     });
   });
 

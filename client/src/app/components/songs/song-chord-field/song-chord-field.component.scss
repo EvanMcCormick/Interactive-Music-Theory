@@ -1,0 +1,61 @@
+@use '../../../styles/a11y';
+
+// The song pages' tokens, each with its own value as the fallback so the field renders the same outside the page.
+// A chord read is in the sheet's chord blue, so the hint previews the name in the colour it will have on the sheet.
+:host {
+  --field-surface: var(--songs-surface, #1a252f);
+  --field-border: var(--songs-border, #465666);
+  --field-text: var(--songs-text, #ecf0f1);
+  --field-text-dim: var(--songs-text-dim, #adbcc8);
+  --field-chord: #5dade2;
+  --field-error: var(--songs-error, #f1948a);
+
+  display: block;
+}
+
+.chord-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.chord-field-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.3rem 0.45rem;
+  background-color: var(--field-surface);
+  border: 1px solid var(--field-border);
+  border-radius: 4px;
+  color: var(--field-text);
+  font: inherit;
+  font-weight: 700;
+
+  &:focus-visible {
+    outline: 2px solid var(--field-text);
+    outline-offset: -1px;
+  }
+
+  &[aria-invalid='true'] {
+    border-color: var(--field-error);
+  }
+}
+
+.chord-field-hint {
+  margin: 0;
+  color: var(--field-text-dim);
+  font-size: 0.85em;
+  line-height: 1.3;
+
+  &.is-chord {
+    color: var(--field-chord);
+    font-weight: 700;
+  }
+
+  &.is-refused.is-invalid {
+    color: var(--field-error);
+  }
+}
+
+.chord-field-alert {
+  @extend %sr-only;
+}

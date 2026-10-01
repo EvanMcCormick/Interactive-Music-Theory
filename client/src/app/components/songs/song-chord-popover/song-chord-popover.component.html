@@ -1,0 +1,51 @@
+<!-- Non-modal: no aria-modal, and nothing behind it is made inert (see the class comment). -->
+<div *ngIf="model as model" #dialog class="chord-popover" role="dialog" [attr.aria-labelledby]="titleId">
+  <p class="chord-popover-title" [id]="titleId">{{ model.title }}</p>
+
+  <div class="chord-popover-row chord-popover-chord">
+    <span class="row-label" aria-hidden="true">Chord</span>
+    <app-song-chord-field
+      label="Chord"
+      [key]="model.key"
+      [scaleIntervals]="model.scaleIntervals"
+      [initial]="model.name"
+      [autofocus]="true"
+      (chosen)="changeChord($event)"
+      (cancelled)="cancel()"
+    ></app-song-chord-field>
+  </div>
+
+  <div class="chord-popover-row chord-popover-length" role="group" aria-label="Length">
+    <span class="row-label" aria-hidden="true">Length</span>
+    <div class="stepper">
+      <!-- Dimmed, not disabled, at the shortest: a press there changes nothing, and the button keeps its place in Tab. -->
+      <button
+        type="button"
+        class="tool length-shorter"
+        aria-label="A beat shorter"
+        [attr.aria-disabled]="atShortest()"
+        (click)="step(-1)"
+      >
+        −
+      </button>
+      <span class="length-value">{{ model.lengthText }}</span>
+      <button type="button" class="tool length-longer" aria-label="A beat longer" (click)="step(1)">+</button>
+    </div>
+    <div class="presets">
+      <button
+        *ngFor="let preset of model.presets; trackBy: trackByLabel"
+        type="button"
+        class="tool length-preset"
+        [class.on]="preset.beats === model.lengthBeats"
+        [attr.aria-pressed]="preset.beats === model.lengthBeats"
+        (click)="setLength(preset.beats)"
+      >
+        {{ preset.label }}
+      </button>
+    </div>
+  </div>
+
+  <div class="chord-popover-row chord-popover-actions">
+    <button type="button" class="tool delete-chord" (click)="remove()">Delete chord</button>
+  </div>
+</div>

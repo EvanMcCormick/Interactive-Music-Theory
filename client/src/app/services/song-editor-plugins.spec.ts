@@ -6,7 +6,9 @@ import { createExtensions } from '../models/progression-normalize';
 import { ProgressionKey } from '../models/progression.model';
 import { SongMeta } from '../models/song.model';
 import { chordWithId, commandOf, insertChord, setTitle } from './song-commands';
-import { chordSlotOf, sectionsOf } from './song-document';
+import { MusicTheoryService } from './music-theory.service';
+import { ProgressionKeyContext } from './progression-key-context';
+import { chordSlotOf, chordsOf, sectionsOf } from './song-document';
 import {
   ChordFieldRequest,
   SongEditorOptions,
@@ -226,6 +228,39 @@ describe('songEditorPlugins', () => {
       expect(outlineOf(editor.state.doc)).toEqual(['Verse 1 (verse): one * / two']);
     });
 
+    it('opens a selected chord instead, when the sheet listens for it, and changes nothing', () => {
+      const am = chord(5);
+      const doc = song(section('s1', 'Verse 1', line('one ', am, 'two')));
+      const pos = chordWithId(doc, am.attrs['id'])?.pos ?? -1;
+      const opened: string[] = [];
+      const editor = viewOf(doc, d => NodeSelection.create(d, pos), {
+        onChordOpen: chordAt => opened.push(`${chordAt.attrs.id}@${chordAt.pos}`)
+      });
+
+      expect(press(editor, 'Enter')).toBeTrue();
+
+      expect(opened).toEqual([`${am.attrs['id']}@${pos}`]);
+      expect(editor.state.doc.eq(doc)).toBeTrue();
+      expect(editor.state.selection).toEqual(jasmine.any(NodeSelection));
+    });
+
+    it('still splits after a selected chord on Shift-Enter, and splits a caret as before, when the sheet listens', () => {
+      const am = chord(5);
+      const doc = song(section('s1', 'Verse 1', line('one ', am, 'two')));
+      const pos = chordWithId(doc, am.attrs['id'])?.pos ?? -1;
+      const open = jasmine.createSpy('open');
+      const selected = viewOf(doc, d => NodeSelection.create(d, pos), { onChordOpen: open });
+
+      press(selected, 'Enter', { shift: true });
+      expect(outlineOf(selected.state.doc)).toEqual(['Verse 1 (verse): one * / two']);
+      selected.destroy();
+
+      const atCaret = viewOf(doc, caret(3), { onChordOpen: open });
+      press(atCaret, 'Enter');
+      expect(outlineOf(atCaret.state.doc)).toEqual(['Verse 1 (verse): o / ne *two']);
+      expect(open).not.toHaveBeenCalled();
+    });
+
     it('is what Shift-Enter does too: a line break is a new lyric line', () => {
       const doc = song(section('s1', 'Verse 1', line('one two')));
       const editor = viewOf(doc, caret(before(doc, ' two')));
@@ -384,6 +419,110 @@ describe('songEditorPlugins', () => {
       press(editor, 'Backspace');
 
       expect(outlineOf(editor.state.doc)).toEqual(['Verse 1 (verse): one / [Chorus]']);
+    });
+  });
+
+  describe('the [Chord] input rule', () => {
+    const keys = new ProgressionKeyContext(new MusicTheoryService());
+    const doc = song(section('s1', 'Verse 1', line('one'), line()));
+    const atEnd = (d: Node): Selection => Selection.atEnd(d);
+    const withKeys: SongEditorOptions = { keys };
+
+    /** The chords in the document, in order, each as its degree (0-6) and length. */
+    function chordsIn(d: Node): { degree: number | null; lengthBeats: number }[] {
+      const found: { degree: number | null; lengthBeats: number }[] = [];
+      d.descendants(node => {
+        if (node.type.name !== 'chord') return true;
+        const harmony = node.attrs['harmony'];
+        found.push({ degree: harmony.kind === 'degree' ? harmony.degree.degree : null, lengthBeats: node.attrs['lengthBeats'] });
+        return false;
+      });
+      return found;
+    }
+
+    it('places a chord at the start of an empty line, ChordPro style, with the caret after it', () => {
+      const editor = viewOf(doc, atEnd, withKeys);
+
+      type(editor, '[Am]');
+
+      expect(outlineOf(editor.state.doc)).toEqual(['Verse 1 (verse): one / *']);
+      expect(chordsIn(editor.state.doc)).toEqual([{ degree: 5, lengthBeats: 4 }]);
+      const [verse] = sectionsOf(editor.state.doc);
+      const [placed] = chordsOf(verse.node, verse.pos);
+      expect(editor.state.selection.empty).toBeTrue();
+      expect(editor.state.selection.from).toBe(placed.pos + 1);
+    });
+
+    it('reads numerals and names outside the key, in the song\'s key, a bar of its meter long', () => {
+      const aMinor = { tonic: 9, scaleId: 'aeolian', preferSharps: true };
+      const threeFour = { numerator: 3, denominator: 4, isCommon: false };
+      const waltz = songSchema.node('doc', { ...META, key: aMinor, timeSignature: threeFour }, [
+        section('s1', 'Verse 1', line())
+      ]);
+      const editor = viewOf(waltz, atEnd, withKeys);
+
+      type(editor, '[VII]words');
+      press(editor, 'Enter');
+      type(editor, '[Bb]');
+
+      // In A aeolian, VII is G (degree 6) and Bb is the flat second (degree 1).
+      expect(chordsIn(editor.state.doc)).toEqual([
+        { degree: 6, lengthBeats: 3 },
+        { degree: 1, lengthBeats: 3 }
+      ]);
+    });
+
+    it('still makes a section of a word that is not a chord: [Chorus], and [Amen], which only starts like one', () => {
+      const chorus = viewOf(doc, atEnd, withKeys);
+      type(chorus, '[Chorus]');
+      expect(outlineOf(chorus.state.doc)).toEqual(['Verse 1 (verse): one', 'Chorus (chorus): ']);
+      chorus.destroy();
+
+      const amen = viewOf(doc, atEnd, withKeys);
+      type(amen, '[Amen]');
+      expect(outlineOf(amen.state.doc)).toEqual(['Verse 1 (verse): one', 'Amen (other): ']);
+      expect(chordsIn(amen.state.doc)).toEqual([]);
+    });
+
+    it('reads every section word as a section, never a chord', () => {
+      for (const word of ['Intro', 'Verse', 'Verse 2', 'Pre-Chorus', 'Chorus', 'Bridge', 'Outro']) {
+        const editor = viewOf(doc, atEnd, withKeys);
+        type(editor, `[${word}]`);
+        expect(sectionsOf(editor.state.doc).map(entry => entry.label)).withContext(word).toEqual(['Verse 1', word]);
+        editor.destroy();
+        view = null;
+      }
+    });
+
+    it('makes a section of [Am] when the sheet gives no key rules to read chords by', () => {
+      const editor = viewOf(doc, atEnd);
+      type(editor, '[Am]');
+      expect(outlineOf(editor.state.doc)).toEqual(['Verse 1 (verse): one', 'Am (other): ']);
+    });
+
+    it('is one undo step, which leaves the text as it was typed but for its bracket', () => {
+      const editor = viewOf(doc, atEnd, withKeys);
+      type(editor, '[Am]');
+
+      press(editor, 'z', { mod: true });
+
+      expect(outlineOf(editor.state.doc)).toEqual(['Verse 1 (verse): one / [Am']);
+      expect(chordsIn(editor.state.doc)).toEqual([]);
+    });
+
+    it('gives the text back as typed on a Backspace straight after', () => {
+      const editor = viewOf(doc, atEnd, withKeys);
+      type(editor, '[Am]');
+
+      press(editor, 'Backspace');
+
+      expect(outlineOf(editor.state.doc)).toEqual(['Verse 1 (verse): one / [Am]']);
+    });
+
+    it('lets the typing go on into the line: [Am]Wondering is a chord over the W', () => {
+      const editor = viewOf(doc, atEnd, withKeys);
+      type(editor, '[Am]Wondering');
+      expect(outlineOf(editor.state.doc)).toEqual(['Verse 1 (verse): one / *Wondering']);
     });
   });
 

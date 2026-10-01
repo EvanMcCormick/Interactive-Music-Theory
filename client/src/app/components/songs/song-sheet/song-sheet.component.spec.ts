@@ -8,7 +8,7 @@ import { ProgressionKeyContext } from '../../../services/progression-key-context
 import { deleteSection, setTempo, transposeSong } from '../../../services/song-commands';
 import { chordSlotOf, sectionsOf, songMetaOf } from '../../../services/song-document';
 import { songSchema } from '../../../services/song-schema';
-import { SongSheetComponent } from './song-sheet.component';
+import { ChordOpening, SongSheetComponent } from './song-sheet.component';
 
 const C_MAJOR: ProgressionKey = { tonic: 0, scaleId: 'ionian', preferSharps: true };
 const IONIAN = [0, 2, 4, 5, 7, 9, 11];
@@ -63,6 +63,7 @@ describe('SongSheetComponent', () => {
   let changed: Node[];
   let refusals: string[];
   let notices: string[];
+  let opened: ChordOpening[];
 
   const keys = new ProgressionKeyContext(new MusicTheoryService());
 
@@ -75,7 +76,9 @@ describe('SongSheetComponent', () => {
     changed = [];
     refusals = [];
     notices = [];
+    opened = [];
     sheet.docChanged.subscribe(next => changed.push(next));
+    sheet.chordOpened.subscribe(opening => opened.push(opening));
     sheet.refused.subscribe(reason => refusals.push(reason));
     sheet.notice.subscribe(message => notices.push(message));
     fixture.detectChanges();
@@ -93,6 +96,23 @@ describe('SongSheetComponent', () => {
     const name = el.querySelector<HTMLElement>('.song-chord-name');
     if (!name) throw new Error('A chord with no name');
     return name;
+  };
+  const editor = (): HTMLElement => {
+    const found = host.querySelector<HTMLElement>('.ProseMirror');
+    if (!found) throw new Error('No editor');
+    return found;
+  };
+  /** Each lyric line as its words, with each chord written `*` where it sits. */
+  const linesOf = (doc: Node): string[] => {
+    const lines: string[] = [];
+    doc.descendants(node => {
+      if (node.type.name !== 'lyricLine') return true;
+      let text = '';
+      node.forEach(child => (text += child.isText ? child.text : '*'));
+      lines.push(text);
+      return false;
+    });
+    return lines;
   };
   const current = (): Node => {
     const state = sheet.editorState();
@@ -339,6 +359,182 @@ describe('SongSheetComponent', () => {
       const lines = (): HTMLElement[] => Array.from(host.querySelectorAll<HTMLElement>('.song-lyric-line'));
       expect(lines().map(el => el.classList.contains('is-placeholder'))).toEqual([true, false, false]);
       expect(lines()[0].getAttribute('data-placeholder')).toBe('Lyrics…');
+    });
+  });
+
+  describe('opening a chord', () => {
+    it('asks for the chord popover when a name is clicked, saying where the name is', () => {
+      const am = chord(5);
+      open(song(section('v1', 'Verse 1', line('Got me ', am, 'thinking'))));
+      const name = nameOf(chordEls()[0]);
+      name.click();
+
+      const rect = name.getBoundingClientRect();
+      expect(opened).toEqual([{ id: am.attrs['id'], anchor: { left: rect.left, top: rect.top, bottom: rect.bottom } }]);
+      expect(sheet.editorState()?.selection).toEqual(jasmine.any(NodeSelection));
+    });
+
+    it('asks for it on Enter with a chord selected, and changes nothing', () => {
+      const am = chord(5);
+      open(song(section('v1', 'Verse 1', line('Got me ', am, 'thinking'))));
+      nameOf(chordEls()[0]).click();
+      const before = current();
+
+      editor().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+
+      expect(opened.map(opening => opening.id)).toEqual([am.attrs['id'], am.attrs['id']]);
+      expect(current()).toBe(before);
+    });
+  });
+
+  describe('placing a chord', () => {
+    it('puts it where it is told, as one undo step, with the caret after it and the focus in the lyrics', () => {
+      open(song(section('v1', 'Verse 1', line('Wondering where'))));
+      // The section opens at 0, its line at 1, and "where" starts ten letters into the line's text at 2.
+      expect(sheet.placeChord(12, chordSlotOf(degreeAt(3), C_MAJOR, IONIAN, FOUR_FOUR))).toBeTrue();
+
+      expect(linesOf(current())).toEqual(['Wondering *where']);
+      expect(sheet.editorState()?.selection.from).toBe(13);
+      expect(document.activeElement).toBe(editor());
+
+      expect(sheet.undo()).toBeTrue();
+      expect(linesOf(current())).toEqual(['Wondering where']);
+    });
+
+    it('reports a position outside the lyrics as refused', () => {
+      open(song(section('v1', 'Verse 1', line('Wondering'))));
+      expect(sheet.placeChord(0, chordSlotOf(degreeAt(3), C_MAJOR, IONIAN, FOUR_FOUR))).toBeFalse();
+      expect(refusals).toEqual(['Put the caret in a line of lyrics to add a chord there.']);
+    });
+  });
+
+  describe('dragging a chord', () => {
+    /** A pointer event as a mouse with its button held makes it. */
+    function pointer(type: string, target: Element, x: number, y: number): void {
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 1,
+          pointerType: 'mouse',
+          isPrimary: true,
+          button: 0,
+          buttons: type === 'pointerup' ? 0 : 1,
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+          cancelable: true
+        })
+      );
+    }
+
+    /** Presses the name, moves it by (dx, dy) in two steps, and checks the drop caret on the way; then lets go. */
+    function drag(name: HTMLElement, dx: number, dy: number, whileDragging: () => void = () => undefined): void {
+      const home = name.getBoundingClientRect();
+      const x = home.left + 2;
+      const y = home.top + 2;
+      pointer('pointerdown', name, x, y);
+      pointer('pointermove', name, x + dx / 2, y + dy / 2);
+      pointer('pointermove', name, x + dx, y + dy);
+      whileDragging();
+      pointer('pointerup', name, x + dx, y + dy);
+    }
+
+    /** The box of the character at `index` in the first text of the sheet containing `text`. */
+    function letterIn(text: string, index: number): DOMRect {
+      const walker = document.createTreeWalker(editor(), NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const at = (node.textContent ?? '').indexOf(text);
+        if (at < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, at + index);
+        range.setEnd(node, at + index + 1);
+        return range.getBoundingClientRect();
+      }
+      throw new Error(`No "${text}" on the sheet`);
+    }
+
+    it('moves a chord dropped over another letter there, keeping its id and length, and selects it', () => {
+      const am = chord(5);
+      open(song(section('v1', 'Verse 1', line(am, 'Wondering where the'))));
+      const name = nameOf(chordEls()[0]);
+      const target = letterIn('where', 0);
+
+      drag(name, target.left - name.getBoundingClientRect().left, 0, () => {
+        const caret = host.querySelector<HTMLElement>('.song-drop-caret');
+        expect(caret?.hidden).toBeFalse();
+        expect(Math.abs((caret?.getBoundingClientRect().left ?? -99) - target.left)).toBeLessThan(2);
+      });
+
+      expect(linesOf(current())).toEqual(['Wondering *where the']);
+      const selection = sheet.editorState()?.selection;
+      expect(selection instanceof NodeSelection && selection.node.attrs['id']).toBe(am.attrs['id']);
+      expect(host.querySelector<HTMLElement>('.song-drop-caret')?.hidden).toBeTrue();
+      expect(changed.length).toBe(1);
+      expect(opened).toEqual([]);
+    });
+
+    it('moves a chord to a letter on another line', () => {
+      open(song(section('v1', 'Verse 1', line(chord(5), 'Wondering'), line('where the'))));
+      const name = nameOf(chordEls()[0]);
+      const home = name.getBoundingClientRect();
+      const target = letterIn('the', 0);
+
+      drag(name, target.left - home.left, target.top - letterIn('Wondering', 0).top);
+
+      expect(linesOf(current())).toEqual(['Wondering', 'where *the']);
+    });
+
+    it('refuses a drop outside the lines of lyrics, saying why, and leaves the chord where it was', () => {
+      open(song(section('v1', 'Verse 1', line(chord(5), 'Wondering'))));
+      const before = current();
+
+      drag(nameOf(chordEls()[0]), 0, -2000);
+
+      expect(current()).toBe(before);
+      expect(refusals).toEqual(['A chord can only be dropped onto a line of lyrics.']);
+      expect(host.querySelector<HTMLElement>('.song-drop-caret')?.hidden).toBeTrue();
+    });
+
+    it('takes a press that hardly moves for a click, which opens the chord', () => {
+      const am = chord(5);
+      open(song(section('v1', 'Verse 1', line(am, 'Wondering'))));
+      const name = nameOf(chordEls()[0]);
+      const before = current();
+
+      drag(name, 2, 1);
+      name.click();
+
+      expect(current()).toBe(before);
+      expect(opened.map(opening => opening.id)).toEqual([am.attrs['id']]);
+    });
+
+    it('does not open the chord on the click that ends a drag', () => {
+      open(song(section('v1', 'Verse 1', line(chord(5), 'Wondering where'))));
+      const name = nameOf(chordEls()[0]);
+
+      drag(name, letterIn('where', 0).left - name.getBoundingClientRect().left, 0);
+      name.click();
+
+      expect(opened).toEqual([]);
+    });
+
+    it('keeps a press on the name from ProseMirror, and never lets the browser start its own drag of the chord', () => {
+      open(song(section('v1', 'Verse 1', line(chord(5), 'Wondering'))));
+      const name = nameOf(chordEls()[0]);
+      const box = name.getBoundingClientRect();
+      const at = { bubbles: true, cancelable: true, button: 0, clientX: box.left + 2, clientY: box.top + 2 };
+      const before = current();
+
+      const down = new MouseEvent('mousedown', at);
+      name.dispatchEvent(down);
+      const start = new DragEvent('dragstart', { ...at, dataTransfer: new DataTransfer() });
+      name.dispatchEvent(start);
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+
+      expect(down.defaultPrevented).toBeTrue();
+      expect(start.defaultPrevented).toBeTrue();
+      // ProseMirror, had it seen the drag start, would have written the chord into the drag's data to move it.
+      expect(start.dataTransfer?.types).toEqual([]);
+      expect(current()).toBe(before);
     });
   });
 

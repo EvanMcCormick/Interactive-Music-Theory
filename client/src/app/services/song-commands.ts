@@ -3,11 +3,11 @@ import { Node, ResolvedPos } from 'prosemirror-model';
 import { Command, EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import type { TimeSignature } from '../models/composer.model';
 import { normalizeChordSlot, normalizeProgressionKey } from '../models/progression-normalize';
-import type { ChordSlot, ProgressionKey } from '../models/progression.model';
+import type { ChordDegree, ChordSlot, ProgressionKey } from '../models/progression.model';
 import { ChordAtomAttrs, SECTION_KINDS, SectionKind, SongMeta } from '../models/song.model';
 import { messageOf } from './error-message';
 import { rekeyedSlot } from './progression-degree-editor';
-import { keyTransposeInterval, retimeNotes } from './progression-edit';
+import { keyTransposeInterval, reclaimPitches, regenerateSlot, retimeNotes, sameDegree } from './progression-edit';
 import type { ProgressionKeyContext } from './progression-key-context';
 import { ChordAt, SongSection, atomAttrsOf, createSectionNode, sectionsOf, songMetaOf } from './song-document';
 import { songSchema } from './song-schema';
@@ -94,6 +94,7 @@ const NOT_BEATS = "A chord's length must be a number of beats.";
 const AT_LINE_START = 'The chord is already at the start of its line.';
 const AT_LINE_END = 'The chord is already at the end of its line.';
 const DROP_OUTSIDE = 'A chord can only be dropped onto a line of lyrics.';
+const NO_CHORDS_KEY = "This key's scale can't build chords; choose a seven-note scale for the song.";
 const GONE_SECTION = 'That section is no longer in the song.';
 const BLANK_LABEL = 'A section needs a name.';
 const FIRST_SECTION = 'This is already the first section.';
@@ -303,26 +304,39 @@ function songAttributeEdit<K extends keyof SongMeta>(name: K, value: SongMeta[K]
  * goes at the selection's start and the selected words are left alone - a
  * chord is placed on words, never in place of them.
  *
+ * `at`, when given, is where the chord goes instead of the caret: a position
+ * the caller recorded in this document - the chord field records where `[`
+ * was pressed. The caret is then put just after the chord, ready for the
+ * word it sits over, wherever it was. A position that is not in a line of
+ * lyrics is refused as a caret there would be.
+ *
  * `attrs` comes from `chordSlotOf`, so it is voiced and has a fresh id. A
  * chord the schema refuses, or one whose id the song already holds, is
  * refused rather than repaired: either is a caller's mistake, and repairing it
  * here would hide it.
  */
-export function insertChord(attrs: ChordAtomAttrs): SongEdit {
+export function insertChord(attrs: ChordAtomAttrs, at?: number): SongEdit {
   return state => {
-    const $from = state.selection.$from;
+    if (at !== undefined && (!Number.isInteger(at) || at < 0 || at > state.doc.content.size)) {
+      return refused(OUTSIDE_LINE);
+    }
+    const $from = at === undefined ? state.selection.$from : state.doc.resolve(at);
     if (!isLyricLine($from.parent)) return refused(OUTSIDE_LINE);
     if (chordWithId(state.doc, attrs.id) !== null) return refused(DUPLICATE_CHORD);
 
     const node = checkedChord(attrs);
     if (typeof node === 'string') return refused(node);
-    return edited(state.tr.insert($from.pos, node));
+    const tr = state.tr.insert($from.pos, node);
+    if (at !== undefined) tr.setSelection(TextSelection.create(tr.doc, $from.pos + 1));
+    return edited(tr);
   };
 }
 
 /**
  * Writes a different chord over the chord `id`, which keeps its id and its
- * place: the popover's "change chord". Any id on `attrs` is ignored.
+ * place. Any id on `attrs` is ignored. The popover's "change chord" comes
+ * through here by way of `changeChord`, which works out the new chord's
+ * attributes from a degree.
  */
 export function replaceChord(id: string, attrs: Omit<ChordAtomAttrs, 'id'>): SongEdit {
   return state => {
@@ -337,6 +351,50 @@ export function replaceChord(id: string, attrs: Omit<ChordAtomAttrs, 'id'>): Son
     const tr = state.tr;
     writeChord(tr, found.pos, next, found.attrs);
     return edited(tr);
+  };
+}
+
+/**
+ * Makes the chord `id` a different chord - `degree`, in the song's key - and
+ * voices it: the popover's chord field. Its id, its place and its length stay.
+ *
+ * It means what the progression page's `setSlotChord` means, by the same
+ * parts (`ProgressionDegreeEditor.editDegree`), so a chord's ownership reads
+ * the same on both pages:
+ *
+ * - **the pitches are handed back** (`reclaimPitches`) and the chord re-voiced
+ *   from its new degree (`regenerateSlot`). A slot that owns its pitches - a
+ *   voicing written in the progression page's roll and brought back by Open in
+ *   Progression - keeps them through a key change, but a chord change restates
+ *   the chord, and keeping them would leave the sheet printing the new name
+ *   over the old chord's sound. Undo puts the owned voicing back.
+ * - **a rhythm or a dynamic the slot owns is kept**: changing the chord says
+ *   nothing about either.
+ * - **the same degree is unchanged**, owned pitches and all: retyping a
+ *   chord's own name in the field must not quietly throw away its voicing.
+ *
+ * A key whose scale cannot build chords is refused, since no degree can be
+ * voiced in it; the field refuses every name there first.
+ */
+export function changeChord(keys: Pick<SongKeyRules, 'chordScaleFor'>, id: string, degree: ChordDegree): SongEdit {
+  return state => {
+    const found = chordWithId(state.doc, id);
+    if (found === null) return refused(GONE_CHORD);
+    const key = songMetaOf(state.doc).key;
+    const scaleIntervals = keys.chordScaleFor(key);
+    if (scaleIntervals === null) return refused(NO_CHORDS_KEY);
+
+    const harmony = found.attrs.harmony;
+    if (harmony.kind === 'degree' && sameDegree(harmony.degree, degree)) return UNCHANGED;
+
+    let slot: ChordSlot;
+    try {
+      const restated = normalizeChordSlot({ ...slotOf(found.attrs), harmony: { kind: 'degree', degree } });
+      slot = regenerateSlot(reclaimPitches(restated), key, scaleIntervals);
+    } catch (error) {
+      return refused(messageOf(error));
+    }
+    return replaceChord(id, atomAttrsOf(slot))(state);
   };
 }
 

@@ -180,9 +180,31 @@
   min-height: 0;
 }
 
+// Positioned, so the chord field and popover are placed in its box and scroll with the lyrics they belong to.
 .sheet-pane {
+  position: relative;
   min-height: 0;
   overflow-y: auto;
+}
+
+// Over the sheet, as the section menus are; kept inside the pane's width however near its right edge they open.
+.chord-field-anchor,
+.chord-popover-anchor {
+  position: absolute;
+  z-index: 60;
+  max-width: calc(100% - 1rem);
+}
+
+.chord-field-anchor {
+  width: 14rem;
+  padding: 0.5rem;
+  box-sizing: border-box;
+  background-color: var(--songs-bar);
+  border: 1px solid var(--songs-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 40%);
+  font-family: system-ui, sans-serif;
+  font-size: 0.9rem;
 }
 
 @media (max-width: 768px) {

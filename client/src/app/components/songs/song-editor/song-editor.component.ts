@@ -16,17 +16,21 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Node } from 'prosemirror-model';
 import { Subject, from } from 'rxjs';
 import { distinctUntilChanged, map, switchMap, takeUntil, tap } from 'rxjs/operators';
+import type { ChordDegree, ProgressionKey } from '../../../models/progression.model';
 import type { SongDoc } from '../../../models/song.model';
 import { messageOf } from '../../../services/error-message';
 import { MusicTheoryService } from '../../../services/music-theory.service';
 import { ProgressionKeyContext } from '../../../services/progression-key-context';
 import { relativeTimeOf } from '../../../services/relative-time';
 import { AutosaveClock, BROWSER_CLOCK, SaveStatus, SongAutosave } from '../../../services/song-autosave';
-import { SongEdit, setArtist, setTitle } from '../../../services/song-commands';
-import { songMetaOf } from '../../../services/song-document';
+import { SongEdit, chordWithId, setArtist, setTitle } from '../../../services/song-commands';
+import { chordSlotOf, songMetaOf } from '../../../services/song-document';
+import { CaretCoords, ChordFieldRequest } from '../../../services/song-editor-plugins';
 import { SongLibraryService } from '../../../services/song-library.service';
 import { SongSheetPreferencesService } from '../../../services/song-sheet-preferences.service';
-import { SheetHistory, SongSheetComponent } from '../song-sheet/song-sheet.component';
+import { SongChordFieldComponent } from '../song-chord-field/song-chord-field.component';
+import { SongChordPopoverComponent } from '../song-chord-popover/song-chord-popover.component';
+import { ChordOpening, SheetHistory, SongSheetComponent } from '../song-sheet/song-sheet.component';
 import { SongToolbarComponent } from '../song-toolbar/song-toolbar.component';
 
 /**
@@ -44,6 +48,25 @@ const REWORD_MS = 60_000;
 
 /** What the page is showing. */
 type Phase = 'loading' | 'ready' | 'missing' | 'unreadable';
+
+/** Where a popup over the sheet sits, in the sheet pane's own box (which scrolls with the lyrics). */
+interface PaneAnchor {
+  left: number;
+  top: number;
+}
+
+/** The chord field `[` opened: where the chord will go, and where the field sits. */
+interface ChordFieldState extends PaneAnchor {
+  pos: number;
+}
+
+/** The chord popover open: whose, and where it sits. */
+interface ChordPopoverState extends PaneAnchor {
+  id: string;
+}
+
+/** The gap between what a popup hangs under and its top edge, in CSS pixels. */
+const POPUP_GAP_PX = 4;
 
 /** What opening the route's song came to. */
 type Opened =
@@ -72,13 +95,29 @@ type Opened =
  * status line itself is not live: it changes on every pause in typing, and announcing "Saving…" each time would bury
  * everything else. A failure is the exception, and goes to the region too.
  *
+ * **The chord field and the chord popover** are the page's, over the sheet (design Part 2): `[` in the lyrics opens the
+ * field at the caret, and its chord is placed where `[` was pressed (`SongSheetComponent.placeChord`); a click on a
+ * chord's name, or Enter on a selected chord, opens the popover under the name, whose edits run on the sheet like the
+ * toolbar's. One is open at a time. Both sit in the sheet's scrolling pane, anchored in its box, so they scroll with
+ * the words they belong to. **Focus:** the field and the popover take it when they open; Escape - and placing a chord,
+ * and deleting one - give it back to the lyrics, at the caret or with the chord still selected; a press elsewhere
+ * closes either and leaves the focus where the press put it. A field left for nowhere (the focus dropped to the page
+ * itself) gives it back to the lyrics too, so typing goes on where it was.
+ *
  * The page is laid out as a one-column grid under the toolbar so the Chords panel (task 8) slots in as a second
  * column without moving the sheet.
  */
 @Component({
   selector: 'app-song-editor',
   standalone: true,
-  imports: [CommonModule, RouterLink, SongSheetComponent, SongToolbarComponent],
+  imports: [
+    CommonModule,
+    RouterLink,
+    SongChordFieldComponent,
+    SongChordPopoverComponent,
+    SongSheetComponent,
+    SongToolbarComponent
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './song-editor.component.html',
   styleUrls: ['./song-editor.component.scss']
@@ -100,6 +139,7 @@ export class SongEditorComponent implements OnInit, OnDestroy {
   @ViewChild(SongSheetComponent) private sheet?: SongSheetComponent;
   @ViewChild('titleField') private titleField?: ElementRef<HTMLInputElement>;
   @ViewChild('artistField') private artistField?: ElementRef<HTMLInputElement>;
+  @ViewChild('sheetPane') private sheetPane?: ElementRef<HTMLElement>;
 
   phase: Phase = 'loading';
   /** Why the song cannot be opened, in the `unreadable` phase. */
@@ -115,6 +155,14 @@ export class SongEditorComponent implements OnInit, OnDestroy {
   statusText = '';
   history: SheetHistory = { canUndo: false, canRedo: false };
   preferences = this.preferencesService.preferences;
+
+  /** The song's key, and its scale when it can build chords: what the chord field reads a chord in. */
+  key: ProgressionKey | null = null;
+  scaleIntervals: readonly number[] | null = null;
+  /** The chord field, while `[` has it open. */
+  chordField: ChordFieldState | null = null;
+  /** The chord popover, while one is open. */
+  chordPopover: ChordPopoverState | null = null;
 
   /** The live region's two halves (see the class comment). */
   messages: readonly [string, string] = ['', ''];
@@ -194,6 +242,8 @@ export class SongEditorComponent implements OnInit, OnDestroy {
   onDocChanged(doc: Node): void {
     this.adopt(doc);
     this.autosave?.change(doc);
+    // A popover whose chord has gone - undone away, deleted - has nothing left to show.
+    if (this.chordPopover !== null && chordWithId(doc, this.chordPopover.id) === null) this.chordPopover = null;
   }
 
   onHistoryChanged(history: SheetHistory): void {
@@ -228,6 +278,71 @@ export class SongEditorComponent implements OnInit, OnDestroy {
   revertField(field: HTMLInputElement, value: string): void {
     field.value = value;
     field.blur();
+  }
+
+  // ---------------------------------------------------------------------------
+  // The chord field and the chord popover
+  // ---------------------------------------------------------------------------
+
+  // Every opening and closing below is rendered at once (`detectChanges`) rather than on the next frame, which is when
+  // this zoneless app would otherwise render a `markForCheck`. Typing outruns frames. A field opened by `[` must hold
+  // the focus before the next key arrives, or `[Am]` typed in one go - the ChordPro way - puts its `Am` into the
+  // lyrics; and a field closed by Enter must be gone before the next `[`, or that `[` finds the old field still on the
+  // page, and `*ngIf` keeps it - with its old text, and without taking the focus again.
+
+  /** `[` in the lyrics: the field opens under the caret, remembering where the chord goes. */
+  openChordField(request: ChordFieldRequest): void {
+    this.chordPopover = null;
+    this.chordField = { pos: request.pos, ...this.anchorFor(request.coords) };
+    this.changes.detectChanges();
+  }
+
+  /**
+   * The field read a chord: it goes where `[` was pressed, voiced and a bar long, and the focus goes back after it. A
+   * refusal - which would take the song changing under an open field - is said in the live region by the sheet.
+   */
+  placeChord(degree: ChordDegree): void {
+    const field = this.chordField;
+    const doc = this.doc;
+    if (field === null || doc === null) return;
+    const { key, timeSignature } = songMetaOf(doc);
+    this.chordField = null;
+    this.sheet?.placeChord(field.pos, chordSlotOf(degree, key, this.keys.chordScaleFor(key), timeSignature));
+    this.changes.detectChanges();
+  }
+
+  /** Escape in the field: nothing placed, and the focus back in the lyrics at the caret. */
+  cancelChordField(): void {
+    this.chordField = null;
+    this.focusSheet();
+    this.changes.detectChanges();
+  }
+
+  /**
+   * The focus left the field for somewhere outside it: it closes, placing nothing, and the focus stays where it went -
+   * unless it went nowhere, when it comes back to the lyrics.
+   */
+  onChordFieldFocusOut(event: FocusEvent, anchor: HTMLElement): void {
+    const next = event.relatedTarget;
+    if (next instanceof globalThis.Node && anchor.contains(next)) return;
+    if (this.chordField === null) return;
+    this.chordField = null;
+    if (next === null) this.focusSheet();
+    this.changes.detectChanges();
+  }
+
+  /** A chord's name clicked, or Enter on it: its popover, under the name. */
+  openChordPopover(opening: ChordOpening): void {
+    this.chordField = null;
+    this.chordPopover = { id: opening.id, ...this.anchorFor(opening.anchor) };
+    this.changes.detectChanges();
+  }
+
+  /** The popover is done; `giveFocusBack` when it closed by its own keys or buttons rather than a press elsewhere. */
+  closeChordPopover(giveFocusBack: boolean): void {
+    this.chordPopover = null;
+    if (giveFocusBack) this.focusSheet();
+    this.changes.detectChanges();
   }
 
   /** Retry, after a failed save: saves now, with the change that failed or anything newer. */
@@ -307,6 +422,10 @@ export class SongEditorComponent implements OnInit, OnDestroy {
     this.phase = 'loading';
     this.initialDoc = null;
     this.doc = null;
+    this.key = null;
+    this.scaleIntervals = null;
+    this.chordField = null;
+    this.chordPopover = null;
     this.status = null;
     this.statusText = '';
     this.history = { canUndo: false, canRedo: false };
@@ -317,7 +436,25 @@ export class SongEditorComponent implements OnInit, OnDestroy {
     const meta = songMetaOf(doc);
     this.title = meta.title;
     this.artist = meta.artist;
+    if (meta.key !== this.key) {
+      this.key = meta.key;
+      this.scaleIntervals = this.keys.chordScaleFor(meta.key);
+    }
     this.changes.markForCheck();
+  }
+
+  /**
+   * A popup's place under `coords` - a box on screen - in the sheet pane's own box, scrolled: the pane is the popup's
+   * positioned parent and scrolls it with the lyrics. At the pane's top left when there is nothing to measure.
+   */
+  private anchorFor(coords: CaretCoords | null): PaneAnchor {
+    const pane = this.sheetPane?.nativeElement;
+    if (coords === null || pane === undefined) return { left: 0, top: 0 };
+    const box = pane.getBoundingClientRect();
+    return {
+      left: coords.left - box.left + pane.scrollLeft,
+      top: coords.bottom - box.top + pane.scrollTop + POPUP_GAP_PX
+    };
   }
 
   // ---------------------------------------------------------------------------

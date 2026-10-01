@@ -79,7 +79,7 @@
 
       <!-- One column for now; the Chords panel (task 8) is a second column beside the sheet. -->
       <div class="editor-body">
-        <div class="sheet-pane">
+        <div #sheetPane class="sheet-pane">
           <app-song-sheet
             [initialDoc]="initialDoc"
             [keys]="keys"
@@ -89,7 +89,39 @@
             (historyChanged)="onHistoryChanged($event)"
             (refused)="say($event, true)"
             (notice)="say($event)"
+            (chordFieldRequested)="openChordField($event)"
+            (chordOpened)="openChordPopover($event)"
           ></app-song-sheet>
+
+          <!-- The field `[` opens, under the caret. Placing, Escape and leaving it all close it (see the class comment). -->
+          <div
+            *ngIf="chordField as field"
+            #fieldAnchor
+            class="chord-field-anchor"
+            [style.left.px]="field.left"
+            [style.top.px]="field.top"
+            (focusout)="onChordFieldFocusOut($event, fieldAnchor)"
+          >
+            <app-song-chord-field
+              [key]="key"
+              [scaleIntervals]="scaleIntervals"
+              [autofocus]="true"
+              (chosen)="placeChord($event)"
+              (cancelled)="cancelChordField()"
+            ></app-song-chord-field>
+          </div>
+
+          <app-song-chord-popover
+            *ngIf="chordPopover as popover"
+            class="chord-popover-anchor"
+            [style.left.px]="popover.left"
+            [style.top.px]="popover.top"
+            [doc]="doc"
+            [chordId]="popover.id"
+            [keys]="keys"
+            (edit)="run($event)"
+            (closed)="closeChordPopover($event)"
+          ></app-song-chord-popover>
         </div>
       </div>
     </ng-container>
