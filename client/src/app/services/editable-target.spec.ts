@@ -133,17 +133,7 @@ describe('pressesFocusedControl', () => {
 });
 
 describe('movesFocusedSlider', () => {
-  /**
-   * `created`, focused from the keyboard: it matches `:focus-visible`, or, with `visible` false, it does not, as a slider
-   * the mouse dragged. Faked, as `pressesFocusedControl`'s specs fake it: a headless browser decides `:focus-visible`
-   * from how the focus arrived, which a script's `focus()` does not reliably set.
-   */
-  function focused<T extends HTMLElement>(created: T, visible = true): T {
-    spyOn(created as HTMLElement, 'matches').and.callFake((selector: string): boolean => visible && selector === ':focus-visible');
-    return created;
-  }
-
-  const slider = (visible = true): HTMLInputElement => focused(Object.assign(document.createElement('input'), { type: 'range' }), visible);
+  const slider = (): HTMLInputElement => Object.assign(document.createElement('input'), { type: 'range' });
   const on = (target: EventTarget, key: string, modifiers: Partial<Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 'metaKey'>> = {}) =>
     movesFocusedSlider({ key, ctrlKey: false, altKey: false, metaKey: false, target, ...modifiers });
 
@@ -151,13 +141,18 @@ describe('movesFocusedSlider', () => {
     for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']) {
       expect(on(slider(), key)).withContext(key).toBeTrue();
     }
-    expect(on(focused(document.createElement('button')), 'ArrowLeft')).toBeFalse();
-    expect(on(focused(Object.assign(document.createElement('input'), { type: 'checkbox' })), 'ArrowLeft')).toBeFalse();
+    expect(on(document.createElement('button'), 'ArrowLeft')).toBeFalse();
+    expect(on(Object.assign(document.createElement('input'), { type: 'checkbox' }), 'ArrowLeft')).toBeFalse();
   });
 
-  it('leaves the arrows to the page on a slider the mouse left the focus on, which does not match :focus-visible', () => {
+  it('takes them on a slider the mouse left the focus on too, which does not match :focus-visible', () => {
+    // Faked, since a headless browser decides `:focus-visible` from how the focus arrived. Real Chrome turns it on for a
+    // mouse-focused slider at the first key press anyway, so asking it would not tell a click from a Tab.
+    const clicked = slider();
+    spyOn(clicked, 'matches').and.returnValue(false);
+
     for (const key of ['ArrowLeft', 'ArrowRight', 'Home', 'End']) {
-      expect(on(slider(false), key)).withContext(key).toBeFalse();
+      expect(on(clicked, key)).withContext(key).toBeTrue();
     }
   });
 

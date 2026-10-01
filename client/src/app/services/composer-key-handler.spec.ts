@@ -276,32 +276,19 @@ describe('ComposerKeyHandler', () => {
     expect(composer.doc).not.toBe(doc);
   });
 
-  /**
-   * A range slider with the focus, from the keyboard (`:focus-visible`) or, with `visible` false, left there by a mouse
-   * drag. Faked, since a headless browser decides `:focus-visible` from how the focus arrived.
-   */
-  function focusedSlider(visible: boolean): HTMLInputElement {
+  it('leaves an arrow on a focused slider to the slider, however it was focused, and plays on Space there', () => {
+    // The mouse's way in: a slider that does not match `:focus-visible`. Faked, since a headless browser decides that from
+    // how the focus arrived; real Chrome turns it on at the key press anyway.
     const slider = Object.assign(document.createElement('input'), { type: 'range' });
-    spyOn(slider, 'matches').and.callFake((selector: string) => visible && selector === ':focus-visible');
-    return slider;
-  }
-
-  it("leaves an arrow on a slider focused from the keyboard to the slider, and plays on Space there", () => {
-    const slider = focusedSlider(true);
+    spyOn(slider, 'matches').and.returnValue(false);
     const before = composer.state.cursor;
+    const arrow = press({ key: 'ArrowRight', target: slider });
 
-    expect(handler.handle(press({ key: 'ArrowRight', target: slider }))).toBeFalse();
+    expect(handler.handle(arrow)).toBeFalse();
+    expect(arrow.preventDefault).not.toHaveBeenCalled();
     expect(composer.state.cursor).toBe(before);
 
     expect(handler.handle(press({ key: ' ', target: slider }))).toBeTrue();
     expect(host.playPause).toHaveBeenCalled();
-  });
-
-  it('moves the caret on an arrow once the mouse has dragged a slider, which keeps the focus but not :focus-visible', () => {
-    const arrow = press({ key: 'ArrowRight', target: focusedSlider(false) });
-
-    expect(handler.handle(arrow)).toBeTrue();
-    expect(arrow.preventDefault).toHaveBeenCalled();
-    expect(composer.state.cursor.beatIndex).toBe(1);
   });
 });

@@ -45,6 +45,7 @@ export type LossId =
   | 'tempoText'
   | 'unnamedSlides'
   | 'directions'
+  | 'backingTrack'
   | 'syncPoints'
   | 'layout'
   | 'fades'
@@ -101,6 +102,11 @@ const ITEMS: Readonly<Record<LossId, { label: string; one: string; many: string;
   tempoText: { label: "Tempo markings' words", one: 'marking', many: 'markings', group: 'conversion', note: 'the BPM stays' },
   unnamedSlides: { label: 'Slides out downwards, pick slides and slides in from above', one: 'note', many: 'notes', group: 'conversion' },
   directions: { label: 'Directions: D.C., D.S., Coda, Fine', one: 'marking', many: 'markings', group: 'conversion' },
+  // The recording a Guitar Pro 7/8 file embeds - most of an 83 MB file, in the one tested - which the GP viewer plays in
+  // place of the synthesizer (`AlphaTabApi._setupOrDestroyPlayer`, `alphaTab.core.mjs` ~52041-52049). The model has no
+  // audio, so the recording goes, and the converted score plays from the synthesizer. Its own row, not a sync point: a
+  // file can carry the recording with any number of sync points, and the prompt has to name the audio either way.
+  backingTrack: { label: 'Backing track', one: 'recording', many: 'recordings', group: 'conversion', note: 'the audio is not kept' },
   syncPoints: { label: 'Backing-track sync points', one: 'sync point', many: 'sync points', group: 'conversion' },
   layout: { label: 'Page layout and stylesheet', one: 'setting', many: 'settings', group: 'conversion', note: 'the layout goes back to the default' },
   fades: { label: 'Fade-outs and volume swells', one: 'beat', many: 'beats', group: 'conversion' },
@@ -260,7 +266,9 @@ function scoreLossInto(tally: Tally, score: alphaTab.model.Score, converted: Sco
   const credits = [score.copyright, score.music, score.words, score.tab, score.notices, score.instructions];
   tally.add('credits', null, credits.filter(field => (field ?? '') !== '').length);
   if (styled(score.style)) tally.add('customStyles', null);
-  if (score.backingTrack) tally.add('syncPoints', null);
+  // Counted as the recording, not as a sync point: counting it under `syncPoints` added one the file does not have, so a
+  // file synced once read "2 sync points" and never said its audio went. The sync points are `masterBarLossInto`'s.
+  if (score.backingTrack) tally.add('backingTrack', null);
 
   // Not compared: the systems layout - `defaultSystemsLayout` and `systemsLayout`, on the score and on each track - and
   // each bar's and master bar's `displayScale` and `displayWidth`. alphaTab reads the systems layout only in

@@ -32,12 +32,16 @@ const SLIDER_KEYS: ReadonlySet<string> = new Set(['ArrowLeft', 'ArrowRight', 'Ar
  * is the slider's rather than the page's: an arrow, Home, End, Page Up or Page Down with no Ctrl, Alt or Cmd. Every other
  * key on a slider stays the page's, as `isEditableTarget` leaves it: Space still plays, and Ctrl+→ still moves a bar.
  *
- * Only for a slider focused from the keyboard, one that matches `:focus-visible`, as `pressesFocusedControl` asks. A
- * mouse drag leaves the focus on the slider it moved, and an arrow pressed next is meant for the score's caret.
+ * However the slider was focused, the mouse included: that is the browser's own behaviour, and with the seek bar's
+ * `step` of 1000 an arrow visibly seeks a second. It once asked `:focus-visible`, as `pressesFocusedControl` does, so that
+ * after a click on the seek bar the arrows would go back to the score's caret. Real Chrome makes that test useless here:
+ * a key pressed on a mouse-focused element turns `:focus-visible` on for it before any keydown listener runs. Checked by
+ * hand - click the seek bar (`:focus-visible` false), press → - and the seek bar moved a second, `:focus-visible` read
+ * true, and the caret stayed. So the test cannot tell a click from a Tab at a key press; do not add it back.
  */
 export function movesFocusedSlider(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'altKey' | 'metaKey' | 'target'>): boolean {
   const target = event.target;
-  if (!(target instanceof HTMLInputElement) || target.type !== 'range' || !target.matches(':focus-visible')) return false;
+  if (!(target instanceof HTMLInputElement) || target.type !== 'range') return false;
   return SLIDER_KEYS.has(event.key) && !event.ctrlKey && !event.altKey && !event.metaKey;
 }
 

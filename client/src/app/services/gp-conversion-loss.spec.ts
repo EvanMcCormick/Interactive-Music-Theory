@@ -105,6 +105,8 @@ describe('conversionLossOf', () => {
         score.masterBars[1].syncPoints = [point];
       }
     },
+    // The recording itself, which `GpifParser` reads into `backingTrack`: its own row, not a sync point.
+    { id: 'backingTrack', set: score => (score.backingTrack = new model.BackingTrack()), firstBar: 0 },
     { id: 'layout', set: score => (score.stylesheet.hideDynamics = true), firstBar: 0 },
     { id: 'layout', set: score => score.tracks[0].addLineBreaks(1), firstBar: 0 },
     { id: 'layout', set: score => (score.stylesheet.perTrackDisplayTuning = new Map([[0, false]])), firstBar: 0 },
@@ -269,6 +271,20 @@ describe('conversionLossOf', () => {
     const loss = lossOf(score);
     expect(itemOf(score, 'wah')).toEqual({ id: 'wah', group: 'conversion', label: 'Wah', detail: '2 beats, first in bar 2', count: 2, firstBar: 2 });
     expect(loss.find(item => item.id === 'doubleBars')?.group).toBe('first save');
+  });
+
+  it("names a backing track's audio, and counts only the sync points the file has beside it", () => {
+    // A Guitar Pro 7/8 file with its recording embedded, synced at the start of bar 1, as `GpifParser` reads one.
+    const score = guitar();
+    score.backingTrack = new model.BackingTrack();
+    const point = new model.Automation();
+    point.type = model.AutomationType.SyncPoint;
+    score.masterBars[0].syncPoints = [point];
+
+    expect(itemOf(score, 'backingTrack')).toEqual(
+      jasmine.objectContaining({ group: 'conversion', label: 'Backing track', detail: '1 recording; the audio is not kept', count: 1, firstBar: 0 })
+    );
+    expect(itemOf(score, 'syncPoints')).toEqual(jasmine.objectContaining({ detail: '1 sync point, first in bar 1', count: 1, firstBar: 1 }));
   });
 
   it('lists items by first bar, then by count, most first', () => {
