@@ -141,9 +141,13 @@ export function chordSlotOf(
 
 /**
  * A slot's atom attributes. Listed rather than spread, so a field `ChordSlot`
- * gains is a compile error here rather than a field the atom silently drops.
+ * gains is a compile error here rather than a field the atom silently drops,
+ * and a slot's `startBeat` - derived, never stored - is left behind.
+ *
+ * Exported for the song commands, which take a chord atom through the
+ * progression model's slot functions and back.
  */
-function atomAttrsOf(slot: ChordSlot): ChordAtomAttrs {
+export function atomAttrsOf(slot: ChordSlot): ChordAtomAttrs {
   return { id: slot.id, harmony: slot.harmony, lengthBeats: slot.lengthBeats, notes: slot.notes, owned: slot.owned };
 }
 
