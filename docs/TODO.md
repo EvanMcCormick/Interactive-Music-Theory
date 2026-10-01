@@ -83,7 +83,6 @@ they would cost us to be wrong about.
         notes already match the file's, hit for hit.
       - Step 6: a muted track silent and a soloed one alone, in both states.
       - Step 7: loop, speed at 50% and 200%, and volume, heard.
-      - Step 8: the scale marks through a deliberate window resize, and through an ordinary edit's re-render.
 
 ### The rest of the app
 

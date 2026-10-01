@@ -24,6 +24,12 @@ Guitar Pro or ears is recorded as not performed. By step, as numbered in Task J.
   - Step 5, with a finding below. Convert left one composition of nine tracks, "In the Garage" in the composer library,
     and no `.gp` entry in the gallery. With the caret on a note, a hammer-on applied, Undo took it back and left the
     converted score, and Undo was then disabled with Redo enabled.
+  - Step 8, with a finding below. G Ionian ringed every in-scale note head on notation and tablature, the root in a red
+    double ring, and the marks stayed through hiding tracks, Convert and the render after it. On "Blues in F" with F
+    Mixolydian, an edit that put a rest in place of a four-note chord took the marks from 282 to 274 - its eight, on
+    notation and tab - and a resize from 900 to 1400 px wide re-flowed the score from twelve systems to five, the marks
+    following it (the rightmost at 1128.2 px, alphaTab's rightmost note head at 1128.2). The pane runs no animation
+    frames while hidden, so a resize there waits for the page to be drawn; that is the pane, not the app.
   - Step 9. `/gp-viewer?id=<id>` opened that file in the composer at `/composer`, in Original. `/gp-viewer` alone going
     to the gallery was checked in a real browser by the review of Task I.1, and the redirect has specs.
   - Step 10. With the score focused, `h` opened the prompt with the focus on its heading; Tab cycled Save the original
@@ -45,10 +51,6 @@ Guitar Pro or ears is recorded as not performed. By step, as numbered in Task J.
     volume 30% reached it as 0.3, Loop pressed set it looping, and the seek bar moved to 1:00 and the player followed.
     Focused from the keyboard, three presses of → seeked from 60 s to 63 s and left the caret alone. Finding below. Not
     performed: by ear.
-  - Step 8. G Ionian ringed every in-scale note head on notation and tablature, the root in a red double ring, and the
-    marks stayed through hiding tracks, Convert and the render after it. A window resize was not tried on purpose - the
-    viewport changed during the session and the marks followed it - and an edit's re-render was not checked apart from
-    Convert's. Finding below.
 - **Not performed.**
   - Step 2: Guitar Pro is not installed. What the prompt listed is kept for the comparison. For the `.gp5`: credits 4
     fields, chord diagrams 710 (first in bar 1), tempo words 1, slides 3 (bar 62), instrument, volume and balance
