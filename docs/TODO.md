@@ -256,6 +256,13 @@ the design doc). What review fixed is under "Corrections during implementation" 
 - **Writing a new drum note is still out of scope.** A converted kit keeps and plays the drums it arrived with, and a
   percussion staff refuses Pen and the fret digits; choosing a drum needs alphaTab's internal articulation table, which
   is a design of its own.
+- **A fret typed over an existing note rewrites its rhythm.** Fret entry writes at the input duration
+  (`setNoteAtCursor`, "at the input duration"), while the palette shows the duration of the beat under the caret. On a
+  converted "In the Garage", `5` typed over bar 3's first note - an eighth, with the palette showing Eighth pressed -
+  made it a quarter, and the bar ran over its time signature; the same happens in any composition. Guitar Pro changes
+  only the fret. It matters most on a converted file, where the user is editing music that already has its rhythm.
+  Whether a digit over a note keeps the beat's value, or the palette shows the input duration, is a product decision.
+  Found in the hand check of the final review's fixes, 2026-09-30; it predates the milestone.
 - **An edit can still write to a hidden track.** The caret is moved off a track as it is hidden, and keyboard track
   moves pass over hidden tracks, but Undo, Redo, or a Remove that clamps the caret can leave it on one, and edits are
   refused command by command, with no single gate that knows what is hidden.
