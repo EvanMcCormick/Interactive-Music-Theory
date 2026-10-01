@@ -1,4 +1,3 @@
-import { createExtensions } from '../../../../models/progression-normalize';
 import { ChordDegree } from '../../../../models/progression.model';
 import { ChordExtent } from '../../../../services/progression-harmony';
 import { ChordOption } from '../../../../services/progression-vocabulary';
@@ -43,19 +42,12 @@ import type { PaletteAlternate, PaletteOption } from './chord-palette.component'
  * A palette that printed seventh figures and appended triads would be a label
  * disagreeing with the thing it labelled before the user had touched anything.
  * The complexity control below it is how a chord gets taller, after it is placed.
- */
-const PALETTE_EXTENT: ChordExtent = 3;
-
-/**
- * The diatonic row is unaltered, which is what makes it the diatonic row.
  *
- * Named rather than written as a bare `0` at the `romanNumeral` call, because
- * the argument it fills is the one Task 8 added for borrowed chords: the seven
- * buttons there are the key's own degrees and the accidental is what the
- * borrowed group below them carries. It is `createDegreeSlot`'s `alter` and
- * `paletteDegree`'s, for the same reason both of those write it down.
+ * The seven are built by `diatonicChordsOf` at this height - unaltered and with
+ * `quality: null`, `createDegreeSlot`'s own `alter` and `quality`, which is what
+ * makes them the key's own row and the borrowed group below them not.
  */
-export const PALETTE_ALTER = 0;
+export const PALETTE_EXTENT: ChordExtent = 3;
 
 /** What each rung of the ladder is called, for the complexity readout. */
 export const EXTENT_LABELS: Record<ChordExtent, string> = {
@@ -65,35 +57,6 @@ export const EXTENT_LABELS: Record<ChordExtent, string> = {
   11: '11th',
   13: '13th'
 };
-
-/**
- * The degree a palette button stands for, as `chordRootName` wants it.
- *
- * It is `createDegreeSlot`'s degree at the palette's own extent - the slot the
- * button appends - so building it here rather than passing the index alone is
- * what makes the label and the appended chord one description. `alter: 0` is
- * copied from that factory rather than assumed: it is the field M2's borrowed
- * chords move, and the day it moves the palette follows through the shared
- * function instead of standing still.
- *
- * `quality: null` is copied from it for the same reason, and it used to be the
- * *derived* label instead - which was the palette writing a name into a field
- * that means "override", one call site over from the `regenerateSlot` that did
- * the same thing everywhere else. The root arithmetic reads neither, so
- * nothing moved; what changed is that the two descriptions now match.
- */
-export function paletteDegree(degree: number): ChordDegree {
-  return {
-    degree,
-    alter: 0,
-    extent: PALETTE_EXTENT,
-    quality: null,
-    inversion: 0,
-    suspension: 'none',
-    extensions: createExtensions(),
-    octave: 0
-  };
-}
 
 /**
  * The sentence under the alternates row, or null when there is nothing to warn

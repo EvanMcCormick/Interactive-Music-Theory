@@ -94,7 +94,8 @@ const NOT_BEATS = "A chord's length must be a number of beats.";
 const AT_LINE_START = 'The chord is already at the start of its line.';
 const AT_LINE_END = 'The chord is already at the end of its line.';
 const DROP_OUTSIDE = 'A chord can only be dropped onto a line of lyrics.';
-const NO_CHORDS_KEY = "This key's scale can't build chords; choose a seven-note scale for the song.";
+/** Why no chord can go into a song whose key's scale cannot stack thirds; the Chords tab says it too. */
+export const NO_CHORDS_KEY = "This key's scale can't build chords; choose a seven-note scale for the song.";
 const GONE_SECTION = 'That section is no longer in the song.';
 const BLANK_LABEL = 'A section needs a name.';
 const FIRST_SECTION = 'This is already the first section.';

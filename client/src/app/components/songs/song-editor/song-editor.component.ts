@@ -9,7 +9,9 @@ import {
   NgZone,
   OnDestroy,
   OnInit,
+  QueryList,
   ViewChild,
+  ViewChildren,
   inject
 } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -17,18 +19,26 @@ import { Node } from 'prosemirror-model';
 import { Subject, from } from 'rxjs';
 import { distinctUntilChanged, map, switchMap, takeUntil, tap } from 'rxjs/operators';
 import type { ChordDegree, ProgressionKey } from '../../../models/progression.model';
-import type { SongDoc } from '../../../models/song.model';
+import type { ChordAtomAttrs, SongDoc } from '../../../models/song.model';
 import { messageOf } from '../../../services/error-message';
 import { MusicTheoryService } from '../../../services/music-theory.service';
 import { ProgressionKeyContext } from '../../../services/progression-key-context';
 import { relativeTimeOf } from '../../../services/relative-time';
 import { AutosaveClock, BROWSER_CLOCK, SaveStatus, SongAutosave } from '../../../services/song-autosave';
-import { SongEdit, chordWithId, setArtist, setTitle } from '../../../services/song-commands';
+import {
+  SongEdit,
+  changeChord,
+  chordWithId,
+  insertChord,
+  setArtist,
+  setTitle
+} from '../../../services/song-commands';
 import { chordSlotOf, songMetaOf } from '../../../services/song-document';
 import { CaretCoords, ChordFieldRequest } from '../../../services/song-editor-plugins';
 import { SongLibraryService } from '../../../services/song-library.service';
 import { SongSheetPreferencesService } from '../../../services/song-sheet-preferences.service';
 import { SongChordFieldComponent } from '../song-chord-field/song-chord-field.component';
+import { SongChordPanelComponent } from '../song-chord-panel/song-chord-panel.component';
 import { SongChordPopoverComponent } from '../song-chord-popover/song-chord-popover.component';
 import { ChordOpening, SheetHistory, SongSheetComponent } from '../song-sheet/song-sheet.component';
 import { SongToolbarComponent } from '../song-toolbar/song-toolbar.component';
@@ -65,6 +75,27 @@ interface ChordPopoverState extends PaneAnchor {
   id: string;
 }
 
+/** The side panel's tabs. Only Chords in S1; S4 adds Words and Memos. */
+export type PanelTabId = 'chords';
+
+/** One tab of the side panel: what it is called, and the ids that tie it to its panel (the ARIA tabs pattern). */
+export interface PanelTab {
+  id: PanelTabId;
+  label: string;
+  tabId: string;
+  panelId: string;
+}
+
+/**
+ * The side panel's tabs, in order. One now, and shown as a strip of one rather than hidden until there are two: the
+ * strip is the panel's visible title either way - it needs one - and a tablist of one tab is valid, announced "Chords,
+ * tab, 1 of 1", which tells a listener the panel is tabbed before S4 adds the others. S4 adds entries here and a panel
+ * for each in the template; nothing else about the strip changes.
+ */
+export const PANEL_TABS: readonly PanelTab[] = Object.freeze([
+  { id: 'chords', label: 'Chords', tabId: 'song-panel-tab-chords', panelId: 'song-panel-chords' }
+]);
+
 /** The gap between what a popup hangs under and its top edge, in CSS pixels. */
 const POPUP_GAP_PX = 4;
 
@@ -76,7 +107,7 @@ type Opened =
 
 /**
  * A song's page, `/songs/:id` (design Part 2): the header - back to the library, the title and artist, the save
- * status - the song's toolbar, and the sheet.
+ * status - the song's toolbar, the sheet, and the side panel beside it.
  *
  * **The song lives in the sheet.** Its document is the sheet's ProseMirror state; this page keeps the latest copy the
  * sheet published (`doc`) only to show it - the title fields, the toolbar - and to hand it to autosave. Every change
@@ -104,8 +135,17 @@ type Opened =
  * closes either and leaves the focus where the press put it. A field left for nowhere (the focus dropped to the page
  * itself) gives it back to the lyrics too, so typing goes on where it was.
  *
- * The page is laid out as a one-column grid under the toolbar so the Chords panel (task 8) slots in as a second
- * column without moving the sheet.
+ * **The side panel** (design Part 2) is a second column beside the sheet: a tab strip - Chords alone in S1 - and the
+ * selected tab's panel, folded away and back by Hide panel / Show panel, a viewer preference
+ * (`SongSheetPreferencesService.panelOpen`). On a narrow screen it goes **under the sheet** rather than over it as a
+ * drawer: the Chords tab is for building a line a click at a time, and a drawer would cover the line being built.
+ *
+ * **A chord clicked in the Chords tab** (`placePaletteChord`) replaces the chord selected on the sheet, if one is - so
+ * picking a chord on the sheet and then a cell swaps it, as in songcraft - or is placed at the caret the lyrics last
+ * had (`SongSheetComponent.lastCaret`). The press took the focus from the lyrics but not their selection, so that is
+ * where it goes; it is placed as one undo step with the caret after it, and the focus goes back to the lyrics, so the
+ * next click places the next chord after it and a row of clicks builds a progression left to right. Lyrics that have
+ * never had a caret refuse it, with the reason in the live region, and keep the focus where it is.
  */
 @Component({
   selector: 'app-song-editor',
@@ -114,6 +154,7 @@ type Opened =
     CommonModule,
     RouterLink,
     SongChordFieldComponent,
+    SongChordPanelComponent,
     SongChordPopoverComponent,
     SongSheetComponent,
     SongToolbarComponent
@@ -140,6 +181,7 @@ export class SongEditorComponent implements OnInit, OnDestroy {
   @ViewChild('titleField') private titleField?: ElementRef<HTMLInputElement>;
   @ViewChild('artistField') private artistField?: ElementRef<HTMLInputElement>;
   @ViewChild('sheetPane') private sheetPane?: ElementRef<HTMLElement>;
+  @ViewChildren('panelTab') private panelTabElements?: QueryList<ElementRef<HTMLButtonElement>>;
 
   phase: Phase = 'loading';
   /** Why the song cannot be opened, in the `unreadable` phase. */
@@ -163,6 +205,11 @@ export class SongEditorComponent implements OnInit, OnDestroy {
   chordField: ChordFieldState | null = null;
   /** The chord popover, while one is open. */
   chordPopover: ChordPopoverState | null = null;
+  /** The chord selected on the sheet, which the Chords tab marks and a click there replaces. */
+  selectedChord: ChordAtomAttrs | null = null;
+
+  readonly panelTabs = PANEL_TABS;
+  selectedTab: PanelTabId = 'chords';
 
   /** The live region's two halves (see the class comment). */
   messages: readonly [string, string] = ['', ''];
@@ -248,6 +295,11 @@ export class SongEditorComponent implements OnInit, OnDestroy {
 
   onHistoryChanged(history: SheetHistory): void {
     this.history = history;
+  }
+
+  onSelectedChordChanged(attrs: ChordAtomAttrs | null): void {
+    this.selectedChord = attrs;
+    this.changes.markForCheck();
   }
 
   undo(): void {
@@ -345,6 +397,58 @@ export class SongEditorComponent implements OnInit, OnDestroy {
     this.changes.detectChanges();
   }
 
+  // ---------------------------------------------------------------------------
+  // The side panel
+  // ---------------------------------------------------------------------------
+
+  /** Hide panel / Show panel, remembered for this viewer. */
+  togglePanel(): void {
+    this.preferencesService.setPanelOpen(!this.preferences.panelOpen);
+  }
+
+  selectTab(id: PanelTabId): void {
+    this.selectedTab = id;
+  }
+
+  /**
+   * The tab strip's keys, by the ARIA tabs pattern: ←/→ to the previous and next tab, round the ends, and Home and
+   * End to the first and last, each selecting the tab it lands on and taking the focus there. With one tab every key
+   * lands where it started.
+   */
+  onTabKeydown(event: KeyboardEvent, index: number): void {
+    const count = this.panelTabs.length;
+    const moves: Record<string, number> = { ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: count - 1 };
+    const target = moves[event.key];
+    if (target === undefined) return;
+    event.preventDefault();
+    const next = (target + count) % count;
+    this.selectTab(this.panelTabs[next].id);
+    this.panelTabElements?.get(next)?.nativeElement.focus();
+  }
+
+  /**
+   * A chord clicked in the Chords tab: in place of the chord selected on the sheet, or at the caret the lyrics last had
+   * (see the class comment). `changeChord` keeps the selected chord's id, place and length, and leaves it selected, so
+   * the cell it now matches is marked and another click swaps it again.
+   */
+  placePaletteChord(degree: ChordDegree): void {
+    const sheet = this.sheet;
+    const doc = this.doc;
+    if (sheet === undefined || doc === null) return;
+
+    const selected = sheet.selectedChord();
+    if (selected !== null) {
+      sheet.run(changeChord(this.keys, selected.attrs.id, degree));
+      sheet.focus();
+      return;
+    }
+
+    const { key, timeSignature } = songMetaOf(doc);
+    const attrs = chordSlotOf(degree, key, this.keys.chordScaleFor(key), timeSignature);
+    // No caret yet is handed on as a place no line can hold, so the refusal and its words are `insertChord`'s.
+    if (sheet.run(insertChord(attrs, sheet.lastCaret() ?? Number.NaN))) sheet.focus();
+  }
+
   /** Retry, after a failed save: saves now, with the change that failed or anything newer. */
   retry(): void {
     void this.autosave?.flush();
@@ -426,6 +530,7 @@ export class SongEditorComponent implements OnInit, OnDestroy {
     this.scaleIntervals = null;
     this.chordField = null;
     this.chordPopover = null;
+    this.selectedChord = null;
     this.status = null;
     this.statusText = '';
     this.history = { canUndo: false, canRedo: false };

@@ -16,10 +16,17 @@ import {
 } from '@angular/core';
 import { redo, redoDepth, undo, undoDepth } from 'prosemirror-history';
 import { Node } from 'prosemirror-model';
-import { EditorState, Transaction } from 'prosemirror-state';
+import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type { ChordAtomAttrs } from '../../../models/song.model';
-import { SongEdit, SongKeyRules, commandOf, insertChord, moveChordTo } from '../../../services/song-commands';
+import {
+  SongEdit,
+  SongKeyRules,
+  commandOf,
+  insertChord,
+  moveChordTo,
+  selectedChordOf
+} from '../../../services/song-commands';
 import { ChordAt, songMetaOf } from '../../../services/song-document';
 import { CaretCoords, ChordFieldRequest, songEditorPlugins } from '../../../services/song-editor-plugins';
 import { LyricSize } from '../../../services/song-sheet-preferences.service';
@@ -57,6 +64,8 @@ export interface SheetHistory {
  * chord asks for its popover (`chordOpened`), whose edits come back through `run`; and a chord's name is dragged to
  * another letter here, outright (`ChordView`), with a thin caret showing where it will land and a refused drop said on
  * `refused`. The field and the popover are the page's, not the sheet's: the sheet owns the editor and nothing else.
+ * The Chords panel, which takes the focus when clicked, asks two things of the sheet to act on it: where the caret
+ * was (`lastCaret`) and which chord is selected (`selectedChord`, and `selectedChordChanged` to mark its cell).
  *
  * **What the page shows it with** - names or numerals, the lyric size, the key rules chord names are worked out by -
  * are inputs, because they are the viewer's or the app's and not the song's (`SongSheetPreferencesService`). A change
@@ -98,6 +107,12 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
    * asks only while something listens - with nothing bound, Enter on a selected chord splits the line after it.
    */
   @Output() readonly chordOpened = new EventEmitter<ChordOpening>();
+  /**
+   * The chord selected on the sheet changed: a chord was selected, the selection left it, or the selected chord itself
+   * was rewritten - a key change, a chord change - so whatever shows it is out of date. Null when no chord is selected.
+   * Only on a change, so a keystroke in the words, which moves the caret on every press, emits nothing.
+   */
+  @Output() readonly selectedChordChanged = new EventEmitter<ChordAtomAttrs | null>();
 
   @ViewChild('mount', { static: true }) private mount?: ElementRef<HTMLElement>;
   @ViewChild('dropCaret', { static: true }) private dropCaret?: ElementRef<HTMLElement>;
@@ -108,6 +123,10 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
   private readonly chordViews = new Set<ChordView>();
   private naming: ChordNaming = { key: { tonic: 0, scaleId: 'ionian', preferSharps: true }, scaleIntervals: null, numerals: false };
   private history: SheetHistory = { canUndo: false, canRedo: false };
+  /** The selected chord's attributes as last emitted on `selectedChordChanged`. */
+  private selected: ChordAtomAttrs | null = null;
+  /** Whether the lyrics have had the focus, so the caret is one the user put somewhere (`lastCaret`). */
+  private caretChosen = false;
   private resizes: ResizeObserver | null = null;
   /** Set when an input changed what the lines look like; the lines are measured once the view has caught up. */
   private remeasureDue = false;
@@ -142,6 +161,17 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
         nodeViews: {
           chord: (node, view, getPos) => new ChordView(node, view, getPos, this.chordHost(view)),
           section: (node, view) => new SectionView(node, this.sectionHost(view))
+        },
+        handleDOMEvents: {
+          // Noted and left to ProseMirror: it has its own work to do on focus.
+          focus: () => {
+            this.caretChosen = true;
+            return false;
+          },
+          mouseup: view => {
+            this.catchUpCaret(view);
+            return false;
+          }
         },
         attributes: {
           class: 'song-sheet-editor',
@@ -212,6 +242,34 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
     return placed;
   }
 
+  /**
+   * Where a chord placed from outside the sheet goes - the Chords panel's click - or null when the lyrics have never
+   * had the focus.
+   *
+   * **The editor's own selection, kept.** ProseMirror's state holds the selection whether or not the editor has the
+   * focus: a press on a panel button takes the focus and leaves the state's selection where it was, and every
+   * transaction since - typing, a transpose from the panel, an undo - maps it as it maps the caret, because it *is* the
+   * caret. So no copy is kept and nothing is mapped by hand; this reads the selection's start, which is where
+   * `insertChord` puts a chord on selected words and where `[` records its place (`ChordFieldRequest.pos`). The one
+   * thing done is to read a click's caret as the click ends, before ProseMirror would (`catchUpCaret`), so a cell
+   * pressed straight after it does not find the caret from before.
+   *
+   * **Null until the lyrics have had the focus.** A new state's selection is the first position in the song, which
+   * no one chose: a chord placed there before the user has been in the lyrics at all would land on the first word
+   * unasked. The page hands null on as a place no line can hold, so the refusal and its words are `insertChord`'s.
+   */
+  lastCaret(): number | null {
+    const view = this.view;
+    if (view === null || !this.caretChosen) return null;
+    return view.state.selection.from;
+  }
+
+  /** The chord selected on the sheet - a click on its name, Alt+arrows, a chord placed by drag - or null. */
+  selectedChord(): ChordAt | null {
+    const view = this.view;
+    return view === null ? null : selectedChordOf(view.state);
+  }
+
   /** Puts the focus in the lyrics, at the caret. */
   focus(): void {
     this.view?.focus();
@@ -246,12 +304,56 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
     const history: SheetHistory = { canUndo: undoDepth(state) > 0, canRedo: redoDepth(state) > 0 };
     const historyMoved = history.canUndo !== this.history.canUndo || history.canRedo !== this.history.canRedo;
     this.history = history;
-    if (state.doc === before.doc && !historyMoved) return;
+    // By identity: an atom no step touched keeps its node, and so its attributes object, through any amount of typing
+    // around it, while a step that rewrites it - a re-key, a new chord - makes a new one.
+    const selected = selectedChordOf(state)?.attrs ?? null;
+    const selectionMoved = selected !== this.selected;
+    this.selected = selected;
+    if (state.doc === before.doc && !historyMoved && !selectionMoved) return;
 
     this.zone.run(() => {
       if (state.doc !== before.doc) this.docChanged.emit(state.doc);
       if (historyMoved) this.historyChanged.emit(history);
+      if (selectionMoved) this.selectedChordChanged.emit(selected);
     });
+  }
+
+  /**
+   * Reads into the editor the caret a click in the words has just put down, as the click ends.
+   *
+   * The browser moves its caret on the press, but ProseMirror learns of it from `selectionchange`, which Chrome fires
+   * a task later - and ignores once the editor has lost the focus. A press on a Chords panel cell straight after the
+   * click can take the focus in between, and the chord then goes to the caret before the click. So the browser's
+   * caret is read here, at `mouseup`, while the editor still has the focus; ProseMirror's own reading a moment later
+   * finds the state already there and changes nothing.
+   *
+   * At the end of a click and not as the focus leaves: a keystroke's text can be in the browser's DOM before
+   * ProseMirror has read it, and a caret read then would be ahead of the document - but a click types nothing. A press
+   * on a chord's name never gets here (`ChordView` keeps its own events), and a browser selection anywhere but in a
+   * line of words is left alone.
+   */
+  private catchUpCaret(view: EditorView): void {
+    const state = view.state;
+    const dom = view.dom.ownerDocument.getSelection();
+    if (dom === null) return;
+    const { anchorNode, anchorOffset, focusNode, focusOffset } = dom;
+    if (anchorNode === null || focusNode === null) return;
+    if (!view.dom.contains(anchorNode) || !view.dom.contains(focusNode)) return;
+
+    let anchor: number;
+    let head: number;
+    try {
+      anchor = view.posAtDOM(anchorNode, anchorOffset);
+      head = view.posAtDOM(focusNode, focusOffset);
+    } catch {
+      // A node ProseMirror does not map (a chord name's own text): nothing to read.
+      return;
+    }
+    if (anchor === state.selection.anchor && head === state.selection.head) return;
+    const $anchor = state.doc.resolve(anchor);
+    const $head = state.doc.resolve(head);
+    if (!$anchor.parent.inlineContent || !$head.parent.inlineContent) return;
+    this.dispatch(state.tr.setSelection(TextSelection.between($anchor, $head)));
   }
 
   private namingFor(doc: Node): ChordNaming {

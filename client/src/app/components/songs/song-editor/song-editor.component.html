@@ -77,8 +77,8 @@
         (sheetFocus)="focusSheet()"
       ></app-song-toolbar>
 
-      <!-- One column for now; the Chords panel (task 8) is a second column beside the sheet. -->
-      <div class="editor-body">
+      <!-- The sheet, and the side panel beside it - or under it on a narrow screen (see the stylesheet). -->
+      <div class="editor-body" [class.panel-closed]="!preferences.panelOpen">
         <div #sheetPane class="sheet-pane">
           <app-song-sheet
             [initialDoc]="initialDoc"
@@ -87,6 +87,7 @@
             [lyricSize]="preferences.lyricSize"
             (docChanged)="onDocChanged($event)"
             (historyChanged)="onHistoryChanged($event)"
+            (selectedChordChanged)="onSelectedChordChanged($event)"
             (refused)="say($event, true)"
             (notice)="say($event)"
             (chordFieldRequested)="openChordField($event)"
@@ -123,6 +124,62 @@
             (closed)="closeChordPopover($event)"
           ></app-song-chord-popover>
         </div>
+
+        <!--
+          The side panel: a tab strip of one tab now (Words and Memos come in S4), the button that folds it away, and the
+          selected tab's panel. The toggle is the one element in both states, so the focus stays on it as it is pressed.
+        -->
+        <aside id="song-side-panel" class="side-panel" aria-label="Side panel">
+          <div class="panel-bar">
+            <div *ngIf="preferences.panelOpen" class="panel-tabs" role="tablist" aria-label="Song panel">
+              <button
+                #panelTab
+                *ngFor="let tab of panelTabs; let index = index"
+                type="button"
+                role="tab"
+                class="tool panel-tab"
+                [id]="tab.tabId"
+                [class.selected]="tab.id === selectedTab"
+                [attr.aria-selected]="tab.id === selectedTab"
+                [attr.aria-controls]="tab.panelId"
+                [attr.tabindex]="tab.id === selectedTab ? 0 : -1"
+                (click)="selectTab(tab.id)"
+                (keydown)="onTabKeydown($event, index)"
+              >{{ tab.label }}</button>
+            </div>
+            <button
+              type="button"
+              class="tool panel-toggle"
+              aria-controls="song-side-panel"
+              [attr.aria-expanded]="preferences.panelOpen"
+              [attr.aria-label]="preferences.panelOpen ? 'Hide panel' : 'Show panel'"
+              [title]="preferences.panelOpen ? 'Hide panel' : 'Show panel'"
+              (click)="togglePanel()"
+            >
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M15 4v16" />
+              </svg>
+            </button>
+          </div>
+
+          <div
+            *ngIf="preferences.panelOpen && selectedTab === 'chords'"
+            class="panel-body"
+            role="tabpanel"
+            id="song-panel-chords"
+            aria-labelledby="song-panel-tab-chords"
+          >
+            <app-song-chord-panel
+              [doc]="doc"
+              [keys]="keys"
+              [numerals]="preferences.numerals"
+              [selected]="selectedChord"
+              (edit)="run($event)"
+              (chosen)="placePaletteChord($event)"
+            ></app-song-chord-panel>
+          </div>
+        </aside>
       </div>
     </ng-container>
   </ng-container>

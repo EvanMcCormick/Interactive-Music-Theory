@@ -1,0 +1,60 @@
+<div class="chord-panel">
+  <div class="panel-key" role="group" aria-label="Song key">
+    <button
+      type="button"
+      class="tool panel-transpose-up"
+      aria-label="Transpose the song up a semitone"
+      title="Transpose up a semitone"
+      (click)="transpose(1)"
+    >↑</button>
+    <span class="panel-key-name">{{ keyName }}</span>
+    <button
+      type="button"
+      class="tool panel-transpose-down"
+      aria-label="Transpose the song down a semitone"
+      title="Transpose down a semitone"
+      (click)="transpose(-1)"
+    >↓</button>
+  </div>
+
+  <p *ngIf="refusal !== null; else chords" class="panel-refusal">{{ refusal }}</p>
+
+  <ng-template #chords>
+    <!-- Says what a click will do, which turns on whether a chord is selected on the sheet. Describes every group. -->
+    <p class="panel-hint" id="song-chord-panel-hint">{{ hint }}</p>
+
+    <ng-template #cellGroup let-group>
+      <section class="chord-group" role="group" [attr.data-group]="group.id" [attr.aria-labelledby]="group.headingId"
+        aria-describedby="song-chord-panel-hint">
+        <h3 class="group-title" [id]="group.headingId">{{ group.title }}</h3>
+        <div class="cells">
+          <!-- Labelled by the spoken name: `vii°` over `B°` would be read out as letters and signs. -->
+          <button
+            *ngFor="let cell of group.cells; trackBy: trackByCell"
+            type="button"
+            class="tool cell"
+            [class.on]="cell.current"
+            [attr.aria-current]="cell.current ? 'true' : null"
+            [attr.aria-label]="cell.option.spoken"
+            (click)="choose(cell)"
+          >
+            <span class="cell-primary">{{ cell.primary }}</span>
+            <span class="cell-secondary">{{ cell.secondary }}</span>
+            <span *ngIf="cell.option.role" class="cell-role">{{ cell.option.role }}</span>
+          </button>
+        </div>
+      </section>
+    </ng-template>
+
+    <div class="diatonic">
+      <ng-container *ngFor="let group of diatonic; trackBy: trackByGroup">
+        <ng-container *ngTemplateOutlet="cellGroup; context: { $implicit: group }"></ng-container>
+      </ng-container>
+    </div>
+    <div class="chromatic">
+      <ng-container *ngFor="let group of chromatic; trackBy: trackByGroup">
+        <ng-container *ngTemplateOutlet="cellGroup; context: { $implicit: group }"></ng-container>
+      </ng-container>
+    </div>
+  </ng-template>
+</div>

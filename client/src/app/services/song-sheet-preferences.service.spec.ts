@@ -31,7 +31,10 @@ class MemoryStorage implements Storage {
 
 const KEY = 'songSheetPreferences';
 
-/** How the sheet is shown to this viewer: names or numerals, and the lyric size - kept per browser, never in a song. */
+/**
+ * How the sheet is shown to this viewer: names or numerals, the lyric size, and whether the side panel is open - kept
+ * per browser, never in a song.
+ */
 describe('SongSheetPreferencesService', () => {
   let storage: MemoryStorage;
 
@@ -44,33 +47,34 @@ describe('SongSheetPreferencesService', () => {
     storage = new MemoryStorage();
   });
 
-  it('starts on chord names at the medium size when nothing is stored', () => {
-    expect(serviceWith(storage).preferences).toEqual({ numerals: false, lyricSize: 'medium' });
+  it('starts on chord names at the medium size, with the side panel open, when nothing is stored', () => {
+    expect(serviceWith(storage).preferences).toEqual({ numerals: false, lyricSize: 'medium', panelOpen: true });
   });
 
   it('reads back what an earlier visit chose', () => {
-    storage.setItem(KEY, JSON.stringify({ numerals: true, lyricSize: 'large' }));
-    expect(serviceWith(storage).preferences).toEqual({ numerals: true, lyricSize: 'large' });
+    storage.setItem(KEY, JSON.stringify({ numerals: true, lyricSize: 'large', panelOpen: false }));
+    expect(serviceWith(storage).preferences).toEqual({ numerals: true, lyricSize: 'large', panelOpen: false });
   });
 
   it('keeps each stored choice it can read and defaults the rest', () => {
-    storage.setItem(KEY, JSON.stringify({ numerals: 'yes', lyricSize: 'small' }));
-    expect(serviceWith(storage).preferences).toEqual({ numerals: false, lyricSize: 'small' });
+    storage.setItem(KEY, JSON.stringify({ numerals: 'yes', lyricSize: 'small', panelOpen: 'no' }));
+    expect(serviceWith(storage).preferences).toEqual({ numerals: false, lyricSize: 'small', panelOpen: true });
   });
 
   it('defaults everything over a stored value that is not JSON', () => {
     storage.setItem(KEY, '{not json');
-    expect(serviceWith(storage).preferences).toEqual({ numerals: false, lyricSize: 'medium' });
+    expect(serviceWith(storage).preferences).toEqual({ numerals: false, lyricSize: 'medium', panelOpen: true });
   });
 
   it('publishes and stores each change', async () => {
     const service = serviceWith(storage);
     service.setNumerals(true);
     service.setLyricSize('small');
+    service.setPanelOpen(false);
 
     const published: SongSheetPreferences = await firstValueFrom(service.preferences$);
-    expect(published).toEqual({ numerals: true, lyricSize: 'small' });
-    expect(JSON.parse(storage.getItem(KEY) ?? 'null')).toEqual({ numerals: true, lyricSize: 'small' });
+    expect(published).toEqual({ numerals: true, lyricSize: 'small', panelOpen: false });
+    expect(JSON.parse(storage.getItem(KEY) ?? 'null')).toEqual({ numerals: true, lyricSize: 'small', panelOpen: false });
   });
 
   it('does not publish a choice that changes nothing', () => {
@@ -79,6 +83,7 @@ describe('SongSheetPreferencesService', () => {
     service.preferences$.subscribe(preferences => seen.push(preferences));
     service.setNumerals(false);
     service.setLyricSize('medium');
+    service.setPanelOpen(true);
     expect(seen.length).toBe(1);
   });
 
@@ -97,6 +102,6 @@ describe('SongSheetPreferencesService', () => {
 
   it('starts on the defaults when the browser refuses to read storage', () => {
     spyOn(storage, 'getItem').and.throwError(new DOMException('Denied', 'SecurityError'));
-    expect(serviceWith(storage).preferences).toEqual({ numerals: false, lyricSize: 'medium' });
+    expect(serviceWith(storage).preferences).toEqual({ numerals: false, lyricSize: 'medium', panelOpen: true });
   });
 });

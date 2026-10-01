@@ -27,22 +27,19 @@ import {
 } from './chord-palette-controls-view';
 import {
   EXTENT_LABELS,
-  PALETTE_ALTER,
+  PALETTE_EXTENT,
   addVerb,
   buildOption,
-  paletteDegree,
   shapeVerb,
   warnAboutHeight
 } from './chord-palette-options-view';
-import {
-  chordName,
-  romanNumeral,
-  spokenChordName
-} from '../../../../services/progression-chord-names';
 import { effectiveChord } from '../../../../services/progression-harmony';
 import { likelyNextDegrees } from '../../../../services/progression-next-chords';
-import { chordRootName } from '../../../../services/progression-spelling';
-import { ChordOption, chordVocabulary } from '../../../../services/progression-vocabulary';
+import {
+  ChordOption,
+  chordVocabulary,
+  diatonicChordsOf
+} from '../../../../services/progression-vocabulary';
 import { describeSlot } from '../progression-strip/progression-strip-cards';
 import { hintPalette } from './chord-palette-hints-view';
 
@@ -741,44 +738,31 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
         : null;
   }
 
+  /**
+   * The seven buttons: the key's own triads, as `diatonicChordsOf` builds them.
+   *
+   * Built there rather than here since the song sheet's Chords tab needs the
+   * same seven, and its sevenths, so the two cannot disagree about a key's
+   * chords. What the vocabulary decides - the root on the degree's own letter
+   * through `chordRootName`, the identity the strip card and the fretboard read
+   * through `effectiveChord` - is argued there; what is the palette's is the
+   * height (`PALETTE_EXTENT`, what `createDegreeSlot` appends) and the label.
+   */
   private buildChords(key: ProgressionKey, intervals: readonly number[]): PaletteChord[] {
-    return [0, 1, 2, 3, 4, 5, 6].map(degree => {
-      // The whole identity rather than a bare quality, which is what the three
-      // renderers take since M3 Task 5 - and it is the same identity the strip
-      // card and the fretboard read, so a diatonic button here cannot come to a
-      // different conclusion about a chord from the card it will make. At this
-      // row's extent nothing composes: a triad with no suspension and no pinned
-      // extension renders exactly what `degreeQuality` rendered before.
-      const chord = effectiveChord(intervals, paletteDegree(degree));
-      // The shared arithmetic rather than a local `(tonic + interval) % 12`,
-      // which is what this was and which agrees with it only while `alter` is
-      // pinned at zero. The strip card and the fretboard highlight both call
-      // this function; a palette doing its own sum is the one label that would
-      // not follow when M2 lets a degree be altered - and it would also not
-      // fold a negative sum back into range.
-      //
-      // Spelled on this degree's own letter rather than from the two chromatic
-      // tables, which is what makes F locrian's third degree an `Ab` here
-      // instead of the `G♯` a six-sharp signature gave it - and what keeps this
-      // row agreeing with the borrowed row beside it, where a lowered root now
-      // has a letter no preference could have chosen.
-      const root = chordRootName(key, intervals, paletteDegree(degree));
-
-      return {
-        degree,
-        numeral: romanNumeral(degree, PALETTE_ALTER, chord),
-        name: chordName(root, chord),
-        // The numeral is dropped from the spoken label rather than translated:
-        // read aloud it is a string of letters ("vee eye eye") and the one fact
-        // it carries beyond the position - the quality - is already in the
-        // spoken name. The position is given as the degree instead.
-        label: `Add ${spokenChordName(root, chord)}, degree ${degree + 1}`,
-        spoken: spokenChordName(root, chord),
-        isTonic: degree === 0,
-        // Unmarked as built: `renderHints` marks the ones the hints land on.
-        hinted: false
-      };
-    });
+    return diatonicChordsOf(key, intervals, PALETTE_EXTENT).map(({ degree: { degree }, numeral, name, spoken }) => ({
+      degree,
+      numeral,
+      name,
+      // The numeral is dropped from the spoken label rather than translated:
+      // read aloud it is a string of letters ("vee eye eye") and the one fact
+      // it carries beyond the position - the quality - is already in the
+      // spoken name. The position is given as the degree instead.
+      label: `Add ${spoken}, degree ${degree + 1}`,
+      spoken,
+      isTonic: degree === 0,
+      // Unmarked as built: `renderHints` marks the ones the hints land on.
+      hinted: false
+    }));
   }
 
   /**

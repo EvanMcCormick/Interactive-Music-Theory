@@ -1,0 +1,162 @@
+// The song pages' tokens, each with its own value as the fallback so the panel renders the same outside the page.
+:host {
+  --panel-text: var(--songs-text, #ecf0f1);
+  --panel-text-dim: var(--songs-text-dim, #adbcc8);
+  --panel-accent: var(--songs-accent, #3498db);
+  --panel-border: var(--songs-border, #465666);
+
+  display: block;
+  color: var(--panel-text);
+  font-family: system-ui, sans-serif;
+}
+
+.chord-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+
+// ↑ C Ionian (Major) ↓, as the design's sketch has it.
+.panel-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.panel-key-name {
+  font-weight: 600;
+  text-align: center;
+}
+
+.panel-hint,
+.panel-refusal {
+  margin: 0;
+  color: var(--panel-text-dim);
+  font-size: 0.8rem;
+}
+
+.panel-refusal {
+  font-size: 0.9rem;
+}
+
+// Triads and sevenths side by side, each a column of seven, so a degree's triad sits beside its seventh.
+.diatonic {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+
+  .cells {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.chromatic {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+
+  .cells {
+    grid-template-columns: repeat(auto-fill, minmax(3.75rem, 1fr));
+  }
+}
+
+.chord-group {
+  min-width: 0;
+}
+
+.group-title {
+  margin: 0 0 0.3rem;
+  color: var(--panel-text-dim);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cells {
+  display: grid;
+  gap: 0.15rem;
+}
+
+// The flat tool style: no chrome until hovered, colour only on the selection (`.on`).
+.tool {
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--panel-text);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 90ms ease-out;
+
+  &:hover:not(.on) {
+    background-color: rgb(255 255 255 / 10%);
+  }
+
+  &:active {
+    background-color: rgb(255 255 255 / 16%);
+  }
+
+  &.on {
+    background-color: var(--panel-accent);
+    color: #fff;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--panel-text);
+    outline-offset: -2px;
+  }
+}
+
+.panel-transpose-up,
+.panel-transpose-down {
+  min-width: 2rem;
+  padding: 0.3rem 0.5rem;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  padding: 0.3rem 0.25rem;
+  line-height: 1.2;
+}
+
+.cell-primary {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.cell-secondary,
+.cell-role {
+  color: var(--panel-text-dim);
+  font-size: 0.75rem;
+}
+
+// Numerals are set in the toolbar's I-IV face wherever they appear; the role is always a numeral.
+.cell-role {
+  font-family: Georgia, 'Times New Roman', serif;
+}
+
+.cell.on .cell-secondary,
+.cell.on .cell-role {
+  color: rgb(255 255 255 / 85%);
+}
+
+// Under the sheet (the page's narrow layout, at the same width): there is room across and little down, so each group
+// is a row, triads above sevenths with a degree's two chords in one column.
+@media (max-width: 768px) {
+  .diatonic {
+    grid-template-columns: minmax(0, 1fr);
+
+    .cells {
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+  }
+
+  .cell-primary {
+    font-size: 0.85rem;
+  }
+}

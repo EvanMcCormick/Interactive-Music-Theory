@@ -10,6 +10,7 @@
   --songs-text-dim: #adbcc8;
   --songs-accent: #3498db;
   --songs-error: #f1948a;
+  --songs-raised: #22313f;
 
   display: block;
 }
@@ -172,12 +173,67 @@
   }
 }
 
-// A grid of one column now; the Chords panel (task 8) is a second, `grid-template-columns: minmax(0, 1fr) 20rem`.
+// The sheet and the side panel beside it; folded away, the panel keeps only the column its Show panel button needs.
 .editor-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 22rem;
   flex: 1;
   min-height: 0;
+
+  &.panel-closed {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background-color: var(--songs-raised);
+  border-left: 1px solid var(--songs-border);
+}
+
+.panel-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--songs-border);
+
+  .panel-closed & {
+    border-bottom: 0;
+  }
+}
+
+.panel-tabs {
+  display: flex;
+  flex: 1;
+  gap: 0.25rem;
+}
+
+// A selected tab is marked by a line under it rather than a fill: the flat style keeps colour for a selection, and a
+// strip whose one tab is always selected would otherwise be a block of colour that says nothing.
+.panel-tab {
+  font-weight: 600;
+
+  &.selected {
+    box-shadow: inset 0 -2px 0 var(--songs-accent);
+  }
+}
+
+.panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 0.35rem;
+}
+
+// The selected tab's panel scrolls on its own, so the tab strip and the toggle stay in reach.
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 // Positioned, so the chord field and popover are placed in its box and scroll with the lyrics they belong to.
@@ -210,6 +266,21 @@
 @media (max-width: 768px) {
   .editor-bar {
     padding: 0.6rem 1rem;
+  }
+
+  // Under the sheet, not a drawer over it (see the class comment), and kept to about a third of the height: on a phone
+  // the app's header and the toolbar already take much of the rest, and the line being built must stay in view above.
+  .editor-body,
+  .editor-body.panel-closed {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .side-panel {
+    max-height: 35vh;
+    max-height: 35dvh;
+    border-top: 1px solid var(--songs-border);
+    border-left: 0;
   }
 
   .identity-field .song-title,

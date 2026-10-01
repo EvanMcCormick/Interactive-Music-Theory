@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Node } from 'prosemirror-model';
-import { NodeSelection } from 'prosemirror-state';
+import { NodeSelection, TextSelection } from 'prosemirror-state';
 import { createExtensions } from '../../../models/progression-normalize';
 import { ChordDegree, ProgressionKey } from '../../../models/progression.model';
 import { MusicTheoryService } from '../../../services/music-theory.service';
@@ -405,6 +405,90 @@ describe('SongSheetComponent', () => {
       open(song(section('v1', 'Verse 1', line('Wondering'))));
       expect(sheet.placeChord(0, chordSlotOf(degreeAt(3), C_MAJOR, IONIAN, FOUR_FOUR))).toBeFalse();
       expect(refusals).toEqual(['Put the caret in a line of lyrics to add a chord there.']);
+    });
+  });
+
+  describe('the caret and the selected chord, for the Chords panel', () => {
+    /** Puts the caret at `pos`, as a click in the lyrics would. */
+    function caretAt(pos: number): void {
+      sheet.run(state => ({ kind: 'edit', tr: state.tr.setSelection(TextSelection.create(state.doc, pos)) }));
+    }
+
+    /** Something outside the sheet to take the focus, as a panel's button does when pressed. */
+    function focusElsewhere(): HTMLButtonElement {
+      const button = document.createElement('button');
+      document.body.appendChild(button);
+      button.focus();
+      return button;
+    }
+
+    it('has no caret to offer until the lyrics have had the focus', () => {
+      open(song(section('v1', 'Verse 1', line('Wondering where'))));
+      expect(sheet.lastCaret()).toBeNull();
+
+      sheet.focus();
+      caretAt(7);
+      expect(sheet.lastCaret()).toBe(7);
+    });
+
+    it('keeps the caret it had when the focus leaves the lyrics, and follows edits made from outside', () => {
+      open(song(section('v1', 'Verse 1', line('Wondering where'))));
+      sheet.focus();
+      caretAt(12);
+      const outside = focusElsewhere();
+
+      expect(document.activeElement).toBe(outside);
+      expect(sheet.lastCaret()).toBe(12);
+      // Words put in before the caret move it on, as they move the caret itself.
+      sheet.run(state => ({ kind: 'edit', tr: state.tr.insertText('Oh ', 2) }));
+      expect(sheet.lastCaret()).toBe(15);
+      outside.remove();
+    });
+
+    it('takes a click’s caret as the click ends, though the focus leaves before ProseMirror would hear of it', () => {
+      open(song(section('v1', 'Verse 1', line('Wondering where'))));
+      sheet.focus();
+      caretAt(3);
+
+      // A click on "where" puts the browser's caret there at once, and tells ProseMirror only on the next
+      // `selectionchange` - which, when a panel button takes the focus first, finds the editor no longer focused.
+      const text = host.querySelector('.song-lyric-line')?.firstChild;
+      if (!text) throw new Error('No text');
+      document.getSelection()?.collapse(text, 10);
+      text.parentElement?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+      const outside = focusElsewhere();
+
+      expect(sheet.lastCaret()).toBe(12);
+      outside.remove();
+    });
+
+    it('offers the start of a selection, where a chord placed on words goes', () => {
+      open(song(section('v1', 'Verse 1', line('Wondering where'))));
+      sheet.focus();
+      sheet.run(state => ({ kind: 'edit', tr: state.tr.setSelection(TextSelection.create(state.doc, 12, 7)) }));
+      expect(sheet.lastCaret()).toBe(7);
+    });
+
+    it('says which chord is selected each time that changes, and only then', () => {
+      open(song(section('v1', 'Verse 1', line(chord(0), 'Got me ', chord(5), 'thinking'))));
+      const seen: (string | null)[] = [];
+      sheet.selectedChordChanged.subscribe(attrs => seen.push(attrs === null ? null : attrs.id));
+      const am = current().nodeAt(10);
+      if (!am) throw new Error('No Am');
+
+      nameOf(chordEls()[1]).click();
+      expect(seen).toEqual([am.attrs['id']]);
+      expect(sheet.selectedChord()?.attrs.id).toBe(am.attrs['id']);
+
+      // Re-keyed, it is a new chord to show, though the same atom stays selected.
+      sheet.run(transposeSong(keys, 1));
+      expect(seen.length).toBe(2);
+      expect(seen[1]).toBe(am.attrs['id']);
+
+      caretAt(5);
+      sheet.run(state => ({ kind: 'edit', tr: state.tr.insertText('x', 5) }));
+      expect(seen).toEqual([am.attrs['id'], am.attrs['id'], null]);
+      expect(sheet.selectedChord()).toBeNull();
     });
   });
 

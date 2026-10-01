@@ -21,7 +21,9 @@ import {
 /**
  * The chords a key offers beyond its own seven: other shapes on the chord you
  * are on, chords borrowed from the parallel minor, and the dominants of the
- * degrees you could go to.
+ * degrees you could go to - and, since the song sheet, those seven themselves
+ * at any height (`diatonicChordsOf`), which the progression palette and the
+ * sheet's Chords tab both draw.
  *
  * Pure, with no Angular dependency, on the `progression-harmony.ts` precedent.
  * It is the layer above that one: harmony answers "what notes does this triple
@@ -179,6 +181,70 @@ export interface ChordVocabulary {
   alternates: readonly ChordOption[];
   borrowed: readonly ChordOption[];
   secondary: readonly ChordOption[];
+}
+
+/**
+ * One of a key's own chords at a given height: the degree that builds it, and
+ * the three ways of writing it that a `ChordOption` carries.
+ *
+ * The degree is the whole `ChordDegree` a slot would store rather than an
+ * index, because it is what a caller places: the progression palette appends
+ * its index through `createDegreeSlot`, and the song sheet's Chords tab writes
+ * the whole of it into a chord atom (`chordSlotOf`).
+ */
+export interface DiatonicChord {
+  /** `quality: null` - the key's own chord - at the height asked for, unaltered. */
+  degree: ChordDegree;
+  /** `vi`, `V7`, `viiø7`. */
+  numeral: string;
+  /** `A min`, `G7` - `chordName` style, as the palette prints. */
+  name: string;
+  /** `A minor`. */
+  spoken: string;
+}
+
+/**
+ * A key's own seven chords at `extent`: its triads at 3, its sevenths at 7 -
+ * each degree's stack of thirds through the scale, which is what `quality:
+ * null` builds.
+ *
+ * **The diatonic row, which the vocabulary above used not to have.** The
+ * progression palette built its seven buttons itself, and the song sheet's
+ * Chords tab needs the same seven and the same seven again at a seventh's
+ * height. Built once here so the two cannot come to different conclusions
+ * about a key's chords: the root is `chordRootName`'s - spelled on the degree's
+ * own letter, so F locrian's third degree is `Ab` and not the `G#` a six-sharp
+ * signature would give - and the chord is `effectiveChord`'s, the identity the
+ * strip card and the fretboard read. The name and numeral are written from
+ * those two by the functions every other option here uses.
+ *
+ * **Unaltered and unoverridden.** `alter` 0 and `quality` null are what make
+ * them the key's own: the accidental and the shape are what the borrowed row
+ * carries, so a diatonic chord written with either would be a borrowed one by
+ * another name. The fields a button does not choose are what a fresh slot
+ * carries (`optionDegree`).
+ *
+ * A scale that cannot stack thirds gives none, on the bargain `chordVocabulary`
+ * makes: an empty row rather than a throw three layers down.
+ */
+export function diatonicChordsOf(
+  key: ProgressionKey,
+  scaleIntervals: readonly number[],
+  extent: ChordExtent
+): DiatonicChord[] {
+  if (!isHeptatonic(scaleIntervals)) return [];
+
+  return scaleIntervals.map((_, index) => {
+    const degree = optionDegree(index, 0, null, extent);
+    const chord = effectiveChord(scaleIntervals, degree);
+    const root = chordRootName(key, scaleIntervals, degree);
+    return {
+      degree,
+      numeral: romanNumeral(index, degree.alter, chord),
+      name: chordName(root, chord),
+      spoken: spokenChordName(root, chord)
+    };
+  });
 }
 
 /** A triad, which is the height every borrowed chord here is offered at. */
@@ -619,7 +685,8 @@ function naturalExtent(quality: NamedQuality): ChordExtent {
  * The `ChordDegree` an option stands for, as `chordRootName` wants it.
  *
  * The shared arithmetic rather than a local `(tonic + interval + alter) % 12`,
- * on the argument the palette's own `paletteDegree` makes: the strip card, the
+ * on the argument the palette's diatonic row made when it built its own seven
+ * (they are `diatonicChordsOf`'s now, through this same function): the strip card, the
  * fretboard highlight and the generator all root a chord through
  * `chordRootPitchClass`, which is what `chordRootName` spells, and a caller
  * doing its own sum is the label that stops agreeing with the sound. It also
@@ -658,11 +725,17 @@ function naturalExtent(quality: NamedQuality): ChordExtent {
  * slash numeral by design and is measured against its target rather than
  * against the key - see `ALTER_AGAINST_TARGET` above, and `romanNumeral`. Its
  * name and its spoken form are swept like every other button's.
+ *
+ * `quality` is null for the diatonic rows (`diatonicChordsOf`) - the key's own
+ * shape - and a named shape for every option in the three groups. Exported
+ * because a caller that places an option's chord whole, rather than handing its
+ * four fields to `chosen` over a slot it already has, needs exactly this degree:
+ * the song sheet's Chords tab writes it into a new chord atom.
  */
-function optionDegree(
+export function optionDegree(
   degree: number,
   alter: number,
-  quality: NamedQuality,
+  quality: NamedQuality | null,
   extent: ChordExtent
 ): ChordDegree {
   return {

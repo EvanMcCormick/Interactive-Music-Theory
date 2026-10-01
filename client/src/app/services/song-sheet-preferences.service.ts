@@ -12,11 +12,13 @@ export interface SongSheetPreferences {
   /** Roman numerals over the words (`I-IV` pressed) rather than chord names. */
   numerals: boolean;
   lyricSize: LyricSize;
+  /** The song page's side panel - the Chords tab - shown beside the sheet, or folded away to give the lyrics room. */
+  panelOpen: boolean;
 }
 
-const DEFAULTS: SongSheetPreferences = Object.freeze({ numerals: false, lyricSize: 'medium' });
+const DEFAULTS: SongSheetPreferences = Object.freeze({ numerals: false, lyricSize: 'medium', panelOpen: true });
 
-/** One key for both choices, so they are read and written together. */
+/** One key for every choice, so they are read and written together. */
 const STORAGE_KEY = 'songSheetPreferences';
 
 /**
@@ -36,11 +38,12 @@ export const SONG_PREFERENCES_STORAGE = new InjectionToken<Storage | null>('SONG
 });
 
 /**
- * How the song sheet is shown to this viewer: chord names or Roman numerals (`I-IV`), and the lyric size (`Aa`).
+ * How the song sheet is shown to this viewer: chord names or Roman numerals (`I-IV`), the lyric size (`Aa`), and
+ * whether the side panel is open (Hide panel / Show panel).
  *
- * **Kept out of the song on purpose.** Both are how one person likes to read a sheet, not what the song is: a
- * co-writer reading in numerals should not turn the other's sheet into numerals, a size change should not be an undo
- * step, and neither should mark the song unsaved or bump its revision. So they live per browser, in `localStorage`,
+ * **Kept out of the song on purpose.** Each is how one person likes to read a sheet, not what the song is: a
+ * co-writer reading in numerals should not turn the other's sheet into numerals, a size change or a folded panel
+ * should not be an undo step, and none should mark the song unsaved or bump its revision. So they live per browser, in `localStorage`,
  * and the document - which design Part 8 keeps for what a future sync would share - never sees them.
  *
  * **A root service rather than storage calls in the page**, so the toolbar that changes them and the page that hands
@@ -69,9 +72,19 @@ export class SongSheetPreferencesService {
     this.update({ ...this.preferences, lyricSize });
   }
 
+  setPanelOpen(panelOpen: boolean): void {
+    this.update({ ...this.preferences, panelOpen });
+  }
+
   private update(next: SongSheetPreferences): void {
     const current = this.preferences;
-    if (next.numerals === current.numerals && next.lyricSize === current.lyricSize) return;
+    if (
+      next.numerals === current.numerals &&
+      next.lyricSize === current.lyricSize &&
+      next.panelOpen === current.panelOpen
+    ) {
+      return;
+    }
     this.subject.next(next);
     try {
       this.storage?.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -90,10 +103,11 @@ export class SongSheetPreferencesService {
     }
     if (typeof stored !== 'object' || stored === null) return DEFAULTS;
 
-    const { numerals, lyricSize } = stored as Record<string, unknown>;
+    const { numerals, lyricSize, panelOpen } = stored as Record<string, unknown>;
     return {
       numerals: typeof numerals === 'boolean' ? numerals : DEFAULTS.numerals,
-      lyricSize: LYRIC_SIZES.includes(lyricSize as LyricSize) ? (lyricSize as LyricSize) : DEFAULTS.lyricSize
+      lyricSize: LYRIC_SIZES.includes(lyricSize as LyricSize) ? (lyricSize as LyricSize) : DEFAULTS.lyricSize,
+      panelOpen: typeof panelOpen === 'boolean' ? panelOpen : DEFAULTS.panelOpen
     };
   }
 }
