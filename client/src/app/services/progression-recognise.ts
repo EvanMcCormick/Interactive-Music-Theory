@@ -217,11 +217,23 @@ export function expressInKey(
  * degree cannot write it.
  *
  * `writeAt` answers the harmony half and this adds the two register fields, so
- * that the two callers who choose a degree by different means - `expressInKey`,
+ * that the callers who choose a degree by different means - `expressInKey`,
  * which ranks them, and `keptNumeral`, which is handed one - agree on
  * everything after the choice.
+ *
+ * Exported for the song sheet's chord field (`song-chord-parse.ts`), which is a
+ * third caller handed its degree: a typed numeral names one outright, and a
+ * typed name names one by its letter. Both are the user saying which numeral
+ * they mean, which is the ruling `keptNumeral` records - so the field writes
+ * the chord there, and only falls back to `expressInKey`'s ranking for a name
+ * whose letter is too far from the root to be a numeral the model can store.
+ *
+ * The caller owes the one check `keptNumeral` makes first: that
+ * `scaleIntervals[degree] + alter` *is* the identity's root. `writeAt` compares
+ * intervals above a root rather than pitch classes, so handed a different root
+ * it would write the same shape there without complaint.
  */
-function atDegree(
+export function atDegree(
   identity: ChordIdentity,
   scaleIntervals: readonly number[],
   candidate: { degree: number; alter: number },

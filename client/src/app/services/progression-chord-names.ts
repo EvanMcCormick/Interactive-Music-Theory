@@ -49,9 +49,10 @@ import type { ChordExtent, ChordIdentity, ChordQuality } from './progression-har
  */
 
 /**
- * How a quality is written, in the three places a chord is written at all.
+ * How a quality is written, in the three places a chord is written at all -
+ * and, since the song sheet, a fourth (`LEAD_SHEET_SUFFIXES`, below).
  *
- * All three tables live together rather than one per module, and here rather
+ * The tables live together rather than one per module, and here rather
  * than in the palette that prints them, for one reason: they are keyed
  * exhaustively on `ChordQuality`, so adding a quality cannot compile until
  * every way of writing it has been decided. A table in a component would be as
@@ -124,6 +125,50 @@ const CHORD_SUFFIXES: Record<ChordQuality, string> = {
   minor6: 'min6',
   add9: 'add9',
   minorAdd9: 'minadd9',
+  other: '?'
+};
+
+/**
+ * The same qualities as a lead sheet prints them: `C`, `Am`, `Cmaj7`, `Am7`.
+ *
+ * A fourth convention rather than a rewrite of `CHORD_SUFFIXES`, because the
+ * two answer to different readers. The progression page teaches, and spells a
+ * major triad `C Maj` so the quality is never left implicit; a song sheet is
+ * read while playing, over lyrics, and every chart a songwriter has ever read
+ * writes the major triad as its bare root and the minor one as `m`. Each table
+ * is right where it is printed and wrong where the other is.
+ *
+ * The signs are the ones the other tables already use - `°`, `ø7`, `+` - so a
+ * chord carries the same mark on the sheet as on the progression page; only
+ * the words change, to the short lower-case forms a chart uses (`m`, `maj7`,
+ * `mMaj7`, `madd9`). Nothing here takes a space: a lead-sheet name is one token
+ * above a syllable.
+ *
+ * Keyed exhaustively on `ChordQuality` for the reason the header gives, and
+ * composed through `composeFigure` with the other three, so a height, an
+ * alteration or a suspension is written into this convention by the same rules
+ * and in the same pass - `G7♭9` on the strip and `G7b9` on the sheet are one
+ * identity printed twice.
+ */
+const LEAD_SHEET_SUFFIXES: Record<ChordQuality, string> = {
+  major: '',
+  minor: 'm',
+  diminished: '°',
+  augmented: '+',
+  major7: 'maj7',
+  dominant7: '7',
+  minor7: 'm7',
+  // `mMaj7` is the chord catalogue's own symbol for this shape, and its capital
+  // keeps the major seventh legible beside the minor third it follows.
+  minorMajor7: 'mMaj7',
+  halfDiminished7: 'ø7',
+  diminished7: '°7',
+  augmented7: '+7',
+  augmentedMajor7: '+maj7',
+  major6: '6',
+  minor6: 'm6',
+  add9: 'add9',
+  minorAdd9: 'madd9',
   other: '?'
 };
 
@@ -295,16 +340,18 @@ const SUSPENSION_FIGURES: Readonly<Record<'sus2' | 'sus4', { figure: string; spo
 interface SuspendedFigure {
   numeral: string;
   symbol: string;
+  /** The lead-sheet suffix: see `LEAD_SHEET_SUFFIXES`. */
+  leadSheet: string;
   spoken: string;
 }
 
 const SUSPENDED_FIGURES: Readonly<Partial<Record<ChordQuality, SuspendedFigure>>> = {
-  major: { numeral: '', symbol: '', spoken: '' },
-  minor: { numeral: '', symbol: '', spoken: '' },
-  dominant7: { numeral: '7', symbol: '7', spoken: 'dominant seventh' },
-  minor7: { numeral: '7', symbol: '7', spoken: 'dominant seventh' },
-  major7: { numeral: 'maj7', symbol: 'Maj7', spoken: 'major seventh' },
-  minorMajor7: { numeral: 'maj7', symbol: 'Maj7', spoken: 'major seventh' }
+  major: { numeral: '', symbol: '', leadSheet: '', spoken: '' },
+  minor: { numeral: '', symbol: '', leadSheet: '', spoken: '' },
+  dominant7: { numeral: '7', symbol: '7', leadSheet: '7', spoken: 'dominant seventh' },
+  minor7: { numeral: '7', symbol: '7', leadSheet: '7', spoken: 'dominant seventh' },
+  major7: { numeral: 'maj7', symbol: 'Maj7', leadSheet: 'maj7', spoken: 'major seventh' },
+  minorMajor7: { numeral: 'maj7', symbol: 'Maj7', leadSheet: 'maj7', spoken: 'major seventh' }
 };
 
 /**
@@ -316,8 +363,8 @@ const SUSPENDED_FIGURES: Readonly<Partial<Record<ChordQuality, SuspendedFigure>>
  * `C6/9` is a standard symbol and `C6add9` is not.
  */
 const SIX_NINE_FIGURES: Readonly<Partial<Record<ChordQuality, SuspendedFigure>>> = {
-  major6: { numeral: '6/9', symbol: '6/9', spoken: 'six nine' },
-  minor6: { numeral: '6/9', symbol: 'min6/9', spoken: 'minor six nine' }
+  major6: { numeral: '6/9', symbol: '6/9', leadSheet: '6/9', spoken: 'six nine' },
+  minor6: { numeral: '6/9', symbol: 'min6/9', leadSheet: 'm6/9', spoken: 'minor six nine' }
 };
 
 /** The four shapes whose fourth note is a sixth or a ninth rather than a seventh. */
@@ -330,6 +377,8 @@ interface ComposedFigure {
   numeral: string;
   /** The chord symbol's suffix: `Maj13#11`, `7sus4`, `6/9`. */
   symbol: string;
+  /** The lead-sheet suffix: `maj13#11`, `7sus4`, `m6/9`. Never spaced. */
+  leadSheet: string;
   /** Whether that suffix is a word and takes a space. See `chordName`. */
   spaced: boolean;
   /** The whole quality as words: `major thirteenth sharp eleven`. */
@@ -341,6 +390,7 @@ const UNNAMEABLE: ComposedFigure = {
   lowerCase: NUMERAL_FIGURES.other.lowerCase,
   numeral: NUMERAL_FIGURES.other.suffix,
   symbol: CHORD_SUFFIXES.other,
+  leadSheet: LEAD_SHEET_SUFFIXES.other,
   spaced: false,
   spoken: SPOKEN_QUALITIES.other
 };
@@ -381,6 +431,8 @@ function composeFigure(chord: ChordIdentity): ComposedFigure {
       base.numeral + altered.map(one => one.numeral).join('') + (suspension?.figure ?? ''),
     symbol:
       base.symbol + altered.map(one => one.symbol).join('') + (suspension?.figure ?? ''),
+    leadSheet:
+      base.leadSheet + altered.map(one => one.leadSheet).join('') + (suspension?.figure ?? ''),
     // Read off the *base*, not off the whole suffix, which is the same rule as
     // before at one remove: a suffix is spaced because it opens with a word, and
     // an alteration or a `sus` is never the opening. A suspended triad has no
@@ -453,6 +505,7 @@ function baseFigure(chord: ChordIdentity): ComposedFigure | null {
     {
       numeral: numeral.suffix,
       symbol: CHORD_SUFFIXES[chord.base],
+      leadSheet: LEAD_SHEET_SUFFIXES[chord.base],
       spoken: SPOKEN_QUALITIES[chord.base]
     },
     height
@@ -485,6 +538,7 @@ function addedToneFigure(chord: ChordIdentity): ComposedFigure | null {
     sixNine ?? {
       numeral: numeral.suffix,
       symbol: CHORD_SUFFIXES[chord.base],
+      leadSheet: LEAD_SHEET_SUFFIXES[chord.base],
       spoken: SPOKEN_QUALITIES[chord.base]
     },
     // An added-tone figure never takes a height: its own note is the fourth one,
@@ -503,6 +557,7 @@ function figureAt(
     lowerCase,
     numeral: raise(figure.numeral, SEVENTH_FIGURE, HEIGHT_FIGURES[height]),
     symbol: raise(figure.symbol, SEVENTH_FIGURE, HEIGHT_FIGURES[height]),
+    leadSheet: raise(figure.leadSheet, SEVENTH_FIGURE, HEIGHT_FIGURES[height]),
     spaced: false,
     spoken: raise(figure.spoken, SPOKEN_SEVENTH, SPOKEN_HEIGHTS[height])
   };
@@ -534,6 +589,7 @@ function alteredExtensions(chord: ChordIdentity): SuspendedFigure[] {
     figures.push({
       numeral: (raised ? SHARP_SIGN : FLAT_SIGN) + EXTENSION_FIGURES[i],
       symbol: (raised ? '#' : 'b') + EXTENSION_FIGURES[i],
+      leadSheet: (raised ? '#' : 'b') + EXTENSION_FIGURES[i],
       spoken: `${raised ? 'sharp' : 'flat'} ${SPOKEN_EXTENSIONS[i]}`
     });
   });
@@ -727,6 +783,20 @@ function accidental(alter: number): string {
 export function chordName(root: string, chord: ChordIdentity): string {
   const figure = composeFigure(chord);
   return figure.spaced ? `${root} ${figure.symbol}` : `${root}${figure.symbol}`;
+}
+
+/**
+ * The same chord as a lead sheet writes it: `C`, `Am`, `Bb7`, `Bø7`, `G7b9`.
+ *
+ * `chordName`'s twin for the song sheet, taking the same two arguments and
+ * composed in the same pass, so the two can differ only in their suffix table -
+ * see `LEAD_SHEET_SUFFIXES` for why the sheet needs its own. The root arrives
+ * spelled for the reason it does there, and nothing here adds a slash bass:
+ * that is a fact about the *voicing*, which `ChordIdentity` does not carry, so
+ * the caller holding the degree's inversion writes it (`leadSheetNameOf`).
+ */
+export function leadSheetChordName(root: string, chord: ChordIdentity): string {
+  return `${root}${composeFigure(chord).leadSheet}`;
 }
 
 /**
