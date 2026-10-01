@@ -285,6 +285,10 @@ the design doc). What review fixed is under "Corrections during implementation" 
   specs fake `matches`, so they cannot catch it. The hand check found it through the seek bar, whose copy of the rule
   was taken out (`4f40809`).
 - **A large file opens scrolled about 130 px down**, cutting off its title. Hand check step 1.
+- **Listing the GP library still reads every file's bytes.** The list it publishes holds none
+  (`GpLibrarySummary`), and its cursor holds one file at a time, so nothing is kept; but IndexedDB reads a record
+  whole, and the store's indexes carry one field each. The read goes once the metadata has a store of its own, with
+  the bytes kept by id beside it - a schema version and a migration of the existing `files` store.
 - **alphaTab's errors after a load go only to the console.** `AlphaTabService` still sets `loadingState` and
   `errorMessage` on an `error` event - a soundfont or worker failure - but nothing has read them since the viewer went.
 - **`composer.component.spec.ts` is 1,379 lines**, past `CLAUDE.md`'s 1000-line cap, and `progression.component.ts`

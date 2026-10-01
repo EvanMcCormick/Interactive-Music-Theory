@@ -30,7 +30,7 @@ import { ComposerSaveRequests } from '../../../../services/composer-save-request
 import { GP_FILE_ACCEPT } from '../../../../services/gp-file-name';
 import { GpFileOpener } from '../../../../services/gp-file-opener.service';
 import { GpLibraryService } from '../../../../services/gp-library.service';
-import { GpLibraryEntry } from '../../../../models/alpha-tab.model';
+import { GpLibrarySummary } from '../../../../models/alpha-tab.model';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { ComposerState } from '../../../../models/composer.model';
 
@@ -103,7 +103,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   linkedProgressions: string[] = [];
 
   /** The `.gp` files in the library, listed in the drawer beside the compositions (design decision 2). */
-  gpFiles: GpLibraryEntry[] = [];
+  gpFiles: GpLibrarySummary[] = [];
   /** The files Import .gp… offers: the ones the opener takes (`GP_FILE_EXTENSIONS`). */
   readonly gpFileAccept = GP_FILE_ACCEPT;
 
@@ -674,7 +674,7 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
     if (file) await this.opener.importFile(file);
   }
 
-  trackByGpId(_index: number, entry: GpLibraryEntry): string {
+  trackByGpId(_index: number, entry: GpLibrarySummary): string {
     return entry.id;
   }
 

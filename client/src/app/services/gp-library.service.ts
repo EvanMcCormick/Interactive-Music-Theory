@@ -1,6 +1,6 @@
 import { Injectable, InjectionToken, NgZone, inject } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
-import { GpLibraryEntry, GpLibraryFilter } from '../models/alpha-tab.model';
+import { GpLibraryEntry, GpLibraryFilter, GpLibrarySummary } from '../models/alpha-tab.model';
 import { committed } from './indexed-db';
 
 const DB_VERSION = 1;
@@ -30,7 +30,7 @@ export type GpFileMetadata = Partial<Omit<GpLibraryEntry, 'id' | 'fileName' | 'f
 })
 export class GpLibraryService {
   private readyPromise: Promise<IDBDatabase> | null = null;
-  private entriesSubject = new BehaviorSubject<GpLibraryEntry[]>([]);
+  private entriesSubject = new BehaviorSubject<GpLibrarySummary[]>([]);
   private readonly dbName: string = inject(GP_LIBRARY_DB);
 
   constructor(private ngZone: NgZone) {
@@ -38,10 +38,8 @@ export class GpLibraryService {
     void this.loadAllEntries().catch(error => console.error('Failed to open the GP library:', error));
   }
 
-  /**
-   * Get observable of all library entries
-   */
-  getEntries(): Observable<GpLibraryEntry[]> {
+  /** Every entry, without its bytes (`loadAllEntries`): a reader of a file's bytes reads its entry (`getEntry`). */
+  getEntries(): Observable<GpLibrarySummary[]> {
     return this.entriesSubject.asObservable();
   }
 
@@ -106,12 +104,30 @@ export class GpLibraryService {
   }
 
   /**
-   * Load all entries from IndexedDB
+   * Lists the library, every entry without its bytes (`GpLibrarySummary`). The list is kept for the session by a root
+   * service the composer page injects too, for its drawer's titles; kept whole, a first visit to the composer held every
+   * file's bytes until the tab closed.
+   *
+   * Read through a cursor, one entry at a time, rather than `getAll`, so no more than one file's bytes are held at once,
+   * and none once read. They are still read: IndexedDB has no way to read part of a record, and the store's indexes
+   * (`title`, `artist`, `dateAdded`, `key`) carry only their own field and the id. Not reading them at all needs the
+   * metadata in a store of its own (`docs/TODO.md`).
    */
   private async loadAllEntries(): Promise<void> {
-    const entries = await this.inStore<GpLibraryEntry[]>('readonly', store => store.getAll());
+    const db = await this.ensureDb();
+    const transaction = db.transaction(STORE_NAME, 'readonly');
+    const summaries: GpLibrarySummary[] = [];
+    const cursor = transaction.objectStore(STORE_NAME).openCursor();
+    cursor.onsuccess = () => {
+      const at = cursor.result;
+      if (!at) return;
+      const { fileData, ...summary } = at.value as GpLibraryEntry;
+      summaries.push(summary);
+      at.continue();
+    };
+    await committed(transaction, 'The GP library could not be read');
     // IndexedDB callbacks run outside Angular's zone.
-    this.ngZone.run(() => this.entriesSubject.next(entries ?? []));
+    this.ngZone.run(() => this.entriesSubject.next(summaries));
   }
 
   /**
@@ -197,7 +213,7 @@ export class GpLibraryService {
   /**
    * Filter entries based on criteria
    */
-  filterEntries(entries: GpLibraryEntry[], filter: GpLibraryFilter): GpLibraryEntry[] {
+  filterEntries(entries: GpLibrarySummary[], filter: GpLibraryFilter): GpLibrarySummary[] {
     return entries.filter(entry => {
       // Search text filter
       if (filter.searchText) {
@@ -240,10 +256,10 @@ export class GpLibraryService {
    * Sort entries by specified field
    */
   sortEntries(
-    entries: GpLibraryEntry[],
+    entries: GpLibrarySummary[],
     sortBy: 'title' | 'artist' | 'dateAdded' | 'tempo',
     ascending = true
-  ): GpLibraryEntry[] {
+  ): GpLibrarySummary[] {
     return [...entries].sort((a, b) => {
       let comparison = 0;
 

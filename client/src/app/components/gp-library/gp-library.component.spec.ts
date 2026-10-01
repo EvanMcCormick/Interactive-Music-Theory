@@ -48,6 +48,22 @@ describe('GpLibraryComponent', () => {
     expect(navigate).toHaveBeenCalledWith(['/composer'], { queryParams: { gp: entry.id } });
   });
 
+  it('lists its files without their bytes, and opens and deletes one from the list', async () => {
+    await library.addBytes(bytes(), 'riff.gp', { title: 'Riff' });
+    await firstValueFrom(library.getEntries().pipe(filter(list => list.length === 1)));
+    const [listed] = component.filteredEntries;
+    expect('fileData' in listed).toBeFalse();
+    const navigate = spyOn(TestBed.inject(Router), 'navigate').and.resolveTo(true);
+    spyOn(window, 'confirm').and.returnValue(true);
+
+    component.openFile(listed);
+    expect(navigate).toHaveBeenCalledWith(['/composer'], { queryParams: { gp: listed.id } });
+
+    await component.deleteFile(listed);
+    expect(await library.getEntry(listed.id)).toBeNull();
+    expect(component.filteredEntries).toEqual([]);
+  });
+
   it('takes the Guitar Pro files of a drop and leaves the rest', async () => {
     const transfer = new DataTransfer();
     transfer.items.add(new File([new Uint8Array([1])], 'one.gp5'));

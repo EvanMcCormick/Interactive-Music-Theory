@@ -42,6 +42,17 @@ describe('GpLibraryService', () => {
     expect(read?.tempo).toBe(120);
   });
 
+  it('publishes its entries without their bytes, which getEntry still reads', async () => {
+    const added = await service.addBytes(bytes(1, 2, 3), 'a.gp', { title: 'A' });
+
+    const [listed] = await firstValueFrom(service.getEntries().pipe(filter(list => list.length === 1)));
+    expect(listed.title).toBe('A');
+    expect(listed.fileSize).toBe(3);
+    expect('fileData' in listed).withContext('a list of every file holds no file').toBeFalse();
+    const read = await service.getEntry(added.id);
+    expect(read ? Array.from(new Uint8Array(read.fileData)) : null).toEqual([1, 2, 3]);
+  });
+
   it('adds a File through the same path', async () => {
     const added = await service.addFile(new File([new Uint8Array([9])], 'one.gp'), { title: 'One' });
 
@@ -114,11 +125,12 @@ describe('GpLibraryService', () => {
   it('resolves a delete once it has committed, though the list read after it fails', async () => {
     const added = await service.addBytes(bytes(1), 'a.gp', {});
     const logged = spyOn(console, 'error');
-    const getAll = spyOn(IDBObjectStore.prototype, 'getAll').and.throwError('read failed');
+    // The list is read through a cursor (`loadAllEntries`); `getEntry` below reads with `get`.
+    const openCursor = spyOn(IDBObjectStore.prototype, 'openCursor').and.throwError('read failed');
 
     await expectAsync(service.deleteEntry(added.id)).toBeResolved();
 
-    getAll.and.callThrough();
+    openCursor.and.callThrough();
     expect(await service.getEntry(added.id)).toBeNull();
     expect(logged).toHaveBeenCalled();
   });

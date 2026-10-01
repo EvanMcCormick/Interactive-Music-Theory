@@ -5,7 +5,7 @@ import { Router } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
 import { isGpFileName } from '../../services/gp-file-name';
 import { GpLibraryService } from '../../services/gp-library.service';
-import { GpLibraryEntry, GpLibraryFilter } from '../../models/alpha-tab.model';
+import { GpLibraryFilter, GpLibrarySummary } from '../../models/alpha-tab.model';
 import { GpFileCardComponent } from './components/gp-file-card/gp-file-card.component';
 import { GpLibraryFiltersComponent } from './components/gp-library-filters/gp-library-filters.component';
 
@@ -19,8 +19,8 @@ import { GpLibraryFiltersComponent } from './components/gp-library-filters/gp-li
 export class GpLibraryComponent implements OnInit, OnDestroy {
   private destroy$ = new Subject<void>();
 
-  entries: GpLibraryEntry[] = [];
-  filteredEntries: GpLibraryEntry[] = [];
+  entries: GpLibrarySummary[] = [];
+  filteredEntries: GpLibrarySummary[] = [];
   currentFilter: GpLibraryFilter = {};
   sortBy: 'title' | 'artist' | 'dateAdded' | 'tempo' = 'dateAdded';
   sortAscending = false;
@@ -84,7 +84,7 @@ export class GpLibraryComponent implements OnInit, OnDestroy {
   }
 
   /** Opens a file in the composer, in the Original state: `/composer?gp=<id>`. */
-  openFile(entry: GpLibraryEntry): void {
+  openFile(entry: GpLibrarySummary): void {
     void this.router.navigate(['/composer'], {
       queryParams: { gp: entry.id }
     });
@@ -93,7 +93,7 @@ export class GpLibraryComponent implements OnInit, OnDestroy {
   /**
    * Delete a file from the library
    */
-  async deleteFile(entry: GpLibraryEntry): Promise<void> {
+  async deleteFile(entry: GpLibrarySummary): Promise<void> {
     if (confirm(`Delete "${entry.title}" from the library?`)) {
       await this.libraryService.deleteEntry(entry.id);
     }

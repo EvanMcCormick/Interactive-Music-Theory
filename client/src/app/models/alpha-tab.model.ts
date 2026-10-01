@@ -148,6 +148,13 @@ export interface GpLibraryEntry {
 }
 
 /**
+ * A library entry as the library lists it: everything but the file. A list of every file is read on the first visit to
+ * the gallery or the composer and kept for the session, so it holds no bytes; what needs them - opening a file - reads
+ * that one entry (`GpLibraryService.getEntry`). As `CompositionSummary` is to a saved composition.
+ */
+export type GpLibrarySummary = Omit<GpLibraryEntry, 'fileData'>;
+
+/**
  * Filter options for GP library search
  */
 export interface GpLibraryFilter {
