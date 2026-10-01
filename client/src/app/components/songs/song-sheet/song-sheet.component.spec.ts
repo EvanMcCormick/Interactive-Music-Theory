@@ -8,6 +8,7 @@ import { ProgressionKeyContext } from '../../../services/progression-key-context
 import { deleteSection, setTempo, transposeSong } from '../../../services/song-commands';
 import { chordSlotOf, sectionsOf, songMetaOf } from '../../../services/song-document';
 import { songSchema } from '../../../services/song-schema';
+import { spaceChordNames } from './chord-view';
 import { ChordOpening, SongSheetComponent } from './song-sheet.component';
 
 const C_MAJOR: ProgressionKey = { tonic: 0, scaleId: 'ionian', preferSharps: true };
@@ -67,10 +68,12 @@ describe('SongSheetComponent', () => {
 
   const keys = new ProgressionKeyContext(new MusicTheoryService());
 
-  function open(doc: Node): void {
+  /** Opens `doc` on a sheet `width` CSS pixels wide, or as wide as the test page, before its lines are first measured. */
+  function open(doc: Node, width?: number): void {
     fixture = TestBed.createComponent(SongSheetComponent);
     sheet = fixture.componentInstance;
     host = fixture.nativeElement;
+    if (width !== undefined) host.style.width = `${width}px`;
     fixture.componentRef.setInput('initialDoc', doc);
     fixture.componentRef.setInput('keys', keys);
     changed = [];
@@ -214,6 +217,147 @@ describe('SongSheetComponent', () => {
       expect(selection instanceof NodeSelection).toBeTrue();
       expect((selection as NodeSelection).node.type.name).toBe('chord');
       expect(chordEls()[0].classList).toContain('ProseMirror-selectednode');
+    });
+  });
+
+  /**
+   * A lyric line too long for the sheet wraps onto further rows, and the names have to stay apart and above their own
+   * words on every row. These sheets are a fixed width, so the lines wrap where these specs expect; each spec first
+   * checks that they do, so a font that changes where they wrap fails it plainly rather than passing for nothing.
+   */
+  describe('chord names on a line that wraps', () => {
+    /** Wraps at 360px, with chords on the first row and on the rows after it. */
+    const wrapping = (): Node =>
+      line(
+        chord(0),
+        'Got me thinking bout that ',
+        chord(3),
+        'last dance and the ',
+        chord(4),
+        'way you ',
+        chord(1, 7),
+        'moved ',
+        chord(2),
+        'across the ',
+        chord(5),
+        'floor tonight'
+      );
+    /** Six chords at the end of a line, after its last word: at 300px their names need more room than the row has. */
+    const piled = (): Node => line('Piled at the end ', chord(0), chord(1), chord(2), chord(3), chord(4), chord(5));
+
+    const overlap = (a: DOMRect, b: DOMRect): boolean =>
+      Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 &&
+      Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5;
+
+    /** The box of every printed character on the sheet that is not part of a chord's name: words and headers. */
+    function letterBoxes(): DOMRect[] {
+      const boxes: DOMRect[] = [];
+      const walker = document.createTreeWalker(editor(), NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.parentElement?.closest('.song-chord-name')) continue;
+        const text = node.textContent ?? '';
+        for (let at = 0; at < text.length; at++) {
+          if (/\s/.test(text[at])) continue;
+          const range = document.createRange();
+          range.setStart(node, at);
+          range.setEnd(node, at + 1);
+          const box = range.getBoundingClientRect();
+          if (box.width > 0) boxes.push(box);
+        }
+      }
+      return boxes;
+    }
+
+    /** Every name that overlaps another name or a printed character, said as "Dm/Em" or "Am over 'h'". */
+    function collisions(): string[] {
+      const named = chordEls().map(el => ({ text: nameOf(el).textContent ?? '', box: nameOf(el).getBoundingClientRect() }));
+      const letters = letterBoxes();
+      const found: string[] = [];
+      named.forEach((name, index) => {
+        for (const other of named.slice(index + 1)) if (overlap(name.box, other.box)) found.push(`${name.text}/${other.text}`);
+        if (letters.some(letter => overlap(name.box, letter))) found.push(`${name.text} over a letter`);
+      });
+      return found;
+    }
+
+    /** How many rows the chords sit on: their own boxes are the row of words they are in, letter or no letter after. */
+    const chordRows = (): number => new Set(chordEls().map(el => Math.round(el.getBoundingClientRect().top))).size;
+
+    /** Everything the measuring decides, as the padding it wrote and where each name ended up. */
+    const layout = (): string[] =>
+      chordEls().map(el => {
+        const box = nameOf(el).getBoundingClientRect();
+        return `${el.style.paddingLeft || '0'} @ ${box.left.toFixed(1)},${box.top.toFixed(1)}`;
+      });
+
+    /**
+     * Waits for a resize to be measured: the sheet's `ResizeObserver` hears of it in the next frame, after this wait's
+     * first frame callback, and measures in the frame after that, after its second - so it is done by the third.
+     */
+    const afterResize = (): Promise<void> =>
+      new Promise(resolve =>
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      );
+
+    it('keeps each name over its own letter on every row of a line that wraps', () => {
+      open(song(section('v1', 'Verse 1', wrapping())), 360);
+      expect(chordRows()).toBeGreaterThan(1);
+
+      for (const el of chordEls()) {
+        const name = nameOf(el).getBoundingClientRect();
+        const letter = letterAfter(el);
+        expect(Math.abs(name.left - letter.left)).withContext(nameOf(el).textContent ?? '').toBeLessThan(1);
+        expect(name.bottom).toBeLessThanOrEqual(letter.top + 1);
+      }
+    });
+
+    it('keeps every name below the row of words above its own', () => {
+      open(song(section('v1', 'Verse 1', wrapping(), piled())), 360);
+      expect(chordRows()).toBeGreaterThan(2);
+      const letters = letterBoxes();
+
+      for (const el of chordEls()) {
+        const row = el.getBoundingClientRect();
+        // The bottom of the nearest row of characters above this chord's row: its line's row before, or the line or
+        // section header above it.
+        const above = Math.max(...letters.filter(letter => letter.bottom <= row.top + 1).map(letter => letter.bottom));
+        expect(nameOf(el).getBoundingClientRect().top)
+          .withContext(nameOf(el).textContent ?? '')
+          .toBeGreaterThanOrEqual(above - 0.5);
+      }
+      expect(collisions()).toEqual([]);
+    });
+
+    it('sets chords piled at the end of a line side by side, onto the next row when they run out of room', () => {
+      open(song(section('v1', 'Verse 1', piled())), 300);
+      expect(chordRows()).toBe(2);
+      expect(collisions()).toEqual([]);
+    });
+
+    it('measures the same layout every time it measures', () => {
+      open(song(section('v1', 'Verse 1', wrapping(), piled())), 300);
+      const first = layout();
+
+      spaceChordNames(editor());
+      expect(layout()).toEqual(first);
+      spaceChordNames(editor());
+      expect(layout()).toEqual(first);
+      expect(collisions()).toEqual([]);
+    });
+
+    it('keeps the names apart through a resize, and lays them out as before when the width comes back', async () => {
+      open(song(section('v1', 'Verse 1', wrapping(), piled())), 900);
+      const wide = layout();
+      expect(collisions()).toEqual([]);
+
+      host.style.width = '300px';
+      await afterResize();
+      expect(chordRows()).toBeGreaterThan(3);
+      expect(collisions()).toEqual([]);
+
+      host.style.width = '900px';
+      await afterResize();
+      expect(layout()).toEqual(wide);
     });
   });
 

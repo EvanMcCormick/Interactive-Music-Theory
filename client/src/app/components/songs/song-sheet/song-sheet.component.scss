@@ -12,7 +12,7 @@
   display: block;
 }
 
-// The three lyric sizes `Aa` steps through. Names, headers and the room above each line are all in `em` of this.
+// The three lyric sizes `Aa` steps through. Names, headers and the band above each row are all in `em` of this.
 // Positioned, so the drop caret is placed in the sheet's own box and scrolls with the lyrics.
 .song-sheet {
   --lyric-size: 1.1rem;
@@ -209,13 +209,20 @@
   // Lyric lines and the chords over them
   // ---------------------------------------------------------------------------
 
-  // Every line keeps the room above it for a row of names, whether or not it has chords yet, so placing the first
-  // chord on a line never shifts the lines below it.
+  // Every row of words keeps a band above it for a row of names: the first row of a line and every row it wraps onto,
+  // with chords or without, so placing a chord, or a window narrow enough to wrap a line, never shifts a row.
+  //
+  // The band is the line's own leading, not padding, because padding is above the first row only. A row of text is
+  // `line-height` tall with its letters in the middle, so the space between one row's letters and the next row's is
+  // `line-height` less the letters' height - 1.1em to 1.2em in the monospace faces listed below - and a line-height
+  // of 2.45 leaves at least the 1.25em band between every two rows that the first row alone kept as padding before. A
+  // name is 1.02em tall (0.85em at a line-height of 1.2), so it fits in the band with room to spare. The first row has
+  // only half the leading above it, so the line's padding is the other half. No line needs a minimum height: an empty
+  // one still holds ProseMirror's trailing break, a row tall.
   .song-lyric-line {
     margin: 0;
-    padding-top: 1.25em;
-    line-height: 1.35;
-    min-height: 1.35em;
+    padding-top: 0.625em;
+    line-height: 2.45;
 
     &.is-placeholder::before {
       content: attr(data-placeholder);
@@ -228,12 +235,13 @@
   }
 
   // Zero wide: no content in the flow, only the name positioned out of it. Left padding, set by `spaceChordNames`,
-  // is how a collision widens the line.
+  // is how a collision widens the line. An inline span and not an inline-block: an inline-block is a place a line may
+  // break, so a chord inside a word would let the word split there, and a plain span keeps it with its letter.
   .song-chord {
     position: relative;
   }
 
-  // At the span's right edge - where its letter starts - and just above the line.
+  // At the span's right edge - where its letter starts - and just above its row's letters, in the row's band.
   .song-chord-name {
     position: absolute;
     left: 100%;

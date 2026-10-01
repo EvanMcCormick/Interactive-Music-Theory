@@ -17,16 +17,31 @@ import { leadSheetNameOf, numeralOf } from '../../../services/song-chord-names';
  *
  * The atom is an empty inline `span` placed just before the letter, so it is zero wide and its left edge is that
  * letter's left edge. The name is absolutely positioned inside it, at its right edge and just above the text, so it
- * starts exactly where the letter starts and takes no room in the line. The line keeps room above itself for the
- * names (the sheet's SCSS), so a name never covers the line before it.
+ * starts exactly where the letter starts and takes no room in the line.
+ *
+ * **A plain inline span, so it wraps with its letter.** An inline span is no place for a line to break: a chord inside
+ * a word goes onto the next row with the word, and one at the start of a word goes with that word rather than staying
+ * at the end of the row before. An `inline-block` would have been the obvious way to give a name a box of its own, but
+ * a line may break on either side of one - `Wonder|ing` - so a chord would split the word it is in.
+ *
+ * **Every row keeps a band above it for names** - the first row of a line and every row it wraps onto, chords or
+ * none - and it is the line's leading that keeps it (the sheet's SCSS), not padding above the line, which only its
+ * first row would have. So a name on a wrapped row has the same room as one on a first row, and is never over the row
+ * of words before it, with no measuring at all. The cost is height: a wrapped line's rows are spaced as far apart as
+ * two lines are, chords on them or not, where the design (Part 2) pictured room only above a line.
  *
  * ## When two names would collide
  *
- * Two chords a letter or two apart would print their names on top of one another. The line widens instead: the later
- * chord's span gets left padding, which pushes it - and the letter after it - right until its name clears the one
- * before it. The name stays at the span's right edge, so it is still over its own letter. The padding is measured, not
- * computed from character counts, because names are a proportional bold face over a monospace line and the lyric size
- * is the viewer's to change; `chordSpacingPlugin` measures after every update of the view.
+ * Two chords a letter or two apart would print their names on top of one another. The line widens instead, as the
+ * design has it: the later chord's span gets left padding, which pushes it - and the letter after it - right until its
+ * name clears the one before it. The name stays at the span's right edge, so it is still over its own letter, and
+ * anywhere nothing collides the chords keep taking no width in the words. Chords piled on one letter, or after a
+ * line's last word, are no special case: each is a chord whose name must clear the one before it, so their names sit
+ * side by side in the order they come. The padding is measured, not computed from character counts, because names are
+ * a proportional bold face over a monospace line and the lyric size is the viewer's to change; `chordSpacingPlugin`
+ * measures after every update of the view, and the sheet again whenever it is resized or a font arrives.
+ *
+ * Widening a line can wrap it, which is what makes measuring it subtle: see `spaceChordNames`.
  */
 
 /** What a chord's name is worked out from: the song's key and its scale, and whether the sheet shows numerals. */
@@ -320,34 +335,51 @@ export class ChordView implements NodeView {
  * Pads chords whose names would collide (see the file comment), across every lyric line under `root`, and takes the
  * padding off chords that no longer need it.
  *
- * Left to right through each line, each chord is compared with the name before it on the same row: a line that wraps
- * starts again on its next row. A chord's own box starts where it sits in the words whatever its padding, so the
- * padding each one needs is worked out from where it would be unpadded, and the result does not depend on the padding
- * it had - measuring twice gives the same answer. Writes happen only where the padding changes, so a measure that finds
- * nothing to change forces no layout but its first read.
+ * Left to right through each line, each chord is compared with the name before it, if that is on the same row: a
+ * line that wraps starts again on each new row.
+ *
+ * **Each line is measured from no padding at all.** Padding can wrap a line: a chord pushed past the end of a row
+ * goes onto the next one, with whatever word it is on and the chords before it in that word. So which row a chord is
+ * on depends on the padding - its own and that of the chords after it - and the padding it needs depends on its row.
+ * Read with the padding a previous measure left, the two chase each other: a chord padded onto the next row reads as
+ * the first on its row, loses its padding, lands back beside the name it collided with, and is padded again on the
+ * measure after - names overlapping every other time. So a line with any padding has it all taken off first, and its
+ * chords are then padded one at a time, left to right, each read where the padding before it and none after it put
+ * it. What a measure writes depends only on the words, the names and the width, never on what the last measure wrote,
+ * so measuring twice gives the same layout.
+ *
+ * A chord whose padding carried it onto the next row keeps that padding there, where nothing before it needs it: an
+ * indent, but the only layout that holds still, because without it the chord fits back on the row it collided on.
+ *
+ * A line with no padding and nothing colliding costs reads only; one with padding costs a layout to take it off and
+ * one per chord padded again - a few a verse, where names collide at all.
  */
 export function spaceChordNames(root: HTMLElement): void {
   for (const line of Array.from(root.querySelectorAll<HTMLElement>('.song-lyric-line'))) spaceLine(line);
 }
 
 function spaceLine(line: HTMLElement): void {
+  const chords = Array.from(line.querySelectorAll<HTMLElement>('.song-chord'));
+  for (const chord of chords) if (chord.style.paddingLeft !== '') chord.style.paddingLeft = '';
+
   let previous: { right: number; top: number } | null = null;
   let gap: number | null = null;
-
-  for (const chord of Array.from(line.querySelectorAll<HTMLElement>('.song-chord'))) {
+  for (const chord of chords) {
     const name = chord.querySelector<HTMLElement>('.song-chord-name');
     if (name === null) continue;
     gap ??= parseFloat(getComputedStyle(name).fontSize) * NAME_GAP_EM;
 
     let box = chord.getBoundingClientRect();
+    // Spans on one row share their top exactly; rows are a line-height - over two lyric ems - apart.
     const sameRow = previous !== null && Math.abs(box.top - previous.top) < 1;
-    const needed = previous !== null && sameRow ? Math.max(0, previous.right + gap - box.left) : 0;
-    const current = parseFloat(chord.style.paddingLeft) || 0;
-    if (Math.abs(needed - current) >= 0.5) {
-      chord.style.paddingLeft = needed > 0 ? `${needed}px` : '';
+    const needed = previous !== null && sameRow ? previous.right + gap - box.left : 0;
+    if (needed >= 0.5) {
+      chord.style.paddingLeft = `${needed}px`;
       box = chord.getBoundingClientRect();
     }
-    previous = { right: name.getBoundingClientRect().right, top: box.top };
+    // The name starts at the span's right edge. Its width rather than its own box: a name being dragged is moved by
+    // a transform, and the chord it belongs to has not moved.
+    previous = { right: box.right + name.getBoundingClientRect().width, top: box.top };
   }
 }
 

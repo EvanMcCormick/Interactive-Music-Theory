@@ -128,6 +128,8 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
   /** Whether the lyrics have had the focus, so the caret is one the user put somewhere (`lastCaret`). */
   private caretChosen = false;
   private resizes: ResizeObserver | null = null;
+  /** The frame a resize is to be measured in, while one is waiting: however many resizes come first, one measure. */
+  private resizeFrame: number | null = null;
   /** Set when an input changed what the lines look like; the lines are measured once the view has caught up. */
   private remeasureDue = false;
 
@@ -183,7 +185,13 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
       });
 
       // A narrower window wraps lines differently, and a late font changes every name's width: both move collisions.
-      this.resizes = new ResizeObserver(() => this.remeasure());
+      // A resize is measured on the next frame, not in the observer's callback: padding that wraps a line makes the
+      // sheet taller, and a size the callback itself changes is one the browser cannot report in the same frame - it
+      // reports an error instead ("ResizeObserver loop completed with undelivered notifications"). Measured a frame
+      // later, that height change is reported like any other, and the measure it leads to lays out the same padding
+      // again, because measuring gives the same layout every time (`spaceChordNames`) - so no size changes, and the
+      // observer falls quiet. The one frame drawn before the measure is a frame of a window being resized.
+      this.resizes = new ResizeObserver(() => this.remeasureNextFrame());
       this.resizes.observe(mount);
       void document.fonts?.ready.then(() => this.remeasure());
     });
@@ -207,6 +215,7 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
 
   ngOnDestroy(): void {
     this.resizes?.disconnect();
+    if (this.resizeFrame !== null) cancelAnimationFrame(this.resizeFrame);
     this.view?.destroy();
     this.view = null;
   }
@@ -367,6 +376,15 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
 
   private remeasure(): void {
     if (this.view !== null) spaceChordNames(this.view.dom);
+  }
+
+  /** Measures on the next frame, once, however many times it is asked before then (see the `ResizeObserver`). */
+  private remeasureNextFrame(): void {
+    if (this.resizeFrame !== null) return;
+    this.resizeFrame = requestAnimationFrame(() => {
+      this.resizeFrame = null;
+      this.remeasure();
+    });
   }
 
   /** What each chord's view may ask of this sheet. */
