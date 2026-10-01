@@ -4,23 +4,8 @@ import * as alphaTab from '@coderline/alphatab';
 import { GpLibraryEntry } from '../models/alpha-tab.model';
 import { ComposerGpService } from './composer-gp.service';
 import { ComposerService } from './composer.service';
+import { isGpFileName } from './gp-file-name';
 import { GpFileMetadata, GpLibraryService } from './gp-library.service';
-
-/**
- * The extensions of a file alphaTab can read as Guitar Pro: one list, so the name test and the Import .gp… picker's
- * `accept` cannot come to disagree about what a Guitar Pro file is.
- */
-export const GP_FILE_EXTENSIONS: readonly string[] = ['gp', 'gp3', 'gp4', 'gp5', 'gpx'];
-
-/** `GP_FILE_EXTENSIONS` as a file input's `accept`: `.gp,.gp3,…`. */
-export const GP_FILE_ACCEPT = GP_FILE_EXTENSIONS.map(extension => `.${extension}`).join(',');
-
-const GP_FILE = new RegExp(`\\.(${GP_FILE_EXTENSIONS.join('|')})$`, 'i');
-
-/** Whether `fileName` names a Guitar Pro file, by its extension. */
-export function isGpFileName(fileName: string): boolean {
-  return GP_FILE.test(fileName);
-}
 
 /** What a parsed file says about itself, for its library entry: its title, artist, album, tempo and track count. */
 export function gpMetadataOf(score: alphaTab.model.Score): GpFileMetadata {

@@ -1,5 +1,5 @@
 import { Injectable, NgZone } from '@angular/core';
-import { BehaviorSubject, Observable } from 'rxjs';
+import { BehaviorSubject } from 'rxjs';
 import {
   AlphaTabState,
   AlphaTabSettings,
@@ -317,13 +317,6 @@ export class AlphaTabService {
   }
 
   /**
-   * Pause playback
-   */
-  pause(): void {
-    this.api?.pause();
-  }
-
-  /**
    * Toggle play/pause
    */
   playPause(): void {
@@ -545,23 +538,5 @@ export class AlphaTabService {
     this.trackPlayback = [];
     this.trackPlaybackSet = false;
     this.stateSubject.next(DEFAULT_ALPHA_TAB_STATE);
-  }
-
-  /**
-   * Reset to initial state without disposing
-   */
-  reset(): void {
-    this.stop();
-    this.updateState({
-      isLoaded: false,
-      isPlaying: false,
-      tickPosition: 0,
-      timePosition: 0,
-      totalDuration: 0,
-      score: null,
-      selectedTracks: [],
-      loadingState: 'idle',
-      errorMessage: null
-    });
   }
 }

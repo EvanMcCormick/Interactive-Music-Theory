@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
-import { isGpFileName } from '../../services/gp-file-opener.service';
+import { isGpFileName } from '../../services/gp-file-name';
 import { GpLibraryService } from '../../services/gp-library.service';
 import { GpLibraryEntry, GpLibraryFilter } from '../../models/alpha-tab.model';
 import { GpFileCardComponent } from './components/gp-file-card/gp-file-card.component';

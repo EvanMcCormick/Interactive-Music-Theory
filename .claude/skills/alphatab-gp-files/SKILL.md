@@ -13,7 +13,7 @@ The app uses alphaTab library to render and play Guitar Pro files (.gp, .gp3-.gp
 
 ## When to Use
 
-- Modifying GP viewer functionality
+- Modifying how the composer opens and plays a .gp file (its Original state; the GP Viewer is gone, and `/gp-viewer` redirects)
 - Adding features to GP library
 - Integrating scale/chord highlighting with sheet music
 - Handling file upload/storage
@@ -24,21 +24,29 @@ The app uses alphaTab library to render and play Guitar Pro files (.gp, .gp3-.gp
 ### Files Structure
 ```
 components/
-  gp-viewer/
-    gp-viewer.component.ts         # Main viewer container
-    gp-viewer.component.html
-    gp-viewer.component.scss
+  composer/
+    composer.component.ts          # The page: transport, file drop, ?gp=<id>
     components/
-      gp-scale-highlighter/        # Scale/chord highlight controls
+      composer-score/              # Owns the alphaTab api: loads, renders, mixer
+      composer-track-strip/        # Per-track show/hide, mute, solo
+      composer-scale-panel/        # Scale/chord highlight controls
+      composer-library-panel/      # Library drawer, Import .gp…
   gp-library/
-    gp-library.component.ts        # Library browser
+    gp-library.component.ts        # Library browser (Open goes to /composer?gp=<id>)
     components/
       gp-file-card/                # File card display
       gp-library-filters/          # Search/filter controls
 
 services/
   alpha-tab.service.ts             # alphaTab API wrapper
+  gp-file-opener.service.ts        # GpFileOpener: every way a .gp comes into the composer
+  gp-file-name.ts                  # GP_FILE_EXTENSIONS, GP_FILE_ACCEPT, isGpFileName (no alphaTab import)
+  composer-gp.service.ts           # The file the page is showing (Original), or null
+  composer-track-view.service.ts   # Hidden tracks, and the file's mutes and solos
+  scale-highlight.ts               # Which drawn note heads a highlight marks
   gp-library.service.ts            # IndexedDB storage
+
+gp-viewer-redirect.ts              # /gp-viewer?id= -> /composer?gp=, else /gp-library
 
 models/
   alpha-tab.model.ts               # Interfaces
@@ -163,54 +171,58 @@ this.alphaTabService.initializeApi(element, {
 
 ### Loading Files
 
-```typescript
-async loadFile(file: File): Promise<void> {
-  this.updateState({ loadingState: 'loading' });
+A `.gp` comes into the composer through `GpFileOpener`, never straight into alphaTab. Each route - `?gp=<id>` from the gallery (`openEntry`), a Library drawer row (`openEntry`), Import .gp… (`importFile`), a drop on the page (`importDropped`) - parses the bytes first, asks about unsaved work (`confirmDiscard`), writes or corrects the `gp-library` entry, and then hands the file to `ComposerGpService.open`. One open runs at a time; what went wrong goes to the status line (`composer.announce`).
 
-  try {
-    const arrayBuffer = await file.arrayBuffer();
-    this.api.load(arrayBuffer);
-  } catch (error) {
-    this.updateState({
-      loadingState: 'error',
-      errorMessage: 'Failed to load file'
-    });
+The score component then draws the file's bytes with `loadBytes`, or a composition with `renderScore`:
+
+```typescript
+// alpha-tab.service.ts
+loadBytes(bytes: ArrayBuffer, trackIndices: readonly number[]): void {
+  if (!this.api) {
+    throw new Error('alphaTab API not initialized');
   }
+
+  this.updateState({ loadingState: 'loading', errorMessage: null });
+  this.api.load(new Uint8Array(bytes), trackIndices.slice());
 }
+
+// An in-memory score the composer built from its ScoreDoc
+renderScore(score: alphaTab.model.Score, trackIndices?: number[]): void;
+
+// composer-score.component.ts - Original state: the file's bytes, the tracks the strip shows
+this.alphaTabService.loadBytes(original.bytes, shown.length > 0 ? shown : ALL_TRACKS);
+
+// Composition state: the document, mapped to a Score
+this.alphaTabService.renderScore(score, renderedTracksOf(this.trackRows()));
 ```
+
+Parse failures do not throw from `loadBytes`: alphaTab parses in a worker and reports through its `error` event, which sets `loadingState: 'error'`. Pass explicit track indices - without them alphaTab draws only the first track. `ALL_TRACKS` (`[-1]`) is alphaTab's "every track" sentinel.
 
 ### Drag and Drop
 
+The composer page takes a dropped file and hands every dropped file to the opener, which picks the first Guitar Pro file and says what it left:
+
 ```typescript
+// composer.component.ts
 @HostListener('dragover', ['$event'])
 onDragOver(event: DragEvent): void {
-  event.preventDefault();
-  event.stopPropagation();
-  this.isDragging = true;
+  if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
 }
 
 @HostListener('drop', ['$event'])
 onDrop(event: DragEvent): void {
+  const files = Array.from(event.dataTransfer?.files ?? []);
+  if (files.length === 0) return;
   event.preventDefault();
-  event.stopPropagation();
-  this.isDragging = false;
-
-  const files = event.dataTransfer?.files;
-  if (files && files.length > 0) {
-    const file = files[0];
-    if (this.isValidGpFile(file)) {
-      this.loadFile(file);
-    }
+  if (this.modalOpen) {
+    this.composer.announce(this.dropRefusal(), true);
+    return;
   }
-}
-
-private isValidGpFile(file: File): boolean {
-  const validExtensions = ['.gp', '.gp3', '.gp4', '.gp5', '.gpx'];
-  return validExtensions.some(ext =>
-    file.name.toLowerCase().endsWith(ext)
-  );
+  void this.opener.importDropped(files);
 }
 ```
+
+Test a name with `isGpFileName` from `services/gp-file-name.ts`, and give a file input `GP_FILE_ACCEPT`. Import them from that module, not from `gp-file-opener.service.ts`: the opener imports alphaTab at the top, and the gallery route would pull the alphaTab core into its chunk just to check an extension.
 
 ## GP Library (IndexedDB)
 
@@ -298,51 +310,47 @@ interface HighlightConfig {
 
 ### Applying Highlights
 
+alphaTab 1.8 renders no `.at-note` elements and no `data-note` attribute, so highlighting cannot query the SVG. The composer's scale panel emits a `HighlightConfig` (`highlightChange`), the page passes it to the score's `highlight` input, and the score draws rings over the engraving from alphaTab's bounds lookup:
+
 ```typescript
-onHighlightChange(config: HighlightConfig): void {
-  this.highlightConfig = config;
-  this.applyHighlighting();
+// composer-score.component.ts
+private updateScaleOverlay(): void {
+  const element = this.alphaTabContainer?.nativeElement;
+  const lookup = element && !this.boundsPending ? this.alphaTabService.getBoundsLookup() : null;
+  const highlights = lookup ? noteHighlightsOf(lookup, this.highlightConfig) : [];
+  const offset = element && highlights.length > 0 ? this.hitTest.lookupOffsetOf(element) : null;
+  const marks = offset ? noteMarksOf(highlights, offset) : [];
+  if (sameMarks(marks, this.noteMarks)) return;
+  this.noteMarks = marks;
+  this.cdr.markForCheck();
 }
+```
 
-private applyHighlighting(): void {
-  const container = this.alphaTabContainer.nativeElement;
+`noteHighlightsOf` (`services/scale-highlight.ts`) is pure: it reads each note head's box from `BeatBounds.notes` and its pitch class from `realValue`, and skips drum hits, dead notes and slash/numbered bands. Note heads are in the lookup only while `core.includeNoteBounds` is on, so the page turns it on when the scale panel first opens:
 
-  // Remove existing highlights
-  container.querySelectorAll('.scale-highlight').forEach((el: Element) => {
-    el.classList.remove('scale-highlight');
-  });
-
-  if (!this.highlightConfig?.enabled) return;
-
-  // Calculate notes to highlight (0-11)
-  const highlightedNotes = this.highlightConfig.intervals.map(interval =>
-    (this.highlightConfig!.rootNote + interval) % 12
-  );
-
-  // Find note elements and apply class
-  container.querySelectorAll('.at-note').forEach((noteEl: Element) => {
-    const noteValue = noteEl.getAttribute('data-note');
-    if (noteValue !== null) {
-      const noteNum = parseInt(noteValue, 10) % 12;
-      if (highlightedNotes.includes(noteNum)) {
-        noteEl.classList.add('scale-highlight');
-      }
-    }
-  });
+```typescript
+// composer.component.ts
+onScalePanelOpened(): void {
+  this.alphaTabService.setNoteBounds(true);  // re-lays the score out once
 }
 ```
 
 ### Highlight Styles
 
 ```scss
-// In component SCSS
-.alphatab-container {
-  ::ng-deep .at-note.scale-highlight {
-    circle, ellipse {
-      fill: rgba($accent-color, 0.3) !important;
-      stroke: $accent-color !important;
-      stroke-width: 2px !important;
-    }
+// composer-score.component.scss - one absolutely placed ring per marked note head
+.scale-mark {
+  position: absolute;
+  z-index: 2;
+  box-sizing: content-box;
+  margin: -2px 0 0 -2px;
+  border: 2px solid var(--composer-in-scale, #3498db);
+  border-radius: 50%;
+  pointer-events: none;
+
+  &.root {
+    margin: -4px 0 0 -4px;
+    border: 4px double var(--composer-root, #e74c3c);
   }
 }
 ```
@@ -351,49 +359,41 @@ private applyHighlighting(): void {
 
 ### Basic Controls
 
+`AlphaTabService` has `play()`, `playPause()` and `stop()` - no `pause()`; the composer's transport toggles with `playPause()`. The rest of the transport writes the api and mirrors the value into state:
+
 ```typescript
-play(): void {
-  this.api?.play();
-}
-
-pause(): void {
-  this.api?.pause();
-}
-
-stop(): void {
-  this.api?.stop();
-}
-
-setVolume(value: number): void {
+setVolume(volume: number): void {
   if (this.api) {
-    this.api.masterVolume = value;  // 0-1
+    this.api.masterVolume = Math.max(0, Math.min(1, volume));
+    this.updateState({ volume });
   }
 }
 
 setPlaybackSpeed(multiplier: number): void {
   if (this.api) {
-    this.api.playbackSpeed = multiplier;  // 0.25 to 2.0
+    this.api.playbackSpeed = multiplier;
+    this.updateState({ tempoMultiplier: multiplier });
   }
 }
+
+setLooping(loop: boolean): void;        // api.isLooping, state.isLooping
+seekToTime(timeMs: number): void;       // api.timePosition
+setMetronomeVolume(volume: number): void;
+setCountInVolume(volume: number): void;
 ```
 
 ### Track Controls
 
-```typescript
-setTrackMute(trackIndex: number, muted: boolean): void {
-  const track = this.api?.score?.tracks[trackIndex];
-  if (track) {
-    this.api.changeTrackMute([track], muted);
-  }
-}
+There is one mixer call, for every track at once. `setTrackPlayback` takes a `TrackPlayback` (`{ mute, solo }`) per track index, applies it now, and applies it again after every MIDI load - a render reloads the MIDI, and the player forgets mutes and solos then:
 
-setTrackSolo(trackIndex: number, solo: boolean): void {
-  const track = this.api?.score?.tracks[trackIndex];
-  if (track) {
-    this.api.changeTrackSolo([track], solo);
-  }
-}
+```typescript
+// composer-score.component.ts
+this.alphaTabService.setTrackPlayback(this.trackRows().map(row => ({ mute: row.muted, solo: row.soloed })));
 ```
+
+Which tracks are drawn is separate: `renderTracks(indices)` redraws the given tracks of the score alphaTab already holds (show/hide in the Original state, with no document to re-render from).
+
+Components do not call either directly from a button. The track strip changes `ComposerTrackViewService` (`toggleShown`, and in Original `toggleMuted`/`toggleSoloed` by track key), and the score subscribes to its `getView()` and calls `renderTracks` and `setTrackPlayback`. The view starts again when what the page shows changes - a file opens with the mutes and solos it declares - and Convert carries the file's hidden tracks into the composition (`carryThroughConvert`).
 
 ## Common Issues
 
@@ -404,42 +404,44 @@ setTrackSolo(trackIndex: number, solo: boolean): void {
 | No soundfont | Path incorrect | Check `/soundfont/sonivox.sf2` exists |
 | Rendering blank | Container too small | Ensure container has dimensions |
 | Memory leak | Not disposing | Call `api.destroy()` in ngOnDestroy |
-| UI not updating | Events outside Angular zone | Use ChangeDetectorRef.detectChanges() |
+| UI not updating | OnPush component not marked | Call ChangeDetectorRef.markForCheck() in the state subscription |
 | Assets missing in dev | Only webpack plugin configured | Add assets to angular.json |
 
 ## ChangeDetectorRef for UI Updates
 
-alphaTab events fire outside Angular's zone. Even with NgZone.run() in the service, components may need manual change detection:
+alphaTab events fire outside Angular's zone. The service brings each one back in with `NgZone.run()`, so an `OnPush` component only has to mark itself for the zone's next check. `markForCheck()`, not `detectChanges()`: a position event arrives many times a second while playing, and `detectChanges()` ran a second change-detection pass for each one.
 
 ```typescript
 import { ChangeDetectorRef } from '@angular/core';
 
-export class GpViewerComponent implements OnInit {
+@Component({ /* ... */ changeDetection: ChangeDetectionStrategy.OnPush })
+export class ComposerComponent implements OnInit {
   constructor(
-    private alphaTabService: AlphaTabService,
-    private cdr: ChangeDetectorRef
+    private readonly alphaTabService: AlphaTabService,
+    private readonly cdr: ChangeDetectorRef
   ) {}
 
   ngOnInit(): void {
     this.alphaTabService.getState()
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => {
-        this.state = state;
-        // CRITICAL: Force change detection for alphaTab events
-        this.cdr.detectChanges();
+        this.playerState = state;
+        this.cdr.markForCheck();
       });
   }
 }
 ```
 
+The exception is `onBeatMouseMove`, whose handler runs outside the zone on purpose (alphaTab raises it on every pointer move); a caller enters the zone only for a move that changes state.
+
 ## Checklist
 
-When modifying GP viewer/library:
+When modifying the composer's file handling or the GP library:
 
 - [ ] AlphaTabService wraps all API calls
 - [ ] NgZone.run() used for all event handlers in service
-- [ ] ChangeDetectorRef.detectChanges() used in component subscriptions
-- [ ] Files validated before loading
+- [ ] ChangeDetectorRef.markForCheck() used in OnPush component subscriptions
+- [ ] Files go through GpFileOpener, which parses before it writes anything
 - [ ] Dispose called in ngOnDestroy
 - [ ] IndexedDB transactions properly handled
 - [ ] Highlighting re-applied after score renders

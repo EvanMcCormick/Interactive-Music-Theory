@@ -27,7 +27,8 @@ import {
 } from '../../../../services/composer-library.service';
 import { ComposerService } from '../../../../services/composer.service';
 import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
-import { GP_FILE_ACCEPT, GpFileOpener } from '../../../../services/gp-file-opener.service';
+import { GP_FILE_ACCEPT } from '../../../../services/gp-file-name';
+import { GpFileOpener } from '../../../../services/gp-file-opener.service';
 import { GpLibraryService } from '../../../../services/gp-library.service';
 import { GpLibraryEntry } from '../../../../models/alpha-tab.model';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';

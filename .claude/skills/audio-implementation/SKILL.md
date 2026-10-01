@@ -299,10 +299,10 @@ The app uses two audio systems:
 alphaTab creates its own Web Audio context. When switching between pages:
 
 ```typescript
-// GP Viewer Component
-export class GpViewerComponent implements OnInit, OnDestroy {
-  ngOnInit(): void {
-    // alphaTab will create its own audio context
+// The composer's score, which owns the alphaTab api (composer-score.component.ts)
+export class ComposerScoreComponent implements AfterViewInit, OnDestroy {
+  ngAfterViewInit(): void {
+    // alphaTabService.initializeApi(...): alphaTab will create its own audio context
     // Tone.js context remains but is unused
   }
 

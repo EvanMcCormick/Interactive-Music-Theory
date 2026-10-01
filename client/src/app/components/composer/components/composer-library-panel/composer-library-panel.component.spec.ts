@@ -11,7 +11,8 @@ import { CompositionEntry, ComposerLibraryService } from '../../../../services/c
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { ComposerService } from '../../../../services/composer.service';
 import { ComposerSaveRequests } from '../../../../services/composer-save-requests.service';
-import { GP_FILE_ACCEPT, GpFileOpener } from '../../../../services/gp-file-opener.service';
+import { GP_FILE_ACCEPT } from '../../../../services/gp-file-name';
+import { GpFileOpener } from '../../../../services/gp-file-opener.service';
 import { GP_LIBRARY_DB, GpLibraryService } from '../../../../services/gp-library.service';
 import { deletedDatabase } from '../../../../services/indexed-db.spec-helper';
 

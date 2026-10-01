@@ -57,8 +57,10 @@ export interface AlphaTabSettings {
      * to know *which note* was clicked - the transcription review, whose whole
      * gesture is overruling one note - has to ask for this.
      *
-     * It costs a rectangle per note in the lookup, which is why it is not on
-     * for the composer, where the beat is the unit of selection.
+     * It costs a rectangle per note in the lookup, which is why the composer,
+     * where the beat is the unit of selection, starts with it off and turns it
+     * on only when its scale panel first opens, for the highlight to read
+     * (`AlphaTabService.setNoteBounds`).
      */
     includeNoteBounds?: boolean;
     /** Log level */
