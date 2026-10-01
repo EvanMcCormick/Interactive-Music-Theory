@@ -4,6 +4,7 @@ import { ComposerTrackStripComponent } from './composer-track-strip.component';
 import * as alphaTab from '@coderline/alphatab';
 
 import { ComposerService } from '../../../../services/composer.service';
+import { AlphaTexService } from '../../../../services/alpha-tex.service';
 import { ComposerGpService } from '../../../../services/composer-gp.service';
 import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
 import { ProgressionService } from '../../../../services/progression.service';
@@ -799,22 +800,21 @@ describe('ComposerTrackStripComponent', () => {
       expect(score.tracks[2].playbackInfo.isMute).toBeFalse();
     });
 
-    it("selects no row in Original, where the caret has no track of the file's to go to, and its buttons still work", () => {
-      const score = new alphaTab.model.Score();
-      for (const name of ['Lead', 'Bass']) {
-        const track = new alphaTab.model.Track();
-        track.name = name;
-        score.addTrack(track);
-      }
-      TestBed.inject(ComposerGpService).open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
+    it("selects the file's caret's row in Original, a click moving that caret and never the composition's, and its buttons still work", () => {
+      const score = TestBed.inject(AlphaTexService).parse(['\\track "Lead"', '3.3.1 |', '\\track "Bass"', '3.4.1 |'].join('\n')).score;
+      if (!score) throw new Error('the file did not parse');
+      const gp = TestBed.inject(ComposerGpService);
+      gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
       fixture.detectChanges();
       const before = composer.state;
+      expect(rows().map(candidate => candidate.classList.contains('selected'))).toEqual([true, false]);
 
       row(1).click();
       fixture.detectChanges();
 
       expect(composer.state).toBe(before);
-      expect(rows().some(candidate => candidate.classList.contains('selected'))).toBeFalse();
+      expect(gp.caret?.cursor.trackIndex).toBe(1);
+      expect(rows().map(candidate => candidate.classList.contains('selected'))).toEqual([false, true]);
 
       rowButtons('.track-shown')[1].click();
       fixture.detectChanges();

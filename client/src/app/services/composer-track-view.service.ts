@@ -26,9 +26,10 @@ import {
  * composition it makes is the file's tracks in the file's order, so the file's hidden tracks are named in it
  * (`carryThroughConvert`).
  *
- * In Composition no track is left hidden that the document no longer has, and never every track (`keptHiddenOf`); the
- * caret is moved off a track as it is hidden, and a keyboard track move passes over hidden tracks
- * (`ComposerService.passOverTracks`): an edit there would write to a staff no one can see.
+ * In Composition no track is left hidden that the document no longer has, and never every track (`keptHiddenOf`). In
+ * either state the caret is moved off a track as it is hidden, and a keyboard track move passes over hidden tracks
+ * (`ComposerService.passOverTracks`, `ComposerGpService.passOverTracks`): an edit there would write to a staff no one can
+ * see - in Original once Convert has run it.
  */
 @Injectable({ providedIn: 'root' })
 export class ComposerTrackViewService {
@@ -60,6 +61,8 @@ export class ComposerTrackViewService {
       this.moveCaretOffHidden();
     });
     composer.passOverTracks(track => !gp.isOriginal && this.view.hidden.has(track.id));
+    // The file's caret too, whose rows are keyed by index (`trackRowsOf`).
+    gp.passOverTracks(index => this.view.hidden.has(String(index)));
   }
 
   getView(): Observable<TrackView> {
@@ -72,7 +75,7 @@ export class ComposerTrackViewService {
 
   /**
    * Shows the row at `index`, or hides it - or returns why not: it is the last one shown (`hideRefusalOf`). Hiding the
-   * caret's own track in Composition moves the caret to the nearest track shown.
+   * caret's own track moves the caret to the nearest track shown - the file's caret, in Original.
    */
   toggleShown(rows: readonly TrackRow[], index: number): string | null {
     const row = rows.find(candidate => candidate.index === index);
@@ -80,7 +83,7 @@ export class ComposerTrackViewService {
     const refusal = hideRefusalOf(rows, index);
     if (refusal) return refusal;
     this.subject.next({ ...this.view, hidden: toggled(this.view.hidden, row.key) });
-    if (!this.gp.isOriginal) this.moveCaretOffHidden();
+    this.moveCaretOffHidden();
     return null;
   }
 
@@ -102,11 +105,15 @@ export class ComposerTrackViewService {
     this.subject.next({ ...this.view, soloed: toggled(this.view.soloed, key) });
   }
 
-  /** Puts the caret on the nearest track shown, when its own is hidden: the same bar, on that track's first beat. */
+  /**
+   * Puts the caret on the nearest track shown, when its own is hidden: the same bar, on that track's first beat. In
+   * Original it is the file's caret, over the file's rows, which `setCursor` reaches there (`ComposerService.lendCaret`).
+   */
   private moveCaretOffHidden(): void {
-    const { doc, cursor } = this.composer.state;
-    const rows = trackRowsOf(doc, this.view);
-    if (rows[cursor.trackIndex]?.shown !== false) return;
+    const original = this.gp.original;
+    const cursor = original ? this.gp.caret?.cursor : this.composer.state.cursor;
+    const rows = trackRowsOf(original ? original.score : this.composer.state.doc, this.view);
+    if (!cursor || rows[cursor.trackIndex]?.shown !== false) return;
     const trackIndex = nearestShownTrackOf(rows, cursor.trackIndex);
     if (trackIndex !== null) this.composer.setCursor({ trackIndex, staffIndex: 0, voiceIndex: 0, beatIndex: 0 });
   }

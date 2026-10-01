@@ -1101,16 +1101,36 @@ describe('ComposerComponent in the Original state', () => {
     expect(fixture.nativeElement.querySelector('.palette').hasAttribute('inert')).toBeTrue();
   });
 
-  it('asks before an editing key the same way, and not before a caret move', async () => {
-    await openFile('Band', 132);
+  it('asks before an editing key the same way, and not before a caret move, which moves the file\'s caret', async () => {
+    await openFileOfBars(2);
 
     press({ key: 'ArrowRight' });
     expect(promptOpen()).toBeFalse();
-    expect(composer.state.cursor.beatIndex).toBe(1);
+    expect(gp.caret?.cursor.barIndex).toBe(1);
+    expect(composer.state.cursor.barIndex).withContext('the empty composition under the file').toBe(0);
 
     press({ key: 'Delete' });
     expect(promptOpen()).toBeTrue();
   });
+
+  it("reads out the file's caret in the status line, not the empty composition's", async () => {
+    await openFileOfBars(3);
+
+    composer.setCursor({ barIndex: 2 });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.readout')?.textContent).toContain('Bar 3 of 3');
+  });
+
+  /** Opens a file of one guitar track of `bars` one-beat bars. */
+  async function openFileOfBars(bars: number): Promise<void> {
+    const score = TestBed.inject(AlphaTexService).parse(['\\track "Guitar"', Array(bars).fill('3.3.1').join(' | ') + ' |'].join('\n')).score;
+    if (!score) throw new Error('the file did not parse');
+    gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+  }
 
   it('changes nothing on Cancel, and says nothing: the prompt was the message', async () => {
     await openFile('Band', 132);

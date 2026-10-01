@@ -8,6 +8,7 @@ import { ComposerLibraryService } from './composer-library.service';
 import { ComposerService } from './composer.service';
 import { trackRowsOf } from './composer-track-rows';
 import { ComposerTrackViewService } from './composer-track-view.service';
+import { FretDigitEntry } from './composer-fret-entry';
 import { GpConversionService } from './gp-conversion.service';
 import { GP_LIBRARY_DB, GpLibraryService } from './gp-library.service';
 import { deletedDatabase } from './indexed-db.spec-helper';
@@ -209,6 +210,40 @@ describe('GpConversionService', () => {
     expect(composer.doc.masterBars[0].isDoubleBar).toBeTrue();
   });
 
+  describe('the caret pressed in Original', () => {
+    const riff = ['\\title "Riff"', '\\track "Guitar"', '3.3.4 3.3.4 3.3.4 3.3.4 | 5.3.2 7.3.2 | 3.3.1 |'].join('\n');
+    const notesAt = (barIndex: number, beatIndex: number) =>
+      composer.doc.tracks[0].staves[0].bars[barIndex].voices[0].beats[beatIndex].notes.map(note => note.pitch);
+
+    it('is where the edit that asked is written: a fret digit at bar 3 lands at bar 3, on the string pressed', async () => {
+      openFile(riff);
+      // A press on bar 3's second string from the top, as the score sends it in Original.
+      composer.setCursor({ barIndex: 2, beatIndex: 0, stringIndex: 1 });
+      const digits = new FretDigitEntry(composer);
+      gp.requestEdit('fret', 'Fret', () => digits.type(7));
+
+      await conversion.convert();
+
+      expect(notesAt(2, 0)).toContain({ kind: 'fretted', string: 2, fret: 7 });
+      expect(notesAt(0, 0)).withContext("the file's first beat, as it was").toEqual([{ kind: 'fretted', string: 3, fret: 3 }]);
+      composer.undo();
+      expect(notesAt(2, 0)).withContext('the edit is its own undo step').toEqual([{ kind: 'fretted', string: 3, fret: 3 }]);
+    });
+
+    it('carries a range over the file through Convert, for an edit of the range', async () => {
+      openFile(riff);
+      composer.setCursor({ barIndex: 1, beatIndex: 0 });
+      composer.moveCursor({ kind: 'beat', delta: 1 }, true);
+      gp.requestEdit('clearBeat', 'Clear beat to rest', () => composer.clearSelectionToRests());
+
+      await conversion.convert();
+
+      const beats = composer.doc.tracks[0].staves[0].bars[1].voices[0].beats;
+      expect(beats.map(beat => beat.isRest)).toEqual([true, true]);
+      expect(composer.doc.tracks[0].staves[0].bars[0].voices[0].beats[0].isRest).toBeFalse();
+    });
+  });
+
   describe("the track strip's hidden tracks", () => {
     const band = ['\\title "Band"', '\\track "Guitar"', '3.3.4 3.3.4 3.3.4 3.3.4 |', '\\track "Bass"', '3.4.4 3.4.4 3.4.4 3.4.4 |', '\\track "Keys"', '3.3.4 3.3.4 3.3.4 3.3.4 |'].join('\n');
     let views: ComposerTrackViewService;
@@ -249,6 +284,20 @@ describe('GpConversionService', () => {
       expect(firstBeat(0).isRest).withContext('the hidden track, as the file had it').toBeFalse();
       composer.undo();
       expect(firstBeat(1).isRest).withContext('before the edit').toBeFalse();
+    });
+
+    it("move the caret pressed in Original off its track when that track is hidden, keeping its bar", async () => {
+      openFile(['\\title "Band"', '\\track "Guitar"', '3.3.4 3.3.4 3.3.4 3.3.4 | 3.3.1 |', '\\track "Bass"', '3.4.1 | 3.4.1 |', '\\track "Keys"', '3.3.1 | 3.3.1 |'].join('\n'));
+      hideInOriginal(1);
+      // Held on the hidden track, as nothing on the page can put it but a caller that skips the strip.
+      composer.setCursor({ trackIndex: 1, barIndex: 1 });
+      gp.requestEdit('clearBeat', 'Clear beat to rest', () => composer.setRestAtCursor(false));
+
+      await conversion.convert();
+
+      expect(composer.state.cursor).toEqual(jasmine.objectContaining({ trackIndex: 2, barIndex: 1, beatIndex: 0 }));
+      expect(composer.doc.tracks[2].staves[0].bars[1].voices[0].beats[0].isRest).toBeTrue();
+      expect(composer.doc.tracks[1].staves[0].bars[1].voices[0].beats[0].isRest).toBeFalse();
     });
   });
 });

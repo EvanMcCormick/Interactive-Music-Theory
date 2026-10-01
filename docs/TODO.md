@@ -265,9 +265,11 @@ the design doc). What review fixed is under "Corrections during implementation" 
 - **A hidden track's id can name another track after Undo past an applied alphaTex draft.** Apply starts the hidden
   set again, and Undo does not; a document read from alphaTex names its tracks by position (`track-N`), so the ids the
   set keeps after Undo may be other tracks'.
-- **After Convert, the edit that asked runs wherever the caret was.** In Original a click cannot place the caret - the
-  composition under the file is empty - so an edit aimed at a note is usually refused once converted, "There is no note
-  there to change". Hand check step 5.
+- **In a file the mapper cannot read, the caret moves only by a press.** The file's caret (`ComposerGpService.caret`)
+  is clamped to and moved over `toDoc` of the file; where that throws there is no document, so the keys move nothing,
+  Pen's hover has no clef to read, and no range is drawn. Convert refuses such a file anyway, at its first step. Since
+  the final review, the edit that asked after Convert runs where the file's caret was (`fix: Give a .gp file its own
+  caret`); hand check step 5 found the old behaviour.
 - **Scale marks follow sounding pitch.** On a detuned or transposing staff the key that marks every note is not the one
   a player reads: a file tuned down a half step marks its G-shaped chords as G♭. Whether to mark by sounding or by
   fretted or written pitch is a design question. Hand check step 8.

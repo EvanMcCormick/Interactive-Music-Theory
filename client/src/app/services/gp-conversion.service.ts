@@ -31,7 +31,8 @@ const UNKNOWN_ARTICULATION = 209;
  *    is not applied, the `.gp` is untouched, and the reason names the track when the diagnostic does.
  * 3. The `.gp` entry is deleted: **the one irreversible step.** A failure leaves both rows, and says the original is still
  *    in the library - better than the reverse order, where a failed write after a delete would lose the file.
- * 4. The document replaces the page's as a new composition, clean. It is the one parsed back at step 2, not the one
+ * 4. The document replaces the page's as a new composition, clean, with the caret and range the file had in Original
+ *    (`ComposerGpService.caret`), so the edit that asked lands where it was asked. It is the one parsed back at step 2, not the one
  *    written: what the first save loses (a double bar, a voice of rests) is already gone from it, so the page shows what
  *    the library holds and "clean" is true by construction - reopening the entry gives this document. `replaceDocument`
  *    frets it again and, on a fretted document, drops nothing, so its `markClean` survives. `documentId` moves on, so the
@@ -61,8 +62,9 @@ export class GpConversionService {
   async convert(): Promise<ConversionOutcome> {
     const original = this.gp.original;
     if (!original) return { kind: 'refused', reason: 'There is no file to convert.' };
-    // Taken now: leaving Original at step 4 drops it.
+    // Taken now: leaving Original at step 4 drops them.
     const request = this.gp.request;
+    const caret = this.gp.caret;
 
     // 1. The document. A file with no title takes its file name's, so the composition is not saved untitled - before the
     // export, so the document read back at step 2 keeps it.
@@ -112,10 +114,12 @@ export class GpConversionService {
       originalKept = true;
     }
 
-    // 4. The composition, as a new one, clean; the library panel names its entry. The tracks hidden in Original stay
-    // hidden, and the caret goes to a track shown before the edit that asked is written (`carryThroughConvert`).
+    // 4. The composition, as a new one, clean; the library panel names its entry. The caret and range are the file's,
+    // clamped to the composition - which keeps the file's track, bar, beat and string indices, being `toDoc` of it read
+    // back - so the edit that asked is written where it was asked. The tracks hidden in Original stay hidden, and a caret
+    // on one goes to the nearest track shown, same bar, before that edit is written (`carryThroughConvert`).
     this.trackViews.carryThroughConvert(doc);
-    this.composer.replaceDocument(doc, { newComposition: true, markClean: true });
+    this.composer.replaceDocument(doc, { newComposition: true, markClean: true, selection: caret ?? undefined });
     this.library.markOpened(compositionId);
 
     // 5. The edit that asked, on its own undo step; then what the conversion did, beside what the edit said.

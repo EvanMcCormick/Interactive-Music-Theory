@@ -40,7 +40,7 @@ import {
   toggleFermata,
   toggledValue
 } from './beat-edits';
-import { CursorMove, clampedCursor, movedCursor } from './composer-cursor';
+import { CaretOwner, CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { defaultFermata } from './composer-tool-defaults';
 import { BeatRef, selectionTargets } from './composer-selection';
 import { ComposerEntryCommands, ComposerEntryHost } from './composer-entry-commands';
@@ -105,6 +105,9 @@ export class ComposerService {
 
   /** The tracks a keyboard track move passes over. See `passOverTracks`. */
   private passedOver: (track: TrackDoc) => boolean = () => false;
+
+  /** What takes the caret commands while the composition is not what the page shows. See `lendCaret`. */
+  private caretOwner: CaretOwner | null = null;
 
   /** Commits, undo and redo, and the refusals and notices beside them. See composer-history.ts. */
   private readonly history = new ComposerHistory({
@@ -314,8 +317,23 @@ export class ComposerService {
   // Cursor
   // -------------------------------------------------------------------------
 
+  /**
+   * Hands the caret commands below - `setCursor`, `extendSelectionTo`, `moveCursor` and `selectAllInTrack` - to `owner`
+   * until it is given back with null: `ComposerGpService`, while a `.gp` file is shown in Original. The composition under
+   * the file then is the empty one no one sees, and a caret held in it was clamped to its bar 1 - so a press seeked
+   * there, and the edit that asked was written there once converted. Lent, rather than each caller asking which state
+   * the page is in: the score's presses, the keys, Escape and the strip all move the caret through here, and this service
+   * cannot read `ComposerGpService`, which reads it (as with `passOverTracks`). The composer's own caret is left where it
+   * is, so nothing that reads it against the document - the palette's states, an edit - reads a caret the document does
+   * not have.
+   */
+  lendCaret(owner: CaretOwner | null): void {
+    this.caretOwner = owner;
+  }
+
   /** Moves the caret, and drops any range: a plain click or arrow key. */
   setCursor(cursor: Partial<EditCursor>): void {
+    if (this.caretOwner) return this.caretOwner.setCursor(cursor);
     const state = this.stateSubject.getValue();
     this.publishSelection(clampedCursor({ ...state.cursor, ...cursor }, state.doc), null);
   }
@@ -325,12 +343,14 @@ export class ComposerService {
    * existed yet: shift-click and shift-arrow.
    */
   extendSelectionTo(cursor: Partial<EditCursor>): void {
+    if (this.caretOwner) return this.caretOwner.extendSelectionTo(cursor);
     const state = this.stateSubject.getValue();
     this.publishSelection(clampedCursor({ ...state.cursor, ...cursor }, state.doc), state.anchor ?? state.cursor);
   }
 
   /** Selects every beat of the caret's staff, first bar to last. */
   selectAllInTrack(): void {
+    if (this.caretOwner) return this.caretOwner.selectAllInTrack();
     const { doc, cursor } = this.stateSubject.getValue();
     this.publishSelection(
       movedCursor(doc, cursor, { kind: 'scoreEdge', edge: 'last' }),
@@ -343,6 +363,7 @@ export class ComposerService {
    * A plain move drops the range, except a change of string, which moves the focus within it.
    */
   moveCursor(move: CursorMove, extend = false): void {
+    if (this.caretOwner) return this.caretOwner.moveCursor(move, extend);
     const state = this.stateSubject.getValue();
     const anchor = extend ? state.anchor ?? state.cursor : move.kind === 'string' ? state.anchor : null;
     this.publishSelection(movedCursor(state.doc, state.cursor, move, this.passedOver), anchor);

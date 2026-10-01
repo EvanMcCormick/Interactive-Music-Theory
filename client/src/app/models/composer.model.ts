@@ -522,6 +522,11 @@ export interface DocumentReplacement {
    * a file does in Guitar Pro, so no undo puts back the composition before under the name of the one opened.
    */
   newComposition?: boolean;
+  /**
+   * Where the caret and the range go in it, clamped to it: Convert's, which carries the caret the file had in Original
+   * into the composition made of it. Left out, the caret stays where it was, clamped, and the range is dropped.
+   */
+  selection?: { cursor: EditCursor; anchor: EditCursor | null };
 }
 
 // ---------------------------------------------------------------------------

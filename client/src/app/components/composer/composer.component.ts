@@ -26,7 +26,7 @@ import { ComposerShortcutSheetComponent } from './components/composer-shortcut-s
 import { ComposerStatusLineComponent } from './components/composer-status-line/composer-status-line.component';
 import { ComposerTrackStripComponent } from './components/composer-track-strip/composer-track-strip.component';
 import { AlphaTabState, DEFAULT_HIGHLIGHT_CONFIG, HighlightConfig } from '../../models/alpha-tab.model';
-import { ComposerState, ScoreDoc, TexDiagnostic } from '../../models/composer.model';
+import { ComposerState, EditCursor, ScoreDoc, TexDiagnostic } from '../../models/composer.model';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
@@ -148,6 +148,8 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
    * stay live - the first command that would change the document asks instead.
    */
   original: GpOriginal | null = null;
+  /** In Original, the file's caret, which the status line reads out (`ComposerGpService.caret`); null in Composition. */
+  fileCursor: EditCursor | null = null;
   /** The command waiting on the conversion prompt, which is open while there is one (`ComposerGpService.requestEdit`). */
   editRequest: EditRequest | null = null;
   /**
@@ -370,6 +372,14 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
         // composer's subscription would leave the empty composition's alphaTex in a panel already open. A draft typed
         // into is left as typed, as it is when the score changes.
         if (changed && this.showTexPanel && !this.texDraftEdited) this.seedTexDraft();
+        this.cdr.markForCheck();
+      });
+
+    this.gp
+      .getCaret()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(caret => {
+        this.fileCursor = caret?.cursor ?? null;
         this.cdr.markForCheck();
       });
 

@@ -2,6 +2,7 @@ import { ErrorHandler } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import * as alphaTab from '@coderline/alphatab';
 
+import { AlphaTexService } from './alpha-tex.service';
 import { ComposerGpService, GpFile, GpOriginal } from './composer-gp.service';
 import { ComposerService } from './composer.service';
 import { ASKING_PAGE_COMMANDS } from './composer-edit-intent';
@@ -97,6 +98,114 @@ describe('ComposerGpService', () => {
     composer.setCursor({ beatIndex: 1 });
 
     expect(service.isOriginal).toBe(true);
+  });
+
+  /**
+   * The caret over the file. In Original the composition under the page is the empty one no one sees, so a caret held there
+   * was clamped to its bar 1: the file keeps its own, and the composer's caret commands are lent to it.
+   */
+  describe("the file's caret", () => {
+    /** A guitar file of three bars, the second of two beats, and a keyboard track of one bar. */
+    function band(): GpFile {
+      const source = ['\\track "Guitar"', '3.3.4 3.3.4 3.3.4 3.3.4 | 5.2.2 7.2.2 | 3.3.1 |', '\\track "Keys"', 'c4.1 | c4.1 | c4.1 |'].join('\n');
+      const score = TestBed.inject(AlphaTexService).parse(source).score;
+      if (!score) throw new Error('the file did not parse');
+      return { entryId: 'band', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score };
+    }
+
+    it('starts at the start of the file, and is null in Composition', () => {
+      expect(service.caret).toBeNull();
+
+      service.open(band());
+
+      expect(service.caret).toEqual({ cursor: { trackIndex: 0, staffIndex: 0, barIndex: 0, voiceIndex: 0, beatIndex: 0, stringIndex: 0 }, anchor: null });
+    });
+
+    it("takes the composer's caret commands in Original, against the file rather than the composition under it", () => {
+      service.open(band());
+      const under = composer.state.cursor;
+
+      composer.setCursor({ barIndex: 2, stringIndex: 3 });
+
+      expect(service.caret?.cursor).toEqual(jasmine.objectContaining({ barIndex: 2, stringIndex: 3 }));
+      expect(composer.state.cursor).withContext('the empty composition under the file').toBe(under);
+    });
+
+    it('holds a caret in range of the file, as the composition clamps its own', () => {
+      service.open(band());
+
+      composer.setCursor({ barIndex: 9, beatIndex: 9 });
+
+      expect(service.caret?.cursor).toEqual(jasmine.objectContaining({ barIndex: 2, beatIndex: 0 }));
+    });
+
+    it('moves by the keys over the file, and extends a range there', () => {
+      service.open(band());
+      composer.setCursor({ barIndex: 1 });
+
+      composer.moveCursor({ kind: 'beat', delta: 1 });
+      expect(service.caret?.cursor).toEqual(jasmine.objectContaining({ barIndex: 1, beatIndex: 1 }));
+
+      composer.moveCursor({ kind: 'beat', delta: 1 }, true);
+      expect(service.caret?.cursor).toEqual(jasmine.objectContaining({ barIndex: 2, beatIndex: 0 }));
+      expect(service.caret?.anchor).toEqual(jasmine.objectContaining({ barIndex: 1, beatIndex: 1 }));
+
+      composer.extendSelectionTo({ trackIndex: 1, barIndex: 0, stringIndex: null });
+      expect(service.caret?.cursor).toEqual(jasmine.objectContaining({ trackIndex: 1, barIndex: 0 }));
+
+      composer.setCursor({});
+      expect(service.caret?.anchor).withContext('a plain move drops the range').toBeNull();
+    });
+
+    it('passes over the tracks it is told to on a track move, as the composition does', () => {
+      service.open(band());
+      service.passOverTracks(index => index === 1);
+
+      composer.moveCursor({ kind: 'track', delta: 1 });
+
+      expect(service.caret?.cursor.trackIndex).toBe(0);
+    });
+
+    it('selects every beat of the caret\'s staff in the file', () => {
+      service.open(band());
+
+      composer.selectAllInTrack();
+
+      expect(service.caret?.anchor).toEqual(jasmine.objectContaining({ barIndex: 0, beatIndex: 0 }));
+      expect(service.caret?.cursor).toEqual(jasmine.objectContaining({ barIndex: 2, beatIndex: 0 }));
+    });
+
+    it('takes a press as it is when the file could not be read as a document, and moves by no key', () => {
+      spyOn(TestBed.inject(ScoreDocMapperService), 'toDoc').and.throwError('a model this mapper has not met');
+      spyOn(TestBed.inject(ErrorHandler), 'handleError');
+      service.open(band());
+
+      composer.setCursor({ barIndex: 2 });
+      composer.moveCursor({ kind: 'beat', delta: 1 });
+
+      expect(service.caret?.cursor.barIndex).toBe(2);
+      expect(service.caret?.cursor.beatIndex).toBe(0);
+    });
+
+    it("gives the composer its caret back on leaving Original", () => {
+      service.open(band());
+      composer.setCursor({ barIndex: 2 });
+
+      service.clear();
+      composer.setCursor({ barIndex: 1 });
+
+      expect(service.caret).toBeNull();
+      expect(composer.state.cursor.barIndex).toBe(1);
+    });
+
+    it('starts again at the start of a second file', () => {
+      service.open(band());
+      composer.setCursor({ barIndex: 2 });
+
+      service.open(band());
+
+      expect(service.caret?.cursor.barIndex).toBe(0);
+    });
   });
 
   describe('requestEdit', () => {

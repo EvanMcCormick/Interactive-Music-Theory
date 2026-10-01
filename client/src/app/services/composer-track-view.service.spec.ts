@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import * as alphaTab from '@coderline/alphatab';
 
+import { AlphaTexService } from './alpha-tex.service';
 import { ComposerGpService } from './composer-gp.service';
 import { ComposerService } from './composer.service';
 import { LAST_SHOWN_TRACK } from './composer-text';
@@ -78,6 +79,37 @@ describe('ComposerTrackViewService', () => {
     gp.clear();
 
     expect(views.view.muted.size).toBe(0);
+  });
+
+  describe("in Original, the file's caret", () => {
+    /** A file of three one-bar tracks, read as alphaTab reads a `.gp`. */
+    function openBand(): void {
+      const source = ['\\track "Guitar"', '3.3.1 | 3.3.1 |', '\\track "Bass"', '3.4.1 | 3.4.1 |', '\\track "Keys"', 'c4.1 | c4.1 |'].join('\n');
+      const score = TestBed.inject(AlphaTexService).parse(source).score;
+      if (!score) throw new Error('the file did not parse');
+      gp.open({ entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score });
+    }
+    const rows = () => trackRowsOf(gp.original!.score, views.view);
+
+    it('moves off a track as it is hidden, keeping its bar, and never touches the composition under the file', () => {
+      openBand();
+      composer.setCursor({ trackIndex: 1, barIndex: 1 });
+      const under = composer.state.cursor;
+
+      views.toggleShown(rows(), 1);
+
+      expect(gp.caret?.cursor).toEqual(jasmine.objectContaining({ trackIndex: 2, barIndex: 1, beatIndex: 0 }));
+      expect(composer.state.cursor).toBe(under);
+    });
+
+    it('passes over hidden tracks on a keyboard track move', () => {
+      openBand();
+      views.toggleShown(rows(), 1);
+
+      composer.moveCursor({ kind: 'track', delta: 1 });
+
+      expect(gp.caret?.cursor.trackIndex).toBe(2);
+    });
   });
 
   describe('in Composition', () => {

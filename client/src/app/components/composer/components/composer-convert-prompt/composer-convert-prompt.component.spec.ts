@@ -37,7 +37,7 @@ describe('ComposerConvertPromptComponent', () => {
   }
 
   function original(loss: LossItem[] = []): GpOriginal {
-    return { entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score(), loss };
+    return { entryId: 'entry-1', fileName: 'Band.gp', bytes: new ArrayBuffer(4), score: new alphaTab.model.Score(), loss, doc: null };
   }
 
   const request: EditRequest = { id: 'hammerOn', label: 'Hammer-on', run: () => undefined };

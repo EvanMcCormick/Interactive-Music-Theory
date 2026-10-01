@@ -236,6 +236,17 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
         this.renderRequest$.next();
       });
 
+    // The file's caret, in Original: it moves while the composer's state does not, so it redraws what sits over the
+    // engraving as a caret move in Composition does.
+    this.gp
+      .getCaret()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(caret => {
+        if (!caret) return;
+        this.drawHighlight();
+        this.scheduleCaretUpdate();
+      });
+
     // A track shown or hidden redraws; a mute or solo only plays differently.
     this.trackViews
       .getView()
@@ -276,6 +287,24 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     if (shown.join(',') === this.lastDrawnOriginalTracks) return;
     this.lastDrawnOriginalTracks = shown.join(',');
     this.alphaTabService.renderTracks(shown);
+  }
+
+  /**
+   * The caret and the range drawn and pressed against: the file's in Original (`ComposerGpService.caret`), the
+   * composition's otherwise. In Original the composition under the page is the empty one no one sees, whose caret is
+   * not on the file.
+   */
+  private caret(): { cursor: EditCursor; anchor: EditCursor | null } | null {
+    return this.gp.isOriginal ? this.gp.caret : this.state;
+  }
+
+  /**
+   * The document the caret is in: the file read as one in Original (`GpOriginal.doc`) - null when it could not be - or
+   * the composition. A bar's clef and a staff's strings are read from it.
+   */
+  private caretDoc(): ScoreDoc | null {
+    const original = this.gp.original;
+    return original ? original.doc : this.state?.doc ?? null;
   }
 
   /** Plays each track muted and soloed as its row says (`AlphaTabService.setTrackPlayback`). */
@@ -643,13 +672,15 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   /**
    * A mouse-down on a beat. See `scorePressOf` and `seeksOnPress`. On a staff the caret goes to that staff's
    * beat under the pointer (`cursorUnderPointer`); off every staff, to the beat alphaTab hit, on its own track.
+   * In Original the caret moved is the file's: `ComposerService` lends its caret commands there (`lendCaret`).
    */
   private pressBeat(beat: alphaTab.model.Beat): void {
     // A press waits for the render's bounds, and the press that closed a popover only closed it (`scoreTakesPress`).
-    if (!this.state || !scoreTakesPress(this.boundsPending, this.pressGuard)) return;
+    const current = this.caret();
+    if (!this.state || !current || !scoreTakesPress(this.boundsPending, this.pressGuard)) return;
     const under = this.staffUnderPointer();
     const mode = this.state.entryMode;
-    const cursor = under ? this.cursorUnderPointer(under, this.state.cursor) : beatCursorOf(beat);
+    const cursor = under ? this.cursorUnderPointer(under, current.cursor) : beatCursorOf(beat);
     if (!cursor) return;
     const press = scorePressOf(mode, under?.slot.kind ?? null, this.pointer?.shiftKey ?? false);
 
@@ -663,7 +694,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
       this.dragging = dragExtends(mode, under?.slot.kind ?? null);
       if (under) {
         this.clickedSlotIndex = under.slotIndex;
-        this.clickedAt = this.composer.state.cursor;
+        this.clickedAt = this.caret()?.cursor ?? null;
       }
       if (under?.slot.kind === 'notation' && under.lines) this.rememberNotationClick(under.lines);
       if (press === 'write' && under?.lines) this.placeClickedPitch(under.lines);
@@ -679,27 +710,28 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
    * to extend to a caret that differs from the current one.
    */
   private dragOverBeat(): void {
-    if (!this.state || this.boundsPending) return;
+    const current = this.caret()?.cursor;
+    if (!this.state || !current || this.boundsPending) return;
     if (!dragContinues(this.dragging, this.pointer?.buttons ?? 0)) {
       this.dragging = false;
       return;
     }
-    const current = this.state.cursor;
     const under = this.staffUnderPointer();
     const cursor = this.cursorUnderPointer(under, current);
     // A move to another string or voice of the same beat is a new caret too.
     if (!cursor || sameCaret(cursor, current)) return;
     this.ngZone.run(() => this.composer.extendSelectionTo(cursor));
     // A drag along the slash or numbered staff it began on keeps the caret drawn there (`caretSlotIndexOf`).
-    if (under?.slotIndex === this.clickedSlotIndex) this.clickedAt = this.composer.state.cursor;
+    if (under?.slotIndex === this.clickedSlotIndex) this.clickedAt = this.caret()?.cursor ?? null;
   }
 
   /**
    * Moves the playback position to the caret's beat, on the caret's own track - not alphaTab's hit beat, which
-   * may be another track's - in the score alphaTab holds now.
+   * may be another track's - in the score alphaTab holds now: the file's own in Original, where the caret is the file's.
    */
   private seekToCaret(): void {
-    const beat = this.engravedBeatOf(this.composer.state.cursor);
+    const cursor = this.caret()?.cursor;
+    const beat = cursor ? this.engravedBeatOf(cursor) : undefined;
     if (beat) this.alphaTabService.seekToBeat(beat);
   }
 
@@ -716,8 +748,10 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
 
   /** Records where on a notation staff the click landed, so the caret box sits there. */
   private rememberNotationClick(lines: StaffLines): void {
-    if (!this.pointer || !this.state) return;
-    const bar = this.composer.barAt(this.state.doc, this.state.cursor);
+    const doc = this.caretDoc();
+    const cursor = this.caret()?.cursor;
+    if (!this.pointer || !doc || !cursor) return;
+    const bar = this.composer.barAt(doc, cursor);
     if (!bar) return;
     const diatonic = this.hitTest.diatonicIn(lines, bar.clef, this.pointer.y);
     const bottom = bottomLineDiatonic(bar.clef);
@@ -727,7 +761,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
   /**
    * Writes the note the pointer landed on, for standard notation staves in Pen - asking the conversion prompt first in
    * Original. The pointer's height is read now, for a write that may run only after the prompt's Convert, by which time
-   * the pointer has moved to press it.
+   * the pointer has moved to press it. The bar - and the clef the height is read under - is read when it runs, at the
+   * caret: in Original the press put the file's caret there, and Convert carries it into the composition.
    */
   private placeClickedPitch(lines: StaffLines): void {
     if (!this.pointer) return;
@@ -787,8 +822,9 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     const index = under?.index;
     if (!under || !lines || index === null || index === undefined) return null;
 
+    // In Original the clef is the file's (`caretDoc`), so the hover reads the pitch a click there would write.
     const hovered = this.beatUnderPointerOn(under.slot.trackIndex, under.slot.staffIndex, under);
-    const bar = hovered ? state.doc.tracks[under.slot.trackIndex]?.staves[under.slot.staffIndex]?.bars[hovered.voice.bar.index] : undefined;
+    const bar = hovered ? this.caretDoc()?.tracks[under.slot.trackIndex]?.staves[under.slot.staffIndex]?.bars[hovered.voice.bar.index] : undefined;
     const diatonic = bar ? this.hitTest.diatonicIn(lines, bar.clef, pointer.y) : null;
     const halfSteps = bar ? penHoverHalfStepsOf(state.entryMode, under.slot.kind, diatonic, bar.clef) : null;
     if (halfSteps === null) return null;
@@ -810,8 +846,9 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
    * (`highlightBeatsOf`); post-render draws it again.
    */
   private drawHighlight(): void {
-    const state = this.state;
-    const ends = state ? highlightEndsOf(state.doc, state.anchor, state.cursor) : null;
+    const caret = this.caret();
+    const doc = this.caretDoc();
+    const ends = caret && doc ? highlightEndsOf(doc, caret.anchor, caret.cursor) : null;
     const beats = highlightBeatsOf(
       ends ? this.engravedBeatOf(ends.first) : undefined,
       ends ? this.engravedBeatOf(ends.last) : undefined,
@@ -852,13 +889,13 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     const api = this.alphaTabService.getApi();
     const lookup = this.alphaTabService.getBoundsLookup();
     const state = this.state;
+    const cursor = this.caret()?.cursor;
 
-    if (!element || !api?.score || !lookup || !state) {
+    if (!element || !api?.score || !lookup || !state || !cursor) {
       this.caretRect = null;
       return;
     }
 
-    const cursor = state.cursor;
     const slots = this.slots(state.doc);
     const slotIndex = caretSlotIndexOf(slots, cursor, this.clickedSlotIndex, this.clickedAt);
     const beat = this.engravedBeatOf(cursor);
@@ -880,7 +917,8 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
     }
 
     const slot = slots[slotIndex];
-    const stringCount = this.composer.staffAt(state.doc, cursor)?.tuning.length ?? 0;
+    const doc = this.caretDoc();
+    const stringCount = (doc ? this.composer.staffAt(doc, cursor)?.tuning.length : undefined) ?? 0;
     const clicked = slotIndex === this.clickedSlotIndex ? this.clickedHalfSteps : null;
     const halfSteps = caretHalfStepsOf(slot.kind, stringCount, cursor.stringIndex, clicked);
 

@@ -8,7 +8,15 @@ import { ComposerGpService } from '../../../../services/composer-gp.service';
 import { trackRowsOf } from '../../../../services/composer-track-rows';
 import { ComposerTrackViewService } from '../../../../services/composer-track-view.service';
 import { ComposerService } from '../../../../services/composer.service';
+import { AlphaTexService } from '../../../../services/alpha-tex.service';
+import { ASKING_PAGE_COMMANDS } from '../../../../services/composer-edit-intent';
+import { ComposerLibraryService } from '../../../../services/composer-library.service';
+import { GpConversionService } from '../../../../services/gp-conversion.service';
+import { GP_LIBRARY_DB, GpLibraryService } from '../../../../services/gp-library.service';
+import { deletedDatabase } from '../../../../services/indexed-db.spec-helper';
 import { NoteBoundsSource } from '../../../../services/scale-highlight';
+import { StaffHitTestService } from '../../../../services/staff-hit-test.service';
+import { bottomLineDiatonic } from '../../../../services/staff-pitch';
 
 /**
  * The score's press guard, wired to the page's events (`pressGuardAfter`, design decision 17).
@@ -458,5 +466,168 @@ describe('ComposerScoreComponent and the scale highlight', () => {
     highlight({ ...cMajor, name: 'C Major again' });
 
     expect(marks()[0]).toBe(first);
+  });
+});
+
+/**
+ * The caret over a `.gp` file in Original. The composition under the page is the empty one no one sees, so a caret held
+ * there was clamped to bar 1: a press seeked to bar 1, and the edit that asked was written there after Convert. The file
+ * keeps its own caret (`ComposerGpService.caret`), and Convert carries it into the composition.
+ *
+ * alphaTab is stubbed and holds the file's own score. For Pen, the hit test is faked as well: one notation staff under the
+ * pointer, its bottom line clicked, on a page of one system whose master bar is the file's bar 3.
+ */
+describe('ComposerScoreComponent over a file in Original', () => {
+  let fixture: ComponentFixture<ComposerScoreComponent>;
+  let alphaTabService: jasmine.SpyObj<AlphaTabService>;
+  let hitTest: jasmine.SpyObj<StaffHitTestService>;
+  let composer: ComposerService;
+  let gp: ComposerGpService;
+  let beatMouseDown: (beat: alphaTab.model.Beat) => void = () => undefined;
+  let score: alphaTab.model.Score;
+  // The GP library opens its database as it is made: one of its own, not the one a browser holds.
+  const gpDb = `gp-library-score-spec-${Math.random().toString(36).slice(2)}`;
+
+  afterAll(async () => {
+    await deletedDatabase(gpDb);
+  });
+
+  beforeEach(async () => {
+    alphaTabService = jasmine.createSpyObj<AlphaTabService>('AlphaTabService', [
+      'initializeApi',
+      'renderScore',
+      'renderTracks',
+      'setTrackPlayback',
+      'render',
+      'auditionAfterRender',
+      'getApi',
+      'getBoundsLookup',
+      'getCurrentState',
+      'onBeatMouseDown',
+      'onBeatMouseMove',
+      'onBeatMouseUp',
+      'onRenderFinished',
+      'onPostRenderFinished',
+      'highlightRange',
+      'clearHighlight',
+      'seekToBeat',
+      'dispose'
+    ]);
+    hitTest = jasmine.createSpyObj<StaffHitTestService>('StaffHitTestService', [
+      'allStaves',
+      'surfaceOriginOf',
+      'staffCentresIn',
+      'staffIndexAt',
+      'stringIn',
+      'diatonicIn',
+      'caretRect',
+      'bandCaretRect',
+      'lookupOffsetOf',
+      'scaleOf'
+    ]);
+    alphaTabService.getBoundsLookup.and.returnValue(null);
+    alphaTabService.getCurrentState.and.returnValue({ isPlaying: false } as AlphaTabState);
+    alphaTabService.onBeatMouseDown.and.callFake(handler => (beatMouseDown = handler));
+    // No staff under the pointer until a spec draws one.
+    hitTest.allStaves.and.returnValue([]);
+    hitTest.staffCentresIn.and.returnValue([]);
+    hitTest.staffIndexAt.and.returnValue(null);
+    hitTest.surfaceOriginOf.and.returnValue(null);
+    hitTest.caretRect.and.returnValue(null);
+    hitTest.lookupOffsetOf.and.returnValue(null);
+
+    await TestBed.configureTestingModule({
+      imports: [ComposerScoreComponent],
+      providers: [
+        { provide: AlphaTabService, useValue: alphaTabService },
+        { provide: StaffHitTestService, useValue: hitTest },
+        { provide: GP_LIBRARY_DB, useValue: gpDb }
+      ]
+    }).compileComponents();
+
+    composer = TestBed.inject(ComposerService);
+    gp = TestBed.inject(ComposerGpService);
+    const parsed = TestBed.inject(AlphaTexService).parse(['\\title "Keys"', '\\track "Piano"', 'c4.1 | c4.1 | r.2 e4.2 | c4.1 |'].join('\n')).score;
+    if (!parsed) throw new Error('the file did not parse');
+    score = parsed;
+    // Bar 3 in the bass clef, so a pitch read under bar 1's treble clef would be the wrong note.
+    score.tracks[0].staves[0].bars[2].clef = alphaTab.model.Clef.F4;
+    alphaTabService.getApi.and.returnValue({ score } as unknown as alphaTab.AlphaTabApi);
+    gp.open({ entryId: 'entry-keys', fileName: 'Keys.gp', bytes: new ArrayBuffer(4), score });
+
+    fixture = TestBed.createComponent(ComposerScoreComponent);
+    fixture.detectChanges();
+  });
+
+  afterEach(() => fixture.destroy());
+
+  const fileBeat = (barIndex: number): alphaTab.model.Beat => score.tracks[0].staves[0].bars[barIndex].voices[0].beats[0];
+
+  /** The mouse-down on the score's container at (100, 50), then alphaTab's beat press on `beat`. */
+  function press(beat: alphaTab.model.Beat, shiftKey = false): void {
+    const container: HTMLElement = fixture.nativeElement.querySelector('.alphatab-container');
+    container.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, buttons: 1, clientX: 100, clientY: 50, shiftKey }));
+    beatMouseDown(beat);
+  }
+
+  it("puts the file's caret on the beat pressed, not the empty composition's, and seeks there while stopped", () => {
+    press(fileBeat(2));
+
+    expect(gp.caret?.cursor).toEqual(jasmine.objectContaining({ trackIndex: 0, barIndex: 2, beatIndex: 0 }));
+    expect(composer.state.cursor.barIndex).withContext('the composition under the file').toBe(0);
+    expect(alphaTabService.seekToBeat).toHaveBeenCalledOnceWith(fileBeat(2));
+  });
+
+  it('does not seek on a press while the file plays', () => {
+    alphaTabService.getCurrentState.and.returnValue({ isPlaying: true } as AlphaTabState);
+
+    press(fileBeat(3));
+
+    expect(gp.caret?.cursor.barIndex).toBe(3);
+    expect(alphaTabService.seekToBeat).not.toHaveBeenCalled();
+  });
+
+  it("highlights a Shift-press's range over the file", () => {
+    alphaTabService.getBoundsLookup.and.returnValue({ staffSystems: [], findBeat: () => ({}) } as unknown as alphaTab.rendering.BoundsLookup);
+
+    press(fileBeat(1));
+    press(fileBeat(3), true);
+
+    expect(gp.caret?.anchor?.barIndex).toBe(1);
+    expect(gp.caret?.cursor.barIndex).toBe(3);
+    expect(alphaTabService.highlightRange).toHaveBeenCalledWith(fileBeat(1), fileBeat(3));
+  });
+
+  it("writes a Pen click in Original at the bar clicked once converted, its pitch read under that bar's clef", async () => {
+    spyOn(TestBed.inject(ComposerLibraryService), 'save').and.resolveTo('composition-1');
+    spyOn(TestBed.inject(GpLibraryService), 'deleteEntry').and.resolveTo();
+    // One system, 0-100, drawing the piano's notation staff at 30-70; its master bar is bar 3 wherever it is pressed.
+    const barBounds = { realBounds: { y: 30, h: 40 }, beats: [{ beat: fileBeat(2) }], findBeatAtPos: () => ({ beat: fileBeat(2) }) };
+    const masterBar = { bars: [barBounds] };
+    alphaTabService.getBoundsLookup.and.returnValue({
+      staffSystems: [{ realBounds: { y: 0, h: 100 }, bars: [masterBar], findBarAtPos: () => masterBar }],
+      findBeat: () => null
+    } as unknown as alphaTab.rendering.BoundsLookup);
+    const lines = { surface: document.createElementNS('http://www.w3.org/2000/svg', 'svg'), lineY: [30, 40, 50, 60, 70], spacing: 10 };
+    hitTest.allStaves.and.returnValue([lines]);
+    hitTest.staffCentresIn.and.returnValue([50]);
+    hitTest.staffIndexAt.and.returnValue(0);
+    hitTest.surfaceOriginOf.and.returnValue({ left: 0, top: 0 } as DOMRect);
+    // The click is on the bottom line: G2 in the bass clef, E4 in the treble.
+    hitTest.diatonicIn.and.callFake((_lines, clef) => bottomLineDiatonic(clef));
+    composer.setEntryMode('pen');
+
+    // alphaTab's hit is bar 2; the staff under the pointer reads its own beat, bar 3's.
+    press(fileBeat(1));
+    expect(gp.request?.id).withContext('Pen asks before it writes').toBe(ASKING_PAGE_COMMANDS.penWrite);
+    expect(gp.caret?.cursor.barIndex).toBe(2);
+
+    await TestBed.inject(GpConversionService).convert();
+
+    const beatAt = (barIndex: number) => composer.doc.tracks[0].staves[0].bars[barIndex].voices[0].beats[0];
+    expect(beatAt(2).notes.map(note => note.pitch)).toEqual([jasmine.objectContaining({ kind: 'pitched', noteValue: 7, octave: 2 })]);
+    expect(beatAt(0).notes.map(note => note.pitch))
+      .withContext("the file's first beat, as it was")
+      .toEqual([jasmine.objectContaining({ kind: 'pitched', noteValue: 0, octave: 4 })]);
   });
 });

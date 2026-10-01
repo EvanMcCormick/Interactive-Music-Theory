@@ -67,6 +67,8 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
   /** The rows the strip draws, in either state (`trackRowsOf`). */
   rows: TrackRow[] = [];
   private view: TrackView = EMPTY_TRACK_VIEW;
+  /** In Original, the track of the file's caret (`ComposerGpService.caret`): the row drawn as selected. */
+  private fileCaretTrack: number | null = null;
 
   /**
    * The progression this page can send, or null before the first publish.
@@ -115,6 +117,14 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
       .subscribe(original => {
         this.original = original;
         this.readRows();
+        this.cdr.markForCheck();
+      });
+
+    this.gp
+      .getCaret()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(caret => {
+        this.fileCaretTrack = caret?.cursor.trackIndex ?? null;
         this.cdr.markForCheck();
       });
 
@@ -227,20 +237,20 @@ export class ComposerTrackStripComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Puts the caret on the row's track. Not in Original, where the rows are the file's and the caret is the empty
-   * composition's under it, which has no such track; and not on a hidden track, where an edit would write to a staff no
-   * one can see - that says why on the status line instead.
+   * Puts the caret on the row's track - in Original the file's caret, which `setCursor` reaches there
+   * (`ComposerService.lendCaret`). Not on a hidden track, where an edit would write to a staff no one can see - that says
+   * why on the status line instead.
    */
   selectTrack(index: number): void {
     const row = this.rows.find(candidate => candidate.index === index);
-    if (this.original || !row) return;
+    if (!row) return;
     if (!row.shown) return this.composer.announce(hiddenTrackRefusalOf(row.name), true);
     this.composer.setCursor({ trackIndex: index, staffIndex: 0 });
   }
 
-  /** Whether the row is drawn as the caret's: never in Original, where no row can be (`selectTrack`). */
+  /** Whether the row is drawn as the caret's: the file's caret in Original, the composition's otherwise. */
   isSelected(row: TrackRow, state: ComposerState): boolean {
-    return !this.original && state.cursor.trackIndex === row.index;
+    return (this.original ? this.fileCaretTrack : state.cursor.trackIndex) === row.index;
   }
 
   // -------------------------------------------------------------------------

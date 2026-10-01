@@ -19,6 +19,17 @@ export type CursorMove =
   | { kind: 'scoreEdge'; edge: 'first' | 'last' }
   | { kind: 'track'; delta: number };
 
+/**
+ * What takes `ComposerService`'s caret commands while the page shows something other than the composition: the `.gp`
+ * file in Original, whose caret `ComposerGpService` keeps (`ComposerService.lendCaret`).
+ */
+export interface CaretOwner {
+  setCursor(cursor: Partial<EditCursor>): void;
+  extendSelectionTo(cursor: Partial<EditCursor>): void;
+  moveCursor(move: CursorMove, extend: boolean): void;
+  selectAllInTrack(): void;
+}
+
 const clamp = (value: number, min: number, max: number): number => (max < min ? min : Math.max(min, Math.min(max, value)));
 
 /** `cursor` with every index pulled back inside `doc`. A pitched staff has no string. */

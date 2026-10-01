@@ -124,7 +124,7 @@ export class ComposerHistory {
    * Replaces the whole document: by default an edit of this composition, as an applied alphaTex draft is, on the undo
    * stack. A new composition - a load, an opened transcription - moves `documentId` on and starts a fresh history.
    */
-  replaceDocument(doc: ScoreDoc, { markClean = false, newComposition = false }: DocumentReplacement = {}): void {
+  replaceDocument(doc: ScoreDoc, { markClean = false, newComposition = false, selection }: DocumentReplacement = {}): void {
     const state = this.host.state();
     if (newComposition) this.undoStack = [];
     else this.undoStack.push(structuredClone(state.doc));
@@ -133,8 +133,8 @@ export class ComposerHistory {
     this.host.publish({
       ...state,
       doc,
-      cursor: clampedCursor(state.cursor, doc),
-      anchor: null,
+      cursor: clampedCursor(selection?.cursor ?? state.cursor, doc),
+      anchor: selection?.anchor ? clampedCursor(selection.anchor, doc) : null,
       refusal: null,
       notice: null,
       documentId: newComposition ? state.documentId + 1 : state.documentId,
