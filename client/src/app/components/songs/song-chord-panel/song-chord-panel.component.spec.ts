@@ -155,6 +155,49 @@ describe('SongChordPanelComponent', () => {
     expect(text(host.querySelector('.panel-hint'))).toBe('Click a chord to replace the one selected on the sheet.');
   });
 
+  describe('the sound toggle', () => {
+    const toggle = (): HTMLButtonElement => {
+      const found = host.querySelector<HTMLButtonElement>('.panel-sound');
+      if (!found) throw new Error('No sound toggle');
+      return found;
+    };
+
+    it('is a pressed toggle, named for what it does, while chords sound as they are placed', () => {
+      show(createSongContent({ key: C_MAJOR }));
+      fixture.componentRef.setInput('playOnPlace', true);
+      fixture.detectChanges();
+
+      expect(toggle().getAttribute('aria-label')).toBe('Play chords as I place them');
+      expect(toggle().getAttribute('aria-pressed')).toBe('true');
+      expect(toggle().classList).toContain('on');
+    });
+
+    it('asks for the other setting when pressed, leaving the setting itself to the page', () => {
+      const asked: boolean[] = [];
+      show(createSongContent({ key: C_MAJOR }));
+      fixture.componentInstance.playOnPlaceChange.subscribe(on => asked.push(on));
+      fixture.componentRef.setInput('playOnPlace', true);
+      fixture.detectChanges();
+
+      toggle().click();
+      fixture.detectChanges();
+      expect(asked).toEqual([false]);
+      expect(toggle().getAttribute('aria-pressed')).toBe('true');
+
+      fixture.componentRef.setInput('playOnPlace', false);
+      fixture.detectChanges();
+      expect(toggle().getAttribute('aria-pressed')).toBe('false');
+      expect(toggle().classList).not.toContain('on');
+      toggle().click();
+      expect(asked).toEqual([false, true]);
+    });
+
+    it('stays beside the key when the key has no chords to offer', () => {
+      show(createSongContent({ key: { tonic: 0, scaleId: 'majorPentatonic', preferSharps: true } }));
+      expect(host.querySelector('.panel-sound')).not.toBeNull();
+    });
+  });
+
   it('says why a key that cannot build chords has none, in place of the grid', () => {
     show(createSongContent({ key: { tonic: 0, scaleId: 'majorPentatonic', preferSharps: true } }));
     expect(text(host.querySelector('.panel-refusal'))).toBe(

@@ -40,6 +40,17 @@ export interface ToneApi {
    * service has to survive rather than schedule into.
    */
   resume(): Promise<void>;
+  /**
+   * The audio clock now, in seconds: `Tone.now()`, which is the context's time
+   * plus its lookahead - the earliest moment a note can be scheduled for and
+   * still start on time.
+   *
+   * What an audition is struck at. It is the one time the service asks for
+   * rather than being handed, because an audition is not on the transport: a
+   * part's callback is given the time its event is due, and a chord heard on a
+   * click has no event to be given one by.
+   */
+  now(): number;
   transport(): ToneTransport;
   createPolySynth(): TonePolySynth;
   createReverb(): ToneNode;
@@ -189,6 +200,7 @@ export function createToneApi(): ToneApi {
       if (Tone.getContext().state === 'running') return;
       await Tone.start();
     },
+    now: (): number => Tone.now(),
     transport(): ToneTransport {
       const transport = Tone.getTransport();
       return {
@@ -242,7 +254,8 @@ export function createToneApi(): ToneApi {
 /**
  * How `ProgressionPlayerService` reaches Tone.
  *
- * Bound to `createToneApi` by `ProgressionComponent`, deliberately with no
+ * Bound to `createToneApi` by the pages that sound - `ProgressionComponent` and
+ * `SongEditorComponent` - deliberately with no
  * default factory here - the same choice `NOTE_DETECTOR` makes, for the same
  * reason. Bound *there* rather than in `main.ts` because this module's
  * `import * as Tone` follows whichever file names the factory, and only a page

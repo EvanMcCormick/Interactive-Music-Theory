@@ -121,6 +121,7 @@
             [chordId]="popover.id"
             [keys]="keys"
             (edit)="run($event)"
+            (hear)="hearChord()"
             (closed)="closeChordPopover($event)"
           ></app-song-chord-popover>
         </div>
@@ -175,8 +176,10 @@
               [keys]="keys"
               [numerals]="preferences.numerals"
               [selected]="selectedChord"
+              [playOnPlace]="preferences.playOnPlace"
               (edit)="run($event)"
               (chosen)="placePaletteChord($event)"
+              (playOnPlaceChange)="setPlayOnPlace($event)"
             ></app-song-chord-panel>
           </div>
         </aside>

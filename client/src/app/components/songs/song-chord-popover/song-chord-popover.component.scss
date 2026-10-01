@@ -64,9 +64,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+// Hear it at the start, Delete chord at the far end, away from it.
 .chord-popover-actions {
-  grid-template-columns: minmax(0, 1fr);
-  justify-items: end;
+  display: flex;
+  justify-content: space-between;
 }
 
 // The flat tool style: no chrome until hovered, colour only on the preset the chord is now.

@@ -197,6 +197,21 @@ describe('SongChordPopoverComponent', () => {
     });
   });
 
+  it('asks for the chord to be heard, staying open with the focus on the button', () => {
+    open();
+    let heard = 0;
+    popover.hear.subscribe(() => heard++);
+    const hear = element<HTMLButtonElement>('.hear-chord');
+    expect(hear.textContent?.trim()).toBe('Hear it');
+
+    hear.focus();
+    press('.hear-chord');
+
+    expect(heard).toBe(1);
+    expect(closed).toEqual([]);
+    expect(document.activeElement).toBe(hear);
+  });
+
   it('deletes the chord and closes, giving the focus back', () => {
     open();
     press('.delete-chord');

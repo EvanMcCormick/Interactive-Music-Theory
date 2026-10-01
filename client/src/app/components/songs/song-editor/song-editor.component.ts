@@ -18,11 +18,13 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Node } from 'prosemirror-model';
 import { Subject, from } from 'rxjs';
 import { distinctUntilChanged, map, switchMap, takeUntil, tap } from 'rxjs/operators';
-import type { ChordDegree, ProgressionKey } from '../../../models/progression.model';
+import type { ChordDegree, ProgressionKey, RollNote } from '../../../models/progression.model';
 import type { ChordAtomAttrs, SongDoc } from '../../../models/song.model';
 import { messageOf } from '../../../services/error-message';
 import { MusicTheoryService } from '../../../services/music-theory.service';
+import { PROGRESSION_AUDIO, createToneApi } from '../../../services/progression-audio';
 import { ProgressionKeyContext } from '../../../services/progression-key-context';
+import { ProgressionPlayerService } from '../../../services/progression-player.service';
 import { relativeTimeOf } from '../../../services/relative-time';
 import { AutosaveClock, BROWSER_CLOCK, SaveStatus, SongAutosave } from '../../../services/song-autosave';
 import {
@@ -99,6 +101,18 @@ export const PANEL_TABS: readonly PanelTab[] = Object.freeze([
 /** The gap between what a popup hangs under and its top edge, in CSS pixels. */
 const POPUP_GAP_PX = 4;
 
+/**
+ * How long a chord heard on the page is held, in seconds, before the piano voice's release (1.5 s more) lets it ring
+ * out: a stab, long enough to hear the chord's colour and short enough to be out of the way of the next click.
+ *
+ * Fixed rather than a bar at the song's tempo. A bar is 1.2 s at 200 BPM, 4 s at 60, and longer again for a chord two
+ * bars long, so the same chord would sound different from song to song, and in a slow ballad a click would hold a
+ * chord under the next four seconds of typing. An audition answers "what does this chord sound like", which does not
+ * change with the tempo; the song's rhythm is what playing the song is for. The tempo still times each note's own
+ * length, so a note shorter than this - in a hand-voiced chord - stays as short as it was written.
+ */
+const AUDITION_SECONDS = 1.5;
+
 /** What opening the route's song came to. */
 type Opened =
   | { kind: 'song'; record: SongDoc; node: Node }
@@ -146,6 +160,28 @@ type Opened =
  * where it goes; it is placed as one undo step with the caret after it, and the focus goes back to the lyrics, so the
  * next click places the next chord after it and a row of clicks builds a progression left to right. Lyrics that have
  * never had a caret refuse it, with the reason in the live region, and keep the focus where it is.
+ *
+ * **Hearing a chord.** The page has a player of its own (`providers`, as `ProgressionComponent` has, and for the same
+ * reason: binding `PROGRESSION_AUDIO` here, in a page loaded lazily, keeps Tone out of the `main` bundle). It plays a
+ * chord in two places, each with the chord's own voiced notes - so a chord voiced by hand sounds as voiced - held for
+ * `AUDITION_SECONDS`:
+ *
+ * - **A chord the Chords tab places or swaps in sounds as it lands**, while the viewer's "Play chords as I place them"
+ *   (`SongSheetPreferencesService.playOnPlace`, the toggle in the tab's header) is on, which it is to begin with. A row
+ *   of clicks is how a line gets built there, and hearing each chord as it goes in is how the user knows it is the one
+ *   they meant. A click that places nothing is silent. The chord field (`[`) does not sound: it is part of typing the
+ *   lyrics, where `[Am]` goes in mid-word and a chord per bracket would be noise.
+ * - **Hear it, in the chord popover**, plays that chord whatever the setting, since it was asked for.
+ *
+ * **A click on a chord's name is silent.** It selects the chord and opens its popover, which is editing - moving it,
+ * re-lengthening it, swapping it - and a sound on every selection, including the ones Alt+arrows make, would be noise
+ * over that work. Hear it is one press away in the popover the click opens, and the Chords tab plays a chord as it is
+ * swapped in.
+ *
+ * **Sound that will not start** - a browser that refuses audio, a context that will not resume - is said in the live
+ * region, "Sound could not start: <reason>", rather than only logged as the progression page does: here the chord was
+ * placed, and the user should know why they did not hear it. Nothing is remembered about the failure, so the next
+ * click asks the browser again.
  */
 @Component({
   selector: 'app-song-editor',
@@ -161,7 +197,9 @@ type Opened =
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './song-editor.component.html',
-  styleUrls: ['./song-editor.component.scss']
+  styleUrls: ['./song-editor.component.scss'],
+  // The page's own audio, as the progression page has its own: see "Hearing a chord" in the class comment.
+  providers: [{ provide: PROGRESSION_AUDIO, useFactory: createToneApi }, ProgressionPlayerService]
 })
 export class SongEditorComponent implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
@@ -170,6 +208,7 @@ export class SongEditorComponent implements OnInit, OnDestroy {
   private readonly changes = inject(ChangeDetectorRef);
   private readonly zone = inject(NgZone);
   private readonly clock = inject(SONG_AUTOSAVE_CLOCK);
+  private readonly player = inject(ProgressionPlayerService);
   private readonly destroy$ = new Subject<void>();
   /** Ends the subscriptions of the song open now, when another is opened in its place or the page goes. */
   private readonly songClosed$ = new Subject<void>();
@@ -390,6 +429,14 @@ export class SongEditorComponent implements OnInit, OnDestroy {
     this.changes.detectChanges();
   }
 
+  /** Hear it, in the popover: its chord, as voiced, whatever "Play chords as I place them" says. */
+  hearChord(): void {
+    const popover = this.chordPopover;
+    const doc = this.doc;
+    const found = popover === null || doc === null ? null : chordWithId(doc, popover.id);
+    if (found !== null) this.audition(found.attrs.notes);
+  }
+
   /** The popover is done; `giveFocusBack` when it closed by its own keys or buttons rather than a press elsewhere. */
   closeChordPopover(giveFocusBack: boolean): void {
     this.chordPopover = null;
@@ -408,6 +455,11 @@ export class SongEditorComponent implements OnInit, OnDestroy {
 
   selectTab(id: PanelTabId): void {
     this.selectedTab = id;
+  }
+
+  /** The Chords tab's sound toggle, remembered for this viewer. */
+  setPlayOnPlace(on: boolean): void {
+    this.preferencesService.setPlayOnPlace(on);
   }
 
   /**
@@ -429,7 +481,8 @@ export class SongEditorComponent implements OnInit, OnDestroy {
   /**
    * A chord clicked in the Chords tab: in place of the chord selected on the sheet, or at the caret the lyrics last had
    * (see the class comment). `changeChord` keeps the selected chord's id, place and length, and leaves it selected, so
-   * the cell it now matches is marked and another click swaps it again.
+   * the cell it now matches is marked and another click swaps it again. Either way the chord placed sounds, if the
+   * viewer has that on (see "Hearing a chord").
    */
   placePaletteChord(degree: ChordDegree): void {
     const sheet = this.sheet;
@@ -438,7 +491,7 @@ export class SongEditorComponent implements OnInit, OnDestroy {
 
     const selected = sheet.selectedChord();
     if (selected !== null) {
-      sheet.run(changeChord(this.keys, selected.attrs.id, degree));
+      if (sheet.run(changeChord(this.keys, selected.attrs.id, degree))) this.playPlaced(sheet, selected.attrs.id);
       sheet.focus();
       return;
     }
@@ -446,12 +499,38 @@ export class SongEditorComponent implements OnInit, OnDestroy {
     const { key, timeSignature } = songMetaOf(doc);
     const attrs = chordSlotOf(degree, key, this.keys.chordScaleFor(key), timeSignature);
     // No caret yet is handed on as a place no line can hold, so the refusal and its words are `insertChord`'s.
-    if (sheet.run(insertChord(attrs, sheet.lastCaret() ?? Number.NaN))) sheet.focus();
+    if (!sheet.run(insertChord(attrs, sheet.lastCaret() ?? Number.NaN))) return;
+    this.playPlaced(sheet, attrs.id);
+    sheet.focus();
   }
 
   /** Retry, after a failed save: saves now, with the change that failed or anything newer. */
   retry(): void {
     void this.autosave?.flush();
+  }
+
+  /**
+   * The chord `id` just placed or swapped in, played if the viewer has "Play chords as I place them" on. Its notes are
+   * read back from the sheet rather than taken from what was asked for, so what sounds is what the song now holds -
+   * re-voiced, for a swap, by `changeChord`.
+   */
+  private playPlaced(sheet: SongSheetComponent, id: string): void {
+    if (!this.preferences.playOnPlace) return;
+    const state = sheet.editorState();
+    const placed = state === null ? null : chordWithId(state.doc, id);
+    if (placed !== null) this.audition(placed.attrs.notes);
+  }
+
+  /**
+   * Plays `notes` for `AUDITION_SECONDS` at the song's tempo. Called inside the click that asked, which is the gesture
+   * the browser needs to start audio; a failure to start is said in the live region (see the class comment).
+   */
+  private audition(notes: readonly RollNote[]): void {
+    const doc = this.doc;
+    if (doc === null) return;
+    this.player
+      .audition(notes, AUDITION_SECONDS, songMetaOf(doc).tempo)
+      .catch((error: unknown) => this.say(`Sound could not start: ${messageOf(error)}`, true));
   }
 
   /** Puts `message` in the live region, in the half that is empty (see `messages`). */

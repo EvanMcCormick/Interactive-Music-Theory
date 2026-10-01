@@ -71,6 +71,11 @@ const REPLACE_HINT = 'Click a chord to replace the one selected on the sheet.';
  * **Colour only on the selection** (the flat tool style): the cell whose chord is selected on the sheet is the one
  * coloured, and carries `aria-current`; nothing else has chrome until hovered.
  *
+ * **The sound toggle, "Play chords as I place them",** sits at the end of the key's row, the panel's header. It is
+ * about what a click on a cell does, so it belongs to the cells rather than to the page's panel bar, which every tab
+ * will share in S4; and the header is where it is seen before the first click rather than found after one. Like the
+ * cells, it never sets anything itself: it asks (`playOnPlaceChange`) and the page keeps the viewer's preference.
+ *
  * **Plain buttons, one tab stop each, not a roving tabindex.** Every cell is a command of its own, as the progression
  * palette's buttons are, and a native button needs no script to be pressed, found by a screen reader's button list,
  * or reached by voice control. A roving tabindex would save Tab presses, but its arrow keys would have to mean a
@@ -94,11 +99,15 @@ export class SongChordPanelComponent implements OnChanges {
   @Input() numerals = false;
   /** The chord selected on the sheet, which a click replaces, or null. */
   @Input() selected: ChordAtomAttrs | null = null;
+  /** Whether a chord sounds as a click places it: the viewer's "Play chords as I place them". */
+  @Input() playOnPlace = true;
 
   /** Transpose ↑↓, for the page to run on the sheet. */
   @Output() readonly edit = new EventEmitter<SongEdit>();
   /** A cell was clicked: the chord it places. */
   @Output() readonly chosen = new EventEmitter<ChordDegree>();
+  /** The sound toggle was pressed: the setting asked for, for the page to keep as the viewer's preference. */
+  @Output() readonly playOnPlaceChange = new EventEmitter<boolean>();
 
   /** `C Ionian (Major)`, as the library's cards and the progression page write a key. */
   keyName = '';
@@ -134,6 +143,11 @@ export class SongChordPanelComponent implements OnChanges {
   /** A cell clicked: its chord, for the page to place or put in place of the selected one. */
   choose(cell: ChordCell): void {
     this.chosen.emit(cell.option.degree);
+  }
+
+  /** The sound toggle: the other setting, asked of the page, which hands it back as `playOnPlace`. */
+  togglePlayOnPlace(): void {
+    this.playOnPlaceChange.emit(!this.playOnPlace);
   }
 
   /** ↑ or ↓: the song a semitone up or down, as the toolbar's Transpose. */

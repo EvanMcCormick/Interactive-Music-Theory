@@ -1,6 +1,6 @@
 import { Injectable, NgZone, OnDestroy, inject } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
-import { ProgressionDoc } from '../models/progression.model';
+import { ProgressionDoc, RollNote } from '../models/progression.model';
 import {
   PROGRESSION_AUDIO,
   TimedEvent,
@@ -283,6 +283,10 @@ export function buildSchedule(doc: ProgressionDoc): PlaybackSchedule {
  * no longer a claim about surviving navigation.
  *
  * A spec that wants a player provides it, as `main.ts` no longer can.
+ *
+ * `SongEditorComponent` provides one the same way, for its auditions - its own
+ * chain, built when the song page opens and disposed when it closes, and never
+ * asked to play a progression.
  */
 @Injectable()
 export class ProgressionPlayerService implements OnDestroy {
@@ -353,6 +357,13 @@ export class ProgressionPlayerService implements OnDestroy {
    * has not built anything.
    */
   private generation = 0;
+
+  /**
+   * Which audition is the newest, as `generation` is for plays: an audition
+   * waits on the audio context too, and two clicks inside the first wait - the
+   * browser's own, on a first click - should sound the second chord, not both.
+   */
+  private auditionTicket = 0;
 
   constructor() {
     this.synth = this.audio.createPolySynth();
@@ -549,7 +560,76 @@ export class ProgressionPlayerService implements OnDestroy {
     this.audio.transport().setLoop(on, this.lengthSeconds);
   }
 
+  /**
+   * One chord, heard now: `notes` struck together on this service's chain, each
+   * held for its own length at `tempo` but never longer than `seconds`. What the
+   * song page plays when a chord is placed or asked for.
+   *
+   * ## Beside the transport, never on it
+   *
+   * The notes go straight to the synth at the audio clock's `now()`. Nothing
+   * here starts, stops, cancels or re-tempos the transport, and no part is
+   * built: the transport is the progression's, and a chord heard in passing has
+   * no claim on it. A progression playing under an audition goes on playing,
+   * and is still the thing a stop stops.
+   *
+   * ## A stab, not a replay
+   *
+   * Every note is struck at the same instant, including one a hand-voiced roll
+   * starts partway into its slot: the ear is asking what the chord *is*, and a
+   * slot's rhythm is the progression's to play. Each note keeps its own length
+   * - converted at `tempo`, as `buildSchedule` converts it - so a short note in a
+   * literal slot stays short, and `seconds` caps the rest, so a chord two bars
+   * long at 60 BPM does not drone for eight seconds under whatever the user
+   * does next. Pitch and level go through the same `frequencyOf` and `gainOf`
+   * as playback, so an audition and a play of the same slot sound alike.
+   *
+   * ## The chord before it is let go
+   *
+   * Each audition releases what is sounding before it strikes - into the
+   * voice's release, not cut off, so there is no click. Clicking through a row
+   * of chords is the normal way to use this, and letting each one ring on would
+   * stack three or four chords at once into one smear, which is the opposite of
+   * hearing the chord just clicked. Not while the transport is running, though:
+   * `releaseAll` takes every voice, and the progression's sounding chord is one
+   * of them, so over playback an audition sounds on top rather than cutting into
+   * the music.
+   *
+   * ## The gesture, and failing
+   *
+   * `resume` is called before the first `await`, so it runs inside the click
+   * that asked for the chord - the gesture a browser needs before it will start
+   * audio. Unlike `play`, a context that will not start is not swallowed here:
+   * the promise rejects with the reason, because the page that asked is the one
+   * with somewhere to say it. Nothing is remembered about the failure, so the
+   * next audition asks again, which is what a later click needs to work once
+   * the browser relents.
+   *
+   * A tempo or length that cannot time a note - zero, `NaN`, infinite - sounds
+   * nothing, as `play` refuses a schedule it cannot time; so does an audition
+   * that a newer one, or the page going, has overtaken while it waited.
+   */
+  async audition(notes: readonly RollNote[], seconds: number, tempo: number): Promise<void> {
+    const ticket = ++this.auditionTicket;
+    const timeable = seconds > 0 && Number.isFinite(seconds) && tempo > 0 && Number.isFinite(tempo);
+    if (!timeable || notes.length === 0) return;
+
+    await this.audio.resume();
+    if (ticket !== this.auditionTicket) return;
+
+    if (!this.running) this.synth.releaseAll();
+    const time = this.audio.now();
+    const secondsPerBeat = 60 / tempo;
+    for (const note of notes) {
+      const duration = Math.min(note.lengthBeats * secondsPerBeat, seconds);
+      this.synth.triggerAttackRelease(frequencyOf(note.midi), duration, time, gainOf(note.velocity));
+    }
+  }
+
   ngOnDestroy(): void {
+    // An audition still waiting on the audio context would otherwise strike a
+    // synth disposed a few lines down, which Tone answers by throwing.
+    this.auditionTicket++;
     this.stop();
     // The transport is global and outlives this service, so a listener left on
     // it would be a closure over a disposed chain, woken by whatever plays

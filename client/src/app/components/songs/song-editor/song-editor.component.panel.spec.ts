@@ -9,6 +9,7 @@ import { createExtensions } from '../../../models/progression-normalize';
 import { ChordDegree, ProgressionKey } from '../../../models/progression.model';
 import { SongDoc } from '../../../models/song.model';
 import { deletedDatabase } from '../../../services/indexed-db.spec-helper';
+import { ProgressionPlayerService } from '../../../services/progression-player.service';
 import { AutosaveClock } from '../../../services/song-autosave';
 import { chordSlotOf } from '../../../services/song-document';
 import { SONG_LIBRARY_DB, SongLibraryService } from '../../../services/song-library.service';
@@ -86,7 +87,13 @@ describe('SongEditorComponent: the side panel', () => {
         { provide: SONG_AUTOSAVE_CLOCK, useValue: new StoppedClock() },
         { provide: SONG_PREFERENCES_STORAGE, useValue: null }
       ]
-    }).compileComponents();
+    })
+      // A silent player in place of the page's own: these specs are not about sound (the audition spec is), and the
+      // real one would build a Tone chain on the headless browser's audio context for every spec.
+      .overrideComponent(SongEditorComponent, {
+        set: { providers: [{ provide: ProgressionPlayerService, useValue: { audition: () => Promise.resolve() } }] }
+      })
+      .compileComponents();
     library = TestBed.inject(SongLibraryService);
     harness = await RouterTestingHarness.create();
   });

@@ -14,9 +14,20 @@ export interface SongSheetPreferences {
   lyricSize: LyricSize;
   /** The song page's side panel - the Chords tab - shown beside the sheet, or folded away to give the lyrics room. */
   panelOpen: boolean;
+  /**
+   * A chord placed from the Chords tab sounds as it lands ("Play chords as I place them"). On by default, as
+   * songcraft plays on click: building a line a click at a time is easier by ear. Off for a viewer in a quiet room,
+   * or one who already knows what they are placing; the popover's Hear it plays a chord either way.
+   */
+  playOnPlace: boolean;
 }
 
-const DEFAULTS: SongSheetPreferences = Object.freeze({ numerals: false, lyricSize: 'medium', panelOpen: true });
+const DEFAULTS: SongSheetPreferences = Object.freeze({
+  numerals: false,
+  lyricSize: 'medium',
+  panelOpen: true,
+  playOnPlace: true
+});
 
 /** One key for every choice, so they are read and written together. */
 const STORAGE_KEY = 'songSheetPreferences';
@@ -38,10 +49,10 @@ export const SONG_PREFERENCES_STORAGE = new InjectionToken<Storage | null>('SONG
 });
 
 /**
- * How the song sheet is shown to this viewer: chord names or Roman numerals (`I-IV`), the lyric size (`Aa`), and
- * whether the side panel is open (Hide panel / Show panel).
+ * How the song sheet is shown to this viewer: chord names or Roman numerals (`I-IV`), the lyric size (`Aa`), whether
+ * the side panel is open (Hide panel / Show panel), and whether a chord placed from it sounds.
  *
- * **Kept out of the song on purpose.** Each is how one person likes to read a sheet, not what the song is: a
+ * **Kept out of the song on purpose.** Each is how one person likes to work with a sheet, not what the song is: a
  * co-writer reading in numerals should not turn the other's sheet into numerals, a size change or a folded panel
  * should not be an undo step, and none should mark the song unsaved or bump its revision. So they live per browser, in `localStorage`,
  * and the document - which design Part 8 keeps for what a future sync would share - never sees them.
@@ -76,12 +87,17 @@ export class SongSheetPreferencesService {
     this.update({ ...this.preferences, panelOpen });
   }
 
+  setPlayOnPlace(playOnPlace: boolean): void {
+    this.update({ ...this.preferences, playOnPlace });
+  }
+
   private update(next: SongSheetPreferences): void {
     const current = this.preferences;
     if (
       next.numerals === current.numerals &&
       next.lyricSize === current.lyricSize &&
-      next.panelOpen === current.panelOpen
+      next.panelOpen === current.panelOpen &&
+      next.playOnPlace === current.playOnPlace
     ) {
       return;
     }
@@ -103,11 +119,12 @@ export class SongSheetPreferencesService {
     }
     if (typeof stored !== 'object' || stored === null) return DEFAULTS;
 
-    const { numerals, lyricSize, panelOpen } = stored as Record<string, unknown>;
+    const { numerals, lyricSize, panelOpen, playOnPlace } = stored as Record<string, unknown>;
     return {
       numerals: typeof numerals === 'boolean' ? numerals : DEFAULTS.numerals,
       lyricSize: LYRIC_SIZES.includes(lyricSize as LyricSize) ? (lyricSize as LyricSize) : DEFAULTS.lyricSize,
-      panelOpen: typeof panelOpen === 'boolean' ? panelOpen : DEFAULTS.panelOpen
+      panelOpen: typeof panelOpen === 'boolean' ? panelOpen : DEFAULTS.panelOpen,
+      playOnPlace: typeof playOnPlace === 'boolean' ? playOnPlace : DEFAULTS.playOnPlace
     };
   }
 }

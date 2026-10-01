@@ -87,8 +87,9 @@ function lengthTextOf(beats: number): string {
  * - **Length**: a stepper that moves to the next whole beat either way, and presets of half a bar, a bar and two bars
  *   of the song's meter, the one the chord is now marked pressed (`setChordLength`).
  * - **Delete** (`deleteChord`), which closes the popover.
- *
- * Hearing the chord is task 9's: the popover has no button for it until there is a sound behind it.
+ * - **Hear it**, which asks the page to play the chord (`hear`) and leaves the popover open with the focus where it
+ *   was, so it can be pressed again, or the chord changed and heard again. The one place on the sheet a chord is
+ *   played on request: a click on its name only selects it and opens this, since that click is for editing.
  *
  * **Focus.** A non-modal dialog: nothing behind it is made inert, and a press outside it closes it, leaving the focus
  * where the press put it. While it is open the focus is in it - on the chord field first - and Tab goes round its
@@ -119,6 +120,8 @@ export class SongChordPopoverComponent implements OnChanges {
    * it somewhere else.
    */
   @Output() readonly closed = new EventEmitter<boolean>();
+  /** Hear it: the page plays this chord, as voiced. */
+  @Output() readonly hear = new EventEmitter<void>();
 
   @ViewChild('dialog') private dialog?: ElementRef<HTMLElement>;
 
@@ -166,6 +169,10 @@ export class SongChordPopoverComponent implements OnChanges {
 
   setLength(beats: number): void {
     this.edit.emit(setChordLength(this.chordId, beats));
+  }
+
+  hearChord(): void {
+    this.hear.emit();
   }
 
   remove(): void {

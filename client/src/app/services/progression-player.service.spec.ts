@@ -231,6 +231,13 @@ class FakeToneApi implements ToneApi {
     for (const release of this.held.splice(0)) release();
   }
 
+  /** What `now()` answers: the audio clock, in seconds, moved by hand. */
+  clock = 0;
+
+  now(): number {
+    return this.clock;
+  }
+
   transport(): ToneTransport {
     return this.transportStub;
   }
@@ -1391,6 +1398,141 @@ describe('ProgressionPlayerService', () => {
 
       for (const part of parts) expect(part.disposals).toBe(1);
       expect(audio.livingParts.length).toBe(0);
+    });
+  });
+
+  /**
+   * One chord, heard now: what the song page plays when a chord is placed or asked for.
+   *
+   * Straight onto the synth at the audio clock's `now()`, never through the transport - the transport is the
+   * progression's, and a chord heard in passing has no business starting, stopping or rescheduling it.
+   */
+  describe('audition', () => {
+    /** C major as a slot voices it at `mf`: a bar long. */
+    const cMajor = (): RollNote[] => [note(60, 0, 4), note(64, 0, 4), note(67, 0, 4)];
+
+    it('strikes every note together, now, in hertz and as a gain', async () => {
+      audio.clock = 12.5;
+
+      // The last note starts half a beat into its slot - a hand-voiced roll can do that - and is struck with the
+      // rest anyway: an audition is a chord stab, not a replay of the slot's rhythm.
+      await player.audition([note(69, 0, 4, 127), note(60, 0, 4, 80), note(64, 0.5, 4, 40)], 1.5, 120);
+
+      const triggered = audio.synth.triggered;
+      expect(triggered.map(call => call.time)).toEqual([12.5, 12.5, 12.5]);
+      expect(triggered[0].frequency).toBeCloseTo(440, 9);
+      expect(triggered[1].frequency).toBeCloseTo(261.6255653, 6);
+      expect(triggered.map(call => call.velocity)).toEqual([1, 80 / 127, 40 / 127]);
+    });
+
+    it('holds each note for its own length at the tempo, and no longer than the audition', async () => {
+      // At 120 BPM a beat is half a second: one beat is 0.5 s and sounds whole; four beats are 2 s and stop at 1.5.
+      await player.audition([note(60, 0, 1), note(64, 0, 4)], 1.5, 120);
+
+      expect(audio.synth.triggered.map(call => call.duration)).toEqual([0.5, 1.5]);
+    });
+
+    it('resumes the audio context first, inside the gesture, and strikes nothing until it has', async () => {
+      audio.gateResume = true;
+
+      const heard = player.audition(cMajor(), 1.5, 120);
+      expect(audio.resumeCalls).toBe(1);
+      await Promise.resolve();
+      expect(audio.synth.triggered).toEqual([]);
+
+      audio.openResumeGate();
+      await heard;
+      expect(audio.synth.triggered.length).toBe(3);
+    });
+
+    it('leaves the transport alone', async () => {
+      await player.audition(cMajor(), 1.5, 120);
+
+      const transport = audio.transportStub;
+      expect(transport.starts).toBe(0);
+      expect(transport.stops).toBe(0);
+      expect(transport.cancels).toBe(0);
+      expect(transport.tempo).toBeNull();
+      expect(audio.parts).toEqual([]);
+    });
+
+    it('leaves a progression that is playing alone, sounding over it', async () => {
+      await player.play(twoChords());
+      const parts = audio.livingParts;
+      const releasesBefore = audio.synth.releases;
+
+      await player.audition(cMajor(), 1.5, 120);
+
+      // Not stopped, not cancelled, and no `releaseAll` - which would cut the progression's sounding chord too.
+      expect(audio.transportStub.stops).toBe(0);
+      expect(audio.transportStub.cancels).toBe(0);
+      expect(audio.synth.releases).toBe(releasesBefore);
+      expect(audio.livingParts).toEqual(parts);
+      cuePart().fire(1);
+      expect(currentSlot()).toBe('b');
+
+      // And the play is still the one a stop stops.
+      player.stop();
+      expect(audio.transportStub.stops).toBe(1);
+    });
+
+    it('lets the chord before it go when another is asked for, so a run of clicks does not pile up', async () => {
+      await player.audition(cMajor(), 1.5, 120);
+      let struckWhenReleased = -1;
+      spyOn(audio.synth, 'releaseAll').and.callFake(() => {
+        struckWhenReleased = audio.synth.triggered.length;
+      });
+
+      await player.audition([note(57, 0, 4), note(60, 0, 4), note(64, 0, 4)], 1.5, 120);
+
+      // Released once, after the first chord's three notes and before the second's.
+      expect(audio.synth.releaseAll).toHaveBeenCalledTimes(1);
+      expect(struckWhenReleased).toBe(3);
+      expect(audio.synth.triggered.length).toBe(6);
+    });
+
+    it('sounds only the newest of two auditions still waiting on the context', async () => {
+      audio.gateResume = true;
+
+      const first = player.audition(cMajor(), 1.5, 120);
+      const second = player.audition([note(57, 0, 4)], 1.5, 120);
+      audio.openResumeGate();
+      await Promise.all([first, second]);
+
+      expect(audio.synth.triggered.length).toBe(1);
+      expect(audio.synth.triggered[0].frequency).toBeCloseTo(220, 9);
+    });
+
+    it('rejects with the reason when the context will not start, and tries again on the next', async () => {
+      audio.resumeFails = true;
+
+      await expectAsync(player.audition(cMajor(), 1.5, 120)).toBeRejectedWithError('no user gesture yet');
+      expect(audio.synth.triggered).toEqual([]);
+
+      audio.resumeFails = false;
+      await player.audition(cMajor(), 1.5, 120);
+      expect(audio.resumeCalls).toBe(2);
+      expect(audio.synth.triggered.length).toBe(3);
+    });
+
+    it('sounds nothing for a tempo or a length it cannot time', async () => {
+      await player.audition(cMajor(), 1.5, 0);
+      await player.audition(cMajor(), 1.5, NaN);
+      await player.audition(cMajor(), 0, 120);
+      await player.audition(cMajor(), Infinity, 120);
+
+      expect(audio.synth.triggered).toEqual([]);
+    });
+
+    it('sounds nothing once the page has gone, even if it was asked for just before', async () => {
+      audio.gateResume = true;
+      const heard = player.audition(cMajor(), 1.5, 120);
+
+      TestBed.resetTestingModule();
+      audio.openResumeGate();
+      await heard;
+
+      expect(audio.synth.triggered).toEqual([]);
     });
   });
 });

@@ -1,20 +1,47 @@
 <div class="chord-panel">
-  <div class="panel-key" role="group" aria-label="Song key">
+  <!-- The key in the middle, as the design's sketch has it; the sound toggle at the end, about what a click does. -->
+  <div class="panel-head">
+    <div class="panel-key" role="group" aria-label="Song key">
+      <button
+        type="button"
+        class="tool panel-transpose-up"
+        aria-label="Transpose the song up a semitone"
+        title="Transpose up a semitone"
+        (click)="transpose(1)"
+      >↑</button>
+      <span class="panel-key-name">{{ keyName }}</span>
+      <button
+        type="button"
+        class="tool panel-transpose-down"
+        aria-label="Transpose the song down a semitone"
+        title="Transpose down a semitone"
+        (click)="transpose(-1)"
+      >↓</button>
+    </div>
+
+    <!-- A toggle: one name, and `aria-pressed` says which way it is. The icon says it too, for those not on colour. -->
     <button
       type="button"
-      class="tool panel-transpose-up"
-      aria-label="Transpose the song up a semitone"
-      title="Transpose up a semitone"
-      (click)="transpose(1)"
-    >↑</button>
-    <span class="panel-key-name">{{ keyName }}</span>
-    <button
-      type="button"
-      class="tool panel-transpose-down"
-      aria-label="Transpose the song down a semitone"
-      title="Transpose down a semitone"
-      (click)="transpose(-1)"
-    >↓</button>
+      class="tool panel-sound"
+      aria-label="Play chords as I place them"
+      title="Play chords as I place them"
+      [class.on]="playOnPlace"
+      [attr.aria-pressed]="playOnPlace"
+      (click)="togglePlayOnPlace()"
+    >
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M11 5 6 9H2v6h4l5 4V5z" />
+        <g *ngIf="playOnPlace" class="sound-on">
+          <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+          <path d="M19 5a10 10 0 0 1 0 14" />
+        </g>
+        <g *ngIf="!playOnPlace" class="sound-off">
+          <path d="m16 9 6 6" />
+          <path d="m22 9-6 6" />
+        </g>
+      </svg>
+    </button>
   </div>
 
   <p *ngIf="refusal !== null; else chords" class="panel-refusal">{{ refusal }}</p>

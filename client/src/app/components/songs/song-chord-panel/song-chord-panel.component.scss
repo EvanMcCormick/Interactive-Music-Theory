@@ -17,8 +17,29 @@
   padding: 0.75rem;
 }
 
-// ↑ C Ionian (Major) ↓, as the design's sketch has it.
+// The key centred over the chords, as the design's sketch has it, with the sound toggle at the end: the outer columns
+// are equal, so the toggle does not push the key off centre.
+.panel-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.panel-sound {
+  grid-column: 3;
+  justify-self: end;
+  display: inline-flex;
+  padding: 0.35rem;
+
+  svg {
+    display: block;
+  }
+}
+
+// ↑ C Ionian (Major) ↓.
 .panel-key {
+  grid-column: 2;
   display: flex;
   align-items: center;
   justify-content: center;
