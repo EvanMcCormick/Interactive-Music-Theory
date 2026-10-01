@@ -201,9 +201,22 @@ A comprehensive web application for exploring scales, modes, chords, and music t
   position there
 - **Status line**: the caret's bar ("Bar 3 of 4"), and what an edit, a save or a load
   did or why it was refused, announced to screen readers
-- **Track strip** under a draggable separator: add and remove tracks, and a linked
-  progression track's badge, Update and Flatten
-- **Library and Export menus** in the top bar, with the saved compositions in a drawer
+- **Track strip** under a draggable separator: show or hide, mute and solo every track;
+  add and remove tracks; and a linked progression track's badge, Update and Flatten
+- **Library and Export menus** in the top bar, with the saved compositions and the
+  imported Guitar Pro files in a drawer
+- **Guitar Pro files** (.gp, .gp3, .gp4, .gp5, .gpx) open here: drop one on the page,
+  choose **Import .gp…** from the Library menu, or open one from the drawer or the GP
+  Library. It shows as the file itself, every track drawn as alphaTab reads it, with
+  "Viewing the original file" in the status line, and it plays, until the first edit
+- **Convert**: the first edit of a Guitar Pro file asks first. The prompt lists what
+  converting this file would lose, and what its first save would, with counts and the
+  first bar, and offers **Save the original file first**, which downloads it untouched.
+  Converting cannot be undone: the library's file is replaced by a composition, drum
+  tracks included, and the edit that asked is applied
+- **Scales menu**: ring a scale's or a chord's notes on the score, the root in red and
+  the rest in blue, on a Guitar Pro file or a composition
+- **Transport**: play, loop, a speed from 25% to 200%, volume, and a seek bar
 - Score model shaped after Guitar Pro 7, engraved and played by alphaTab
 - Undo/redo, and an alphaTex escape hatch for editing the source directly
 - Export to MIDI and to a real `.gp` file
@@ -217,24 +230,17 @@ A comprehensive web application for exploring scales, modes, chords, and music t
   suppressed note back in — discards are shown as ghost notes rather than hidden
 - Optional server tier running the same model under ONNX Runtime
 
-### Guitar Pro File Viewer
-- **GP File Support**: Load and play Guitar Pro files (.gp, .gp3, .gp4, .gp5, .gpx)
-- **Full Playback**: Play/pause, tempo control, seeking, and looping
-- **Track Controls**: Mute/solo individual tracks
-- **Drag & Drop**: Easy file loading via drag-and-drop or file dialog
-- **Save to Library**: Store GP files locally for quick access
-- Its scale highlighting draws nothing: it looks for markup alphaTab 1.8 does not render.
-  The next milestone folds this page into the Composer, where the highlighting is built
-  rather than moved — see [docs/plans/2026-09-14-gp-composer-design.md](docs/plans/2026-09-14-gp-composer-design.md)
-
 ### GP Library
-- **Local Storage**: IndexedDB-backed library for storing Guitar Pro files
-- **Metadata Display**: View title, artist, album, tempo, and track count — real for a file
-  saved from the viewer, and invented for one dropped straight into the gallery, which is
-  read as "120 BPM, 0 tracks" until the same milestone parses it on the way in
+- **Local Storage**: IndexedDB-backed library for storing Guitar Pro files, added by
+  drag-and-drop or the file dialog, or by opening a file in the Composer
+- **Metadata Display**: View title, artist, album, tempo, and track count — read from the
+  file whenever it is opened in the Composer. A file dropped straight into the gallery reads
+  "120 BPM, 0 tracks" until it is first opened
 - **Search & Filter**: Find files by name, artist or album. The key, scale and chord filters
   are decorative — nothing in the app detects any of the three
-- **Quick Loading**: Open files directly from library into viewer
+- **Open in the Composer**: a file opens there as the file itself, until its first edit
+  converts it. The old GP Viewer is gone: a link to a file in it opens that file in the
+  Composer, and one to the viewer alone comes here
 
 ### Audio Playback
 - **Guitar/Bass**: Authentic bass guitar sound with FM synthesis
@@ -383,7 +389,6 @@ MusicTheory/
 │   │   │   │   │                    #   piano roll, transport, notation
 │   │   │   │   ├── composer/        # Sheet music composer
 │   │   │   │   ├── transcription/   # Audio transcription and its review panel
-│   │   │   │   ├── gp-viewer/       # Guitar Pro file viewer
 │   │   │   │   └── gp-library/      # GP file library browser
 │   │   │   ├── models/              # TypeScript interfaces (auth, user, music,
 │   │   │   │                        #   composer, progression, transcription)
@@ -427,17 +432,16 @@ MusicTheory/
 
 ### The other pages
 
-The header switches between six views, and the **Circle of Fifths** drawer sets the key
+The header switches between five views, and the **Circle of Fifths** drawer sets the key
 for the ones that read it:
 
 | Page | What it is for |
 |---|---|
 | **Fretboard** | The scale and chord explorer above |
-| **Composer** | Writing sheet music from scratch, notation and tab |
+| **Composer** | Writing sheet music from scratch, notation and tab, and opening, playing and editing a Guitar Pro file |
 | **Progression** | Building a chord progression and editing its notes in a piano roll |
 | **Transcribe** | Turning an audio file into notation |
-| **GP Viewer** | Reading and playing a Guitar Pro file |
-| **GP Library** | The Guitar Pro files you have saved |
+| **GP Library** | The Guitar Pro files you have saved, each opening in the Composer |
 
 A quick tour of the progression composer: open the **Circle of Fifths** and pick a key,
 click a few chords from **Chords in this key** to build a progression, press **Play** with
@@ -447,6 +451,20 @@ When you like it, **Send to Composer** puts it on a staff beside your own tracks
 **Export MIDI** or **Export .gp** takes it out of the app entirely.
 
 ## Recent Updates
+
+### Guitar Pro Files in the Composer (September 2026)
+- ✨ **New**: The Composer opens Guitar Pro files — dropped on the page, imported from the
+  Library menu, or opened from the drawer or the GP Library — and shows each as the file
+  itself, every track drawn and playing, until the first edit
+- ✨ **New**: The first edit asks before converting, listing what this file would lose and
+  what its first save would, with counts and bars, and offers to save the original first.
+  Drum tracks convert as drums: percussion is part of the score model now
+- ✨ **New**: Show or hide, mute and solo on every track; a Scales menu that rings a scale's
+  or a chord's notes on the score; and loop, speed, volume and a seek bar on the transport
+- 🐛 **Fixed**: Every track of a composed score used to play on one MIDI channel, so on one
+  instrument; each track now has its own, and a drum track plays on the drum channel
+- 🐛 **Fixed**: The GP Library could say it had updated or deleted a file when it had not
+- The GP Viewer page is gone; a link to a file in it opens that file in the Composer
 
 ### Composer Editor (September 2026)
 - ✨ **New**: A palette of tools in seven groups — Select and Pen at the top, then note

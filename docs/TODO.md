@@ -1,9 +1,9 @@
 # Outstanding
 
-What is known to be left, as of **2026-09-14**, after M4 of the progression composer and M1 and
-M2 of the composer editor shipped, and after the milestone that makes the GP Viewer the composer
-was designed. Written because these items were spread across design documents, a roadmap
-paragraph and a plan's hand-check list, and no single place said "here is what is not done".
+What is known to be left, as of **2026-09-30**, after M4 of the progression composer, M1 and M2
+of the composer editor, and the milestone that makes the GP Viewer the composer shipped. Written
+because these items were spread across design documents, a roadmap paragraph and a plan's
+hand-check list, and no single place said "here is what is not done".
 
 This is not a backlog of ideas. Everything here is either a check nobody has performed or a
 defect somebody decided not to fix yet, and each says which. What M2 settled is argued in the
@@ -72,9 +72,22 @@ they would cost us to be wrong about.
       Step 29, Guitar Pro, is the second item above. The alphaTex panel's re-fit of the strip, in Step 14, was fixed
       after the merge (`ff8a94c`) and has a behaviour spec; the drag that would confirm it by hand is still owed.
 
+- [ ] **Finish the GP milestone's hand check, with Guitar Pro and by ear.** It was run on 2026-09-30 in the desktop
+      app's Chromium, on real files, with no Guitar Pro installed and no sound to hear. Its results are under "Hand
+      check" in `docs/plans/2026-09-14-gp-composer-design.md`. Owed, as numbered in Task J.2 of
+      `docs/plans/2026-09-30-gp-composer.md`:
+      - Step 2: each count and first bar the prompt lists, against Guitar Pro - for "In The Garage", the `.gp5` and the
+        83 MB GP8 version; the prompt's lists are kept in the design doc for it.
+      - Step 3: the saved original opening in Guitar Pro.
+      - Step 4: a drum track sounding the right kit in Original, after Convert, and after a save and a reload. Its MIDI
+        notes already match the file's, hit for hit.
+      - Step 6: a muted track silent and a soloed one alone, in both states.
+      - Step 7: loop, speed at 50% and 200%, and volume, heard.
+      - Step 8: the scale marks through a deliberate window resize, and through an ordinary edit's re-render.
+
 ### The rest of the app
 
-- [ ] **Send a progression into a score loaded from a `.gp` file** — one with a bass
+- [ ] **Send a progression into a score converted from a `.gp` file** — one with a bass
       staff, so its bars carry `f4` and a real key signature. `padStaff` carries clef,
       ottava and key signature forward from the staff's last bar; that is specced, but
       never exercised against a genuinely loaded score.
@@ -144,7 +157,9 @@ upgrade that changes one turns a spec red rather than going unnoticed.
   button can therefore run a symbol tool - German AltGr+0, `}`, opens Alternate ending in place of the popover open.
 - **A document marked saved is compared by identity.** A queued save compares the alphaTex it would write, but
   `markSaved` still marks the document clean only if it is the very one written, so Save, then an edit and its undo,
-  leaves the unsaved marker showing for a document the library already holds.
+  leaves the unsaved marker showing for a document the library already holds. Undo and redo set the flag outright
+  (`ComposerHistory`), so any undo leaves it showing: the GP milestone's hand check met it when New, after an edit to a
+  converted file and its undo, asked to discard a composition the library already held.
 - **The score takes the mouse only.** alphaTab and the score listen for mouse events, so a tap or a stylus press acts as a
   click, but a touch or stylus drag scrolls rather than selecting, and there is no touch hover. Pointer events would give
   both; recorded as a follow-up, not built.
@@ -187,21 +202,18 @@ whoever next opens that carry. Each is in the design doc's "Found while designin
 ## Found while designing the GP milestone
 
 Recorded on 2026-09-14 in `docs/plans/2026-09-14-gp-composer-design.md`, under "Found while
-designing". These are in shipped code on `/gp-viewer` and `/gp-library`. The milestone meets the
-first two — the highlighter goes with the page and is rebuilt on the composer, and the metadata is
-corrected as a side effect of parsing the bytes on the way in. The rest it does not meet, and they
-outlive it.
+designing", against the viewer and the gallery as they were. The milestone settled three: the scale
+highlighter that never highlighted went with the viewer, and the composer's Scales menu was built in
+its place; `GpLibraryService` opens its database once and no longer resolves a write it did not
+make; and the viewer's Tone import went with the viewer. The rest is in shipped code on
+`/gp-library` and in `AlphaTabService`, and outlives it.
 
-- **The scale highlighter has never highlighted anything.** `applyHighlighting` queries `.at-note`
-  and reads `data-note`; alphaTab 1.8 renders neither, and nothing calls the method after a render
-  in any case. The `::ng-deep` rules in `gp-viewer.component.scss` are dead with it, and it is
-  direct DOM manipulation, which `CLAUDE.md` names in its table of common mistakes. Decision 9 of
-  the milestone builds the panel rather than moving it.
-- **A file added from the gallery carries invented metadata.** `GpLibraryComponent.addFiles` calls
-  `addFile(file, {})` and the service fills the gaps with `trackCount: 0` and `tempo: 120`, so the
-  card prints "120 BPM" and "0 tracks" and sorting by BPM sorts every such file as if it were 120.
-  Only a file saved from the viewer carries real values. The milestone parses the bytes on every
-  route in, so an older entry is corrected the first time it is opened.
+- **A file added from the gallery carries invented metadata until it is first opened.**
+  `GpLibraryComponent.addFiles` calls `addFile(file, {})` and the service fills the gaps with
+  `trackCount: 0` and `tempo: 120`, so the card prints "120 BPM" and "0 tracks" and sorting by BPM
+  sorts every such file as if it were 120. Every route into the composer parses the bytes and
+  corrects the entry, so it is right from the first time the file is opened; the gallery's own add
+  could parse them too.
 - **The library's key, scale and chord filters can never match.** `GpLibraryFiltersComponent` offers
   all three, and nothing in the app ever writes `key`, `detectedScales` or `detectedChords`. Either
   something should detect them or they should go.
@@ -222,16 +234,65 @@ outlive it.
   whole records, `ArrayBuffer`s included, so a library of fifty files sits in memory to render a grid
   of titles. `ComposerLibraryService.refresh` strips its payload; the fix is a summary projection and
   `getFileData`, which exists and has no caller.
-- **`GpLibraryService` can open its database twice.** `initDatabase()` runs from the constructor and
-  its promise is not kept, so `addFile` and `getEntry` call it again when `this.db` is still null,
-  while `updateEntry`, `deleteEntry` and `clearLibrary` silently resolve instead.
-  `ComposerLibraryService.ensureDb` memoises one promise and is the model to copy.
 - **Its four indexes are never used.** `title`, `artist`, `dateAdded` and `key`: every read is
   `getAll()` or `get(id)`, and the filtering and sorting run in JS over the whole set. Harmless at
   this size.
-- **Re-saving a file always makes a second row.** `addFile` uses `store.add`, and `isInLibrary` is
-  in-memory only, so a file dropped into the viewer that the library already holds still offers
-  "Save to Library". The milestone's own routes write through one path; the gallery still can.
+- **Adding a file the library already holds makes a second row.** `addBytes` uses `store.add`, and
+  nothing compares a file with the entries already there, so the same file imported twice - from the
+  gallery, Import .gp… or a drop on the composer - is two entries. Opening an entry, from the
+  gallery or the Library drawer, writes no new one.
+
+## Found in building the GP milestone
+
+Found while building `docs/plans/2026-09-30-gp-composer.md`, in its reviews and its hand check (under "Hand check" in
+the design doc). What review fixed is under "Corrections during implementation" in the plan; these it did not.
+
+- **Every score the composer built played all its tracks on MIDI channel 0** - so on one program, whichever was set
+  last - until `midiChannelsOf`. alphaTab assigns channels in `ModelUtils.consolidate`, which only its importers run,
+  and a converted drum kit would have played as pitched notes. Fixed in the milestone (Task A.1); recorded here for the
+  record, since it was older than the milestone and every multi-track composition had it.
+- **The scale panel and the circle of fifths now sit on one page, with no coupling.** The Scales menu keeps its own
+  root and scale, and the circle's key does not reach it. Whether it should follow the circle is the design's last open
+  question, and was not in the milestone.
+- **Writing a new drum note is still out of scope.** A converted kit keeps and plays the drums it arrived with, and a
+  percussion staff refuses Pen and the fret digits; choosing a drum needs alphaTab's internal articulation table, which
+  is a design of its own.
+- **An edit can still write to a hidden track.** The caret is moved off a track as it is hidden, and keyboard track
+  moves pass over hidden tracks, but Undo, Redo, or a Remove that clamps the caret can leave it on one, and edits are
+  refused command by command, with no single gate that knows what is hidden.
+- **A selection across a hidden track still covers it.** One made with Shift and the track keys, or a drag across it,
+  takes the hidden track in, so Delete writes into it. `barRectangle` and `selectionTargets` decide what a selection
+  covers and know nothing of the strip.
+- **A hidden track's id can name another track after Undo past an applied alphaTex draft.** Apply starts the hidden
+  set again, and Undo does not; a document read from alphaTex names its tracks by position (`track-N`), so the ids the
+  set keeps after Undo may be other tracks'.
+- **After Convert, the edit that asked runs wherever the caret was.** In Original a click cannot place the caret - the
+  composition under the file is empty - so an edit aimed at a note is usually refused once converted, "There is no note
+  there to change". Hand check step 5.
+- **Scale marks follow sounding pitch.** On a detuned or transposing staff the key that marks every note is not the one
+  a player reads: a file tuned down a half step marks its G-shaped chords as G♭. Whether to mark by sounding or by
+  fretted or written pitch is a design question. Hand check step 8.
+- **The scale highlight is lost on leaving the page.** It is a field of the composer page, as it was of the viewer's,
+  not state on a service.
+- **The Scales menu's roots ignore `preferSharps`.** They read "C#/Db", "D#/Eb" and so on, whatever the scale chosen
+  prefers.
+- **Looping a passage is gone.** The viewer let alphaTab's own selection pick a passage to play or loop; the composer's
+  Loop loops the whole score. A known loss, to come back as: loop a selection, from the composer's own selection.
+- **`pressesFocusedControl`'s mouse exception never takes effect in Chrome.** A key pressed on a mouse-focused element
+  turns `:focus-visible` on before any keydown listener runs, so after a mouse click on a composer button, Space presses
+  that button again instead of playing. It predates the milestone (`10147b4`, on `main` since 2026-09-14), and its
+  specs fake `matches`, so they cannot catch it. The hand check found it through the seek bar, whose copy of the rule
+  was taken out (`4f40809`).
+- **A large file opens scrolled about 130 px down**, cutting off its title. Hand check step 1.
+- **alphaTab's errors after a load go only to the console.** `AlphaTabService` still sets `loadingState` and
+  `errorMessage` on an `error` event - a soundfont or worker failure - but nothing has read them since the viewer went.
+- **`composer.component.spec.ts` is 1,379 lines**, past `CLAUDE.md`'s 1000-line cap, and `progression.component.ts`
+  grew to 1,042 with the gated Send (its own item, below).
+- **The progression page can say it sent a track that is only held.** When the composer is showing a file, Send asks
+  the conversion prompt and goes to the composer, where nothing is sent until Convert. If that navigation fails, the
+  page says "The progression is in the composer" (`SENT_BUT_STILL_HERE`), which is not so for a held one.
+- **The gallery's delete and clear throw unhandled.** `GpLibraryComponent.deleteFile` and `clearLibrary` await the
+  library with no `try`, so a failed write is an unhandled rejection and the user is told nothing.
 
 ## Smaller things noticed in passing
 
@@ -246,9 +307,10 @@ outlive it.
   spells each run where it opened.
 - **`isEditableTarget` does not count checkboxes, radios and range sliders as typing.** Space on a
   checkbox or a radio is already covered, by M2's separate focused-control check
-  (`pressesFocusedControl`), but only while the control matches `:focus-visible`; the arrows are
-  covered by neither, so an arrow on a range slider or inside a radio group moves the composer's
-  caret as well. M3's mixer adds such controls and must let them keep their keys.
+  (`pressesFocusedControl`). A focused range slider keeps its arrows, Home, End and Page keys since
+  the GP milestone's transport (`movesFocusedSlider`), but nothing covers a radio group's arrows,
+  which still move the composer's caret as well. M3's mixer adds such controls and must let them
+  keep their keys.
 
 ---
 
@@ -294,8 +356,8 @@ not here.
   *stood* at 500 when they were split — `review-controls.ts`, `progression-strip-gestures.ts`,
   `progression-strip-cards.ts`, `progression-chord-names.ts`, `progression-edit.ts` — are history, and
   right as they are.
-- **`progression.component.ts` is 1,012 lines**, over `CLAUDE.md`'s 1000-line cap. Found while
-  reviewing M2 of the composer editor, which touches only its shared editable-target helper. A
+- **`progression.component.ts` is 1,042 lines**, over `CLAUDE.md`'s 1000-line cap. Found while
+  reviewing M2 of the composer editor, at 1,012, and grown by the GP milestone's gated Send. A
   small refactor of its own: lift a cohesive block out, as `composer.service.ts` shed its bar and
   track commands and then its history.
 - **`((x % 12) + 12) % 12` is written out ten more times** across
@@ -320,17 +382,25 @@ track strip. What implementation changed is under "Corrections during implementa
 plan; its decisions, as corrected, are under "M2 decisions" in the design doc. A review after the
 merge added `54381aa`, and `0c5ebc9` restyled the palette flat.
 
-**Next up, the GP Viewer becomes the composer.** Decided by the user on 2026-09-13 and designed on
-2026-09-14 in `docs/plans/2026-09-14-gp-composer-design.md`, which supersedes the paragraph that
-stood here and the "After M2" section of the editor design. Seventeen decisions, a build order of
-eleven steps, and percussion joining the model — because a drum track did not convert short, it
-converted wrong: alphaTab leaves `tone` and `octave` at -1 on a percussion note, so `fromNote`
-produced `{ kind: 'pitched', noteValue: -1, octave: -2 }` for every drum hit in the file. The
-design is merged at `2e875be`, and planned in `docs/plans/2026-09-30-gp-composer.md`, whose "Corrections to the design" list
-what building it changed; steps 1 and 2 are built on `feature/gp-composer`.
+**The GP Viewer is now the composer.** Decided by the user on 2026-09-13, designed on 2026-09-14
+in `docs/plans/2026-09-14-gp-composer-design.md`, and built to `docs/plans/2026-09-30-gp-composer.md`
+on `feature/gp-composer`, through `4f40809`. A `.gp` file - dropped on the page, imported from the
+Library menu, or opened from the drawer or the gallery - shows in the composer as alphaTab reads
+it, every track drawn and playing, until the first edit asks: what converting this file would lose
+and what its first save would, with counts and first bars, and Save the original file first.
+Convert replaces the file with a composition, drums included, since percussion joined the model.
+The track strip shows or hides, mutes and solos every track in both states, a Scales menu rings a
+scale's notes on the score, and the transport gained the viewer's loop, speed, volume and seek bar.
+`/gp-viewer` is gone; its old links open the file in the composer. What building it corrected in
+the design is under "Corrections found in building" in the design doc, what review corrected in
+the code under "Corrections during implementation" at the top of the plan, and the hand check
+under "Hand check" in the design doc.
 
-M3 (inspector, and the track strip's mixer and bar grid) and M4 (bend curve, custom tuplet and
-trill speed editors) follow it.
+**Next up, M3** (inspector, and the track strip's mixer and bar grid), as scoped in Part 1 of the
+editor design: tuning presets with a real bass tuning, capo, transpose, staff views and the mixer.
+It has no design or plan of its own yet. The mixer lands on the strip's rows, which now carry mute
+and solo, and four of the five bugs under "Bugs, recorded and not yet fixed" wait on its controls.
+Then M4 (bend curve, custom tuplet and trill speed editors).
 
 After that, the progression design doc's "Not in M4" names the one that unlocks the
 others: **a progression library**. It would give `GeneratedOrigin.progressionId` a far end worth persisting,

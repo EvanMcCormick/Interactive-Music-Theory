@@ -1,6 +1,6 @@
 # MusicTheory SaaS Platform Roadmap
 
-**Last Updated:** 2026-09-14
+**Last Updated:** 2026-09-30
 
 This document tracks the progress of transforming MusicTheory from a standalone learning tool into a B2B SaaS platform for music education.
 
@@ -303,7 +303,8 @@ records the decisions and — where implementation disproved one — the correct
 
 | Tool | Route | State |
 |---|---|---|
-| Sheet music composer | `/composer` | Shipped. Multi-track notation and tab, MIDI and `.gp` export; a Guitar Pro-style editor since M2 of its redesign |
+| Sheet music composer | `/composer` | Shipped. Multi-track notation and tab, MIDI and `.gp` export; a Guitar Pro-style editor since M2 of its redesign; opens Guitar Pro files, in place of the GP Viewer, since the GP milestone |
+| GP library | `/gp-library` | Shipped. The Guitar Pro files saved in the browser, each opening in the composer |
 | Audio transcription | `/transcribe` | Shipped. Basic Pitch detection, beat tracking, correctable review |
 | Circle of fifths | drawer | Shipped. Sets the key app-wide |
 | Progression composer | `/progression` | M1–M4 shipped. Sends a track to the composer, MIDI and `.gp` export |
@@ -325,8 +326,8 @@ built bottom-up so each layer is proven before the next leans on it:
 | M1 | Shipped | Foundations with no new controls: saving stops losing effects, a selection with beat, note, bar and track commands over it that refuse whole or apply whole, and bars that fill their gaps with rests and report overflow for a Fix bar command; today's duration buttons already fill gaps |
 | M2 | Shipped, merged at `f23bb1c` on 2026-09-14 | The editor: a Bravura-glyph palette with popovers for valued tools, Select / Pen on the score, one tool table behind every button, tooltip, shortcut and the modal shortcut sheet, refusals and outcomes in one live region, and a page grid with Library and Export menus and a minimal track strip; built to [plans/2026-09-13-composer-editor-m2.md](plans/2026-09-13-composer-editor-m2.md) |
 | | after M2 | A review after the merge fixed three more, at `54381aa`: a press the browser cancels — a link dragged onto the score, a touch become a scroll — no longer leaves the score ignoring the next click; the track strip re-fits when the alphaTex panel closes; and `ComposerHistory` no longer holds the discard prompt or the unsaved-elsewhere set. Then `0c5ebc9` restyled the palette flat, in the manner of Guitar Pro's tool sidebar: no button chrome, a hairline between groups, colour on the current selection only, and refusing tools dimmed rather than hidden |
-| GP | Planned; steps 1-2 built | The GP Viewer becomes the composer: an opened `.gp` file shows and plays alphaTab's original until the first edit, which converts it after a prompt listing what that file would lose; the GP Library opens into the composer and the viewer route goes. Percussion joins the model, because a drum track converted wrong rather than short. Designed in [plans/2026-09-14-gp-composer-design.md](plans/2026-09-14-gp-composer-design.md), merged at `2e875be`. Planned in [plans/2026-09-30-gp-composer.md](plans/2026-09-30-gp-composer.md), proven by applying it to a clean checkout and running the suite at every task; steps 1 and 2 are built on `feature/gp-composer` |
-| M3 | Planned, after the GP milestone | Inspector, and the track strip's mixer and bar grid: tuning presets (a real bass tuning), capo, transpose, staff views, mixer |
+| GP | Shipped, built on `feature/gp-composer` through `4f40809` | The GP Viewer is the composer: a `.gp` file opens there and plays as alphaTab reads it until the first edit, which converts it - drums included - after a prompt listing what that file would lose, with Save the original file first; show / hide, mute and solo on every track, a Scales menu, and the viewer's transport came with it, and `/gp-viewer` went. Designed in [plans/2026-09-14-gp-composer-design.md](plans/2026-09-14-gp-composer-design.md), with the corrections building it found and the hand check; built to [plans/2026-09-30-gp-composer.md](plans/2026-09-30-gp-composer.md), with review's corrections at its top |
+| M3 | Next | Inspector, and the track strip's mixer and bar grid: tuning presets (a real bass tuning), capo, transpose, staff views, mixer |
 | M4 | Planned | Tools that need their own editor: bend curve, custom tuplet, trill speed |
 
 Five things in the progression composer are recorded as known limitations rather than
@@ -342,7 +343,7 @@ tracks sharing an id and a name, with nothing but the badge between them.
 
 Those, and everything else known to be left, are collected in [TODO.md](TODO.md) — the
 checks nobody has performed, what M1 and M2 of the composer editor recorded rather than
-fixed, and what designing the GP milestone found in the viewer and the GP library. The one
+fixed, and what designing and building the GP milestone found. The one
 real bug that list used to carry, `insertBar(0)` making a 3/4 score read as 4/4, was fixed
 on 2026-09-13; the bugs left on it are waiting on the controls that reach them, four of the
 five on M3's track setup.
@@ -351,44 +352,40 @@ Two of those checks want real Guitar Pro, and neither has been run. alphaTab's G
 exporter appears, from reading its source, to write a C♭ as B♭ and a B♯ as C♯ — recorded in
 the progression design doc as an open question rather than as a limitation or a bug. And a
 composer score full of effects has been round-tripped only through alphaTex, which is what
-the library stores, never through the `.gp` writer, which is a different writer.
+the library stores, never through the `.gp` writer, which is a different writer. The GP
+milestone's hand check adds two more for Guitar Pro - the conversion prompt's counts, and the
+saved original opening there - and the steps that want ears.
 
 ---
 
 ## Where things stand
 
-**2026-09-14.** Written at the end of the day, so that tomorrow starts from a sentence
-rather than from a `git log`.
+**2026-09-30.** Written at the end of the GP milestone, so that the next one starts from a
+sentence rather than from a `git log`.
 
-**Shipped.** M2 of the composer editor redesign, merged at `f23bb1c`: the palette, Select
-and Pen, a shortcut for every tool and the sheet that lists them, the seven value
-popovers, the track strip, the Library and Export menus with the saved-list drawer, the
-status line, the page grid, and score interaction — click, drag, seek, highlight and Pen's
-hover notehead. A review after the merge added `54381aa`, and a restyle made the palette
-flat in the manner of Guitar Pro's own sidebar (`0c5ebc9`). The suite stands at **3,357**
-and both type checks are clean.
+**Shipped.** The GP milestone - the GP Viewer becomes the composer - built on
+`feature/gp-composer` through `4f40809`, to
+[plans/2026-09-30-gp-composer.md](plans/2026-09-30-gp-composer.md): percussion in the model, the
+loss checker, the conversion prompt and Save the original file first, Convert, every way a `.gp`
+file comes in, show / hide, mute and solo on the strip, the Scales menu, the viewer's transport,
+and the viewer deleted. Building it corrected the design in sixteen places, the largest a bug
+older than the milestone: every score the composer built played all its tracks on MIDI channel 0.
+Each task was reviewed after it was committed, and what review changed is at the top of the plan.
+The hand check ran in part, on real files; what it could not do wants Guitar Pro or ears.
 
-**In flight, on `feature/gp-composer`.** The next milestone — the GP Viewer becomes the
-composer — is designed (merged into `main` at `2e875be`) and planned in
-[plans/2026-09-30-gp-composer.md](plans/2026-09-30-gp-composer.md). The branch carries build steps 1 and 2 - bytes and every
-track, and the two states - and the plan builds the rest in twelve tasks: percussion in the
-model, the loss checker, the prompt, converting, the entry points, the strip, highlighting,
-the transport, and only then deleting the viewer. Building it corrected the design in
-sixteen places, the largest a bug older than the milestone: every score the composer builds
-played all its tracks on MIDI channel 0.
+**In flight.** Nothing, once `feature/gp-composer` merges into `main`.
 
-**Pick up first tomorrow**, in this order:
+**Pick up next**, in this order:
 
-1. **Execute the GP implementation plan**, [plans/2026-09-30-gp-composer.md](plans/2026-09-30-gp-composer.md), on
-   `feature/gp-composer`, task by task from Task 0.1. Its "Corrections to the design" are
-   worth reading first: two of them - the MIDI channels and the kit alphaTex cannot carry -
-   change what a task does, not only how.
-2. **The M2 hand check, in a real browser.** It is the largest thing owed, and the desktop
-   Browser pane could not do most of it — no drag with intermediate moves, no Enter or
-   Space on a focused button, no zoom, no second browser, operating system, keyboard
-   layout, screen reader or DevTools. The numbered steps still owed are listed in
-   [TODO.md](TODO.md).
-3. **`progression.component.ts` is 1,012 lines**, twelve over the cap, and the refactor
+1. **Design and plan M3**: the inspector, and the track strip's mixer and bar grid. Its scope is
+   Part 1 of [the editor design](plans/2026-09-13-composer-editor-design.md); the strip's rows now
+   carry mute and solo for the mixer to land on, and four of the five bugs in [TODO.md](TODO.md)
+   wait on its track controls.
+2. **The hand checks owed.** M2's in a real browser - the desktop Browser pane could not drag
+   with intermediate moves, press a focused button with Enter or Space, zoom, or offer a second
+   browser, operating system, keyboard layout, screen reader or DevTools - and the GP milestone's
+   steps that want Guitar Pro or ears. Both are listed, step by step, in [TODO.md](TODO.md).
+3. **`progression.component.ts` is 1,042 lines**, forty-two over the cap, and the refactor
    that fixes it is the one `composer.service.ts` has already had done to it twice.
 
 ---
@@ -408,7 +405,8 @@ played all its tracks on MIDI channel 0.
 | Composer Editor Redesign | [plans/2026-09-13-composer-editor-design.md](plans/2026-09-13-composer-editor-design.md) | M1 and M2 implemented |
 | Composer Editor M1 Plan | [plans/2026-09-13-composer-editor-m1.md](plans/2026-09-13-composer-editor-m1.md) | Implemented, with the corrections review made recorded in it |
 | Composer Editor M2 Plan | [plans/2026-09-13-composer-editor-m2.md](plans/2026-09-13-composer-editor-m2.md) | Implemented, with the corrections review made recorded in it |
-| The GP Viewer becomes the composer | [plans/2026-09-14-gp-composer-design.md](plans/2026-09-14-gp-composer-design.md) | Designed and merged; planned in [plans/2026-09-30-gp-composer.md](plans/2026-09-30-gp-composer.md) |
+| The GP Viewer becomes the composer | [plans/2026-09-14-gp-composer-design.md](plans/2026-09-14-gp-composer-design.md) | Implemented, with the corrections building it found and the hand check recorded in it |
+| GP Composer Plan | [plans/2026-09-30-gp-composer.md](plans/2026-09-30-gp-composer.md) | Implemented, with the corrections review made recorded in it |
 
 Implementation plans, one per milestone, sit beside each design in `plans/`. The
 transcription investigations that produced *negative* results are kept too — the onset

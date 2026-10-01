@@ -1,12 +1,84 @@
 # The GP Viewer becomes the composer
 
 **Date:** 2026-09-14
-**Status:** Designed and planned, not yet implemented: [the implementation plan](2026-09-30-gp-composer.md) builds steps 3 to 11
-of Part 8, proven against the code, and lists sixteen corrections building it made to this design. Steps 1 and 2 are
-built on `feature/gp-composer`. The milestone after M2 of
-[the composer editor redesign](2026-09-13-composer-editor-design.md) and before its M3.
+**Status:** Implemented, to [the plan](2026-09-30-gp-composer.md), on `feature/gp-composer` through `4f40809`. Building
+it corrected this design in sixteen places, listed under "Corrections found in building" below; review corrected the
+plan's code after it, task by task, under "Corrections during implementation" at the top of the plan. The milestone after
+M2 of [the composer editor redesign](2026-09-13-composer-editor-design.md) and before its M3.
 **Supersedes:** "After M2: the GP Viewer becomes the composer" in that document (Part 1), and
 the paragraph of the same name under "Next milestone, when there is one" in `docs/TODO.md`.
+
+**Hand check, 2026-09-30: performed in part.** Task J.2 of the plan, run in the Claude desktop app's built-in Chromium
+(Chrome 152) against the dev server at `localhost:4200`. The files were real ones from the user's machine, served from
+the dev server for the session and dropped on the page with a scripted `DragEvent`, since the pane cannot drag from the
+desktop. Guitar Pro is not installed there - only its soundbank - and nothing could be heard, so every step that needs
+Guitar Pro or ears is recorded as not performed. By step, as numbered in Task J.2:
+
+- **Passed.**
+  - Step 1. "Weezer - In The Garage (ver 2).gp5" - nine tracks with drums, 94 bars, 98 BPM, tuned down a half step:
+    every staff drawn (voice, guitars, bass, harmonica, drums), the file's title and tempo, "Viewing the original file"
+    in the status line, and the gallery entry corrected to "In the Garage", its artist, 98 BPM and 9 tracks. These
+    opened in Original too, each in under 3 s: a GP3 ("The Boys Are Back In Town", 4 tracks with drums, 181 bars), a GPX
+    ("Modes - Bass", 1 track), three GP7/8 `.gp` files ("Blues in F", 3 tracks with drums; "Billie Jean", 139 bars;
+    "Like A Stone", 130 bars), and the 83 MB GP8 "In the Garage", which embeds an audio backing track, in 5.4 s.
+  - Step 5, with a finding below. Convert left one composition of nine tracks, "In the Garage" in the composer library,
+    and no `.gp` entry in the gallery. With the caret on a note, a hammer-on applied, Undo took it back and left the
+    converted score, and Undo was then disabled with Redo enabled.
+  - Step 9. `/gp-viewer?id=<id>` opened that file in the composer at `/composer`, in Original. `/gp-viewer` alone going
+    to the gallery was checked in a real browser by the review of Task I.1, and the redirect has specs.
+  - Step 10. With the score focused, `h` opened the prompt with the focus on its heading; Tab cycled Save the original
+    file first, Convert, Cancel and back; Escape cancelled, the file stayed in Original, and the focus went back to the
+    score.
+- **Passed in part.**
+  - Step 3. The download kept the file's own name and was byte for byte the file that went in (131,194 bytes, compared
+    in the page). Not performed: opening it in Guitar Pro.
+  - Step 4, on the data. In Original the kit draws on a percussion staff, cymbals with cross heads. After Convert the drum
+    track is a percussion staff on MIDI channel 9, primary and secondary, and no other track uses channel 9. Every drum
+    hit's MIDI note matched the original file's: all 1,095 of the `.gp5` (kit 36, 40, 41, 42, 43, 57) after Convert, a
+    save, New and a reload from the library, and all 144 of "Blues in F" (kit 36, 38, 42) after Convert and after a save,
+    New and a reload. Not performed: whether it sounds like the right kit.
+  - Step 6, by sight and by the player's calls. Hiding eight of nine tracks in Original left only the drums drawn; the
+    last track shown refused to hide, named "Show Drums, unavailable: At least one track is shown...". Hidden tracks
+    stayed hidden across Convert. In a composition M and S reached alphaTab's `changeTrackMute` and `changeTrackSolo`,
+    offs before ons, with no re-render, and each was an undoable edit. Not performed: by ear, in either state.
+  - Step 7, on the player's state. Speed at 50% and 200% reached the player (0.5 and 2; the end time halved to 1:52),
+    volume 30% reached it as 0.3, Loop pressed set it looping, and the seek bar moved to 1:00 and the player followed.
+    Focused from the keyboard, three presses of → seeked from 60 s to 63 s and left the caret alone. Finding below. Not
+    performed: by ear.
+  - Step 8. G Ionian ringed every in-scale note head on notation and tablature, the root in a red double ring, and the
+    marks stayed through hiding tracks, Convert and the render after it. A window resize was not tried on purpose - the
+    viewport changed during the session and the marks followed it - and an edit's re-render was not checked apart from
+    Convert's. Finding below.
+- **Not performed.**
+  - Step 2: Guitar Pro is not installed. What the prompt listed is kept for the comparison. For the `.gp5`: credits 4
+    fields, chord diagrams 710 (first in bar 1), tempo words 1, slides 3 (bar 62), instrument, volume and balance
+    changes 2 (bar 94); for the first save, double bar lines 9 (bar 4). For the 83 MB `.gp`: credits 4, backing-track
+    sync points 2, page layout 2, beaming 1177, chord diagrams 88, tempo words 1, slides 3; for the first save, double
+    bar lines 9.
+  - The Guitar Pro half of Step 3, and every by-ear half of Steps 4, 6 and 7.
+- **Found and fixed**, in `4f40809`:
+  - Step 2: "sync points: 2" for a file with one. The backing track was counted as a sync point, and the audio itself
+    was never named. It is its own row now, `backingTrack`.
+  - Step 7: after a mouse click on the seek bar, Chrome turns `:focus-visible` on at the next key press, so the Task H.1
+    review's rule - a mouse-focused slider leaves the arrows to the score - never took effect. A focused slider owns its
+    arrows again, as the browser's own rule has it.
+- **Found and not fixed**, each in `docs/TODO.md`:
+  - Step 5: the edit that asked was refused after Convert, "There is no note there to change". In Original a click
+    cannot place the caret - the composition under the file is empty - so the held edit runs wherever the caret happens
+    to be once converted: here string 0 of bar 1, with no note.
+  - Step 8: the `.gp5` is tuned down a half step, so its G-shaped chords sound in G♭, and the marks follow sounding pitch
+    (`realValue`, as Part 5 says): G major marked about half the notes, F♯/G♭ major every one. A guitarist would pick G.
+    An open design question: mark by sounding pitch, or by the fretted or written pitch on a detuned or transposing staff.
+  - Step 1: a large file opens scrolled about 130 px down, cutting the title. A nine-track, 94-bar score also takes
+    several seconds of alphaTab's worker before the first staves show; it is not blank for good.
+  - Step 5: Undo always marks the document unsaved, so New after an edit and its undo asks to discard. It predates this
+    milestone: `ComposerHistory` sets the flag on undo and redo.
+  - Step 7: the same Chrome behaviour defeats `pressesFocusedControl`'s exception for a mouse-focused button, which
+    predates this milestone.
+- **For whoever runs it next.** The pane declines `window.confirm` by itself, so New seemed to do nothing until the
+  confirm was stubbed - a property of the pane, not a bug. And the check left test data in the dev origin's IndexedDB
+  (`localhost:4200`): `gp-library` entries for the files above, and the composer-library compositions "In the Garage"
+  and "Blues in F", beside "Hand Check" from the plan's own build. All of it is test data, safe to delete.
 
 There are two pages that draw a score. `/gp-viewer` opens a Guitar Pro file, plays it, and
 cannot change a note. `/composer` edits a score it built itself, and cannot open a file. A
@@ -17,6 +89,41 @@ edit it is alphaTab's own reading of the bytes - every track, as the file was wr
 first command that would change the document asks, naming what converting that file would
 change, and offers to save the untouched original first. After Convert it is an ordinary
 composition, and the viewer route goes.
+
+---
+
+## Corrections found in building
+
+Building the milestone disproved or refined these readings of this design. The design below is left as written; each
+line points to the argument under "Corrections to the design, found while building it" in
+[the plan](2026-09-30-gp-composer.md), by its number there.
+
+1. `InstrumentArticulation.create` is not in `alphaTab.d.ts`; the mapper rebuilds a kit with the public constructor
+   (Part 3; Task A.1).
+2. `Score.finish` assigns no MIDI channels, so every score the composer built played all its tracks on channel 0; the
+   mapper now applies alphaTab's importers' rule, `midiChannelsOf` (Part 3, Part 2's MIDI channels row; Tasks A.1, B.1).
+3. A drum track keeps the clef the file gave it, not `Clef.Neutral` (Part 3; Task A.1).
+4. Per-note dynamics are not a loss: `Beat.finish` copies the beat's onto its notes (Part 2; Task B.1).
+5. The kit alphaTex cannot carry is counted exactly, by a round trip through alphaTab's exporter and importer, not as an
+   exposure; renamed `unsavableKit` (Part 2; Task B.1).
+6. Three silent losses beyond Part 2's tables: dynamics outside ppp to fff, bend graces and feedback harmonics (Task B.1).
+7. The first beat's instrument automation, and a first-beat volume, balance or bank equal to the track's own, are
+   alphaTab's, not the file's, and are not reported (Part 2; Task B.1).
+8. The loss checker takes the converted document as a second argument, for the notes no string reaches (Part 2; Task
+   B.1).
+9. Every writing path in the page asks, not only the tool table: `ComposerGpService.requestEdit` is the gate (Part 4;
+   Task C.1).
+10. Original ends by itself when `ComposerState.documentId` moves, so Part 4's step 5 needs no code; a progression sent
+    over does not move it, and is gated instead (Part 1, Part 4; Tasks C.1, D.2).
+11. The GP library could resolve an update or delete it had not made; fixed before Convert trusted one (Part 7; Task
+    D.1).
+12. A file opens over a fresh page: the composer is reset first (Part 1; Task E.1).
+13. A file is parsed before the page is touched, with `ScoreLoader.loadScoreFromBytes`, so one alphaTab cannot read
+    writes no library entry (Part 1; Task E.1).
+14. Mute and solo in Original stay the player's and end with it; the composition starts from the mixer the file
+    declares, not the strip's mutes re-applied (decision 16; Task F.1).
+15. The scale panel is a menu off the top bar, not a row beside the alphaTex panel (Part 5; Task G.1).
+16. The Original state's status line counted the empty composition's bars, not the file's (Part 1; Task 0.1).
 
 ---
 
@@ -306,55 +413,66 @@ Every row was checked against `services/score-doc-mapper.service.ts`,
 field exists on a `*Doc`. A bare line number is `models/composer.model.ts` where it follows a
 `*Doc`, and `services/score-doc-mapper.service.ts` where it follows a mapper method.
 
+*As built*, each item is a `LossId` in `services/gp-conversion-loss.ts`, named after it in these tables, and the
+checker counts what is seen or heard, not what a field holds: alphaTab's real importers fill fields a file never chose,
+and review moved several rows to look past them (the plan's Task B.1, "Corrected in review"). Where a row was built
+differently from the design, it says so in italics.
+
 | Item | alphaTab | In the model | Counted from |
 |---|---|---|---|
-| Chord diagrams | `Staff.chords`, `Beat.chordId` | no - `BeatDoc` (`:243-277`) and `StaffDoc` (`:214-229`) have no chord; the mapper names neither | diagrams per staff |
-| Tremolo bar | `Beat.whammyBarType`, `whammyBarPoints`, `whammyStyle` | no - `BeatEffectsDoc` (`:285-300`) has twelve fields and no whammy; bend points are per note only (`:376`) | beats with a whammy |
-| Wah | `Beat.wahPedal` | no | beats with the pedal open or closed |
-| Lyric lines past the first | `Beat.lyrics: string[]` | one line: `BeatDoc.lyrics: string \| null` (`:274`); read as `beat.lyrics[0]` (`:601`), written as `[doc.lyrics]` (`:396`) | beats whose array is longer than one |
-| Tempo changes past a bar's first, and any on bar 1 | `MasterBar.tempoAutomations` | one BPM per bar from `index > 0` (`:505-508`); `ratioPosition`, `isLinear` and the marking's text go too | automations not kept |
-| The slides with no name | `SlideOutType.OutDown`, `PickSlideDown`, `PickSlideUp`; `SlideInType.IntoFromAbove`; and a slide-in on a note that also slides out | `slideOf` (`services/alpha-tab-enum.bridge.ts:202-209`) names `Shift`, `Legato`, `OutUp` and `IntoFromBelow` only, and reads the slide-in only when the slide-out is `None` | notes per kind |
-| Directions | `MasterBar.directions` - nineteen kinds, D.C., D.S., Coda, Fine | no - `MasterBarDoc` has nine fields (`:100-120`) | markings |
-| Sync points | `MasterBar.syncPoints`, `Score.backingTrack` | no | sync points |
-| Stylesheet and systems layout | `Score.stylesheet` (22 settings, multi-bar rests among them), `Score.defaultSystemsLayout`, `Score.systemsLayout`, `Track.systemsLayout`, `Track.lineBreaks`, `MasterBar.displayScale`/`displayWidth`, `Bar.displayScale`/`displayWidth` | none of it | one item, reported when any setting differs from alphaTab's default |
-| Fade-out and volume swell | `Beat.fade`, a `FadeType` of four | a boolean: `BeatEffectsDoc.fadeIn` (`:291`). The mapper already says so - "Fade out and volume swell read as no fade in: the model has neither yet" (`:585-586`) | beats fading out or swelling |
+| Chord diagrams (`chordDiagrams`) | `Staff.chords`, `Beat.chordId` | no - `BeatDoc` (`:243-277`) and `StaffDoc` (`:214-229`) have no chord; the mapper names neither | diagrams per staff |
+| Tremolo bar (`tremoloBar`) | `Beat.whammyBarType`, `whammyBarPoints`, `whammyStyle` | no - `BeatEffectsDoc` (`:285-300`) has twelve fields and no whammy; bend points are per note only (`:376`) | beats with a whammy |
+| Wah (`wah`) | `Beat.wahPedal` | no | beats with the pedal open or closed |
+| Lyric lines past the first (`lyricLines`) | `Beat.lyrics: string[]` | one line: `BeatDoc.lyrics: string \| null` (`:274`); read as `beat.lyrics[0]` (`:601`), written as `[doc.lyrics]` (`:396`) | beats whose array is longer than one - *as built, beats with text on a later line: GP files pad every lyric beat to five lines of `''`* |
+| Tempo changes past a bar's first, and any on bar 1 (`tempoChanges`) | `MasterBar.tempoAutomations` | one BPM per bar from `index > 0` (`:505-508`); `ratioPosition`, `isLinear` and the marking's text go too | automations not kept - *as built, one at a place with one value counts once, `isLinear` is not a change, and the text is the next row's* |
+| *Built:* Tempo markings' words (`tempoText`) | a visible tempo `Automation.text`, bar 1's included (`Score.tempoLabel`) | no - each automation is rebuilt without its text | visible markings with words; the BPM stays |
+| The slides with no name (`unnamedSlides`) | `SlideOutType.OutDown`, `PickSlideDown`, `PickSlideUp`; `SlideInType.IntoFromAbove`; and a slide-in on a note that also slides out | `slideOf` (`services/alpha-tab-enum.bridge.ts:202-209`) names `Shift`, `Legato`, `OutUp` and `IntoFromBelow` only, and reads the slide-in only when the slide-out is `None` | notes per kind |
+| Directions (`directions`) | `MasterBar.directions` - nineteen kinds, D.C., D.S., Coda, Fine | no - `MasterBarDoc` has nine fields (`:100-120`) | markings |
+| *Built:* Backing track (`backingTrack`) | `Score.backingTrack` - the recording a GP7 or GP8 file embeds, which the player plays in place of the synthesizer | no - the model has no audio, so the converted score plays from the synthesizer | one recording; "the audio is not kept". Added after the hand check (`4f40809`) |
+| Sync points (`syncPoints`) | `MasterBar.syncPoints`, `Score.backingTrack` | no | sync points - *as built, the master bars' alone: counting the backing track as one more read "2 sync points" for a file synced once, and never named the audio. It is the row above* |
+| Stylesheet and systems layout (`layout`) | `Score.stylesheet` (22 settings, multi-bar rests among them), `Score.defaultSystemsLayout`, `Score.systemsLayout`, `Track.systemsLayout`, `Track.lineBreaks`, `MasterBar.displayScale`/`displayWidth`, `Bar.displayScale`/`displayWidth` | none of it | one item, reported when any setting differs from alphaTab's default - *as built, a count of settings drawn differently: the systems layouts and bar scales and widths are not counted, since the app's Page layout never reads them; the chord-diagram settings are `chordDiagrams`'; and the header and footer are compared line by line with alphaTab's defaults* |
+| Fade-out and volume swell (`fades`) | `Beat.fade`, a `FadeType` of four | a boolean: `BeatEffectsDoc.fadeIn` (`:291`). The mapper already says so - "Fade out and volume swell read as no fade in: the model has neither yet" (`:585-586`) | beats fading out or swelling |
 
 And what the sweep found beyond them. Each is something a real Guitar Pro file holds, or a step
 of the conversion outside the mapper, and each reads back as nothing:
 
 | Item | alphaTab | Note |
 |---|---|---|
-| Tremolo picking | `Beat.tremoloPicking` | distinct from the tremolo bar above; both are lost |
-| Ornaments | `Note.ornament` - turn, inverted turn, upper and lower mordent | |
-| Sustain pedal | `Bar.sustainPedals` | a piano track loses every pedal marking |
-| Simile marks | `Bar.simileMark` | |
-| Barré | `Beat.barreFret`, `barreShape` | |
-| Rasgueado | `Beat.rasgueado` - nineteen patterns | |
-| Golpe | `Beat.golpe` | |
-| Beat-level ottava | `Beat.ottava` | the model has ottava on the bar's clef alone (`BarDoc.clefOttava`, `:233`) |
-| Slash beats and dead slaps | `Beat.slashed`, `Beat.deadSlapped` | a dead-slapped beat has no notes, so `fromBeat` reads it as a plain rest (`:598`) |
-| Per-note dynamics | `Note.dynamics` | the model marks a dynamic on the beat (`:273`) |
-| An artificial harmonic's pitch | `Note.harmonicValue` | the kind survives, the pitch does not, so the note sounds and engraves wrong |
-| Bend style, continued bends | `Note.bendStyle`, `isContinuedBend` | gradual and fast bends flatten to the default |
-| Slurs | `Note.isSlurDestination`, `Beat.isLegatoOrigin` | |
-| Invisible notes, shortened notes | `Note.isVisible`, `durationPercent` | |
-| Instrument, volume and balance automations | `Beat.automations` | never read; only tempo automations are, and only a bar's first |
-| Pickup bars | `MasterBar.isAnacrusis` | an anacrusis becomes a full bar |
-| Bar line styles | `Bar.barLineLeft`, `barLineRight` - twelve kinds | the model has `isDoubleBar` alone (`:118`), and alphaTab marks that deprecated |
-| Beaming | `MasterBar.beamingRules`, `Beat.beamingMode`, `invertBeamDirection`, `preferredBeamDirection` | |
-| Brush speed | `Beat.brushDuration` | the strum direction survives, its speed does not |
-| Forced natural, forced none | `AccidentalMode.ForceNatural`, `ForceNone` | both read as `auto` (`:122-127`), for the reason argued at `:62-86` |
-| Notes no string can reach | - | not the mapper's: `frettedDocOf` (`services/pitch-on-strings.ts`) frets every pitched note on a staff with a tuning and leaves out the ones no free string reaches, because alphaTab cannot draw a pitched note on tablature (M2 decision 33). Counted by running it on the converted document. A percussion staff never meets it: a drum note is its own kind of pitch, and a percussion staff has no tuning to fret it on |
-| Score credits | `Score.copyright`, `music`, `words`, `tab`, `notices`, `instructions`, `tempoLabel` | `ScoreDoc` holds title, subtitle, artist and album only (`:379-388`) |
-| MIDI channels | `PlaybackInformation.primaryChannel`, `secondaryChannel`, `port` | `PlaybackInfoDoc` (`:127-138`) has program, bank, volume, balance, mute and solo, and no channel. A drum track is the exception and gets its channel back for nothing: `Score.finish` puts a track whose single staff is percussion on channel 9, primary and secondary (`alphaTab.core.mjs:4316-4321`) |
-| Custom styles | `Score.style`, `Track.style`, `Bar.style`, `Beat.style`, `Note.style` | per-element colour and notehead choices |
+| Tremolo picking (`tremoloPicking`) | `Beat.tremoloPicking` | distinct from the tremolo bar above; both are lost |
+| Ornaments (`ornaments`) | `Note.ornament` - turn, inverted turn, upper and lower mordent | |
+| Sustain pedal (`sustainPedals`) | `Bar.sustainPedals` | a piano track loses every pedal marking |
+| Simile marks (`simile`) | `Bar.simileMark` | |
+| Barré (`barre`) | `Beat.barreFret`, `barreShape` | |
+| Rasgueado (`rasgueado`) | `Beat.rasgueado` - nineteen patterns | |
+| Golpe (`golpe`) | `Beat.golpe` | |
+| Beat-level ottava (`beatOttava`) | `Beat.ottava` | the model has ottava on the bar's clef alone (`BarDoc.clefOttava`, `:233`) |
+| Slash beats and dead slaps (`slashedBeats`) | `Beat.slashed`, `Beat.deadSlapped` | a dead-slapped beat has no notes, so `fromBeat` reads it as a plain rest (`:598`) |
+| Per-note dynamics | `Note.dynamics` | the model marks a dynamic on the beat (`:273`). *Not built: `Beat.finish` copies the beat's dynamic onto its notes, so a parsed file has none of its own to lose (correction 4)* |
+| *Built:* Dynamics other than ppp to fff (`otherDynamics`) | `Beat.dynamics` - sfz, pppp, fp and the rest | read as none, so they play forte (correction 6) |
+| An artificial harmonic's pitch (`harmonicPitch`) | `Note.harmonicValue` | the kind survives, the pitch does not, so the note sounds and engraves wrong. *As built, the mapper gives a natural harmonic the value of its fret, as alphaTex's `nh` does, and the row counts a natural one only when the file's value differs from that* |
+| *Built:* Bend grace notes (`bendGraces`) | `GraceType.BendGrace` | read as no grace, so each becomes a full beat (correction 6) |
+| *Built:* Feedback harmonics (`feedbackHarmonics`) | `HarmonicType.Feedback` | read as no harmonic (correction 6) |
+| Bend style, continued bends (`bendStyle`) | `Note.bendStyle`, `isContinuedBend` | gradual and fast bends flatten to the default. *As built, `isContinuedBend` is not counted: `Note.finish` recomputes it from the tie and the bend, which the mapper keeps* |
+| Slurs (`slurs`) | `Note.isSlurDestination`, `Beat.isLegatoOrigin` | |
+| Invisible notes, shortened notes (`hiddenNotes`) | `Note.isVisible`, `durationPercent` | |
+| Instrument, volume and balance automations (`beatAutomations`) | `Beat.automations` | never read; only tempo automations are, and only a bar's first. *As built, not the first beat's instrument automation, nor a first-beat volume, balance or bank equal to the track's own: alphaTab and GP5's bar-1 mix table put those there (correction 7)* |
+| Pickup bars (`pickupBars`) | `MasterBar.isAnacrusis` | an anacrusis becomes a full bar |
+| Bar line styles (`barLines`) | `Bar.barLineLeft`, `barLineRight` - twelve kinds | the model has `isDoubleBar` alone (`:118`), and alphaTab marks that deprecated. *As built, not the right bar line both importers set on a double bar, where an automatic line draws the same* |
+| Beaming (`beaming`) | `MasterBar.beamingRules`, `Beat.beamingMode`, `invertBeamDirection`, `preferredBeamDirection` | |
+| Brush speed (`brushSpeed`) | `Beat.brushDuration` | the strum direction survives, its speed does not |
+| Forced natural, forced none (`forcedNaturals`) | `AccidentalMode.ForceNatural`, `ForceNone` | both read as `auto` (`:122-127`), for the reason argued at `:62-86` |
+| Notes no string can reach (`unreachableNotes`) | - | not the mapper's: `frettedDocOf` (`services/pitch-on-strings.ts`) frets every pitched note on a staff with a tuning and leaves out the ones no free string reaches, because alphaTab cannot draw a pitched note on tablature (M2 decision 33). Counted by running it on the converted document. A percussion staff never meets it: a drum note is its own kind of pitch, and a percussion staff has no tuning to fret it on |
+| Score credits (`credits`) | `Score.copyright`, `music`, `words`, `tab`, `notices`, `instructions`, `tempoLabel` | `ScoreDoc` holds title, subtitle, artist and album only (`:379-388`). *As built, not `tempoLabel`, which is bar 1's tempo marking's words, counted under `tempoText`* |
+| MIDI channels (`midiChannels`) | `PlaybackInformation.primaryChannel`, `secondaryChannel`, `port` | `PlaybackInfoDoc` (`:127-138`) has program, bank, volume, balance, mute and solo, and no channel. A drum track is the exception and gets its channel back for nothing: `Score.finish` puts a track whose single staff is percussion on channel 9, primary and secondary (`alphaTab.core.mjs:4316-4321`). *As built, `Score.finish` does not (correction 2): `toScore` assigns channels by `midiChannelsOf`, so the one audible change is a track that is not a one-staff kit but that the file put on channel 9, where it plays as drums until conversion - "Tracks the file plays on the drum channel". `port` is not compared: nothing plays from it* |
+| Custom styles (`customStyles`) | `Score.style`, `Track.style`, `Bar.style`, `Beat.style`, `Note.style` | per-element colour and notehead choices. *As built, a style counts only when it holds a colour, or on a note a notehead of its own* |
 
 ### What it must not report, and what belongs to the save
 
 - **Multiple voices convert whole.** The correction under "What the composer's model cannot
   hold" above. What the checker reports instead, as a *save* item rather than a conversion one,
   is a **second voice holding only rests**: conversion keeps it and the save after it does not
-  (`:376-378`).
+  (`:376-378`). *As built, a conversion item (`restVoices`), not a save one: `toVoice` marks such a voice empty, so its
+  rests stop being drawn as soon as the file converts, and the save then writes none of them.*
 - **A drum track converts whole**, from this milestone on - decision 12 and Part 3. What the
   checker reports, and again as a save item, is **a kit the file invents**: percussion notes
   whose articulation indexes into a non-empty `Track.percussionArticulations`. alphaTex names a
@@ -362,10 +480,15 @@ of the conversion outside the mapper, and each reads back as nothing:
   written `"unknown"` and cannot be read back. The count is the exposure, not the loss - the
   table is internal to alphaTab, so nothing outside it can say which names will be found - and
   the detail says so. Part 3's "alphaTex carries percussion" has the mechanism, and the
-  conversion proves the save rather than trusting this count.
+  conversion proves the save rather than trusting this count. *As built, the count is exact
+  (`unsavableKit`, "Drums alphaTex cannot name", correction 5): the checker writes a one-note score of each distinct
+  articulation as alphaTex and reads it back, and Convert refuses a file that has any.*
 - **A double bar** survives conversion and is lost by the save, because alphaTab 1.8 reads
   `\db` and never writes it - already pinned in `score-doc-mapper.effects.spec.ts` and recorded
-  in `docs/TODO.md`. It is reported in the same save group.
+  in `docs/TODO.md`. It is reported in the same save group (`doubleBars`).
+- *Built:* **a file whose loss cannot be measured still opens.** When the mapper or the checker throws on a file
+  alphaTab can draw, the error is reported and the prompt lists one item, `unmeasured` - "What converting would lose
+  could not be measured" - which points to Save the original file first.
 - **Fermatas** are not a loss. alphaTab files them per bar and tick and `Voice.finish` hands
   them back, and `BeatEffectsDoc.fermata` (`:293`) carries them per beat.
 

@@ -18,6 +18,103 @@ not reach the page component - converting, opening, the track view - is a root s
 
 ---
 
+## Corrections during implementation
+
+Every task was reviewed after it was committed, and each review's fix commit changed the code after this plan's blocks
+were written. **For every task named here, the committed code supersedes the plan's code blocks**; they are left as
+written, as the record of what was planned. A few fixes touched this plan as they landed - two comments in Task A.1's
+mapper block, Task B.1's "Corrected in review" note, Task C.1's description of the gate, and corrections 7 and 10 to the
+design below - but no task's blocks were brought up to date with its review. Task J.2's hand check was performed as its list reads, and its results, step by step, are under "Hand check" in
+the design doc; the fix it led to is the last entry here.
+
+- **Task 0.1** (`733d229`). The page passes the file's bar count from a `fileBarCount` getter, and specs pin that
+  Original measures no bar as over.
+- **Task A.1** (`d3d0367`).
+  - The mapper's comments said `Score.finish` puts a drum track on channel 9; they now say `toScore` assigns it
+    (`midiChannelsOf`), and `midi-channels.spec.ts` pins the channel rule.
+  - `toArticulation` records that alphaTab's constructor turns a `None` half or whole notehead into the default one, so
+    such an entry does not come back field for field.
+- **Task A.2** (`edfe2ea`).
+  - Beats copied from a drum track carry its kit (`CopiedBeats.kit`), and a paste onto a drum track with another kit
+    refuses: the same number names another drum there.
+  - A trill press that clears trills is refused only where any note edit is, so a trill an imported file put on a drum
+    hit can come off. Setting one is still refused.
+  - With no string, the caret takes a drum staff's percussion band as its notation, rather than falling back to a slash
+    staff drawn above it.
+- **Task B.1** (`3be7bad`, `f3173a6`). In full in the task's own "Corrected in review" note. In short: rows fired for
+  what alphaTab's real importers put in every file, so the checker now reports only what conversion changes in what is
+  seen or heard; a new row, `tempoText`, takes the tempo markings' words, and `credits` drops `tempoLabel`;
+  `midiChannels` reports only a track that is not a kit on channel 9; `restVoices` moves to the conversion group; and
+  the mapper keeps a natural harmonic's pitch (`services/natural-harmonics.ts`).
+- **Task C.1** (`4780fd3`).
+  - The progression's three doors - the strip's Add progression track and Update, and the progression page's Send - go
+    through `requestEdit` (`ASKING_PAGE_COMMANDS.progressionTrack`), since `sendProgression` does not move
+    `documentId`. A held Send projects the progression again when it runs, after Convert.
+  - A request asked on the composer page is cancelled with the page; a second request while one waits is dropped.
+  - Measuring the loss no longer stops a file opening: a throw is reported, and the prompt lists one `unmeasured` item.
+  - The prompt splits the loss into its two groups when the file changes, not on every check; an open, untouched
+    alphaTex panel reseeds when a file opens; and an export of the file that throws leaves the panel empty.
+  - Superseded and not corrected in the block: `ComposerGpService`'s header comment still lists "a progression sent
+    over" among what moves `documentId`. The committed comment says it does not, and why it is gated instead.
+- **Task D.1** (`5782620`). Writes to both IndexedDB libraries settle when their transaction commits (`committed`, in
+  `services/indexed-db.ts`), not on the request's success; `updateEntry` reads and writes in one transaction; a failed
+  open, or a `versionchange` from another tab, lets the connection go so the next call opens it again; and the specs
+  wait until their databases are really deleted (`indexed-db.spec-helper.ts`).
+- **Task D.2** (`9c7f299`).
+  - Convert never sticks: a throw is reported and said in the status line, and `converting` clears in `finally`.
+  - Nothing cancels a conversion under way: Cancel and Save the original file first are disabled (`busy`), Escape and the
+    backdrop do nothing, and the page stays inert.
+  - The page is given the document read back from the alphaTex that was saved, so it is what the library holds; a
+    mapper that throws refuses the conversion.
+  - The status line says the file converted beside the edit's own refusal, or that the edit could not be applied.
+  - A list refresh failing after a committed write is logged, not thrown, in both libraries.
+  - A held Send refuses a projection that runs past the bound in the composer's status line (`SEND_TRUNCATED`).
+- **Task E.1** (`2c451c2`).
+  - A file dropped over a modal - the prompt, a conversion under way, the shortcut sheet - is refused out loud.
+  - The file shows before its library entry is corrected; one open runs at a time; a file or library that cannot be read
+    says so.
+  - A drop of several files says how many other Guitar Pro files, and how many other files, it left.
+  - Import .gp…'s `accept` and the name test share `GP_FILE_EXTENSIONS`; the drawer is "Library", opened by "Browse the
+    library…"; and Import .gp… gives the focus back to the Library button.
+  - Specs no longer open the real `gp-library` database; `gp-file-opener.service.spec.ts` is new.
+- **Task F.1** (`adb2b36`, `6b87f9f`).
+  - A change to mute or solo alone is drawn as an overlay (`differsOnlyInMixer`), not a render, so the MIDI is not
+    reloaded and playback keeps going. It is compared by walking both documents, not by serialising them.
+  - Show / hide redraws with `renderTracks`, which keeps the MIDI.
+  - The hidden set keeps only tracks the document still has, never covers every track, starts again when a document is
+    replaced, and is carried across Convert by the file's track order (`carryThroughConvert`).
+  - The caret moves off a track as it is hidden, a hidden row's click refuses, and keyboard track moves pass over hidden
+    tracks (`passOverTracks`).
+  - Mutes and solos are sent offs before ons, since tracks share MIDI channels; the player's mixer is left alone until a
+    page sets it, and forgotten on `dispose`.
+  - Show / hide is named "Show <track>" with `aria-pressed`; the rows read the composer's current document.
+- **Task G.1** (`79ff184`).
+  - The select holds the option itself (`ngValue`), not its id: the Diminished and Augmented triads share ids with
+    scales, so a triad picked was found again as the scale.
+  - Dead notes, and heads on slash and numbered bands, are not marked; a beat or note the lookup lost is skipped.
+  - The Scales menu closes as Library and Export do: Escape from a capture listener, a modal opening, and it closes an
+    open popover as it opens.
+  - The page is measured once per redraw rather than per note head, and unchanged rings are left as they are; the
+    root's ring is a red double ring, told apart without its colour.
+- **Task H.1** (`d13ec27`).
+  - The seek bar steps by a second (`step` 1000).
+  - Dragging the seek bar or the speed slider moves a draft; the player is set once, on `change`.
+  - The readouts are `aria-hidden` spans, not `<output>` live regions read out every second; the sliders are disabled
+    until the player is ready; position events mark for check rather than running change detection.
+  - `clockTimeOf` reads a time that is not a finite number as `0:00`.
+  - `movesFocusedSlider` was made to ask `:focus-visible`; the hand check undid that (the last entry).
+- **Task I.1** (`05fc2f7`).
+  - The `/gp-viewer` redirect is a function in its own module (`gp-viewer-redirect.ts`) returning a `UrlTree`, with
+    specs: the string redirect read an id starting with `:` as a route parameter and dropped it.
+  - `gp-file-name.ts` holds the extension test, so the gallery's chunk no longer imports alphaTab.
+  - `AlphaTabService.pause` and `reset`, which only the viewer called, go; the project skills under `.claude/skills/`
+    are updated for the viewer's removal.
+- **After the hand check** (`4f40809`).
+  - A focused range slider owns its arrow keys however it was focused. Chrome turns `:focus-visible` on at the key
+    press, so the H.1 review's exception for a mouse-focused slider never took effect.
+  - A backing track is its own loss row, `backingTrack` ("Backing track", "the audio is not kept"), and no longer
+    counts as a sync point: a file synced once read "2 sync points" and never said its audio went.
+
 ## Before you start
 
 **Worktree.** Everything happens in `.worktrees/gp-composer` on `feature/gp-composer`, from `4ac17a9`: the merge of
