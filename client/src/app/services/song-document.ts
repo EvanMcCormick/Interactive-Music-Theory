@@ -53,8 +53,8 @@ export interface ChordAt {
   pos: number;
 }
 
-/** What a progression is called when the song it came from has no title yet. */
-const UNTITLED_SONG = 'Untitled song';
+/** What a song with no title yet is called where it needs a name: its progressions, its copy's title. */
+export const UNTITLED_SONG = 'Untitled song';
 
 /** The node types that carry an `id`, and so must carry a unique one. */
 const IDENTIFIED: ReadonlySet<string> = new Set(['section', 'chord', 'tabBlock', 'memo']);
