@@ -63,7 +63,7 @@ import { BeatRef } from '../../../../services/composer-selection';
 import { ScoreDocMapperService } from '../../../../services/score-doc-mapper.service';
 import { Rect, StaffHitTestService, StaffLines } from '../../../../services/staff-hit-test.service';
 import { bottomLineDiatonic, diatonicToPitch, pitchToMidi } from '../../../../services/staff-pitch';
-import { ComposerState, EditCursor, ScoreDoc } from '../../../../models/composer.model';
+import { CaretSelection, ComposerState, EditCursor, ScoreDoc } from '../../../../models/composer.model';
 
 /** The pointer as the last mouse event over the score left it. */
 interface Pointer {
@@ -294,7 +294,7 @@ export class ComposerScoreComponent implements OnInit, AfterViewInit, OnDestroy 
    * composition's otherwise. In Original the composition under the page is the empty one no one sees, whose caret is
    * not on the file.
    */
-  private caret(): { cursor: EditCursor; anchor: EditCursor | null } | null {
+  private caret(): CaretSelection | null {
     return this.gp.isOriginal ? this.gp.caret : this.state;
   }
 

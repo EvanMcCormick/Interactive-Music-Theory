@@ -85,19 +85,17 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   state: ComposerState | null = null;
 
   /**
-   * The library entry the open composition is - the one the next Save writes over - or null for a new one. Held on the
-   * service too, for the composition it is (`ComposerLibraryService.rememberOpen`): this panel is made again each time
-   * the page is, and the panel made when the page comes back adopts it (`ngOnInit`) rather than writing a second
-   * composition on Save.
+   * The library entry the open composition is - the one the next Save writes over - or null for a new one. Held by the
+   * service alone, for the composition it is (`ComposerLibraryService.rememberOpen`): this panel is made again each time
+   * the page is, so a field here forgot it on leaving the page, and a save or a delete that landed after the page was
+   * left was never adopted - Save then made a second composition.
    */
   get currentId(): string | null {
-    return this.openId;
+    return this.state ? this.library.openEntryOf(this.state.documentId) : null;
   }
   set currentId(id: string | null) {
-    this.openId = id;
     if (this.state) this.library.rememberOpen(id, this.state.documentId);
   }
-  private openId: string | null = null;
 
   /** The last failure's words, for the report of a flatten nothing saved. Said in the status line (`reportError`). */
   errorMessage: string | null = null;
@@ -228,9 +226,6 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
   ) {}
 
   ngOnInit(): void {
-    // The entry the composition still open was, when the page was last here (`currentId`).
-    this.openId = this.library.openEntryOf(this.composer.state.documentId);
-
     this.composer
       .getState()
       .pipe(takeUntil(this.destroy$))
@@ -282,11 +277,12 @@ export class ComposerLibraryPanelComponent implements OnInit, OnChanges, OnDestr
         this.cdr.markForCheck();
       });
 
-    // An entry opened elsewhere - a converted `.gp` file - is the one the next Save writes over, as a load's is.
-    this.library.opened$.pipe(takeUntil(this.destroy$)).subscribe(id => {
-      this.currentId = id;
-      this.cdr.markForCheck();
-    });
+    // The entry held open (`currentId`) moves from outside this panel too: a converted `.gp` file's, and a save or a
+    // delete that lands after the panel the page had before this one was left.
+    this.library
+      .getOpenEntry()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(() => this.cdr.markForCheck());
 
     this.document.addEventListener('keydown', this.escapeListener, true);
 

@@ -26,7 +26,7 @@ import { ComposerShortcutSheetComponent } from './components/composer-shortcut-s
 import { ComposerStatusLineComponent } from './components/composer-status-line/composer-status-line.component';
 import { ComposerTrackStripComponent } from './components/composer-track-strip/composer-track-strip.component';
 import { AlphaTabState, DEFAULT_HIGHLIGHT_CONFIG, HighlightConfig } from '../../models/alpha-tab.model';
-import { ComposerState, EditCursor, ScoreDoc, TexDiagnostic } from '../../models/composer.model';
+import { CaretSelection, ComposerState, ScoreDoc, TexDiagnostic } from '../../models/composer.model';
 import { AlphaTabService } from '../../services/alpha-tab.service';
 import { AlphaTexService } from '../../services/alpha-tex.service';
 import { ASKING_PAGE_COMMANDS } from '../../services/composer-edit-intent';
@@ -81,6 +81,17 @@ export function stripHeightRangeOf(pageHeight: number, fixedRowsHeight: number, 
 /** `height` clamped to `range`, in whole pixels. */
 export function clampedStripHeight(height: number, range: StripHeightRange): number {
   return Math.max(range.min, Math.min(range.max, Math.round(height)));
+}
+
+/**
+ * The state the palette and its popovers read: the composer's, or in Original - where the composition under the page is
+ * the empty one no one sees - the file read as a document and the file's caret, so a button's pressed and unavailable
+ * states and a popover's values describe the note under that caret. The rest - Select or Pen, the input duration - is
+ * the composer's own. A file the mapper could not read has no document to describe, and the composition's state stands.
+ */
+export function paletteStateOf(state: ComposerState, original: Pick<GpOriginal, 'doc'> | null, caret: CaretSelection | null): ComposerState {
+  const doc = original?.doc;
+  return doc && caret ? { ...state, doc, cursor: caret.cursor, anchor: caret.anchor } : state;
 }
 
 /**
@@ -149,7 +160,9 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
    */
   original: GpOriginal | null = null;
   /** In Original, the file's caret, which the status line reads out (`ComposerGpService.caret`); null in Composition. */
-  fileCursor: EditCursor | null = null;
+  fileCaret: CaretSelection | null = null;
+  /** What the palette and its popovers read (`paletteStateOf`): made again when the state, the file or its caret moves. */
+  paletteState: ComposerState | null = null;
   /** The command waiting on the conversion prompt, which is open while there is one (`ComposerGpService.requestEdit`). */
   editRequest: EditRequest | null = null;
   /**
@@ -335,6 +348,11 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
     );
   }
 
+  /** `paletteStateOf` what the page holds now. A new object only when one of them moved, so the palette's `OnChanges` runs then. */
+  private readPaletteState(): void {
+    this.paletteState = this.state ? paletteStateOf(this.state, this.original, this.fileCaret) : null;
+  }
+
   ngOnInit(): void {
     this.composer
       .getState()
@@ -347,6 +365,7 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
         // it first (`confirmDiscard`) and throws it away.
         if (this.showTexPanel && state.documentId !== this.texDraftDocumentId) this.discardTexDraft();
         else if (docChanged && this.showTexPanel && !this.texDraftEdited) this.seedTexDraft();
+        this.readPaletteState();
         this.cdr.markForCheck();
       });
 
@@ -372,6 +391,7 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
         // composer's subscription would leave the empty composition's alphaTex in a panel already open. A draft typed
         // into is left as typed, as it is when the score changes.
         if (changed && this.showTexPanel && !this.texDraftEdited) this.seedTexDraft();
+        this.readPaletteState();
         this.cdr.markForCheck();
       });
 
@@ -379,7 +399,8 @@ export class ComposerComponent implements OnInit, AfterViewInit, OnDestroy {
       .getCaret()
       .pipe(takeUntil(this.destroy$))
       .subscribe(caret => {
-        this.fileCursor = caret?.cursor ?? null;
+        this.fileCaret = caret;
+        this.readPaletteState();
         this.cdr.markForCheck();
       });
 

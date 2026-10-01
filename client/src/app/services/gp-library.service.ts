@@ -202,13 +202,6 @@ export class GpLibraryService {
     return (await this.inStore<GpLibraryEntry | undefined>('readonly', store => store.get(id))) ?? null;
   }
 
-  /**
-   * Get file data as ArrayBuffer for a library entry
-   */
-  async getFileData(id: string): Promise<ArrayBuffer | null> {
-    const entry = await this.getEntry(id);
-    return entry?.fileData || null;
-  }
 
   /**
    * Filter entries based on criteria

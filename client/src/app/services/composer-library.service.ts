@@ -1,6 +1,6 @@
 import { committed } from './indexed-db';
 import { Injectable, NgZone } from '@angular/core';
-import { BehaviorSubject, Observable, Subject } from 'rxjs';
+import { BehaviorSubject, Observable } from 'rxjs';
 
 const DB_NAME = 'composer-library';
 const DB_VERSION = 1;
@@ -37,16 +37,13 @@ export type CompositionSummary = Omit<CompositionEntry, 'tex'>;
 export class ComposerLibraryService {
   private db: IDBDatabase | null = null;
   private readonly entriesSubject = new BehaviorSubject<CompositionSummary[]>([]);
-  private readonly openedSubject = new Subject<string>();
-  /** The entry the composition open is, and which composition that is (`rememberOpen`). */
-  private openEntry: { id: string; documentId: number } | null = null;
-
   /**
-   * The id of an entry opened by something other than the library panel - a converted `.gp` file, written and opened
-   * in one step (`GpConversionService`) - so the panel adopts it, and the next Save writes over it rather than making a
-   * second. Emitted after the document it holds is in place, so the panel has already forgotten the one before.
+   * The entry the composition open is - the one the next Save writes over - and which composition that is
+   * (`ComposerState.documentId`). The one place it is held: the library panel is made again each time the composer page
+   * is, and reads it here, so a save, a load or a Convert is not forgotten by leaving the page, nor a save or a delete
+   * that lands after the page was left.
    */
-  readonly opened$: Observable<string> = this.openedSubject.asObservable();
+  private readonly openEntrySubject = new BehaviorSubject<{ id: string; documentId: number } | null>(null);
   private readyPromise: Promise<void> | null = null;
 
   constructor(private readonly ngZone: NgZone) {}
@@ -55,27 +52,33 @@ export class ComposerLibraryService {
     return this.entriesSubject.asObservable();
   }
 
-  /** Says the entry `id` is the composition now open, `documentId` (`opened$`). */
+  /**
+   * Says the entry `id` is composition `documentId`, opened by something other than the library panel: a converted
+   * `.gp` file, written and opened in one step (`GpConversionService`), so the next Save writes over it.
+   */
   markOpened(id: string, documentId: number): void {
     this.rememberOpen(id, documentId);
-    this.openedSubject.next(id);
   }
 
-  /**
-   * Holds the entry composition `documentId` is open as - or null, none yet - for a library panel made later
-   * (`openEntryOf`). The panel is made again each time the composer page is, and the entry was its own field: leaving the
-   * page after a Convert, a load or a save and coming back, Save made a second composition.
-   */
+  /** Holds `id` - or null, none - as the entry composition `documentId` is. */
   rememberOpen(id: string | null, documentId: number): void {
     // `documentId` only moves on. A panel the page has left still has a write landing for the composition it knew, which
     // is not the one open now and must not displace its entry.
-    if (this.openEntry && documentId < this.openEntry.documentId) return;
-    this.openEntry = id === null ? null : { id, documentId };
+    const held = this.openEntrySubject.getValue();
+    if (held && documentId < held.documentId) return;
+    const next = id === null ? null : { id, documentId };
+    if (next?.id !== held?.id || next?.documentId !== held?.documentId) this.openEntrySubject.next(next);
   }
 
-  /** The entry composition `documentId` is open as, or null: one held for another composition is not this one's. */
+  /** The entry composition `documentId` is, or null: one held for another composition is not this one's. */
   openEntryOf(documentId: number): string | null {
-    return this.openEntry?.documentId === documentId ? this.openEntry.id : null;
+    const held = this.openEntrySubject.getValue();
+    return held?.documentId === documentId ? held.id : null;
+  }
+
+  /** Each change of the entry held open (`rememberOpen`), for a view that draws it. */
+  getOpenEntry(): Observable<{ id: string; documentId: number } | null> {
+    return this.openEntrySubject.asObservable();
   }
 
   /**

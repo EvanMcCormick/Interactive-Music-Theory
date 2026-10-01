@@ -1,4 +1,4 @@
-import { ComposerState, DocumentReplacement, EditCursor, ScoreDoc } from '../models/composer.model';
+import { CaretSelection, ComposerState, DocumentReplacement, EditCursor, ScoreDoc } from '../models/composer.model';
 import { clampedCursor } from './composer-cursor';
 import { beatAt, followedEnd } from './composer-selection';
 import { EditOutcome, SelectionPlacement, noticeOfOutcome } from './composer-service-structure';
@@ -182,7 +182,7 @@ export class ComposerHistory {
    */
   private commitDocument(
     next: ScoreDoc,
-    selection?: { cursor: EditCursor; anchor: EditCursor | null },
+    selection?: CaretSelection,
     amend = false,
     notice: string | null = null
   ): void {

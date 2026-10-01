@@ -65,7 +65,7 @@ import { moveNotesToString, shiftSemitone } from './note-moves';
 import { respellNotes, respellRefusal } from './note-respell';
 import { GeneratedTrack, flattenGeneratedTrack, mergeGeneratedTrack } from './progression-track';
 import { deleteBars } from './bar-edits';
-import { LAST_TRACK_REFUSAL } from './composer-text';
+import { LAST_TRACK_REFUSAL, UNREADABLE_FILE_COPY } from './composer-text';
 import { insertBarInto } from './score-structure';
 
 /**
@@ -439,7 +439,12 @@ export class ComposerService {
 
   /** Copies the selection's beats to the composer's clipboard. */
   copy(): void {
-    this.entry.copy();
+    // Ungated, as it writes nothing - so in Original it must read the file's range, or it would copy the empty
+    // composition's rest over the clipboard and a later paste would write that (`lendCaret`).
+    const lent = this.caretOwner?.readSelection();
+    if (!lent) return this.entry.copy();
+    if (!lent.doc) return this.history.refuse(UNREADABLE_FILE_COPY);
+    this.entry.copyFrom(lent.doc, lent.caret.anchor, lent.caret.cursor);
   }
 
   /** Copies the selection's beats and clears them to rests. */

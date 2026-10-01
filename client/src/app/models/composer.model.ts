@@ -451,6 +451,15 @@ export interface EditCursor {
   stringIndex: number | null;
 }
 
+/**
+ * A caret and the other end of its range, or null for none: what `ComposerState` holds for the composition, what
+ * `ComposerGpService` holds for a `.gp` file in Original, and what Convert carries from one to the other.
+ */
+export interface CaretSelection {
+  cursor: EditCursor;
+  anchor: EditCursor | null;
+}
+
 /** A parse or validation message from the alphaTex escape hatch. */
 export interface TexDiagnostic {
   severity: 'error' | 'warning' | 'info';
@@ -526,7 +535,7 @@ export interface DocumentReplacement {
    * Where the caret and the range go in it, clamped to it: Convert's, which carries the caret the file had in Original
    * into the composition made of it. Left out, the caret stays where it was, clamped, and the range is dropped.
    */
-  selection?: { cursor: EditCursor; anchor: EditCursor | null };
+  selection?: CaretSelection;
 }
 
 // ---------------------------------------------------------------------------

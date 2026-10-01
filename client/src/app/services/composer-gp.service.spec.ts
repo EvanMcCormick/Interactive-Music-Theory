@@ -13,7 +13,7 @@ import { ScoreDocMapperService } from './score-doc-mapper.service';
  * conversion prompt.
  *
  * Non-null means the page is in Original; null means Composition. Nothing else in the composer keeps this, so
- * `ComposerService` - 861 lines against the 1000-line cap - gains nothing.
+ * `ComposerService`, near the 1000-line cap, gains nothing.
  */
 describe('ComposerGpService', () => {
   let service: ComposerGpService;

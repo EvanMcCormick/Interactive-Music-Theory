@@ -10,9 +10,10 @@ import { deletedDatabase } from '../../../../services/indexed-db.spec-helper';
  * An entry opened by something other than the panel - a converted `.gp` file, written and opened in one step
  * (`GpConversionService`) - is the one the next Save writes over.
  *
- * The order is the point: the conversion replaces the document as a new composition, which moves `documentId` on and
- * makes the panel forget the entry it had (`forgetEntry`), and only then names the new one (`opened$`). Adopted before
- * the forget, the id would be dropped again, and the next Save would write a second copy of the converted file.
+ * The conversion replaces the document as a new composition, which moves `documentId` on and makes the panel forget the
+ * entry it had (`forgetEntry`), and then names the new one for the new `documentId` (`markOpened`). The service holds it
+ * (`ComposerLibraryService.rememberOpen`), keyed by that composition, so neither the forget nor the page being left
+ * drops it, and the next Save writes over it rather than making a second copy of the converted file.
  */
 describe('ComposerLibraryPanelComponent and an entry opened elsewhere', () => {
   let fixture: ComponentFixture<ComposerLibraryPanelComponent>;
@@ -91,6 +92,24 @@ describe('ComposerLibraryPanelComponent and an entry opened elsewhere', () => {
       await panel.save();
 
       expect(saveTarget()).toBe('x');
+    });
+
+    it('adopts a save that lands after the page was left and came back', async () => {
+      composer.replaceDocument(ComposerService.createEmptyScore(), { newComposition: true, markClean: true });
+      let land: (id: string) => void = () => undefined;
+      (library.save as jasmine.Spy).and.returnValue(new Promise<string>(resolve => (land = resolve)));
+      const leaving = panel.save();
+
+      comeBack();
+      land('landed');
+      await leaving;
+      fixture.detectChanges();
+      expect(panel.currentId).toBe('landed');
+
+      (library.save as jasmine.Spy).and.resolveTo('landed');
+      composer.setTempo(140);
+      await panel.save();
+      expect(saveTarget()).toBe('landed');
     });
 
     it('forgets it once another composition has opened while the page was away', async () => {

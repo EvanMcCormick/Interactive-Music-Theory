@@ -1,7 +1,8 @@
 import { ErrorHandler, Injectable, inject } from '@angular/core';
 import * as alphaTab from '@coderline/alphatab';
 
-import { ScoreDoc, TexDiagnostic } from '../models/composer.model';
+import { CaretSelection, ScoreDoc, TexDiagnostic } from '../models/composer.model';
+import { carriedCursorOf } from './composer-cursor';
 import { AlphaTexService } from './alpha-tex.service';
 import { ComposerGpService } from './composer-gp.service';
 import { ComposerLibraryService } from './composer-library.service';
@@ -119,7 +120,7 @@ export class GpConversionService {
     // back - so the edit that asked is written where it was asked. The tracks hidden in Original stay hidden, and a caret
     // on one goes to the nearest track shown, same bar, before that edit is written (`carryThroughConvert`).
     this.trackViews.carryThroughConvert(doc);
-    this.composer.replaceDocument(doc, { newComposition: true, markClean: true, selection: caret ?? undefined });
+    this.composer.replaceDocument(doc, { newComposition: true, markClean: true, selection: carriedSelectionOf(caret, original.doc, doc) });
     this.library.markOpened(compositionId, this.composer.state.documentId);
 
     // 5. The edit that asked, on its own undo step; then what the conversion did, beside what the edit said.
@@ -149,6 +150,16 @@ function unsavableReasonOf(tex: string, diagnostics: readonly TexDiagnostic[]): 
     return `${where} uses drums alphaTex cannot name, so the file was not converted: a composition saved with them would not open again.`;
   }
   return `${where} would not open again once saved, so the file was not converted${error ? `: ${error.message}` : '.'}`;
+}
+
+/**
+ * The file's caret and range carried into the composition made of it (`carriedCursorOf`), or none to carry. With no
+ * document of the file to read the onsets from, `replaceDocument` clamps them as they are.
+ */
+function carriedSelectionOf(caret: CaretSelection | null, from: ScoreDoc | null, to: ScoreDoc): CaretSelection | undefined {
+  if (!caret) return undefined;
+  if (!from) return caret;
+  return { cursor: carriedCursorOf(caret.cursor, from, to), anchor: caret.anchor ? carriedCursorOf(caret.anchor, from, to) : null };
 }
 
 /** The name of the `\track` the 1-based `line` of `tex` is in, or null. */

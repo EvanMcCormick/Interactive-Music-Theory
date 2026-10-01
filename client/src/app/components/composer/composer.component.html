@@ -154,7 +154,7 @@
   <app-composer-palette
     class="palette"
     [attr.inert]="modalOpen ? '' : null"
-    [state]="s"
+    [state]="paletteState"
     [popover]="popover"
     (toolPressed)="runTool($event)"
     (popoverClosed)="closePopover()"
@@ -201,7 +201,7 @@
     [messageId]="s.messageId"
     [texError]="texApplyError"
     [texErrorId]="texErrorId"
-    [cursor]="fileCursor ?? s.cursor"
+    [cursor]="fileCaret?.cursor ?? s.cursor"
     [entryMode]="s.entryMode"
     [doc]="s.doc"
     [viewingOriginal]="viewingOriginal"

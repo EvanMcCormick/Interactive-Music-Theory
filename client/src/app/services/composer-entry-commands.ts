@@ -194,9 +194,17 @@ export class ComposerEntryCommands {
   /** Copies the selection's beats, from one staff. Not an edit: nothing is committed. */
   copy(): void {
     const state = this.host.state();
-    const refs = selectionTargets(state.doc, state.anchor, state.cursor);
+    this.copyFrom(state.doc, state.anchor, state.cursor);
+  }
+
+  /**
+   * Copies the beats `anchor` to `cursor` select in `doc`: the composition's, or - in Original, where the caret is the
+   * file's (`ComposerService.lendCaret`) - the file read as a document, so a paste after Convert writes what was copied.
+   */
+  copyFrom(doc: ScoreDoc, anchor: EditCursor | null, cursor: EditCursor): void {
+    const refs = selectionTargets(doc, anchor, cursor);
     if (refs.length === 0) return this.host.refuse('Nothing is selected.');
-    const copied = copiedBeatsOf(state.doc, refs);
+    const copied = copiedBeatsOf(doc, refs);
     if (!copied) return this.host.refuse('Copy takes beats from one staff at a time.');
     this.clipboard = copied;
   }

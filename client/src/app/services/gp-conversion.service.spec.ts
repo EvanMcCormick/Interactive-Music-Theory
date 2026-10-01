@@ -244,6 +244,66 @@ describe('GpConversionService', () => {
     });
   });
 
+  describe('the caret pressed in Original, where the composition differs from the file', () => {
+    it('lands on the beat at the same onset when the first save drops the voice it was in', async () => {
+      // A second voice of two half rests in every bar, which alphaTex does not write back.
+      openFile(['\\title "Riff"', '\\track "Guitar"', '3.3.4 5.3.4 7.3.4 8.3.4 | 3.3.4 5.3.4 7.3.4 8.3.4 |'].join('\n'), score => {
+        for (const bar of score.tracks[0].staves[0].bars) {
+          const voice = new alphaTab.model.Voice();
+          bar.addVoice(voice);
+          for (let index = 0; index < 2; index++) {
+            const rest = new alphaTab.model.Beat();
+            rest.duration = alphaTab.model.Duration.Half;
+            voice.addBeat(rest);
+          }
+        }
+        score.finish(new alphaTab.Settings());
+      });
+      // The second half rest of bar 2's second voice: half way through the bar.
+      composer.setCursor({ barIndex: 1, voiceIndex: 1, beatIndex: 1 });
+      askWithNothing();
+
+      await conversion.convert();
+
+      expect(composer.doc.tracks[0].staves[0].bars[1].voices.length).withContext('the voice the caret was in is gone').toBe(1);
+      expect(composer.state.cursor).toEqual(jasmine.objectContaining({ barIndex: 1, voiceIndex: 0, beatIndex: 2 }));
+    });
+
+    it('is clamped into a composition the mapper read with less of the file', async () => {
+      openFile(['\\title "Riff"', '\\track "Guitar"', '3.3.4 3.3.4 3.3.4 3.3.4 | 3.3.4 3.3.4 3.3.4 3.3.4 | 3.3.1 |'].join('\n'));
+      composer.setCursor({ barIndex: 2 });
+      askWithNothing();
+      // The read back of what was saved loses the last bar.
+      const toDoc = mapper.toDoc.bind(mapper);
+      let reads = 0;
+      spyOn(mapper, 'toDoc').and.callFake(score => {
+        const doc = toDoc(score);
+        if (++reads < 2) return doc;
+        doc.masterBars.pop();
+        for (const track of doc.tracks) for (const staff of track.staves) staff.bars.pop();
+        return doc;
+      });
+
+      await conversion.convert();
+
+      expect(composer.doc.masterBars.length).toBe(2);
+      expect(composer.state.cursor).toEqual(jasmine.objectContaining({ barIndex: 1, beatIndex: 0 }));
+    });
+
+    it('stays on a drum staff, with no string, through Convert', async () => {
+      openFile(['\\title "Band"', '\\track "Guitar"', '3.3.4 3.3.4 3.3.4 3.3.4 | 3.3.1 |', '\\track "Kit" {instrument percussion}', '\\articulation defaults', '"Snare (hit)".4 r.4 r.2 | "Snare (hit)".1 |'].join('\n'));
+      composer.setCursor({ trackIndex: 1, barIndex: 1 });
+      expect(gp.caret?.cursor.stringIndex).toBeNull();
+      gp.requestEdit('clearBeat', 'Clear beat to rest', () => composer.setRestAtCursor(false));
+
+      await conversion.convert();
+
+      expect(composer.state.cursor).toEqual(jasmine.objectContaining({ trackIndex: 1, barIndex: 1, beatIndex: 0, stringIndex: null }));
+      expect(composer.doc.tracks[1].staves[0].bars[1].voices[0].beats[0].isRest).toBeTrue();
+      expect(composer.doc.tracks[1].staves[0].bars[0].voices[0].beats[0].isRest).toBeFalse();
+    });
+  });
+
   describe("the track strip's hidden tracks", () => {
     const band = ['\\title "Band"', '\\track "Guitar"', '3.3.4 3.3.4 3.3.4 3.3.4 |', '\\track "Bass"', '3.4.4 3.4.4 3.4.4 3.4.4 |', '\\track "Keys"', '3.3.4 3.3.4 3.3.4 3.3.4 |'].join('\n');
     let views: ComposerTrackViewService;

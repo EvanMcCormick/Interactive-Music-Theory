@@ -2,7 +2,7 @@ import { ErrorHandler, Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import type * as alphaTab from '@coderline/alphatab';
 
-import { EditCursor, ScoreDoc, createDefaultCursor } from '../models/composer.model';
+import { CaretSelection, EditCursor, ScoreDoc, createDefaultCursor } from '../models/composer.model';
 import { ComposerService } from './composer.service';
 import { CaretOwner, CursorMove, clampedCursor, movedCursor } from './composer-cursor';
 import { changesDocument } from './composer-edit-intent';
@@ -35,12 +35,6 @@ export interface GpOriginal extends GpFile {
   doc: ScoreDoc | null;
 }
 
-/** The caret over the file in Original, and the other end of its range, as `ComposerState` holds the composition's. */
-export interface GpCaret {
-  cursor: EditCursor;
-  anchor: EditCursor | null;
-}
-
 /**
  * A command held back until the file is converted: the first command in Original that would change the document asks
  * first (design decision 4), and runs only once the prompt's Convert has made a document for it to change.
@@ -59,8 +53,8 @@ export interface EditRequest {
  * Non-null `original` is **Original**: the bytes alphaTab read, every track rendered, no document. Null is
  * **Composition**: today's composer. A `.gp` opens in Original and every other way in starts in Composition.
  *
- * Its own root service rather than a field on `ComposerService`, which is 861 lines against `CLAUDE.md`'s 1000-line
- * cap and whose history M2 already moved out to make room. `ComposerState` gains nothing either: the empty document
+ * Its own root service rather than a field on `ComposerService`, which sits near `CLAUDE.md`'s 1000-line cap and whose
+ * history M2 already moved out to make room. `ComposerState` gains nothing either: the empty document
  * it already holds is simply not drawn while an original is current.
  *
  * **Another composition opening ends Original.** A load, New, an opened transcription and Convert itself each move
@@ -80,7 +74,7 @@ export interface EditRequest {
 export class ComposerGpService implements CaretOwner {
   private readonly subject = new BehaviorSubject<GpOriginal | null>(null);
   private readonly requestSubject = new BehaviorSubject<EditRequest | null>(null);
-  private readonly caretSubject = new BehaviorSubject<GpCaret | null>(null);
+  private readonly caretSubject = new BehaviorSubject<CaretSelection | null>(null);
   /** The composition that was open when the file opened: once another is, Original ends. */
   private openedOver: number | null = null;
   /** The file's tracks a keyboard track move passes over, by index. See `passOverTracks`. */
@@ -121,12 +115,12 @@ export class ComposerGpService implements CaretOwner {
   }
 
   /** The caret over the file, or null in Composition. */
-  getCaret(): Observable<GpCaret | null> {
+  getCaret(): Observable<CaretSelection | null> {
     return this.caretSubject.asObservable();
   }
 
   /** The caret over the file, or null in Composition. */
-  get caret(): GpCaret | null {
+  get caret(): CaretSelection | null {
     return this.caretSubject.getValue();
   }
 
@@ -217,6 +211,12 @@ export class ComposerGpService implements CaretOwner {
       movedCursor(doc, caret.cursor, { kind: 'scoreEdge', edge: 'last' }),
       movedCursor(doc, caret.cursor, { kind: 'scoreEdge', edge: 'first' })
     );
+  }
+
+  /** The file's caret and range, and the file read as a document, for Copy (`CaretOwner.readSelection`). */
+  readSelection(): { doc: ScoreDoc | null; caret: CaretSelection } | null {
+    const caret = this.caret;
+    return caret ? { doc: this.original?.doc ?? null, caret } : null;
   }
 
   /**

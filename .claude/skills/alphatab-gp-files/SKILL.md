@@ -274,11 +274,6 @@ export class GpLibraryService {
       reader.readAsArrayBuffer(file);
     });
   }
-
-  async getFileData(id: string): Promise<ArrayBuffer | null> {
-    const entry = await this.getEntry(id);
-    return entry?.fileData || null;
-  }
 }
 ```
 

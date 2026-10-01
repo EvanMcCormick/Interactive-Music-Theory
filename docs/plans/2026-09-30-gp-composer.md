@@ -130,6 +130,13 @@ the design doc; the fix it led to is the last entry here.
     refused, as the code does; and the composer library holds the open entry by `documentId`
     (`ComposerLibraryService.rememberOpen`), so Save after leaving the page and coming back no longer makes a second
     composition.
+  - Its review (`fix: Copy the file's range in Original...`): Copy, which asks nothing, read the empty composition in
+    Original and put its rest on the clipboard; it reads the file's range now (`CaretOwner.readSelection`), and refuses
+    with a reason over a file the mapper could not read. Cut asks, as any edit does, and Select All selects the file's
+    staff. The palette and its popovers read the file's note under its caret (`paletteStateOf`). The library service is
+    the one holder of the open entry, so a save or delete landing after the page was left is adopted. A caret in a voice
+    the first save drops lands on the beat at the same onset (`carriedCursorOf`). `CaretSelection` is the one type for a
+    caret and its range; `getFileData`, which nothing called, is gone.
 
 ## Before you start
 

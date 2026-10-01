@@ -1,4 +1,5 @@
-import { EditCursor, ScoreDoc, TrackDoc, createDefaultCursor } from '../models/composer.model';
+import { CaretSelection, EditCursor, ScoreDoc, TrackDoc, createDefaultCursor } from '../models/composer.model';
+import { playbackStartsOf } from './bar-fill';
 
 /**
  * Where the caret goes, as pure functions of the document.
@@ -28,6 +29,11 @@ export interface CaretOwner {
   extendSelectionTo(cursor: Partial<EditCursor>): void;
   moveCursor(move: CursorMove, extend: boolean): void;
   selectAllInTrack(): void;
+  /**
+   * What a command that reads the selection without writing reads instead of the composition's: Copy. The caret and its
+   * range, and the document they are in - null where the file could not be read as one.
+   */
+  readSelection(): { doc: ScoreDoc | null; caret: CaretSelection } | null;
 }
 
 const clamp = (value: number, min: number, max: number): number => (max < min ? min : Math.max(min, Math.min(max, value)));
@@ -48,6 +54,27 @@ export function clampedCursor(cursor: EditCursor, doc: ScoreDoc): EditCursor {
   const stringIndex = staff.tuning.length > 0 ? clamp(cursor.stringIndex ?? 0, 0, staff.tuning.length - 1) : null;
 
   return { trackIndex, staffIndex, barIndex, voiceIndex, beatIndex, stringIndex };
+}
+
+/**
+ * `cursor`, on `from`, carried into `to`, a document read back from it: Convert's, from the file to the composition saved
+ * of it. Clamped - and, where `to` has lost the voice the cursor was in (the first save drops a voice of rests), on the
+ * beat of the voice it is clamped to that plays where the cursor's beat did, or else the last before it. Clamped alone,
+ * the cursor would keep its beat index in another voice's rhythm: the second half rest of a voice 2 became the second
+ * quarter of voice 1.
+ */
+export function carriedCursorOf(cursor: EditCursor, from: ScoreDoc, to: ScoreDoc): EditCursor {
+  const clamped = clampedCursor(cursor, to);
+  const sameBar =
+    clamped.trackIndex === cursor.trackIndex && clamped.staffIndex === cursor.staffIndex && clamped.barIndex === cursor.barIndex;
+  if (clamped.voiceIndex === cursor.voiceIndex || !sameBar) return clamped;
+  const barIn = (doc: ScoreDoc) => doc.tracks[cursor.trackIndex]?.staves[cursor.staffIndex]?.bars[cursor.barIndex];
+  const was = barIn(from)?.voices[cursor.voiceIndex]?.beats;
+  const now = barIn(to)?.voices[clamped.voiceIndex]?.beats;
+  if (!was || !now) return { ...clamped, beatIndex: 0 };
+  const onset = playbackStartsOf(was)[cursor.beatIndex] ?? 0;
+  const beatIndex = playbackStartsOf(now).reduce((found, start, index) => (start <= onset ? index : found), 0);
+  return { ...clamped, beatIndex };
 }
 
 /**

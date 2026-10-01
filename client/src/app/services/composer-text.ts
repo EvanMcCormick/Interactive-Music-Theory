@@ -23,6 +23,9 @@ export function pasteNoticeOf(beats: number, appended: number): string {
 /** Why the last track cannot be removed: said by the service, and on the track strip's Remove before it is pressed. */
 export const LAST_TRACK_REFUSAL = 'A score needs at least one track.';
 
+/** Why Copy does nothing in Original over a file the mapper could not read: there is no document to copy beats from. */
+export const UNREADABLE_FILE_COPY = 'The file could not be read as a composition, so nothing can be copied from it.';
+
 /** Why the last track shown cannot be hidden: said on the track strip's show / hide before it is pressed, and after. */
 export const LAST_SHOWN_TRACK = 'At least one track is shown: show another before hiding this one.';
 

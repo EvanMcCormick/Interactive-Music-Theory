@@ -229,10 +229,6 @@ make; and the viewer's Tone import went with the viewer. The rest is in shipped 
   `/assets/font/` and `/assets/soundfont/sonivox.sf2`; `angular.json` publishes them at `/font` and
   `/soundfont`. Every real caller overrides both, so nothing is broken — a caller that forgot would
   lose its music font silently.
-- **`GpLibraryService` keeps every file's bytes in a `BehaviorSubject`.** `loadAllEntries` pushes
-  whole records, `ArrayBuffer`s included, so a library of fifty files sits in memory to render a grid
-  of titles. `ComposerLibraryService.refresh` strips its payload; the fix is a summary projection and
-  `getFileData`, which exists and has no caller.
 - **Its four indexes are never used.** `title`, `artist`, `dateAdded` and `key`: every read is
   `getAll()` or `get(id)`, and the filtering and sorting run in JS over the whole set. Harmless at
   this size.
