@@ -1,7 +1,97 @@
 <div class="song-editor">
   <header class="editor-bar">
     <a class="back-to-library" routerLink="/songs">← Library</a>
+
+    <ng-container *ngIf="phase === 'ready'">
+      <div class="song-identity">
+        <label class="identity-field">
+          <span class="field-name">Title</span>
+          <input
+            #titleField
+            type="text"
+            class="song-title"
+            placeholder="Untitled song"
+            autocomplete="off"
+            [value]="title"
+            (change)="commitTitle(titleField.value)"
+            (keydown.enter)="titleField.blur()"
+            (keydown.escape)="revertField(titleField, title)"
+          />
+        </label>
+        <label class="identity-field">
+          <span class="field-name">Artist</span>
+          <input
+            #artistField
+            type="text"
+            class="song-artist"
+            placeholder="Artist"
+            autocomplete="off"
+            [value]="artist"
+            (change)="commitArtist(artistField.value)"
+            (keydown.enter)="artistField.blur()"
+            (keydown.escape)="revertField(artistField, artist)"
+          />
+        </label>
+      </div>
+
+      <!-- Not a live region: it changes on every pause in typing. A failure is also said in the region below. -->
+      <p class="save-status" [class.is-error]="status?.kind === 'failed'">
+        <span>{{ statusText }}</span>
+        <button *ngIf="status?.kind === 'failed'" type="button" class="tool retry-save" (click)="retry()">Retry</button>
+      </p>
+    </ng-container>
   </header>
-  <!-- A status, so a screen reader hears that the page is waiting rather than meeting an empty page. -->
-  <p class="loading" role="status">Loading…</p>
+
+  <!--
+    Everything the page says that is not on screen already. Always on the page and only its words change, in two halves
+    that swap so a repeated message is a change (`SongEditorComponent.messages`). Polite: nothing here interrupts.
+  -->
+  <p class="editor-messages" [class.is-error]="messageIsError">
+    <span role="status">{{ messages[0] }}</span><span role="status">{{ messages[1] }}</span>
+  </p>
+
+  <ng-container [ngSwitch]="phase">
+    <!-- A status, so a screen reader hears that the page is waiting rather than meeting an empty page. -->
+    <p *ngSwitchCase="'loading'" class="editor-state loading" role="status">Loading…</p>
+
+    <div *ngSwitchCase="'missing'" class="editor-state song-missing">
+      <p>That song is no longer in the library.</p>
+      <a routerLink="/songs">Back to the library</a>
+    </div>
+
+    <div *ngSwitchCase="'unreadable'" class="editor-state song-unreadable">
+      <p>This song cannot be opened: {{ reason }}</p>
+      <a routerLink="/songs">Back to the library</a>
+    </div>
+
+    <ng-container *ngSwitchCase="'ready'">
+      <app-song-toolbar
+        [doc]="doc"
+        [keys]="keys"
+        [canUndo]="history.canUndo"
+        [canRedo]="history.canRedo"
+        (edit)="run($event)"
+        (undo)="undo()"
+        (redo)="redo()"
+        (notice)="say($event)"
+        (sheetFocus)="focusSheet()"
+      ></app-song-toolbar>
+
+      <!-- One column for now; the Chords panel (task 8) is a second column beside the sheet. -->
+      <div class="editor-body">
+        <div class="sheet-pane">
+          <app-song-sheet
+            [initialDoc]="initialDoc"
+            [keys]="keys"
+            [numerals]="preferences.numerals"
+            [lyricSize]="preferences.lyricSize"
+            (docChanged)="onDocChanged($event)"
+            (historyChanged)="onHistoryChanged($event)"
+            (refused)="say($event, true)"
+            (notice)="say($event)"
+          ></app-song-sheet>
+        </div>
+      </div>
+    </ng-container>
+  </ng-container>
 </div>

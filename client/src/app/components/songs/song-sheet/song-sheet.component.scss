@@ -1,0 +1,246 @@
+// The sheet's colours, as the song pages name them, each with its own value as the fallback so the sheet renders the
+// same in its own specs, outside the page that sets them. Chord names are the app's in-scale blue, lightened to read
+// on the dark surface (6:1); a selected chord takes the accent the flat tools use for "this one".
+:host {
+  --sheet-text: var(--songs-text, #ecf0f1);
+  --sheet-text-dim: var(--songs-text-dim, #adbcc8);
+  --sheet-chord: #5dade2;
+  --sheet-accent: var(--songs-accent, #3498db);
+  --sheet-menu: var(--songs-bar, #2c3e50);
+  --sheet-border: var(--songs-border, #465666);
+
+  display: block;
+}
+
+// The three lyric sizes `Aa` steps through. Names, headers and the room above each line are all in `em` of this.
+.song-sheet {
+  --lyric-size: 1.1rem;
+
+  &[data-lyric-size='small'] {
+    --lyric-size: 0.95rem;
+  }
+
+  &[data-lyric-size='large'] {
+    --lyric-size: 1.35rem;
+  }
+}
+
+// Everything below is ProseMirror's DOM or a node view's, which Angular's emulated encapsulation never marks - hence
+// `::ng-deep`, kept under `:host .song-sheet` so nothing outside the sheet is touched.
+:host ::ng-deep .song-sheet {
+  // prosemirror-view's own stylesheet (`style/prosemirror.css`), which whitespace and the caret depend on, restated
+  // here rather than added to the global bundle every page downloads.
+  .ProseMirror {
+    position: relative;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+    white-space: break-spaces;
+    font-variant-ligatures: none;
+    font-feature-settings: 'liga' 0;
+  }
+
+  .ProseMirror-hideselection *::selection {
+    background: transparent;
+  }
+
+  .ProseMirror-hideselection {
+    caret-color: transparent;
+  }
+
+  .ProseMirror [draggable][contenteditable='false'] {
+    user-select: text;
+  }
+
+  img.ProseMirror-separator {
+    display: inline !important;
+    border: none !important;
+    margin: 0 !important;
+  }
+
+  .song-sheet-editor {
+    min-height: 100%;
+    padding: 1rem 2rem 6rem;
+    outline: none;
+    color: var(--sheet-text);
+    caret-color: var(--sheet-text);
+    // Monospace, so a letter is a letter's width and a chord over the fifth letter of a line is over the fifth
+    // letter of every copy of it - and a chord sheet copied out as text keeps its columns.
+    font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: var(--lyric-size);
+  }
+
+  .song-section {
+    margin-bottom: 1.25em;
+  }
+
+  // ---------------------------------------------------------------------------
+  // The section header: `[Verse 1]` and its ⋮ menu
+  // ---------------------------------------------------------------------------
+
+  .song-section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    min-height: 2em;
+    user-select: none;
+    color: var(--sheet-text-dim);
+  }
+
+  .song-section-label {
+    font-weight: 700;
+    color: var(--sheet-text);
+  }
+
+  .song-section-bracket {
+    color: var(--sheet-text-dim);
+  }
+
+  .song-section-kind {
+    font-family: system-ui, sans-serif;
+    font-size: 0.75em;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .song-section-rename {
+    width: 14em;
+    padding: 0.15em 0.4em;
+    background-color: var(--songs-surface, #1a252f);
+    border: 1px solid var(--sheet-border);
+    border-radius: 3px;
+    color: var(--sheet-text);
+    font: inherit;
+    font-weight: 700;
+
+    &:focus-visible {
+      outline: 2px solid var(--sheet-text);
+      outline-offset: -1px;
+    }
+  }
+
+  .song-section-menu-wrap {
+    position: relative;
+  }
+
+  // The flat tool style: no chrome until hovered, colour only while its menu is open.
+  .song-section-menu-toggle,
+  .song-section-menu-item {
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    color: var(--sheet-text);
+    font-family: system-ui, sans-serif;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 90ms ease-out;
+
+    &:hover:not(.on) {
+      background-color: rgb(255 255 255 / 10%);
+    }
+
+    &:active {
+      background-color: rgb(255 255 255 / 16%);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--sheet-text);
+      outline-offset: -2px;
+    }
+  }
+
+  .song-section-menu-toggle {
+    padding: 0.1rem 0.45rem;
+    line-height: 1.2;
+    color: var(--sheet-text-dim);
+
+    &.on {
+      background-color: var(--sheet-accent);
+      color: #fff;
+    }
+  }
+
+  .song-section-menu {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    min-width: 9rem;
+    padding: 0.25rem;
+    background-color: var(--sheet-menu);
+    border: 1px solid var(--sheet-border);
+    border-radius: 6px;
+    box-shadow: 0 6px 20px rgb(0 0 0 / 40%);
+
+    &[hidden] {
+      display: none;
+    }
+  }
+
+  .song-section-menu-item {
+    padding: 0.4rem 0.75rem;
+    text-align: left;
+
+    // Dimmed, not hidden: pressing it says why it cannot run.
+    &[aria-disabled='true'] {
+      opacity: 0.42;
+      cursor: not-allowed;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Lyric lines and the chords over them
+  // ---------------------------------------------------------------------------
+
+  // Every line keeps the room above it for a row of names, whether or not it has chords yet, so placing the first
+  // chord on a line never shifts the lines below it.
+  .song-lyric-line {
+    margin: 0;
+    padding-top: 1.25em;
+    line-height: 1.35;
+    min-height: 1.35em;
+
+    &.is-placeholder::before {
+      content: attr(data-placeholder);
+      float: left;
+      height: 0;
+      color: var(--sheet-text-dim);
+      opacity: 0.6;
+      pointer-events: none;
+    }
+  }
+
+  // Zero wide: no content in the flow, only the name positioned out of it. Left padding, set by `spaceChordNames`,
+  // is how a collision widens the line.
+  .song-chord {
+    position: relative;
+  }
+
+  // At the span's right edge - where its letter starts - and just above the line.
+  .song-chord-name {
+    position: absolute;
+    left: 100%;
+    bottom: 100%;
+    border-radius: 2px;
+    color: var(--sheet-chord);
+    font-family: system-ui, sans-serif;
+    font-size: 0.85em;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .song-chord.ProseMirror-selectednode {
+    outline: none;
+
+    // The highlight reaches past the name by a shadow rather than padding, so the name does not move off its letter.
+    .song-chord-name {
+      background-color: var(--sheet-accent);
+      box-shadow: 0 0 0 0.15em var(--sheet-accent);
+      color: #fff;
+    }
+  }
+}

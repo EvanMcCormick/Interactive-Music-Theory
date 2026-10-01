@@ -59,8 +59,8 @@ export interface SongAutosaveOptions<T> {
   maxWaitMs?: number;
 }
 
-/** The browser's own timers and clock. */
-const BROWSER_CLOCK: AutosaveClock = {
+/** The browser's own timers and clock: what an autosave runs on unless given another. */
+export const BROWSER_CLOCK: AutosaveClock = {
   now: () => Date.now(),
   setTimeout: (callback, ms) => setTimeout(callback, ms),
   clearTimeout: handle => clearTimeout(handle as ReturnType<typeof setTimeout>)

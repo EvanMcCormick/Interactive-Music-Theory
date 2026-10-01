@@ -1,0 +1,118 @@
+<div class="song-toolbar" role="toolbar" aria-label="Song" *ngIf="meta as meta">
+  <!-- Dimmed, not hidden, when there is nothing to undo: a press then does nothing, as Ctrl+Z does. -->
+  <div class="group">
+    <button
+      type="button"
+      class="tool undo"
+      aria-label="Undo"
+      title="Undo (Ctrl+Z)"
+      [attr.aria-disabled]="!canUndo"
+      (click)="undo.emit()"
+    >
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 14 4 9l5-5" />
+        <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+      </svg>
+    </button>
+    <button
+      type="button"
+      class="tool redo"
+      aria-label="Redo"
+      title="Redo (Ctrl+Y)"
+      [attr.aria-disabled]="!canRedo"
+      (click)="redo.emit()"
+    >
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="m15 14 5-5-5-5" />
+        <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
+      </svg>
+    </button>
+  </div>
+
+  <div class="group" role="group" aria-label="Key">
+    <span class="field-label" aria-hidden="true">Key</span>
+    <select #tonic class="key-tonic" aria-label="Key: tonic" (change)="chooseTonic(tonic)">
+      <option *ngFor="let option of tonicOptions; trackBy: trackByValue" [value]="option.value" [selected]="option.value === tonicValue">
+        {{ option.label }}
+      </option>
+    </select>
+    <select #scale class="key-scale" aria-label="Key: scale" (change)="chooseScale(scale)">
+      <option *ngIf="unlistedScale" [value]="meta.key.scaleId" disabled selected>{{ unlistedScale }}</option>
+      <optgroup *ngFor="let group of scaleGroups; trackBy: trackByName" [label]="group.name">
+        <option *ngFor="let entry of group.scales" [value]="entry.id" [selected]="entry.id === meta.key.scaleId">
+          {{ entry.name }}
+        </option>
+      </optgroup>
+    </select>
+    <button type="button" class="tool transpose-up" aria-label="Transpose up a semitone" title="Transpose up a semitone" (click)="transpose(1)">↑</button>
+    <button type="button" class="tool transpose-down" aria-label="Transpose down a semitone" title="Transpose down a semitone" (click)="transpose(-1)">↓</button>
+  </div>
+
+  <div class="group">
+    <label class="field">
+      <span class="field-label">BPM</span>
+      <input
+        #tempo
+        type="number"
+        class="song-tempo"
+        [min]="tempoMin"
+        [max]="tempoMax"
+        step="1"
+        [value]="meta.tempo"
+        (change)="commitTempo(tempo)"
+      />
+    </label>
+  </div>
+
+  <div class="group meter" role="group" aria-label="Time signature">
+    <select #numerator class="meter-numerator" aria-label="Beats in a bar" (change)="chooseMeter('numerator', numerator)">
+      <option *ngFor="let beats of numerators" [value]="beats" [selected]="beats === meta.timeSignature.numerator">{{ beats }}</option>
+    </select>
+    <span aria-hidden="true">/</span>
+    <select #denominator class="meter-denominator" aria-label="Beat note value" (change)="chooseMeter('denominator', denominator)">
+      <option *ngFor="let value of denominators" [value]="value" [selected]="value === meta.timeSignature.denominator">{{ value }}</option>
+    </select>
+  </div>
+
+  <div class="group">
+    <button
+      type="button"
+      class="tool numerals-toggle"
+      [class.on]="preferences.numerals"
+      [attr.aria-pressed]="preferences.numerals"
+      title="Show Roman numerals instead of chord names"
+      (click)="toggleNumerals()"
+    >I-IV</button>
+    <button
+      type="button"
+      class="tool lyric-size"
+      [attr.aria-label]="'Lyric size: ' + preferences.lyricSize"
+      [title]="'Lyric size: ' + preferences.lyricSize + ' (next: ' + nextLyricSize + ')'"
+      (click)="stepLyricSize()"
+    >Aa</button>
+  </div>
+
+  <div class="group add-section" (keydown.escape)="closeSectionMenu(sectionToggle, $event)">
+    <button
+      #sectionToggle
+      type="button"
+      class="tool add-section-toggle"
+      [class.on]="sectionMenuOpen"
+      aria-haspopup="menu"
+      aria-controls="song-add-section-menu"
+      [attr.aria-expanded]="sectionMenuOpen"
+      (click)="toggleSectionMenu()"
+    >+ Section</button>
+    <!-- Hidden with CSS rather than removed, so aria-controls always points at something. -->
+    <div class="menu-panel" id="song-add-section-menu" role="menu" aria-label="Add a section" [class.open]="sectionMenuOpen">
+      <button
+        *ngFor="let kind of sectionKinds"
+        type="button"
+        role="menuitem"
+        class="tool"
+        [attr.data-kind]="kind"
+        (click)="addSection(kind)"
+      >{{ kindNames[kind] }}</button>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,141 @@
+// The song pages' tokens, each with its own value as the fallback so the toolbar renders the same outside the page.
+:host {
+  --toolbar-bar: var(--songs-bar, #2c3e50);
+  --toolbar-surface: var(--songs-surface, #1a252f);
+  --toolbar-border: var(--songs-border, #465666);
+  --toolbar-text: var(--songs-text, #ecf0f1);
+  --toolbar-text-dim: var(--songs-text-dim, #adbcc8);
+  --toolbar-accent: var(--songs-accent, #3498db);
+
+  display: block;
+}
+
+.song-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  padding: 0.4rem 1.5rem;
+  background-color: var(--toolbar-bar);
+  border-bottom: 1px solid var(--toolbar-border);
+  color: var(--toolbar-text);
+  font-size: 0.9rem;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.field-label {
+  color: var(--toolbar-text-dim);
+}
+
+select,
+input {
+  padding: 0.3rem 0.4rem;
+  background-color: var(--toolbar-surface);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 4px;
+  color: var(--toolbar-text);
+  font: inherit;
+
+  &:focus-visible {
+    outline: 2px solid var(--toolbar-text);
+    outline-offset: -1px;
+  }
+}
+
+.key-scale {
+  max-width: 14rem;
+}
+
+.song-tempo {
+  width: 4.5rem;
+}
+
+// The flat tool style (composer palette): no chrome until hovered, colour only on the one that is on (`.on`).
+.tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  min-width: 2rem;
+  padding: 0.35rem 0.55rem;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--toolbar-text);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 90ms ease-out;
+
+  &:hover:not(.on) {
+    background-color: rgb(255 255 255 / 10%);
+  }
+
+  &:active {
+    background-color: rgb(255 255 255 / 16%);
+  }
+
+  &.on {
+    background-color: var(--toolbar-accent);
+    color: #fff;
+  }
+
+  &[aria-disabled='true'] {
+    opacity: 0.42;
+    cursor: not-allowed;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--toolbar-text);
+    outline-offset: -2px;
+  }
+}
+
+.numerals-toggle {
+  font-family: Georgia, 'Times New Roman', serif;
+  letter-spacing: 0.04em;
+}
+
+.add-section {
+  position: relative;
+}
+
+.menu-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  z-index: 60;
+  min-width: 9rem;
+  padding: 0.25rem;
+  flex-direction: column;
+  background-color: var(--toolbar-bar);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 40%);
+
+  &.open {
+    display: flex;
+  }
+
+  .tool {
+    justify-content: flex-start;
+    width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .song-toolbar {
+    padding: 0.4rem 1rem;
+  }
+}
