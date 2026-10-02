@@ -308,7 +308,7 @@ records the decisions and — where implementation disproved one — the correct
 | Audio transcription | `/transcribe` | Shipped. Basic Pitch detection, beat tracking, correctable review |
 | Circle of fifths | drawer | Shipped. Sets the key app-wide |
 | Progression composer | `/progression` | M1–M4 shipped. Sends a track to the composer, MIDI and `.gp` export |
-| Songwriting | `/songs` | Designed 2026-10-01, not yet planned. A lyric sheet with sections, chords over words as scale degrees, inline tab, playback, rhymes and syllables, voice memos, ChordPro import and export; in five milestones, S1-S5 |
+| Songwriting | `/songs` | Designed 2026-10-01; S1 planned in [plans/2026-10-01-songwriting-s1.md](plans/2026-10-01-songwriting-s1.md), proven against the code. A lyric sheet with sections, chords over words as scale degrees, inline tab, playback, rhymes and syllables, voice memos, ChordPro import and export; in five milestones, S1-S5 |
 
 **Progression composer milestones:**
 
@@ -380,9 +380,10 @@ and the user put it ahead of M3.
 
 **Pick up next**, in this order:
 
-1. **Plan and build songwriting S1**, the sheet: ProseMirror, the song model, the `/songs` pages,
-   chords over words, key and Transpose, the Chords tab, autosave. S2 to S5 follow it, in the
-   order the design gives.
+1. **Build songwriting S1**, the sheet, to [plans/2026-10-01-songwriting-s1.md](plans/2026-10-01-songwriting-s1.md):
+   ProseMirror, the song model, the `/songs` pages, chords over words, key and Transpose, the
+   Chords tab, hearing a chord, autosave, Open in Progression. Its "Corrections to the design" are
+   worth reading first. S2 to S5 follow it, in the order the design gives.
 2. **Design and plan M3**: the inspector, and the track strip's mixer and bar grid. Its scope is
    Part 1 of [the editor design](plans/2026-09-13-composer-editor-design.md); the strip's rows now
    carry mute and solo for the mixer to land on, and four of the five bugs in [TODO.md](TODO.md)
@@ -413,7 +414,8 @@ and the user put it ahead of M3.
 | Composer Editor M2 Plan | [plans/2026-09-13-composer-editor-m2.md](plans/2026-09-13-composer-editor-m2.md) | Implemented, with the corrections review made recorded in it |
 | The GP Viewer becomes the composer | [plans/2026-09-14-gp-composer-design.md](plans/2026-09-14-gp-composer-design.md) | Implemented, with the corrections building it found and the hand check recorded in it |
 | GP Composer Plan | [plans/2026-09-30-gp-composer.md](plans/2026-09-30-gp-composer.md) | Implemented, with the corrections review made recorded in it |
-| Songwriting | [plans/2026-10-01-songwriting-design.md](plans/2026-10-01-songwriting-design.md) | Designed, not yet planned |
+| Songwriting | [plans/2026-10-01-songwriting-design.md](plans/2026-10-01-songwriting-design.md) | Designed; S1 planned |
+| Songwriting S1 Plan | [plans/2026-10-01-songwriting-s1.md](plans/2026-10-01-songwriting-s1.md) | Planned and proven, not yet built |
 
 Implementation plans, one per milestone, sit beside each design in `plans/`. The
 transcription investigations that produced *negative* results are kept too — the onset
