@@ -1,0 +1,78 @@
+// The page's tokens (`--page-*`, declared on the Progression page's host) are read with their values as fallbacks, so
+// the banner renders as it will on the page even without one around it. Its own two: the accent is the composer's
+// "this one" blue, marking the progression as one that belongs somewhere else, and the link is a lighter blue than the
+// focus ring, measuring 4.8:1 on the raised surface where the focus blue measures 3.8:1.
+:host {
+  --handoff-accent: #3498db;
+  --handoff-link: #85c1e9;
+
+  display: block;
+}
+
+// No banner, no box: the rail's 1px gaps would otherwise draw an empty line above the Key block.
+:host(:empty) {
+  display: none;
+}
+
+.handoff {
+  padding: 0.85rem 1rem;
+  border-left: 3px solid var(--handoff-accent, #3498db);
+  background: var(--page-rail-raised, #34495e);
+  color: var(--page-text, #ecf0f1);
+}
+
+.handoff-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.handoff-dot {
+  margin: 0 0.15rem;
+  color: var(--page-text-dim, #adbcc8);
+}
+
+// A link-like button, flat as the user's tools are: the banner's one action, not a second accent.
+.handoff-back {
+  padding: 0.1rem 0.3rem;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--handoff-link, #85c1e9);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  transition: background-color 90ms ease-out;
+
+  &:hover {
+    background: rgb(255 255 255 / 10%);
+  }
+
+  &:active {
+    background: rgb(255 255 255 / 16%);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--page-focus, #5dade2);
+    outline-offset: 2px;
+  }
+}
+
+.handoff-key {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--page-text-dim, #adbcc8);
+
+  &.is-quiet {
+    margin: 0;
+  }
+}
+
+// Where the rail becomes a row of blocks (the page's own breakpoint), the banner takes the whole row above them.
+@media (max-width: 46rem) {
+  :host {
+    flex: 1 1 100%;
+  }
+}

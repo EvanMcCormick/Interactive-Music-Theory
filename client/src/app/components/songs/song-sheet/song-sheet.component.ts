@@ -113,6 +113,11 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
    * Only on a change, so a keystroke in the words, which moves the caret on every press, emits nothing.
    */
   @Output() readonly selectedChordChanged = new EventEmitter<ChordAtomAttrs | null>();
+  /**
+   * A section's ⋮ → Open in Progression: the section with this id is to go to the Progression page. The page does it -
+   * it saves the song first, and leaving is the page's to do - so the sheet only asks, and changes nothing.
+   */
+  @Output() readonly progressionOpened = new EventEmitter<string>();
 
   @ViewChild('mount', { static: true }) private mount?: ElementRef<HTMLElement>;
   @ViewChild('dropCaret', { static: true }) private dropCaret?: ElementRef<HTMLElement>;
@@ -448,7 +453,8 @@ export class SongSheetComponent implements AfterViewInit, AfterViewChecked, OnCh
       focusSectionMenu: id =>
         view.dom
           .querySelector<HTMLElement>(`[data-section-id="${CSS.escape(id)}"] .song-section-menu-toggle`)
-          ?.focus()
+          ?.focus(),
+      openInProgression: id => this.zone.run(() => this.progressionOpened.emit(id))
     };
   }
 }

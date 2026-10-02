@@ -232,8 +232,10 @@ function sameValue(a: unknown, b: unknown): boolean {
  * ProseMirror runs an attribute's `validate` in `Node.check()`, not when a
  * node is created or a step applied, so an edit that brings a chord in from
  * outside the document checks it here, once, rather than trusting the caller.
+ * Exported for the other road chords come in by from outside, Open in
+ * Progression's return (`song-progression-return.ts`).
  */
-function checkedChord(attrs: ChordAtomAttrs): Node | string {
+export function checkedChord(attrs: ChordAtomAttrs): Node | string {
   try {
     const node = songSchema.nodes.chord.create({
       id: attrs.id,

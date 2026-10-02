@@ -14,6 +14,7 @@ import { Subject, distinctUntilChanged, map, takeUntil } from 'rxjs';
 
 import { ChordPaletteComponent } from './components/chord-palette/chord-palette.component';
 import { PianoRollComponent } from './components/piano-roll/piano-roll.component';
+import { ProgressionHandoffBannerComponent } from './components/progression-handoff-banner/progression-handoff-banner.component';
 import { ProgressionNotationComponent } from './components/progression-notation/progression-notation.component';
 import { ProgressionStripComponent } from './components/progression-strip/progression-strip.component';
 import { ProgressionTransportComponent } from './components/progression-transport/progression-transport.component';
@@ -27,6 +28,7 @@ import { isEditableTarget } from '../../services/editable-target';
 import { errorOf } from '../../services/error-message';
 import { MusicTheoryService } from '../../services/music-theory.service';
 import { PROGRESSION_AUDIO, createToneApi } from '../../services/progression-audio';
+import { ProgressionHandoffService } from '../../services/progression-handoff.service';
 import { chordRootPitchClass } from '../../services/progression-generate';
 import { effectiveChord } from '../../services/progression-harmony';
 import { ProgressionPlayerService } from '../../services/progression-player.service';
@@ -159,6 +161,7 @@ interface AppSelection {
   imports: [
     ChordPaletteComponent,
     PianoRollComponent,
+    ProgressionHandoffBannerComponent,
     ProgressionNotationComponent,
     ProgressionStripComponent,
     ProgressionTransportComponent
@@ -234,6 +237,8 @@ export class ProgressionComponent implements OnInit, OnDestroy {
   sendLabel = 'Send to Composer';
 
   private readonly progression = inject(ProgressionService);
+  /** Open in Progression: whether the progression open is a song's section, whose key is the song's (`adopt`). */
+  private readonly handoff = inject(ProgressionHandoffService);
   private readonly musicTheory = inject(MusicTheoryService);
   private readonly player = inject(ProgressionPlayerService);
   private readonly exporter = inject(ComposerExportService);
@@ -826,6 +831,15 @@ export class ProgressionComponent implements OnInit, OnDestroy {
     // second lookup to establish - and `setKey` is documented to survive an id
     // it cannot resolve by offering no chords rather than by throwing.
     const preferSharps = this.musicTheory.shouldUseSharps();
+
+    // A song's section open here (Open in Progression) keeps the song's key:
+    // every section of the song shares it, and it is set on the song, so the
+    // circle must not re-key one section of it. The hand-off says so on the
+    // page's banner. Asked before the "already in this key" check below, so
+    // the banner also hears when the circle comes back to the song's key.
+    const offered = { tonic, scaleId: selection.itemId, preferSharps };
+    if (this.handoff.declineKey(this.progression.doc, offered)) return;
+
     const current = this.progression.doc.key;
     if (
       current.tonic === tonic &&

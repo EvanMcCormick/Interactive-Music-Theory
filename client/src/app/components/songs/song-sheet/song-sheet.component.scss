@@ -197,6 +197,9 @@
   .song-section-menu-item {
     padding: 0.4rem 0.75rem;
     text-align: left;
+    // One line each, the menu as wide as its longest item: the header sits inside the editor, whose `break-spaces`
+    // would otherwise fold "Open in Progression" onto two lines at the menu's minimum width.
+    white-space: nowrap;
 
     // Dimmed, not hidden: pressing it says why it cannot run.
     &[aria-disabled='true'] {

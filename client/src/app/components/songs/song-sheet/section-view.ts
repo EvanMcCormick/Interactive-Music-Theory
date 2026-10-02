@@ -22,7 +22,7 @@ import { sectionHeadingOf } from '../../../services/song-editor-plugins';
  *
  * Built with the DOM directly rather than as an Angular component: a node view is made and thrown away by
  * ProseMirror as sections are added, moved and undone, and an Angular view per section would have to be created,
- * attached and destroyed in step with it for a header and five buttons.
+ * attached and destroyed in step with it for a header and six buttons.
  */
 
 /** What the sheet gives each section header: a way to run its commands, and to say what it did. */
@@ -37,6 +37,8 @@ export interface SectionHost {
   focusEditor(): void;
   /** Focuses the ⋮ button of the section `id`, wherever it now is. */
   focusSectionMenu(id: string): void;
+  /** Open in Progression: asks the page to send the section `id` to the Progression page. */
+  openInProgression(id: string): void;
 }
 
 /** How each kind is written where the sheet names one: the "+ Section" menu, and a header whose label does not say it. */
@@ -50,13 +52,18 @@ export const SECTION_KIND_NAMES: Readonly<Record<SectionKind, string>> = Object.
   other: 'Section'
 });
 
-type MenuAction = 'rename' | 'up' | 'down' | 'duplicate' | 'delete';
+type MenuAction = 'rename' | 'up' | 'down' | 'duplicate' | 'progression' | 'delete';
 
+/**
+ * The menu, in order. Open in Progression sits with the section's other ways of working, and Delete stays last, where
+ * a destructive item belongs - and where End and a wrap from the top land.
+ */
 const MENU_ITEMS: readonly { action: MenuAction; text: string }[] = [
   { action: 'rename', text: 'Rename' },
   { action: 'up', text: 'Move up' },
   { action: 'down', text: 'Move down' },
   { action: 'duplicate', text: 'Duplicate' },
+  { action: 'progression', text: 'Open in Progression' },
   { action: 'delete', text: 'Delete' }
 ];
 
@@ -272,10 +279,14 @@ export class SectionView implements NodeView {
     }
   };
 
-  /** The edit an item runs, or null for Rename, which opens a field first. */
+  /**
+   * The edit an item runs, or null for the two that are not edits: Rename, which opens a field first, and Open in
+   * Progression, which the page does - it changes nothing in the song.
+   */
   private editFor(action: MenuAction): SongEdit | null {
     switch (action) {
       case 'rename':
+      case 'progression':
         return null;
       case 'up':
         return moveSection(this.id, -1);
@@ -297,14 +308,21 @@ export class SectionView implements NodeView {
    * - **Delete**: in the lyrics, since the menu went with its section. **No confirm**: a deleted section is one Undo
    *   away (Ctrl+Z, or the toolbar's Undo), ids and all, which a dialog in front of every delete would only slow; the
    *   live region says so. The library's song delete asks because it has no undo.
+   * - **Open in Progression**: back on this section's ⋮, then handed to the page, which saves the song and leaves for
+   *   the Progression page - or stays, saying why, with the focus where the user left it.
    */
   private choose(action: MenuAction): void {
-    this.closeMenu(false);
-    const edit = this.editFor(action);
-    if (edit === null) {
+    this.closeMenu(action === 'progression');
+    if (action === 'rename') {
       this.startRename();
       return;
     }
+    if (action === 'progression') {
+      this.host.openInProgression(this.id);
+      return;
+    }
+    const edit = this.editFor(action);
+    if (edit === null) return;
 
     const { id, label } = this;
     const changed = this.host.run(edit);

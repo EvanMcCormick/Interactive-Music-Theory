@@ -1,0 +1,9 @@
+<section *ngIf="view as banner" class="handoff" aria-label="Song section">
+  <p class="handoff-text">
+    Editing <strong>{{ banner.sectionLabel }}</strong> of “{{ banner.songTitle }}”
+    <span class="handoff-dot" aria-hidden="true">·</span>
+    <button type="button" class="handoff-back" (click)="back()">Back to song</button>
+  </p>
+  <!-- Always in the banner and only its words change, so a turn of the circle is announced (see the component). -->
+  <p class="handoff-key" role="status" [class.is-quiet]="!banner.keyNote">{{ banner.keyNote }}</p>
+</section>

@@ -159,6 +159,25 @@
   }
 }
 
+// Chords waiting on the user after their section went (Open in Progression): a bar between the toolbar and the sheet,
+// marked with the accent on its edge so it reads as something to answer rather than a message that has passed.
+.return-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  padding: 0.5rem 1.5rem;
+  border-left: 3px solid var(--songs-accent);
+  border-bottom: 1px solid var(--songs-border);
+  background-color: var(--songs-raised);
+}
+
+.return-offer-text {
+  flex: 1 1 18rem;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
 .editor-state {
   margin: 0;
   padding: 1.5rem;

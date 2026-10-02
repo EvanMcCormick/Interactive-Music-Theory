@@ -19,10 +19,11 @@ import { Node } from 'prosemirror-model';
 import { Subject, from } from 'rxjs';
 import { distinctUntilChanged, map, switchMap, takeUntil, tap } from 'rxjs/operators';
 import type { ChordDegree, ProgressionKey, RollNote } from '../../../models/progression.model';
-import type { ChordAtomAttrs, SongDoc } from '../../../models/song.model';
+import type { ChordAtomAttrs, SectionKind, SongDoc } from '../../../models/song.model';
 import { messageOf } from '../../../services/error-message';
 import { MusicTheoryService } from '../../../services/music-theory.service';
 import { PROGRESSION_AUDIO, createToneApi } from '../../../services/progression-audio';
+import { ProgressionHandoffService, ProgressionReturn } from '../../../services/progression-handoff.service';
 import { ProgressionKeyContext } from '../../../services/progression-key-context';
 import { ProgressionPlayerService } from '../../../services/progression-player.service';
 import { relativeTimeOf } from '../../../services/relative-time';
@@ -38,6 +39,12 @@ import {
 import { chordSlotOf, songMetaOf } from '../../../services/song-document';
 import { CaretCoords, ChordFieldRequest } from '../../../services/song-editor-plugins';
 import { SongLibraryService } from '../../../services/song-library.service';
+import {
+  addReturnedSection,
+  applyReturn,
+  sectionHandoffOf,
+  songAfterReturnOf
+} from '../../../services/song-progression-return';
 import { SongSheetPreferencesService } from '../../../services/song-sheet-preferences.service';
 import { SongChordFieldComponent } from '../song-chord-field/song-chord-field.component';
 import { SongChordPanelComponent } from '../song-chord-panel/song-chord-panel.component';
@@ -75,6 +82,18 @@ interface ChordFieldState extends PaneAnchor {
 /** The chord popover open: whose, and where it sits. */
 interface ChordPopoverState extends PaneAnchor {
   id: string;
+}
+
+/**
+ * Chords that came back from the Progression page for a section no longer in the song, waiting for the user to put
+ * them in a new section or let them go (see "Open in Progression" in the class comment).
+ */
+export interface ReturnOffer {
+  label: string;
+  kind: SectionKind;
+  chords: readonly ChordAtomAttrs[];
+  /** What the offer says: which section, and how many chords. */
+  text: string;
 }
 
 /** The side panel's tabs. Only Chords in S1; S4 adds Words and Memos. */
@@ -182,6 +201,16 @@ type Opened =
  * region, "Sound could not start: <reason>", rather than only logged as the progression page does: here the chord was
  * placed, and the user should know why they did not hear it. Nothing is remembered about the failure, so the next
  * click asks the browser again.
+ *
+ * **Open in Progression** (brief decision 7), from a section's ⋮: the song is saved first - a flush, so the song this
+ * page opens on the way back is the stored one, and a song that cannot be saved is not left: the reason is said and
+ * the page stays - and then the section goes out through `ProgressionHandoffService`. **On the way back** the page
+ * loads the song as always, makes its sheet at once, and applies what the Progression page handed back
+ * (`takeReturn`, `songAfterReturnOf`) through the sheet as one undo step, before anything else can reach it; what that
+ * did - chords changed, added at the end of a line, a reorder not applied, a key or tempo not brought back - is said in
+ * the live region. **A section deleted while it was out** (in another tab) cannot take its chords back, and they are
+ * not dropped: the page offers to put them in a new section at the end of the song, or to let them go, and does
+ * neither until asked.
  */
 @Component({
   selector: 'app-song-editor',
@@ -209,6 +238,7 @@ export class SongEditorComponent implements OnInit, OnDestroy {
   private readonly zone = inject(NgZone);
   private readonly clock = inject(SONG_AUTOSAVE_CLOCK);
   private readonly player = inject(ProgressionPlayerService);
+  private readonly handoff = inject(ProgressionHandoffService);
   private readonly destroy$ = new Subject<void>();
   /** Ends the subscriptions of the song open now, when another is opened in its place or the page goes. */
   private readonly songClosed$ = new Subject<void>();
@@ -250,11 +280,16 @@ export class SongEditorComponent implements OnInit, OnDestroy {
   readonly panelTabs = PANEL_TABS;
   selectedTab: PanelTabId = 'chords';
 
+  /** Chords back from the Progression page for sections no longer in the song, each waiting on the user. */
+  returnOffers: readonly ReturnOffer[] = [];
+
   /** The live region's two halves (see the class comment). */
   messages: readonly [string, string] = ['', ''];
   messageIsError = false;
 
   private autosave: SongAutosave<Node> | null = null;
+  /** The id of the song open, which Open in Progression sends and a return is taken by. */
+  private songId: string | null = null;
   private rewordTimer: unknown = null;
 
   ngOnInit(): void {
@@ -504,6 +539,53 @@ export class SongEditorComponent implements OnInit, OnDestroy {
     sheet.focus();
   }
 
+  // ---------------------------------------------------------------------------
+  // Open in Progression
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A section's ⋮ → Open in Progression: saves the song, then sends the section to the Progression page. A song that
+   * cannot be saved stays open here, with the reason in the live region (see the class comment). Read after the save,
+   * so whatever was typed while it ran goes too; leaving the page saves that as well.
+   */
+  async openInProgression(sectionId: string): Promise<void> {
+    const autosave = this.autosave;
+    const songId = this.songId;
+    if (autosave === null || songId === null) return;
+
+    this.commitFields();
+    const status = await autosave.flush();
+    // Another song opened in the page while it saved, or the page went: this section is no longer the one asked for.
+    if (this.autosave !== autosave) return;
+    if (status.kind === 'failed') {
+      this.say(`Not opened in Progression: the song could not be saved first. ${status.reason}`, true);
+      return;
+    }
+
+    const doc = this.sheet?.editorState()?.doc ?? null;
+    const section = doc === null ? null : sectionHandoffOf(songId, doc, sectionId);
+    if (section === null) {
+      this.say('That section is no longer in the song.', true);
+      return;
+    }
+    this.handoff.open(section);
+  }
+
+  /** "Put them in a new section": the offer's chords, in a section of their own at the end of the song. */
+  keepReturnedChords(offer: ReturnOffer): void {
+    if (this.sheet?.run(addReturnedSection(offer.label, offer.kind, offer.chords))) {
+      this.dropOffer(offer);
+      this.say(`Put the chords that came back for ${offer.label} in a new section at the end of the song.`);
+      this.focusSheet();
+    }
+  }
+
+  /** "Discard them": the offer's chords go, on the user's word. */
+  discardReturnedChords(offer: ReturnOffer): void {
+    this.dropOffer(offer);
+    this.say(`Discarded the chords that came back for ${offer.label}.`);
+  }
+
   /** Retry, after a failed save: saves now, with the change that failed or anything newer. */
   retry(): void {
     void this.autosave?.flush();
@@ -564,10 +646,59 @@ export class SongEditorComponent implements OnInit, OnDestroy {
       this.reason = opened.reason;
     } else {
       this.startAutosave(opened.record);
+      this.songId = opened.record.id;
       this.initialDoc = opened.node;
       this.adopt(opened.node);
       this.phase = 'ready';
+      // The sheet is made now rather than on the next frame, so what came back from the Progression page goes in
+      // before anything else can reach the song.
+      this.changes.detectChanges();
+      this.applyReturns(opened.record.id);
     }
+    this.changes.markForCheck();
+  }
+
+  /**
+   * Applies what the Progression page handed back for the song `songId`, each return as one undo step through the
+   * sheet, and says in the live region what that did. A return whose section has gone becomes an offer.
+   */
+  private applyReturns(songId: string): void {
+    const sheet = this.sheet;
+    if (sheet === undefined) return;
+    const said: string[] = [];
+    let failed = false;
+    for (const back of this.handoff.takeReturn(songId)) {
+      const state = sheet.editorState();
+      if (state === null) break;
+      const outcome = songAfterReturnOf(state.doc, back.sectionId, back.returned, back.sent);
+      if (outcome.kind === 'refused') {
+        said.push(outcome.reason);
+        failed = true;
+      } else if (outcome.kind === 'sectionGone') {
+        said.push(this.offerReturned(back, outcome.chords));
+      } else if (outcome.kind === 'changes') {
+        // A refusal to apply is said by the sheet, on `refused`.
+        const applied = outcome.steps.length === 0 || sheet.run(applyReturn(state.doc, outcome.steps));
+        if (applied) said.push(...outcome.notices);
+      }
+    }
+    if (said.length > 0) this.say(said.join(' '), failed);
+  }
+
+  /** Puts the chords of `back`, whose section has gone, on offer, and returns what to say about it. */
+  private offerReturned(back: ProgressionReturn, chords: readonly ChordAtomAttrs[]): string {
+    const label = back.sectionLabel;
+    if (chords.length === 0) {
+      return `${label} is no longer in this song, and it came back from the Progression page with no chords.`;
+    }
+    const count = `${chords.length} chord${chords.length === 1 ? '' : 's'}`;
+    const text = `${label} is no longer in this song. ${count} came back for it from the Progression page.`;
+    this.returnOffers = [...this.returnOffers, { label, kind: back.sectionKind, chords, text }];
+    return `${text} Put them in a new section, or discard them.`;
+  }
+
+  private dropOffer(offer: ReturnOffer): void {
+    this.returnOffers = this.returnOffers.filter(each => each !== offer);
     this.changes.markForCheck();
   }
 
@@ -603,6 +734,8 @@ export class SongEditorComponent implements OnInit, OnDestroy {
     void autosave?.destroy();
 
     this.phase = 'loading';
+    this.songId = null;
+    this.returnOffers = [];
     this.initialDoc = null;
     this.doc = null;
     this.key = null;

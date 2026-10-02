@@ -409,6 +409,18 @@ describe('SongSheetComponent', () => {
       expect(labels()).toEqual(['Chorus', 'Verse 1', 'Verse 2']);
     });
 
+    it('asks the page to open a section in the Progression page, changing nothing itself', () => {
+      open(song(section('v1', 'Verse 1'), section('c1', 'Chorus')));
+      const asked: string[] = [];
+      sheet.progressionOpened.subscribe(id => asked.push(id));
+
+      choose(1, 'Open in Progression');
+
+      expect(asked).toEqual(['c1']);
+      expect(changed).toEqual([]);
+      expect(document.activeElement).toBe(toggles()[1]);
+    });
+
     it('reports why a section command was refused', () => {
       open(song(section('v1', 'Verse 1')));
       choose(0, 'Delete');

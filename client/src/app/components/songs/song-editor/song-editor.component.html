@@ -77,6 +77,25 @@
         (sheetFocus)="focusSheet()"
       ></app-song-toolbar>
 
+      <!--
+        Chords back from the Progression page for a section that is no longer in the song: kept until the user says
+        what to do with them. The live region says so as they arrive; this is where the answer is given.
+      -->
+      <div
+        *ngFor="let offer of returnOffers"
+        class="return-offer"
+        role="group"
+        aria-label="Chords from the Progression page"
+      >
+        <p class="return-offer-text">{{ offer.text }}</p>
+        <button type="button" class="tool keep-returned" (click)="keepReturnedChords(offer)">
+          Put them in a new section
+        </button>
+        <button type="button" class="tool discard-returned" (click)="discardReturnedChords(offer)">
+          Discard them
+        </button>
+      </div>
+
       <!-- The sheet, and the side panel beside it - or under it on a narrow screen (see the stylesheet). -->
       <div class="editor-body" [class.panel-closed]="!preferences.panelOpen">
         <div #sheetPane class="sheet-pane">
@@ -92,6 +111,7 @@
             (notice)="say($event)"
             (chordFieldRequested)="openChordField($event)"
             (chordOpened)="openChordPopover($event)"
+            (progressionOpened)="openInProgression($event)"
           ></app-song-sheet>
 
           <!-- The field `[` opens, under the caret. Placing, Escape and leaving it all close it (see the class comment). -->
