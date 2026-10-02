@@ -1,6 +1,6 @@
 import { Node } from 'prosemirror-model';
 import { redoDepth, undoDepth } from 'prosemirror-history';
-import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
+import { AllSelection, EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { createExtensions } from '../models/progression-normalize';
 import { ProgressionKey } from '../models/progression.model';
@@ -24,9 +24,10 @@ import { songSchema } from './song-schema';
  *
  * Keys and typed text go through a real `EditorView` on a detached element,
  * because that is where ProseMirror routes them (`handleKeyDown`,
- * `handleTextInput`); nothing is attached to the page, and every view is
- * destroyed after its spec. History grouping is asked of a bare state, as the
- * view would apply the same transactions.
+ * `handleTextInput`); nothing is attached to the page but the caret motions'
+ * views, which go through ProseMirror's whole key handling (see there), and
+ * every view is destroyed after its spec. History grouping is asked of a bare
+ * state, as the view would apply the same transactions.
  */
 const C_MAJOR: ProgressionKey = { tonic: 0, scaleId: 'ionian', preferSharps: true };
 const FOUR_FOUR = { numerator: 4, denominator: 4, isCommon: true };
@@ -357,6 +358,193 @@ describe('songEditorPlugins', () => {
       const editor = viewOf(doc, caret(3));
 
       expect(press(editor, 'ArrowRight', { alt: true })).toBeFalse();
+    });
+  });
+
+  /**
+   * Every other way a caret moves, beside chords: word jumps, Shift, Home and End, up and down.
+   *
+   * These go through ProseMirror's *whole* key handling, not just the plugins' `handleKeyDown`: a keydown event is
+   * dispatched on the editor, so the view's own arrow handling runs after the plugins, as it does in the browser - and
+   * that is where a chord was being selected. The view is attached to the page, as the sheet's is. A synthetic event
+   * makes no native motion, so a key that is not taken (`preventDefault`) leaves the editor's selection where the
+   * plugins put it, and the browser's own motion is what would happen next.
+   */
+  describe('caret motions beside a chord', () => {
+    const KEY_CODES: Record<string, number> = {
+      ArrowLeft: 37,
+      ArrowUp: 38,
+      ArrowRight: 39,
+      ArrowDown: 40,
+      Home: 36,
+      End: 35,
+      Delete: 46
+    };
+
+    interface Held {
+      ctrl?: boolean;
+      alt?: boolean;
+      shift?: boolean;
+      /** Ctrl, or Cmd on a Mac. */
+      mod?: boolean;
+    }
+
+    const c = chord(0);
+    const f = chord(3);
+    const g = chord(4);
+    // A chord at the start of the line, one mid-line, one after its last word.
+    const doc = song(section('s1', 'Verse 1', line('one'), line(c, 'Wondering ', f, 'where', g)));
+    const lineStart = before(doc, 'Wondering') - 1;
+    const where = before(doc, 'where');
+    const lineEnd = where + 'where'.length + 1;
+
+    function attachedViewOf(start: Node, selection: (d: Node) => Selection): EditorView {
+      const mount = document.body.appendChild(document.createElement('div'));
+      view = new EditorView(mount, { state: EditorState.create({ doc: start, selection: selection(start), plugins: songEditorPlugins() }) });
+      return view;
+    }
+
+    afterEach(() => view?.dom.parentElement?.remove());
+
+    /** Sends a keydown through ProseMirror's whole key handling (see above); answers whether the key was taken. */
+    function keydown(target: EditorView, key: string, held: Held = {}): boolean {
+      const event = new KeyboardEvent('keydown', {
+        key,
+        keyCode: KEY_CODES[key] ?? key.toUpperCase().charCodeAt(0),
+        ctrlKey: (held.ctrl ?? false) || ((held.mod ?? false) && !MAC),
+        metaKey: (held.mod ?? false) && MAC,
+        altKey: held.alt ?? false,
+        shiftKey: held.shift ?? false,
+        bubbles: true,
+        cancelable: true
+      });
+      target.dom.dispatchEvent(event);
+      return event.defaultPrevented;
+    }
+
+    function textSelection(target: EditorView): { anchor: number; head: number } | string {
+      const selection = target.state.selection;
+      return selection instanceof TextSelection ? { anchor: selection.anchor, head: selection.head } : selection.toJSON()['type'];
+    }
+
+    // Ctrl is the word jump on Windows and Linux, Alt (Option) on a Mac.
+    const WORD_JUMPS: readonly Held[] = [{ ctrl: true }, { alt: true }];
+
+    it('take a word jump past the chords beside the caret, and leave the jump itself to the browser', () => {
+      const jumps: [string, number, number][] = [
+        ['ArrowRight', lineStart, lineStart + 1],
+        ['ArrowRight', where - 1, where],
+        ['ArrowLeft', where, where - 1]
+      ];
+      for (const held of WORD_JUMPS) {
+        for (const [key, from, to] of jumps) {
+          const editor = attachedViewOf(doc, caret(from));
+          const context = `${JSON.stringify(held)} ${key} from ${from}`;
+
+          expect(keydown(editor, key, held)).withContext(context).toBeFalse();
+          expect(textSelection(editor)).withContext(context).toEqual({ anchor: to, head: to });
+          editor.dom.parentElement?.remove();
+          editor.destroy();
+        }
+      }
+    });
+
+    it('never select the chord on the way, so a second Alt+arrow cannot move it', () => {
+      const editor = attachedViewOf(doc, caret(lineStart));
+
+      keydown(editor, 'ArrowRight', { alt: true });
+      keydown(editor, 'ArrowRight', { alt: true });
+
+      expect(editor.state.doc.eq(doc)).toBeTrue();
+    });
+
+    it('pass every chord piled on one letter in one press', () => {
+      const piled = song(section('s1', 'Verse 1', line(c, f, 'Wo')));
+      const editor = attachedViewOf(piled, caret(2));
+
+      expect(keydown(editor, 'ArrowRight', { ctrl: true })).toBeFalse();
+      expect(textSelection(editor)).toEqual({ anchor: 4, head: 4 });
+    });
+
+    it('pass the chords after a line\'s last word, leaving the browser to go on to the next line', () => {
+      const editor = attachedViewOf(doc, caret(lineEnd - 1));
+
+      expect(keydown(editor, 'ArrowRight', { ctrl: true })).toBeFalse();
+      expect(textSelection(editor)).toEqual({ anchor: lineEnd, head: lineEnd });
+    });
+
+    it('extend a Shift selection over the chords beside its head, keeping its anchor, for the browser to extend on', () => {
+      const extensions: [Held, string, { anchor: number; head: number }, number][] = [
+        [{ shift: true }, 'ArrowRight', { anchor: lineStart, head: lineStart }, lineStart + 1],
+        [{ shift: true }, 'ArrowLeft', { anchor: where + 3, head: where }, where - 1],
+        [{ shift: true, ctrl: true }, 'ArrowRight', { anchor: where - 3, head: where - 1 }, where],
+        [{ shift: true, alt: true }, 'ArrowLeft', { anchor: where + 3, head: where }, where - 1]
+      ];
+      for (const [held, key, { anchor, head }, to] of extensions) {
+        const editor = attachedViewOf(doc, d => TextSelection.create(d, anchor, head));
+        const context = `${JSON.stringify(held)} ${key} from ${anchor}-${head}`;
+
+        expect(keydown(editor, key, held)).withContext(context).toBeFalse();
+        expect(textSelection(editor)).withContext(context).toEqual({ anchor, head: to });
+        editor.dom.parentElement?.remove();
+        editor.destroy();
+      }
+    });
+
+    it('leave a selected chord\'s Alt+arrows to the chord, and a word jump with no chord beside it untouched', () => {
+      const selected = attachedViewOf(doc, d => NodeSelection.create(d, where - 1));
+      expect(keydown(selected, 'ArrowRight', { alt: true })).toBeTrue();
+      expect(outlineOf(selected.state.doc)).toEqual(['Verse 1 (verse): one / *Wondering w*here*']);
+      selected.dom.parentElement?.remove();
+      selected.destroy();
+
+      const midWord = attachedViewOf(doc, caret(lineStart + 4));
+      expect(keydown(midWord, 'ArrowRight', { ctrl: true })).toBeFalse();
+      expect(textSelection(midWord)).toEqual({ anchor: lineStart + 4, head: lineStart + 4 });
+    });
+
+    it('leave Home, End, up and down to the browser, beside a chord or not', () => {
+      for (const key of ['Home', 'End', 'ArrowUp', 'ArrowDown']) {
+        for (const held of [{}, { shift: true }]) {
+          for (const at of [lineStart, where - 1, where, lineEnd - 1]) {
+            const editor = attachedViewOf(doc, caret(at));
+            const context = `${JSON.stringify(held)} ${key} from ${at}`;
+
+            expect(keydown(editor, key, held)).withContext(context).toBeFalse();
+            expect(textSelection(editor)).withContext(context).toEqual({ anchor: at, head: at });
+            editor.dom.parentElement?.remove();
+            editor.destroy();
+          }
+        }
+      }
+    });
+
+    it('delete a chord with a selection across it, as the letter under it goes too', () => {
+      const editor = attachedViewOf(doc, d => TextSelection.create(d, where - 2, where + 1));
+
+      expect(keydown(editor, 'Delete')).toBeTrue();
+
+      expect(outlineOf(editor.state.doc)).toEqual(['Verse 1 (verse): one / *Wonderinghere*']);
+    });
+
+    it('make select all and a typed letter one fresh section holding the letter', () => {
+      const twoSections = song(
+        section('s1', 'Verse 1', line(c, 'one')),
+        section('s2', 'Chorus', line('two ', f, 'three'))
+      );
+      const editor = attachedViewOf(twoSections, caret(3));
+
+      expect(keydown(editor, 'a', { mod: true })).toBeTrue();
+      expect(editor.state.selection).toEqual(jasmine.any(AllSelection));
+      // A letter typed over a selection that is not text in one line is ProseMirror's to insert, on keypress.
+      const typed = new KeyboardEvent('keypress', { key: 'x', charCode: 'x'.charCodeAt(0), bubbles: true, cancelable: true });
+      editor.dom.dispatchEvent(typed);
+
+      const result = editor.state.doc;
+      expect(() => result.check()).not.toThrow();
+      expect(sectionsOf(result).map(entry => entry.id)).toEqual([jasmine.stringMatching(/^[0-9a-f-]{36}$/)]);
+      expect(outlineOf(result)).toEqual(['Verse 1 (verse): x']);
+      expect(textSelection(editor)).toEqual({ anchor: 3, head: 3 });
     });
   });
 

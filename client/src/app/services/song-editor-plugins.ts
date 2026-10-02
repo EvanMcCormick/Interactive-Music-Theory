@@ -64,7 +64,24 @@ import { songSchema } from './song-schema';
  *   (`moveChordBy`). With a chord selected the key is always taken - at an edge
  *   the refusal is reported through `onRefuse` - so a Mac's Alt+arrow word jump
  *   cannot fire instead and drop the selection. With no chord selected they are
- *   left to the browser.
+ *   a word jump like any other (below).
+ * - **Every other left or right arrow** - the word jumps (Ctrl on Windows and
+ *   Linux, Alt on a Mac), Shift to extend a selection, both together - is the
+ *   browser's, as in any text, once the chords beside the caret are out of its
+ *   way (`passChordsPlugin`). ProseMirror's own arrow handling, which runs
+ *   when no plugin takes the key, treats an atom beside the caret as something
+ *   to *select*: a word jump beside a chord selected it instead of moving -
+ *   and a second Alt+arrow then moved the chord - and Shift took the chord
+ *   alone into the selection, nothing on screen growing. So the caret's head is
+ *   first moved past those chords, and the key is not taken: ProseMirror then
+ *   finds no atom beside the caret and leaves the motion to the browser, which
+ *   makes it from there exactly as it would in plain text.
+ * - **Home, End, ArrowUp and ArrowDown**, with Shift or without, are left to
+ *   the browser, and nothing here binds them: ProseMirror does not select an
+ *   atom for them, and the browser's own motions land at the line's ends and on
+ *   the line above or below wherever the chords are - checked on the sheet in
+ *   Chrome, key by key, with chords at a line's start, middle and end. The
+ *   specs pin that nothing in the editor takes them.
  *
  * ## `[`: the chord field on a line with words, a bracket on an empty line
  *
@@ -371,6 +388,55 @@ export function stepPastChord(dir: -1 | 1): Command {
   };
 }
 
+/**
+ * The selection a modified left (`-1`) or right (`1`) arrow should start
+ * from: its head moved past every chord beside it in that direction - only
+ * the head when `extend` (Shift), so the anchor stays; the caret itself
+ * otherwise. Null when no chord is there, or for a selection that is not text:
+ * a selected chord's keys are its own, and with words selected a word jump
+ * collapses the selection, which is the browser's to do.
+ */
+function selectionPastChordsOf(state: EditorState, dir: -1 | 1, extend: boolean): TextSelection | null {
+  const selection = state.selection;
+  if (!(selection instanceof TextSelection) || (!extend && !selection.empty)) return null;
+  const doc = state.doc;
+  const beside = (pos: number): Node | null => (dir > 0 ? doc.resolve(pos).nodeAfter : doc.resolve(pos).nodeBefore);
+
+  let head = selection.head;
+  if (!isChord(beside(head))) return null;
+  while (isChord(beside(head))) head += dir;
+  return TextSelection.create(doc, extend ? selection.anchor : head, head);
+}
+
+/**
+ * Moves the caret's head past the chords beside it before a modified left or
+ * right arrow, and leaves the key itself to ProseMirror and the browser (see
+ * the header).
+ *
+ * A `handleKeyDown` that changes the selection and still answers false, which
+ * a keymap command must not do: false is what lets the key go on to
+ * ProseMirror's own arrow handling - which, with no atom beside the caret
+ * now, declines it - and then to the browser's word jump or extension, made
+ * from the selection set here, because the view writes a dispatched
+ * selection to the DOM before the key's default action runs. The plain
+ * arrows are `stepPastChord`'s, which takes them; any modifier at all comes
+ * here, Cmd on a Mac too, whose line-start and line-end jumps lose nothing by
+ * starting past a chord.
+ */
+function passChordsPlugin(): Plugin {
+  return new Plugin({
+    props: {
+      handleKeyDown: (view, event) => {
+        const dir = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+        if (dir === 0 || !(event.shiftKey || event.ctrlKey || event.altKey || event.metaKey)) return false;
+        const next = selectionPastChordsOf(view.state, dir, event.shiftKey);
+        if (next !== null) view.dispatch(view.state.tr.setSelection(next));
+        return false;
+      }
+    }
+  });
+}
+
 /** Enter on a selected chord: asks for it to be opened, changing nothing. False with no chord selected or no listener. */
 function openSelectedChord(onOpen: ((chord: ChordAt) => void) | undefined): Command {
   return (state, dispatch) => {
@@ -455,6 +521,8 @@ function commandStepPlugin(): Plugin {
  * The order matters in two places. Key handlers run in list order, so the
  * song's keymap comes before `baseKeymap` - its Enter and arrows win - and the
  * section-edge hold after it, so it only answers what `baseKeymap` declined.
+ * The chord-passing hook follows the song's keymap, which has by then taken
+ * the plain arrows and a selected chord's Alt+arrows; it never takes a key.
  * And appended transactions run in list order too: the id plugin must repair a
  * command's ids *before* the step is closed behind it, or the repair would be
  * an undo step of its own, so `commandStepPlugin` is last.
@@ -464,6 +532,7 @@ export function songEditorPlugins(options: SongEditorOptions = {}): Plugin[] {
     chordFieldPlugin(options),
     inputRules({ rules: [bracketRule(options.keys)] }),
     keymap(songKeymap(options)),
+    passChordsPlugin(),
     keymap(baseKeymap),
     keymap(SECTION_EDGE_KEYMAP),
     history(),
