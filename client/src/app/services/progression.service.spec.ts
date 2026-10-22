@@ -644,4 +644,29 @@ describe('ProgressionService', () => {
       expect(currentState().selectedSlotId).toBeNull();
     });
   });
+
+  describe('suggest next', () => {
+    function suggestNext(): boolean {
+      let captured: boolean | undefined;
+      service.getSuggestNext().subscribe(value => (captured = value)).unsubscribe();
+      if (captured === undefined) throw new Error('getSuggestNext published nothing on subscribe');
+      return captured;
+    }
+
+    it('starts on', () => {
+      expect(suggestNext()).toBeTrue();
+    });
+
+    it('turns off and on again', () => {
+      service.setSuggestNext(false);
+      expect(suggestNext()).toBeFalse();
+      service.setSuggestNext(true);
+      expect(suggestNext()).toBeTrue();
+    });
+
+    it('is no edit to the document: nothing to undo', () => {
+      service.setSuggestNext(false);
+      expect(currentState().canUndo).toBeFalse();
+    });
+  });
 });

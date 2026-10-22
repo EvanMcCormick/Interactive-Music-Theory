@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
+import { BehaviorSubject, Observable } from 'rxjs';
 import {
   createExtensions,
   createOwnership,
@@ -173,6 +173,16 @@ export class ProgressionService {
   private readonly musicTheory = inject(MusicTheoryService);
 
   /**
+   * Whether the palette marks the chords that conventionally follow the
+   * selected one. A view preference rather than a fact about the document, so
+   * it is a subject of its own rather than a field on `ProgressionState`: that
+   * state is rebuilt from the document on every commit, through `derive`, and a
+   * preference threaded through it would have to survive every publish. No undo
+   * step and not saved across reloads - the transport's Loop behaves the same.
+   */
+  private readonly suggestNextSubject = new BehaviorSubject<boolean>(true);
+
+  /**
    * How a key id becomes a scale. A field initializer rather than a line in the
    * constructor, because it needs nothing but `musicTheory` - which the line
    * above has filled by the time this one runs - and it has to be in place this
@@ -234,6 +244,17 @@ export class ProgressionService {
 
   getState(): Observable<ProgressionState> {
     return this.store.getState();
+  }
+
+  /** Whether the palette marks the chords that conventionally follow the selected one. */
+  getSuggestNext(): Observable<boolean> {
+    return this.suggestNextSubject.asObservable();
+  }
+
+  /** Turns the palette's next-chord hints on or off. No undo step: it edits no document. */
+  setSuggestNext(on: boolean): void {
+    if (this.suggestNextSubject.getValue() === on) return;
+    this.suggestNextSubject.next(on);
   }
 
   get doc(): ProgressionDoc {
