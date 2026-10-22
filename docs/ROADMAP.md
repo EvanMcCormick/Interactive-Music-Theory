@@ -362,8 +362,31 @@ saved original opening there - and the steps that want ears.
 
 ## Where things stand
 
-**2026-09-30.** Written at the end of the GP milestone, so that the next one starts from a
+**2026-10-21.** Two things shipped on `main` in one session, so that the next one starts from a
 sentence rather than from a `git log`.
+
+**Shipped: next-chord hints** (`8e82d65`..`cda8ae8`), designed and built to
+[plans/2026-10-21-next-chord-hints-design.md](plans/2026-10-21-next-chord-hints-design.md). With a
+chord selected on `/progression`, a `›` marks the chords that conventionally follow it and a
+caption names each motion - dominant to tonic, deceptive, plagal. The tables (major, minor, the
+borrowed chords, secondary dominants and the church modes' cadences) live in
+`services/progression-next-chords.ts` as `likelyNextDegrees`, each entry checked against harmony
+references rather than the bass book that suggested the idea. Building it moved the caption from
+under the title to under the append rows: every append selects, and a caption above the chords
+pushed them under the pointer. Owed: an ear on the minor `v → VI, iv` entry, which no reference
+charted.
+
+**Shipped: songwriting S1** (to `1f328f6`), to
+[plans/2026-10-01-songwriting-s1.md](plans/2026-10-01-songwriting-s1.md): the Songs library, the
+ProseMirror sheet with chords over words as scale degrees, key and Transpose, the Chords tab,
+hearing a chord, autosave, and Open in Progression both ways. It landed as the plan's proof
+commits replayed onto `main`, with one conflict in the palette's diatonic row resolved for the
+hints; the suite is 4,484. The hand check is in
+[the design doc](plans/2026-10-01-songwriting-design.md): seven steps passed, two in part, and
+hearing not performed. What it could not do - ears, a drag by hand, a Mac, a real IME - is in
+[TODO.md](TODO.md).
+
+**2026-09-30.** Written at the end of the GP milestone.
 
 **Shipped.** The GP milestone - the GP Viewer becomes the composer - built on
 `feature/gp-composer` through `4f40809`, to
