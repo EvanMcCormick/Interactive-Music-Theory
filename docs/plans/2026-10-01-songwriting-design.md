@@ -1,6 +1,8 @@
 # Songwriting: design
 
-**Status:** Designed, not planned. Agreed with the user on 2026-10-01 in a brainstorming session, section by section.
+**Status:** S1 implemented, to [2026-10-01-songwriting-s1.md](2026-10-01-songwriting-s1.md), and on `main` since
+2026-10-21; S2-S5 designed, not planned. Agreed with the user on 2026-10-01 in a brainstorming session, section by
+section. What building S1 corrected, and its hand check, are at the end of this document.
 
 A songwriting tool inside the app, after [songcraft.io](https://songcraft.io/): a lyric sheet split into sections,
 chord names over the words, tab blocks between them, a key / BPM / Transpose bar, and a side panel of the key's
@@ -231,6 +233,65 @@ backend. This version keeps that door open:
 - **Autosave is "persist the latest document"**, a single seam a sync provider can replace.
 - **Derived things stay derived:** a section's progression, the song score, syllable counts and rhyme letters are
   computed from the document and never stored.
+
+## Corrections found in building S1
+
+Each is argued in [the S1 plan's "Corrections to the design"](2026-10-01-songwriting-s1.md); one line each here.
+
+1. The progression types live in `models/progression.model.ts`, not `composer.model.ts`.
+2. Nothing auditioned one chord: `ProgressionPlayerService.audition` and `ToneApi.now()` were added, off the transport.
+3. `chordVocabulary` had no diatonic row: `diatonicChordsOf` now builds it for the palette and the Chords tab alike.
+4. `chordName` writes `A min`; lead-sheet names (`Am`, `Cmaj7`) come from a fourth suffix table beside the others.
+5. Nothing read a chord typed by name: `chordFromText` writes it on the degree its letter names, or refuses why.
+6. The progression page has no key picker; the song has its own, and refuses a key that cannot build chords.
+7. `rekey` needed a store: its body is the pure `rekeyedSlot`, and the song re-keys every chord through it.
+8. ProseMirror needs a default for every attribute: ids default to null and the id plugin fills them.
+9. `[` opens the chord field on a line with text and is typed on an empty one, where the bracket rule reads it.
+10. ProseMirror selected an atom on a modified arrow: a key handler steps past chords instead.
+11. A chord name keeps zero width, but lines are taller, and spacing is measured from no padding each time.
+12. Open in Progression keeps the link in `sessionStorage`, merges the return three ways, and guards `adopt`.
+13. Display choices are the viewer's, in `localStorage`, out of the document and its history.
+14. Autosave is compare-and-swap: a save over a newer revision is refused, never retried on a timer.
+15. A key is shown as the progression page shows it, "C Ionian (Major)".
+16. A secondary dominant is numbered as the sheet prints it (`VI7`), with `V/ii` as a caption under the cell.
+
+## Hand check (S1)
+
+Run on 2026-10-21 in the desktop app's browser pane, against the dev server, typing with real key events. The pane's
+browser could not hear, could not be a Mac, and its synthetic drags do not reliably start the browser's own
+drag-and-drop - so three things below are recorded as not performed, and one as inconclusive.
+
+1. **A song from nothing - passed.** A title; `[Am]` at the start of an empty line read as a chord; `[` mid-line
+   opened the field and `]` closed it; `[G]` alone on a line; `[Chorus]` started a section. "Saved · just now", and a
+   reload brought all of it back.
+2. **Chords over words - passed by measurement**, at 375, 498 and 1,400 px: every name starts on its own letter and
+   sits directly above it, no two names overlap and none covers lyric text, including three chords piled on an empty
+   line and lines that wrap at 375 px. Not looked at on a real phone.
+3. **Key and Transpose - passed.** C to G, then up to A♭ and down to F♯: every name re-spelled (`Fm D♭ A♭ E♭`,
+   `D♯m B F♯ C♯`) and the numerals held at `vi IV I V`.
+4. **The Chords tab - passed.** Three clicks built `[G][C][D]` left to right at the caret; with `D` selected, `Em`
+   replaced it; the panel's arrows transposed the song and the key menu followed.
+5. **Hearing - not performed.** Nothing here can hear a chord; placing, Hear it and the preference want ears.
+6. **The popover and moving - passed in part.** The popover changed `C` to `Cmaj7` (`IVmaj7`) and its length from 4 to
+   8 beats; Alt+→ and Alt+← moved the chord a letter at a time and kept it selected. **Dragging is inconclusive:** one
+   synthetic drag moved the chord (to the next word along, likely from coordinates taken before a scroll) and the next
+   did not move it at all. Wants a hand.
+7. **The caret - passed on Windows.** Ctrl+→ went word by word and stepped past chords; Ctrl+Shift+→ selected a word
+   and its space; Home and End; Ctrl+← from a line's end stopped before the last word's chord; ↓ reached the next line.
+   **Option+arrows on a Mac - not performed.**
+8. **Open in Progression - passed.** Verse 1 opened with "Editing Verse 1 of “Last Dance” · Back to song"; a chord
+   changed, a length changed and a chord added there came back with "Verse 1: 2 chords changed on the Progression page.
+   1 chord added on the Progression page is at the end of Verse 1's last line; drag it onto its word."; one Undo took
+   all three back; the progression page's own I-V-vi was back. A reload in the middle of a hand-off kept the section
+   and the banner, and the chord added before it landed on return. The edits on the progression page were made through
+   its own service commands from the console, not by clicking its controls.
+9. **Two tabs - passed.** The second tab's save was refused: "Not saved: This song was changed in another tab or window
+   after it was opened here, so the changes here were not saved. Reload it to see that version." The first tab's edit
+   is the one stored.
+10. **Library - passed.** Duplicate made "Last Dance (copy)"; search narrowed to it; Delete asked "Delete "Hand Check
+    Song"? This cannot be undone." - the pane dismisses a native dialog as Cancel, which kept the song, and accepting
+    it was checked by answering the dialog from the console; a record corrupted in IndexedDB got its own card, "This
+    song cannot be opened: Unknown node type: not-a-song", with Delete.
 
 ## Open questions
 

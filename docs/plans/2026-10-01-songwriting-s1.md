@@ -18,6 +18,15 @@ Jasmine/Karma.
 
 ---
 
+## Corrections during implementation
+
+S1 reached `main` on 2026-10-21 as the proof's twelve commits replayed onto a `main` that had moved on - the progression
+palette's next-chord hints (`docs/plans/2026-10-21-next-chord-hints-design.md`) had landed in between. One block
+conflicted: Task E.1's `ChordPaletteComponent.buildChords`, which moves the seven buttons onto `diatonicChordsOf`. The
+committed version is E.1's, plus the two fields the hints added to `PaletteChord` - `spoken`, from the same
+`diatonicChordsOf` row, and `hinted: false`. **The committed code supersedes that block.** Nothing else changed; the
+whole suite is 4,484, the proof's 4,418 and the hints' 66.
+
 ## Before you start
 
 **Worktree.** Everything happens in `.worktrees/songwriting` on `feature/songwriting-s1`, from `590a09e`: `main` at

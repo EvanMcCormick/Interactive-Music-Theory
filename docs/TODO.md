@@ -302,6 +302,23 @@ the design doc). What review fixed is under "Corrections during implementation" 
 - **The gallery's delete and clear throw unhandled.** `GpLibraryComponent.deleteFile` and `clearLibrary` await the
   library with no `try`, so a failed write is an unhandled rejection and the user is told nothing.
 
+## Found in building songwriting S1
+
+- **Typing through the browser's text-input path misbehaves.** Text inserted as text rather than as key presses - an
+  IME, a dead key, a test driver's `insertText` - takes ProseMirror's DOM-diff route. The plan saw a select-all typed
+  over leave an empty section with the caret before the typed letter; the S1 hand check saw the desktop pane's text
+  insertion put each run at the start of the line, in reverse order, with `[` never opening the chord field. Typing the
+  same text as key presses worked exactly. Unconfirmed by hand with a real IME.
+- **The song sheet's hand check owes three things** (the design doc's "Hand check (S1)"): hearing a chord placed, Hear
+  it and the play-on-place preference, by ear; dragging a chord to another word, by hand - the pane's synthetic drags
+  were inconclusive; and the caret's Option+arrows on a Mac.
+- **At a short window the Chords panel covers the sheet.** In a 498 x 365 pane the panel took everything below the
+  toolbar and a click meant for a lyric line landed on it; hiding the panel gave the sheet back. Not checked on a real
+  phone, where the window is taller.
+- **`progression.component.ts` is 1,056 lines and `progression-player.service.spec.ts` 1,538**, both over the cap.
+- **The user's progression, restored after a hand-off, is re-issued a revision**, so a composer track generated from it
+  reads as stale; and it adopts the circle's key on arrival, as the page always has.
+
 ## Smaller things noticed in passing
 
 - **Every call to `updateScoreInfo` is an undo step**, so each keystroke in the title field
