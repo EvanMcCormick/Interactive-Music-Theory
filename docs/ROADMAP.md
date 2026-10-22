@@ -1,6 +1,6 @@
 # MusicTheory SaaS Platform Roadmap
 
-**Last Updated:** 2026-09-30
+**Last Updated:** 2026-10-21
 
 This document tracks the progress of transforming MusicTheory from a standalone learning tool into a B2B SaaS platform for music education.
 
@@ -317,6 +317,7 @@ records the decisions and — where implementation disproved one — the correct
 | M2 | Shipped | Piano roll, per-aspect edit protection, borrowed chords and secondary dominants, loop-boundary rescheduling, notation projection |
 | M3 | Shipped | The recogniser: a hand-edited slot reading its identity back, `literal` degradation and a way out of it, the alternates chip; suspensions sounded and each extension alterable; names composed from the chord; every note spelled by its degree's letter |
 | M4 | Shipped | Send a progression into the composer as a real track that knows where it came from, press again to update it, flatten it into an ordinary track; saving refuses while a track is still linked and offers to flatten first; MIDI and `.gp` export from either page, with no notation panel required; and a spelling letter on `NotePitch`, so an exported ♭II engraves on C♭ rather than B |
+| Hints | Shipped 2026-10-21 | Next-chord hints on the palette: with a chord selected, a `›` marks the chords that conventionally follow it and a caption names each motion - dominant to tonic, deceptive, plagal. Major and minor tables, borrowed chords, secondary dominants and the church modes' cadences, each entry checked against harmony references; a `Suggest next` toggle, on by default. Designed in [plans/2026-10-21-next-chord-hints-design.md](plans/2026-10-21-next-chord-hints-design.md), built to [plans/2026-10-21-next-chord-hints.md](plans/2026-10-21-next-chord-hints.md). The minor `v → VI, iv` entry is the one no reference charted, and still wants an ear |
 
 **Composer editor redesign milestones** — a Guitar Pro-style editor for `/composer`,
 built bottom-up so each layer is proven before the next leans on it:
