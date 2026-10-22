@@ -35,17 +35,22 @@ independently against harmony references (see [Verification](#verification)).
 
 ```
  CHORDS IN THIS KEY                               [› Suggest next]
- After V (G Maj): I — dominant to tonic · vi — deceptive
 
  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐
  │ I   ›│ │  ii  │ │ iii  │ │  IV  │ │  V   │ │ vi  ›│ │ vii° │
  │C Maj │ │D min │ │E min │ │F Maj │ │G Maj │ │A min │ │ B°   │
  └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ └──────┘
+ BORROWED …
+ SECONDARY DOMINANTS …
+ After V (G Maj): I — dominant to tonic · vi — deceptive
 ```
 
 - **The toggle** sits at the right of the title row: a `toggle` button in the style the Sus buttons use, with
   `aria-pressed`, starting pressed.
-- **The caption**, one dim line under the title, says which chord the hints answer for and why each one is hinted.
+- **The caption**, a dim line under the two append rows, says which chord the hints answer for and why each one is
+  hinted. *Under the append rows, not under the title* (changed while building): every append selects, so the caption
+  appears or changes with each click, and drawn above the chords it pushed them down under the pointer - the failure the
+  palette already moved its alternates row to fix. Below the append rows it moves only the steppers.
   - A hinted target: `After V (G Maj): I — dominant to tonic · vi — deceptive`. Each target is named by the numeral its
     button prints, in table order.
   - The tonic of major or minor: `After I (C Maj): any chord — the tonic can go anywhere`, and **no marks**: marking all

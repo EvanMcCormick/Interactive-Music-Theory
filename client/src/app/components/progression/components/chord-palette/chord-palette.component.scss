@@ -1,3 +1,5 @@
+@use '../../../../styles/a11y';
+
 // The app's scheme, named locally so this component theming is one block to
 // read: dark navigation surfaces, blue for what is in the mode, red for the
 // root. The tonic button takes the root red for the same reason the circle of
@@ -70,8 +72,16 @@
   color: var(--palette-text);
 }
 
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
 .title {
-  margin: 0 0 0.75rem;
+  margin: 0;
   font-size: 0.85rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -350,4 +360,36 @@
 
 .unavailable {
   margin-top: 0;
+}
+
+// The next-chord caption: the selected chord and the motion to each hint. Dim,
+// as the other hints on this panel are - it explains, it does not compete. It
+// sits under the append rows; the template says why.
+.next-caption {
+  margin: 0.75rem 0 0;
+  font-size: 0.75rem;
+  color: var(--palette-text-dim);
+}
+
+// The next-chord mark. A glyph in the text colour and no fill or ring, because
+// the white ring already means "the chord you are on" and the palette keeps
+// colour for that one selection. It reads without colour, and `forced-colors`
+// keeps a glyph where it drops a `box-shadow`.
+.chord,
+.option {
+  position: relative;
+}
+
+.next-mark {
+  position: absolute;
+  top: 0.2rem;
+  right: 0.3rem;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: var(--palette-text);
+}
+
+// The caption in words, for a screen reader. See `%sr-only`.
+.visually-hidden {
+  @extend %sr-only;
 }

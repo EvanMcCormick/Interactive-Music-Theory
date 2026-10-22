@@ -1,5 +1,20 @@
 <div class="chord-palette">
-  <h3 class="title">Chords in this key</h3>
+  <!-- The title row carries the next-chord toggle. Hidden with the rest of the
+       panel when the key can build no chords: there would be nothing to hint.
+       It is a toggle in the Sus buttons' style - `aria-pressed`, and the ring
+       for "on" - because it is the same kind of control. -->
+  <div class="title-row">
+    <h3 class="title">Chords in this key</h3>
+    <button
+      type="button"
+      class="toggle suggest"
+      *ngIf="unavailable === null"
+      [class.current]="suggestNext"
+      [attr.aria-pressed]="suggestNext"
+      (click)="toggleSuggestNext()">
+      <span aria-hidden="true">&rsaquo;</span> Suggest next
+    </button>
+  </div>
 
   <!-- The guard. A pentatonic or blues scale has no thirds to stack, so the
        page says why rather than printing chords it invented.
@@ -18,10 +33,14 @@
       class="chord"
       *ngFor="let chord of chords; trackBy: trackByDegree"
       [class.tonic]="chord.isTonic"
+      [class.hinted]="chord.hinted"
       [attr.aria-label]="chord.label"
       (click)="addChord(chord)">
       <span class="numeral">{{ chord.numeral }}</span>
       <span class="name">{{ chord.name }}</span>
+      <!-- The next-chord mark. Hidden from a screen reader, which hears the
+           same fact at the end of the label. -->
+      <span class="next-mark" *ngIf="chord.hinted" aria-hidden="true">&rsaquo;</span>
     </button>
   </div>
 
@@ -53,10 +72,12 @@
         class="option"
         *ngFor="let option of borrowed; trackBy: trackByKey"
         [class.current]="option.current"
+        [class.hinted]="option.hinted"
         [attr.aria-label]="option.label"
         (click)="addOption(option)">
         <span class="numeral">{{ option.numeral }}</span>
         <span class="name">{{ option.name }}</span>
+        <span class="next-mark" *ngIf="option.hinted" aria-hidden="true">&rsaquo;</span>
       </button>
     </div>
   </section>
@@ -76,6 +97,26 @@
       </button>
     </div>
   </section>
+
+  <!-- The next-chord caption: the selected chord, and the motion to each hint.
+
+       Below the two append rows rather than under the title, and that is the
+       layout rule the alternates row was moved for. Every append selects, so
+       a click on any chord above makes this line appear or change - and drawn
+       above them, its arrival moved every button down under the pointer, and a
+       second click aimed at the same place landed on a different chord. Here
+       it moves only the steppers below it, which no append is aimed at.
+
+       The live region is the wrapper, which is always here, on the rule the
+       refusal's region argues - a region announces changes to itself, not its
+       own arrival. The visible line carries numerals; the hidden one says the
+       same thing in words, as every label on this panel does. -->
+  <div class="caption-region" aria-live="polite">
+    <p class="next-caption" *ngIf="hintCaption">
+      <span aria-hidden="true">{{ hintCaption }}</span>
+      <span class="visually-hidden">{{ hintSpoken }}</span>
+    </p>
+  </div>
 
   <!-- Hidden rather than greyed in a key that can build no chords. They act on
        a selected chord, and there is none to select: the panel would otherwise

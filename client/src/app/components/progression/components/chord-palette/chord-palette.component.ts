@@ -7,11 +7,12 @@ import {
   OnInit,
   inject
 } from '@angular/core';
-import { Subject, takeUntil } from 'rxjs';
+import { Subject, combineLatest, takeUntil } from 'rxjs';
 
 import { Scale } from '../../../../models/music-theory.model';
 import {
   ChordDegree,
+  ChordSlot,
   ProgressionKey,
   ProgressionState
 } from '../../../../models/progression.model';
@@ -39,8 +40,11 @@ import {
   spokenChordName
 } from '../../../../services/progression-chord-names';
 import { effectiveChord } from '../../../../services/progression-harmony';
+import { likelyNextDegrees } from '../../../../services/progression-next-chords';
 import { chordRootName } from '../../../../services/progression-spelling';
 import { ChordOption, chordVocabulary } from '../../../../services/progression-vocabulary';
+import { describeSlot } from '../progression-strip/progression-strip-cards';
+import { hintPalette } from './chord-palette-hints-view';
 
 /** One button: where the chord sits in the key, and what it is called there. */
 export interface PaletteChord {
@@ -419,6 +423,15 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   /** One row per extension the selected chord actually has. Empty below a ninth. */
   tensions: readonly TensionRow[] = [];
 
+  /** Whether the next-chord hints are on. Mirrors `ProgressionService.getSuggestNext`. */
+  suggestNext = true;
+
+  /** The line under the title naming the selected chord and each hint, or null. */
+  hintCaption: string | null = null;
+
+  /** The same line as it is heard. See `chord-palette-hints-view.ts`. */
+  hintSpoken: string | null = null;
+
   private selectedSlotId: string | null = null;
   private soundingOctave = 0;
 
@@ -427,11 +440,13 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   private readonly destroy$ = new Subject<void>();
 
   ngOnInit(): void {
-    this.progression
-      .getState()
+    // The toggle is a subject of its own on the service rather than a field on
+    // the state - see `setSuggestNext` - so the two are combined here, and
+    // either one changing re-renders the panel.
+    combineLatest([this.progression.getState(), this.progression.getSuggestNext()])
       .pipe(takeUntil(this.destroy$))
-      .subscribe(state => {
-        this.render(state);
+      .subscribe(([state, suggestNext]) => {
+        this.render(state, suggestNext);
         this.changes.markForCheck();
       });
   }
@@ -439,6 +454,11 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
+  }
+
+  /** The `Suggest next` toggle. */
+  toggleSuggestNext(): void {
+    this.progression.setSuggestNext(!this.suggestNext);
   }
 
   /** Adds the clicked chord to the end of the progression. */
@@ -605,8 +625,8 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
   // Rendering
   // -------------------------------------------------------------------------
 
-  /** Rebuilds everything on screen from one published state. */
-  private render(state: ProgressionState): void {
+  /** Rebuilds everything on screen from one published state and the hint toggle. */
+  private render(state: ProgressionState, suggestNext: boolean): void {
     const scale = state.keyScale;
     // Read before the rows are built rather than after, because two of the
     // three read it: the alternates row is shapes on *this* chord's root, and
@@ -647,6 +667,43 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     this.suspensions = state.canBuildChords ? buildSuspensions(chord) : [];
     this.tensions = chord ? buildTensions(chord) : [];
     this.renderOctave(state.selectedSlotId, this.canAdjust);
+    this.suggestNext = suggestNext;
+    this.renderHints(state, degree, suggestNext);
+  }
+
+  /**
+   * The next-chord marks and caption. Last, because it re-labels buttons the
+   * rows above have just built - unmarked, so turning the toggle off needs no
+   * clearing of its own.
+   *
+   * `canAdjust` is the guard for the reason `render` gives the controls: it is
+   * false in a key that can build no chords, where `effectiveChord` would
+   * throw, and false with nothing - or a literal slot - selected.
+   */
+  private renderHints(state: ProgressionState, degree: ChordDegree | null, suggestNext: boolean): void {
+    const scale = state.keyScale;
+    const slot = this.selectedSlot(state);
+
+    if (!suggestNext || !this.canAdjust || degree === null || scale === null || slot === null) {
+      this.hintCaption = null;
+      this.hintSpoken = null;
+      return;
+    }
+
+    const hints = hintPalette({
+      next: likelyNextDegrees(scale.intervals, degree),
+      // The strip card's own naming, so the caption and the card cannot
+      // disagree about the chord the hints are about.
+      subject: describeSlot(slot.harmony, state.doc.key, scale.intervals),
+      scaleIntervals: scale.intervals,
+      chords: this.chords,
+      borrowed: this.borrowed
+    });
+
+    this.chords = hints.chords;
+    this.borrowed = hints.borrowed;
+    this.hintCaption = hints.caption;
+    this.hintSpoken = hints.spokenCaption;
   }
 
   /**
@@ -859,9 +916,14 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
     );
   }
 
+  /** The selected slot, or null. */
+  private selectedSlot(state: ProgressionState): ChordSlot | null {
+    return state.doc.slots.find(candidate => candidate.id === state.selectedSlotId) ?? null;
+  }
+
   /** The selected slot's degree, or null when nothing selectable is selected. */
   private selectedDegree(state: ProgressionState): ChordDegree | null {
-    const slot = state.doc.slots.find(candidate => candidate.id === state.selectedSlotId);
+    const slot = this.selectedSlot(state);
     // A literal slot has no degree, so the steppers have nothing to move. It
     // cannot be reached in M1 - the recogniser that makes one is M3's - and
     // the check is here so that when it can be, the controls grey out rather
