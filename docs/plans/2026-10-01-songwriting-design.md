@@ -90,6 +90,12 @@ doc       attrs: title, artist, key (ProgressionKey), tempo, timeSignature
 - **The Chords tab** shows the vocabulary the progression palette offers (`chordVocabulary` in
   `services/progression-vocabulary.ts`): diatonic triads and sevenths, borrowed chords, secondary dominants, each as
   numeral and name. Its ↑↓ transposes the song.
+  - **After S1: next-chord hints.** The progression palette marks the chords that conventionally follow the selected
+    one and names each motion (`docs/plans/2026-10-21-next-chord-hints-design.md`, shipped on `main`). The table is
+    `likelyNextDegrees(scaleIntervals, selected)` in `services/progression-next-chords.ts`: it takes a key's intervals
+    and a `ChordShape`, which a chord atom's `ChordSlot` already carries, and knows nothing about the palette - so the
+    Chords tab can mark the chords that follow the one at the caret, and share the palette's caption, without a second
+    table. Not part of S1, whose plan is unchanged; picked up once S1 has landed.
 
 ## Part 3: Sound
 
