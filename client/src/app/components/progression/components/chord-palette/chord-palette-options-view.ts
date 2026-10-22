@@ -225,8 +225,14 @@ export function buildOption(option: ChordOption, label: string): PaletteOption {
     numeral: option.numeral,
     name: option.name,
     label,
+    // For the next-chord caption, which names a hinted button aloud. It rides
+    // on the button, not into the slot: the service copies the four fields
+    // above and nothing else.
+    spoken: option.spoken,
     current: option.current,
-    key: optionKey(option)
+    key: optionKey(option),
+    // Unmarked as built: the component's `renderHints` marks the hinted ones.
+    hinted: false
   };
 }
 

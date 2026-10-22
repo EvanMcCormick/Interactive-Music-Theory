@@ -58,8 +58,16 @@ export interface PaletteChord {
    * than assembling. See `spokenChordName`.
    */
   label: string;
+  /**
+   * The chord as a phrase that is heard - `G major` - for the next-chord
+   * caption, which names its targets aloud. `label` is not reusable for that:
+   * it carries a verb and a position.
+   */
+  spoken: string;
   /** The I chord, which takes the root colour the fretboard gives the root. */
   isTonic: boolean;
+  /** Whether the next-chord hints mark this button. See `chord-palette-hints-view.ts`. */
+  hinted: boolean;
 }
 
 /**
@@ -73,15 +81,20 @@ export interface PaletteChord {
  *
  * It is a copy of `ChordOption` rather than the option itself for the reason
  * `PaletteChord` is a view model at all: the fields a template binds are the
- * fields the component has decided to draw, and `spoken` and `group` are
- * neither drawn nor dispatched - they are the inputs to `label` and to which
- * row this ended up in.
+ * fields the component has decided to draw, and `group` is neither drawn nor
+ * dispatched - it decided which row this ended up in. `spoken` was dropped on
+ * the same argument until the next-chord caption came to name its targets
+ * aloud; it is carried now because something reads it.
  */
 export interface PaletteOption extends ChordChoice {
   numeral: string;
   name: string;
   /** What the button says aloud. See `PaletteChord.label`, which argues it. */
   label: string;
+  /** The chord as a phrase that is heard. See `PaletteChord.spoken`. */
+  spoken: string;
+  /** Whether the next-chord hints mark this button. Never set on the alternates row. */
+  hinted: boolean;
   /**
    * Whether the selected slot already holds this chord.
    *
@@ -703,7 +716,10 @@ export class ChordPaletteComponent implements OnInit, OnDestroy {
         // it carries beyond the position - the quality - is already in the
         // spoken name. The position is given as the degree instead.
         label: `Add ${spokenChordName(root, chord)}, degree ${degree + 1}`,
-        isTonic: degree === 0
+        spoken: spokenChordName(root, chord),
+        isTonic: degree === 0,
+        // Unmarked as built: `renderHints` marks the ones the hints land on.
+        hinted: false
       };
     });
   }
