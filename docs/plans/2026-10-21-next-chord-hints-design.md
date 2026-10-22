@@ -201,9 +201,13 @@ against the 1000-line cap, and the logic stays in the two pure modules.
 
 ### State
 
-`ProgressionState` gains `suggestNext: boolean`, starting `true`. `ProgressionService.setSuggestNext(on)` sets it. It
-is a view preference: not in the document, no undo step, not saved across reloads - the way the transport's Loop
-behaves.
+`ProgressionService` gains a `BehaviorSubject<boolean>` starting `true`, read through `getSuggestNext()` and set by
+`setSuggestNext(on)`. The palette combines it with `getState()`. It is a view preference: not in the document, no undo
+step, not saved across reloads - the way the transport's Loop behaves.
+
+It is a subject of its own rather than a field on `ProgressionState` because that state is *derived*: `ProgressionStore`
+rebuilds it from the document on every commit through the service's `derive`, and a preference that is no fact about
+the document would have to be threaded through that callback and every publish to survive.
 
 ### Songwriting
 
